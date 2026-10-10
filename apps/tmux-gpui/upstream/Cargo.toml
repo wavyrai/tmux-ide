@@ -1,0 +1,106 @@
+[workspace]
+members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol"]
+resolver = "2"
+
+[workspace.package]
+edition      = "2024"
+license      = "Apache-2.0"
+rust-version = "1.96"
+# Cargo metadata only. Releases carry a derived calendar version YYYYMMDD.COUNTER
+# that CI embeds as HERDR_RELEASE_VERSION; this value never reaches the UI.
+version = "0.1.0"
+# Workspace crates are not published to crates.io; they build this application.
+publish = false
+
+[workspace.lints.rust]
+unsafe_code           = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
+[workspace.dependencies]
+url = "2"
+anyhow               = "1"
+aes                  = "0.9.3"
+cbc                  = { features = ["block-padding"], version = "0.2.1" }
+percent-encoding     = "2"
+pbkdf2               = { default-features = false, features = ["hmac"], version = "0.13.0" }
+base64               = "0.23.1"
+bincode              = { default-features = false, features = ["serde", "std"], version = "2" }
+chrono               = { default-features = false, features = ["clock"], version = "0.4" }
+cocoa                = "0.27"
+config_loader        = { default-features = false, features = ["toml"], package = "config", version = "0.15.25" }
+core-graphics        = "0.25"
+crossbeam-channel    = "0.5"
+ed25519-dalek        = { default-features = false, features = ["std"], version = "2.2" }
+flate2               = "1"
+# Locates installed font files on Linux, as GPUI's own text system does.
+fontdb               = "0.23"
+foreign-types        = "0.5"
+futures-lite         = "2"
+getrandom            = "0.3.4"
+gpui                 = { package = "gpui-pre", version = "=0.3.6" }
+gpui_platform        = { package = "gpui-pre-platform", version = "=0.3.6" }
+gpui-wry             = "=0.6.6"
+# The same wry gpui-wry builds on; it does not re-export the builder.
+wry                  = { package = "lb-wry", version = "=0.53.3" }
+herdr-client         = { path = "crates/herdr-client" }
+herdr-protocol       = { path = "crates/herdr-protocol" }
+interprocess         = "2.4.2"
+# Local interface addresses, so Bonjour discovery skips this machine; the
+# version mdns-sd already uses.
+if-addrs             = "0.15"
+# Display and idle holds behind the status bar cup; `bin` would pull in a CLI.
+keepawake            = { default-features = false, version = "0.6.1" }
+image                = { default-features = false, features = ["gif", "jpeg", "png", "webp"], version = "0.25.10" }
+# Helix's fzf-style scorer behind the command palette.
+nucleo-matcher       = "0.3.1"
+# Bonjour browsing for SSH hosts in the Add Device dialog; it runs its own
+# thread and needs no async runtime.
+mdns-sd              = { default-features = false, version = "0.21.5" }
+nix                  = { default-features = false, features = ["socket", "user"], version = "=0.31.3" }
+objc                 = "0.2"
+# The Secret Service client GPUI's Linux platform links, with its async-io backend.
+oo7                  = { default-features = false, features = ["async-std", "native_crypto"], version = "0.6" }
+objc2                = "0.6.4"
+objc2-app-kit        = { default-features = false, features = ["NSApplication", "NSDockTile", "NSEvent", "NSImage", "NSImageRep", "NSPasteboard", "NSResponder", "NSTextInputContext", "NSView", "std"], version = "0.3.2" }
+objc2-foundation     = { default-features = false, features = ["NSBundle", "NSData", "NSError", "NSProcessInfo", "NSString", "std"], version = "0.3.2" }
+# The WebKit snapshot behind page annotation screenshots and the popups pages
+# open, at the versions wry uses.
+block2               = "0.6.2"
+dispatch2            = { default-features = false, features = ["objc2", "std"], version = "0.3.1" }
+objc2-core-foundation = { default-features = false, features = ["CFCGTypes", "std"], version = "0.3.2" }
+objc2-web-kit        = { default-features = false, features = ["WKSnapshotConfiguration", "WKUIDelegate", "WKWebView", "block2", "objc2-app-kit", "objc2-core-foundation", "std"], version = "0.3.2" }
+raw-window-handle    = "0.6"
+rusqlite             = { features = ["bundled"], version = "0.40" }
+rodio                = { default-features = false, features = ["playback", "symphonia-mp3", "tracing"], version = "0.22.2" }
+rustix               = { features = ["event", "fs", "process"], version = "=1.1.5" }
+secrecy              = { features = ["serde"], version = "=0.10.3" }
+security-framework   = "=3.7.0"
+serde                = { features = ["derive"], version = "1" }
+serde_json           = "1"
+serde_ignored        = "0.1.14"
+sha1                 = "0.11.0"
+sha2                 = "0.11.0"
+# Reads embedded bitmap strikes to spot fonts GPUI's Linux rasterizer panics on.
+skrifa               = { default-features = false, features = ["std"], version = "0.44" }
+# Diff syntax colouring: bundled grammars, parsed with the pure-Rust regex
+# engine, no themes (colours come from the app's theme).
+syntect              = { default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"], version = "5.3" }
+# The version GPUI's screen capture already locks; only CPU and memory are read.
+sysinfo              = { default-features = false, features = ["system"], version = "0.39.6" }
+tar                  = "0.4"
+tempfile             = "3"
+thiserror            = "2"
+toml                 = "1.1"
+toml_edit            = "0.25"
+tracing              = "0.1"
+tracing-subscriber   = { default-features = false, features = ["registry", "std"], version = "0.3" }
+unicode-segmentation = "1"
+unicode-width        = "0.2.2"
+ureq                 = "3"
+uuid                 = { features = ["serde"], version = "1" }
+windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
+zeroize              = "=1.9.0"

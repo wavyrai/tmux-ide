@@ -39,7 +39,7 @@ export const WIDGET_MARKER_CONCEAL_SUFFIX = "\u001b[0m";
  * rows (39%) of margin inside the seed window. The image widget's source cap is
  * derived FROM this through two encoding steps, which is the easy thing to get
  * wrong — see PANE_WIDGET_IMAGE_MAX_BYTES and the derivation table in
- * apps/desktop-renderer/src/terminal/widgets/WIDGETS.md.
+ * docs/guides/pane-widget-protocol.md.
  *
  * A marker that IS truncated fails closed: all five grammar conditions are
  * checked against the whole line, so the pane stays an ordinary terminal rather

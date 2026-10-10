@@ -1,0 +1,62 @@
+name: Sign artifacts
+description: Generate SHA256/SHA512 checksums and Sigstore keyless signatures for release files
+
+inputs:
+  files:
+    description: Space-separated list or glob of files to check-sum and sign
+    required: true
+  working-directory:
+    description: Directory containing the files
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FILES_PATTERN: ${{ inputs.files }}
+      run: |
+        set -euo pipefail
+
+        # sha256sum/sha512sum are GNU; macOS runners only have shasum.
+        checksum() {
+          local algo="$1" file="$2"
+          "sha${algo}sum" "$file" > "${file}.sha${algo}" 2>/dev/null \
+            || shasum -a "$algo" "$file" > "${file}.sha${algo}"
+        }
+
+        # Validate every expansion before signing anything; one missing glob is fatal.
+        files=()
+        # Unquoted on purpose: the input is a glob or a space-separated list.
+        for file in $FILES_PATTERN; do
+          [[ -f "$file" && ! -L "$file" && -s "$file" ]] || {
+            echo "::error::missing, empty, or symlink artifact '$file'"
+            exit 1
+          }
+          files+=("$file")
+        done
+        [[ ${#files[@]} -gt 0 ]] || exit 1
+        signed=0
+        for file in "${files[@]}"; do
+          echo "Signing: $file"
+
+          checksum 256 "$file"
+          checksum 512 "$file"
+
+          # Keyless: the certificate binds the signature to this workflow's
+          # OIDC identity, so there is no long-lived signing secret to leak.
+          cosign sign-blob --yes \
+            --output-signature "${file}.sig" \
+            --output-certificate "${file}.crt" \
+            "$file"
+
+          signed=$((signed + 1))
+        done
+
+        if [ "$signed" -eq 0 ]; then
+          echo "::error::no files matched '$FILES_PATTERN'; nothing was signed"
+          exit 1
+        fi
+        echo "Signed $signed file(s)."

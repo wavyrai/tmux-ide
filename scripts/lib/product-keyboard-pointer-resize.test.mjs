@@ -464,3 +464,29 @@ test("permits an explicitly superseded intermediate frame without counting it as
   records.unshift(intermediate, { ...intermediate, phase: "pane-resize-frame-superseded" });
   assert.equal(exactFinalResizeOperation(records, sample, release).operationId, UUID);
 });
+
+test("terminal-only scope excludes browser proof but retains native correlation", () => {
+  const value = structuredClone(evidence());
+  delete value.web;
+  delete value.correlation.web;
+  const result = assessProductKeyboardPointerResize({
+    evidence: value,
+    expected: expected,
+    evidenceScope: "terminal-only",
+  });
+  assert.equal(result.qualified, true);
+  assert.equal(result.browserEvidence.status, "unmeasured");
+  assert.equal(
+    assessProductKeyboardPointerResize({ evidence: value, expected: expected }).qualified,
+    false,
+  );
+  value.correlation.tmux = false;
+  assert.equal(
+    assessProductKeyboardPointerResize({
+      evidence: value,
+      expected: expected,
+      evidenceScope: "terminal-only",
+    }).qualified,
+    false,
+  );
+});

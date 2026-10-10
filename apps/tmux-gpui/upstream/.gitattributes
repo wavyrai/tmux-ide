@@ -1,0 +1,3 @@
+# The agent skill is compiled in with include_str! and written out verbatim,
+# so it keeps LF line endings on every platform, Windows checkouts included.
+skills/** text eol=lf

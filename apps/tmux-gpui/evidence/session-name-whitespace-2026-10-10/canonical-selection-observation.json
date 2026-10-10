@@ -1,0 +1,25 @@
+{
+  "scope": "Separate read-only packaged live-helper observation against same private daemon during native rerun; not original native publication trace",
+  "observations": [
+    {
+      "catalogReady": true,
+      "layoutCount": 2,
+      "currentWindowCount": 1,
+      "activePaneCounts": [
+        1,
+        1
+      ],
+      "currentWindowHasSemanticId": true
+    },
+    {
+      "catalogReady": true,
+      "layoutCount": 2,
+      "currentWindowCount": 1,
+      "activePaneCounts": [
+        1,
+        1
+      ],
+      "currentWindowHasSemanticId": true
+    }
+  ]
+}

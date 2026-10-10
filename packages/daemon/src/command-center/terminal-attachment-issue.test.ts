@@ -5,12 +5,10 @@ import { join } from "node:path";
 import {
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TerminalAttachmentIssueResultSchemaZ,
-  type DesktopDaemonHostState,
   type TerminalAttachmentIssueMutationRequest,
 } from "@tmux-ide/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DaemonResourceBroker } from "../../../../apps/electron-shell/src/daemon-resource-broker.ts";
 import { WorkspaceRegistry } from "../lib/workspace-registry.ts";
 import { createApp } from "./server.ts";
 
@@ -89,7 +87,7 @@ async function parsed(response: Response) {
 }
 
 describe("owner terminal attachment issue route", () => {
-  it("interoperates with the Electron broker and projects only the strict shared descriptor", async () => {
+  it("issues only the strict shared descriptor through the public route", async () => {
     const now = 1_784_662_800_000;
     const issue = vi.fn(async () => ({
       protocolVersion: 1 as const,
@@ -102,22 +100,12 @@ describe("owner terminal attachment issue route", () => {
       effectiveGeometryOwnership: "passive" as const,
     }));
     const app = appWith({ issue });
-    const connected: DesktopDaemonHostState = {
-      status: "connected",
-      descriptor: { apiBaseUrl: "http://127.0.0.1:6060", ...IDENTITY },
-    };
-    const brokerRequestUrls: string[] = [];
-    const broker = new DaemonResourceBroker({
-      daemon: connected,
-      ownerToken: OWNER_TOKEN,
-      now: () => now,
-      fetch: async (input, init) => {
-        brokerRequestUrls.push(input.toString());
-        return app.fetch(new Request(input, init));
-      },
+    const response = await app.request(TERMINAL_ATTACHMENT_ISSUE_PATH, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(mutation()),
     });
-
-    await expect(broker.issueTerminalAttachment(mutation(), ORIGIN)).resolves.toEqual({
+    expect(await parsed(response)).toEqual({
       status: "issued",
       descriptor: {
         protocolVersion: 1,
@@ -139,9 +127,6 @@ describe("owner terminal attachment issue route", () => {
         rendererOrigin: ORIGIN,
       }),
     );
-    expect(brokerRequestUrls).toEqual([
-      `${connected.descriptor.apiBaseUrl}${TERMINAL_ATTACHMENT_ISSUE_PATH}`,
-    ]);
   });
 
   it.each([

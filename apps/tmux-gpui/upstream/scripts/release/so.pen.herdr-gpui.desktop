@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Herdr
+Comment=Native client for an existing local Herdr daemon
+Exec=herdr-gpui
+Icon=herdr-gpui
+Terminal=false
+Categories=Development;
+StartupWMClass=so.pen.herdr-gpui

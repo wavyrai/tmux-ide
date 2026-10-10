@@ -1,0 +1,4 @@
+{
+  "packages/daemon/src/terminal/protocol/layout-parse.ts": "e6a9a4398218c41cc1d5f25319da4d83aeddcb72a1c52af327cb44f05006a218",
+  "packages/daemon/src/terminal/protocol/layout-tree.test.ts": "bd4ce2950a87aaf6ff98b3570d006158bc21e15ba3b765c46cfefb64e31fd744"
+}

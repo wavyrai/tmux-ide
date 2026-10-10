@@ -7,6 +7,7 @@ import {
   type RetainedNativeBackingResult,
 } from "./native-seed-backing.ts";
 import {
+  WorkspaceIdSchemaZ,
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
@@ -175,6 +176,7 @@ export interface TerminalDeliverySourceOwner {
 }
 
 interface ClientState {
+  readonly deliveryWorkspaceName: string;
   readonly key: string;
   readonly clientId: string;
   readonly diagnosticClientId: string;
@@ -365,8 +367,11 @@ export class SessionRuntimeTerminalDeliveryHub {
       laneId: string;
       requestId?: string;
     }> = Object.freeze({ clientId, surface: "direct", laneId: clientId }),
+    deliveryWorkspaceName: string = this.workspaceName,
   ): Promise<TerminalDeliveryConnection> {
     if (this.#closed) throw new Error("Terminal delivery hub is closed");
+    // Public delivery identity is independent of the exact native source session.
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName);
     const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
     const negotiation = negotiateTerminalDelivery(
       offer,
@@ -398,6 +403,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         resolveClosed = resolve;
       });
       const client: ClientState = {
+        deliveryWorkspaceName: address,
         key,
         clientId,
         diagnosticClientId: diagnosticIdentity.clientId,
@@ -1044,7 +1050,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
       const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
         type: "terminal.delivery",
-        workspaceName: target.update.workspaceName,
+        workspaceName: client.deliveryWorkspaceName,
         semanticPaneId: target.update.semanticPaneId,
         generation: target.update.generation,
         incarnation: target.update.incarnation,
@@ -1789,7 +1795,7 @@ export class SessionRuntimeTerminalDeliveryHub {
             maxQueueDepth: metrics.maxQueueDepth,
             inFlight: metrics.inFlight,
             inFlightBytes: metrics.inFlightBytes,
-            workspaceName: this.workspaceName,
+            workspaceName: client.deliveryWorkspaceName,
             semanticPaneId: client.paneId,
             faultReason: reason,
             ...(selectionObservation ? terminalSelectionObservation(selectionObservation) : {}),
@@ -1927,7 +1933,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         null,
         undefined,
         Object.freeze({
-          workspaceName: this.workspaceName,
+          workspaceName: client.deliveryWorkspaceName,
           semanticPaneId: client.paneId,
           canonicalGeneration: this.generation,
           canonicalIncarnation: canonical.incarnation,
@@ -1963,7 +1969,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         null,
         undefined,
         Object.freeze({
-          workspaceName: this.workspaceName,
+          workspaceName: client.deliveryWorkspaceName,
           semanticPaneId: client.paneId,
           canonicalGeneration: this.generation,
           canonicalIncarnation: canonical.incarnation,

@@ -1,0 +1,1228 @@
+# DO NOT EDIT -- WILL BE OVERWRITTEN
+# Managed Herdr GPUI defaults, refreshed on startup and GUI config reload.
+# Put your overrides in config-gpui.local.toml beside this file.
+# Herdr GUI settings. Independent of the daemon config, except where a setting
+# below says it starts from one the daemon config already carries.
+# Save at $XDG_CONFIG_HOME/herdr/config-gpui.toml (default ~/.config/herdr/).
+# Omitted settings use defaults. Keys this build does not know, such as ones a
+# newer build reads, are ignored and named in a dismissible warning instead of
+# failing the load. [github] credentials are still refused.
+# Font sizes are logical pixels, inclusive 8..48.
+# Font families below are examples; leave them commented to use platform defaults.
+# Fonts must be installed locally; none are bundled.
+# Powerline separators and Nerd Font icons live in the Private Use Area, which
+# no text face covers. Each section falls back to the installed "Nerd Font"
+# families automatically; set fallback to choose them yourself, or to [] for
+# none. Uninstalled names are ignored, and at most 8 are accepted per section.
+# Saved changes to the local file reload automatically in every GUI window.
+
+# Built-ins: Default, Nord, Dracula, Catppuccin Mocha, Catppuccin Latte.
+# Also accepts a Ghostty theme name, an absolute path, or a ~/ path.
+# Set "Follow Herdr" in config-gpui.local.toml to follow the local Herdr theme.
+# To follow the system light/dark appearance, name a theme for each side, as
+# Ghostty does: theme = "light:Catppuccin Latte,dark:Catppuccin Mocha"
+theme = "Default"
+# How far the app's own colors (status dots, pull request badges, diff counts,
+# warnings, dim labels) stand off the sidebar and menus. "standard" moves a
+# color only when it would fall below 3:1, as pastels do on light themes.
+# "high" raises them and dim labels to 4.5:1 and makes selected rows stand out
+# more. Terminal output always keeps its program's colors.
+contrast = "standard"
+
+# Ask before closing a tab (closing terminates its terminal processes).
+confirm_close_tab = true
+# Ask before closing a pane, independently of tabs. The dialog's "Do not ask
+# again" checkbox sets this to false in config-gpui.local.toml.
+confirm_close_pane = true
+# Show the Agents section below Spaces in the sidebar.
+show_agents = true
+# Show CPU and memory: the selected host's in the status bar, and each host's
+# on its sidebar row. Connected remote hosts are read over SSH every couple of
+# seconds; false stops all sampling. Also under Settings > Status bar.
+show_system_load = true
+# Checkpoint a worktree each time one of its agents starts or finishes a turn,
+# locally or over SSH, so its files can be rolled back from the workspace
+# menu's Checkpoints. Snapshots include untracked (not ignored) files, live in
+# hidden refs/herdr-gpui/checkpoints/ refs, and the newest 50 per branch are
+# kept. Taking one never changes the index or files. Also under
+# Settings > General.
+agent_checkpoints = true
+# Show the TCP ports each workspace's servers listen on, under its sidebar row
+# and in the status bar; click one to open it in a browser tab. Hosts are
+# scanned every five seconds with ss or lsof, a remote one over SSH; false
+# stops all scanning. Also under Settings > General.
+show_listening_ports = true
+# macOS only: whether Option-letter reaches a pane as an Alt shortcut (Alt-P
+# for Option-P) or types the character the keyboard layout puts there. "auto"
+# sends Alt from the left Option on the U.S. and ABC layouts, while the right
+# Option still types accents and dead keys (Option-E then E types é); it types
+# with both elsewhere, so layouts that keep @, [, or letters on Option still
+# type them. "left" or "right" sends Alt from that Option key alone on any
+# layout, true from both, and false never. Alt always reaches the pane on
+# Linux and Windows.
+option_as_alt = "auto"
+# Where a clicked terminal link opens: "system" (the default browser) or
+# "browser-tab" (a browser tab beside the workspace's terminals, macOS and
+# Windows only). Alt-click (Option-click) opens a link in the other one.
+open_links_in = "system"
+# Keep a terminal selection highlighted after releasing the mouse copies it,
+# until the next click or keystroke. Cmd-C and Edit > Copy copy it again, and
+# selection tools and screen readers can still read it. false clears it on
+# release.
+keep_selection_after_copy = true
+# "normal" (TUI-like), "comfortable" (the previous roomy Normal), or "compact".
+# Compact hides workspace branch lines and PR change
+# counts, and tightens Spaces and Agents spacing without changing font sizes.
+# Add "-rounded" to any of them ("normal-rounded", "compact-rounded",
+# "comfortable-rounded") for inset rows with rounded, bordered highlights.
+# "superset" (single-line rows), "orca" (cards), and "minimal" (status and name
+# only) draw rows with a design of their own. View > Layout lists them all.
+layout = "normal"
+
+[palette]
+# Two short Shift taps open the unified palette in the focused GUI window.
+# Cmd-Shift-P opens All; Cmd-P starts on Navigation. Ordinary Shift typing and
+# selection do not count. Disable the gesture independently of keybindings.
+double_shift = true
+# Immediate non-hidden subdirectories, including folders without Git metadata.
+# Roots expand a leading ~ and $VAR / ${VAR}; unset variables show an error.
+# At most 16 roots. Child symlinks are skipped. Local folders open locally,
+# never on the selected SSH host. These settings do not read herdr-utils config.
+project_roots = []
+# Example override: project_roots = ["~/Code", "$HOME/Projects"]
+
+# Inherit shared [ui.toast] delivery, delay_seconds, and herdr.position.
+# Only delivery = "herdr" enables in-app toasts; "off", "terminal", and "system"
+# do not. QA previews bypass delivery policy. In config-gpui.local.toml, each
+# explicit key overrides the shared setting independently, including false.
+# [notifications]
+# enabled = false
+# Inclusive 0..3600. Custom notifications are immediate.
+# delay_seconds = 1
+# top-left, top-right, bottom-left, bottom-right. Explicit wire corners win.
+# position = "bottom-right"
+
+# The "copied to clipboard" flash shown after a terminal selection is copied.
+# Left commented out, this follows the daemon config's [ui.toast.clipboard], so
+# setting it there covers both clients. Uncomment a key to override that one
+# here; each key overrides on its own. Defaults, as in herdr: shown, at the
+# bottom center of the terminal.
+# [clipboard_toast]
+# enabled = true
+# top-left, top-center, top-right, bottom-left, bottom-center, bottom-right.
+# The position also places the note saying why New Worktree opened no dialog.
+# position = "bottom-center"
+
+# What a pane's terminal bell (BEL) does. Herdr has no bell setting of its own:
+# it forwards each bell to the focused client, as an outer terminal would see it.
+# [bell]
+# Bounce the Dock icon while the window is in the background.
+# attention = true
+# Play the system alert sound.
+# sound = false
+
+# To customize spacing too, REPLACE the top-level layout above with this table:
+# [layout]
+# mode = "normal"
+# Blank space between the sidebar and the terminal beside it, 0 to 64.
+# The terminal keeps the remaining width, so a wide gap costs columns.
+# Ignored while the sidebar is hidden. Set 0 to sit against the divider.
+# sidebar_gap = 8
+
+# Native shortcuts. Each key is a command; the value is one keystroke or a list,
+# primary first. "" or [] unbinds it. Assigning a keystroke here takes it away
+# from its default command. Modifiers: cmd (super on Linux), ctrl, alt, shift,
+# fn; keystrokes need at least one of cmd, ctrl, alt, or fn.
+# Herdr's own [keys] in config.toml (prefix chords included) add to these
+# defaults; a command named here keeps only the keystrokes listed here.
+# [keybindings]
+# new_tab = "cmd-t"
+# new_workspace = "cmd-shift-n"
+# new_worktree = "cmd-n"
+# new_window = "cmd-alt-shift-n"
+# split_right = "cmd-d"
+# split_down = "cmd-shift-d"
+# next_tab = "cmd-shift-]"
+# previous_tab = "cmd-shift-["
+# focus_left = "cmd-alt-left"
+# focus_right = "cmd-alt-right"
+# focus_up = "cmd-alt-up"
+# focus_down = "cmd-alt-down"
+# next_pane = "cmd-alt-]"
+# previous_pane = "cmd-alt-["
+# toggle_zoom = "cmd-shift-enter"
+# close_pane = "cmd-w"
+# close_tab = "cmd-shift-w"
+# focus_tab_1 = "cmd-1"   # through focus_tab_9 = "cmd-9"
+# toggle_sidebar = "cmd-b"
+# toggle_status_bar = "cmd-ctrl-b"   # unbound by default
+# increase_font_size = ["cmd-=", "cmd-+"]
+# decrease_font_size = "cmd--"
+# reset_font_size = "cmd-0"
+# settings = "cmd-,"
+# keybindings = "cmd-/"
+# workspace_picker = "cmd-p"
+# command_palette = "cmd-shift-p"
+# open_notification_target = "cmd-alt-n"
+# quit = "cmd-q"
+# find_next = "cmd-g"
+# find_previous = "cmd-shift-g"
+# toggle_full_screen = "ctrl-cmd-f"
+# cycle_windows = "cmd-`"
+# Unbound by default: themes, reconnect, logs, about, worktree_notes,
+# edit_worktree_note.
+
+# What the focused pane receives instead of a keystroke, as Ghostty's text:
+# binds do. The value is a key a terminal can receive (ctrl-a, home, alt-b,
+# shift-enter); an empty string removes a default. A keystroke here leaves its
+# default or daemon command, but naming it in [keybindings] too is an error.
+# On macOS these are the defaults:
+# [pane_keys]
+# "cmd-left" = "ctrl-a"
+# "cmd-right" = "ctrl-e"
+# "cmd-backspace" = "ctrl-u"
+# "alt-left" = "alt-b"
+# "alt-right" = "alt-f"
+
+# Saved SSH devices use the local keybindings above, as `herdr --remote` does.
+# "server" uses the [keys] profile that device's Herdr publishes instead, like
+# `herdr --remote-keybindings server`; [keybindings] still apply on top. Keyed
+# by catalog ID; a device's right-click menu toggles it.
+# [devices.0123456789abcdef0123456789abcdef]
+# keybindings = "server"
+
+# Preferences offers a searchable picker for all four families together or each row.
+# Platform default removes the local family override; fallback cascades remain active.
+[sidebar]
+# Default: "Menlo" on macOS, "Cascadia Mono" on Windows (Consolas when
+# missing), "DejaVu Sans Mono" on Linux (or an installed monospace family such
+# as JetBrains Mono when DejaVu is missing).
+# family = "DejaVu Sans Mono"
+size = 12
+# fallback = ["Symbols Nerd Font Mono"]
+# Spacing written over the layout chosen above, in logical pixels. Each key
+# left out keeps the layout's own value. The indent is how far each nesting
+# level steps in: workspaces under their host, worktrees under their
+# repository. Bands: indent 0..=48, row_padding 0..=16, gap 0..=32,
+# host_gap 0..=48. The superset and orca layouts copy another app's rows,
+# so row_padding does not reach them: superset spaces its rows by gap, and
+# orca keeps its own gap and padding. Both take indent and host_gap.
+# indent = 14
+# row_padding = 2
+# gap = 6
+# host_gap = 10
+# What selecting a workspace marks besides its own row: "row" (only the row),
+# "group" (a stronger wash over the whole host group), or "group-dim" (that,
+# and the other hosts' rows dimmed). Hosts without a colour below use the
+# theme's active colour for the wash.
+# select = "row"
+
+# A colour per host, keyed by the host's name in the sidebar, as #rgb or
+# #rrggbb. It washes the host's header, its workspace rows, and its agents'
+# rows faintly, so a long list reads by colour. Names with spaces go in quotes.
+# [sidebar.hosts]
+# Personal = "#3a4a6b"
+# "Mac mini" = "#5a3a3a"
+
+[tabs]
+# Default: "Menlo" on macOS, "Cascadia Mono" on Windows (Consolas when
+# missing), "DejaVu Sans Mono" on Linux (or an installed monospace family such
+# as JetBrains Mono when DejaVu is missing).
+# family = "DejaVu Sans Mono"
+size = 12
+# fallback = ["Symbols Nerd Font Mono"]
+
+[terminal]
+# Default: "Menlo" on macOS, "Cascadia Mono" on Windows (Consolas when
+# missing), "DejaVu Sans Mono" on Linux (or an installed monospace family such
+# as JetBrains Mono when DejaVu is missing).
+# family = "DejaVu Sans Mono"
+size = 14
+# fallback = ["Symbols Nerd Font Mono"]
+# Row height as a multiple of size, 1 to 2. Default 20/14 (about 1.43), which
+# is 20 logical pixels at size 14. Lower it for tighter rows. Only [terminal]
+# takes this key.
+# line_height = 1.3
+
+[ui]
+# Default: ".SystemUIFont" on macOS and Windows, "DejaVu Sans" on Linux (or an installed
+# sans family such as Noto Sans when DejaVu is missing).
+# family = "DejaVu Sans"
+size = 12
+# fallback = ["Symbols Nerd Font Mono"]
+
+# Native GitHub sign-in uses the public Herdr GPUI GitHub App by default.
+# Optionally override with your own Device Flow-enabled app's public client ID.
+# Never put an App ID, client secret, private key, or token here.
+# HERDR_GITHUB_OAUTH_CLIENT_ID overrides this field when set.
+# [github]
+# oauth_client_id = "YOUR_REGISTERED_PUBLIC_CLIENT_ID"
+# Explicit opt-in when an OS credential store is not available, which on macOS
+# means every unsigned development build; signed release builds use the Keychain
+# and ignore this field. macOS development builds always use the file store.
+# Linux uses the desktop keyring (Secret Service) unless this is true, for
+# desktops without GNOME Keyring, KWallet, or KeePassXC.
+# WARNING: saves an UNENCRYPTED token in the separate 0600 github-credentials file.
+# Other software running as you and backups can read it. Default is false.
+# allow_plaintext_credentials = false
+
+# A Coder deployment whose workspaces can be created and added as devices from
+# the device picker's "Add Coder Workspace…". Settings > Cloud Devices edits
+# these keys and saves the client secret to the credential store, so editing
+# this table by hand is optional. Register an OAuth2 app in Coder
+# (the deployment must enable the `oauth2` experiment) with the redirect URI
+# below; Coder compares it as an exact string, so copy it verbatim. Requires the
+# `coder` CLI, which carries the connection. Each HERDR_CODER_URL,
+# HERDR_CODER_OAUTH_CLIENT_ID, HERDR_CODER_OAUTH_CLIENT_SECRET, and
+# HERDR_CODER_OAUTH_REDIRECT_URI variable overrides its field when set.
+# [coder]
+# url = "https://coder.example.com"
+# oauth_client_id = "YOUR_OAUTH2_APP_ID"
+# Coder requires a confidential client. Prefer Settings > Cloud Devices, which
+# keeps the secret out of this file; when set here or in the environment, this
+# value takes precedence. It identifies this app to Coder, not your account.
+# oauth_client_secret = "YOUR_OAUTH2_APP_SECRET"
+# A loopback address with an explicit port the GUI can listen on while signing in.
+# oauth_redirect_uri = "http://127.0.0.1:47823/callback"
+# Create workspaces in this organization instead of your default one.
+# organization = "default"
+# New workspace names start with this prefix (lowercase, digits, hyphens).
+# workspace_prefix = "herdr"
+# Absolute path to the coder CLI when it is not on PATH or in a usual location.
+# cli = "/opt/homebrew/bin/coder"
+# Same meaning as [github] allow_plaintext_credentials, for the Coder sign-in,
+# which is saved in its own 0600 coder-credentials file. Default is false.
+# allow_plaintext_credentials = false
+
+# Daytona sandboxes as devices (experimental). Settings > Cloud Devices >
+# Daytona edits this table and saves the API key to the credential store; the
+# key is never read from this file. HERDR_DAYTONA_API_KEY overrides the saved
+# key and HERDR_DAYTONA_API_URL overrides api_url.
+# [daytona]
+# api_url = "https://app.daytona.io/api"
+# Send requests on behalf of this organization instead of the key's default.
+# organization_id = "YOUR_ORGANIZATION_ID"
+# The region and snapshot new sandboxes use; Daytona's defaults when unset.
+# target = "us"
+# snapshot = "daytonaio/sandbox:0.4.3"
+# Same meaning as [github] allow_plaintext_credentials, for the API key, which
+# is saved in its own 0600 daytona-api-key file. Default is false.
+# allow_plaintext_credentials = false
+
+# What the status bar shows, also under Settings > Status bar. Whether usage
+# and CPU/memory show at all is [usage] show and show_system_load.
+# [status_bar]
+# The bar itself. false opens windows without it; Terminal > Toggle Status Bar,
+# or a `toggle_status_bar` binding, hides or shows it for the session. While
+# hidden, its connection message, prefix and resize badges show nowhere else.
+# show = true
+# "detailed" draws a meter and a service's two tightest windows; "compact"
+# shows each service's tightest limit as one share.
+# usage = "detailed"
+# "detailed" draws a CPU graph and a memory meter; "compact" shows the shares.
+# system_load = "detailed"
+# The cup that keeps the display awake; it stays while holding, so it can stop.
+# keep_awake = true
+# Buttons: "label" for icon and name, "icon" for the icon alone, or "hidden".
+# theme = "label"
+# shortcuts = "label"
+# report_issue = "label"
+
+# Optional behaviors, all off unless turned on here.
+# [features]
+# Open a space's menu when the pointer rests on its sidebar row, without a
+# right click. Moving the pointer anywhere but into that menu closes it again.
+# sidebar_hover_menu = false
+
+# Plan usage of AI services in the status bar, for the selected host. A
+# service shows when its sign-in is found: an agent's own login on that host
+# (read over SSH for a remote host, and never copied off it), or a key or
+# cookie set below on this machine.
+# [usage]
+# Also under Settings > Status bar.
+# show = true
+# Daemon toolbar segments, including plugin usage percentages; independent of show.
+# topbar = true
+# Honor the daemon's [ui.sidebar] rows and plugin tokens; false uses native layouts.
+# inline = true
+# Show these even when no sign-in was found, with what to set up.
+# show_providers = ["cursor", "openrouter"]
+# Never show these, even when signed in.
+# hide_providers = []
+# Let providers listed in show_providers read their web session from Chrome
+# (and Brave, Edge, Arc, Chromium) or Safari when no cookie is set below.
+# Chrome makes macOS ask for Keychain access, so nothing is read until you
+# press Allow in that provider's usage panel; Safari needs Full Disk Access.
+# browser_cookies = true
+
+# --- usage providers: generated from each provider's settings ---
+#
+# Found from the agent's own sign-in on the host, with nothing to set:
+#   codex, claude, kiro, doubao, pi
+#
+# OpenAI (openai)
+# [usage.providers.openai]
+#   An organization Admin API key (sk-admin-...), created by an organization
+#   owner at https://platform.openai.com/settings/organization/admin-keys.
+#   Project and service-account keys cannot read organization usage.
+# api_key = ""  # or OPENAI_ADMIN_KEY, OPENAI_API_KEY
+#   Optional. A project ID (proj_...) from
+#   https://platform.openai.com/settings/organization/projects to limit spend
+#   and usage to that project.
+# project_id = ""  # or OPENAI_PROJECT_ID
+#   Optional. How many days of spend to total, 1 to 365. Defaults to 30.
+# history_days = ""  # or OPENAI_HISTORY_DAYS
+#   Optional. Set to 1 to show the legacy prepaid credit balance when the key
+#   cannot read organization usage (older user API keys). Ignored with
+#   project_id.
+# balance_fallback = ""  # or OPENAI_ALLOW_BALANCE_FALLBACK
+#
+# Azure OpenAI (azureopenai)
+# [usage.providers.azureopenai]
+#   An Azure OpenAI resource key: in the Azure portal open the Azure OpenAI
+#   resource, then Resource Management > Keys and Endpoint, and copy KEY 1.
+# api_key = ""  # or AZURE_OPENAI_API_KEY
+#   The resource endpoint from the same Keys and Endpoint page, e.g.
+#   https://my-resource.openai.azure.com. Only HTTPS is accepted.
+# endpoint = ""  # or AZURE_OPENAI_ENDPOINT
+#   The deployment name to check, as listed under Deployments in Azure AI
+#   Foundry (https://ai.azure.com), e.g. chat-prod.
+# deployment = ""  # or AZURE_OPENAI_DEPLOYMENT_NAME
+#   Optional. "v1" for the OpenAI-compatible v1 API, or a dated API version.
+#   Defaults to 2024-10-21.
+# api_version = ""  # or AZURE_OPENAI_API_VERSION
+#
+# ClinePass (clinepass)
+# [usage.providers.clinepass]
+#   A Cline API key for the account with the ClinePass subscription. Create one
+#   at https://app.cline.bot under Settings > API Keys.
+# api_key = ""  # or CLINE_API_KEY, CLINEPASS_API_KEY
+#
+# Cursor (cursor)
+# [usage.providers.cursor]
+#   Your cursor.com session. Sign in at https://cursor.com/dashboard, open
+#   Developer Tools > Application > Cookies > https://cursor.com, and copy the
+#   WorkosCursorSessionToken cookie (or __Secure-next-auth.session-token on
+#   older accounts). Paste it as "WorkosCursorSessionToken=value". Not needed
+#   when Cursor is listed in show_providers and you are signed in with Chrome or
+#   Safari.
+# cookie = ""
+#
+# OpenCode (opencode)
+# [usage.providers.opencode]
+#   Your opencode.ai session. Sign in at https://opencode.ai/auth, open
+#   Developer Tools > Application > Cookies > https://opencode.ai, and copy the
+#   auth and __Host-console_session cookies (either one alone also works). Paste
+#   them as "auth=value; __Host-console_session=value".
+# cookie = ""
+#   Optional. The workspace to read, as a wrk_... ID or the
+#   https://opencode.ai/workspace/... URL of its dashboard. Defaults to the
+#   first workspace of the account.
+# workspace_id = ""  # or CODEXBAR_OPENCODE_WORKSPACE_ID
+#
+# OpenCode Go (opencodego)
+# [usage.providers.opencodego]
+#   An OpenCode API key for the account with the Go subscription, created at
+#   https://opencode.ai/auth under API Keys. Preferred over the cookie. When
+#   unset, the key `opencode auth login` saved in
+#   ~/.local/share/opencode/auth.json is used.
+# api_key = ""  # or OPENCODE_API_KEY
+#   Your opencode.ai session, used when no API key is set. Sign in at
+#   https://opencode.ai/auth, open Developer Tools > Application > Cookies >
+#   https://opencode.ai, and copy the __Host-console_session and auth cookies
+#   (either one alone also works). Paste them as "__Host-console_session=value;
+#   auth=value".
+# cookie = ""
+#   Optional, for the cookie sign-in. The workspace to read, as a wrk_... or
+#   org_... ID or its https://opencode.ai/console/... URL. Defaults to the first
+#   workspace of the account.
+# workspace_id = ""  # or CODEXBAR_OPENCODE_WORKSPACE_ID
+#
+# Alibaba (alibaba)
+# [usage.providers.alibaba]
+#   Your Model Studio console session. Sign in to the Coding Plan page at
+#   https://modelstudio.console.alibabacloud.com (or
+#   https://bailian.console.aliyun.com in China), open Developer Tools >
+#   Application > Cookies for that site, and copy at least
+#   login_aliyunid_ticket, login_aliyunid_pk, login_aliyunid_csrf and cna. Paste
+#   them as "name=value; name2=value2", or copy the whole Cookie header of the
+#   data/api.json request from the Network tab.
+# cookie = ""  # or ALIBABA_CODING_PLAN_COOKIE
+#   A Coding Plan API key (sk-sp-...) from the Coding Plan page of the Model
+#   Studio console. Used when no console cookie works; some mainland accounts
+#   only answer the cookie.
+# api_key = ""  # or ALIBABA_CODING_PLAN_API_KEY, ALIBABA_QWEN_API_KEY, DASHSCOPE_API_KEY
+#   Optional. "intl" (modelstudio.console.alibabacloud.com) or "cn"
+#   (bailian.console.aliyun.com). Unset tries International, then China
+#   mainland.
+# region = ""
+#   Optional. The console's sec_token, when it cannot be read from
+#   /tool/user/info.json: in Developer Tools > Network, the sec_token form field
+#   of the data/api.json request on the Coding Plan page.
+# sec_token = ""
+#
+# Alibaba Token Plan (alibabatokenplan)
+# [usage.providers.alibabatokenplan]
+#   Which Token Plan to read: "intl" (International Team, the default), "cn"
+#   (China mainland Team), "intl-personal" or "cn-personal" (Personal/Solo).
+# region = ""
+#   Only needed without a signed-in Bailian CLI (bl). Sign in to the Token Plan
+#   page (https://modelstudio.console.alibabacloud.com, or
+#   https://bailian.console.aliyun.com in China), open Developer Tools >
+#   Application > Cookies for that site, and copy at least
+#   login_aliyunid_ticket, login_aliyunid_pk, login_aliyunid_csrf and cna. Paste
+#   them as "name=value; name2=value2", or copy the whole Cookie header of the
+#   data/api.json request from the Network tab.
+# cookie = ""  # or ALIBABA_TOKEN_PLAN_COOKIE
+#   Optional. The console's sec_token, when it cannot be read from
+#   /tool/user/info.json: in Developer Tools > Network, the sec_token form field
+#   of any data/api.json request on the Token Plan page.
+# sec_token = ""
+#
+# Qwen Cloud (qwencloud)
+# [usage.providers.qwencloud]
+#   Your Qwen Cloud console session. Sign in at
+#   https://home.qwencloud.com/billing/subscription/token-plan-individual, open
+#   Developer Tools > Application > Cookies > https://home.qwencloud.com, and
+#   copy the login ticket (login_qwencloud_ticket or login_aliyunid_ticket)
+#   together with login_aliyunid_csrf and cna. Paste them as "name=value;
+#   name2=value2", or copy the whole Cookie header of the data/api.json request
+#   from the Network tab.
+# cookie = ""  # or QWEN_CLOUD_COOKIE
+#   Optional. The console's sec_token, when it cannot be read from
+#   /tool/user/info.json: in Developer Tools > Network, the sec_token form field
+#   of the data/api.json request on the Token Plan page.
+# sec_token = ""
+#
+# Droid (factory)
+# [usage.providers.factory]
+#   A Factory API key (fk-…) from https://app.factory.ai/settings/api-keys.
+# api_key = ""  # or FACTORY_API_KEY
+#   Used when no API key is set. Sign in to https://app.factory.ai, open
+#   Developer Tools > Application > Cookies > https://app.factory.ai, and copy
+#   the session cookies (wos-session, access-token, and any *.session-token) as
+#   "name=value; name2=value2".
+# cookie = ""
+#
+# Fireworks (fireworks)
+# [usage.providers.fireworks]
+#   A Fireworks API key from https://app.fireworks.ai/settings/users/api-keys.
+#   It reads the account's billing summary.
+# api_key = ""  # or FIREWORKS_API_KEY, FIREWORKS_KEY
+#   The Fireworks account id, needed only when the API key can see several
+#   accounts. Find it in the account switcher on https://app.fireworks.ai or
+#   with `firectl whoami`.
+# account_slug = ""  # or FIREWORKS_ACCOUNT_SLUG
+#
+# Gemini (gemini)
+# [usage.providers.gemini]
+#   The Gemini CLI's OAuth client id, used to refresh an expired sign-in.
+#   Normally found in the installed CLI (OAUTH_CLIENT_ID in
+#   @google/gemini-cli-core/dist/src/code_assist/oauth2.js); set it only when
+#   the CLI is not on the host's PATH.
+# client_id = ""  # or GEMINI_OAUTH_CLIENT_ID
+#   The matching OAUTH_CLIENT_SECRET from the same file.
+# client_secret = ""  # or GEMINI_OAUTH_CLIENT_SECRET
+#
+# Antigravity (antigravity)
+# [usage.providers.antigravity]
+#   The agy executable on the probed host when it is not on the PATH (install it
+#   with `brew install --cask antigravity-cli`, run `agy` once, and sign in).
+#   agy runs only when this is set or antigravity is in show_providers, as a
+#   signed-out agy opens a browser to sign in.
+# cli_path = ""  # or ANTIGRAVITY_CLI_PATH
+#
+# Copilot (copilot)
+# [usage.providers.copilot]
+#   A GitHub token of the account with Copilot, e.g. a fine-grained personal
+#   access token from https://github.com/settings/personal-access-tokens with no
+#   extra permissions, or the output of `gh auth token`. Not needed when a
+#   Copilot editor plugin is signed in on the host.
+# token = ""  # or COPILOT_API_TOKEN
+#   For GitHub Enterprise Cloud with data residency: the host, such as
+#   octocorp.ghe.com. Usage is then read from api.<host>.
+# enterprise_host = ""
+#
+# Devin (devin)
+# [usage.providers.devin]
+#   Sign in to https://app.devin.ai, open your organization's Usage & Limits
+#   page, then in Developer Tools > Network select the successful
+#   billing/quota/usage request and copy its Authorization request header
+#   without the leading "Bearer ". The value is a browser session token and
+#   expires with that session.
+# token = ""  # or DEVIN_BEARER_TOKEN
+#   The x-cog-org-id request header of the same request (an org-… or org_…
+#   id). An organization slug or its app.devin.ai URL also works.
+# organization = ""  # or DEVIN_ORGANIZATION, DEVIN_ORG
+#
+# z.ai / GLM (zai)
+# [usage.providers.zai]
+#   A z.ai API key from https://z.ai/manage-apikey/apikey-list, or for BigModel
+#   China one from https://bigmodel.cn/usercenter/proj-mgmt/apikeys.
+# api_key = ""  # or Z_AI_API_KEY
+#   "global" for api.z.ai (the default) or "bigmodel-cn" for open.bigmodel.cn,
+#   the China mainland GLM Coding Plan.
+# region = ""
+#   An HTTPS host that replaces the region's API host, e.g. a proxy.
+# api_host = ""  # or Z_AI_API_HOST
+#   A full HTTPS URL that replaces the quota endpoint.
+# quota_url = ""  # or Z_AI_QUOTA_URL
+#   A full HTTPS URL that replaces the BigModel China balance endpoint.
+# balance_url = ""  # or Z_AI_BALANCE_URL
+#   "personal" (the default) or "team" for BigModel team usage, which also needs
+#   organization and project.
+# usage_scope = ""
+#   For team usage: open https://bigmodel.cn/coding-plan/team/usage-stats, pick
+#   the team, and in Developer Tools > Network copy the Bigmodel-Organization
+#   request header of the quota/limit request.
+# organization = ""  # or Z_AI_BIGMODEL_ORGANIZATION
+#   For team usage: the Bigmodel-Project request header of the same request.
+# project = ""  # or Z_AI_BIGMODEL_PROJECT
+#
+# MiniMax (minimax)
+# [usage.providers.minimax]
+#   A MiniMax Coding Plan or Token Plan API key (sk-cp-…) from
+#   https://platform.minimax.io/user-center/basic-information/interface-key.
+# api_key = ""  # or MINIMAX_CODING_API_KEY, MINIMAX_API_KEY
+#   Used when no API key is set. Sign in to https://platform.minimax.io, open
+#   Developer Tools > Application > Cookies > https://platform.minimax.io, and
+#   copy every cookie (including HERTZ-SESSION) as "name=value; name2=value2".
+# cookie = ""  # or MINIMAX_COOKIE, MINIMAX_COOKIE_HEADER
+#   "global" for minimax.io (the default) or "cn" for the China mainland
+#   platform at minimaxi.com.
+# region = ""
+#
+# Manus (manus)
+# [usage.providers.manus]
+#   Sign in to https://manus.im, open Developer Tools > Application > Cookies >
+#   https://manus.im, and copy the value of the session_id cookie (the value
+#   only, without "session_id="). Not needed when Manus is listed in
+#   show_providers and you are signed in with Chrome or Safari.
+# session_token = ""  # or MANUS_SESSION_TOKEN, MANUS_SESSION_ID
+#   Instead of session_token, a whole manus.im Cookie header that includes
+#   session_id, as "session_id=value; …".
+# cookie = ""  # or MANUS_COOKIE
+#
+# Kimi Code (kimi)
+# [usage.providers.kimi]
+#   A Kimi Code API key from the Kimi Code console
+#   (https://www.kimi.com/code/console, or https://www.kimi.ai/code/console for
+#   International). Not needed when the Kimi Code CLI is signed in on the host.
+# api_key = ""  # or KIMI_CODE_API_KEY
+#   Which Kimi service the credentials belong to: "china" (the default,
+#   kimi.com) or "international" (kimi.ai). Moonshot Open Platform keys belong
+#   to the moonshot provider instead.
+# region = ""
+#   An https Kimi Code API base to use with the API key instead of
+#   https://api.kimi.com, for a compatible proxy. Setting it stops the CLI's
+#   sign-in from being used.
+# base_url = ""  # or KIMI_CODE_BASE_URL
+#   Your Kimi web session, for the membership pool and plan, or on its own. Sign
+#   in at https://www.kimi.com/code/console, open Developer Tools →
+#   Application → Cookies → https://www.kimi.com, and copy the value of the
+#   `kimi-auth` cookie (a JWT starting with eyJ), without its name. On kimi.ai,
+#   copy `access_token` from Local Storage instead. Not needed when Kimi is
+#   listed in show_providers and you are signed in with Chrome or Safari.
+# token = ""  # or KIMI_AUTH_TOKEN
+#   Instead of token, a whole Kimi Cookie header that includes kimi-auth, as
+#   "kimi-auth=value; …".
+# cookie = ""  # or KIMI_MANUAL_COOKIE
+#
+# Kilo (kilo)
+# [usage.providers.kilo]
+#   A Kilo API key from https://app.kilo.ai (Profile → API keys). Without one,
+#   the Kilo CLI's sign-in in ~/.local/share/kilo/auth.json is used; run `kilo
+#   auth login` to create it.
+# api_key = ""  # or KILO_API_KEY
+#
+# Vertex AI (vertexai)
+# [usage.providers.vertexai]
+#   The Google Cloud project id whose Vertex AI quotas to read, when gcloud has
+#   none set (`gcloud config set project PROJECT_ID`). Sign in with `gcloud auth
+#   application-default login`; the account needs Cloud Monitoring read access
+#   (roles/monitoring.viewer) on the project.
+# project = ""  # or GOOGLE_CLOUD_PROJECT, GCLOUD_PROJECT, CLOUDSDK_CORE_PROJECT
+#
+# Augment (augment)
+# [usage.providers.augment]
+#   Your app.augmentcode.com browser session, used when the Auggie CLI is not
+#   signed in. Sign in at https://app.augmentcode.com, open Developer Tools →
+#   Application → Cookies → https://app.augmentcode.com, and copy the
+#   session cookies (such as `_session`, `session`, `web_rpc_proxy_session`, or
+#   `auth0`), pasted as one header: "name=value; name2=value2".
+# cookie = ""
+#
+# JetBrains AI (jetbrains)
+# [usage.providers.jetbrains]
+#   The config directory of the IDE to read, when the most recently used one is
+#   not the right one, e.g. "~/Library/Application
+#   Support/JetBrains/IntelliJIdea2025.3" on a Mac or
+#   "~/.config/JetBrains/PyCharm2025.3" on Linux. Its
+#   options/AIAssistantQuotaManager2.xml appears once AI Assistant has been
+#   used.
+# ide_path = ""
+#
+# Moonshot / Kimi Open Platform (moonshot)
+# [usage.providers.moonshot]
+#   A Moonshot / Kimi Open Platform API key, from
+#   https://platform.moonshot.ai/console/api-keys (International) or
+#   https://platform.moonshot.cn/console/api-keys (China mainland). Use a key
+#   issued for the region set below.
+# api_key = ""  # or MOONSHOT_API_KEY, MOONSHOT_KEY
+#   Which platform issued the key: "international" (the default,
+#   api.moonshot.ai, balances in USD) or "china" (api.moonshot.cn, balances in
+#   CNY).
+# region = ""  # or MOONSHOT_REGION
+#
+# Amp (amp)
+# [usage.providers.amp]
+#   An Amp access token, created in Amp's settings at
+#   https://ampcode.com/settings. Not needed when the Amp CLI is installed and
+#   signed in on the host (`amp login`).
+# api_key = ""  # or AMP_API_KEY
+#   Your ampcode.com browser session, used when neither the CLI nor a token is
+#   available; it shows Amp Free only. Sign in at https://ampcode.com, open
+#   Developer Tools → Application → Cookies → https://ampcode.com, and
+#   copy the `session` cookie as "session=value".
+# cookie = ""
+#
+# T3 Chat (t3chat)
+# [usage.providers.t3chat]
+#   Your t3.chat browser session. Sign in at https://t3.chat, open Developer
+#   Tools → Application → Cookies → https://t3.chat, and copy every cookie
+#   there (the session cookies change names between releases), pasted as one
+#   header: "name=value; name2=value2". It is sent only to t3.chat.
+# cookie = ""
+#
+# Ollama (ollama)
+# [usage.providers.ollama]
+#   The ollama.com browser session, needed for quota. Sign in at
+#   https://ollama.com/signin, open Developer Tools → Application → Cookies
+#   → https://ollama.com, copy the session cookie (wos-session, or
+#   __Secure-session on older sign-ins), and paste it as "name=value".
+# cookie = ""
+#   An Ollama API key from https://ollama.com/settings/keys. It only verifies
+#   access: Ollama shows quota on its website, not through the API.
+# api_key = ""  # or OLLAMA_API_KEY, OLLAMA_KEY
+#
+# Synthetic (synthetic)
+# [usage.providers.synthetic]
+#   A Synthetic API key, created as described in
+#   https://dev.synthetic.new/docs/api/getting-started.
+# api_key = ""  # or SYNTHETIC_API_KEY
+#
+# OpenRouter (openrouter)
+# [usage.providers.openrouter]
+#   An OpenRouter API key (sk-or-v1-…) from
+#   https://openrouter.ai/settings/keys. A Management API key also works and
+#   adds the last 30 days of activity.
+# api_key = ""  # or OPENROUTER_API_KEY
+#   Optional Management API key from
+#   https://openrouter.ai/settings/management-keys, used only for the last 30
+#   days of account activity.
+# management_api_key = ""  # or OPENROUTER_MANAGEMENT_API_KEY
+#   Optional HTTPS API URL for a proxy. Defaults to
+#   https://openrouter.ai/api/v1.
+# base_url = ""  # or OPENROUTER_API_URL
+#   Optional client URL sent as the HTTP-Referer header.
+# http_referer = ""  # or OPENROUTER_HTTP_REFERER
+#   Optional client title sent as the X-Title header. Defaults to Herdr.
+# x_title = ""  # or OPENROUTER_X_TITLE
+#
+# ElevenLabs (elevenlabs)
+# [usage.providers.elevenlabs]
+#   An ElevenLabs API key with the user_read permission, from
+#   https://elevenlabs.io/app/settings/api-keys.
+# api_key = ""  # or ELEVENLABS_API_KEY, XI_API_KEY
+#   Optional HTTPS API origin for a proxy. Defaults to
+#   https://api.elevenlabs.io.
+# base_url = ""  # or ELEVENLABS_API_URL
+#
+# Warp (warp)
+# [usage.providers.warp]
+#   A Warp API key (wk-…). In Warp open your profile menu, then Settings →
+#   Platform → API Keys, and create one. See
+#   https://docs.warp.dev/reference/cli/api-keys.
+# api_key = ""  # or WARP_API_KEY, WARP_TOKEN
+#
+# Windsurf (windsurf)
+# [usage.providers.windsurf]
+#   The windsurf.com session bundle, for live quota. Sign in at
+#   https://windsurf.com/profile in Chrome, open Developer Tools → Application
+#   → Local Storage → https://windsurf.com (or https://app.devin.ai), and
+#   copy the values of devin_session_token, devin_auth1_token, devin_account_id,
+#   and devin_primary_org_id into one JSON object: {"devin_session_token":
+#   "…", "devin_auth1_token": "…", "devin_account_id": "…",
+#   "devin_primary_org_id": "…"}. Without it, the plan the Windsurf editor
+#   cached at its last launch is shown.
+# session = ""
+#
+# Zed (zed)
+# [usage.providers.zed]
+#   The zed.dev browser session, for token spend. Sign in at https://zed.dev in
+#   your browser (signing in inside the editor is not enough), open Developer
+#   Tools → Application → Cookies → https://zed.dev, copy the zed.session
+#   cookie, and paste it as "zed.session=value".
+# cookie = ""
+#
+# Perplexity (perplexity)
+# [usage.providers.perplexity]
+#   The perplexity.ai web session. Sign in at https://www.perplexity.ai, open
+#   Developer Tools → Application → Cookies → https://www.perplexity.ai,
+#   copy the session cookie (__Secure-next-auth.session-token, or
+#   __Secure-authjs.session-token on newer sign-ins), and paste it as
+#   "name=value".
+# cookie = ""  # or PERPLEXITY_COOKIE
+#   Alternatively, only the value of that session cookie; each session cookie
+#   name is tried in turn.
+# session_token = ""  # or PERPLEXITY_SESSION_TOKEN
+#
+# Xiaomi MiMo (mimo)
+# [usage.providers.mimo]
+#   The MiMo console session. Sign in at
+#   https://platform.xiaomimimo.com/#/console/balance, open Developer Tools →
+#   Application → Cookies → https://platform.xiaomimimo.com, copy the
+#   api-platform_serviceToken and userId cookies (and api-platform_ph and
+#   api-platform_slh when present), and paste them as
+#   "api-platform_serviceToken=value; userId=value".
+# cookie = ""
+#   Optional HTTPS API URL. Defaults to https://platform.xiaomimimo.com/api/v1.
+# base_url = ""  # or MIMO_API_URL
+#
+# Sakana AI (sakana)
+# [usage.providers.sakana]
+#   Sign in to https://console.sakana.ai, open Developer Tools > Application >
+#   Cookies for https://console.sakana.ai, and copy every cookie there (the
+#   sign-in session cookies are required). Paste them as "name=value;
+#   name2=value2"; the Cookie header of a request to console.sakana.ai/billing
+#   in the Network tab also works.
+# cookie = ""  # or SAKANA_COOKIE
+#
+# Abacus AI (abacus)
+# [usage.providers.abacus]
+#   Sign in to https://apps.abacus.ai, open Developer Tools > Application >
+#   Cookies for https://apps.abacus.ai, and copy its session cookies (names
+#   containing "session", "auth", or "sid"). Paste them as "name=value;
+#   name2=value2"; the whole Cookie header of any apps.abacus.ai request also
+#   works.
+# cookie = ""
+#
+# Mistral (mistral)
+# [usage.providers.mistral]
+#   Sign in to https://admin.mistral.ai/organization/usage, open Developer Tools
+#   > Application > Cookies for https://admin.mistral.ai, and copy the
+#   ory_session_… cookie (its name ends in a per-project suffix) and
+#   csrftoken. Paste them as "name=value; name2=value2"; the Cookie header of
+#   any admin.mistral.ai request also works.
+# cookie = ""
+#
+# DeepSeek (deepseek)
+# [usage.providers.deepseek]
+#   A DeepSeek API key from https://platform.deepseek.com/api_keys. It reads the
+#   remaining credit balance.
+# api_key = ""  # or DEEPSEEK_API_KEY, DEEPSEEK_KEY
+#   Used when no API key is set. Sign in to https://platform.deepseek.com, open
+#   Developer Tools > Application > Local Storage >
+#   https://platform.deepseek.com, and copy the value of the userToken entry
+#   (either the whole JSON value or just its "value" field).
+# platform_token = ""  # or DEEPSEEK_PLATFORM_TOKEN, DEEPSEEK_USER_TOKEN
+#
+# DeepInfra (deepinfra)
+# [usage.providers.deepinfra]
+#   A DeepInfra API key from https://deepinfra.com/dash/api_keys, without a
+#   "Bearer " prefix. It must be allowed to read billing data.
+# api_key = ""  # or DEEPINFRA_API_KEY, DEEPINFRA_TOKEN
+#
+# Codebuff (codebuff)
+# [usage.providers.codebuff]
+#   A Codebuff API key from https://www.codebuff.com. It reads the credit
+#   balance only; without it, the session from `codebuff login` is used, which
+#   also reads the plan and weekly limit.
+# api_key = ""  # or CODEBUFF_API_KEY
+#   An https URL that replaces https://www.codebuff.com, e.g. for a staging
+#   server. Other schemes are ignored so the token never travels unencrypted.
+# base_url = ""  # or CODEBUFF_API_URL
+#
+# Venice (venice)
+# [usage.providers.venice]
+#   A Venice API key from https://venice.ai/settings/api. It reads the USD and
+#   DIEM API balance.
+# api_key = ""  # or VENICE_API_KEY, VENICE_KEY
+#   Used when no API key is set, for subscription credits. Sign in to
+#   https://venice.ai, open Developer Tools > Application > Cookies for
+#   https://venice.ai, and copy the __venice-auth.session-token cookie (or every
+#   __venice-auth.session-token.N chunk when it is split). Paste them as
+#   "name=value; name2=value2".
+# cookie = ""
+#
+# Command Code (commandcode)
+# [usage.providers.commandcode]
+#   Sign in to https://commandcode.ai, open Developer Tools > Application >
+#   Cookies for https://commandcode.ai, and copy the session cookie:
+#   __Secure-better-auth.session_token (or
+#   __Secure-commandcode_prod_.session_token, whichever is present). Paste it as
+#   "name=value".
+# cookie = ""
+#
+# Qoder (qoder)
+# [usage.providers.qoder]
+#   Your Qoder browser session. Sign in at https://qoder.com/account/usage (or
+#   https://qoder.com.cn/account/usage), open Developer Tools > Application >
+#   Cookies for qoder.com (or qoder.com.cn), and copy every cookie of the site
+#   as one header: "name=value; name2=value2".
+# cookie = ""
+#   Which Qoder site the account belongs to: "global" for qoder.com (the
+#   default) or "china" for qoder.com.cn.
+# site = ""
+#
+# StepFun (stepfun)
+# [usage.providers.stepfun]
+#   Your StepFun Oasis-Token. Sign in at https://platform.stepfun.com, open
+#   Developer Tools > Application > Cookies for platform.stepfun.com, and copy
+#   the value of the Oasis-Token cookie. Set webid too.
+# token = ""  # or STEPFUN_TOKEN
+#   The value of the Oasis-Webid cookie next to Oasis-Token on
+#   platform.stepfun.com. StepFun rejects a token sent with another device's web
+#   id.
+# webid = ""
+#   Instead of token and webid: sign in at https://platform.stepfun.com, open
+#   Developer Tools > Application > Cookies for platform.stepfun.com, and copy
+#   the Oasis-Token and Oasis-Webid cookies as "Oasis-Token=…;
+#   Oasis-Webid=…".
+# cookie = ""
+#
+# AWS Bedrock (bedrock)
+# [usage.providers.bedrock]
+#   The AWS CLI profile to read Cost Explorer with, from ~/.aws/config on the
+#   selected host (run `aws sso login --profile <name>` first for SSO). Use
+#   "default" for the default credentials. The identity needs
+#   ce:GetCostAndUsage. AWS bills every Cost Explorer request, so this provider
+#   runs only once profile or budget is set here.
+# profile = ""
+#   Optional monthly Bedrock budget in US dollars, e.g. 250, shown as a monthly
+#   limit. It does not cap AWS charges.
+# budget = ""  # or CODEXBAR_BEDROCK_BUDGET
+#   Optional path to the AWS CLI v2 on the selected host when `aws` is not on
+#   its PATH, e.g. /opt/homebrew/bin/aws.
+# aws_cli = ""  # or AWS_CLI_PATH
+#
+# Grok (grok)
+# [usage.providers.grok]
+#   A SuperGrok bearer token, only needed when the Grok CLI is not signed in on
+#   the selected host (run `grok login` there instead when you can). It is the
+#   "key" of the https://auth.x.ai entry in ~/.grok/auth.json. xai- API keys do
+#   not work.
+# token = ""  # or GROK_OAUTH_TOKEN
+#
+# Groq (groq)
+# [usage.providers.groq]
+#   A GroqCloud Enterprise API key from https://console.groq.com/keys. Only
+#   Enterprise organizations can read Prometheus metrics.
+# api_key = ""  # or GROQ_API_KEY
+#   Optional HTTPS API base URL for a private gateway. Defaults to
+#   https://api.groq.com/v1.
+# base_url = ""  # or GROQ_API_URL
+#
+# LLM Proxy (llmproxy)
+# [usage.providers.llmproxy]
+#   The API key your LLM-API-Key-Proxy accepts (its PROXY_API_KEY), sent as a
+#   bearer token to base_url.
+# api_key = ""  # or LLM_PROXY_API_KEY
+#   The proxy's URL, with or without /v1, e.g. https://proxy.example.com. It
+#   must be HTTPS unless it is on localhost, a private network, or a .local
+#   host.
+# base_url = ""  # or LLM_PROXY_BASE_URL
+#
+# LiteLLM (litellm)
+# [usage.providers.litellm]
+#   A LiteLLM virtual key (sk-…) issued by your LiteLLM proxy, e.g. from its
+#   admin UI under Virtual Keys. A master key is not needed.
+# api_key = ""  # or LITELLM_API_KEY
+#   The LiteLLM proxy's URL, with or without /v1, e.g.
+#   https://litellm.example.com. It must be HTTPS unless it is on localhost, a
+#   private network, or a .local host.
+# base_url = ""  # or LITELLM_BASE_URL
+#
+# Bifrost (bifrost)
+# [usage.providers.bifrost]
+#   Your Bifrost virtual key (vk-…), from the gateway's Virtual Keys page. It
+#   is sent as the x-bf-vk header to base_url only.
+# api_key = ""  # or BIFROST_API_KEY
+#   Your Bifrost gateway's URL, e.g. https://bifrost.example.com. Bifrost has no
+#   public host. It must be HTTPS unless it is on localhost, a private network,
+#   or a .local host.
+# base_url = ""  # or BIFROST_BASE_URL
+#
+# Aixy (aixy)
+# [usage.providers.aixy]
+#   The project-scoped Aixy API key your workload uses, from
+#   https://dash.aixy-gateway.com under the project's API keys. Usage is that
+#   key's own traffic from every machine.
+# api_key = ""  # or AIXY_API_KEY
+#   Optional gateway URL for a self-hosted or dedicated Aixy, with or without
+#   /v1. Defaults to https://api.aixy-gateway.com. It must be HTTPS unless it is
+#   on localhost, a private network, or a .local host.
+# base_url = ""  # or AIXY_BASE_URL
+#
+# Deepgram (deepgram)
+# [usage.providers.deepgram]
+#   A Deepgram API key with the usage:read scope, created in the Deepgram
+#   Console (https://console.deepgram.com) under API Keys.
+# api_key = ""  # or DEEPGRAM_API_KEY
+#   Optional project UUID from the Deepgram Console. Leave unset to sum usage
+#   over every project the key can see.
+# project_id = ""  # or DEEPGRAM_PROJECT_ID
+#   Optional HTTPS API URL for a proxy. Defaults to https://api.deepgram.com/v1.
+# base_url = ""  # or DEEPGRAM_API_URL
+#
+# Poe (poe)
+# [usage.providers.poe]
+#   A Poe API key, created or copied at https://poe.com/api/keys.
+# api_key = ""  # or POE_API_KEY
+#
+# Chutes (chutes)
+# [usage.providers.chutes]
+#   A Chutes API key (cpk_…), created as described at
+#   https://chutes.ai/docs/getting-started/authentication.
+# api_key = ""  # or CHUTES_API_KEY
+#   Optional HTTPS management API URL. Defaults to https://api.chutes.ai.
+# base_url = ""  # or CHUTES_API_URL
+#
+# Neuralwatt (neuralwatt)
+# [usage.providers.neuralwatt]
+#   A Neuralwatt API key, created or copied at
+#   https://portal.neuralwatt.com/dashboard.
+# api_key = ""  # or NEURALWATT_API_KEY
+#   Optional HTTPS API URL for a proxy. Defaults to https://api.neuralwatt.com.
+# base_url = ""  # or NEURALWATT_API_URL
+#
+# Helmcode (helmcode)
+# [usage.providers.helmcode]
+#   The dashboard session. Sign in to https://cloud.helmcode.com/dashboard (or
+#   https://cloud.nan.builders/dashboard for NaN Builders), open Developer Tools
+#   > Network, reload, and copy the Cookie request header of a request to
+#   cloud-api.helmcode.com (or cloud-api.nan.builders). Developer Tools >
+#   Application > Cookies lists the same cookies. Paste it as "name=value;
+#   name2=value2".
+# cookie = ""
+#   Which dashboard a pasted cookie belongs to: "helmcode" (default) or
+#   "nanBuilders".
+# tenant = ""
+#
+# ClawRouter (clawrouter)
+# [usage.providers.clawrouter]
+#   A ClawRouter policy API key, created at
+#   https://clawrouter.openclaw.ai/dashboard/access.
+# api_key = ""  # or CLAWROUTER_API_KEY
+#   Optional HTTPS service root or /v1 URL of another ClawRouter deployment.
+#   Defaults to https://clawrouter.openclaw.ai.
+# base_url = ""  # or CLAWROUTER_BASE_URL
+#
+# LongCat (longcat)
+# [usage.providers.longcat]
+#   The LongCat console session. Sign in at https://longcat.chat/platform/usage,
+#   open Developer Tools > Application > Cookies > https://longcat.chat, and
+#   copy every cookie of the site (the console does not document which one holds
+#   the session). Paste them as "name=value; name2=value2", or copy the Cookie
+#   request header of a request to longcat.chat from the Network tab.
+# cookie = ""  # or LONGCAT_MANUAL_COOKIE
+#
+# sub2api (sub2api)
+# [usage.providers.sub2api]
+#   A sub2api group API key (sk-…), created in your sub2api deployment's
+#   dashboard under API keys. Usage is scoped to that key's group.
+# api_key = ""  # or SUB2API_API_KEY
+#   Your sub2api deployment, e.g. https://sub2api.example.com. HTTPS is
+#   required, except plain HTTP on a loopback address such as
+#   http://127.0.0.1:8080.
+# base_url = ""  # or SUB2API_BASE_URL
+#
+# Wayfinder (wayfinder)
+# [usage.providers.wayfinder]
+#   The Wayfinder gateway, started with `wayfinder-router serve`. Defaults to
+#   http://127.0.0.1:8088; another URL must be HTTPS, or plain HTTP on a
+#   loopback address.
+# base_url = ""  # or WAYFINDER_GATEWAY_URL
+#
+# ZenMux (zenmux)
+# [usage.providers.zenmux]
+#   A Management API key created at https://zenmux.ai/platform/management.
+#   Normal inference API keys are rejected by the usage endpoints.
+# api_key = ""  # or ZENMUX_MANAGEMENT_API_KEY
+#
+# ai& (aiand)
+# [usage.providers.aiand]
+#   An ai& API key (starts with sk-), created at https://console.aiand.com under
+#   Settings > API Keys > Create. Keys are shown only once.
+# api_key = ""  # or AIAND_API_KEY
+#
+# ZoomMate (zoommate)
+# [usage.providers.zoommate]
+#   Your Zoom session cookies. Sign in at https://zoommate.zoom.us, open
+#   Developer Tools > Application > Cookies for https://zoommate.zoom.us (Zoom's
+#   sign-in cookies such as _zm_ssid, _zm_lang and cf_clearance live on
+#   zoom.us), and paste them all as "name=value; name2=value2". They are
+#   exchanged for a short-lived token on every refresh.
+# cookie = ""
+#   A bearer token instead of cookies: on https://zoommate.zoom.us open
+#   Developer Tools > Network, reload the AI credit usage page, select the
+#   credits/status request and copy its Authorization header without "Bearer ".
+#   It expires after about an hour.
+# token = ""
+#
+# xAI (xai)
+# [usage.providers.xai]
+#   A Management API key from https://console.x.ai under Settings > Management
+#   Keys, with billing read access. Inference API keys are not accepted.
+# api_key = ""  # or XAI_MANAGEMENT_API_KEY
+#   The xAI team ID to bill against, shown in the xAI Console URL and team
+#   settings. The Management key must belong to this team.
+# team_id = ""  # or XAI_TEAM_ID
+#
+# Notion AI (notion)
+# [usage.providers.notion]
+#   Your Notion session cookie. Sign in at https://app.notion.com, open
+#   Developer Tools > Application > Cookies for https://app.notion.com (or
+#   notion.so), copy the token_v2 cookie and paste it as "token_v2=value" (add
+#   "; notion_user_id=value" for accounts signed in to several users).
+# cookie = ""
+#   The workspace (space) ID to read, dashed or not, for accounts in several
+#   workspaces. Defaults to the first Business or Enterprise workspace. It is
+#   the x-notion-space-id header of requests in Developer Tools > Network.
+# workspace_id = ""
+#
+# IBM Bob (ibmbob)
+# [usage.providers.ibmbob]
+#   An IBM Bob API key that can read subscription usage, created at
+#   https://bob.ibm.com (the same key Bob Shell uses as BOBSHELL_API_KEY).
+# api_key = ""  # or BOBSHELL_API_KEY
+#   Instead of an API key, an IBM Cloud bearer token (a JWT) for your Bob
+#   account. It is sent as "Authorization: Bearer <token>".
+# token = ""
+#
+# Nous Portal (nous)
+# [usage.providers.nous]
+#   A Nous Portal OAuth access token, used instead of Hermes Agent's login in
+#   ~/.hermes/auth.json (sign in with `hermes auth add nous`). It lasts about an
+#   hour; portal API keys are not accepted.
+# token = ""  # or NOUS_PORTAL_ACCESS_TOKEN
+#   An HTTPS portal origin such as https://portal.nousresearch.com, for a
+#   preview deployment. Plain HTTP is refused.
+# base_url = ""  # or NOUS_PORTAL_BASE_URL, HERMES_PORTAL_BASE_URL
+#
+# Muse Code (muse)
+# [usage.providers.muse]
+#   A Muse CLI device-code access token (it starts with dca:), used when this
+#   host has no `muse login`. It is providers.meta.access_token in
+#   ~/.config/muse/auth.json on a machine where you ran `muse login`. Dashboard
+#   LLM_ keys and LLM| inference keys are not accepted.
+# token = ""
+#
+# CodeRabbit (coderabbit)
+# [usage.providers.coderabbit]
+#   The path of the coderabbit executable on the probed host, when it is not on
+#   the usual PATH (~/.local/bin, Homebrew). Sign in once with `coderabbit auth
+#   login`.
+# cli_path = ""  # or CODERABBIT_CLI_PATH
+#
+# Replicate (replicate)
+# [usage.providers.replicate]
+#   Sign in at https://replicate.com/account/billing, open Developer Tools >
+#   Application > Cookies > https://replicate.com, and copy sessionid (and
+#   csrftoken when present) as one "sessionid=value; csrftoken=value" header. An
+#   API token does not work here.
+# cookie = ""
+#
+# Hugging Face (huggingface)
+# [usage.providers.huggingface]
+#   A Hugging Face access token from https://huggingface.co/settings/tokens. A
+#   classic read token works; a fine-grained token needs the Billing read
+#   permission. Not needed when `hf auth login` has saved a token on the host.
+# api_key = ""  # or CODEXBAR_HUGGINGFACE_API_KEY, HF_TOKEN, HUGGING_FACE_HUB_TOKEN
+#   Optional, for the prepaid credit balance. Sign in at
+#   https://huggingface.co/settings/billing with the token's account, open
+#   Developer Tools > Application > Cookies > https://huggingface.co, and copy
+#   the token cookie as "token=value" (or every cookie there as "name=value;
+#   name2=value2").
+# cookie = ""
+#
+# Raycast (raycast)
+# [usage.providers.raycast]
+#   Sign in at https://www.raycast.com/settings, open Developer Tools >
+#   Application > Cookies > https://www.raycast.com, and copy __raycast_session
+#   (and csrf_token when present) as one "__raycast_session=value;
+#   csrf_token=value" header.
+# cookie = ""
+#
+# v0 (v0)
+# [usage.providers.v0]
+#   A v0 Platform API key from https://v0.app/settings/keys.
+# api_key = ""  # or V0_API_KEY
+#   Optional project ID or slug to read that scope's billing and rate limit.
+# scope = ""  # or V0_SCOPE
+#
+# TypeSafe (typesafe)
+# [usage.providers.typesafe]
+#   Sign in at https://console.typesafe.ai/settings/billing, open Developer
+#   Tools > Application > Cookies > https://console.typesafe.ai, and copy every
+#   cookie there as one "name=value; name2=value2" header. An inference API key
+#   does not work here.
+# cookie = ""
+#
+# Charm Hyper (hyper)
+# [usage.providers.hyper]
+#   A Charm Hyper API key from https://hyper.charm.land. Used when no browser
+#   session is available or the session has expired.
+# api_key = ""  # or HYPER_API_KEY
+#   Sign in at https://hyper.charm.land, open Developer Tools > Application >
+#   Cookies > https://hyper.charm.land, and copy every cookie there as one
+#   "name=value; name2=value2" header.
+# cookie = ""
+#
+# GitKraken AI (gitkraken)
+# [usage.providers.gitkraken]
+#   A GitKraken account session access token. Sign in at
+#   https://gitkraken.dev/account#ai-usage, open Developer Tools > Network,
+#   select the successful ai-tasks/usage request, and copy only the value after
+#   "Bearer " in its Authorization header. Replace it when it expires.
+# token = ""  # or GITKRAKEN_API_TOKEN
+#   Optional organization ID: the gk-org-id header of the same request, to read
+#   that organization's shared pool.
+# org_id = ""  # or GITKRAKEN_ORG_ID
+#
+# DevPass (devpass)
+# [usage.providers.devpass]
+#   A regular LLM Gateway API key from https://devpass.llmgateway.io/dashboard.
+#   Publishable keys cannot read plan usage.
+# api_key = ""  # or DEVPASS_API_KEY
+#
+# Atlas Cloud (atlascloud)
+# [usage.providers.atlascloud]
+#   A standard Atlas Cloud API key from https://www.atlascloud.ai/console. It
+#   needs account balance read permission: use the account owner's key, or an
+#   Account Admin or Finance key for a team. A public key ID (ak_…) cannot
+#   authenticate.
+# api_key = ""  # or ATLASCLOUD_API_KEY
+#
+# Vercel AI Gateway (vercel)
+# [usage.providers.vercel]
+#   An AI Gateway API key from the Vercel dashboard: AI Gateway > API Keys. The
+#   balance is the key's team, so use a key of the team to show.
+# api_key = ""  # or AI_GATEWAY_API_KEY
+#
+# llmman (llmman)
+# [usage.providers.llmman]
+#   The llmman serve address, when not http://127.0.0.1:17434. A host without a
+#   scheme uses HTTP on port 17434, e.g. localhost:18000. Plain HTTP is allowed
+#   only for loopback, private-network, and .local hosts; others need HTTPS.
+#   Without it, LLMMAN_HOST on the probed host is used when set.
+# base_url = ""
+#   Only when the daemon was started with LLMMAN_API_KEYS: one of those keys.
+# api_key = ""  # or LLMMAN_API_KEY
+#
+# xKiro (xkiro)
+# [usage.providers.xkiro]
+#   An xKiro API key from your account at https://xkiro.com. It is sent only to
+#   api.xkiro.com; reading usage spends no tokens.
+# api_key = ""  # or XKIRO_API_KEY
+# --- end usage providers ---

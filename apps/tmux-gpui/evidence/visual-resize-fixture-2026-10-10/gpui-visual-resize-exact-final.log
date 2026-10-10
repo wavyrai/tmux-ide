@@ -1,0 +1,11 @@
+✔ specimen keeps Unicode, colored blanks, wrap and cursor explicit at multiple sizes (0.625958ms)
+✔ unsupported geometry fails instead of silently clipping the specimen (0.152875ms)
+✔ actual PTY resize redraws the specimen with current stdout geometry (326.518917ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 361.352042

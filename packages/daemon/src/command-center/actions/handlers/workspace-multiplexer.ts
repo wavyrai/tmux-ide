@@ -6,6 +6,7 @@
  * be a split while arriving at the kill route.
  */
 import type {
+  ActionName,
   ActionInput,
   ActionResult,
   WorkspaceMultiplexerIntent,
@@ -76,7 +77,7 @@ async function runVerb(
  * parses the answer against the route's result schema before it reaches a
  * client — so a mismatch would be refused there rather than rendered.
  */
-function verbHandler<V extends WorkspaceMultiplexerVerb>(verb: V) {
+function verbHandler<V extends Extract<WorkspaceMultiplexerVerb, ActionName>>(verb: V) {
   return async (
     input: ActionInput<V>,
     context: ActionExecutionContext = {},

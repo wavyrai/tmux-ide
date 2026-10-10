@@ -1,0 +1,8 @@
+
+ RUN  v4.1.6 /private/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/gpui-source-clean-6cgdgkqc/packages/presentation
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  19:39:33
+   Duration  115ms (transform 17ms, setup 0ms, import 25ms, tests 4ms, environment 0ms)

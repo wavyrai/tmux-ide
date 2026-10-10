@@ -1,0 +1,19 @@
+✔ publishes only matching canonical geometry and ignores output/label-only changes (8.310917ms)
+✔ retires old reads on lifetime change even if cancellation is ignored (0.546958ms)
+✔ wrong link or geometry never grants handles; unsupported reads do not retry on output (0.578916ms)
+✔ clamped receipt permits changed layout after submission without retry (1.766583ms)
+✔ stale layout during authority acquisition cannot dispatch (0.2305ms)
+✔ wrong echoed target is refused even when actual boundary is plausible (0.218ms)
+✔ late scope and lifetime changes refuse result (0.462833ms)
+✔ detached command survives caller mutation while waiting for authority (0.149708ms)
+✔ malformed inputs and unknown split axis do not acquire or submit (0.295042ms)
+✔ resource refresh after submission accepts receipt but absent pre-submit resource refuses (0.218042ms)
+✔ retained window replacement after submission refuses even with no resource (0.140791ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 169.901333

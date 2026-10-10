@@ -1,0 +1,8 @@
+Open the sole session, wait Keyboard ready/SPLIT_SOURCE, then Actions -> Split pane right. Do not type into terminals.
+sandbox_extension_issue_file_to_process failed for /tmp/gpui-pane-actions-package/Tmux IDE Pane Actions.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+{"stage":"split-verified","direction":"right","original":"%0","created":"%1","terminalInputBytes":0}
+Wait for coherent two-pane layout/Keyboard ready. Original SPLIT_SOURCE must remain selected. Actions -> Split pane down.
+{"stage":"split-verified","direction":"down","original":"%0","created":"%2","terminalInputBytes":0}
+Both directions verified. Observe coherent three-pane layout with original selected, then Cmd-Q.
+{"passed":true,"rightAndDown":true,"terminalInputBytes":0,"originalPid":"92020","sourceSurvivesClose":true,"nativeLayoutAndSelection":"operator observation required","cleanup":true}

@@ -1,0 +1,42 @@
+[
+  {
+    "gate": "fmt",
+    "exit": 0
+  },
+  {
+    "gate": "file-size",
+    "exit": 0
+  },
+  {
+    "gate": "clippy-all",
+    "exit": 0
+  },
+  {
+    "gate": "clippy-minimal",
+    "exit": 0
+  },
+  {
+    "gate": "tests-default",
+    "exit": 0
+  },
+  {
+    "gate": "tests-all",
+    "exit": 0
+  },
+  {
+    "suite": "tests-default",
+    "passed_failed_ignored": [
+      2806,
+      0,
+      10
+    ]
+  },
+  {
+    "suite": "tests-all",
+    "passed_failed_ignored": [
+      2840,
+      0,
+      17
+    ]
+  }
+]

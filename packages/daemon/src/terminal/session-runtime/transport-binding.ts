@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  WorkspaceIdSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
   type SessionRuntimeControllerLease,
@@ -310,7 +311,9 @@ export class SessionRuntimeTransportBinding {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ) {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     this.#assertOpen();
     if (!this.#allowedSourcePaneIds.has(semanticPaneId)) {
       throw new SessionRuntimeControllerLeaseError(
@@ -324,6 +327,7 @@ export class SessionRuntimeTransportBinding {
       semanticPaneId,
       offer,
       onMessage,
+      address,
     );
   }
 
@@ -338,8 +342,13 @@ export class SessionRuntimeTransportBinding {
         "The transport no longer owns controller authority.",
       );
     }
+    const geometryFence =
+      intent.verb === "workspace.pane.resize" || intent.verb === "workspace.window.split.resize"
+        ? this.#captureResizeGeometryFence()
+        : undefined;
     const scopeKey = paneId ?? "session";
-    let handle = this.#intentHandles.get(scopeKey);
+    // Geometry authority is operation-specific; never reuse an input-only handle.
+    let handle = geometryFence ? undefined : this.#intentHandles.get(scopeKey);
     if (!handle) {
       const lease = this.#shared.lease;
       handle = this.#binder.registry.createExecutionHandle(
@@ -348,6 +357,7 @@ export class SessionRuntimeTransportBinding {
         [...this.#allowedSourcePaneIds],
         () => {
           this.#assertIntentScopeOpen();
+          geometryFence?.();
           assertLiveScope(this.#shared, lease, paneId);
           if (paneId !== undefined && !this.#allowedSourcePaneIds.has(paneId)) {
             throw new SessionRuntimeControllerLeaseError(
@@ -356,8 +366,9 @@ export class SessionRuntimeTransportBinding {
             );
           }
         },
+        geometryFence,
       );
-      this.#intentHandles.set(scopeKey, handle);
+      if (!geometryFence) this.#intentHandles.set(scopeKey, handle);
     }
     // Existing viewer transport protocol acknowledges reads without returning contents.
     // Private snapshots are available only through the dedicated automation boundary.
@@ -367,6 +378,41 @@ export class SessionRuntimeTransportBinding {
         if (!result || result.verb === "workspace.pane.read") return;
         return result;
       });
+  }
+
+  #captureResizeGeometryFence(): () => void {
+    const assertTransport = () => {
+      this.#assertOpen();
+      if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId)
+        throw new SessionRuntimeControllerLeaseError(
+          "invalid-client-capability",
+          "The transport does not own the live geometry lease.",
+        );
+    };
+    assertTransport();
+    const lease = this.#explicitAuthority
+      ? this.#geometryAuthorityLease
+      : this.requestAuthority("geometry");
+    if (!lease)
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    const captured = Object.freeze({ ...lease });
+    const authorize = () => {
+      assertTransport();
+      if (
+        !this.#geometryAuthorityLease ||
+        !sameAuthorityLease(captured, this.#geometryAuthorityLease)
+      )
+        throw new SessionRuntimeControllerLeaseError(
+          "stale-controller-lease",
+          "Geometry authority retired.",
+        );
+      this.#shared.consumer.assertGeometryAuthority(captured);
+    };
+    authorize();
+    return authorize;
   }
 
   sendInput(

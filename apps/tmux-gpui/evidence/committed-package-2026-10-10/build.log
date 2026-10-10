@@ -1,0 +1,2 @@
+Building local native release; cached, nonhermetic scope.
+{"receipt":"/private/tmp/gpui-committed-package-a43136e0/native-build.json","native":"/Users/thijs/.codex/worktrees/gpui-package-check/tmux-ide/apps/tmux-gpui/upstream/target/release/tmux-ide-gpui","sha256":"44eecb7b421614117b8c6f82a35ece84ef8671aba7c761664a66d9f98b7f208e","sourceSha256":"4a299edd89346c626149de528c7223432ef7eeaa2cf7df087e8ec26ff8a103e3"}

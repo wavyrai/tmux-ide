@@ -1,0 +1,114 @@
+
+> tmux-ide@2.9.5 docs:build /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide
+> turbo run build --filter=@tmux-ide/docs
+
+• turbo 2.10.12
+
+   • Packages in scope: @tmux-ide/docs
+   • Running build in 1 packages
+   • Remote caching disabled, using shared worktree cache
+
+@tmux-ide/docs:build: cache miss, executing 8cad6fa805cf0cd4
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 build /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > pnpm run generate && next build && pnpm run check:site
+@tmux-ide/docs:build:
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 generate /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/generate-ascii-wordmark.mjs && fumadocs-mdx && node scripts/generate-git-dates.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Generated /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs/public/ascii-wordmark.svg from the docs marketing wordmark
+@tmux-ide/docs:build: [MDX] generated files in 3.7867920000000197ms
+@tmux-ide/docs:build: Git dates: 24 docs pages + homepage
+@tmux-ide/docs:build: ▲ Next.js 16.3.0 (Turbopack)
+@tmux-ide/docs:build: [MDX] generated files in 3.128499999999974ms
+@tmux-ide/docs:build: ✓ Running next.config.mjs took 88ms
+@tmux-ide/docs:build:
+@tmux-ide/docs:build:   Creating an optimized production build ...
+@tmux-ide/docs:build: ✓ Compiled successfully in 5.3s
+@tmux-ide/docs:build:   Running TypeScript ...
+@tmux-ide/docs:build:   Finished TypeScript in 844ms ...
+@tmux-ide/docs:build:   Collecting page data using 9 workers ...
+@tmux-ide/docs:build:   Generating static pages using 9 workers (0/85) ...
+@tmux-ide/docs:build:   Generating static pages using 9 workers (21/85)
+@tmux-ide/docs:build:   Generating static pages using 9 workers (42/85)
+@tmux-ide/docs:build:   Generating static pages using 9 workers (63/85)
+@tmux-ide/docs:build: ✓ Generating static pages using 9 workers (85/85) in 747ms
+@tmux-ide/docs:build:   Finalizing page optimization ...
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Route (app)                                Revalidate  Expire
+@tmux-ide/docs:build: ┌ ○ /                                              1h      1y
+@tmux-ide/docs:build: ├ ○ /_not-found
+@tmux-ide/docs:build: ├ ○ /agents.md
+@tmux-ide/docs:build: ├ ƒ /api/search
+@tmux-ide/docs:build: ├ ○ /apple-icon.png
+@tmux-ide/docs:build: ├   /docs/[[...slug]]
+@tmux-ide/docs:build: │ ├ ● /docs/agent-detection
+@tmux-ide/docs:build: │ ├ ● /docs/app-surfaces
+@tmux-ide/docs:build: │ ├ ● /docs/automation
+@tmux-ide/docs:build: │ └ ● [+21 more paths]
+@tmux-ide/docs:build: ├ ○ /icon.png
+@tmux-ide/docs:build: ├ ○ /llms-full.txt
+@tmux-ide/docs:build: ├   /llms.mdx/docs/[[...slug]]
+@tmux-ide/docs:build: │ ├ ● /llms.mdx/docs/agent-detection
+@tmux-ide/docs:build: │ ├ ● /llms.mdx/docs/app-surfaces
+@tmux-ide/docs:build: │ ├ ● /llms.mdx/docs/automation
+@tmux-ide/docs:build: │ └ ● [+21 more paths]
+@tmux-ide/docs:build: ├ ○ /llms.txt
+@tmux-ide/docs:build: ├ ○ /og-image.png
+@tmux-ide/docs:build: ├   /og/docs/[...slug]
+@tmux-ide/docs:build: │ ├ ● /og/docs/agent-detection/image.webp
+@tmux-ide/docs:build: │ ├ ● /og/docs/app-surfaces/image.webp
+@tmux-ide/docs:build: │ ├ ● /og/docs/automation/image.webp
+@tmux-ide/docs:build: │ └ ● [+21 more paths]
+@tmux-ide/docs:build: ├ ○ /robots.txt
+@tmux-ide/docs:build: └ ○ /sitemap.xml
+@tmux-ide/docs:build:
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: ○  (Static)   prerendered as static content
+@tmux-ide/docs:build: ●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+@tmux-ide/docs:build: ƒ  (Dynamic)  server-rendered on demand
+@tmux-ide/docs:build:
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:site /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > pnpm run check:structure && pnpm run check:seo && pnpm run check:accessibility && pnpm run check:motion && pnpm run check:performance && pnpm run check:product-docs && pnpm run check:tui-demo
+@tmux-ide/docs:build:
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:structure /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-marketing-structure.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Marketing structure verified: 4 ground stretches, 1 intentional spacing exceptions, stable technical figures, the role-based type ramp, square-or-pill corners, semantic colors, and server-rendered branding.
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:seo /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-seo.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: SEO artifacts verified: metadata + entity graph + visible FAQ schema, security headers, robots.txt (Content-Signal), llms.txt, 25 unique page titles, one canonical host (https://tmux-ide.com), and 24 sitemap URLs (24 with source-backed lastmod).
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:accessibility /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-accessibility.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Accessibility structure verified: language, landmarks, skip targets, headings, labelled figures, alt text, focus, announcements, and reduced motion.
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:motion /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-motion.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Motion verified: tokenized easing, explicit transitions, pointer-safe hover, guarded press feedback, and reduced-motion fallbacks.
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:performance /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-route-budget.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: Homepage client JS: 197908 raw bytes, 67854 gzip bytes, 6 chunks; HTML 28419 gzip bytes; TUI demo 15743 gzip bytes (largest theme); static prerender confirmed.
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:product-docs /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-product-docs.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: product docs: source-aligned
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: > @tmux-ide/docs@0.0.0 check:tui-demo /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+@tmux-ide/docs:build: > node scripts/check-tui-demo.mjs
+@tmux-ide/docs:build:
+@tmux-ide/docs:build: TUI demo verified: current with the app's presentation code, self-contained glyphs, 9 figures with cursor paths.
+
+ Tasks:    1 successful, 1 total
+Cached:    0 cached, 1 total
+  Time:    12.236s

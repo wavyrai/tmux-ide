@@ -1,0 +1,18 @@
+{
+  "binarySha256": "6a3aae46a9bfbd8519c78489c35b779b1f20401046188b0ce17964105db0bb73",
+  "cleanup": true
+}
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/split-gesture-smoke.mjs:192
+if (failures.length) throw new AggregateError(failures, "Split gesture smoke failed");
+                           ^
+
+AggregateError: Split gesture smoke failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/split-gesture-smoke.mjs:192:28 {
+  [errors]: [
+    Error: gesture settle:  {"status":"Keyboard ready — click terminal to type","split":{"version":1,"window":{"liveSessionId":"live-session.66b8590ea4bcba18534c","linkId":"window-link.7f9fd28608fe4b4ab3008af189abccfc","expectedSemanticWindowId":"window.promoted.aac1f32c68b3d0526bc5","linkRevision":1},"layoutId":"7afdd7c7-0728-425b-9849-0380555153fe","cols":80,"rows":24,"panes":[{"semanticPaneId":"pane.promoted.9d5f3a8690dea13052d0","left":0,"top":0,"width":40,"height":24},{"semanticPaneId":"pane.promoted.8c25c2d8fe2784c036e7","left":41,"top":0,"width":39,"height":24}],"splits":[{"splitId":"9bd4d249-2aa6-40e5-b0f3-f9fbce04479b","axis":"cols","boundary":40,"start":0,"length":24}]},"gesture":null,"inputReady":true}
+        at wait (file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/split-gesture-smoke.mjs:54:13)
+        at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/split-gesture-smoke.mjs:145:3
+  ]
+}
+
+Node.js v24.21.0

@@ -1,0 +1,32 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-98b04e9ce7606de7)
+
+running 7 tests
+test tmux_snapshot::pane_actions::tests::bounded_titles_and_exact_zoom_wire ... ok
+test tmux_snapshot::pane_actions::tests::captured_target_zoom_is_absolute_once_and_never_rearms_input ... ok
+test tmux_snapshot::pane_actions::tests::stale_capability_or_availability_dismisses_without_sending ... ok
+test tmux_snapshot::pane_actions::tests::split::split_revalidates_captured_capability_and_queue_failure_keeps_menu ... ok
+test tmux_snapshot::pane_actions::tests::opening_menu_and_editor_does_not_resize_terminal_canvas ... ok
+test tmux_snapshot::pane_actions::tests::rename_uses_real_search_input_and_ime_never_submits_or_leaks ... ok
+test tmux_snapshot::pane_actions::tests::split::rendered_split_choices_queue_exact_target_once_without_input_or_navigation ... FAILED
+
+failures:
+
+---- tmux_snapshot::pane_actions::tests::split::rendered_split_choices_queue_exact_target_once_without_input_or_navigation stdout ----
+
+thread 'tmux_snapshot::pane_actions::tests::split::rendered_split_choices_queue_exact_target_once_without_input_or_navigation' (17137978) panicked at crates/herdr-gpui/src/tmux_snapshot/pane_actions/tests/split.rs:57:13:
+assertion `left == right` failed
+  left: Bounds { origin: Point { x: 224px, y: 90px }, size: Size { 676px × 462px } }
+ right: Bounds { origin: Point { x: 224px, y: 90px }, size: Size { 676px × 481.5px } }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tmux_snapshot::pane_actions::tests::split::rendered_split_choices_queue_exact_target_once_without_input_or_navigation
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 2543 filtered out; finished in 0.08s
+
+error: test failed, to rerun pass `-p herdr-gpui --lib`

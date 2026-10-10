@@ -1,0 +1,15 @@
+bun test v1.3.11 (af24e281)
+
+packages/daemon-client/src/tmux-server-split-layout.test.ts:
+(pass) reads exact scoped split handles with authentication and no caching [7.87ms]
+(pass) rejects every mismatched window identity and server generation [0.87ms]
+(pass) validates targets before fetch and does not retry stale responses [1.58ms]
+(pass) rejects unknown envelope/resource fields
+(pass) snapshots target before awaiting and rejects disposed or aborted late responses [0.76ms]
+(pass) does not fetch when already aborted
+(pass) gives first split readiness a scoped budget while preserving explicit caller deadlines [0.26ms]
+
+ 7 pass
+ 0 fail
+ 28 expect() calls
+Ran 7 tests across 1 file. [114.00ms]

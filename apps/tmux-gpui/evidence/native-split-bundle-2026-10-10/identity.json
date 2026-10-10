@@ -1,0 +1,29 @@
+{
+  "retainedSourceHashes": {
+    "native/tmux/provenance.json": "b791fb213168346f5bf723aee33b6db22745dc1534094376fbc002e32d4df8b2",
+    "native/tmux/split-resize.md": "adbc54426e8676c48ed2b6fbbdf9f860db21d5080cba9079d1c59e3f48841daf",
+    "scripts/build-bundled-tmux.mjs": "537b13a764320467f3f3b4451ec15218670801d1eea575fa8e9ec1659e34d028",
+    "scripts/lib/tmux-native-patches.mjs": "f057e86c25d34639fb1b44cb54bb5e775e12e72df5551fe646261cfeae0279a5",
+    "scripts/lib/tmux-terminfo-bundle.mjs": "a53384c0f49dbede09df43b155fbd689eed5ee1674ff566f699fcfbccb6ce692",
+    "native/tmux/tests/split-resize.py": "e9b979c760f33a86660fa43a4a381ea6e58f4c0872cec2082da8d0e1ad083fa4",
+    "native/tmux/tests/split-membership-regression.py": "49985873199d891c511849bf9e5210f405410f1754947d03328432389ef064ce",
+    "native/tmux/tests/split-guarded-runner.mjs": "2d82532da4ad6a9a6fb3ccb8528d8a2fa5138d48f8e4ad4b84d769256a579f64",
+    "packages/daemon/src/lib/guarded-native-split-resize.ts": "d9a5d55c0f4c9ff9595d6c323b40452b99325983ef0f984c9452270c5b6a632e",
+    "packages/daemon/src/terminal/protocol/native-split-resize.ts": "4a4c3d658827e4cdfb0bd6d4a823002d67e5ad534263fa24d60dab09f2e10236",
+    "native/tmux/native-grid.patch": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "native/tmux/interaction-journal-v1.patch": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d",
+    "native/tmux/control-output-barriers.patch": "00ce678017ce94fd8ca1374b956d8db5cc4f6cdbe1309eddceed8fddb1adf6a8",
+    "native/tmux/split-resize.patch": "4d010271fb4eb52cf36fd29b66e7b3c52c44f6ba90296b944014d74bf3d4222a"
+  },
+  "evidenceHashes": {
+    "/private/tmp/gpui-split-promoted-eg12r6nf/build.log": "8e3f5edea156d52477ea84dcd7d280beaf848e572c6feb2e9bb672c321b7dacb",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/build-receipt.json": "92df04dcedeb1571c2f807f0647a2969f53134a124117059bf98d10dc042f820",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/split.log": "dc5461930a1c20e4317cf03839b0412db8da32b6501e38c3c276ae5dd3ed0b49",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/membership.log": "e7632164d28a07cd5dccb1ba3a1bb7f8b0b047824fabdfe1cfd738a646b5ce2f",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/guarded.log": "22e68b6cd3726671d5dbadd716dddce6f4a1ee1082f2743c403421dd2f01d252",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/test-receipts.json": "bd2a445a3ce053bd440c4ba5b408cc348dd8d550a9e40bcb70640b41c82d56e5",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/result.json": "a7c0a8a48896cff59137aa1b7a3d48946ea8d71c75085b8c8c0ec07099b75432",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/manifest.json": "9347654405cb0e69c451ffa4bd646df70da130165005e90ff7f743f7dd8ba4fd"
+  },
+  "note": "Source hashes recorded at result freeze; builder independently validated pinned commit and all patch hashes before build."
+}

@@ -26,7 +26,7 @@ import {
   type LivePaneResizeTarget,
   type PaneResizeFailure,
 } from "./resize-terminal-pane.ts";
-import { ResizeTransactionController } from "../resize-transaction.ts";
+import { ResizeTransactionController } from "@tmux-ide/core";
 import { nativePaneResizeCells } from "./pane-resize-geometry.ts";
 
 type DiagnosticSink = (phase: string, details?: Readonly<Record<string, unknown>>) => void;

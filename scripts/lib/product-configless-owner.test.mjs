@@ -23,6 +23,7 @@ import {
   parseConfiglessTmuxSessionInventory,
   qualifyCanonicalPromotionAdoption,
   qualifyCanonicalSeedPaint,
+  initialSeedFrameFenceExpectation,
   qualifyCoherentFrameCausality,
   qualifyPostMountConfiglessHomeCatalog,
   qualifyPreseededPaneEvidence,
@@ -886,6 +887,31 @@ test("complete diagnostic correlation requires exact daemon, client, TUI and Web
     expected,
     web,
   });
+  const terminal = buildProductDiagnosticCorrelation({
+    state,
+    tuiAvailable: true,
+    expected,
+    evidenceScope: "terminal-only",
+  });
+  assert.equal(terminal.complete, true);
+  assert.equal(
+    buildProductDiagnosticCorrelation({
+      state,
+      tuiAvailable: false,
+      expected,
+      evidenceScope: "terminal-only",
+    }).complete,
+    false,
+  );
+  assert.equal(
+    buildProductDiagnosticCorrelation({
+      state: { ...state, convergence: null },
+      tuiAvailable: true,
+      expected,
+      evidenceScope: "terminal-only",
+    }).complete,
+    false,
+  );
   assert.equal(correlation.complete, true);
   assert.deepEqual(correlation.missing, []);
   assert.equal(correlation.daemonState.revision, "a".repeat(20));
@@ -2025,8 +2051,10 @@ test("production configless operations preserve exact public entry and discovery
     calls.find(([name]) => name === "canonical-promotion-adoption")[1].catalogRevision,
     "a".repeat(20),
   );
-  assert.ok(
-    calls.findIndex(([name]) => name === "coherent") < calls.findIndex(([name]) => name === "web"),
+  assert.ok(calls.some(([name]) => name === "coherent"));
+  assert.equal(
+    calls.some(([name]) => name === "web"),
+    false,
   );
 });
 
@@ -2190,5 +2218,133 @@ test("first-frame fence excludes later revisions at the same geometry, but rejec
   await assert.rejects(
     waitForCanonicalFrameFence(() => [first, later, { ...first }], expected),
     /duplicate/,
+  );
+});
+
+test("terminal-only coherent boundary still rejects missing canonical paint", () => {
+  const phases = [
+    "targeted-namespace-preseeded",
+    "targeted-daemon-ready",
+    "targeted-tui-cwd-ready",
+    "targeted-tui-connect",
+    "canonical-seed-paint-correlation",
+    "coherent-terminal-publication",
+  ];
+  const assess = (values, correlationComplete = true) =>
+    assessCoherentFirstPaneBoundaries({
+      timeline: values.map((phase) => ({ phase })),
+      correlationComplete,
+      evidenceScope: "terminal-only",
+    });
+  assert.equal(assess(phases).status, "passed");
+  assert.equal(assess(phases).browserEvidence.status, "unmeasured");
+  assert.equal(
+    assess(phases.filter((phase) => phase !== "canonical-seed-paint-correlation")).status,
+    "failed",
+  );
+  assert.equal(assess(phases, false).status, "incomplete");
+});
+
+test("initial seed fence keeps consumed geometry when a later probe has resized", async () => {
+  const seed = {
+    type: "performance.terminal-canonical-publication",
+    updateType: "terminal.seed",
+    processId: "p",
+    clockId: "c",
+    clockKind: "performance-now",
+    generation: "g",
+    semanticPaneId: "pane",
+    incarnation: "g:0",
+    revision: 0,
+    stateHash: "initial",
+    cols: 80,
+    rows: 23,
+    sourceEpoch: 1,
+  };
+  const paint = {
+    ...seed,
+    type: "performance.terminal-canonical-paint",
+    viewportCols: 80,
+    viewportRows: 23,
+  };
+  const later = {
+    ...paint,
+    revision: 2,
+    stateHash: "resized",
+    cols: 132,
+    rows: 40,
+    viewportCols: 132,
+    viewportRows: 40,
+  };
+  const host = { processId: "p", clockId: "c", daemonGeneration: "g", rendererEpoch: 1 };
+  const records = [seed, paint, later];
+  const expected = initialSeedFrameFenceExpectation(records, seed, host);
+  assert.equal(expected.canonicalCols, 80);
+  assert.equal(expected.viewportRows, 23);
+  const fence = {
+    ...paint,
+    type: "performance.terminal-frame-fence",
+    daemonGeneration: "g",
+    rendererEpoch: 1,
+    writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+  };
+  assert.equal(
+    (await waitForCanonicalFrameFence(() => [...records, fence], expected)).fence,
+    fence,
+  );
+  paint.atMicros = 30;
+  const keyedFrame = {
+    ...paint,
+    type: "performance.terminal-canonical-host-frame",
+    rendererEpoch: 1,
+    atMicros: 40,
+  };
+  const closedFence = { ...fence, atMicros: 41, identityDrops: 0 };
+  const lifecycle = [
+    ["generation-connection-start", 10],
+    ["generation-connection-resolved", 20],
+    ["generation-host-internal-snapshot-publication", 25],
+    ["first-terminal-frame", 40],
+  ].map(([phase, monotonicMicros]) => ({
+    ...host,
+    phase,
+    monotonicMicros,
+    elapsedMs: monotonicMicros / 1000,
+    publicationPhase: "internal-snapshot-published",
+  }));
+  const firstRecords = [seed, paint, keyedFrame, closedFence];
+  assert.doesNotThrow(() =>
+    qualifyCoherentFrameCausality(lifecycle, { publication: seed, paint }, "g", firstRecords),
+  );
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(lifecycle, { publication: seed, paint }, "g", firstRecords, {
+        resizedPresentation: {
+          canonicalCols: later.cols,
+          canonicalRows: later.rows,
+          viewportCols: later.viewportCols,
+          viewportRows: later.viewportRows,
+        },
+      }),
+    /exact keyed/,
+  );
+  for (const mismatch of [
+    { stateHash: "stale" },
+    { incarnation: "g:1" },
+    { revision: 1 },
+    { sourceEpoch: 2 },
+  ]) {
+    assert.throws(
+      () => initialSeedFrameFenceExpectation([seed, { ...paint, ...mismatch }, later], seed, host),
+      /one exact/,
+    );
+  }
+  assert.throws(
+    () => initialSeedFrameFenceExpectation([seed, paint, paint], seed, host),
+    /one exact/,
+  );
+  assert.throws(
+    () => initialSeedFrameFenceExpectation(records, seed, { ...host, daemonGeneration: "foreign" }),
+    /invalid/,
   );
 });

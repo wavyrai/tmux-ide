@@ -1,0 +1,10 @@
+{
+  "boot_id": "boot-v1",
+  "revision": 7,
+  "view": {
+    "source": "example.views",
+    "label": "focus",
+    "filter": { "op": "eq", "field": "status", "value": "working" },
+    "sort": [{ "field": "state_change_seq", "order": "desc" }]
+  }
+}

@@ -1,0 +1,21 @@
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:182
+if (failures.length) throw new AggregateError(failures, "Session-open fixture failed");
+                           ^
+
+AggregateError: Session-open fixture failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:182:28 {
+  [errors]: [
+    AssertionError [ERR_ASSERTION]: Session-open deadline: Pane unavailable — select again or refresh
+        at until (file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:49:12)
+        at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:138:3 {
+      generatedMessage: false,
+      code: 'ERR_ASSERTION',
+      actual: false,
+      expected: true,
+      operator: '==',
+      diff: 'simple'
+    }
+  ]
+}
+
+Node.js v24.21.0

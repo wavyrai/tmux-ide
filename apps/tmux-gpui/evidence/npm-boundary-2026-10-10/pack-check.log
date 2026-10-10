@@ -1,0 +1,73 @@
+
+> tmux-ide@2.9.5 pack:check /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide
+> pnpm test:installer && node --test scripts/lib/npm-release-tag.test.mjs && node scripts/pack-tui-check.mjs
+
+
+> tmux-ide@2.9.5 test:installer /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide
+> node --test scripts/install.test.mjs
+
+✔ fresh install and upgrade work with spaces and shell punctuation (1931.220792ms)
+✔ printed start and update commands execute with spaces and shell punctuation (999.351458ms)
+✔ postinstall failure preserves an existing installation (1309.044709ms)
+✔ relocated CLI failure preserves an existing installation (2041.26475ms)
+✔ native checksum mismatch preserves an existing installation (3217.122ms)
+✔ checksum mismatch preserves an existing installation (2470.91975ms)
+✔ npm failure preserves an existing installation (1438.83725ms)
+✔ offline or proxy transport failure preserves an existing installation (1206.858125ms)
+✔ archive extraction failure preserves an existing installation (1267.191625ms)
+✔ unsupported operating system preserves an existing installation (1099.05925ms)
+✔ unsupported architecture preserves an existing installation (1080.728209ms)
+✔ unsupported libc preserves an existing installation (1398.337291ms)
+✔ mismatched CLI version preserves an existing installation (1368.236708ms)
+✔ TUI download failure preserves an existing installation (1328.766834ms)
+✔ missing platform bundle preserves an existing installation (1301.277333ms)
+✔ unsupported tmux version preserves an existing installation (1783.571ms)
+✔ unmanaged launcher is preserved (8.060042ms)
+✔ rollback swaps verified releases offline and uninstall preserves user data (2447.949459ms)
+✔ missing or corrupt rollback target leaves the current release active (1618.15875ms)
+✔ late failure on a fresh install leaves no managed launcher or release (728.25825ms)
+✔ an active installation lock prevents all mutations (1108.064625ms)
+✔ explicit pruning retains current and rollback, skips unknown files, and works offline (2179.761375ms)
+✔ retention cap refuses another install until explicit cleanup (1894.726958ms)
+✔ pre-staging failure preserves every retained runtime (1189.407708ms)
+✔ SIGTERM during relocated setup removes the candidate and preserves the old release (2078.429042ms)
+✔ SIGINT during relocated setup removes the candidate and preserves the old release (2494.795584ms)
+✔ install enables Claude Code agent teams when ~/.claude exists (1683.747708ms)
+✔ install skips agent teams without Claude Code (1064.169042ms)
+✔ install respects a user's agent-teams opt-out (1054.453084ms)
+✔ --no-claude-agent-teams opts out of the agent-teams step (1003.111125ms)
+✔ TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1 opts out of the agent-teams step (2206.09475ms)
+✔ an agent-teams failure warns but never fails the install (1077.060084ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 49112.000042
+✔ stable releases publish on latest (0.671708ms)
+✔ prereleases publish on beta (0.043917ms)
+✔ invalid release versions fail closed (0.134917ms)
+✔ npm release workflow keeps Electron outside both beta and GM gates (0.708458ms)
+✔ npm publish proves the release tag and every runtime manifest belong to its checkout (0.123916ms)
+✔ binary releases bind manual tags, builds, and manifests to one resolved commit (0.437959ms)
+✔ manual binary releases explicitly dispatch npm from the exact release tag (0.350292ms)
+✔ qualification-only builds cannot publish tags, assets, or npm (0.141833ms)
+✔ npm release uses OIDC trusted publishing instead of a repository token (0.176041ms)
+✔ native qualification can retain failed build evidence without publishing npm (0.779ms)
+✔ retired desktop surfaces cannot block the terminal product CI (0.281ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 37.184417
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "patched-dependencies". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "overrides". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+[pack-tui-check] OpenTUI package contract (3886 files, 4329764 bytes)

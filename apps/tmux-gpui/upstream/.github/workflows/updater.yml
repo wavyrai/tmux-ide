@@ -1,0 +1,79 @@
+name: Updater Packaging
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'scripts/**'
+      - 'assets/**'
+      - '.cargo/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/**'
+      - '!**/*.md'
+      - '!assets/social-preview-*'
+      - '!assets/icons/herdr-ui-icon-badge.*'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'scripts/**'
+      - 'assets/**'
+      - '.cargo/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/**'
+      - '!**/*.md'
+      - '!assets/social-preview-*'
+      - '!assets/icons/herdr-ui-icon-badge.*'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  rust-harness:
+    name: Rust Updater (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select repository Rust toolchain
+        run: rustup show
+      - name: Test real updater without GPUI or desktop dependencies
+        run: python3 scripts/test-updater.py
+
+  packaging:
+    name: Python Contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test archive and authentication contract
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          else
+            OPENSSL=/usr/bin/openssl
+          fi
+          export OPENSSL
+          "$OPENSSL" version | grep -q '^OpenSSL 3\.'
+          python3 -m unittest discover -s scripts -p 'test_update_manifest.py' -v

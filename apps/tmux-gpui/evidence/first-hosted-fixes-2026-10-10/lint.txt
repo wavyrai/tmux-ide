@@ -1,0 +1,3 @@
+
+> tmux-ide@2.9.5 lint /Users/thijs/.codex/worktrees/gpui-package-check/tmux-ide
+> eslint bin scripts packages/contracts/src packages/core/src packages/daemon-client/src packages/sdk/src packages/tmux-bridge/src packages/daemon/src

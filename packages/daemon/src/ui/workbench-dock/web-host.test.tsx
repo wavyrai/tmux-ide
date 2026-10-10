@@ -7,7 +7,7 @@ import {
   DOM_EXPERIENCE_VARIABLE,
   createDomExperience,
   type DomExperienceInput,
-} from "../../../../../apps/desktop-renderer/src/experience/dom-experience.ts";
+} from "../../../test-support/dom-experience-fixture.ts";
 import {
   createWorkbenchDockHostFixture,
   createWorkbenchDockHostTrace,

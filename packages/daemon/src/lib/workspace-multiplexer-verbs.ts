@@ -887,6 +887,8 @@ export class WorkspaceMultiplexerAuthority {
     } as const;
 
     switch (intent.verb) {
+      case "workspace.window.split.resize":
+        throw new WorkspaceMultiplexerError("workspace_unavailable");
       case "workspace.window.link.select":
       case "workspace.window.link.unlink":
         throw new WorkspaceMultiplexerError("workspace_unavailable", {

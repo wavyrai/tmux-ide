@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Deny by default; every job below declares the scopes it actually needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Audits the workflows themselves for injection, over-broad permissions,
+  # unpinned actions, and credential persistence. Gates the application
+  # jobs to catch workflow mistakes early; approval/ref protection remains the
+  # credential boundary, not the scanner.
+  zizmor:
+    if: >-
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    name: Workflow Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          online-audits: false
+
+  # The release changelog is generated from these subjects, so a bad one is a
+  # release defect. Local commits are caught earlier by `just hooks`.
+  commits:
+    if: >-
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    name: Commit messages
+    needs: zizmor
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The range being checked is history the default shallow clone lacks.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check every commit subject the changelog will publish
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # A first push or a rewritten branch has no usable base; check the
+          # tip alone rather than every commit that ever reached the repository.
+          if [[ ! $BASE =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            BASE="$HEAD_SHA~1"
+          fi
+          python3 scripts/release/check-commit-messages.py range "$BASE..$HEAD_SHA"
+      - name: Detect build and test inputs
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
+
+  checks:
+    if: >-
+      needs.commits.outputs.code == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    name: Format, lint, and test (${{ matrix.runner }})
+    needs: [zizmor, commits]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/install-linux-deps.sh
+      # Lets the release script tests build real .deb, .rpm and Arch packages.
+      - name: Install the pinned Linux package builder
+        if: runner.os == 'Linux'
+        run: echo "HERDR_TEST_NFPM=$(bash scripts/release/install-nfpm.sh "$RUNNER_TEMP/nfpm")" >> "$GITHUB_ENV"
+      - name: Test release scripts and security contracts without credentials
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ required"'
+          jq --version
+          python3 -m unittest discover -s scripts/release/tests -v
+          python3 scripts/release/test-release-security.py
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: checks
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check source file sizes
+        run: bash scripts/check-file-size.sh
+      - name: Lint every target and feature
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Lint without default features
+        run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+      - name: Test default features and executable CLI
+        run: cargo test --locked --workspace
+      - name: Test integration-feature build and executable CLI
+        run: cargo test --locked --workspace --all-features
+
+  # Match the other platforms' Rust checks without an extra optimized build.
+  # Native GUI tests remain opt-in; release builds and optimized CLI tests run
+  # in the release workflow.
+  windows:
+    if: >-
+      needs.commits.outputs.code == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    name: Windows check (${{ matrix.runner }})
+    needs: [zizmor, commits]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.runner }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint every target and feature
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Lint without default features
+        run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+      - name: Test default features and executable CLI
+        run: cargo test --locked --workspace
+      - name: Test integration-feature build and executable CLI
+        run: cargo test --locked --workspace --all-features
+
+  # Keep the branch-protection context stable while requiring every platform.
+  checks-passed:
+    name: Format, lint, and test
+    needs: [checks, windows, commits]
+    if: >-
+      always() &&
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require all platform checks
+        env:
+          RESULT: ${{ needs.checks.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          COMMITS: ${{ needs.commits.result }}
+          CODE: ${{ needs.commits.outputs.code }}
+        run: |
+          test "$COMMITS" = success || exit 1
+          if [ "$CODE" = true ]; then
+            test "$RESULT" = success && test "$WINDOWS" = success
+          else
+            test "$CODE" = false && test "$RESULT" = skipped && test "$WINDOWS" = skipped
+          fi
+
+  build:
+    if: >-
+      needs.commits.outputs.code == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.actor == 'penso' && github.triggering_actor == 'penso'
+    name: Release (${{ matrix.runner }}, ${{ matrix.arch }})
+    needs: [zizmor, commits]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: bash scripts/install-linux-deps.sh
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-${{ matrix.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build optimized native executable
+        run: cargo build --locked --release -p herdr-gpui
+      - name: Exercise release executable without opening a window
+        run: cargo test --locked --release -p herdr-gpui --test cli

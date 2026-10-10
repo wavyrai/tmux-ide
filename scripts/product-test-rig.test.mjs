@@ -1,3 +1,4 @@
+import ts from "typescript";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -16,7 +17,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { devServerProcessIsRunning } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
+import {
+  devServerProcessIsRunning,
+  formatProductRigReady,
+  formatProductRigCapture,
+} from "./lib/product-fixtures/child-liveness.mjs";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
@@ -56,7 +61,6 @@ import {
   paneBodyRegion,
   paneGeometryIdentity,
   productInputQueuesSettled,
-  productAttachablePaneInventory,
   productRigSourceTraceIncludesPath,
   productRigGitBlobObjectId,
   productRigHostHeartbeatObservation,
@@ -1665,50 +1669,11 @@ test("pane body evidence fails closed without a canonical semantic identity", ()
 
 test("focus framebuffer proof has no synchronous target tmux reads and fences native capture", () => {
   const source = readFileSync(join(process.cwd(), "scripts", "product-test-rig.mjs"), "utf8");
-  const focusSlice = source.slice(
-    source.indexOf("async function focusPaneSnapshot("),
-    source.indexOf("async function activePaneBodyEvidence("),
-  );
+  const focusSlice = namedFunctionSource(source, "focusPaneSnapshot");
   assert.doesNotMatch(focusSlice, /execFileSync|tuiCommand\(/u);
   assert.match(focusSlice, /focusActiveWindowPaneGeometry\(state, lifecycle\)/u);
   assert.match(focusSlice, /stage: "native-body-post-capture"/u);
   assert.match(source, /#\{window_visible_layout\}/u);
-});
-
-test("focus Web success publishes exact stable semantic readiness before later correlation", () => {
-  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("startWebAfterFocus:");
-  const slice = source.slice(start, source.indexOf('if (journeyId === "session-recreate")', start));
-  const readinessPublish = slice.indexOf("focusWebSemantic: semantic");
-  const laterWorkspaceState = slice.indexOf("waitForFocusWorkspaceEvidence", readinessPublish);
-  const watermark = slice.indexOf("focusWorkspaceEvidenceWatermark");
-  const devServerStart = slice.indexOf("startDevServer");
-  assert.ok(readinessPublish > 0);
-  assert.ok(laterWorkspaceState > readinessPublish);
-  assert.ok(watermark > 0);
-  assert.ok(devServerStart > watermark);
-  assert.match(
-    slice,
-    /derivedResources: reclaim\.workspaceClient\.derived\.terminalInventory\.resources/u,
-  );
-  assert.doesNotMatch(slice, /derivedResources:[^\n]*\?\?/u);
-  assert.match(slice, /clientGeneration: reclaim\.workspaceClient\.committed\.generation/u);
-  assert.match(slice, /semanticPaneId: reclaim\.assessment\.qualified\.semanticPaneId/u);
-  assert.match(slice, /afterMicros: workspaceClientWatermark \+ 1/u);
-  assert.match(slice, /boundary: "focus-web-correlation"/u);
-  const reclaimStart = source.indexOf("driveFocus:");
-  const reclaimSlice = source.slice(reclaimStart, start);
-  assert.match(reclaimSlice, /\.\.\.baseline\.expected,[\s\S]*boundary: "focus-reclaim-proved"/u);
-  assert.match(
-    slice,
-    /semantic: focusBoot\.web\.semantic,[\s\S]*readiness: focusBoot\.web\.readiness/u,
-  );
-  assert.doesNotMatch(slice, /locator\("\.terminal-surface\[data-phase='connected'\]"\)/u);
-});
-
-test("causal qualification passes the full active pane into its after-capture body", () => {
-  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  assert.match(source, /const renderedBody = paneBodyRegion\(tuiFrame, activePane\);/u);
 });
 
 test("fails closed when duplicate semantic chrome could map a marker to the wrong pane", () => {
@@ -2919,47 +2884,6 @@ test("resource queue settlement reads the latest bounded input counters", () => 
   assert.equal(productInputQueuesSettled([], "tui:3"), false);
 });
 
-test("multi-client convergence leases the exact full session topology", () => {
-  const resources = [
-    { attachability: { status: "available", semanticPaneId: "pane.c" } },
-    { attachability: { status: "unavailable", semanticPaneId: "pane.ignored" } },
-    { attachability: { status: "available", semanticPaneId: "pane.a" } },
-    { attachability: { status: "available", semanticPaneId: "pane.b" } },
-  ];
-  assert.deepEqual(productAttachablePaneInventory(resources), ["pane.a", "pane.b", "pane.c"]);
-  assert.throws(
-    () =>
-      productAttachablePaneInventory([
-        resources[0],
-        { attachability: { status: "available", semanticPaneId: "pane.c" } },
-      ]),
-    /ambiguous/u,
-  );
-  const owner = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  const client = readFileSync(
-    new URL("./product-test-rig-multiclient.ts", import.meta.url),
-    "utf8",
-  );
-  assert.match(owner, /TMUX_IDE_RIG_PANES: JSON\.stringify\(panes\)/u);
-  assert.match(client, /const panes = requiredPaneInventory/u);
-  assert.match(client, /stream: \{[\s\S]*?panes,/u);
-  assert.doesNotMatch(
-    client.slice(client.indexOf("const nativeStartedAt"), client.indexOf("timings.nativeYieldMs")),
-    /resize-window/u,
-  );
-  assert.match(
-    client,
-    /await Bun\.sleep\(250\);[\s\S]*?geometryAfterNative = await webB\.requestAuthority\("geometry"\)/u,
-  );
-  assert.doesNotMatch(
-    client.slice(
-      client.indexOf("await Bun.sleep(250)"),
-      client.indexOf("timings.nativeQuietReacquireMs"),
-    ),
-    /catch/u,
-  );
-});
-
 test("causal baseline names every fail-closed readiness predicate", () => {
   const ready = {
     fixtureOption: "ready-v1:probe-0",
@@ -2988,15 +2912,6 @@ test("causal baseline names every fail-closed readiness predicate", () => {
     assert.equal(result.ready, false, predicate);
     assert.equal(result.predicates[predicate], false, predicate);
   }
-});
-
-test("causal baseline stability ignores unrelated trace growth", () => {
-  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("const resetFixtureBaseline");
-  const baseline = source.slice(start, source.indexOf("let causalFailure", start));
-  const identity = baseline.match(/const nextIdentity = \[[\s\S]*?\]\.join/)?.[0] ?? "";
-  assert.doesNotMatch(identity, /records\.length/u);
-  assert.match(identity, /queueObservation\?\.atMicros/u);
 });
 
 test("window failure preparation seals relocated structural runtime evidence in every JSON view", () => {
@@ -3112,24 +3027,6 @@ test("ANSI owner readiness uses one bounded journey-specific wait and publishes 
   assert.ok((ansiOwner.match(/ansiReadJsonLines\(/gu) ?? []).length >= 15);
   assert.match(source, /heartbeatPeakRevisionHmac/u);
   assert.match(source, /heartbeatPeakContextSwitchesAvailable/u);
-  const ansiStartWebAt = source.indexOf(
-    "startWeb: async (namespace, runningDaemon, identity, _process, baseline)",
-  );
-  const ansiStartWebEnd = ansiStartWebAt + 60_000;
-  const ansiStartWeb = source.slice(ansiStartWebAt, ansiStartWebEnd);
-  assert.ok(ansiStartWebAt > 0 && ansiStartWeb.length === 60_000);
-  assert.match(ansiStartWeb, /productCapturePageUrlStatus\(devServer\.pageUrl\)/u);
-  assert.match(ansiStartWeb, /publish\(\{ web: \{ pageUrl: ansiPageUrl\.pageUrl/u);
-  assert.ok(ansiStartWeb.indexOf("publish({ web:") < ansiStartWeb.indexOf("await page.goto("));
-
-  const captureAt = source.indexOf("async function captureArtifacts");
-  const captureEnd = source.indexOf("async function waitForState", captureAt);
-  const capture = source.slice(captureAt, captureEnd);
-  assert.match(capture, /productCapturePageUrlStatus\(state\?\.web\?\.pageUrl\)/u);
-  assert.match(capture, /PRODUCT_RIG_CAPTURE_PAGE_URL_INVALID/u);
-  assert.match(capture, /error\.boundary = "evidence-capture"/u);
-  assert.ok(capture.indexOf("if (!capturePageUrl.exact)") < capture.indexOf("mkdirSync("));
-  assert.doesNotMatch(capture, /state\.web\.pageUrl/u);
 });
 
 test("window switch rejects writer loss before quiet-tail or rename attribution", () => {
@@ -3166,10 +3063,7 @@ test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executo
     source.indexOf("async function conditionExactResizeTmuxFixture"),
     source.indexOf("async function validateExactResizeTmuxBaseline"),
   );
-  const resizeBaseline = source.slice(
-    source.indexOf("async function validateExactResizeTmuxBaseline"),
-    source.indexOf("async function preserveWarmRehostFailure"),
-  );
+  const resizeBaseline = namedFunctionSource(source, "validateExactResizeTmuxBaseline");
   assert.ok(start > 0 && end > start);
   assert.match(resize, /runKeyboardPointerResizeOwnerBoot/u);
   assert.match(resize, /windowsPerSession: 1/u);
@@ -3196,14 +3090,13 @@ test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executo
   assert.match(resize, /inspectResizeContentContinuity/u);
   assert.match(resize, /contentContinuity/u);
   assert.match(resize, /waitForWindowWorkspaceEvidence/u);
-  assert.match(resize, /waitForFocusWebSemantic/u);
   assert.match(
     resize,
     /fleetSessionId: resizeBoot\.identity\.fleetSessionId,[\s\S]*?catalogRevision: resizeBoot\.identity\.catalogRevision/u,
   );
   assert.match(
     resize,
-    /publish\(\{\s*convergence: \{ workspaceClient: resizeBoot\.web\.workspaceClient \},\s*journeyEvidence: \{ keyboardPointerResize: journeyEvidence \}/u,
+    /publish\(\{\s*convergence: \{ workspaceClient: resizeBoot\.pointerRelease\.workspaceClient \},\s*journeyEvidence: \{ keyboardPointerResize: journeyEvidence \}/u,
   );
   assert.doesNotMatch(resize, /\btuiCommand\(state/u);
   assert.doesNotMatch(resize, /\bexecFileSync\(/u);
@@ -3243,12 +3136,12 @@ test("selection journey owns one exact hosted selection copy app-mouse executor"
   assert.match(selection, /traceWatermark: traceBefore\.length/u);
   assert.match(selection, /selectionCopyFailureEvidence/u);
   assert.match(selection, /copyFailure/u);
+  assert.match(selection, /selectionWorkspaceClientEvidence\(selectionWorkspaceClient\)/u);
+  assert.match(selection, /workspaceClient\.committed\.terminalResourceRevision/u);
   assert.match(
     selection,
-    /selectionWorkspaceClientEvidence\(selectionBoot\.web\.workspaceClient\)/u,
+    /exactTerminalResourceRevision: selectionBoot\.baseline\.terminalResourceRevision/u,
   );
-  assert.match(selection, /workspaceClient\.committed\.terminalResourceRevision/u);
-  assert.match(selection, /exactTerminalResourceRevision: baseline\.terminalResourceRevision/u);
   assert.doesNotMatch(selection, /derived\.terminalInventory\.terminalResourceRevision/u);
   assert.match(selection, /selectionCausalFailureObservation\(assessment, journeyEvidence\)/u);
   assert.match(selection, /failureObservation,/u);
@@ -3267,7 +3160,6 @@ test("selection journey owns one exact hosted selection copy app-mouse executor"
   assert.match(source, /timeout: testdriveInputSupervisorTimeout\(document\.timeoutMs\)/u);
   assert.match(selection, /latestMode/u);
   assert.match(selection, /waitForWindowWorkspaceEvidence/u);
-  assert.match(selection, /waitForFocusWebSemantic/u);
   assert.match(selection, /settleWindowReferenceTrace/u);
   assert.doesNotMatch(selection, /\btuiCommand\(state/u);
   assert.doesNotMatch(selection, /\bexecFileSync\(/u);
@@ -3355,35 +3247,8 @@ test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
   assert.match(ansiHelper, /waitForAnsiDeliverySubscriberReadiness/u);
   assert.match(ansiHelper, /ansiDeliverySubscriberReadinessStatus/u);
   assert.match(ansi, /ANSI_DELIVERY_LANE_NOT_CAUGHT_UP/u);
-  assert.match(
-    ansi,
-    /publishAnsiPartial\(\{ stage: "web-readiness", webFailure: error\.observation \}\)/u,
-  );
-  assert.match(ansi, /const expectedGrid = ansiWebExpectedGridProjection\(stage, driven\)/u);
   assert.doesNotMatch(ansi, /driven\.raw\.mode\.dirtyRows/u);
-  assert.match(ansi, /operation: "ansi-web-expected-projection"/u);
-  assert.match(ansi, /error\.code = "ANSI_WEB_EXPECTED_GRID_INVALID"/u);
-  assert.match(ansi, /renditionHmacExact: candidate\?\.renditionHmac === renditionHmac/u);
-  assert.match(
-    ansi,
-    /rendererColsExact:\s*candidate\?\.rendererCols === expectedPresentation\.rendererCols/u,
-  );
-  assert.match(
-    ansi,
-    /rendererRowsExact:\s*candidate\?\.rendererRows === expectedPresentation\.rendererRows/u,
-  );
-  assert.match(ansi, /renditionCellCountExact:/u);
-  assert.match(
-    ansi,
-    /cursorCountExact:\s*candidate\?\.cursorCount === \(expectedPresentation\.cursorHidden \? 0 : 1\)/u,
-  );
-  assert.match(ansi, /ansiRenditionFailureLocalization\(candidate,/u);
-  assert.match(ansi, /positionWrappedHmac:/u);
-  assert.match(ansi, /"cellHmacs"/u);
-  assert.match(ansi, /renditionFailure: identityExact \? null : localization/u);
   assert.match(ansi, /firstFailedPredicate,/u);
-  assert.match(ansi, /code: error\.code,\s*firstFailedPredicate,\s*stableSamples:/u);
-  assert.match(ansi, /candidate: boundedCandidate,\s*predicates: predicateVector/u);
   assert.ok(
     ansi.indexOf("const readinessGate = await runAnsiDeliveryReadyAction") <
       ansi.indexOf("takeWatermark:", ansi.indexOf("driveAnsiStage")),
@@ -3396,9 +3261,7 @@ test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
   assert.match(ansiHelper, /timeoutMs = 60_000/u);
   assert.match(ansi, /const deadline = performance\.now\(\) \+ 3_000/u);
   assert.match(ansiHelper, /sampledAt - stableSince >= stableMs/u);
-  assert.match(ansi, /ansiExpectedDeliverySurfaces = Object\.freeze\(\["opentui", "web"\]\)/u);
-  assert.match(ansi, /exactWebClients\.length !== 1/u);
-  assert.match(ansi, /opentui: baseline\.clientId,\s*web: exactWebClients\[0\]\.clientId/u);
+  assert.match(ansi, /ansiExpectedDeliverySurfaces = Object\.freeze\(\["opentui"\]\)/u);
   assert.match(ansi, /semanticPaneId: baseline\.semanticPaneId/u);
   assert.match(ansi, /daemonProcessId: baseline\.rawIdentity\.daemonProcessId/u);
   assert.match(ansi, /daemonClockKind: "performance-now"/u);
@@ -3412,11 +3275,6 @@ test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
   );
   assert.match(ansi, /operation: "ansi-idle-counter-continuity"/u);
   assert.match(ansi, /workloadFailure: timeoutObservation/u);
-  assert.match(ansi, /captureAnsiCursorWebPresentation/u);
-  assert.match(ansi, /__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__/u);
-  assert.match(ansi, /webStageVector/u);
-  assert.match(ansi, /webFirstFailure/u);
-  assert.match(ansi, /boundedWebCandidate/u);
   assert.match(ansi, /ansiBaselineCursorEvidenceStatus/u);
   assert.match(ansi, /ansiBaselinePreviousCounters/u);
   assert.match(ansi, /baselinePredecessor,/u);
@@ -3455,19 +3313,6 @@ test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
   assert.match(ansi, /firstFailedPredicate/u);
   assert.match(ansi, /webRestorationPredicates: Object\.freeze/u);
   assert.match(ansi, /webFirstFailedRestorationPredicate: new Set/u);
-  assert.match(ansi, /positionWrappedHmacExact/u);
-  assert.match(ansi, /domRowsHmacPresent/u);
-  assert.match(ansi, /domCursorHmacPresent/u);
-  assert.match(ansi, /domSemanticExact: candidate\?\.domSemanticExact === true/u);
-  assert.match(ansi, /domRowCountExact: candidate\?\.domRowCountExact === true/u);
-  assert.match(ansi, /domTextExact: candidate\?\.domTextExact === true/u);
-  assert.match(ansi, /domStyleExact: candidate\?\.domStyleExact === true/u);
-  assert.match(ansi, /domFirstMismatchComponent: new Set/u);
-  assert.match(ansi, /domCursorExact: candidate\?\.domCursorExact === true/u);
-  assert.match(ansi, /expectedRendition,/u);
-  assert.match(ansi, /expectedCursor: Object\.freeze\(\{[\s\S]*?style: canonicalCursorStyle/u);
-  assert.match(ansi, /"rowsHmac",\s*"cursorHmac"/u);
-  assert.match(ansi, /JSON\.stringify\(qualifiedWebPresentation\(candidate, undefined\)\)/u);
   assert.match(ansi, /ansiResourceEpochIdentity === null/u);
   assert.match(ansi, /sample\.resourceEpochArmed !== true/u);
   assert.match(ansi, /ansiResourceEpochIdentityExact\(sample\.resourceEpochIdentity/u);
@@ -3479,7 +3324,10 @@ test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
   assert.match(ansi, /stageEvidence: latest\?\.stageEvidence \?\? null/u);
   assert.match(ansi, /ansiCursorStageFromRecords/u);
   assert.match(ansi, /ansiCursorAltScreenExpected: expected/u);
-  assert.match(ansi, /assessAnsiCursorAltScreenEvidence\(journeyEvidence, expected\)/u);
+  assert.match(
+    ansi,
+    /assessAnsiCursorAltScreenEvidence\(journeyEvidence, expected, \{\s*evidenceScope: "terminal-only",?\s*\}\)/u,
+  );
   assert.doesNotMatch(ansi, /\btuiCommand\(state/u);
   assert.doesNotMatch(ansi, /\bexecFileSync\(/u);
 });
@@ -3535,10 +3383,10 @@ test("ANSI fixture reaches exact stable 132x41 geometry before daemon startup", 
   assert.doesNotMatch(ansi, /geometry: Object\.freeze\(\{[\s\S]*?top: 0,[\s\S]*?\}\),/u);
 });
 
-test("resize diagnostic correlation uses strict post-Web identity and never a sibling fallback", () => {
+test("resize diagnostic correlation uses strict terminal identity and never a sibling fallback", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("function productDiagnosticCorrelation");
-  const end = source.indexOf("const WARM_COHERENT_SAMPLE_COUNT", start);
+  const end = start + namedFunctionSource(source, "productDiagnosticCorrelation").length;
   const correlation = source.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(
@@ -3554,17 +3402,6 @@ test("resize diagnostic correlation uses strict post-Web identity and never a si
   assert.match(correlation, /buildProductDiagnosticCorrelation\(\{[\s\S]*?state,/u);
 });
 
-test("runtime qualification translates tmux resize geometry into application-content coordinates", () => {
-  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("function activeVerticalResizeSeparator");
-  const end = source.indexOf("\nfunction ", start + 10);
-  const resizeSeparator = source.slice(start, end);
-
-  assert.match(resizeSeparator, /shellChromeLayout\(160, 44, 28\)/u);
-  assert.match(resizeSeparator, /x: chrome\.main\.x \+ before\.left \+ before\.width/u);
-  assert.match(resizeSeparator, /chrome\.main\.y \+\s*1 \+/u);
-});
-
 test("runtime qualification binds active tmux geometry to canonical pane display identity", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("function activeTmuxPane(state)");
@@ -3574,21 +3411,6 @@ test("runtime qualification binds active tmux geometry to canonical pane display
   assert.match(activePane, /sessionPaneGeometry\(state\)\.find/u);
   assert.match(activePane, /displayName: semantic\.displayName/u);
   assert.match(activePane, /canonicalDisplayNames: semantic\.canonicalDisplayNames/u);
-});
-
-test("runtime qualification captures its own evidence instead of requiring a Card5 owner", () => {
-  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("async function diagnoseRuntimeQualification");
-  const captureStart = source.indexOf(
-    'diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture")',
-    start,
-  );
-  const captureEnd = source.indexOf("diagnosticCaptures.set", captureStart);
-  const qualification = source.slice(captureStart, captureEnd);
-
-  assert.ok(start > 0 && captureStart > start && captureEnd > captureStart);
-  assert.match(qualification, /await captureArtifacts\(/u);
-  assert.doesNotMatch(qualification, /state\.card5CaptureEvidence/u);
 });
 
 test("selection diagnostic correlation uses its own post-Web identity and no sibling evidence", () => {
@@ -3611,7 +3433,7 @@ test("selection diagnostic correlation uses its own post-Web identity and no sib
 test("strict seed failure preserves bounded native and same-pane patch/frame/fence evidence", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function provePreseededPanePublication");
-  const end = source.indexOf("async function preserveWarmRehostFailure", start);
+  const end = start + namedFunctionSource(source, "provePreseededPanePublication").length;
   const proof = source.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(proof, /runBoundedFocusTmux/u);
@@ -3873,4 +3695,34 @@ test("causal capture compares native erased cells as blanks without accepting ab
   assert.equal(causalCellMatchesCapture(" ", undefined), false);
   assert.equal(causalCellMatchesCapture(" ", null), false);
   assert.equal(causalCellMatchesCapture(null, ""), false);
+});
+
+function namedFunctionSource(source, name) {
+  const file = ts.createSourceFile(
+    "rig.mjs",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const node = file.statements.find(
+    (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+  );
+  assert.ok(node, `missing function ${name}`);
+  return node.getText(file);
+}
+
+test("terminal-only ready and capture messages require no browser state", () => {
+  assert.equal(
+    formatProductRigReady({ session: "owned" }),
+    "Product rig ready: owned · terminal-only",
+  );
+  assert.equal(
+    formatProductRigCapture({
+      tuiPath: "/tmp/tui.ansi",
+      tmuxPath: "/tmp/truth.json",
+      webPath: null,
+    }),
+    "Captured terminal /tmp/tui.ansi and tmux /tmp/truth.json",
+  );
 });

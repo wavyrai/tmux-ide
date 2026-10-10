@@ -13,7 +13,7 @@ import {
  *
  * PURE. Everything here turns bytes the caller already read into the exact
  * string the pane should print; the CLI does the reading, the writing and the
- * signal handling. See apps/desktop-renderer/src/terminal/widgets/WIDGETS.md
+ * signal handling. See docs/guides/pane-widget-protocol.md
  * for the grammar and the refusals.
  */
 
@@ -63,7 +63,7 @@ export function imageMediaTypeFor(fileName: string): string | null {
  * which overflows the 2,000-row mirror seed window and would silently break
  * re-detection after every reconnect. The full derivation, including the
  * ~50-column floor below which even a legal marker can be truncated, is the
- * table in apps/desktop-renderer/src/terminal/widgets/WIDGETS.md.
+ * table in docs/guides/pane-widget-protocol.md.
  *
  * Serving image bytes over a daemon route instead — which lifts this entirely —
  * is the documented follow-up.

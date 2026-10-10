@@ -1,0 +1,33 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/terminal/pane-stream/pane-stream-websocket.test.ts (58 tests | 1 failed) 3928ms
+     × uses one session socket and one runtime binding for semantic delivery, layout and intents 227ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/terminal/pane-stream/pane-stream-websocket.test.ts > PaneStreamAdmissionCoordinator > uses one session socket and one runtime binding for semantic delivery, layout and intents
+AssertionError: expected [Function] to not throw an error but 'SessionRuntimeControllerLeaseError: G…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"SessionRuntimeControllerLeaseError: Geometry authority retired."
+
+ ❯ src/terminal/pane-stream/pane-stream-websocket.test.ts:1886:11
+    1884|         },
+    1885|       }),
+    1886|     ).not.toThrow();
+       |           ^
+    1887|     await vi.waitFor(() => expect(socket.framesOfType("semantic-intent…
+    1888|     expect(socket.framesOfType("semantic-intent-ack")[3]).toMatchObjec…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 57 passed (58)
+   Start at  18:40:02
+   Duration  4.67s (transform 496ms, setup 0ms, import 688ms, tests 3.93s, environment 0ms)
+

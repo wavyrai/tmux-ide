@@ -47,190 +47,559 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/daemon/src/lib/development-build.ts
-import { createHash } from "node:crypto";
-import {
-  openSync,
-  closeSync,
-  readSync,
-  fstatSync,
-  constants,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  realpathSync
-} from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-function developmentNativeObservationOption(value, command3 = "rebuild", container = false) {
-  if (value === void 0) return void 0;
-  if (command3 !== "rebuild" || container || value !== "enabled" && value !== "disabled")
-    throw new Error(
-      "native-observation requires rebuild and enabled|disabled outside container mode"
-    );
-  return value;
-}
-function developmentFileHash(path2) {
-  const fd = openSync(path2, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const info = fstatSync(fd);
-    if (!info.isFile() || info.size > 512 * 1024 * 1024)
-      throw new Error(`Invalid build file: ${path2}`);
-    const hash = createHash("sha256");
-    const buffer = HASH_BUFFER;
-    let total = 0;
-    while (true) {
-      const count = readSync(fd, buffer, 0, buffer.length, null);
-      if (!count) break;
-      total += count;
-      if (total > info.size) throw new Error("Build file grew while hashing");
-      hash.update(buffer.subarray(0, count));
-    }
-    const after = fstatSync(fd);
-    if (total !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs)
-      throw new Error("Build file changed while hashing");
-    return hash.digest("hex");
-  } finally {
-    closeSync(fd);
-  }
-}
-function developmentTreeHash(root, omitManifest = false) {
-  const digest3 = createHash("sha256");
-  let files = 0;
-  let bytes = 0;
-  const visit = (path2) => {
-    if (++files > 1e5) throw new Error("Development artifact file budget exceeded");
-    const info = lstatSync(path2);
-    const name = relative(root, path2);
-    if (info.isSymbolicLink()) {
-      const target = readlinkSync(path2);
-      const actual = realpathSync(path2);
-      if (actual !== root && !actual.startsWith(`${root}${sep}`))
-        throw new Error("Development artifact symlink escapes generation");
-      digest3.update(JSON.stringify([name, "link", target]));
-      return;
-    }
-    if (info.isDirectory()) {
-      digest3.update(JSON.stringify([name, "directory"]));
-      for (const child of readdirSync(path2).sort()) {
-        if (omitManifest && path2 === root && child === "manifest.json") continue;
-        visit(join(path2, child));
+// packages/tmux-bridge/src/errors.ts
+var TmuxError;
+var init_errors = __esm({
+  "packages/tmux-bridge/src/errors.ts"() {
+    "use strict";
+    TmuxError = class extends Error {
+      code;
+      exitCode;
+      constructor(message, code2, options = {}) {
+        super(message, { cause: options.cause });
+        this.name = "TmuxError";
+        this.code = code2;
+        this.exitCode = options.exitCode ?? 1;
       }
-      return;
-    }
-    if (!info.isFile() || (bytes += info.size) > 1024 * 1024 * 1024)
-      throw new Error("Development artifact byte budget exceeded");
-    digest3.update(JSON.stringify([name, info.mode & 511, info.size, developmentFileHash(path2)]));
+      toJSON() {
+        const out = {
+          error: this.message,
+          code: this.code
+        };
+        if (this.cause) out.cause = this.cause.message;
+        return out;
+      }
+    };
+  }
+});
+
+// packages/tmux-bridge/src/runner.ts
+import {
+  execFile,
+  execFileSync,
+  spawn
+} from "node:child_process";
+function _setExecutor(fn) {
+  const prev = _executor;
+  _executor = fn;
+  return () => {
+    _executor = prev;
   };
-  visit(root);
-  return digest3.digest("hex");
 }
-function assertRecord(value) {
-  if (!value || typeof value !== "object") throw new Error("Missing development build manifest");
-  const m = value;
-  developmentNativeObservationOption(m.nativeObservation);
-  if (m.version !== 1 || !/^build-[a-f0-9-]{36}$/u.test(m.generation) || m.execution !== "packaged-development" || !m.instance || !m.host || !m.tools || !m.hashes || !m.source || !Array.isArray(m.native) || !Array.isArray(m.packages) || !m.qualification)
-    throw new Error("Invalid development build manifest");
-  for (const hash of [
-    ...Object.values(m.hashes),
-    m.source.digest,
-    m.source.lockfileHash,
-    m.tools.nodeHash,
-    m.tools.bunHash
-  ])
-    if (typeof hash !== "string" || !/^[a-f0-9]{64}$/u.test(hash))
-      throw new Error("Invalid development artifact digest");
+function _setSpawner(fn) {
+  const prev = _spawner;
+  _spawner = fn;
+  return () => {
+    _spawner = prev;
+  };
 }
-function verifyDevelopmentBuild(instance, value) {
-  assertRecord(value);
-  const m = value;
-  for (const key2 of ["id", "digest", "worktree", "name"])
-    if (m.instance[key2] !== instance[key2])
-      throw new Error("Development build belongs to another instance/worktree");
-  if (m.host.platform !== process.platform || m.host.arch !== process.arch || !process.versions.bun && m.host.nodeAbi !== process.versions.modules || process.versions.bun !== void 0 && m.host.bunVersion !== process.versions.bun)
-    throw new Error("Development build host/native ABI mismatch");
-  const root = join(instance.root, "artifacts", m.generation);
-  if (realpathSync(root) !== root) throw new Error("Development artifact generation is redirected");
-  for (const [key2, rel] of Object.entries({
-    cli: "bin/cli.js",
-    tui: "tui/tmux-ide-tui",
-    dependencies: "dependencies",
-    assets: "packages/daemon/dist/native"
-  })) {
-    if (m[key2] !== join(root, rel)) throw new Error("Development artifact path mismatch");
+function _getSpawner() {
+  return _spawner;
+}
+function configureTmuxClientResolver(resolver) {
+  const previous = clientResolver;
+  clientResolver = resolver;
+  return () => {
+    clientResolver = previous;
+  };
+}
+function runTmux(args, options = {}) {
+  if ((options.env ?? process.env).TMUX_IDE_RUNTIME_MODE === "development") {
+    throw new Error("Development tmux operations require an explicitly pinned namespace runner");
   }
-  if (developmentTreeHash(root, true) !== m.hashes.payload || developmentFileHash(m.cli) !== m.hashes.cli || developmentFileHash(m.tui) !== m.hashes.tui || developmentTreeHash(m.dependencies) !== m.hashes.dependencies || developmentTreeHash(m.assets) !== m.hashes.assets || developmentFileHash(join(root, "package.json")) !== m.hashes.metadata)
-    throw new Error("Development artifact contents changed; rebuild required");
-  for (const tool of ["node"]) {
-    if (resolve(m.tools[tool]) !== m.tools[tool] || developmentFileHash(m.tools[tool]) !== m.tools[`${tool}Hash`])
-      throw new Error("Development build toolchain changed; rebuild required");
-  }
-  return m;
+  const resolved2 = clientResolver?.(options.env ?? process.env, options.cwd);
+  return runTmuxBinary(
+    resolved2?.executable ?? "tmux",
+    args,
+    resolved2 ? { ...options, env: resolved2.environment } : options
+  );
 }
-function readDevelopmentBuild(instance, environment = process.env) {
+function sanitizeTmuxClientEnvironment(source = process.env) {
+  const environment = {
+    ...source,
+    COLORTERM: "truecolor",
+    COLORFGBG: "15;0"
+  };
+  delete environment.NO_COLOR;
+  return environment;
+}
+function runTmuxBinary(executable, args, options = {}) {
+  if (DEBUG || globalThis.__tmuxIdeVerbose) {
+    console.error(`  [tmux] ${args.join(" ")}`);
+  }
+  const execOptions = {
+    stdio: ["ignore", "pipe", "pipe"],
+    ...options,
+    env: sanitizeTmuxClientEnvironment(options.env ?? process.env)
+  };
   try {
-    const selected = environment.TMUX_IDE_DEVELOPMENT_BUILD;
-    const selectedHash = environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH;
-    if (Boolean(selected) !== Boolean(selectedHash))
-      throw new Error("Incomplete development build pin");
-    let pointer;
-    if (selected) pointer = { version: 1, generation: selected, sha256: selectedHash };
-    else {
-      const pointerPath = join(instance.root, "build.json");
-      const stat3 = lstatSync(pointerPath);
-      if (!stat3.isFile() || stat3.size > 4096) throw new Error("Invalid build pointer");
-      pointer = JSON.parse(readFileSync(pointerPath, "utf8"));
-    }
-    if (pointer.version !== 1 || !/^build-[a-f0-9-]{36}$/u.test(pointer.generation))
-      throw new Error("Invalid build pointer");
-    const manifestPath = join(instance.root, "artifacts", pointer.generation, "manifest.json");
-    if (lstatSync(manifestPath).size > 1024 * 1024 || developmentFileHash(manifestPath) !== pointer.sha256)
-      throw new Error("Development build manifest changed");
-    return verifyDevelopmentBuild(instance, JSON.parse(readFileSync(manifestPath, "utf8")));
+    return _executor(executable, args, execOptions);
   } catch (error) {
-    throw new Error(
-      "No verified development build manifest. From the selected worktree run: pnpm exec tsx scripts/development-build.ts --bun <absolute-pinned-bun> (repeat the selected --name and --store options). Installed/download/source fallback is disabled.",
+    throw classifyTmuxError(error);
+  }
+}
+function runTmuxBinaryAsync(executable, args, options = {}) {
+  if (DEBUG || globalThis.__tmuxIdeVerbose) {
+    console.error(`  [tmux] ${args.join(" ")}`);
+  }
+  return new Promise((resolve42, reject) => {
+    execFile(
+      executable,
+      args,
+      {
+        windowsHide: true,
+        ...options,
+        encoding: "utf8",
+        env: sanitizeTmuxClientEnvironment(options.env ?? process.env)
+      },
+      (error, stdout) => {
+        if (error) reject(classifyTmuxError(error));
+        else resolve42(stdout);
+      }
+    );
+  });
+}
+function classifyTmuxError(error) {
+  const detail = getErrorDetail(error).toLowerCase();
+  if (SESSION_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
+    return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", {
+      cause: error
+    });
+  }
+  if (ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
+    return new TmuxError(
+      "tmux environment variable was not found",
+      "ENVIRONMENT_VARIABLE_NOT_FOUND",
       { cause: error }
     );
   }
+  if (TMUX_UNAVAILABLE_PATTERNS.some((pattern) => detail.includes(pattern))) {
+    return new TmuxError("tmux is unavailable or its socket is inaccessible", "TMUX_UNAVAILABLE", {
+      cause: error
+    });
+  }
+  return new TmuxError("tmux command failed", "TMUX_ERROR", {
+    cause: error
+  });
 }
-function developmentBuildLaunch(manifest) {
-  return {
-    executable: manifest.tools.node,
-    argv: [manifest.cli],
-    environment: {
-      TMUX_IDE_CLI: manifest.cli,
-      TMUX_IDE_TUI_BIN: manifest.tui,
-      TMUX_IDE_DEVELOPMENT_BUILD: manifest.generation,
-      TMUX_IDE_DEVELOPMENT_BUILD_HASH: developmentFileHash(
-        join(dirname(manifest.cli), "..", "manifest.json")
-      )
-    }
-  };
+function getErrorDetail(error) {
+  const stderr = error?.stderr;
+  if (typeof stderr === "string" && stderr.length > 0) return stderr;
+  if (Buffer.isBuffer(stderr) && stderr.length > 0) return stderr.toString("utf-8");
+  return error?.message ?? "";
 }
-var HASH_BUFFER;
-var init_development_build = __esm({
-  "packages/daemon/src/lib/development-build.ts"() {
+var DEBUG, SESSION_NOT_FOUND_PATTERNS, ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS, TMUX_UNAVAILABLE_PATTERNS, _executor, _spawner, clientResolver;
+var init_runner = __esm({
+  "packages/tmux-bridge/src/runner.ts"() {
     "use strict";
-    HASH_BUFFER = Buffer.allocUnsafe(64 * 1024);
+    init_errors();
+    DEBUG = process.env.TMUX_IDE_DEBUG === "1";
+    SESSION_NOT_FOUND_PATTERNS = [
+      "can't find session",
+      "can't find window",
+      "can't find pane",
+      "unknown target"
+    ];
+    ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS = ["unknown variable:"];
+    TMUX_UNAVAILABLE_PATTERNS = [
+      "failed to connect to server",
+      "no server running",
+      "error connecting to",
+      "connection refused"
+    ];
+    _executor = execFileSync;
+    _spawner = spawn;
+  }
+});
+
+// packages/tmux-bridge/src/sessions.ts
+function getSessionState(session) {
+  try {
+    runTmux(["has-session", "-t", session]);
+    return { running: true, reason: null };
+  } catch (error) {
+    if (error instanceof TmuxError) {
+      if (error.code === "SESSION_NOT_FOUND") {
+        return { running: false, reason: "SESSION_NOT_FOUND" };
+      }
+      if (error.code === "TMUX_UNAVAILABLE") {
+        return { running: false, reason: "TMUX_UNAVAILABLE" };
+      }
+    }
+    throw error;
+  }
+}
+function attachSession(session) {
+  runTmux(["attach", "-t", session], { stdio: "inherit" });
+}
+function hasSession(session) {
+  try {
+    runTmux(["has-session", "-t", session]);
+    return true;
+  } catch (error) {
+    if (error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")) {
+      return false;
+    }
+    throw error;
+  }
+}
+function getSessionCwd(session) {
+  try {
+    const raw = runTmux(["display-message", "-p", "-t", session, "#{pane_current_path}"], {
+      encoding: "utf-8"
+    });
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+function killSession(session) {
+  try {
+    runTmux(["kill-session", "-t", session]);
+    return { stopped: true, reason: null };
+  } catch (error) {
+    if (error instanceof TmuxError) {
+      if (error.code === "SESSION_NOT_FOUND") {
+        return { stopped: false, reason: "SESSION_NOT_FOUND" };
+      }
+      if (error.code === "TMUX_UNAVAILABLE") {
+        return { stopped: false, reason: "TMUX_UNAVAILABLE" };
+      }
+    }
+    throw error;
+  }
+}
+function createDetachedSession(session, cwd, { cols, lines } = {}) {
+  const paneId = runTmux(
+    [
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-s",
+      session,
+      "-c",
+      cwd,
+      "-x",
+      String(cols ?? 200),
+      "-y",
+      String(lines ?? 50),
+      `exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' "\${SHELL:-/bin/sh}" -l`
+    ],
+    { encoding: "utf-8" }
+  ).trim();
+  runTmux(["set-environment", "-r", "-t", `=${session}`, "NO_COLOR"]);
+  runTmux(["set-environment", "-t", `=${session}`, "COLORTERM", "truecolor"]);
+  runTmux(["set-environment", "-t", `=${session}`, "COLORFGBG", "15;0"]);
+  return paneId;
+}
+function setSessionEnvironment(session, key2, value) {
+  runTmux(["set-environment", "-t", session, key2, String(value)]);
+}
+function getSessionVariable(session, name) {
+  try {
+    const raw = runTmux(["show-option", "-qvt", session, name], {
+      encoding: "utf-8"
+    });
+    return raw.trim() || null;
+  } catch {
+    return null;
+  }
+}
+function setSessionVariable(session, name, value) {
+  runTmux(["set-option", "-t", session, name, value]);
+}
+function runSessionCommand(args) {
+  runTmux(args, { stdio: "inherit" });
+}
+var init_sessions = __esm({
+  "packages/tmux-bridge/src/sessions.ts"() {
+    "use strict";
+    init_errors();
+    init_runner();
+  }
+});
+
+// packages/tmux-bridge/src/panes.ts
+function listPanes(session) {
+  const raw = runTmux(
+    [
+      "list-panes",
+      "-t",
+      session,
+      "-F",
+      "#{pane_index}|#{pane_title}|#{pane_width}|#{pane_height}|#{pane_active}"
+    ],
+    { encoding: "utf-8" }
+  ).trim();
+  if (!raw) return [];
+  return raw.split("\n").map((line) => {
+    const [index, title, width, height, active2] = line.split("|");
+    return {
+      index: Number.parseInt(index, 10),
+      title,
+      width: Number.parseInt(width, 10),
+      height: Number.parseInt(height, 10),
+      active: active2 === "1"
+    };
+  });
+}
+function splitPane(targetPane, direction, cwd, percent) {
+  return runTmux(
+    [
+      "split-window",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-t",
+      targetPane,
+      direction === "vertical" ? "-v" : "-h",
+      "-c",
+      cwd,
+      "-p",
+      String(percent)
+    ],
+    { encoding: "utf-8" }
+  ).trim();
+}
+function sendLiteral(targetPane, text) {
+  runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
+  runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
+}
+function sendKeys(targetPane, text, options = {}) {
+  const { enter = true } = options;
+  runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
+  if (enter) {
+    runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
+  }
+}
+function capturePane(targetPane, options = {}) {
+  const args = ["capture-pane", "-t", targetPane, "-p", "-J"];
+  if (typeof options.scrollback === "number") {
+    args.push("-S", `-${options.scrollback}`);
+  } else if (typeof options.lines === "number") {
+    args.push("-S", `-${options.lines}`);
+  }
+  return runTmux(args, { encoding: "utf-8" }).replace(/\n+$/, "");
+}
+function captureRecent(targetPane, lines = 50) {
+  return capturePane(targetPane, { lines });
+}
+function getPaneCurrentCommand(targetPane) {
+  return runTmux(["display-message", "-p", "-t", targetPane, "#{pane_current_command}"], {
+    encoding: "utf-8"
+  }).trim();
+}
+function selectPane(targetPane) {
+  runTmux(["select-pane", "-t", targetPane], { stdio: "inherit" });
+}
+function setPaneTitle(targetPane, title) {
+  runTmux(["select-pane", "-t", targetPane, "-T", title], { stdio: "inherit" });
+}
+function setPaneOption(targetPane, option, value) {
+  runTmux(["set-option", "-pqt", targetPane, option, value]);
+}
+function setWindowOption(targetPane, option, value) {
+  runTmux(["set-option", "-wqt", targetPane, option, value]);
+}
+var init_panes = __esm({
+  "packages/tmux-bridge/src/panes.ts"() {
+    "use strict";
+    init_runner();
+  }
+});
+
+// packages/tmux-bridge/src/monitor.ts
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function startSessionMonitor(session, monitorScript, port) {
+  try {
+    const existingPid = runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
+      encoding: "utf-8"
+    }).trim();
+    if (existingPid) {
+      const pid = parseInt(existingPid, 10);
+      if (isProcessAlive(pid)) {
+        stopSessionMonitor(session);
+        let attempts = 0;
+        while (isProcessAlive(pid) && attempts < 10) {
+          const { Atomics: Atomics2, SharedArrayBuffer: SharedArrayBuffer2 } = globalThis;
+          Atomics2.wait(new Int32Array(new SharedArrayBuffer2(4)), 0, 0, 100);
+          attempts++;
+        }
+      }
+    }
+  } catch {
+  }
+  const child = _getSpawner()("tsx", [monitorScript, session, String(port ?? 0)], {
+    detached: true,
+    stdio: "ignore",
+    cwd: process.cwd()
+  });
+  child.unref();
+  runTmux(["set-option", "-t", session, "@monitor_pid", String(child.pid)]);
+}
+function stopSessionMonitor(session) {
+  try {
+    const pid = runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
+      encoding: "utf-8"
+    }).trim();
+    if (pid) {
+      const numPid = parseInt(pid, 10);
+      try {
+        process.kill(-numPid, "SIGTERM");
+      } catch {
+        try {
+          process.kill(numPid, "SIGTERM");
+        } catch {
+        }
+      }
+    }
+  } catch {
+  }
+}
+var init_monitor = __esm({
+  "packages/tmux-bridge/src/monitor.ts"() {
+    "use strict";
+    init_runner();
+  }
+});
+
+// packages/tmux-bridge/src/targeting.ts
+function resolveTarget(panes, target, session) {
+  switch (target.kind) {
+    case "byId": {
+      if (target.id.startsWith("%")) {
+        return {
+          target: target.id,
+          pane: panes[0] ?? {
+            index: -1,
+            title: void 0,
+            width: 0,
+            height: 0,
+            active: false
+          }
+        };
+      }
+      const numeric = Number.parseInt(target.id, 10);
+      if (!Number.isFinite(numeric)) {
+        throw new Error(`Invalid pane id: ${target.id}`);
+      }
+      const found = panes.find((p) => p.index === numeric);
+      if (!found) {
+        throw new Error(`Pane not found by id: ${target.id}`);
+      }
+      return { target: paneTarget(session, found.index), pane: found };
+    }
+    case "byIndex": {
+      const found = panes.find((p) => p.index === target.index);
+      if (!found) {
+        throw new Error(`Pane not found by index: ${target.index}`);
+      }
+      return { target: paneTarget(session, found.index), pane: found };
+    }
+    case "byTitle": {
+      const matches = panes.filter((p) => p.title === target.title);
+      if (matches.length === 0) {
+        throw new Error(`Pane not found by title: ${target.title}`);
+      }
+      if (matches.length > 1) {
+        throw new Error(`Ambiguous pane title "${target.title}" matches ${matches.length} panes`);
+      }
+      return {
+        target: paneTarget(session, matches[0].index),
+        pane: matches[0]
+      };
+    }
+    case "byRole":
+      throw new Error(
+        `byRole targets must be resolved at the daemon layer before reaching the bridge (got role="${target.role}")`
+      );
+  }
+}
+function paneTarget(session, index) {
+  return session ? `${session}.${index}` : String(index);
+}
+var init_targeting = __esm({
+  "packages/tmux-bridge/src/targeting.ts"() {
+    "use strict";
+  }
+});
+
+// packages/tmux-bridge/src/index.ts
+var src_exports = {};
+__export(src_exports, {
+  TmuxError: () => TmuxError,
+  _getSpawner: () => _getSpawner,
+  _setExecutor: () => _setExecutor,
+  _setSpawner: () => _setSpawner,
+  attachSession: () => attachSession,
+  capturePane: () => capturePane,
+  captureRecent: () => captureRecent,
+  classifyTmuxError: () => classifyTmuxError,
+  configureTmuxClientResolver: () => configureTmuxClientResolver,
+  createDetachedSession: () => createDetachedSession,
+  getPaneCurrentCommand: () => getPaneCurrentCommand,
+  getSessionCwd: () => getSessionCwd,
+  getSessionState: () => getSessionState,
+  getSessionVariable: () => getSessionVariable,
+  hasSession: () => hasSession,
+  isProcessAlive: () => isProcessAlive,
+  killSession: () => killSession,
+  listPanes: () => listPanes,
+  resolveTarget: () => resolveTarget,
+  runSessionCommand: () => runSessionCommand,
+  runTmux: () => runTmux,
+  runTmuxBinary: () => runTmuxBinary,
+  runTmuxBinaryAsync: () => runTmuxBinaryAsync,
+  sanitizeTmuxClientEnvironment: () => sanitizeTmuxClientEnvironment,
+  selectPane: () => selectPane,
+  sendKeys: () => sendKeys,
+  sendLiteral: () => sendLiteral,
+  setPaneOption: () => setPaneOption,
+  setPaneTitle: () => setPaneTitle,
+  setSessionEnvironment: () => setSessionEnvironment,
+  setSessionVariable: () => setSessionVariable,
+  setWindowOption: () => setWindowOption,
+  splitPane: () => splitPane,
+  startSessionMonitor: () => startSessionMonitor,
+  stopSessionMonitor: () => stopSessionMonitor
+});
+var init_src = __esm({
+  "packages/tmux-bridge/src/index.ts"() {
+    "use strict";
+    init_errors();
+    init_runner();
+    init_sessions();
+    init_panes();
+    init_monitor();
+    init_targeting();
   }
 });
 
 // packages/daemon/src/lib/development-instance.ts
-import { createHash as createHash2 } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync as lstatSync2, realpathSync as realpathSync2 } from "node:fs";
+import { createHash } from "node:crypto";
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname2, isAbsolute, join as join2, resolve as resolve2 } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 function validateDevelopmentDirectory(path2, privateRoot) {
   const uid = process.getuid?.();
   if (uid === void 0 || !["darwin", "linux"].includes(process.platform))
     throw new Error("Development instances require macOS or Linux");
-  let cursor2 = resolve2(path2);
+  let cursor2 = resolve(path2);
   while (true) {
     let info;
     try {
-      info = lstatSync2(cursor2);
+      info = lstatSync(cursor2);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
@@ -243,14 +612,14 @@ function validateDevelopmentDirectory(path2, privateRoot) {
       if (info.mode & 18 && !(info.uid === 0 && info.mode & 512))
         throw new Error(`Unsafe shared development ancestor: ${cursor2}`);
     }
-    const parent = dirname2(cursor2);
+    const parent = dirname(cursor2);
     if (parent === cursor2) break;
     cursor2 = parent;
   }
 }
 function resolveDevelopmentInstance(input) {
-  const worktree = realpathSync2(input.worktree);
-  if (!isAbsolute(input.worktree) || !lstatSync2(worktree).isDirectory())
+  const worktree = realpathSync(input.worktree);
+  if (!isAbsolute(input.worktree) || !lstatSync(worktree).isDirectory())
     throw new Error("Development worktree must be an absolute directory");
   return resolveDevelopmentInstancePaths({ ...input, worktree });
 }
@@ -259,38 +628,38 @@ function resolveDevelopmentInstancePaths(input) {
   if (name && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$/u.test(name))
     throw new Error("Invalid development instance name");
   const worktree = input.worktree;
-  if (!isAbsolute(worktree) || resolve2(worktree) !== worktree)
+  if (!isAbsolute(worktree) || resolve(worktree) !== worktree)
     throw new Error("Recorded worktree must be canonical and absolute");
   const userHome = input.userHome ?? homedir();
-  const suppliedStore = resolve2(input.store ?? join2(userHome, ".local", "state", "tmux-ide-dev"));
+  const suppliedStore = resolve(input.store ?? join(userHome, ".local", "state", "tmux-ide-dev"));
   let parent = suppliedStore;
   const suffix = [];
   while (!existsSync(parent)) {
-    const next = dirname2(parent);
+    const next = dirname(parent);
     if (next === parent) break;
     suffix.unshift(parent.slice(next.length + (next === "/" ? 0 : 1)));
     parent = next;
   }
-  if (parent === suppliedStore && lstatSync2(parent).isSymbolicLink())
+  if (parent === suppliedStore && lstatSync(parent).isSymbolicLink())
     throw new Error("Development store cannot be a symlink");
-  const store = join2(realpathSync2(parent), ...suffix);
-  const canonicalHome = join2(realpathSync2(userHome), ".tmux-ide");
-  const canonicalState = existsSync(canonicalHome) ? realpathSync2(canonicalHome) : canonicalHome;
+  const store = join(realpathSync(parent), ...suffix);
+  const canonicalHome = join(realpathSync(userHome), ".tmux-ide");
+  const canonicalState = existsSync(canonicalHome) ? realpathSync(canonicalHome) : canonicalHome;
   if (suppliedStore === canonicalHome || suppliedStore.startsWith(`${canonicalHome}/`) || store === canonicalState || store.startsWith(`${canonicalState}/`))
     throw new Error("Development store cannot use canonical state");
   if (store === canonicalHome || store.startsWith(`${canonicalHome}/`) || /\/instances\/dev-[a-f0-9]{24}(?:\/|$)/u.test(store))
     throw new Error("Development store cannot use canonical or sibling instance state");
   if (input.store && !isAbsolute(input.store))
     throw new Error("Development store must be absolute");
-  const digest3 = createHash2("sha256").update(JSON.stringify(["tmux-ide-development-v1", worktree, name])).digest("hex");
+  const digest3 = createHash("sha256").update(JSON.stringify(["tmux-ide-development-v1", worktree, name])).digest("hex");
   const id2 = `dev-${digest3.slice(0, 24)}`;
-  const root = join2(store, "instances", id2);
-  const runtimeRoot = join2(realpathSync2("/tmp"), `ti-dev-${process.getuid?.()}`);
-  const runtimeDir = join2(runtimeRoot, id2);
+  const root = join(store, "instances", id2);
+  const runtimeRoot = join(realpathSync("/tmp"), `ti-dev-${process.getuid?.()}`);
+  const runtimeDir = join(runtimeRoot, id2);
   validateDevelopmentDirectory(root, store);
-  validateDevelopmentDirectory(join2(root, "state"), store);
+  validateDevelopmentDirectory(join(root, "state"), store);
   validateDevelopmentDirectory(runtimeDir, runtimeRoot);
-  if (Buffer.byteLength(join2(runtimeDir, "control.sock")) > 100)
+  if (Buffer.byteLength(join(runtimeDir, "control.sock")) > 100)
     throw new Error("Development socket path exceeds portable limit");
   return Object.freeze({
     id: id2,
@@ -299,7 +668,7 @@ function resolveDevelopmentInstancePaths(input) {
     name,
     store,
     root,
-    stateHome: join2(root, "state"),
+    stateHome: join(root, "state"),
     runtimeDir
   });
 }
@@ -310,19 +679,19 @@ var init_development_instance = __esm({
 });
 
 // packages/daemon/src/lib/unix-socket-authority.ts
-import { lstatSync as lstatSync3, realpathSync as realpathSync3 } from "node:fs";
-import { basename, dirname as dirname3, isAbsolute as isAbsolute2, join as join3, resolve as resolve3 } from "node:path";
+import { lstatSync as lstatSync2, realpathSync as realpathSync2 } from "node:fs";
+import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join as join2, resolve as resolve2 } from "node:path";
 function validSocketPath(path2) {
-  return isAbsolute2(path2) && resolve3(path2) === path2 && Buffer.byteLength(path2) <= MAX_SOCKET_PATH_BYTES && !/[\0\r\n]/u.test(path2);
+  return isAbsolute2(path2) && resolve2(path2) === path2 && Buffer.byteLength(path2) <= MAX_SOCKET_PATH_BYTES && !/[\0\r\n]/u.test(path2);
 }
 function captureUnixSocketIdentity(path2) {
   if (!validSocketPath(path2)) throw new TypeError("Unix socket path is invalid");
-  const sourceParent = lstatSync3(dirname3(path2));
-  const source = lstatSync3(path2, { bigint: true });
+  const sourceParent = lstatSync2(dirname2(path2));
+  const source = lstatSync2(path2, { bigint: true });
   if (!sourceParent.isDirectory() || sourceParent.isSymbolicLink() || !source.isSocket())
     throw new TypeError("Unix socket authority is invalid");
-  const canonicalPath = join3(realpathSync3(dirname3(path2)), basename(path2));
-  const canonical = lstatSync3(canonicalPath, { bigint: true });
+  const canonicalPath = join2(realpathSync2(dirname2(path2)), basename(path2));
+  const canonical = lstatSync2(canonicalPath, { bigint: true });
   if (!canonical.isSocket() || canonical.dev !== source.dev || canonical.ino !== source.ino)
     throw new TypeError("Unix socket authority changed while resolving");
   return Object.freeze({
@@ -336,7 +705,7 @@ function captureUnixSocketIdentity(path2) {
 function revalidateUnixSocketIdentity(identity2) {
   if (!validSocketPath(identity2.path) || !Number.isSafeInteger(identity2.dev) || identity2.dev < 0 || !Number.isSafeInteger(identity2.ino) || identity2.ino < 0 || typeof identity2.mtimeNs !== "bigint" || identity2.mtimeNs < 0n || typeof identity2.birthtimeNs !== "bigint" || identity2.birthtimeNs < 0n)
     throw new TypeError("Unix socket identity is invalid");
-  const current = lstatSync3(identity2.path, { bigint: true });
+  const current = lstatSync2(identity2.path, { bigint: true });
   if (!current.isSocket() || current.dev !== BigInt(identity2.dev) || current.ino !== BigInt(identity2.ino) || current.mtimeNs !== identity2.mtimeNs || current.birthtimeNs !== identity2.birthtimeNs)
     throw new TypeError("Unix socket authority changed before use");
   return identity2.path;
@@ -351,46 +720,46 @@ var init_unix_socket_authority = __esm({
 
 // packages/daemon/src/lib/runtime-namespace.ts
 import { homedir as homedir2 } from "node:os";
-import { lstatSync as lstatSync4, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute3, join as join4, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
+import { lstatSync as lstatSync3, realpathSync as realpathSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute3, join as join3, relative, resolve as resolve3, sep } from "node:path";
 function nonEmpty(env, key2) {
   const value = env[key2]?.trim();
   return value ? value : void 0;
 }
 function absolutePath(value, cwd, key2) {
-  const path2 = isAbsolute3(value) ? value : resolve4(cwd, value);
+  const path2 = isAbsolute3(value) ? value : resolve3(cwd, value);
   if (!isAbsolute3(path2)) throw new TypeError(`${key2} must resolve to an absolute path`);
   return path2;
 }
 function pathEntryStat(path2) {
   try {
-    return lstatSync4(path2);
+    return lstatSync3(path2);
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
     throw error;
   }
 }
 function pathIdentity(path2) {
-  let cursor2 = resolve4(path2);
+  let cursor2 = resolve3(path2);
   const suffix = [];
   let stat3 = pathEntryStat(cursor2);
   while (!stat3) {
-    const parent = dirname4(cursor2);
+    const parent = dirname3(cursor2);
     if (parent === cursor2) break;
     suffix.unshift(basename2(cursor2));
     cursor2 = parent;
     stat3 = pathEntryStat(cursor2);
   }
   if (stat3?.isSocket()) {
-    return resolve4(captureUnixSocketIdentity(cursor2).path, ...suffix);
+    return resolve3(captureUnixSocketIdentity(cursor2).path, ...suffix);
   }
-  return resolve4(stat3 ? realpathSync4(cursor2) : cursor2, ...suffix);
+  return resolve3(stat3 ? realpathSync3(cursor2) : cursor2, ...suffix);
 }
 function isInsideOrEqual(path2, parent, identity2 = pathIdentity) {
   const child = identity2(path2);
   const root = identity2(parent);
-  const offset = relative2(root, child);
-  return offset === "" || !offset.startsWith(`..${sep2}`) && offset !== "..";
+  const offset = relative(root, child);
+  return offset === "" || !offset.startsWith(`..${sep}`) && offset !== "..";
 }
 function runtimeMode(env) {
   const raw = nonEmpty(env, RUNTIME_MODE_ENV) ?? "production";
@@ -414,7 +783,7 @@ function resolveRuntimeNamespace(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const mode = runtimeMode(env);
   const isolated = ISOLATED_MODES.has(mode);
-  const canonicalHome = join4(userHome, ".tmux-ide");
+  const canonicalHome = join3(userHome, ".tmux-ide");
   const configuredHome = nonEmpty(env, STATE_HOME_ENV);
   let development = null;
   if (mode === "development") {
@@ -433,7 +802,7 @@ function resolveRuntimeNamespace(options = {}) {
     for (const key2 of [REGISTRY_DIR_ENV, DAEMON_INFO_DIR_ENV])
       if (env[key2] !== development.stateHome)
         throw new TypeError(`development requires exact ${key2}`);
-    if (env[TMUX_SOCKET_PATH_ENV] !== join4(development.runtimeDir, "tmux.sock") || nonEmpty(env, TMUX_SOCKET_NAME_ENV))
+    if (env[TMUX_SOCKET_PATH_ENV] !== join3(development.runtimeDir, "tmux.sock") || nonEmpty(env, TMUX_SOCKET_NAME_ENV))
       throw new TypeError("development requires its exact private tmux socket");
     for (const key2 of Object.keys(env)) {
       if (!env[key2]) continue;
@@ -498,19 +867,19 @@ function resolveRuntimeNamespace(options = {}) {
   const runtimeDir = development?.runtimeDir ?? stateHome2;
   const configPath = scoped(
     "TMUX_IDE_CONFIG",
-    join4(isolated ? stateHome2 : canonicalHome, "config.json")
+    join3(isolated ? stateHome2 : canonicalHome, "config.json")
   );
   const settingsDir2 = scoped("TMUX_IDE_SETTINGS_DIR", isolated ? stateHome2 : canonicalHome);
-  const integrationRoot = development ? join4(stateHome2, "integrations") : userHome;
-  const claudeDir2 = scoped("TMUX_IDE_CLAUDE_DIR", join4(integrationRoot, ".claude"));
-  const claudeSettingsPath2 = scoped("TMUX_IDE_CLAUDE_SETTINGS", join4(claudeDir2, "settings.json"));
+  const integrationRoot = development ? join3(stateHome2, "integrations") : userHome;
+  const claudeDir2 = scoped("TMUX_IDE_CLAUDE_DIR", join3(integrationRoot, ".claude"));
+  const claudeSettingsPath2 = scoped("TMUX_IDE_CLAUDE_SETTINGS", join3(claudeDir2, "settings.json"));
   const claudeHookPath = scoped(
     "TMUX_IDE_CLAUDE_HOOK_PATH",
-    development ? join4(stateHome2, "hooks", "claude-state.sh") : join4(userHome, ".tmux-ide", "hooks", "claude-state.sh")
+    development ? join3(stateHome2, "hooks", "claude-state.sh") : join3(userHome, ".tmux-ide", "hooks", "claude-state.sh")
   );
   const opencodeDir = scoped(
     "TMUX_IDE_OPENCODE_DIR",
-    development ? join4(integrationRoot, "opencode", "plugin") : join4(nonEmpty(env, "XDG_CONFIG_HOME") ?? join4(userHome, ".config"), "opencode", "plugin")
+    development ? join3(integrationRoot, "opencode", "plugin") : join3(nonEmpty(env, "XDG_CONFIG_HOME") ?? join3(userHome, ".config"), "opencode", "plugin")
   );
   if (development) {
     for (const key2 of [
@@ -525,7 +894,7 @@ function resolveRuntimeNamespace(options = {}) {
       if (nonEmpty(env, key2)) scoped(key2, "");
     if (env.TMUX) {
       const socket = /^(.*),[0-9]+,[0-9]+$/u.exec(env.TMUX)?.[1];
-      if (!socket || identity2(socket) !== identity2(join4(runtimeDir, "tmux.sock")))
+      if (!socket || identity2(socket) !== identity2(join3(runtimeDir, "tmux.sock")))
         throw new TypeError("development rejects inherited foreign TMUX authority");
     }
   }
@@ -535,7 +904,7 @@ function resolveRuntimeNamespace(options = {}) {
     runtimeDir,
     configPath,
     settingsDir: settingsDir2,
-    logsDir: development ? join4(development.root, "logs") : join4(stateHome2, "logs"),
+    logsDir: development ? join3(development.root, "logs") : join3(stateHome2, "logs"),
     claudeDir: claudeDir2,
     claudeSettingsPath: claudeSettingsPath2,
     claudeHookPath,
@@ -543,8 +912,8 @@ function resolveRuntimeNamespace(options = {}) {
     stateHome: stateHome2,
     registryDir: registryDir2,
     daemonInfoDir,
-    controlSocketPath: join4(runtimeDir, "control.sock"),
-    eventLogPath: join4(stateHome2, "events.jsonl"),
+    controlSocketPath: join3(runtimeDir, "control.sock"),
+    eventLogPath: join3(stateHome2, "events.jsonl"),
     tmuxSocket,
     tmuxSocketExplicit: Boolean(tmuxSocketName || tmuxSocketPath),
     cleanupToken,
@@ -631,13 +1000,437 @@ var init_runtime_namespace = __esm({
   }
 });
 
+// packages/daemon/src/lib/development-build.ts
+import { createHash as createHash2 } from "node:crypto";
+import {
+  openSync,
+  closeSync,
+  readSync,
+  fstatSync,
+  constants,
+  lstatSync as lstatSync4,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync as realpathSync4
+} from "node:fs";
+import { dirname as dirname4, join as join4, relative as relative2, resolve as resolve4, sep as sep2 } from "node:path";
+function developmentNativeObservationOption(value, command3 = "rebuild", container = false) {
+  if (value === void 0) return void 0;
+  if (command3 !== "rebuild" || container || value !== "enabled" && value !== "disabled")
+    throw new Error(
+      "native-observation requires rebuild and enabled|disabled outside container mode"
+    );
+  return value;
+}
+function developmentFileHash(path2) {
+  const fd = openSync(path2, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > 512 * 1024 * 1024)
+      throw new Error(`Invalid build file: ${path2}`);
+    const hash = createHash2("sha256");
+    const buffer = HASH_BUFFER;
+    let total = 0;
+    while (true) {
+      const count = readSync(fd, buffer, 0, buffer.length, null);
+      if (!count) break;
+      total += count;
+      if (total > info.size) throw new Error("Build file grew while hashing");
+      hash.update(buffer.subarray(0, count));
+    }
+    const after = fstatSync(fd);
+    if (total !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs)
+      throw new Error("Build file changed while hashing");
+    return hash.digest("hex");
+  } finally {
+    closeSync(fd);
+  }
+}
+function developmentTreeHash(root, omitManifest = false) {
+  const digest3 = createHash2("sha256");
+  let files = 0;
+  let bytes = 0;
+  const visit = (path2) => {
+    if (++files > 1e5) throw new Error("Development artifact file budget exceeded");
+    const info = lstatSync4(path2);
+    const name = relative2(root, path2);
+    if (info.isSymbolicLink()) {
+      const target = readlinkSync(path2);
+      const actual = realpathSync4(path2);
+      if (actual !== root && !actual.startsWith(`${root}${sep2}`))
+        throw new Error("Development artifact symlink escapes generation");
+      digest3.update(JSON.stringify([name, "link", target]));
+      return;
+    }
+    if (info.isDirectory()) {
+      digest3.update(JSON.stringify([name, "directory"]));
+      for (const child of readdirSync(path2).sort()) {
+        if (omitManifest && path2 === root && child === "manifest.json") continue;
+        visit(join4(path2, child));
+      }
+      return;
+    }
+    if (!info.isFile() || (bytes += info.size) > 1024 * 1024 * 1024)
+      throw new Error("Development artifact byte budget exceeded");
+    digest3.update(JSON.stringify([name, info.mode & 511, info.size, developmentFileHash(path2)]));
+  };
+  visit(root);
+  return digest3.digest("hex");
+}
+function assertRecord(value) {
+  if (!value || typeof value !== "object") throw new Error("Missing development build manifest");
+  const m = value;
+  developmentNativeObservationOption(m.nativeObservation);
+  if (m.version !== 1 || !/^build-[a-f0-9-]{36}$/u.test(m.generation) || m.execution !== "packaged-development" || !m.instance || !m.host || !m.tools || !m.hashes || !m.source || !Array.isArray(m.native) || !Array.isArray(m.packages) || !m.qualification)
+    throw new Error("Invalid development build manifest");
+  for (const hash of [
+    ...Object.values(m.hashes),
+    m.source.digest,
+    m.source.lockfileHash,
+    m.tools.nodeHash,
+    m.tools.bunHash
+  ])
+    if (typeof hash !== "string" || !/^[a-f0-9]{64}$/u.test(hash))
+      throw new Error("Invalid development artifact digest");
+}
+function verifyDevelopmentBuild(instance, value) {
+  assertRecord(value);
+  const m = value;
+  for (const key2 of ["id", "digest", "worktree", "name"])
+    if (m.instance[key2] !== instance[key2])
+      throw new Error("Development build belongs to another instance/worktree");
+  if (m.host.platform !== process.platform || m.host.arch !== process.arch || !process.versions.bun && m.host.nodeAbi !== process.versions.modules || process.versions.bun !== void 0 && m.host.bunVersion !== process.versions.bun)
+    throw new Error("Development build host/native ABI mismatch");
+  const root = join4(instance.root, "artifacts", m.generation);
+  if (realpathSync4(root) !== root) throw new Error("Development artifact generation is redirected");
+  for (const [key2, rel] of Object.entries({
+    cli: "bin/cli.js",
+    tui: "tui/tmux-ide-tui",
+    dependencies: "dependencies",
+    assets: "packages/daemon/dist/native"
+  })) {
+    if (m[key2] !== join4(root, rel)) throw new Error("Development artifact path mismatch");
+  }
+  if (developmentTreeHash(root, true) !== m.hashes.payload || developmentFileHash(m.cli) !== m.hashes.cli || developmentFileHash(m.tui) !== m.hashes.tui || developmentTreeHash(m.dependencies) !== m.hashes.dependencies || developmentTreeHash(m.assets) !== m.hashes.assets || developmentFileHash(join4(root, "package.json")) !== m.hashes.metadata)
+    throw new Error("Development artifact contents changed; rebuild required");
+  for (const tool of ["node"]) {
+    if (resolve4(m.tools[tool]) !== m.tools[tool] || developmentFileHash(m.tools[tool]) !== m.tools[`${tool}Hash`])
+      throw new Error("Development build toolchain changed; rebuild required");
+  }
+  return m;
+}
+function readDevelopmentBuild(instance, environment = process.env) {
+  try {
+    const selected = environment.TMUX_IDE_DEVELOPMENT_BUILD;
+    const selectedHash = environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH;
+    if (Boolean(selected) !== Boolean(selectedHash))
+      throw new Error("Incomplete development build pin");
+    let pointer;
+    if (selected) pointer = { version: 1, generation: selected, sha256: selectedHash };
+    else {
+      const pointerPath = join4(instance.root, "build.json");
+      const stat3 = lstatSync4(pointerPath);
+      if (!stat3.isFile() || stat3.size > 4096) throw new Error("Invalid build pointer");
+      pointer = JSON.parse(readFileSync(pointerPath, "utf8"));
+    }
+    if (pointer.version !== 1 || !/^build-[a-f0-9-]{36}$/u.test(pointer.generation))
+      throw new Error("Invalid build pointer");
+    const manifestPath = join4(instance.root, "artifacts", pointer.generation, "manifest.json");
+    if (lstatSync4(manifestPath).size > 1024 * 1024 || developmentFileHash(manifestPath) !== pointer.sha256)
+      throw new Error("Development build manifest changed");
+    return verifyDevelopmentBuild(instance, JSON.parse(readFileSync(manifestPath, "utf8")));
+  } catch (error) {
+    throw new Error(
+      "No verified development build manifest. From the selected worktree run: pnpm exec tsx scripts/development-build.ts --bun <absolute-pinned-bun> (repeat the selected --name and --store options). Installed/download/source fallback is disabled.",
+      { cause: error }
+    );
+  }
+}
+function developmentBuildLaunch(manifest) {
+  return {
+    executable: manifest.tools.node,
+    argv: [manifest.cli],
+    environment: {
+      TMUX_IDE_CLI: manifest.cli,
+      TMUX_IDE_TUI_BIN: manifest.tui,
+      TMUX_IDE_DEVELOPMENT_BUILD: manifest.generation,
+      TMUX_IDE_DEVELOPMENT_BUILD_HASH: developmentFileHash(
+        join4(dirname4(manifest.cli), "..", "manifest.json")
+      )
+    }
+  };
+}
+var HASH_BUFFER;
+var init_development_build = __esm({
+  "packages/daemon/src/lib/development-build.ts"() {
+    "use strict";
+    HASH_BUFFER = Buffer.allocUnsafe(64 * 1024);
+  }
+});
+
+// packages/daemon/src/lib/bundled-tmux.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { createHash as createHash3 } from "node:crypto";
+import {
+  accessSync,
+  chmodSync,
+  constants as constants2,
+  existsSync as existsSync2,
+  readFileSync as readFileSync2,
+  realpathSync as realpathSync5,
+  statSync,
+  readdirSync as readdirSync2,
+  lstatSync as lstatSync5
+} from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute4, join as join5, relative as relative3, resolve as resolve5, sep as sep3 } from "node:path";
+import { fileURLToPath } from "node:url";
+function validateBundledTmux(directory, platform2 = process.platform, arch = process.arch) {
+  const root = realpathSync5(directory);
+  const manifest = JSON.parse(readFileSync2(join5(root, "manifest.json"), "utf8"));
+  if (manifest.schemaVersion !== 1 || manifest.platform !== platform2 || manifest.arch !== arch || // Both known distributions remain usable; the live server capture probe
+  // decides bootstrap capability, independently of the installed client.
+  manifest.extension !== "tmux-ide-native-grid-v1" && manifest.extension !== "tmux-ide-native-grid-v2" || !manifest.files || typeof manifest.files !== "object" || typeof manifest.files.tmux !== "string")
+    throw new Error("Invalid bundled tmux manifest");
+  if (platform2 === "darwin") parseMacOSVersion(manifest.minimumMacOS);
+  for (const [name, expected] of Object.entries(manifest.files)) {
+    if (isAbsolute4(name) || name.split(/[\\/]/u).includes(".."))
+      throw new Error("Invalid bundled tmux file path");
+    const path2 = realpathSync5(join5(root, name));
+    const local = relative3(root, path2);
+    if (local.startsWith(`..${sep3}`) || local === ".." || isAbsolute4(local))
+      throw new Error("Bundled tmux file escapes its distribution");
+    const actual = createHash3("sha256").update(readFileSync2(path2)).digest("hex");
+    if (actual !== expected) throw new Error(`Bundled tmux checksum mismatch: ${name}`);
+  }
+  if (manifest.terminfo !== void 0) {
+    const catalog = manifest.terminfo;
+    const entries = Object.keys(manifest.files).filter(
+      (name) => name.startsWith("share/terminfo/")
+    );
+    if (catalog.directory !== "share/terminfo" || !Number.isSafeInteger(catalog.entries) || catalog.entries < 1 || catalog.entries > 8192 || entries.length !== catalog.entries || entries.some(
+      (name) => !/^share\/terminfo\/(?:[A-Za-z0-9]|[0-9a-fA-F]{2})\/[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}$/u.test(
+        name
+      )
+    ) || !["xterm-256color", "screen-256color", "tmux-256color"].every(
+      (name) => entries.some((entry) => entry.endsWith(`/${name}`))
+    )) {
+      throw new Error("Invalid bundled terminfo catalog");
+    }
+    const directory2 = join5(root, "share/terminfo");
+    const actual = [];
+    if (!lstatSync5(directory2).isDirectory() || lstatSync5(directory2).isSymbolicLink())
+      throw new Error("Invalid bundled terminfo directory");
+    for (const bucket of readdirSync2(directory2)) {
+      const bucketPath = join5(directory2, bucket), bucketStat = lstatSync5(bucketPath);
+      if (!bucketStat.isDirectory() || bucketStat.isSymbolicLink())
+        throw new Error("Invalid bundled terminfo bucket");
+      for (const name of readdirSync2(bucketPath)) {
+        const entry = lstatSync5(join5(bucketPath, name));
+        if (!entry.isFile() || entry.isSymbolicLink())
+          throw new Error("Invalid bundled terminfo entry");
+        actual.push(`share/terminfo/${bucket}/${name}`);
+      }
+    }
+    if (actual.sort().join("\n") !== entries.sort().join("\n"))
+      throw new Error("Unlisted bundled terminfo entry");
+  }
+  const executable = realpathSync5(join5(root, "tmux"));
+  try {
+    accessSync(executable, constants2.X_OK);
+  } catch (error) {
+    if (error.code !== "EACCES") throw error;
+    chmodSync(executable, 493);
+  }
+  accessSync(executable, constants2.X_OK);
+  return executable;
+}
+function resolveBundledTmux(anchors = [
+  ...process.env.TMUX_IDE_CLI ? [process.env.TMUX_IDE_CLI] : [],
+  fileURLToPath(import.meta.url)
+], currentMacOSVersion = () => execFileSync3("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" }).trim()) {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) {
+    const build = readDevelopmentBuild(namespace.development);
+    const bundle = join5(build.assets, "tmux", `${process.platform}-${process.arch}`);
+    if (!existsSync2(join5(bundle, "manifest.json")))
+      throw new Error("Development build lacks bundled tmux; rebuild with qualified native assets");
+    const executable = validateBundledTmux(bundle);
+    if (process.platform === "darwin") {
+      const manifest = JSON.parse(readFileSync2(join5(bundle, "manifest.json"), "utf8"));
+      if (!isMacOSVersionCompatible(currentMacOSVersion(), manifest.minimumMacOS))
+        throw new Error("Development bundled tmux is incompatible with this OS");
+    }
+    return executable;
+  }
+  const visited = /* @__PURE__ */ new Set();
+  for (const anchor of anchors) {
+    if (!isAbsolute4(anchor)) continue;
+    let directory = dirname5(resolve5(anchor));
+    while (!visited.has(directory)) {
+      visited.add(directory);
+      const bundle = join5(
+        directory,
+        "packages/daemon/dist/native/tmux",
+        `${process.platform}-${process.arch}`
+      );
+      if (existsSync2(join5(bundle, "manifest.json"))) {
+        const executable = validateBundledTmux(bundle);
+        if (process.platform === "darwin") {
+          const manifest = JSON.parse(readFileSync2(join5(bundle, "manifest.json"), "utf8"));
+          if (!isMacOSVersionCompatible(currentMacOSVersion(), manifest.minimumMacOS)) return null;
+        }
+        return executable;
+      }
+      const parent = dirname5(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  return null;
+}
+function parseMacOSVersion(value) {
+  if (typeof value !== "string" || !/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/u.test(value))
+    throw new Error("Invalid bundled tmux macOS version metadata");
+  return value.split(".").map(Number);
+}
+function isMacOSVersionCompatible(current, minimum) {
+  const actual = parseMacOSVersion(current);
+  const required = parseMacOSVersion(minimum);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (actual[index] ?? 0) - (required[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+function bundledTmuxResourceEnvironment(executable) {
+  if (!executable || !isAbsolute4(executable) || !existsSync2(executable)) return {};
+  const canonical = realpathSync5(executable);
+  const root = dirname5(canonical), manifestPath = join5(root, "manifest.json");
+  if (canonical !== join5(root, "tmux") || !existsSync2(manifestPath)) return {};
+  const identity2 = [canonical, manifestPath].map((path2) => {
+    const st = statSync(path2);
+    return `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+  }).join("|");
+  const cached2 = resourceEnvironments.get(canonical);
+  if (cached2?.identity === identity2) return cached2.environment;
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync2(manifestPath, "utf8"));
+  } catch {
+    return {};
+  }
+  if (!manifest || typeof manifest !== "object" || manifest.terminfo === void 0 || !["tmux-ide-native-grid-v1", "tmux-ide-native-grid-v2"].includes(manifest.extension))
+    return {};
+  if (validateBundledTmux(root) !== canonical)
+    throw new Error("Bundled terminfo executable mismatch");
+  const directory = realpathSync5(join5(root, "share/terminfo"));
+  if (!directory.startsWith(`${root}${sep3}`))
+    throw new Error("Bundled terminfo directory escapes bundle");
+  const environment = Object.freeze({ TERMINFO_DIRS: `${directory}:` });
+  resourceEnvironments.set(canonical, { identity: identity2, environment });
+  return environment;
+}
+function withBundledTmuxResources(executable, environment) {
+  const resources = bundledTmuxResourceEnvironment(executable);
+  if (!resources.TERMINFO_DIRS || environment.TERMINFO_DIRS?.startsWith(resources.TERMINFO_DIRS))
+    return environment;
+  return {
+    ...environment,
+    TERMINFO_DIRS: resources.TERMINFO_DIRS + (environment.TERMINFO_DIRS ?? "")
+  };
+}
+var resourceEnvironments;
+var init_bundled_tmux = __esm({
+  "packages/daemon/src/lib/bundled-tmux.ts"() {
+    "use strict";
+    init_runtime_namespace();
+    init_development_build();
+    resourceEnvironments = /* @__PURE__ */ new Map();
+  }
+});
+
+// packages/daemon/src/lib/tmux-client-execution.ts
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { accessSync as accessSync2, constants as constants3, realpathSync as realpathSync6, statSync as statSync2 } from "node:fs";
+import { delimiter, isAbsolute as isAbsolute5, join as join6, resolve as resolve6 } from "node:path";
+function resolveTmuxExecutable() {
+  if (resolveRuntimeNamespace().development) return resolveBundledTmux();
+  const configured = process.env.TMUX_IDE_TMUX_BIN;
+  if (!configured) {
+    const bundled = resolveBundledTmux();
+    if (bundled) return bundled;
+  }
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter).filter((entry) => entry.length > 0 && isAbsolute5(entry)).map((entry) => join6(entry, "tmux"));
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute5(candidate)) continue;
+      accessSync2(candidate, constants3.X_OK);
+      const canonical = realpathSync6(candidate);
+      if (statSync2(canonical).isFile()) return canonical;
+    } catch {
+    }
+  }
+  throw new Error("tmux_executable_unavailable");
+}
+function tmuxClientEnvironment(source, executable) {
+  const environment = {
+    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
+    // A pinned runner may be the first tmux client and therefore create the
+    // server. Never let a headless parent (`TERM=dumb`, `NO_COLOR=1`) become
+    // the global environment inherited by every later interactive child.
+    COLORTERM: "truecolor"
+  };
+  for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
+    const value = source[name];
+    if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
+  }
+  return { ...environment, ...bundledTmuxResourceEnvironment(executable) };
+}
+function resolveOrdinaryTmuxClient(environment, cwd) {
+  const configured = environment.TMUX_IDE_TMUX_BIN;
+  const candidates = configured ? [configured] : (environment.PATH ?? "/usr/bin:/bin").split(delimiter).map(
+    (entry) => resolve6(cwd instanceof URL ? fileURLToPath2(cwd) : cwd ?? process.cwd(), entry, "tmux")
+  );
+  let executable;
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute5(candidate)) continue;
+      accessSync2(candidate, constants3.X_OK);
+      const canonical = realpathSync6(candidate);
+      if (statSync2(canonical).isFile()) {
+        executable = canonical;
+        break;
+      }
+    } catch {
+    }
+  }
+  if (!executable && !configured)
+    executable = resolveBundledTmux([
+      ...environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : [],
+      fileURLToPath2(import.meta.url)
+    ]) ?? void 0;
+  if (!executable) throw new Error("tmux_executable_unavailable");
+  return { executable, environment: withBundledTmuxResources(executable, environment) };
+}
+var SAFE_TERMINAL_VALUE, SAFE_LOCALE_VALUE;
+var init_tmux_client_execution = __esm({
+  "packages/daemon/src/lib/tmux-client-execution.ts"() {
+    "use strict";
+    init_runtime_namespace();
+    init_bundled_tmux();
+    SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
+    SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
+  }
+});
+
 // packages/daemon/src/lib/private-operation-lock.ts
 import { randomUUID } from "node:crypto";
 import {
   closeSync as closeSync2,
-  constants as constants2,
+  constants as constants4,
   fstatSync as fstatSync2,
-  lstatSync as lstatSync5,
+  lstatSync as lstatSync6,
   mkdirSync,
   openSync as openSync2,
   readSync as readSync2,
@@ -647,19 +1440,19 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 function code(error) {
   return error instanceof Error && "code" in error ? error.code : void 0;
 }
 function trusted(path2, directory) {
-  const value = lstatSync5(path2);
+  const value = lstatSync6(path2);
   if ((directory ? !value.isDirectory() : !value.isFile()) || value.uid !== process.getuid?.() || (value.mode & 511) !== (directory ? 448 : 384) || !directory && value.nlink !== 1)
     throw new Error("unsafe private operation lock");
   return value;
 }
 function readOwner(path2) {
   const before = trusted(path2, false);
-  const fd = openSync2(path2, constants2.O_RDONLY | constants2.O_NOFOLLOW);
+  const fd = openSync2(path2, constants4.O_RDONLY | constants4.O_NOFOLLOW);
   try {
     const actual = fstatSync2(fd);
     if (actual.ino !== before.ino || actual.dev !== before.dev || actual.size > 32) {
@@ -694,7 +1487,7 @@ function retire(directory, name, expected) {
     throw error;
   }
   try {
-    unlinkSync(join5(directory, name));
+    unlinkSync(join7(directory, name));
   } catch (error) {
     if (code(error) === "ENOENT") return;
     throw error;
@@ -711,7 +1504,7 @@ function cleanStaging(path2, name, expected, failed) {
     if (current.ino !== expected.ino || current.dev !== expected.dev)
       throw new Error("private operation staging lock changed");
     try {
-      unlinkSync(join5(path2, name));
+      unlinkSync(join7(path2, name));
     } catch (error) {
       if (code(error) !== "ENOENT") throw error;
     }
@@ -731,14 +1524,14 @@ async function acquirePrivateOperationLock(lock, waitMs) {
   let attempted = false;
   let failed = false;
   try {
-    writeFileSync(join5(staging, name), `${process.pid}
+    writeFileSync(join7(staging, name), `${process.pid}
 `, { flag: "wx", mode: 384 });
     while (true) {
       if (attempted && Date.now() >= deadline)
         throw new Error("timed out waiting for another private operation");
       attempted = true;
       try {
-        const existing = lstatSync5(lock);
+        const existing = lstatSync6(lock);
         trusted(lock, existing.isDirectory());
       } catch (error) {
         if (code(error) !== "ENOENT") throw error;
@@ -757,7 +1550,7 @@ async function acquirePrivateOperationLock(lock, waitMs) {
         if (!["EEXIST", "ENOTEMPTY", "ENOTDIR"].includes(String(code(error)))) throw error;
       }
       try {
-        const entry = lstatSync5(lock);
+        const entry = lstatSync6(lock);
         if (entry.isDirectory()) {
           trusted(lock, true);
           const handle = opendirSync(lock);
@@ -774,9 +1567,9 @@ async function acquirePrivateOperationLock(lock, waitMs) {
           if (names.length !== 1 || !/^owner-[0-9a-f-]{36}$/.test(names[0])) {
             if (names.length !== 0) throw new Error("invalid private operation lock inventory");
           } else {
-            const owner = readOwner(join5(lock, names[0]));
+            const owner = readOwner(join7(lock, names[0]));
             if (dead(owner.pid)) {
-              const current = readOwner(join5(lock, names[0]));
+              const current = readOwner(join7(lock, names[0]));
               if (current.ino !== owner.ino || current.dev !== owner.dev || current.pid !== owner.pid) {
                 throw new Error("private operation lock changed");
               }
@@ -803,7 +1596,7 @@ async function acquirePrivateOperationLock(lock, waitMs) {
       if (Date.now() >= deadline)
         throw new Error("timed out waiting for another private operation");
       await new Promise(
-        (resolve41) => setTimeout(resolve41, Math.min(50, Math.max(0, deadline - Date.now())))
+        (resolve42) => setTimeout(resolve42, Math.min(50, Math.max(0, deadline - Date.now())))
       );
     }
   } catch (error) {
@@ -1393,14 +2186,14 @@ var init_manifests = __esm({
 });
 
 // packages/daemon/src/tui/detect/manifest-loader.ts
-import { readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node:fs";
-import { join as join6 } from "node:path";
+import { readdirSync as readdirSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join8 } from "node:path";
 function overrideDir() {
   const home = resolveRuntimeNamespace().stateHome;
-  return runtimeOwnedPath(join6(home, "agent-detection"));
+  return runtimeOwnedPath(join8(home, "agent-detection"));
 }
 function packFile(dir = overrideDir()) {
-  return join6(dir, "pack", "manifest-pack.json");
+  return join8(dir, "pack", "manifest-pack.json");
 }
 function validateManifestShape(value) {
   if (typeof value !== "object" || value === null) return false;
@@ -1456,15 +2249,15 @@ function mergeManifests(bundled, overrides) {
 function readOverrideManifests(dir = overrideDir()) {
   let files;
   try {
-    files = readdirSync2(dir).filter((f) => f.endsWith(".json"));
+    files = readdirSync3(dir).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
   const overrides = [];
   for (const file of files.sort()) {
-    const path2 = join6(dir, file);
+    const path2 = join8(dir, file);
     try {
-      const parsed = JSON.parse(readFileSync2(path2, "utf8"));
+      const parsed = JSON.parse(readFileSync3(path2, "utf8"));
       if (validateManifestShape(parsed)) {
         overrides.push(normalizeStates(parsed));
       } else {
@@ -1494,7 +2287,7 @@ function readPackManifests(dir = overrideDir()) {
   const path2 = packFile(dir);
   let raw;
   try {
-    raw = readFileSync2(path2, "utf8");
+    raw = readFileSync3(path2, "utf8");
   } catch {
     return [];
   }
@@ -6192,7 +6985,7 @@ var init_causal_cell = __esm({
 
 // packages/contracts/src/terminal-delivery.ts
 import { z as z44 } from "zod";
-var TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
+var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
     "use strict";
@@ -6201,6 +6994,7 @@ var init_terminal_delivery = __esm({
     init_session_runtime();
     init_workspace_state();
     init_terminal_replica();
+    STOCK_CAPTURE_TAB_UNAVAILABLE = /* @__PURE__ */ (() => "This tmux server cannot provide an exact snapshot of saved tab cells. Continue this session in native tmux, or use a new session started with tmux-ide's bundled server.")();
     TERMINAL_DELIVERY_PROTOCOL_VERSION = /* @__PURE__ */ (() => 1)();
     TERMINAL_DELIVERY_CHUNK_BYTES = /* @__PURE__ */ (() => 256 * 1024)();
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
@@ -10059,7 +10853,7 @@ var init_native_operation_identity = __esm({
 });
 
 // packages/contracts/src/index.ts
-var init_src = __esm({
+var init_src2 = __esm({
   "packages/contracts/src/index.ts"() {
     "use strict";
     init_auth();
@@ -10190,8 +10984,8 @@ __export(app_config_exports, {
   parseAppConfig: () => parseAppConfig,
   updateAppConfig: () => updateAppConfig
 });
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname5 } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -10312,9 +11106,9 @@ function appConfigPath() {
 }
 function loadAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync2(path2)) return parseAppConfig(void 0);
+  if (!existsSync3(path2)) return parseAppConfig(void 0);
   try {
-    return parseAppConfig(JSON.parse(readFileSync3(path2, "utf-8")));
+    return parseAppConfig(JSON.parse(readFileSync4(path2, "utf-8")));
   } catch {
     return parseAppConfig(void 0);
   }
@@ -10333,9 +11127,9 @@ function _resetForTests() {
 }
 function loadRawAppConfig() {
   const path2 = appConfigPath();
-  if (!existsSync2(path2)) return {};
+  if (!existsSync3(path2)) return {};
   try {
-    const parsed = JSON.parse(readFileSync3(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync4(path2, "utf-8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -10362,7 +11156,7 @@ function mergeConfigPatch(raw, patch) {
 function updateAppConfig(patch) {
   const path2 = appConfigPath();
   const merged = mergeConfigPatch(loadRawAppConfig(), patch);
-  mkdirSync2(dirname5(path2), { recursive: true });
+  mkdirSync2(dirname6(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync2(tmp, `${JSON.stringify(merged, null, 2)}
 `, "utf-8");
@@ -10375,7 +11169,7 @@ var init_app_config = __esm({
   "packages/daemon/src/lib/app-config.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src();
+    init_src2();
     init_legacy_theme_compat();
     DEFAULT_APP_CONFIG = {
       keys: {
@@ -10440,9 +11234,9 @@ __export(manifest_pack_exports, {
   updateManifestPack: () => updateManifestPack,
   validateManifestPack: () => validateManifestPack
 });
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname as dirname6, join as join7 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { dirname as dirname7, join as join9 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 function manifestPackUrl(version = getCurrentVersion()) {
   const v = version.startsWith("v") ? version.slice(1) : version;
   return `https://github.com/${RELEASE_REPO}/releases/download/v${v}/${MANIFEST_PACK_ASSET}`;
@@ -10489,10 +11283,10 @@ function validateManifestPack(value) {
   };
 }
 function packDir() {
-  return join7(overrideDir(), "pack");
+  return join9(overrideDir(), "pack");
 }
 function packPath() {
-  return join7(packDir(), "manifest-pack.json");
+  return join9(packDir(), "manifest-pack.json");
 }
 async function fetchManifestPack(url, timeoutMs = 5e3) {
   if (!isAllowedPackUrl(url)) {
@@ -10502,7 +11296,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   }
   let body;
   if (url.startsWith("file:")) {
-    body = readFileSync4(fileURLToPath(url), "utf8");
+    body = readFileSync5(fileURLToPath3(url), "utf8");
   } else {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -10531,7 +11325,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   return verdict.pack;
 }
 function installManifestPack(pack, dest = packPath()) {
-  mkdirSync3(dirname6(dest), { recursive: true });
+  mkdirSync3(dirname7(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.tmp`;
   writeFileSync3(tmp, JSON.stringify(pack, null, 2));
   renameSync3(tmp, dest);
@@ -10591,9 +11385,9 @@ __export(update_check_exports, {
   updateChannel: () => updateChannel,
   writeUpdateCache: () => writeUpdateCache
 });
-import { existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
-import { dirname as dirname7, join as join8 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { dirname as dirname8, join as join10 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 function updateChannel(version) {
   return parseStrictSemver(version)?.pre.length ? "beta" : "latest";
 }
@@ -10625,13 +11419,13 @@ function deriveStatus(latest, currentVersion) {
 }
 function updateCachePath(scope = {}) {
   const home = resolveRuntimeNamespace().stateHome;
-  return runtimeOwnedPath(join8(home, `update-check-${scopeKey(scope)}.json`));
+  return runtimeOwnedPath(join10(home, `update-check-${scopeKey(scope)}.json`));
 }
 function readUpdateCache(scope = {}) {
   const path2 = updateCachePath(scope);
-  if (!existsSync3(path2)) return null;
+  if (!existsSync4(path2)) return null;
   try {
-    const parsed = JSON.parse(readFileSync5(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync6(path2, "utf-8"));
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed;
     const lastCheckedAt = typeof obj.lastCheckedAt === "number" && Number.isFinite(obj.lastCheckedAt) && obj.lastCheckedAt >= 0 ? obj.lastCheckedAt : null;
@@ -10645,7 +11439,7 @@ function readUpdateCache(scope = {}) {
 function writeUpdateCache(cache3, scope = {}) {
   const path2 = updateCachePath(scope);
   try {
-    mkdirSync4(dirname7(path2), { recursive: true });
+    mkdirSync4(dirname8(path2), { recursive: true });
     writeFileSync4(path2, JSON.stringify(cache3));
   } catch {
   }
@@ -10668,16 +11462,16 @@ async function fetchLatestVersion(timeoutMs = 3e3, channel = "latest") {
 function getCurrentVersion() {
   if (typeof TMUX_IDE_BUILD_VERSION !== "undefined" && parseStrictSemver(TMUX_IDE_BUILD_VERSION))
     return TMUX_IDE_BUILD_VERSION;
-  const here = dirname7(fileURLToPath2(import.meta.url));
+  const here = dirname8(fileURLToPath4(import.meta.url));
   const candidates = [
-    join8(here, "../package.json"),
+    join10(here, "../package.json"),
     // bundled bin/cli.js → repo root
-    join8(here, "../../../../package.json")
+    join10(here, "../../../../package.json")
     // dev src/lib → repo root
   ];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync5(candidate, "utf-8"));
+      const parsed = JSON.parse(readFileSync6(candidate, "utf-8"));
       if (parsed.name === "tmux-ide" && typeof parsed.version === "string" && parseStrictSemver(parsed.version))
         return parsed.version;
     } catch {
@@ -10766,20 +11560,20 @@ __export(tui_binary_exports, {
   tuiPlatformTag: () => tuiPlatformTag,
   tuiStateHome: () => tuiStateHome
 });
-import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import {
-  accessSync,
-  chmodSync,
+  accessSync as accessSync3,
+  chmodSync as chmodSync2,
   constants as fsConstants,
-  existsSync as existsSync4,
+  existsSync as existsSync5,
   mkdirSync as mkdirSync5,
-  readFileSync as readFileSync6,
+  readFileSync as readFileSync7,
   renameSync as renameSync4,
-  statSync,
+  statSync as statSync3,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync5
 } from "node:fs";
-import { dirname as dirname8, join as join9 } from "node:path";
+import { dirname as dirname9, join as join11 } from "node:path";
 import { gunzipSync } from "node:zlib";
 function tuiPlatformTag(platform2 = process.platform, arch = process.arch) {
   return SUPPORTED[`${platform2}-${arch}`] ?? null;
@@ -10803,7 +11597,7 @@ function releaseAssetChecksumUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetChecksumName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
-  return join9(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
+  return join11(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
 }
 function tuiStateHome() {
   return resolveRuntimeNamespace().stateHome;
@@ -10815,7 +11609,7 @@ function findDownloadedTui(version = getCurrentVersion(), options = {}) {
   const path2 = downloadedTuiPath(options.home ?? tuiStateHome(), tag, version);
   const cached2 = inspectCachedBinary(path2, tag, normalizeVersion(version), options.limits);
   if (cached2) return path2;
-  if (!existsSync4(downloadLockPath(path2))) purgeCachedBinary(path2);
+  if (!existsSync5(downloadLockPath(path2))) purgeCachedBinary(path2);
   return null;
 }
 function checksumPath(path2) {
@@ -10825,7 +11619,7 @@ function downloadLockPath(path2) {
   return `${path2}.lock`;
 }
 function sha256(bytes) {
-  return createHash3("sha256").update(bytes).digest("hex");
+  return createHash4("sha256").update(bytes).digest("hex");
 }
 function parseChecksumLine(line, expectedName, label4) {
   const match = /^([a-f0-9]{64}) {2}(.+)$/u.exec(line);
@@ -10876,14 +11670,14 @@ function inspectCachedBinary(path2, tag, version, limits = {
   maxBinaryBytes: MAX_TUI_BINARY_BYTES
 }) {
   try {
-    const stat3 = statSync(path2);
+    const stat3 = statSync3(path2);
     if (!stat3.isFile() || stat3.size < limits.minBinaryBytes || stat3.size > limits.maxBinaryBytes || (stat3.mode & 73) === 0) {
       return null;
     }
-    accessSync(path2, fsConstants.X_OK);
-    const manifestBytes = readFileSync6(checksumPath(path2));
+    accessSync3(path2, fsConstants.X_OK);
+    const manifestBytes = readFileSync7(checksumPath(path2));
     const manifest = parseChecksumManifest(manifestBytes, { version, tag });
-    const binary = readFileSync6(path2);
+    const binary = readFileSync7(path2);
     if (sha256(binary) !== manifest.binarySha256) return null;
     return { bytes: stat3.size, manifest };
   } catch {
@@ -10959,7 +11753,7 @@ async function downloadTuiBinary(opts = {}) {
     maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES,
     timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS
   };
-  mkdirSync5(dirname8(dest), { recursive: true });
+  mkdirSync5(dirname9(dest), { recursive: true });
   const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
     limits.timeoutMs * 2 + 5e3
@@ -11009,7 +11803,7 @@ async function downloadTuiBinary(opts = {}) {
       throw new Error(`SHA-256 mismatch for ${manifest.binary}; refusing to install it`);
     }
     writeFileSync5(binaryTmp, bin, { mode: 493 });
-    chmodSync(binaryTmp, 493);
+    chmodSync2(binaryTmp, 493);
     writeFileSync5(checksumTmp, manifestBytes, { mode: 384 });
     renameSync4(checksumTmp, checksumPath(dest));
     renameSync4(binaryTmp, dest);
@@ -11054,22 +11848,22 @@ var init_tui_binary = __esm({
 });
 
 // packages/daemon/src/tui/compiled.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync6 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync6 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname9, join as join10, resolve as resolve5, sep as sep3 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { dirname as dirname10, join as join12, resolve as resolve7, sep as sep4 } from "node:path";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
+import { execFileSync as execFileSync4 } from "node:child_process";
 function hasDevelopmentTuiSource(scriptPath, environment = process.env) {
   if (resolveRuntimeNamespace({ env: environment }).development) return false;
-  if (!existsSync5(scriptPath)) return false;
+  if (!existsSync6(scriptPath)) return false;
   if (environment.TMUX_IDE_TUI_SOURCE === "1") return true;
-  if (resolve5(scriptPath).split(sep3).includes("node_modules")) return false;
-  let cursor2 = dirname9(scriptPath);
+  if (resolve7(scriptPath).split(sep4).includes("node_modules")) return false;
+  let cursor2 = dirname10(scriptPath);
   while (true) {
-    if (existsSync5(join10(cursor2, ".git")) && existsSync5(join10(cursor2, "pnpm-workspace.yaml"))) {
+    if (existsSync6(join12(cursor2, ".git")) && existsSync6(join12(cursor2, "pnpm-workspace.yaml"))) {
       return true;
     }
-    const parent = dirname9(cursor2);
+    const parent = dirname10(cursor2);
     if (parent === cursor2) return false;
     cursor2 = parent;
   }
@@ -11157,21 +11951,21 @@ function findCompiledTui() {
   const namespace = resolveRuntimeNamespace();
   if (namespace.development) return readDevelopmentBuild(namespace.development).tui;
   const override = process.env.TMUX_IDE_TUI_BIN;
-  if (override) return existsSync5(override) ? override : null;
+  if (override) return existsSync6(override) ? override : null;
   const anchors = [];
-  if (process.argv[1]) anchors.push(dirname9(process.argv[1]));
+  if (process.argv[1]) anchors.push(dirname10(process.argv[1]));
   anchors.push(__dirname);
   for (const anchor of anchors) {
     for (const rel of BINARY_RELS) {
-      const candidate = resolve5(anchor, rel);
-      if (existsSync5(candidate)) return candidate;
+      const candidate = resolve7(anchor, rel);
+      if (existsSync6(candidate)) return candidate;
     }
   }
   return findDownloadedTui();
 }
 function isBunAvailable() {
   try {
-    execFileSync2("bun", ["--version"], { stdio: "ignore" });
+    execFileSync4("bun", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -11179,7 +11973,7 @@ function isBunAvailable() {
 }
 function compiledTuiRuntimeDir(home = homedir3()) {
   const namespace = resolveRuntimeNamespace();
-  return namespace.development ? runtimeOwnedPath(join10(namespace.runtimeDir, "compiled-tui")) : join10(home, ".tmux-ide", "runtime", "compiled-tui");
+  return namespace.development ? runtimeOwnedPath(join12(namespace.runtimeDir, "compiled-tui")) : join12(home, ".tmux-ide", "runtime", "compiled-tui");
 }
 function ensureCompiledTuiRuntimeDir(home = homedir3()) {
   const dir = compiledTuiRuntimeDir(home);
@@ -11193,7 +11987,7 @@ var init_compiled = __esm({
     init_development_build();
     init_runtime_namespace();
     init_tui_binary();
-    __dirname = dirname9(fileURLToPath3(import.meta.url));
+    __dirname = dirname10(fileURLToPath5(import.meta.url));
     BINARY_RELS = [
       "../packages/daemon/dist/tui/tmux-ide-tui",
       "../../dist/tui/tmux-ide-tui",
@@ -11204,537 +11998,12 @@ var init_compiled = __esm({
   }
 });
 
-// packages/tmux-bridge/src/errors.ts
-var TmuxError;
-var init_errors = __esm({
-  "packages/tmux-bridge/src/errors.ts"() {
-    "use strict";
-    TmuxError = class extends Error {
-      code;
-      exitCode;
-      constructor(message, code2, options = {}) {
-        super(message, { cause: options.cause });
-        this.name = "TmuxError";
-        this.code = code2;
-        this.exitCode = options.exitCode ?? 1;
-      }
-      toJSON() {
-        const out = {
-          error: this.message,
-          code: this.code
-        };
-        if (this.cause) out.cause = this.cause.message;
-        return out;
-      }
-    };
-  }
-});
-
-// packages/tmux-bridge/src/runner.ts
-import {
-  execFile,
-  execFileSync as execFileSync3,
-  spawn
-} from "node:child_process";
-function _setExecutor(fn) {
-  const prev = _executor;
-  _executor = fn;
-  return () => {
-    _executor = prev;
-  };
-}
-function _setSpawner(fn) {
-  const prev = _spawner;
-  _spawner = fn;
-  return () => {
-    _spawner = prev;
-  };
-}
-function _getSpawner() {
-  return _spawner;
-}
-function runTmux(args, options = {}) {
-  if ((options.env ?? process.env).TMUX_IDE_RUNTIME_MODE === "development") {
-    throw new Error("Development tmux operations require an explicitly pinned namespace runner");
-  }
-  return runTmuxBinary("tmux", args, options);
-}
-function sanitizeTmuxClientEnvironment(source = process.env) {
-  const environment = {
-    ...source,
-    COLORTERM: "truecolor",
-    COLORFGBG: "15;0"
-  };
-  delete environment.NO_COLOR;
-  return environment;
-}
-function runTmuxBinary(executable, args, options = {}) {
-  if (DEBUG || globalThis.__tmuxIdeVerbose) {
-    console.error(`  [tmux] ${args.join(" ")}`);
-  }
-  const execOptions = {
-    stdio: ["ignore", "pipe", "pipe"],
-    ...options,
-    env: sanitizeTmuxClientEnvironment(options.env ?? process.env)
-  };
-  try {
-    return _executor(executable, args, execOptions);
-  } catch (error) {
-    throw classifyTmuxError(error);
-  }
-}
-function runTmuxBinaryAsync(executable, args, options = {}) {
-  if (DEBUG || globalThis.__tmuxIdeVerbose) {
-    console.error(`  [tmux] ${args.join(" ")}`);
-  }
-  return new Promise((resolve41, reject) => {
-    execFile(
-      executable,
-      args,
-      {
-        windowsHide: true,
-        ...options,
-        encoding: "utf8",
-        env: sanitizeTmuxClientEnvironment(options.env ?? process.env)
-      },
-      (error, stdout) => {
-        if (error) reject(classifyTmuxError(error));
-        else resolve41(stdout);
-      }
-    );
-  });
-}
-function classifyTmuxError(error) {
-  const detail = getErrorDetail(error).toLowerCase();
-  if (SESSION_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
-    return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", {
-      cause: error
-    });
-  }
-  if (ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
-    return new TmuxError(
-      "tmux environment variable was not found",
-      "ENVIRONMENT_VARIABLE_NOT_FOUND",
-      { cause: error }
-    );
-  }
-  if (TMUX_UNAVAILABLE_PATTERNS.some((pattern) => detail.includes(pattern))) {
-    return new TmuxError("tmux is unavailable or its socket is inaccessible", "TMUX_UNAVAILABLE", {
-      cause: error
-    });
-  }
-  return new TmuxError("tmux command failed", "TMUX_ERROR", {
-    cause: error
-  });
-}
-function getErrorDetail(error) {
-  const stderr = error?.stderr;
-  if (typeof stderr === "string" && stderr.length > 0) return stderr;
-  if (Buffer.isBuffer(stderr) && stderr.length > 0) return stderr.toString("utf-8");
-  return error?.message ?? "";
-}
-var DEBUG, SESSION_NOT_FOUND_PATTERNS, ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS, TMUX_UNAVAILABLE_PATTERNS, _executor, _spawner;
-var init_runner = __esm({
-  "packages/tmux-bridge/src/runner.ts"() {
-    "use strict";
-    init_errors();
-    DEBUG = process.env.TMUX_IDE_DEBUG === "1";
-    SESSION_NOT_FOUND_PATTERNS = [
-      "can't find session",
-      "can't find window",
-      "can't find pane",
-      "unknown target"
-    ];
-    ENVIRONMENT_VARIABLE_NOT_FOUND_PATTERNS = ["unknown variable:"];
-    TMUX_UNAVAILABLE_PATTERNS = [
-      "failed to connect to server",
-      "no server running",
-      "error connecting to",
-      "connection refused"
-    ];
-    _executor = execFileSync3;
-    _spawner = spawn;
-  }
-});
-
-// packages/tmux-bridge/src/sessions.ts
-function getSessionState(session) {
-  try {
-    runTmux(["has-session", "-t", session]);
-    return { running: true, reason: null };
-  } catch (error) {
-    if (error instanceof TmuxError) {
-      if (error.code === "SESSION_NOT_FOUND") {
-        return { running: false, reason: "SESSION_NOT_FOUND" };
-      }
-      if (error.code === "TMUX_UNAVAILABLE") {
-        return { running: false, reason: "TMUX_UNAVAILABLE" };
-      }
-    }
-    throw error;
-  }
-}
-function attachSession(session) {
-  runTmux(["attach", "-t", session], { stdio: "inherit" });
-}
-function hasSession(session) {
-  try {
-    runTmux(["has-session", "-t", session]);
-    return true;
-  } catch (error) {
-    if (error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")) {
-      return false;
-    }
-    throw error;
-  }
-}
-function getSessionCwd(session) {
-  try {
-    const raw = runTmux(["display-message", "-p", "-t", session, "#{pane_current_path}"], {
-      encoding: "utf-8"
-    });
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  } catch {
-    return null;
-  }
-}
-function killSession(session) {
-  try {
-    runTmux(["kill-session", "-t", session]);
-    return { stopped: true, reason: null };
-  } catch (error) {
-    if (error instanceof TmuxError) {
-      if (error.code === "SESSION_NOT_FOUND") {
-        return { stopped: false, reason: "SESSION_NOT_FOUND" };
-      }
-      if (error.code === "TMUX_UNAVAILABLE") {
-        return { stopped: false, reason: "TMUX_UNAVAILABLE" };
-      }
-    }
-    throw error;
-  }
-}
-function createDetachedSession(session, cwd, { cols, lines } = {}) {
-  const paneId = runTmux(
-    [
-      "new-session",
-      "-d",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "-s",
-      session,
-      "-c",
-      cwd,
-      "-x",
-      String(cols ?? 200),
-      "-y",
-      String(lines ?? 50),
-      `exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' "\${SHELL:-/bin/sh}" -l`
-    ],
-    { encoding: "utf-8" }
-  ).trim();
-  runTmux(["set-environment", "-r", "-t", `=${session}`, "NO_COLOR"]);
-  runTmux(["set-environment", "-t", `=${session}`, "COLORTERM", "truecolor"]);
-  runTmux(["set-environment", "-t", `=${session}`, "COLORFGBG", "15;0"]);
-  return paneId;
-}
-function setSessionEnvironment(session, key2, value) {
-  runTmux(["set-environment", "-t", session, key2, String(value)]);
-}
-function getSessionVariable(session, name) {
-  try {
-    const raw = runTmux(["show-option", "-qvt", session, name], {
-      encoding: "utf-8"
-    });
-    return raw.trim() || null;
-  } catch {
-    return null;
-  }
-}
-function setSessionVariable(session, name, value) {
-  runTmux(["set-option", "-t", session, name, value]);
-}
-function runSessionCommand(args) {
-  runTmux(args, { stdio: "inherit" });
-}
-var init_sessions = __esm({
-  "packages/tmux-bridge/src/sessions.ts"() {
-    "use strict";
-    init_errors();
-    init_runner();
-  }
-});
-
-// packages/tmux-bridge/src/panes.ts
-function listPanes(session) {
-  const raw = runTmux(
-    [
-      "list-panes",
-      "-t",
-      session,
-      "-F",
-      "#{pane_index}|#{pane_title}|#{pane_width}|#{pane_height}|#{pane_active}"
-    ],
-    { encoding: "utf-8" }
-  ).trim();
-  if (!raw) return [];
-  return raw.split("\n").map((line) => {
-    const [index, title, width, height, active2] = line.split("|");
-    return {
-      index: Number.parseInt(index, 10),
-      title,
-      width: Number.parseInt(width, 10),
-      height: Number.parseInt(height, 10),
-      active: active2 === "1"
-    };
-  });
-}
-function splitPane(targetPane, direction, cwd, percent) {
-  return runTmux(
-    [
-      "split-window",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "-t",
-      targetPane,
-      direction === "vertical" ? "-v" : "-h",
-      "-c",
-      cwd,
-      "-p",
-      String(percent)
-    ],
-    { encoding: "utf-8" }
-  ).trim();
-}
-function sendLiteral(targetPane, text) {
-  runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
-  runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
-}
-function sendKeys(targetPane, text, options = {}) {
-  const { enter = true } = options;
-  runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
-  if (enter) {
-    runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
-  }
-}
-function capturePane(targetPane, options = {}) {
-  const args = ["capture-pane", "-t", targetPane, "-p", "-J"];
-  if (typeof options.scrollback === "number") {
-    args.push("-S", `-${options.scrollback}`);
-  } else if (typeof options.lines === "number") {
-    args.push("-S", `-${options.lines}`);
-  }
-  return runTmux(args, { encoding: "utf-8" }).replace(/\n+$/, "");
-}
-function captureRecent(targetPane, lines = 50) {
-  return capturePane(targetPane, { lines });
-}
-function getPaneCurrentCommand(targetPane) {
-  return runTmux(["display-message", "-p", "-t", targetPane, "#{pane_current_command}"], {
-    encoding: "utf-8"
-  }).trim();
-}
-function selectPane(targetPane) {
-  runTmux(["select-pane", "-t", targetPane], { stdio: "inherit" });
-}
-function setPaneTitle(targetPane, title) {
-  runTmux(["select-pane", "-t", targetPane, "-T", title], { stdio: "inherit" });
-}
-function setPaneOption(targetPane, option, value) {
-  runTmux(["set-option", "-pqt", targetPane, option, value]);
-}
-function setWindowOption(targetPane, option, value) {
-  runTmux(["set-option", "-wqt", targetPane, option, value]);
-}
-var init_panes = __esm({
-  "packages/tmux-bridge/src/panes.ts"() {
-    "use strict";
-    init_runner();
-  }
-});
-
-// packages/tmux-bridge/src/monitor.ts
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function startSessionMonitor(session, monitorScript, port) {
-  try {
-    const existingPid = runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
-      encoding: "utf-8"
-    }).trim();
-    if (existingPid) {
-      const pid = parseInt(existingPid, 10);
-      if (isProcessAlive(pid)) {
-        stopSessionMonitor(session);
-        let attempts = 0;
-        while (isProcessAlive(pid) && attempts < 10) {
-          const { Atomics: Atomics2, SharedArrayBuffer: SharedArrayBuffer2 } = globalThis;
-          Atomics2.wait(new Int32Array(new SharedArrayBuffer2(4)), 0, 0, 100);
-          attempts++;
-        }
-      }
-    }
-  } catch {
-  }
-  const child = _getSpawner()("tsx", [monitorScript, session, String(port ?? 0)], {
-    detached: true,
-    stdio: "ignore",
-    cwd: process.cwd()
-  });
-  child.unref();
-  runTmux(["set-option", "-t", session, "@monitor_pid", String(child.pid)]);
-}
-function stopSessionMonitor(session) {
-  try {
-    const pid = runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
-      encoding: "utf-8"
-    }).trim();
-    if (pid) {
-      const numPid = parseInt(pid, 10);
-      try {
-        process.kill(-numPid, "SIGTERM");
-      } catch {
-        try {
-          process.kill(numPid, "SIGTERM");
-        } catch {
-        }
-      }
-    }
-  } catch {
-  }
-}
-var init_monitor = __esm({
-  "packages/tmux-bridge/src/monitor.ts"() {
-    "use strict";
-    init_runner();
-  }
-});
-
-// packages/tmux-bridge/src/targeting.ts
-function resolveTarget(panes, target, session) {
-  switch (target.kind) {
-    case "byId": {
-      if (target.id.startsWith("%")) {
-        return {
-          target: target.id,
-          pane: panes[0] ?? {
-            index: -1,
-            title: void 0,
-            width: 0,
-            height: 0,
-            active: false
-          }
-        };
-      }
-      const numeric = Number.parseInt(target.id, 10);
-      if (!Number.isFinite(numeric)) {
-        throw new Error(`Invalid pane id: ${target.id}`);
-      }
-      const found = panes.find((p) => p.index === numeric);
-      if (!found) {
-        throw new Error(`Pane not found by id: ${target.id}`);
-      }
-      return { target: paneTarget(session, found.index), pane: found };
-    }
-    case "byIndex": {
-      const found = panes.find((p) => p.index === target.index);
-      if (!found) {
-        throw new Error(`Pane not found by index: ${target.index}`);
-      }
-      return { target: paneTarget(session, found.index), pane: found };
-    }
-    case "byTitle": {
-      const matches = panes.filter((p) => p.title === target.title);
-      if (matches.length === 0) {
-        throw new Error(`Pane not found by title: ${target.title}`);
-      }
-      if (matches.length > 1) {
-        throw new Error(`Ambiguous pane title "${target.title}" matches ${matches.length} panes`);
-      }
-      return {
-        target: paneTarget(session, matches[0].index),
-        pane: matches[0]
-      };
-    }
-    case "byRole":
-      throw new Error(
-        `byRole targets must be resolved at the daemon layer before reaching the bridge (got role="${target.role}")`
-      );
-  }
-}
-function paneTarget(session, index) {
-  return session ? `${session}.${index}` : String(index);
-}
-var init_targeting = __esm({
-  "packages/tmux-bridge/src/targeting.ts"() {
-    "use strict";
-  }
-});
-
-// packages/tmux-bridge/src/index.ts
-var src_exports = {};
-__export(src_exports, {
-  TmuxError: () => TmuxError,
-  _getSpawner: () => _getSpawner,
-  _setExecutor: () => _setExecutor,
-  _setSpawner: () => _setSpawner,
-  attachSession: () => attachSession,
-  capturePane: () => capturePane,
-  captureRecent: () => captureRecent,
-  classifyTmuxError: () => classifyTmuxError,
-  createDetachedSession: () => createDetachedSession,
-  getPaneCurrentCommand: () => getPaneCurrentCommand,
-  getSessionCwd: () => getSessionCwd,
-  getSessionState: () => getSessionState,
-  getSessionVariable: () => getSessionVariable,
-  hasSession: () => hasSession,
-  isProcessAlive: () => isProcessAlive,
-  killSession: () => killSession,
-  listPanes: () => listPanes,
-  resolveTarget: () => resolveTarget,
-  runSessionCommand: () => runSessionCommand,
-  runTmux: () => runTmux,
-  runTmuxBinary: () => runTmuxBinary,
-  runTmuxBinaryAsync: () => runTmuxBinaryAsync,
-  sanitizeTmuxClientEnvironment: () => sanitizeTmuxClientEnvironment,
-  selectPane: () => selectPane,
-  sendKeys: () => sendKeys,
-  sendLiteral: () => sendLiteral,
-  setPaneOption: () => setPaneOption,
-  setPaneTitle: () => setPaneTitle,
-  setSessionEnvironment: () => setSessionEnvironment,
-  setSessionVariable: () => setSessionVariable,
-  setWindowOption: () => setWindowOption,
-  splitPane: () => splitPane,
-  startSessionMonitor: () => startSessionMonitor,
-  stopSessionMonitor: () => stopSessionMonitor
-});
-var init_src2 = __esm({
-  "packages/tmux-bridge/src/index.ts"() {
-    "use strict";
-    init_errors();
-    init_runner();
-    init_sessions();
-    init_panes();
-    init_monitor();
-    init_targeting();
-  }
-});
-
 // packages/daemon/src/lib/errors.ts
 var IdeError, ConfigError, DaemonStartupError, DaemonShutdownError;
 var init_errors2 = __esm({
   "packages/daemon/src/lib/errors.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     IdeError = class extends Error {
       code;
       exitCode;
@@ -11958,7 +12227,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.4",
+      version: "2.9.5",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -11994,8 +12263,8 @@ var require_package = __commonJS({
         "!packages/daemon/dist/**/__snapshots__/**"
       ],
       scripts: {
+        "test:tmux-boundary": "node scripts/test-tmux-boundary.mjs",
         build: "pnpm build:cli",
-        "build:web": "pnpm --filter @tmux-ide/desktop-renderer run build:web",
         "build:cli": "node scripts/build-cli.mjs",
         "build:macos-notifier": "node scripts/build-macos-notifier.mjs",
         "build:tui": "bun scripts/build-tui.mjs",
@@ -12006,9 +12275,8 @@ var require_package = __commonJS({
         dev: "node bin/cli.js",
         "dev:instance": "node scripts/development-instance.mjs",
         "dev:pilotty": "node scripts/pilotty-dev.mjs",
-        "dev:web": "node scripts/dev-web.mjs",
         test: "pnpm run test:unit",
-        "test:unit": "pnpm run build:cli && pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:unit": "pnpm run build:cli && pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk run test",
         "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon-supervision.test.ts ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts ./packages/daemon/src/command-center/resources/agent-graph-overlay.test.ts ./packages/daemon/src/tui/mirror/runtime/runtime-layout-presentation.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/core/src packages/daemon-client/src packages/sdk/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
@@ -12022,17 +12290,16 @@ var require_package = __commonJS({
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "pnpm test:installer && node --test scripts/lib/npm-release-tag.test.mjs && node scripts/pack-tui-check.mjs",
-        "pack:web:check": "pnpm build:web && node scripts/pack-web-check.mjs",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "release:opentui:check": "node scripts/opentui-release-check.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:postinstall && pnpm run test:portable-release-contract && pnpm run test:spark-qualification && pnpm run test:benchmark-comparative && pnpm run test:contracts-initializer-purity && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run typecheck:tui-gallery && pnpm run test:tui-gallery && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:postinstall && pnpm run test:portable-release-contract && pnpm run test:spark-qualification && pnpm run test:benchmark-comparative && pnpm run test:contracts-initializer-purity && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run typecheck:tui-gallery && pnpm run test:tui-gallery && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
         "demo:font": "node docs/scripts/tui-demo-font/build.mjs",
         "readme:media": "node docs/scripts/readme-media.mjs",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/guided-tour-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-new-agent-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/agent-team-renderer.test.tsx ./scripts/solid-conditional-props.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/testing/styled-frame-oracle.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-transient-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-draw-failure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/guided-tour-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-new-agent-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/agent-team-renderer.test.tsx ./scripts/solid-conditional-props.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-clipboard-hook.test.mjs scripts/lib/tui-testdrive-input.test.mjs",
@@ -12040,9 +12307,9 @@ var require_package = __commonJS({
         "qualify:installed-latency": "node packages/daemon/scripts/qualify-installed-latency.mjs",
         "benchmark:comparative": "node scripts/comparative-terminal.mjs",
         "test:contracts-initializer-purity": "node --test scripts/lib/contracts-initializer-purity.test.mjs scripts/lib/owner-evidence-bundle.test.mjs",
-        "test:benchmark-comparative": "node --test scripts/comparative-terminal-support.test.mjs scripts/lib/terminal-scroll-observations.test.mjs scripts/lib/comparative-terminal-resources.test.mjs scripts/lib/comparative-terminal-report.test.mjs",
+        "test:benchmark-comparative": "node --test scripts/comparative-terminal-scenario.test.mjs scripts/comparative-terminal-support.test.mjs scripts/lib/terminal-scroll-observations.test.mjs scripts/lib/comparative-terminal-resources.test.mjs scripts/lib/comparative-terminal-report.test.mjs scripts/lib/comparative-terminal-trace.test.mjs",
         "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
-        "test:portable-release-contract": "node --experimental-strip-types --test scripts/qualify-divider-gestures.test.mjs scripts/lib/product-keyboard-pointer-resize.test.mjs scripts/lib/startup-launch-diagnostic.test.mjs scripts/lib/coherence-delivery-client.test.ts scripts/lib/coherence-trace.test.mjs scripts/lib/spark-qualification-descriptor.test.mjs scripts/lib/spark-qualification-ssh.test.mjs scripts/lib/performance-reference-target.test.mjs scripts/lib/performance-reference-workspace.test.mjs scripts/lib/performance-reference-runtime.test.mjs scripts/lib/performance-reference-report.test.mjs scripts/lib/product-rig-reference-environment.test.mjs && pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",
+        "test:portable-release-contract": "node --experimental-strip-types --test scripts/lib/styled-ssh-qualification.test.mjs scripts/lib/boundary-results.test.mjs scripts/lib/packed-cli-resolution.test.mjs scripts/qualify-divider-gestures.test.mjs scripts/lib/product-keyboard-pointer-resize.test.mjs scripts/lib/startup-launch-diagnostic.test.mjs scripts/lib/coherence-delivery-client.test.ts scripts/lib/coherence-trace.test.mjs scripts/lib/spark-qualification-descriptor.test.mjs scripts/lib/spark-qualification-ssh.test.mjs scripts/lib/performance-reference-target.test.mjs scripts/lib/performance-reference-workspace.test.mjs scripts/lib/performance-reference-runtime.test.mjs scripts/lib/performance-reference-report.test.mjs scripts/lib/performance-reference-input-mapping.test.mjs scripts/lib/transport-clock-evidence.test.mjs scripts/lib/performance-reference-output-content.test.mjs scripts/lib/daemon-trace-admission.test.mjs scripts/lib/owned-reference-capture.test.mjs scripts/lib/product-rig-reference-environment.test.mjs && pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",
         "measure:performance-reference": "node scripts/performance-reference.mjs",
         "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
         "test:tui-perf": "pnpm test:performance-qualification",
@@ -12052,9 +12319,6 @@ var require_package = __commonJS({
         "product:testdrive": "node scripts/product-test-rig.mjs",
         "product:diagnose": "node scripts/product-test-rig.mjs diagnose",
         "test:product-test-rig": "node --test scripts/product-test-rig.test.mjs scripts/product-test-rig-journeys.test.mjs",
-        "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs",
-        "e2e:app": "pnpm --filter @tmux-ide/desktop-renderer run e2e",
-        "test:web-live": "pnpm --filter @tmux-ide/desktop-renderer run smoke:dev-web-host",
         "check:control-bytes": "node scripts/check-control-bytes.mjs",
         "test:dual-tui-live": "TMUX_IDE_DUAL_TUI_LIVE=1 node --test scripts/lib/product-dual-tui-live.test.mjs",
         "test:multi-tui-recovery-live": "TMUX_IDE_TUI_RECOVERY_LIVE=1 node --test scripts/lib/product-tui-recovery-live.test.mjs",
@@ -12068,7 +12332,8 @@ var require_package = __commonJS({
         "test:tui-gallery": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./scripts/tui-gallery/gallery.test.tsx",
         "typecheck:tui-gallery": "tsc --noEmit -p scripts/tsconfig.tui-gallery.json",
         "test:spark-qualification": "node --import tsx --test scripts/lib/spark-*.test.ts scripts/lib/spark-*.test.mjs",
-        "test:installer": "node --test scripts/install.test.mjs"
+        "test:installer": "node --test scripts/install.test.mjs",
+        "qualify:styled-ssh": "node scripts/qualify-styled-ssh.mjs"
       },
       keywords: [
         "tmux",
@@ -12341,7 +12606,7 @@ var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestS
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
     RegisterProjectRequestSchemaZ = z77.object({
       dir: z77.string().min(1),
@@ -12357,9 +12622,9 @@ var init_registry = __esm({
 
 // packages/daemon/src/lib/project-resolver.ts
 import { execFile as execFile2 } from "node:child_process";
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync6, realpathSync as realpathSync5 } from "node:fs";
-import { basename as basename3, dirname as dirname10, isAbsolute as isAbsolute4, join as join11, relative as relative3, resolve as resolve6, sep as sep4 } from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync7, realpathSync as realpathSync7 } from "node:fs";
+import { basename as basename3, dirname as dirname11, isAbsolute as isAbsolute6, join as join13, relative as relative4, resolve as resolve8, sep as sep5 } from "node:path";
 function safeExists(path2, io) {
   try {
     return io.exists(path2);
@@ -12368,7 +12633,7 @@ function safeExists(path2, io) {
   }
 }
 function canonicalize(path2, io) {
-  const absolute2 = resolve6(path2);
+  const absolute2 = resolve8(path2);
   try {
     return io.realpath(absolute2);
   } catch {
@@ -12377,14 +12642,14 @@ function canonicalize(path2, io) {
 }
 function canonicalizeGitPath(path2, io) {
   try {
-    return io.realpath(resolve6(path2));
+    return io.realpath(resolve8(path2));
   } catch {
     return null;
   }
 }
 function isWithin(path2, root) {
-  const fromRoot = relative3(root, path2);
-  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep4}`) && !isAbsolute4(fromRoot);
+  const fromRoot = relative4(root, path2);
+  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep5}`) && !isAbsolute6(fromRoot);
 }
 async function resolveGitPath(args, cwd, allowRelative, io) {
   let output;
@@ -12396,8 +12661,8 @@ async function resolveGitPath(args, cwd, allowRelative, io) {
   if (!output) return null;
   const path2 = output.trim();
   if (path2.length === 0 || path2.includes("\0") || /[\r\n]/.test(path2)) return null;
-  if (!isAbsolute4(path2) && !allowRelative) return null;
-  return canonicalizeGitPath(isAbsolute4(path2) ? path2 : resolve6(cwd, path2), io);
+  if (!isAbsolute6(path2) && !allowRelative) return null;
+  return canonicalizeGitPath(isAbsolute6(path2) ? path2 : resolve8(cwd, path2), io);
 }
 function discoverConfigs(inputDir, gitProjectRoot, io) {
   let current = inputDir;
@@ -12405,8 +12670,8 @@ function discoverConfigs(inputDir, gitProjectRoot, io) {
   let legacyPath = null;
   let hasLegacyAtInput = false;
   while (true) {
-    const workspaceCandidate = join11(current, ".tmux-ide", "workspace.yml");
-    const legacyCandidate = join11(current, "ide.yml");
+    const workspaceCandidate = join13(current, ".tmux-ide", "workspace.yml");
+    const legacyCandidate = join13(current, "ide.yml");
     if (!workspacePath && safeExists(workspaceCandidate, io)) {
       workspacePath = canonicalize(workspaceCandidate, io);
     }
@@ -12416,7 +12681,7 @@ function discoverConfigs(inputDir, gitProjectRoot, io) {
     }
     if (workspacePath && legacyPath) break;
     if (gitProjectRoot && current === gitProjectRoot) break;
-    const parent = dirname10(current);
+    const parent = dirname11(current);
     if (parent === current) break;
     if (gitProjectRoot && !isWithin(parent, gitProjectRoot)) break;
     current = parent;
@@ -12424,7 +12689,7 @@ function discoverConfigs(inputDir, gitProjectRoot, io) {
   return { workspacePath, legacyPath, hasLegacyAtInput };
 }
 function explicitConfigSource(explicitPath, inputDir, io) {
-  const absolute2 = isAbsolute4(explicitPath) ? explicitPath : resolve6(inputDir, explicitPath);
+  const absolute2 = isAbsolute6(explicitPath) ? explicitPath : resolve8(inputDir, explicitPath);
   const path2 = canonicalize(absolute2, io);
   return {
     kind: basename3(path2) === "ide.yml" ? "legacy" : "workspace",
@@ -12446,15 +12711,15 @@ function chooseConfig(explicitPath, inputDir, discovered, io) {
 }
 function configProjectRoot(config2, inputDir) {
   if (config2.kind === "none") return inputDir;
-  const configDir = dirname10(config2.path);
+  const configDir = dirname11(config2.path);
   if (config2.kind === "workspace" && basename3(configDir) === ".tmux-ide") {
-    return dirname10(configDir);
+    return dirname11(configDir);
   }
   return configDir;
 }
 function hintedProjectRoot(hint, inputDir, io) {
   if (!hint || hint.trim().length === 0) return null;
-  const root = canonicalize(isAbsolute4(hint) ? hint : resolve6(inputDir, hint), io);
+  const root = canonicalize(isAbsolute6(hint) ? hint : resolve8(inputDir, hint), io);
   if (!isWithin(inputDir, root)) {
     throw new Error(`Project root hint "${root}" does not contain input directory "${inputDir}"`);
   }
@@ -12464,20 +12729,20 @@ function markedProjectRoot(inputDir, io) {
   let current = inputDir;
   let nearestPackageRoot = null;
   while (true) {
-    if (WORKSPACE_ROOT_MARKERS.some((marker) => safeExists(join11(current, marker), io))) {
+    if (WORKSPACE_ROOT_MARKERS.some((marker) => safeExists(join13(current, marker), io))) {
       return current;
     }
-    if (nearestPackageRoot === null && PACKAGE_ROOT_MARKERS.some((marker) => safeExists(join11(current, marker), io))) {
+    if (nearestPackageRoot === null && PACKAGE_ROOT_MARKERS.some((marker) => safeExists(join13(current, marker), io))) {
       nearestPackageRoot = current;
     }
-    const parent = dirname10(current);
+    const parent = dirname11(current);
     if (parent === current) return nearestPackageRoot;
     current = parent;
   }
 }
 function projectIdentityKey(source, anchor) {
   const prefix = source === "git-common-dir" ? "git" : "path";
-  const digest3 = createHash4("sha256").update(source).update("\0").update(anchor).digest("hex");
+  const digest3 = createHash5("sha256").update(source).update("\0").update(anchor).digest("hex");
   return `${prefix}-${digest3}`;
 }
 async function resolveProject(dir, options = {}) {
@@ -12539,8 +12804,8 @@ var init_project_resolver = __esm({
     ];
     PROJECT_ROOT_MARKERS = [...WORKSPACE_ROOT_MARKERS, ...PACKAGE_ROOT_MARKERS];
     defaultProjectResolverIo = {
-      exists: existsSync6,
-      realpath: realpathSync5,
+      exists: existsSync7,
+      realpath: realpathSync7,
       runGit: (args, cwd) => new Promise((resolveResult) => {
         execFile2(
           "git",
@@ -12565,12 +12830,12 @@ var init_project_resolver = __esm({
 });
 
 // packages/daemon/src/lib/project-probe.ts
-import { basename as basename4, isAbsolute as isAbsolute5, resolve as resolve7 } from "node:path";
+import { basename as basename4, isAbsolute as isAbsolute7, resolve as resolve9 } from "node:path";
 function sanitizeName(raw) {
   return raw.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^-+|-+$/g, "");
 }
 async function probeProject(dir, io = realIo) {
-  const absoluteDir = isAbsolute5(dir) ? dir : resolve7(dir);
+  const absoluteDir = isAbsolute7(dir) ? dir : resolve9(dir);
   const resolution = await resolveProject(dir, {
     // Existing injected ProbeIo values predate canonicalization. Treat their
     // paths as canonical unless they explicitly provide a realpath operation,
@@ -12618,8 +12883,8 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync7, mkdirSync as mkdirSync7, readFileSync as readFileSync7, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname11, isAbsolute as isAbsolute6, join as join12, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname12, isAbsolute as isAbsolute8, join as join14, resolve as resolve10 } from "node:path";
 import { z as z78 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -12656,12 +12921,12 @@ function registryDir() {
   return resolveRuntimeNamespace().registryDir;
 }
 function registryPath() {
-  return runtimeOwnedPath(join12(registryDir(), "projects.json"));
+  return runtimeOwnedPath(join14(registryDir(), "projects.json"));
 }
 function readDisk() {
   const path2 = registryPath();
-  if (!existsSync7(path2)) return [];
-  const raw = readFileSync7(path2, "utf-8");
+  if (!existsSync8(path2)) return [];
+  const raw = readFileSync8(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -12683,7 +12948,7 @@ function readDisk() {
 }
 function writeDisk(projects) {
   const path2 = registryPath();
-  const dir = dirname11(path2);
+  const dir = dirname12(path2);
   mkdirSync7(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
@@ -12717,8 +12982,8 @@ function isProjectVolatile(name) {
   return volatileProjectNames.has(name);
 }
 async function registerProject(input) {
-  const exists = input.exists ?? existsSync7;
-  const absoluteDir = isAbsolute6(input.dir) ? input.dir : resolve8(input.dir);
+  const exists = input.exists ?? existsSync8;
+  const absoluteDir = isAbsolute8(input.dir) ? input.dir : resolve10(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
   }
@@ -12850,7 +13115,7 @@ var init_agent_resolution = __esm({
 });
 
 // packages/daemon/src/tui/detect/process-tree.ts
-import { execFile as execFile3, execFileSync as execFileSync4 } from "node:child_process";
+import { execFile as execFile3, execFileSync as execFileSync5 } from "node:child_process";
 function parsePsOutput(raw) {
   const entries = [];
   for (const line of raw.split("\n")) {
@@ -12906,7 +13171,7 @@ function describeSubtree(entries, rootPid, limit = 8) {
 }
 function readProcessTable() {
   try {
-    const raw = execFileSync4("ps", ["-axo", "pid=,ppid=,command="], {
+    const raw = execFileSync5("ps", ["-axo", "pid=,ppid=,command="], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -12917,7 +13182,7 @@ function readProcessTable() {
   }
 }
 function readProcessTableAsync(signal) {
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     execFile3(
       "ps",
       ["-axo", "pid=,ppid=,command="],
@@ -12926,7 +13191,7 @@ function readProcessTableAsync(signal) {
         timeout: 2e3,
         signal
       },
-      (error, stdout) => resolve41(error ? [] : parsePsOutput(stdout))
+      (error, stdout) => resolve42(error ? [] : parsePsOutput(stdout))
     );
   });
 }
@@ -13002,29 +13267,29 @@ __export(canonical_daemon_exports, {
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
 });
 import {
-  chmodSync as chmodSync2,
+  chmodSync as chmodSync3,
   closeSync as closeSync3,
-  constants as constants3,
+  constants as constants5,
   fchmodSync,
   fstatSync as fstatSync3,
   linkSync,
-  lstatSync as lstatSync6,
+  lstatSync as lstatSync7,
   mkdirSync as mkdirSync8,
   openSync as openSync3,
-  readFileSync as readFileSync8,
+  readFileSync as readFileSync9,
   renameSync as renameSync6,
   rmSync,
   writeFileSync as writeFileSync7
 } from "node:fs";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { dirname as dirname12, join as join13 } from "node:path";
+import { dirname as dirname13, join as join15 } from "node:path";
 function getCanonicalDaemonInfoPath() {
   const namespace = resolveRuntimeNamespace();
-  const path2 = join13(namespace.daemonInfoDir, DAEMON_INFO_FILE);
+  const path2 = join15(namespace.daemonInfoDir, DAEMON_INFO_FILE);
   return namespace.development ? runtimeOwnedPath(path2) : path2;
 }
 function getCanonicalDaemonClaimPath() {
-  return join13(dirname12(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+  return join15(dirname13(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat3) {
   return { dev: stat3.dev, ino: stat3.ino, size: stat3.size, mtimeMs: stat3.mtimeMs };
@@ -13048,7 +13313,7 @@ function prepareCanonicalDaemonRoot(root, expected) {
         if (error.code !== "EEXIST") throw error;
       }
     }
-    const pathStat = lstatSync6(root);
+    const pathStat = lstatSync7(root);
     if (expected && (!sameFileIdentity(expected, pathStat) || (pathStat.mode & 18) !== 0)) {
       throw canonicalDaemonRootError("changed before permission recovery");
     }
@@ -13063,7 +13328,7 @@ function prepareCanonicalDaemonRoot(root, expected) {
     }
     descriptor = openSync3(
       root,
-      constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_DIRECTORY ?? 0)
+      constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0) | (constants5.O_DIRECTORY ?? 0)
     );
     const openedStat = fstatSync3(descriptor);
     if (!openedStat.isDirectory() || !sameFileIdentity(pathStat, openedStat) || expected !== void 0 && (openedStat.mode & 18) !== 0 || typeof process.getuid === "function" && openedStat.uid !== process.getuid()) {
@@ -13071,7 +13336,7 @@ function prepareCanonicalDaemonRoot(root, expected) {
     }
     fchmodSync(descriptor, 448);
     const hardenedStat = fstatSync3(descriptor);
-    const currentPathStat = lstatSync6(root);
+    const currentPathStat = lstatSync7(root);
     if (!hardenedStat.isDirectory() || !sameFileIdentity(openedStat, hardenedStat) || typeof process.getuid === "function" && hardenedStat.uid !== process.getuid() || (hardenedStat.mode & 63) !== 0 || currentPathStat.isSymbolicLink() || !currentPathStat.isDirectory() || !sameFileIdentity(hardenedStat, currentPathStat) || typeof process.getuid === "function" && currentPathStat.uid !== process.getuid() || (currentPathStat.mode & 63) !== 0) {
       throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
     }
@@ -13090,9 +13355,9 @@ function ownerPidFromRaw(raw) {
 function inspectCanonicalDaemonInfoPath(path2) {
   let descriptor;
   try {
-    const pathStat = lstatSync6(path2);
+    const pathStat = lstatSync7(path2);
     const pathObservation = observation(pathStat);
-    const parentStat = lstatSync6(dirname12(path2));
+    const parentStat = lstatSync7(dirname13(path2));
     if (parentStat.isSymbolicLink()) {
       return invalidState(
         "parent-symlink",
@@ -13160,10 +13425,10 @@ function inspectCanonicalDaemonInfoPath(path2) {
         pathObservation
       );
     }
-    descriptor = openSync3(path2, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+    descriptor = openSync3(path2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync3(descriptor);
     const openedObservation = observation(openedStat);
-    const reopenedParentStat = lstatSync6(dirname12(path2));
+    const reopenedParentStat = lstatSync7(dirname13(path2));
     if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
       return invalidState(
         "changed-while-opening",
@@ -13174,7 +13439,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     }
     let raw;
     try {
-      raw = JSON.parse(readFileSync8(descriptor, "utf-8"));
+      raw = JSON.parse(readFileSync9(descriptor, "utf-8"));
     } catch (error) {
       return invalidState(
         "malformed-json",
@@ -13224,7 +13489,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
 function inspectCanonicalDaemonClaimPath(path2) {
   let descriptor;
   try {
-    const claimStat = lstatSync6(path2);
+    const claimStat = lstatSync7(path2);
     if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
       return { status: "invalid", detail: "daemon claim must be a real directory" };
     }
@@ -13234,8 +13499,8 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((claimStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim directory is not owner-only" };
     }
-    const ownerPath = join13(path2, DAEMON_CLAIM_OWNER_FILE);
-    const ownerStat = lstatSync6(ownerPath);
+    const ownerPath = join15(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync7(ownerPath);
     if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
       return { status: "invalid", detail: "daemon claim owner must be a real file" };
     }
@@ -13248,12 +13513,12 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((ownerStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim owner is not owner-only" };
     }
-    descriptor = openSync3(ownerPath, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+    descriptor = openSync3(ownerPath, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync3(descriptor);
     if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
       return { status: "invalid", detail: "daemon claim changed while it was opened" };
     }
-    const raw = JSON.parse(readFileSync8(descriptor, "utf-8"));
+    const raw = JSON.parse(readFileSync9(descriptor, "utf-8"));
     if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
       return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
     }
@@ -13314,7 +13579,7 @@ function admitsClaim(state, intent) {
 }
 function tryAcquireCanonicalDaemonClaim(intent = { kind: "ordinary" }) {
   const path2 = getCanonicalDaemonClaimPath();
-  const root = dirname12(path2);
+  const root = dirname13(path2);
   try {
     prepareCanonicalDaemonRoot(root);
   } catch (error) {
@@ -13336,7 +13601,7 @@ function tryAcquireCanonicalDaemonClaim(intent = { kind: "ordinary" }) {
     };
     const candidate = `${path2}.${claim.claimId}.candidate`;
     mkdirSync8(candidate, { mode: 448 });
-    writeFileSync7(join13(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+    writeFileSync7(join15(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
 `, {
       encoding: "utf-8",
       mode: 384
@@ -13395,7 +13660,7 @@ function writeCanonicalDaemonInfo(info, claim) {
   if (before.status === "valid" && info.supervisionId && pidLiveness(before.info.pid) !== "dead" && !(intent.kind === "supervised" && matchesCanonicalDaemonPredecessor(before, intent.predecessor, intent.supervisionId)))
     throw new Error("Supervised predecessor is not proven dead");
   const path2 = getCanonicalDaemonInfoPath();
-  prepareCanonicalDaemonRoot(dirname12(path2));
+  prepareCanonicalDaemonRoot(dirname13(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID3()}.tmp`;
   const persisted = {
     ...info.supervisionId ? { supervisionId: info.supervisionId } : {},
@@ -13415,7 +13680,7 @@ function writeCanonicalDaemonInfo(info, claim) {
     encoding: "utf-8",
     mode: 384
   });
-  chmodSync2(tmpPath, 384);
+  chmodSync3(tmpPath, 384);
   try {
     if (intent.kind === "supervised") {
       const current = inspectCanonicalDaemonInfo();
@@ -13523,15 +13788,15 @@ function prepareCanonicalDaemonInfoForBootstrap() {
   if (initial.status !== "invalid" || initial.reason !== "parent-unsafe-permissions" && initial.reason !== "unsafe-permissions")
     return initial;
   const path2 = getCanonicalDaemonInfoPath();
-  const root = dirname12(path2);
+  const root = dirname13(path2);
   let descriptor;
   const blocked = (reason, detail) => ({
     ...invalidState(reason, `${path2}: permission recovery refused: ${detail}`),
     recoveryDetail: detail
   });
   try {
-    const parent = lstatSync6(root);
-    const file = lstatSync6(path2);
+    const parent = lstatSync7(root);
+    const file = lstatSync7(path2);
     if (parent.isSymbolicLink()) return blocked("parent-symlink", "parent is a symbolic link");
     if (!parent.isDirectory()) return blocked("parent-not-directory", "parent is not a directory");
     if (typeof process.getuid !== "function" || parent.uid !== process.getuid())
@@ -13558,11 +13823,11 @@ function prepareCanonicalDaemonInfoForBootstrap() {
     if (!initial.observation || !sameObservation(initial.observation, observation(file)))
       return blocked("changed-while-opening", "record changed before recovery; retry bootstrap");
     prepareCanonicalDaemonRoot(root, parent);
-    descriptor = openSync3(path2, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+    descriptor = openSync3(path2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
     const opened = fstatSync3(descriptor);
     const unchanged = () => {
-      const current = lstatSync6(path2);
-      const currentParent = lstatSync6(root);
+      const current = lstatSync7(path2);
+      const currentParent = lstatSync7(root);
       const pinned = fstatSync3(descriptor);
       return current.isFile() && pinned.isFile() && currentParent.isDirectory() && sameObservation(observation(file), observation(current)) && sameObservation(observation(file), observation(pinned)) && sameFileIdentity(parent, currentParent) && current.uid === process.getuid() && pinned.uid === process.getuid() && currentParent.uid === process.getuid() && current.nlink === 1 && pinned.nlink === 1 && (current.mode & 18) === 0 && (pinned.mode & 18) === 0 && (currentParent.mode & 63) === 0;
     };
@@ -13609,7 +13874,7 @@ function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
   try {
-    const current = observation(lstatSync6(captured));
+    const current = observation(lstatSync7(captured));
     if (sameObservation(state.observation, current)) {
       rmSync(captured, { recursive: true, force: true });
       return true;
@@ -13649,7 +13914,7 @@ function canonicalDaemonClaimAllowsStartupAttempt() {
   if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const claimPath = getCanonicalDaemonClaimPath();
   try {
-    const root = lstatSync6(dirname12(claimPath));
+    const root = lstatSync7(dirname13(claimPath));
     if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
       return false;
     }
@@ -13730,7 +13995,7 @@ var DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO
 var init_canonical_daemon = __esm({
   "packages/daemon/src/lib/canonical-daemon.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_runtime_namespace();
     DAEMON_INFO_FILE = "daemon.json";
     DAEMON_CLAIM_DIR = "daemon.claim";
@@ -13913,7 +14178,7 @@ var ANSI, DEFAULT_LINES;
 var init_snapshot = __esm({
   "packages/daemon/src/tui/detect/snapshot.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_canonical_daemon();
     init_tmux_interaction_options();
     ANSI = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
@@ -13934,7 +14199,7 @@ __export(sessions_exports, {
   rollupStatus: () => rollupStatus,
   rollupWindows: () => rollupWindows
 });
-import { execFileSync as execFileSync5 } from "node:child_process";
+import { execFileSync as execFileSync6 } from "node:child_process";
 function buildAgentEntry(input) {
   const { manifest, pane } = input;
   if (!manifest || manifest.id === "shell") return null;
@@ -13964,7 +14229,7 @@ function isListableSession(name) {
 }
 function tmux(args) {
   try {
-    return execFileSync5("tmux", runtimeTmuxArgs(args), {
+    return execFileSync6("tmux", runtimeTmuxArgs(args), {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
@@ -14248,7 +14513,7 @@ function listTeamProjects(tracker, opts = {}) {
 var init_projects = __esm({
   "packages/daemon/src/tui/team/projects.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_project_registry();
     init_sessions2();
   }
@@ -14333,8 +14598,8 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync8, mkdirSync as mkdirSync9, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
-import { join as join14 } from "node:path";
+import { appendFileSync, existsSync as existsSync9, mkdirSync as mkdirSync9, renameSync as renameSync7, statSync as statSync4 } from "node:fs";
+import { join as join16 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -14361,14 +14626,14 @@ function formatEventLine(ev, paint2 = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint2(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return runtimeOwnedPath(join14(stateHome(), "events.jsonl"));
+  return runtimeOwnedPath(join16(stateHome(), "events.jsonl"));
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
   const path2 = eventsPath();
   try {
     mkdirSync9(stateHome(), { recursive: true });
-    if (existsSync8(path2) && shouldRotate(statSync2(path2).size)) {
+    if (existsSync9(path2) && shouldRotate(statSync4(path2).size)) {
       renameSync7(path2, `${path2}.1`);
     }
     const ts = now();
@@ -14427,11 +14692,11 @@ var init_front_door = __esm({
 });
 
 // packages/daemon/src/tui/detect/session-id.ts
-import { execFileSync as execFileSync6 } from "node:child_process";
-import { createHash as createHash5 } from "node:crypto";
-import { readdirSync as readdirSync3, readFileSync as readFileSync9, readlinkSync as readlinkSync2, statSync as statSync3 } from "node:fs";
+import { execFileSync as execFileSync7 } from "node:child_process";
+import { createHash as createHash6 } from "node:crypto";
+import { readdirSync as readdirSync4, readFileSync as readFileSync10, readlinkSync as readlinkSync2, statSync as statSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join17 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -14487,7 +14752,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join15(
+    const dir = join17(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -14496,7 +14761,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join15(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join17(dir, name), id: parsed.id });
       }
     }
   }
@@ -14520,12 +14785,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join15(chatsRoot, createHash5("md5").update(paneCwd).digest("hex"));
+  const hashed = join17(chatsRoot, createHash6("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join15(hashed, name));
+    const mtime = io.mtimeMs(join17(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -14576,11 +14841,11 @@ function createSessionIdCapturer(deps2) {
 function readOpenFiles(pid) {
   try {
     const fdDir = `/proc/${pid}/fd`;
-    const names = readdirSync3(fdDir);
+    const names = readdirSync4(fdDir);
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync2(join15(fdDir, name));
+        const target = readlinkSync2(join17(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -14589,7 +14854,7 @@ function readOpenFiles(pid) {
   } catch {
   }
   try {
-    const raw = execFileSync6("lsof", ["-p", String(pid), "-Fn"], {
+    const raw = execFileSync7("lsof", ["-p", String(pid), "-Fn"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 3e3
@@ -14601,7 +14866,7 @@ function readOpenFiles(pid) {
 }
 function processStartMs(pid, nowMs = Date.now()) {
   try {
-    const raw = execFileSync6("ps", ["-o", "etime=", "-p", String(pid)], {
+    const raw = execFileSync7("ps", ["-o", "etime=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2e3
@@ -14620,8 +14885,8 @@ function liveProbeIo() {
       openFiles: () => [],
       processStartMs: () => null,
       stateDir: liveStateDirIo,
-      codexSessionsRoot: () => join15(namespace.stateHome, "integrations", "codex", "sessions"),
-      cursorChatsRoot: () => join15(namespace.stateHome, "integrations", "cursor", "chats"),
+      codexSessionsRoot: () => join17(namespace.stateHome, "integrations", "codex", "sessions"),
+      cursorChatsRoot: () => join17(namespace.stateHome, "integrations", "cursor", "chats"),
       now: () => Date.now()
     };
   return {
@@ -14629,8 +14894,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join15(homedir4(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join15(homedir4(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join17(homedir4(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join17(homedir4(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -14663,21 +14928,21 @@ var init_session_id = __esm({
     liveStateDirIo = {
       listDir: (path2) => {
         try {
-          return readdirSync3(path2);
+          return readdirSync4(path2);
         } catch {
           return [];
         }
       },
       mtimeMs: (path2) => {
         try {
-          return statSync3(path2).mtimeMs;
+          return statSync5(path2).mtimeMs;
         } catch {
           return null;
         }
       },
       readFirstLine: (path2) => {
         try {
-          const fd = readFileSync9(path2, { encoding: "utf8", flag: "r" });
+          const fd = readFileSync10(path2, { encoding: "utf8", flag: "r" });
           const newline = fd.indexOf("\n");
           return newline === -1 ? fd : fd.slice(0, newline);
         } catch {
@@ -14689,8 +14954,8 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/tui/team/keymap.ts
-import { existsSync as existsSync9, readFileSync as readFileSync10 } from "node:fs";
-import { join as join16 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync11 } from "node:fs";
+import { join as join18 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -15137,15 +15402,15 @@ __export(sidebar_exports, {
   sidebarWidgetCommand: () => sidebarWidgetCommand,
   sidebarWidgetScript: () => sidebarWidgetScript
 });
-import { existsSync as existsSync10 } from "node:fs";
-import { dirname as dirname13, resolve as resolve9 } from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+import { existsSync as existsSync11 } from "node:fs";
+import { dirname as dirname14, resolve as resolve11 } from "node:path";
+import { fileURLToPath as fileURLToPath6 } from "node:url";
 function sidebarWidgetScript() {
   const candidates = [
-    resolve9(__dirname2, "../../widgets/sidebar/index.tsx"),
-    resolve9(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
+    resolve11(__dirname2, "../../widgets/sidebar/index.tsx"),
+    resolve11(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
   ];
-  return candidates.find((p) => existsSync10(p)) ?? candidates[0];
+  return candidates.find((p) => existsSync11(p)) ?? candidates[0];
 }
 function sidebarWidgetCommand(scriptPath, session, dir, theme) {
   const args = [`--session=${session}`, `--dir=${dir}`];
@@ -15231,11 +15496,11 @@ var __dirname2, SIDEBAR_KEY, DEFAULT_SIDEBAR_WIDTH;
 var init_sidebar = __esm({
   "packages/daemon/src/tui/chrome/sidebar.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_shell();
     init_sessions2();
     init_compiled();
-    __dirname2 = dirname13(fileURLToPath4(import.meta.url));
+    __dirname2 = dirname14(fileURLToPath6(import.meta.url));
     SIDEBAR_KEY = "M-b";
     DEFAULT_SIDEBAR_WIDTH = 30;
   }
@@ -15251,22 +15516,22 @@ __export(welcome_exports, {
   welcomeMarkerPath: () => welcomeMarkerPath
 });
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync11, mkdirSync as mkdirSync10, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname14, join as join17 } from "node:path";
+import { existsSync as existsSync12, mkdirSync as mkdirSync10, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname15, join as join19 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
   const home = resolveRuntimeNamespace().stateHome;
-  return runtimeOwnedPath(join17(home, "welcomed"));
+  return runtimeOwnedPath(join19(home, "welcomed"));
 }
 function shouldShowWelcome() {
-  return !existsSync11(welcomeMarkerPath()) && getAppConfig().welcome.show;
+  return !existsSync12(welcomeMarkerPath()) && getAppConfig().welcome.show;
 }
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync10(dirname14(path2), { recursive: true });
+    mkdirSync10(dirname15(path2), { recursive: true });
     writeFileSync8(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15329,17 +15594,17 @@ __export(claude_exports, {
   uninstallClaudeIntegration: () => uninstallClaudeIntegration
 });
 import {
-  accessSync as accessSync2,
-  constants as constants4,
-  statSync as statSync4,
-  chmodSync as chmodSync3,
+  accessSync as accessSync4,
+  constants as constants6,
+  statSync as statSync6,
+  chmodSync as chmodSync4,
   copyFileSync,
-  existsSync as existsSync12,
+  existsSync as existsSync13,
   mkdirSync as mkdirSync11,
-  readFileSync as readFileSync11,
+  readFileSync as readFileSync12,
   writeFileSync as writeFileSync9
 } from "node:fs";
-import { dirname as dirname15, isAbsolute as isAbsolute7 } from "node:path";
+import { dirname as dirname16, isAbsolute as isAbsolute9 } from "node:path";
 function hookScriptPath() {
   return resolveRuntimeNamespace().claudeHookPath;
 }
@@ -15353,7 +15618,7 @@ function ownedCommand(hook, scriptPath) {
   const word = match[1];
   if (scriptPath && (word === scriptPath || word === shellEscape(scriptPath))) return true;
   const decoded = word.startsWith("'") && word.endsWith("'") ? word.slice(1, -1).replaceAll("'\\''", "'") : word;
-  if (!isAbsolute7(decoded) || !decoded.endsWith(`/${HOOK_SCRIPT_RELPATH}`)) return false;
+  if (!isAbsolute9(decoded) || !decoded.endsWith(`/${HOOK_SCRIPT_RELPATH}`)) return false;
   return word === shellEscape(decoded) || !/[\s'";$`\\|&<>]/u.test(word) && word === decoded;
 }
 function strippedGroup(group, scriptPath) {
@@ -15394,9 +15659,9 @@ function integrationPaths() {
   return { scriptPath: hookScriptPath(), settingsPath: claudeSettingsPath() };
 }
 function readSettings(path2) {
-  if (!existsSync12(path2)) return {};
+  if (!existsSync13(path2)) return {};
   try {
-    const parsed = JSON.parse(readFileSync11(path2, "utf8"));
+    const parsed = JSON.parse(readFileSync12(path2, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
       throw new Error("settings must be an object");
     if (parsed.hooks !== void 0) {
@@ -15422,12 +15687,12 @@ function installClaudeIntegration(paths) {
   runtimeOwnedPath(paths.settingsPath);
   const { scriptPath: script, settingsPath } = paths;
   const settings = readSettings(settingsPath);
-  mkdirSync11(dirname15(script), { recursive: true });
+  mkdirSync11(dirname16(script), { recursive: true });
   writeFileSync9(script, HOOK_SCRIPT, "utf8");
-  chmodSync3(script, 493);
-  mkdirSync11(dirname15(settingsPath), { recursive: true });
+  chmodSync4(script, 493);
+  mkdirSync11(dirname16(settingsPath), { recursive: true });
   const backup = `${settingsPath}.tmux-ide.bak`;
-  if (existsSync12(settingsPath) && !existsSync12(backup)) copyFileSync(settingsPath, backup);
+  if (existsSync13(settingsPath) && !existsSync13(backup)) copyFileSync(settingsPath, backup);
   writeFileSync9(settingsPath, `${JSON.stringify(mergeHooks(settings, script), null, 2)}
 `, "utf8");
   return { scriptPath: script, settingsPath };
@@ -15469,10 +15734,10 @@ function claudeIntegrationStatus(paths = integrationPaths()) {
   let scriptCurrent = false;
   let scriptExecutable = false;
   try {
-    scriptExists = statSync4(paths.scriptPath).isFile();
+    scriptExists = statSync6(paths.scriptPath).isFile();
     if (scriptExists) {
-      scriptCurrent = readFileSync11(paths.scriptPath, "utf8") === HOOK_SCRIPT;
-      accessSync2(paths.scriptPath, constants4.X_OK);
+      scriptCurrent = readFileSync12(paths.scriptPath, "utf8") === HOOK_SCRIPT;
+      accessSync4(paths.scriptPath, constants6.X_OK);
       scriptExecutable = true;
     }
   } catch {
@@ -15556,12 +15821,12 @@ __export(offer_exports, {
   maybeOfferIntegrationPopup: () => maybeOfferIntegrationPopup,
   shouldOfferIntegration: () => shouldOfferIntegration
 });
-import { execFileSync as execFileSync7, spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync13, mkdirSync as mkdirSync12, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname16, join as join18 } from "node:path";
+import { execFileSync as execFileSync8, spawn as spawn3 } from "node:child_process";
+import { existsSync as existsSync14, mkdirSync as mkdirSync12, writeFileSync as writeFileSync10 } from "node:fs";
+import { dirname as dirname17, join as join20 } from "node:path";
 function integrationOfferMarkerPath() {
   const home = resolveRuntimeNamespace().stateHome;
-  return runtimeOwnedPath(join18(home, "integration-offered"));
+  return runtimeOwnedPath(join20(home, "integration-offered"));
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -15569,7 +15834,7 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync12(dirname16(path2), { recursive: true });
+    mkdirSync12(dirname17(path2), { recursive: true });
     writeFileSync10(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15596,7 +15861,7 @@ function maybeOfferIntegrationPopup() {
     offer = shouldOfferIntegration({
       claudeOnPath: claudeOnPath(),
       integrationInstalled: status2.installed,
-      markerPresent: existsSync13(integrationOfferMarkerPath()),
+      markerPresent: existsSync14(integrationOfferMarkerPath()),
       offerEnabled: getAppConfig().integrations.offer
     });
   } catch {
@@ -15617,7 +15882,7 @@ function maybeOfferIntegrationPopup() {
 }
 function claudeOnPath() {
   try {
-    execFileSync7("which", ["claude"], { stdio: "ignore", timeout: 2e3 });
+    execFileSync8("which", ["claude"], { stdio: "ignore", timeout: 2e3 });
     return true;
   } catch {
     return false;
@@ -15890,7 +16155,7 @@ var POPUP_KEY, HOME_KEY, MENU_KEY, MENU_STATUS_KEY, MENU_PANE_KEY, STATUS_CLICK_
 var init_statusline = __esm({
   "packages/daemon/src/tui/chrome/statusline.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_app_config();
     init_pane_chrome();
     init_cheatsheet();
@@ -15964,15 +16229,15 @@ var init_notify_prefs = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify.ts
-import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_process";
-import { dirname as dirname17, resolve as resolve10 } from "node:path";
-import { fileURLToPath as fileURLToPath5 } from "node:url";
+import { execFileSync as execFileSync9, spawn as spawn4 } from "node:child_process";
+import { dirname as dirname18, resolve as resolve12 } from "node:path";
+import { fileURLToPath as fileURLToPath7 } from "node:url";
 import {
   closeSync as closeSync4,
   constants as fsConstants2,
-  existsSync as existsSync14,
+  existsSync as existsSync15,
   openSync as openSync4,
-  readFileSync as readFileSync12,
+  readFileSync as readFileSync13,
   writeSync
 } from "node:fs";
 function statusPhrase(to) {
@@ -16157,7 +16422,7 @@ function soundArgv(platform2) {
 function playPingSound(platform2 = process.platform) {
   if (resolveRuntimeNamespace().development) return;
   const argv = soundArgv(platform2);
-  if (!argv || !existsSync14(argv[1])) return;
+  if (!argv || !existsSync15(argv[1])) return;
   try {
     const child = spawn4(argv[0], argv.slice(1), { stdio: "ignore", detached: true });
     child.on("error", () => {
@@ -16168,7 +16433,7 @@ function playPingSound(platform2 = process.platform) {
 }
 function binaryPath(name) {
   try {
-    const path2 = execFileSync8("which", [name], { encoding: "utf8" }).trim();
+    const path2 = execFileSync9("which", [name], { encoding: "utf8" }).trim();
     return path2.startsWith("/") ? path2 : null;
   } catch {
     return null;
@@ -16186,18 +16451,18 @@ function notifierExecuteCommand(session) {
   return `if tmux has-session -t ${host} 2>/dev/null; then tmux set-option -t ${shellSingleQuote(APP_HOST_SESSION)} ${APP_JUMP_OPTION} ${target}; tmux switch-client -t ${host}; else tmux switch-client -t ${target}; fi`;
 }
 function resolveNativeMacosNotifierPath(io = {}) {
-  const exists = io.exists ?? existsSync14;
+  const exists = io.exists ?? existsSync15;
   const cliPath = io.cliPath === void 0 ? process.env.TMUX_IDE_CLI : io.cliPath;
-  const modulePath = io.modulePath ?? fileURLToPath5(import.meta.url);
-  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname17(resolve10(path2)));
+  const modulePath = io.modulePath ?? fileURLToPath7(import.meta.url);
+  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname18(resolve12(path2)));
   const visited = /* @__PURE__ */ new Set();
   for (const anchor of anchors) {
     let directory = anchor;
     while (!visited.has(directory)) {
       visited.add(directory);
-      const candidate = resolve10(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
-      if (exists(resolve10(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
-      const parent = dirname17(directory);
+      const candidate = resolve12(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
+      if (exists(resolve12(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
+      const parent = dirname18(directory);
       if (parent === directory) break;
       directory = parent;
     }
@@ -16250,7 +16515,7 @@ function notifySendArgs(n) {
 function sendSystemNotification(n, io = {}) {
   if (resolveRuntimeNamespace().development) return;
   const platform2 = io.platform ?? process.platform;
-  const exec2 = io.exec ?? ((cmd, args) => execFileSync8(cmd, args, { stdio: "ignore" }));
+  const exec2 = io.exec ?? ((cmd, args) => execFileSync9(cmd, args, { stdio: "ignore" }));
   const has = io.hasBinary ?? hasBinary;
   try {
     if (platform2 === "darwin") {
@@ -16326,9 +16591,9 @@ function applyKillSwitch(prefs, envValue) {
 }
 function readRawConfig() {
   const path2 = appConfigPath();
-  if (!existsSync14(path2)) return void 0;
+  if (!existsSync15(path2)) return void 0;
   try {
-    return JSON.parse(readFileSync12(path2, "utf-8"));
+    return JSON.parse(readFileSync13(path2, "utf-8"));
   } catch {
     return void 0;
   }
@@ -16344,7 +16609,7 @@ var init_notify = __esm({
   "packages/daemon/src/tui/chrome/notify.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src2();
+    init_src();
     init_app_config();
     init_hosted();
     init_selection();
@@ -16374,10 +16639,10 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync13, readFileSync as readFileSync13, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join19 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync13, readFileSync as readFileSync14, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join21 } from "node:path";
 function notifyStatePath() {
-  return runtimeOwnedPath(join19(stateHome(), "notify-state.json"));
+  return runtimeOwnedPath(join21(stateHome(), "notify-state.json"));
 }
 function serializeLastNotified(map, nowMs) {
   const lastNotified = {};
@@ -16404,9 +16669,9 @@ function parseLastNotified(json2, nowMs) {
 }
 function loadLastNotified(nowMs = Date.now()) {
   const path2 = notifyStatePath();
-  if (!existsSync15(path2)) return /* @__PURE__ */ new Map();
+  if (!existsSync16(path2)) return /* @__PURE__ */ new Map();
   try {
-    return parseLastNotified(readFileSync13(path2, "utf-8"), nowMs);
+    return parseLastNotified(readFileSync14(path2, "utf-8"), nowMs);
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -16428,8 +16693,8 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync16, mkdirSync as mkdirSync14, readFileSync as readFileSync14, renameSync as renameSync8, writeFileSync as writeFileSync12 } from "node:fs";
-import { dirname as dirname18, join as join20 } from "node:path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync14, readFileSync as readFileSync15, renameSync as renameSync8, writeFileSync as writeFileSync12 } from "node:fs";
+import { dirname as dirname19, join as join22 } from "node:path";
 import { z as z79 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -16544,15 +16809,15 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return runtimeOwnedPath(join20(resolveRuntimeNamespace().stateHome, "snapshot.json"));
+  return runtimeOwnedPath(join22(resolveRuntimeNamespace().stateHome, "snapshot.json"));
 }
 function writeSnapshot(snapshot2) {
   const path2 = snapshotPath();
   try {
-    mkdirSync14(dirname18(path2), { recursive: true });
+    mkdirSync14(dirname19(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
     writeFileSync12(tmp, JSON.stringify(snapshot2, null, 2) + "\n");
-    if (existsSync16(path2)) {
+    if (existsSync17(path2)) {
       try {
         renameSync8(path2, `${path2}.1`);
       } catch {
@@ -16565,8 +16830,8 @@ function writeSnapshot(snapshot2) {
 function readSnapshot() {
   const path2 = snapshotPath();
   try {
-    if (!existsSync16(path2)) return null;
-    const raw = readFileSync14(path2, "utf-8");
+    if (!existsSync17(path2)) return null;
+    const raw = readFileSync15(path2, "utf-8");
     if (raw.trim().length === 0) return null;
     const result2 = FleetSnapshotSchemaZ.safeParse(JSON.parse(raw));
     return result2.success ? result2.data : null;
@@ -16601,7 +16866,7 @@ var init_snapshot2 = __esm({
     "use strict";
     init_runtime_namespace();
     init_runtime_namespace();
-    init_src2();
+    init_src();
     init_process_tree();
     init_sessions2();
     PaneSnapshotSchemaZ = z79.object({
@@ -17062,7 +17327,7 @@ var STATUS_OPTION, UPDATER_PID_OPTION, TICK_MS, UPDATER_UNREACHABLE_EXIT_TICKS;
 var init_updater = __esm({
   "packages/daemon/src/tui/chrome/updater.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_front_door();
     init_app_config();
     init_update_check();
@@ -17126,7 +17391,7 @@ var ControlVerbError, ok, fail;
 var init_dispatch = __esm({
   "packages/daemon/src/control/dispatch.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_errors2();
     ControlVerbError = class extends Error {
       code;
@@ -17188,10 +17453,10 @@ __export(agent_explain_exports, {
   buildReport: () => buildReport,
   renderReport: () => renderReport
 });
-import { execFileSync as execFileSync9 } from "node:child_process";
+import { execFileSync as execFileSync10 } from "node:child_process";
 function tmux2(args) {
   try {
-    return execFileSync9("tmux", runtimeTmuxArgs(args), {
+    return execFileSync10("tmux", runtimeTmuxArgs(args), {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
@@ -17378,7 +17643,7 @@ var init_agent_explain = __esm({
 });
 
 // packages/daemon/src/widgets/lib/pane-comms.ts
-import { execFileSync as execFileSync10 } from "node:child_process";
+import { execFileSync as execFileSync11 } from "node:child_process";
 function tmux3(...args) {
   try {
     return _executor2("tmux", ["-u", ...runtimeTmuxArgs(args)], {
@@ -17470,14 +17735,14 @@ var init_pane_comms = __esm({
   "packages/daemon/src/widgets/lib/pane-comms.ts"() {
     "use strict";
     init_runtime_namespace();
-    _executor2 = (cmd, args, options) => execFileSync10(cmd, args, { encoding: "utf-8", ...options }).toString();
+    _executor2 = (cmd, args, options) => execFileSync11(cmd, args, { encoding: "utf-8", ...options }).toString();
     SHELL_COMMANDS = /* @__PURE__ */ new Set(["zsh", "bash", "sh", "fish"]);
   }
 });
 
 // packages/daemon/src/lib/workspace-config-loader.ts
-import { existsSync as existsSync17, readFileSync as readFileSync15, realpathSync as realpathSync6 } from "node:fs";
-import { dirname as dirname19, join as join21 } from "node:path";
+import { existsSync as existsSync18, readFileSync as readFileSync16, realpathSync as realpathSync8 } from "node:fs";
+import { dirname as dirname20, join as join23 } from "node:path";
 import yaml from "js-yaml";
 function isPlainObject2(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -17658,7 +17923,7 @@ async function loadWorkspaceConfig(dir, options = {}) {
   const basePath = resolution.config.path;
   const baseDocument = parseMapping(readText(basePath, "base", io), basePath, "base");
   assertBaseVersion(baseDocument, basePath);
-  const localCandidate = join21(dirname19(basePath), "workspace.local.yml");
+  const localCandidate = join23(dirname20(basePath), "workspace.local.yml");
   let localPath = null;
   let effectiveValue = cloneWorkspaceConfigValue(baseDocument);
   if (safeExists2(localCandidate, io)) {
@@ -17687,7 +17952,7 @@ var WorkspaceConfigLoadError, WorkspaceConfigMergeError, defaultLoaderIo;
 var init_workspace_config_loader = __esm({
   "packages/daemon/src/lib/workspace-config-loader.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_project_resolver();
     WorkspaceConfigLoadError = class extends Error {
       code;
@@ -17714,9 +17979,9 @@ var init_workspace_config_loader = __esm({
       }
     };
     defaultLoaderIo = {
-      exists: existsSync17,
-      readFile: (path2) => readFileSync15(path2, "utf-8"),
-      realpath: realpathSync6,
+      exists: existsSync18,
+      readFile: (path2) => readFileSync16(path2, "utf-8"),
+      realpath: realpathSync8,
       resolveProject
     };
   }
@@ -17726,22 +17991,22 @@ var init_workspace_config_loader = __esm({
 var init_ide_config2 = __esm({
   "packages/daemon/src/schemas/ide-config.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
 // packages/daemon/src/lib/legacy-config-adapter.ts
-import { existsSync as existsSync18, readFileSync as readFileSync16 } from "node:fs";
-import { resolve as resolve11 } from "node:path";
+import { existsSync as existsSync19, readFileSync as readFileSync17 } from "node:fs";
+import { resolve as resolve13 } from "node:path";
 import yaml2 from "js-yaml";
 function legacyConfigPath(dir) {
-  return resolve11(dir, "ide.yml");
+  return resolve13(dir, "ide.yml");
 }
 function hasLegacyConfigAt(dir) {
-  return existsSync18(legacyConfigPath(dir));
+  return existsSync19(legacyConfigPath(dir));
 }
 function readLegacyConfigFile(path2) {
-  const raw = readFileSync16(path2, "utf-8");
+  const raw = readFileSync17(path2, "utf-8");
   return { raw, config: IdeConfigSchema.parse(yaml2.load(raw)) };
 }
 function readLegacyConfigAt(dir) {
@@ -17841,7 +18106,7 @@ var ROOT_UNSUPPORTED, PANE_UNSUPPORTED;
 var init_legacy_config_migration = __esm({
   "packages/daemon/src/lib/legacy-config-migration.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     ROOT_UNSUPPORTED = [
       ["team", "UNSUPPORTED_TEAM", "agent team metadata is compatibility-only in ide.yml"],
       [
@@ -17884,16 +18149,16 @@ __export(resolved_config_exports, {
   writeWorkspaceConfig: () => writeWorkspaceConfig
 });
 import {
-  existsSync as existsSync19,
+  existsSync as existsSync20,
   linkSync as linkSync2,
   mkdirSync as mkdirSync15,
-  readFileSync as readFileSync17,
-  realpathSync as realpathSync7,
+  readFileSync as readFileSync18,
+  realpathSync as realpathSync9,
   renameSync as renameSync9,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync13
 } from "node:fs";
-import { basename as basename6, dirname as dirname20, join as join22, resolve as resolve12 } from "node:path";
+import { basename as basename6, dirname as dirname21, join as join24, resolve as resolve14 } from "node:path";
 import yaml4 from "js-yaml";
 function loadedWorkspaceToResolved(loaded) {
   const launchConfig = workspaceConfigToLegacyProjection(loaded.config);
@@ -17999,16 +18264,16 @@ async function resolveConfig(dir, options = {}) {
   };
 }
 function workspaceConfigPath(dir) {
-  return resolve12(dir, ".tmux-ide", "workspace.yml");
+  return resolve14(dir, ".tmux-ide", "workspace.yml");
 }
 function workspaceLocalConfigPath(dir) {
-  return resolve12(dir, ".tmux-ide", "workspace.local.yml");
+  return resolve14(dir, ".tmux-ide", "workspace.local.yml");
 }
 function writeWorkspaceConfig(dir, workspace) {
   const parsed = WorkspaceConfigV1SchemaZ.parse(workspace);
   const configPath = workspaceConfigPath(dir);
-  const configDir = dirname20(configPath);
-  const tempPath = join22(
+  const configDir = dirname21(configPath);
+  const tempPath = join24(
     configDir,
     `.workspace.yml.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
@@ -18033,8 +18298,8 @@ function writeWorkspaceConfig(dir, workspace) {
 function createWorkspaceConfig(dir, workspace) {
   const parsed = WorkspaceConfigV1SchemaZ.parse(workspace);
   const configPath = workspaceConfigPath(dir);
-  const configDir = dirname20(configPath);
-  const tempPath = join22(
+  const configDir = dirname21(configPath);
+  const tempPath = join24(
     configDir,
     `.workspace.yml.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
@@ -18048,7 +18313,7 @@ function createWorkspaceConfig(dir, workspace) {
       unlinkSync3(tempPath);
     } catch {
     }
-    if (cause?.code === "EEXIST" && existsSync19(configPath)) {
+    if (cause?.code === "EEXIST" && existsSync20(configPath)) {
       throw new WorkspaceConfigWriteError(
         `Workspace config already exists at ${configPath}`,
         "CONFIG_EXISTS",
@@ -18067,8 +18332,8 @@ function createWorkspaceConfig(dir, workspace) {
 }
 function readWorkspaceBaseConfig(dir) {
   const workspacePath = workspaceConfigPath(dir);
-  if (!existsSync19(workspacePath)) return null;
-  return WorkspaceConfigV1SchemaZ.parse(yaml4.load(readFileSync17(workspacePath, "utf-8")));
+  if (!existsSync20(workspacePath)) return null;
+  return WorkspaceConfigV1SchemaZ.parse(yaml4.load(readFileSync18(workspacePath, "utf-8")));
 }
 function unsupportedOutputDiagnostics(config2) {
   const diagnostics = [];
@@ -18132,8 +18397,8 @@ function writeLaunchProjectionConfig(dir, config2) {
 }
 function readConfigCompatSync(dir) {
   const workspacePath = workspaceConfigPath(dir);
-  if (existsSync19(workspacePath)) {
-    const parsed = WorkspaceConfigV1SchemaZ.parse(yaml4.load(readFileSync17(workspacePath, "utf-8")));
+  if (existsSync20(workspacePath)) {
+    const parsed = WorkspaceConfigV1SchemaZ.parse(yaml4.load(readFileSync18(workspacePath, "utf-8")));
     return { config: workspaceConfigToLegacyProjection(parsed), configPath: workspacePath };
   }
   const { config: config2, configPath } = readLegacyConfigAtCompat(dir);
@@ -18148,7 +18413,7 @@ function getSessionNameCompatSync(dir) {
   }
 }
 function hasWorkspaceConfig(dir) {
-  return existsSync19(workspaceConfigPath(dir));
+  return existsSync20(workspaceConfigPath(dir));
 }
 function hasLegacyConfig(dir) {
   return hasLegacyConfigAt(dir);
@@ -18158,7 +18423,7 @@ function hasLaunchConfig(dir) {
 }
 function canonicalConfigPath(path2) {
   try {
-    return realpathSync7(path2);
+    return realpathSync9(path2);
   } catch {
     return path2;
   }
@@ -18172,7 +18437,7 @@ var WorkspaceConfigWriteError, UnsupportedLegacyConfigMutationError, LAUNCH_CONF
 var init_resolved_config = __esm({
   "packages/daemon/src/lib/resolved-config.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_workspace_config_loader();
     init_errors2();
     init_project_resolver();
@@ -18236,18 +18501,18 @@ var config_context_exports = {};
 __export(config_context_exports, {
   resolveProjectConfigContext: () => resolveProjectConfigContext
 });
-import { basename as basename7, dirname as dirname21, resolve as resolve13 } from "node:path";
+import { basename as basename7, dirname as dirname22, resolve as resolve15 } from "node:path";
 function configWriteRootForResolved(resolved2, projectRoot) {
   if (!resolved2.path) return projectRoot;
-  if (resolved2.kind === "legacy") return dirname21(resolved2.path);
+  if (resolved2.kind === "legacy") return dirname22(resolved2.path);
   if (resolved2.kind === "workspace") {
-    const configDir = dirname21(resolved2.path);
-    return basename7(configDir) === ".tmux-ide" ? dirname21(configDir) : configDir;
+    const configDir = dirname22(resolved2.path);
+    return basename7(configDir) === ".tmux-ide" ? dirname22(configDir) : configDir;
   }
   return projectRoot;
 }
 async function resolveProjectConfigContext(targetDir, options = {}) {
-  const inputDir = resolve13(targetDir);
+  const inputDir = resolve15(targetDir);
   const resolved2 = await resolveConfig(inputDir, options);
   const projectRoot = resolved2.resolution.projectRoot;
   const configWriteRoot = configWriteRootForResolved(resolved2, projectRoot);
@@ -18278,188 +18543,7 @@ var init_config_context = __esm({
 var init_contract = __esm({
   "packages/daemon/src/command-center/actions/contract.ts"() {
     "use strict";
-    init_src();
-  }
-});
-
-// packages/daemon/src/lib/bundled-tmux.ts
-import { execFileSync as execFileSync11 } from "node:child_process";
-import { createHash as createHash6 } from "node:crypto";
-import {
-  accessSync as accessSync3,
-  chmodSync as chmodSync4,
-  constants as constants5,
-  existsSync as existsSync20,
-  readFileSync as readFileSync18,
-  realpathSync as realpathSync8,
-  statSync as statSync5,
-  readdirSync as readdirSync4,
-  lstatSync as lstatSync7
-} from "node:fs";
-import { dirname as dirname22, isAbsolute as isAbsolute8, join as join23, relative as relative4, resolve as resolve14, sep as sep5 } from "node:path";
-import { fileURLToPath as fileURLToPath6 } from "node:url";
-function validateBundledTmux(directory, platform2 = process.platform, arch = process.arch) {
-  const root = realpathSync8(directory);
-  const manifest = JSON.parse(readFileSync18(join23(root, "manifest.json"), "utf8"));
-  if (manifest.schemaVersion !== 1 || manifest.platform !== platform2 || manifest.arch !== arch || // Both known distributions remain usable; the live server capture probe
-  // decides bootstrap capability, independently of the installed client.
-  manifest.extension !== "tmux-ide-native-grid-v1" && manifest.extension !== "tmux-ide-native-grid-v2" || !manifest.files || typeof manifest.files !== "object" || typeof manifest.files.tmux !== "string")
-    throw new Error("Invalid bundled tmux manifest");
-  if (platform2 === "darwin") parseMacOSVersion(manifest.minimumMacOS);
-  for (const [name, expected] of Object.entries(manifest.files)) {
-    if (isAbsolute8(name) || name.split(/[\\/]/u).includes(".."))
-      throw new Error("Invalid bundled tmux file path");
-    const path2 = realpathSync8(join23(root, name));
-    const local = relative4(root, path2);
-    if (local.startsWith(`..${sep5}`) || local === ".." || isAbsolute8(local))
-      throw new Error("Bundled tmux file escapes its distribution");
-    const actual = createHash6("sha256").update(readFileSync18(path2)).digest("hex");
-    if (actual !== expected) throw new Error(`Bundled tmux checksum mismatch: ${name}`);
-  }
-  if (manifest.terminfo !== void 0) {
-    const catalog = manifest.terminfo;
-    const entries = Object.keys(manifest.files).filter(
-      (name) => name.startsWith("share/terminfo/")
-    );
-    if (catalog.directory !== "share/terminfo" || !Number.isSafeInteger(catalog.entries) || catalog.entries < 1 || catalog.entries > 8192 || entries.length !== catalog.entries || entries.some(
-      (name) => !/^share\/terminfo\/(?:[A-Za-z0-9]|[0-9a-fA-F]{2})\/[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}$/u.test(
-        name
-      )
-    ) || !["xterm-256color", "screen-256color", "tmux-256color"].every(
-      (name) => entries.some((entry) => entry.endsWith(`/${name}`))
-    )) {
-      throw new Error("Invalid bundled terminfo catalog");
-    }
-    const directory2 = join23(root, "share/terminfo");
-    const actual = [];
-    if (!lstatSync7(directory2).isDirectory() || lstatSync7(directory2).isSymbolicLink())
-      throw new Error("Invalid bundled terminfo directory");
-    for (const bucket of readdirSync4(directory2)) {
-      const bucketPath = join23(directory2, bucket), bucketStat = lstatSync7(bucketPath);
-      if (!bucketStat.isDirectory() || bucketStat.isSymbolicLink())
-        throw new Error("Invalid bundled terminfo bucket");
-      for (const name of readdirSync4(bucketPath)) {
-        const entry = lstatSync7(join23(bucketPath, name));
-        if (!entry.isFile() || entry.isSymbolicLink())
-          throw new Error("Invalid bundled terminfo entry");
-        actual.push(`share/terminfo/${bucket}/${name}`);
-      }
-    }
-    if (actual.sort().join("\n") !== entries.sort().join("\n"))
-      throw new Error("Unlisted bundled terminfo entry");
-  }
-  const executable = realpathSync8(join23(root, "tmux"));
-  try {
-    accessSync3(executable, constants5.X_OK);
-  } catch (error) {
-    if (error.code !== "EACCES") throw error;
-    chmodSync4(executable, 493);
-  }
-  accessSync3(executable, constants5.X_OK);
-  return executable;
-}
-function resolveBundledTmux(anchors = [
-  ...process.env.TMUX_IDE_CLI ? [process.env.TMUX_IDE_CLI] : [],
-  fileURLToPath6(import.meta.url)
-], currentMacOSVersion = () => execFileSync11("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" }).trim()) {
-  const namespace = resolveRuntimeNamespace();
-  if (namespace.development) {
-    const build = readDevelopmentBuild(namespace.development);
-    const bundle = join23(build.assets, "tmux", `${process.platform}-${process.arch}`);
-    if (!existsSync20(join23(bundle, "manifest.json")))
-      throw new Error("Development build lacks bundled tmux; rebuild with qualified native assets");
-    const executable = validateBundledTmux(bundle);
-    if (process.platform === "darwin") {
-      const manifest = JSON.parse(readFileSync18(join23(bundle, "manifest.json"), "utf8"));
-      if (!isMacOSVersionCompatible(currentMacOSVersion(), manifest.minimumMacOS))
-        throw new Error("Development bundled tmux is incompatible with this OS");
-    }
-    return executable;
-  }
-  const visited = /* @__PURE__ */ new Set();
-  for (const anchor of anchors) {
-    if (!isAbsolute8(anchor)) continue;
-    let directory = dirname22(resolve14(anchor));
-    while (!visited.has(directory)) {
-      visited.add(directory);
-      const bundle = join23(
-        directory,
-        "packages/daemon/dist/native/tmux",
-        `${process.platform}-${process.arch}`
-      );
-      if (existsSync20(join23(bundle, "manifest.json"))) {
-        const executable = validateBundledTmux(bundle);
-        if (process.platform === "darwin") {
-          const manifest = JSON.parse(readFileSync18(join23(bundle, "manifest.json"), "utf8"));
-          if (!isMacOSVersionCompatible(currentMacOSVersion(), manifest.minimumMacOS)) return null;
-        }
-        return executable;
-      }
-      const parent = dirname22(directory);
-      if (parent === directory) break;
-      directory = parent;
-    }
-  }
-  return null;
-}
-function parseMacOSVersion(value) {
-  if (typeof value !== "string" || !/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/u.test(value))
-    throw new Error("Invalid bundled tmux macOS version metadata");
-  return value.split(".").map(Number);
-}
-function isMacOSVersionCompatible(current, minimum) {
-  const actual = parseMacOSVersion(current);
-  const required = parseMacOSVersion(minimum);
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (actual[index] ?? 0) - (required[index] ?? 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return true;
-}
-function bundledTmuxResourceEnvironment(executable) {
-  if (!executable || !isAbsolute8(executable) || !existsSync20(executable)) return {};
-  const canonical = realpathSync8(executable);
-  const root = dirname22(canonical), manifestPath = join23(root, "manifest.json");
-  if (canonical !== join23(root, "tmux") || !existsSync20(manifestPath)) return {};
-  const identity2 = [canonical, manifestPath].map((path2) => {
-    const st = statSync5(path2);
-    return `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-  }).join("|");
-  const cached2 = resourceEnvironments.get(canonical);
-  if (cached2?.identity === identity2) return cached2.environment;
-  let manifest;
-  try {
-    manifest = JSON.parse(readFileSync18(manifestPath, "utf8"));
-  } catch {
-    return {};
-  }
-  if (!manifest || typeof manifest !== "object" || manifest.terminfo === void 0 || !["tmux-ide-native-grid-v1", "tmux-ide-native-grid-v2"].includes(manifest.extension))
-    return {};
-  if (validateBundledTmux(root) !== canonical)
-    throw new Error("Bundled terminfo executable mismatch");
-  const directory = realpathSync8(join23(root, "share/terminfo"));
-  if (!directory.startsWith(`${root}${sep5}`))
-    throw new Error("Bundled terminfo directory escapes bundle");
-  const environment = Object.freeze({ TERMINFO_DIRS: `${directory}:` });
-  resourceEnvironments.set(canonical, { identity: identity2, environment });
-  return environment;
-}
-function withBundledTmuxResources(executable, environment) {
-  const resources = bundledTmuxResourceEnvironment(executable);
-  if (!resources.TERMINFO_DIRS || environment.TERMINFO_DIRS?.startsWith(resources.TERMINFO_DIRS))
-    return environment;
-  return {
-    ...environment,
-    TERMINFO_DIRS: resources.TERMINFO_DIRS + (environment.TERMINFO_DIRS ?? "")
-  };
-}
-var resourceEnvironments;
-var init_bundled_tmux = __esm({
-  "packages/daemon/src/lib/bundled-tmux.ts"() {
-    "use strict";
-    init_runtime_namespace();
-    init_development_build();
-    resourceEnvironments = /* @__PURE__ */ new Map();
+    init_src2();
   }
 });
 
@@ -18467,7 +18551,7 @@ var init_bundled_tmux = __esm({
 import { execFile as execFile4 } from "node:child_process";
 function boundedTmuxRead(executable, args, options) {
   if (options.signal?.aborted) return Promise.reject(new Error("Tmux read cancelled"));
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     let output = "";
     let failure4 = null;
     let escalation = null;
@@ -18503,7 +18587,7 @@ function boundedTmuxRead(executable, args, options) {
       if (escalation) clearTimeout(escalation);
       options.signal?.removeEventListener("abort", stop3);
       if (failure4) reject(failure4);
-      else resolve41(output);
+      else resolve42(output);
     });
     if (options.signal?.aborted) stop3();
   });
@@ -18583,7 +18667,7 @@ var init_tmux_named_socket_fence = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-proof.ts
-import { realpathSync as realpathSync9, statSync as statSync6 } from "node:fs";
+import { realpathSync as realpathSync10, statSync as statSync7 } from "node:fs";
 import { createHash as createHash7 } from "node:crypto";
 function captureTmuxServerProof(run) {
   const args = ["-N", "display-message", "-p", "#{socket_path}|#{pid}|#{start_time}"];
@@ -18625,8 +18709,8 @@ function captureUnboundTmuxSelectorProof(authority2) {
   if (!isNamedSocketAuthorityUnbound(authority2) || authority2.socketSelector.kind !== "name")
     return null;
   try {
-    const executable = realpathSync9(authority2.executablePath);
-    const stat3 = statSync6(executable, { bigint: true });
+    const executable = realpathSync10(authority2.executablePath);
+    const stat3 = statSync7(executable, { bigint: true });
     const uid = process.getuid?.();
     if (uid === void 0 || !stat3.isFile()) return null;
     return {
@@ -18657,53 +18741,6 @@ var init_tmux_server_proof = __esm({
   }
 });
 
-// packages/daemon/src/lib/tmux-client-execution.ts
-import { accessSync as accessSync4, constants as constants6, realpathSync as realpathSync10, statSync as statSync7 } from "node:fs";
-import { delimiter, isAbsolute as isAbsolute9, join as join24 } from "node:path";
-function resolveTmuxExecutable() {
-  if (resolveRuntimeNamespace().development) return resolveBundledTmux();
-  const configured = process.env.TMUX_IDE_TMUX_BIN;
-  if (!configured) {
-    const bundled = resolveBundledTmux();
-    if (bundled) return bundled;
-  }
-  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter).filter((entry) => entry.length > 0 && isAbsolute9(entry)).map((entry) => join24(entry, "tmux"));
-  for (const candidate of candidates) {
-    try {
-      if (!isAbsolute9(candidate)) continue;
-      accessSync4(candidate, constants6.X_OK);
-      const canonical = realpathSync10(candidate);
-      if (statSync7(canonical).isFile()) return canonical;
-    } catch {
-    }
-  }
-  throw new Error("tmux_executable_unavailable");
-}
-function tmuxClientEnvironment(source, executable) {
-  const environment = {
-    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
-    // A pinned runner may be the first tmux client and therefore create the
-    // server. Never let a headless parent (`TERM=dumb`, `NO_COLOR=1`) become
-    // the global environment inherited by every later interactive child.
-    COLORTERM: "truecolor"
-  };
-  for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
-    const value = source[name];
-    if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
-  }
-  return { ...environment, ...bundledTmuxResourceEnvironment(executable) };
-}
-var SAFE_TERMINAL_VALUE, SAFE_LOCALE_VALUE;
-var init_tmux_client_execution = __esm({
-  "packages/daemon/src/lib/tmux-client-execution.ts"() {
-    "use strict";
-    init_runtime_namespace();
-    init_bundled_tmux();
-    SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
-    SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
-  }
-});
-
 // packages/daemon/src/lib/project-readiness.ts
 var init_project_readiness = __esm({
   "packages/daemon/src/lib/project-readiness.ts"() {
@@ -18714,7 +18751,7 @@ var init_project_readiness = __esm({
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile5 } from "node:child_process";
 import { accessSync as accessSync5, constants as constants7, existsSync as existsSync21, realpathSync as realpathSync11, statSync as statSync8 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute10, basename as basename8, resolve as resolve15, sep as sep6 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute10, basename as basename8, resolve as resolve16, sep as sep6 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
   const code2 = error.code;
@@ -18786,7 +18823,7 @@ function locateExecutable(executable, cwd, environment, io) {
     return { availability: "missing", path: null };
   }
   if (isAbsolute10(executable) || executable.includes(sep6) || executable.includes("/") || executable.includes("\\")) {
-    const candidate = isAbsolute10(executable) ? executable : resolve15(cwd, executable);
+    const candidate = isAbsolute10(executable) ? executable : resolve16(cwd, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     return {
       availability,
@@ -18798,8 +18835,8 @@ function locateExecutable(executable, cwd, environment, io) {
   let sawUnknown = false;
   for (const entry of pathValue.split(delimiter2)) {
     if (entry.length === 0) continue;
-    const directory = isAbsolute10(entry) ? entry : resolve15(cwd, entry);
-    const candidate = resolve15(directory, executable);
+    const directory = isAbsolute10(entry) ? entry : resolve16(cwd, entry);
+    const candidate = resolve16(directory, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     if (availability === "available") {
       return { availability, path: canonicalExecutable(candidate, io) };
@@ -18877,7 +18914,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
     arch: process.arch
   });
   const baseCwd = safeCall(() => io.cwd(), process.cwd());
-  const absoluteRequestedPath = isAbsolute10(requestedPath) ? requestedPath : resolve15(baseCwd, requestedPath);
+  const absoluteRequestedPath = isAbsolute10(requestedPath) ? requestedPath : resolve16(baseCwd, requestedPath);
   const pathKind = safeCall(() => io.inspectPath(absoluteRequestedPath), "unknown");
   const exists = pathKind === "directory" || pathKind === "other";
   const isDirectory = pathKind === "directory";
@@ -19344,7 +19381,7 @@ var init_workspace_registry = __esm({
   "packages/daemon/src/lib/workspace-registry.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src();
+    init_src2();
     init_runtime_namespace();
     RegistryFileSchemaZ2 = z80.object({
       version: z80.literal(1),
@@ -19751,7 +19788,7 @@ import {
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync16
 } from "node:fs";
-import { isAbsolute as isAbsolute11, join as join27, relative as relative5, resolve as resolve16, sep as sep7, win32 } from "node:path";
+import { isAbsolute as isAbsolute11, join as join27, relative as relative5, resolve as resolve17, sep as sep7, win32 } from "node:path";
 function createProjectRuntimeRepository(resolution, options = {}) {
   return new ProjectRuntimeRepository(resolution, options);
 }
@@ -20126,7 +20163,7 @@ var init_project_runtime_repository = __esm({
         this.resolution = resolution;
         this.io = { ...defaultIo3, ...options.io };
         this.runtimeRoot = join27(
-          resolve16(options.home ?? options.stateHome ?? stateHome()),
+          resolve17(options.home ?? options.stateHome ?? stateHome()),
           "projects",
           resolution.identityKey
         );
@@ -20332,7 +20369,7 @@ var init_project_runtime_repository = __esm({
         } catch (error) {
           try {
             rmdirSync2(recovery.target);
-            this.io.fsyncDirectory(resolve16(recovery.target, ".."));
+            this.io.fsyncDirectory(resolve17(recovery.target, ".."));
           } catch {
           }
           throw error;
@@ -20432,7 +20469,7 @@ var init_project_runtime_repository = __esm({
         if (!allowEventNamespace && parts[0] === "events") {
           throw new InvalidRuntimePathError(path2, "the events namespace is reserved for event streams");
         }
-        const target = runtimeOwnedPath(resolve16(this.runtimeRoot, ...parts));
+        const target = runtimeOwnedPath(resolve17(this.runtimeRoot, ...parts));
         if (!isWithinDirectory(target, this.runtimeRoot)) {
           throw new InvalidRuntimePathError(path2, "path escapes the runtime root");
         }
@@ -20466,7 +20503,7 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWrite(target, data, displayPath) {
-        const destinationDir = resolve16(target, "..");
+        const destinationDir = resolve17(target, "..");
         this.io.mkdir(destinationDir);
         const tempPath = join27(
           destinationDir,
@@ -20488,7 +20525,7 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWriteBytes(target, data, displayPath, durable) {
-        const destinationDir = resolve16(target, "..");
+        const destinationDir = resolve17(target, "..");
         this.io.mkdir(destinationDir);
         const tempPath = join27(
           destinationDir,
@@ -20516,7 +20553,7 @@ var init_project_runtime_repository = __esm({
         const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2e3, 0, 6e4, "timeoutMs");
         const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
         const lockPath = join27(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
-        const lockDirectory = resolve16(lockPath, "..");
+        const lockDirectory = resolve17(lockPath, "..");
         this.io.mkdir(this.runtimeRoot);
         assertLockDirectory(this.runtimeRoot);
         this.io.mkdir(lockDirectory);
@@ -20597,7 +20634,7 @@ var init_project_runtime_repository = __esm({
       reserveRecoveryOperation(path2, rawToken) {
         const recoveryRoot = this.resolveRuntimePath("recovery");
         this.io.mkdir(recoveryRoot);
-        this.io.fsyncDirectory(resolve16(recoveryRoot, ".."));
+        this.io.fsyncDirectory(resolve17(recoveryRoot, ".."));
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const operationId = safeTempId(this.io.randomId());
           const relativePath = `recovery/${sha2562(path2)}-${rawToken}-${operationId}`;
@@ -21120,7 +21157,7 @@ var MISSIONS_STREAM, MissionRepositoryError, MissionRepository, MISSION_TRANSITI
 var init_mission_repository = __esm({
   "packages/daemon/src/lib/mission-repository.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_errors2();
     init_project_runtime_repository();
     MISSIONS_STREAM = "missions";
@@ -21988,8 +22025,8 @@ var init_workspace_pane_creation2 = __esm({
   "packages/daemon/src/lib/workspace-pane-creation.ts"() {
     "use strict";
     init_bounded_tmux_read();
-    init_src();
     init_src2();
+    init_src();
     init_tmux_named_socket_fence();
     init_tmux_client_execution();
     init_project_readiness_probe();
@@ -22705,11 +22742,11 @@ var init_bootstrap_coordinator = __esm({
         this.cause = options.cause;
       }
     };
-    defaultSleep = (milliseconds) => new Promise((resolve41) => {
+    defaultSleep = (milliseconds) => new Promise((resolve42) => {
       const releaseTimer = acquireRuntimeResource("runtime-timer");
       setTimeout(() => {
         releaseTimer();
-        resolve41();
+        resolve42();
       }, milliseconds);
     });
     defaultPollMs = (poll) => Math.min(25 * 2 ** poll, 200);
@@ -22882,7 +22919,7 @@ __export(canonical_daemon_bootstrap_exports, {
   retireOutdatedCanonicalDaemon: () => retireOutdatedCanonicalDaemon
 });
 import { spawn as spawn5 } from "node:child_process";
-import { resolve as resolve17 } from "node:path";
+import { resolve as resolve18 } from "node:path";
 function spawnOwner(entryPath, cwd) {
   if (resolveRuntimeNamespace().development)
     return Promise.reject(
@@ -23110,7 +23147,7 @@ function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
       options.expectedProductVersion,
       options.tmuxServerIntent === void 0 ? resolveTmuxServerIntent() : options.tmuxServerIntent
     ),
-    spawn: () => deps2.spawnOwner(resolve17(options.entryPath), resolve17(options.cwd ?? process.cwd())),
+    spawn: () => deps2.spawnOwner(resolve18(options.entryPath), resolve18(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
     now: deps2.now,
@@ -23217,7 +23254,7 @@ var init_canonical_daemon_bootstrap = __esm({
     init_runtime_namespace();
     init_semver();
     init_bootstrap_coordinator();
-    init_src();
+    init_src2();
     init_canonical_daemon();
     defaultDependencies = {
       // This adapter owns startup, so legacy permission preparation is explicit
@@ -23255,10 +23292,10 @@ async function reconcilePaneSourceCredentialsAtStartup(authority2, sessions, tim
   const reconciliation = Promise.allSettled(
     uniqueSessions.map((session) => authority2.reconcileSessionAsync(session, controller.signal))
   );
-  const deadline = new Promise((resolve41) => {
+  const deadline = new Promise((resolve42) => {
     timeout = setTimeout(() => {
       controller.abort();
-      resolve41("timed-out");
+      resolve42("timed-out");
     }, timeoutMs);
   });
   const result2 = await Promise.race([reconciliation.then(() => "complete"), deadline]);
@@ -23432,16 +23469,16 @@ var init_pane_source_credentials = __esm({
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire } from "node:module";
 import { randomUUID as randomUUID8 } from "node:crypto";
-import { basename as basename9, dirname as dirname25, resolve as resolve18 } from "node:path";
-import { fileURLToPath as fileURLToPath7 } from "node:url";
+import { basename as basename9, dirname as dirname25, resolve as resolve19 } from "node:path";
+import { fileURLToPath as fileURLToPath8 } from "node:url";
 import { z as z81 } from "zod";
 function defaultCliEntryPath() {
   const namespace = resolveRuntimeNamespace();
   if (namespace.development) return readDevelopmentBuild(namespace.development).cli;
-  if (process.env.TMUX_IDE_CLI) return resolve18(process.env.TMUX_IDE_CLI);
-  const current = fileURLToPath7(import.meta.url);
+  if (process.env.TMUX_IDE_CLI) return resolve19(process.env.TMUX_IDE_CLI);
+  const current = fileURLToPath8(import.meta.url);
   if (basename9(current) === "cli.js" && basename9(dirname25(current)) === "bin") return current;
-  return resolve18(dirname25(current), "../../../../bin/cli.js");
+  return resolve19(dirname25(current), "../../../../bin/cli.js");
 }
 function timeoutSignal2(ms) {
   const controller = new AbortController();
@@ -23604,7 +23641,7 @@ __export(send_exports, {
 });
 import { randomUUID as randomUUID9 } from "node:crypto";
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { resolve as resolve19, join as join28 } from "node:path";
+import { resolve as resolve20, join as join28 } from "node:path";
 import { existsSync as existsSync24, mkdirSync as mkdirSync19, writeFileSync as writeFileSync17 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
@@ -23792,7 +23829,7 @@ async function deliverMessageThroughDaemon(opts) {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve19(targetDir ?? ".");
+  const dir = resolve20(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -23824,7 +23861,7 @@ var init_send = __esm({
   "packages/daemon/src/send.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src2();
+    init_src();
     init_pane_comms();
     init_errors2();
     init_config_context();
@@ -23899,7 +23936,7 @@ var WAIT_DEFAULT_TIMEOUT_MS, WAIT_STATUS_POLL_MS, WAIT_OUTPUT_POLL_MS, sleepMs2;
 var init_wait = __esm({
   "packages/daemon/src/tui/team/wait.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_classify();
     init_report();
     init_sessions2();
@@ -24058,12 +24095,12 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile6 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     execFile6(
       "tmux",
       runtimeTmuxArgs(args),
       { env: sanitizeTmuxClientEnvironment() },
-      (err, stdout) => err ? reject(err) : resolve41(stdout.trimEnd())
+      (err, stdout) => err ? reject(err) : resolve42(stdout.trimEnd())
     );
   });
 }
@@ -24146,7 +24183,7 @@ var init_lifecycle = __esm({
   "packages/daemon/src/control/lifecycle.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src2();
+    init_src();
     init_agent_lifecycle();
     init_manifest_loader();
     init_dispatch();
@@ -24228,7 +24265,7 @@ function createVerbHandlers(ctx) {
 var init_verbs = __esm({
   "packages/daemon/src/control/verbs.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_agent_explain();
     init_send();
     init_report();
@@ -24260,11 +24297,11 @@ async function claimSocketPath(path2) {
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve41) => {
+  const alive = await new Promise((resolve42) => {
     const probe = connect(path2);
     const done = (result2) => {
       probe.destroy();
-      resolve41(result2);
+      resolve42(result2);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -24346,7 +24383,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve41, reject) => {
+  await new Promise((resolve42, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -24362,14 +24399,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve41();
+      resolve42();
     });
   });
   chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve41) => {
+    close: () => new Promise((resolve42) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -24378,7 +24415,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync5(socketPath);
         } catch {
         }
-        resolve41();
+        resolve42();
       });
     })
   };
@@ -24386,7 +24423,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
 var init_server = __esm({
   "packages/daemon/src/control/server.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_errors2();
     init_runtime_namespace();
     init_classify();
@@ -24409,12 +24446,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve41(wrap(socket));
+      resolve42(wrap(socket));
     });
   });
 }
@@ -24466,12 +24503,12 @@ function wrap(socket) {
   });
   const request3 = (verb, params) => {
     const id2 = nextId++;
-    return new Promise((resolve41, reject) => {
+    return new Promise((resolve42, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id2, { resolve: resolve41, reject });
+      pending.set(id2, { resolve: resolve42, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id: id2, verb, params }));
     });
   };
@@ -24489,7 +24526,7 @@ var ControlRequestError;
 var init_client = __esm({
   "packages/daemon/src/control/client.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_frames();
     init_server();
     ControlRequestError = class extends Error {
@@ -24753,7 +24790,7 @@ function createBoundedDevelopmentLog(path2, options = {}) {
   let flight = null;
   const queue = [];
   const append = options.write ?? ((fd2, data) => new Promise(
-    (resolve41, reject) => write(fd2, data, (error, written) => error ? reject(error) : resolve41(written))
+    (resolve42, reject) => write(fd2, data, (error, written) => error ? reject(error) : resolve42(written))
   ));
   const drain = async () => {
     try {
@@ -24761,7 +24798,7 @@ function createBoundedDevelopmentLog(path2, options = {}) {
         const data = queue[0];
         if (size + data.length > limit) {
           await new Promise(
-            (resolve41, reject) => ftruncate(fd, 0, (error) => error ? reject(error) : resolve41())
+            (resolve42, reject) => ftruncate(fd, 0, (error) => error ? reject(error) : resolve42())
           );
           size = 0;
         }
@@ -24818,12 +24855,12 @@ function createBoundedDevelopmentLog(path2, options = {}) {
       accepting = false;
       let timer;
       const closing = (flight ?? Promise.resolve()).then(
-        () => new Promise((resolve41) => close(fd, () => resolve41()))
+        () => new Promise((resolve42) => close(fd, () => resolve42()))
       );
       await Promise.race([
         closing,
-        new Promise((resolve41) => {
-          timer = setTimeout(resolve41, 1e3);
+        new Promise((resolve42) => {
+          timer = setTimeout(resolve42, 1e3);
         })
       ]);
       if (timer) clearTimeout(timer);
@@ -25024,7 +25061,7 @@ var init_pane_source_discovery = __esm({
             if (counts.get(session) !== 1) this.#fingerprints.delete(session);
         });
         this.#tail = work.catch(() => void 0);
-        return new Promise((resolve41, reject) => {
+        return new Promise((resolve42, reject) => {
           const abort = () => reject(bounded4.reason);
           if (bounded4.aborted) {
             reject(bounded4.reason);
@@ -25034,7 +25071,7 @@ var init_pane_source_discovery = __esm({
           void work.then(
             () => {
               bounded4.removeEventListener("abort", abort);
-              resolve41();
+              resolve42();
             },
             (error) => {
               bounded4.removeEventListener("abort", abort);
@@ -25094,7 +25131,7 @@ var MAX_COMMAND_ARGUMENTS2, MAX_COMMANDS, MAX_BODY_BYTES;
 var init_native_operation_command = __esm({
   "packages/daemon/src/lib/native-operation-command.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_shell();
     MAX_COMMAND_ARGUMENTS2 = 512;
     MAX_COMMANDS = 64;
@@ -25133,7 +25170,7 @@ function decodeNativeOperationInvocation(output, expected) {
 var init_native_operation_reply = __esm({
   "packages/daemon/src/lib/native-operation-reply.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -25478,7 +25515,7 @@ function nativePaneIdentity(serverEpoch, paneBirthId) {
 var init_native_pane_identity = __esm({
   "packages/daemon/src/lib/native-pane-identity.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -25640,7 +25677,7 @@ var same;
 var init_interaction_evidence2 = __esm({
   "packages/core/src/interaction-evidence.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
   }
 });
@@ -25666,7 +25703,7 @@ var immutableBatches;
 var init_native_journal_validation = __esm({
   "packages/daemon/src/lib/native-journal-validation.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     immutableBatches = /* @__PURE__ */ new WeakSet();
   }
 });
@@ -25689,7 +25726,7 @@ var sameContext, commandName, NativeInteractionProjector;
 var init_native_interaction_projector = __esm({
   "packages/daemon/src/lib/native-interaction-projector.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_native_journal_validation();
     sameContext = (a, b) => a.issuerId === b.issuerId && a.requestId === b.requestId && a.parentCommandId === b.parentCommandId && a.transport === b.transport && a.derivation === b.derivation && a.correlation === b.correlation;
     commandName = (kind) => kind === 1 ? "send-keys" : kind === 2 || kind === 6 ? "capture-pane" : kind === 3 ? "paste-buffer" : kind === 4 ? "send-prefix" : "unknown";
@@ -25983,7 +26020,7 @@ var same2;
 var init_authored_native_receipt_enrichment = __esm({
   "packages/daemon/src/lib/authored-native-receipt-enrichment.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_interaction_evidence2();
     init_native_interaction_projector();
     same2 = isDeepStrictEqual;
@@ -26129,7 +26166,7 @@ var ownedCompletions, same3, OwnedNativeInteractionBindings;
 var init_owned_native_interaction_bindings = __esm({
   "packages/daemon/src/lib/owned-native-interaction-bindings.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_native_interaction_projector();
     ownedCompletions = /* @__PURE__ */ new WeakSet();
     same3 = isDeepStrictEqual2;
@@ -26681,7 +26718,7 @@ var MAX_REPLY_BYTES, NativeJournalControlConnection;
 var init_native_journal_control_connection = __esm({
   "packages/daemon/src/lib/native-journal-control-connection.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_control2();
     MAX_REPLY_BYTES = 65536;
     NativeJournalControlConnection = class {
@@ -26728,10 +26765,10 @@ var init_native_journal_control_connection = __esm({
             { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, TMUX: "" } }
           );
           this.#process = child;
-          this.#exited = new Promise((resolve41) => {
+          this.#exited = new Promise((resolve42) => {
             child.once("close", () => {
               this.#fail("Native journal peer closed");
-              resolve41();
+              resolve42();
             });
           });
           child.once("error", () => this.#fail("Native journal peer failed to start"));
@@ -26782,8 +26819,8 @@ var init_native_journal_control_connection = __esm({
         const abort = () => this.#fail("Native journal request cancelled");
         signal.addEventListener("abort", abort, { once: true });
         try {
-          return await new Promise((resolve41, reject) => {
-            this.#pending = { flags, phase: "begin", maxLines, resolve: resolve41, reject };
+          return await new Promise((resolve42, reject) => {
+            this.#pending = { flags, phase: "begin", maxLines, resolve: resolve42, reject };
             this.#armPhaseDeadline();
             try {
               write2();
@@ -26884,8 +26921,8 @@ var init_native_journal_control_connection = __esm({
             try {
               return await Promise.race([
                 this.#exited.then(() => true),
-                new Promise((resolve41) => {
-                  timer = setTimeout(() => resolve41(false), ms);
+                new Promise((resolve42) => {
+                  timer = setTimeout(() => resolve42(false), ms);
                 })
               ]);
             } finally {
@@ -26915,7 +26952,7 @@ function freezeMetadata2(value) {
   Object.freeze(value);
 }
 function delay(milliseconds, signal) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     if (signal.aborted) {
       reject(signal.reason);
       return;
@@ -26926,7 +26963,7 @@ function delay(milliseconds, signal) {
     };
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", abort);
-      resolve41();
+      resolve42();
     }, milliseconds);
     signal.addEventListener("abort", abort, { once: true });
   });
@@ -26959,7 +26996,7 @@ var NativeJournalLeaseExpired, NativeJournalCleanupFailed, NativeTmuxInteraction
 var init_native_tmux_interaction_observer = __esm({
   "packages/daemon/src/lib/native-tmux-interaction-observer.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_tmux_server_generation_runner();
     init_native_journal_control_connection();
     init_native_journal_validation();
@@ -27619,7 +27656,7 @@ var PANE_TEAM_OPTION;
 var init_manual_pane_team = __esm({
   "packages/daemon/src/terminal/attachments/manual-pane-team.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     PANE_TEAM_OPTION = "@tmux_ide_team";
   }
 });
@@ -28637,7 +28674,7 @@ var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
     init_pane_display_name();
-    init_src();
+    init_src2();
     init_semantic_resource_id();
     init_classify();
     init_agent_resolution();
@@ -28758,7 +28795,7 @@ function projectFleetCatalog(sessions, daemon, nowSec) {
 var init_fleet_catalog2 = __esm({
   "packages/daemon/src/command-center/resources/fleet-catalog.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_application_shell2();
   }
 });
@@ -28836,21 +28873,21 @@ var init_fleet_agent_lifecycle = __esm({
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
 import { createHash as createHash16, randomUUID as randomUUID15 } from "node:crypto";
-import { isAbsolute as isAbsolute14, resolve as resolve20 } from "node:path";
+import { isAbsolute as isAbsolute14, resolve as resolve21 } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep2, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
 var init_fleet_lifecycle_authority = __esm({
   "packages/daemon/src/lib/fleet-lifecycle-authority.ts"() {
     "use strict";
     init_live_session_identity();
-    init_src();
+    init_src2();
     init_discovery();
     init_fleet_catalog2();
     init_chrome_front_door();
     init_fleet_agent_lifecycle();
     init_tmux_terminal_color();
     MAX_REPLAY_OPERATIONS = 128;
-    sleep2 = (milliseconds) => new Promise((resolve41) => setTimeout(resolve41, milliseconds));
+    sleep2 = (milliseconds) => new Promise((resolve42) => setTimeout(resolve42, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
       constructor(code2, message) {
         super(message);
@@ -29185,8 +29222,8 @@ var init_fleet_lifecycle_authority = __esm({
       async #exclusive(run) {
         const predecessor = this.#tail;
         let release;
-        this.#tail = new Promise((resolve41) => {
-          release = resolve41;
+        this.#tail = new Promise((resolve42) => {
+          release = resolve42;
         });
         await predecessor;
         try {
@@ -29266,7 +29303,7 @@ var init_fleet_lifecycle_authority = __esm({
       async #canonicalDir(value) {
         if (!isAbsolute14(value))
           throw new FleetLifecycleAuthorityError("invalid_path", "cwd must be absolute");
-        const canonical = await realpath(resolve20(value));
+        const canonical = await realpath(resolve21(value));
         if (!(await stat(canonical)).isDirectory())
           throw new FleetLifecycleAuthorityError("invalid_path", "cwd must be a directory");
         return canonical;
@@ -29321,7 +29358,7 @@ function createNativeTmuxSessionCreator(options) {
 var init_tmux_server_session_create = __esm({
   "packages/daemon/src/lib/tmux-server-session-create.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_fleet_lifecycle_authority();
   }
 });
@@ -29377,7 +29414,7 @@ function createTmuxSessionMutationFence() {
 var init_tmux_session_mutation_fence = __esm({
   "packages/daemon/src/lib/tmux-session-mutation-fence.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_live_session_identity();
     init_shell();
   }
@@ -29432,7 +29469,7 @@ var RuntimeSessionIdSchemaZ, RuntimeWindowIdSchemaZ, RuntimePaneIdSchemaZ, Trust
 var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     RuntimeSessionIdSchemaZ = z83.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
     RuntimeWindowIdSchemaZ = z83.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
     RuntimePaneIdSchemaZ = z83.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
@@ -29751,8 +29788,8 @@ var MAX_OPERATIONS, MAX_REPLAYABLE_FAILURES2, MAX_TMUX_OUTPUT_BYTES, ADOPTED_OPT
 var init_workspace_promotion2 = __esm({
   "packages/daemon/src/lib/workspace-promotion.ts"() {
     "use strict";
-    init_src();
     init_src2();
+    init_src();
     init_workspace_pane_creation2();
     init_workspace_registry();
     init_semantic_pane_catalog();
@@ -30495,7 +30532,7 @@ function createNativeTmuxSessionOpener(options) {
 var init_tmux_server_session_open = __esm({
   "packages/daemon/src/lib/tmux-server-session-open.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_live_session_identity();
     init_fleet_catalog2();
     init_discovery();
@@ -30577,6 +30614,24 @@ var init_runtime_observability = __esm({
       recordSpan: () => void 0,
       snapshot: () => EMPTY_SNAPSHOT
     });
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/stock-capture-fidelity.ts
+function assertStockCaptureRepresentable(chunks) {
+  if (chunks.some((chunk) => chunk.includes(9))) throw new StockCaptureTabUnavailableError();
+}
+var StockCaptureTabUnavailableError;
+var init_stock_capture_fidelity = __esm({
+  "packages/daemon/src/terminal/session-runtime/stock-capture-fidelity.ts"() {
+    "use strict";
+    init_src2();
+    StockCaptureTabUnavailableError = class extends Error {
+      constructor() {
+        super(STOCK_CAPTURE_TAB_UNAVAILABLE);
+        this.name = "StockCaptureTabUnavailableError";
+      }
+    };
   }
 });
 
@@ -30691,6 +30746,7 @@ var init_registered_window_guard = __esm({
 
 // packages/daemon/src/terminal/mirror/control-channel.ts
 import { spawn as spawn7 } from "node:child_process";
+import { randomBytes as randomBytes3 } from "node:crypto";
 function notifyNativeWrapper(state, reply) {
   try {
     state.onReply(reply);
@@ -30723,15 +30779,15 @@ function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTE
 }
 function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     const timer = setTimeout(() => {
       proc.off("exit", onExit);
-      resolve41(false);
+      resolve42(false);
     }, timeoutMs);
     timer.unref?.();
     const onExit = () => {
       clearTimeout(timer);
-      resolve41(true);
+      resolve42(true);
     };
     proc.once("exit", onExit);
   });
@@ -30742,7 +30798,7 @@ var init_control_channel = __esm({
     "use strict";
     init_bundled_tmux();
     init_shell();
-    init_src();
+    init_src2();
     init_native_operation_command();
     init_native_operation_reply();
     init_control2();
@@ -30856,20 +30912,28 @@ var init_control_channel = __esm({
       }
       armAtomicPaneSnapshotCollector(spec) {
         if (this.failed || this.atomicCollector) return false;
+        if (spec.kind !== void 0 && spec.kind !== "snapshot" && spec.kind !== "pause") return false;
+        if (spec.kind === "pause" && (spec.observerCommandCount !== 0 || spec.dualCapture))
+          return false;
+        if (spec.dualCapture !== void 0 && typeof spec.dualCapture !== "boolean") return false;
         if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
         if (!Number.isSafeInteger(spec.maxCaptureBytes) || spec.maxCaptureBytes < 1 || spec.maxCaptureBytes > ATOMIC_CAPTURE_BYTE_HARD_CAP || !Number.isSafeInteger(spec.maxCaptureLines) || spec.maxCaptureLines < 1 || spec.maxCaptureLines > ATOMIC_CAPTURE_LINE_HARD_CAP || !Number.isSafeInteger(spec.maxCursorBytes) || spec.maxCursorBytes < 1 || spec.maxCursorBytes > ATOMIC_CURSOR_BYTE_HARD_CAP || !Number.isSafeInteger(spec.observerCommandCount) || spec.observerCommandCount < 0 || spec.observerCommandCount > 4)
           return false;
         this.atomicCollector = {
           spec,
+          retired: false,
+          settled: false,
           started: false,
           blockOrdinal: -1,
           blockContentCount: 0,
           captureLines: [],
+          ansiCaptureLines: [],
           captureBytes: 0,
           totalLines: 0,
           totalBytes: 0,
           cursorLine: null,
           continueObserved: false,
+          pauseObserved: false,
           statusObserved: false,
           observerEmissionObserved: false,
           lastCompletedOrdinal: -1,
@@ -30879,26 +30943,98 @@ var init_control_channel = __esm({
       }
       retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
         const collector = this.atomicCollector;
-        if (!collector || collector.spec.nonce !== nonce) return false;
-        this.atomicCollector = null;
-        collector.spec.onSettled(
-          Object.freeze({
-            ok: false,
-            captureLines: Object.freeze([]),
-            cursorLine: null,
-            continueObserved: collector.continueObserved,
-            statusObserved: collector.statusObserved,
-            observerEmissionObserved: collector.observerEmissionObserved,
-            started: collector.started,
-            lastCompletedOrdinal: collector.lastCompletedOrdinal,
-            captureLineCount: collector.captureLines.length,
-            captureByteCount: collector.captureBytes,
-            failureReason: collector.failureReason ?? reason
-          })
-        );
+        if (!collector || collector.spec.nonce !== nonce || collector.settled) return false;
+        collector.retired = true;
+        collector.settled = true;
+        const result2 = Object.freeze({
+          ok: false,
+          captureLines: Object.freeze([]),
+          ...collector.spec.dualCapture ? { ansiCaptureLines: Object.freeze([]) } : {},
+          cursorLine: null,
+          continueObserved: collector.continueObserved,
+          statusObserved: collector.statusObserved,
+          observerEmissionObserved: collector.observerEmissionObserved,
+          started: collector.started,
+          lastCompletedOrdinal: collector.lastCompletedOrdinal,
+          captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
+          captureByteCount: collector.captureBytes,
+          failureReason: collector.failureReason ?? reason,
+          ...collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}
+        });
+        collector.captureLines.length = 0;
+        collector.ansiCaptureLines.length = 0;
+        collector.cursorLine = null;
+        collector.totalBytes = 0;
+        collector.totalLines = 0;
+        collector.spec.onSettled(result2);
         return true;
       }
+      /** Caller has validated the separate ordinary command's exact fence reply. */
+      releaseRetiredCollector(nonce) {
+        const collector = this.atomicCollector;
+        if (!collector?.retired || collector.spec.nonce !== nonce) return false;
+        this.atomicCollector = null;
+        this.notifyAtomicDrained(collector, "fence");
+        return true;
+      }
+      notifyAtomicDrained(collector, reason) {
+        try {
+          collector.spec.onDrained?.(reason);
+        } catch {
+          this.failRetiredDrain("snapshot drain callback failed");
+        }
+      }
+      failRetiredDrain(reason) {
+        try {
+          this.fail(reason);
+        } finally {
+          this.handlers.onExit(reason);
+        }
+      }
+      consumeRetiredSnapshotLine(line) {
+        const collector = this.atomicCollector;
+        if (!collector?.retired) return false;
+        const event = parseControlLine(line, this.inReply);
+        if (this.inReply && this.currentReplyFlags === 0) {
+          collector.totalBytes += Buffer.byteLength(line, "latin1") + 1;
+          collector.totalLines += 1;
+          if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024 || collector.totalLines > collector.spec.maxCaptureLines + 64) {
+            this.failRetiredDrain("retired snapshot drain exceeded bounds");
+            return true;
+          }
+          if (event.kind === "end" || event.kind === "error") {
+            if (event.flags !== 0 || event.num !== this.currentReplyNum) {
+              this.failRetiredDrain("invalid retired snapshot framing");
+              return true;
+            }
+            this.inReply = false;
+            this.currentReplyNum = null;
+            this.currentReplyFlags = null;
+            this.currentReplyConsumesPending = false;
+          }
+          return true;
+        }
+        if (event.kind === "begin" && (!Number.isSafeInteger(event.num) || event.num < 0 || ![0, 1].includes(event.flags))) {
+          this.failRetiredDrain("invalid retired snapshot opening frame");
+          return true;
+        }
+        if (event.kind === "begin" && event.flags === 0) {
+          this.inReply = true;
+          this.currentReplyNum = event.num;
+          this.currentReplyFlags = 0;
+          this.currentReplyConsumesPending = false;
+          return true;
+        }
+        if (event.kind === "end" || event.kind === "error") {
+          if (!this.inReply || event.num !== this.currentReplyNum || event.flags !== this.currentReplyFlags) {
+            this.failRetiredDrain("invalid retired snapshot fence framing");
+            return true;
+          }
+        }
+        return false;
+      }
       feed(chunk, receivedAtMicros) {
+        if (this.failed) return;
         if (this.droppingOversizedReplyLine) {
           const newline = chunk.indexOf("\n");
           if (newline < 0) return;
@@ -30916,6 +31052,15 @@ var init_control_channel = __esm({
           const lineReceivedAtMicros = this.bufferReceivedAtMicros;
           this.bufferReceivedAtMicros = this.buffer.length > 0 ? receivedAtMicros ?? null : null;
           this.handleLine(line, lineReceivedAtMicros);
+          if (this.failed) {
+            this.buffer = "";
+            return;
+          }
+        }
+        if (this.atomicCollector?.retired && this.buffer.length > this.atomicCollector.spec.maxCaptureBytes + 64 * 1024) {
+          this.buffer = "";
+          this.failRetiredDrain("retired snapshot partial line exceeded bounds");
+          return;
         }
         const head3 = this.currentBudget();
         const partialLimit = head3 ? Math.max(head3.limits.maxBytes, this.buffer.startsWith("%") ? 1024 : 0) : 0;
@@ -30931,23 +31076,36 @@ var init_control_channel = __esm({
       fail(reason) {
         if (this.failed) return;
         this.failed = true;
-        if (this.atomicCollector)
-          this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
+        if (this.atomicCollector) {
+          const collector = this.atomicCollector;
+          try {
+            this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+          } catch {
+          }
+          this.atomicCollector = null;
+          try {
+            this.notifyAtomicDrained(collector, "channel-exit");
+          } catch {
+          }
+        }
         for (const sink of this.pending.splice(0)) {
-          if (sink.kind === "promise") sink.reject(new Error(reason));
-          else if (sink.kind === "inline" || sink.kind === "bounded")
-            sink.onReply({ ok: false, lines: [reason] });
-          else if (sink.kind === "native-wrapper" && !sink.state.settled) {
-            sink.state.settled = true;
-            notifyNativeWrapper(sink.state, {
-              ok: false,
-              lines: [],
-              metadataStatus: sink.state.metadataStatus,
-              acknowledgement: sink.state.acknowledgement
-            });
-          } else if (sink.kind === "command-list" && !sink.state.settled) {
-            sink.state.settled = true;
-            sink.state.onReply({ ok: false, lines: [reason] });
+          try {
+            if (sink.kind === "promise") sink.reject(new Error(reason));
+            else if (sink.kind === "inline" || sink.kind === "bounded")
+              sink.onReply({ ok: false, lines: [reason] });
+            else if (sink.kind === "native-wrapper" && !sink.state.settled) {
+              sink.state.settled = true;
+              notifyNativeWrapper(sink.state, {
+                ok: false,
+                lines: [],
+                metadataStatus: sink.state.metadataStatus,
+                acknowledgement: sink.state.acknowledgement
+              });
+            } else if (sink.kind === "command-list" && !sink.state.settled) {
+              sink.state.settled = true;
+              sink.state.onReply({ ok: false, lines: [reason] });
+            }
+          } catch {
           }
         }
       }
@@ -31090,6 +31248,7 @@ var init_control_channel = __esm({
             this.handlers.onOutput(event.pane, event.data, event.ageMs, timing);
             break;
           case "exit":
+            this.fail(event.reason ?? "control channel exited");
             this.handlers.onExit(event.reason);
             break;
           case "notify":
@@ -31100,6 +31259,7 @@ var init_control_channel = __esm({
       consumeAtomicPaneSnapshotLine(line) {
         const collector = this.atomicCollector;
         if (!collector) return false;
+        if (collector.retired) return this.consumeRetiredSnapshotLine(line);
         const prefix = "%tmux-ide-atomic-v1 ";
         const ownPrefix = `${prefix}${collector.spec.nonce} `;
         if (line.startsWith(prefix) && !line.startsWith(ownPrefix)) {
@@ -31109,7 +31269,7 @@ var init_control_channel = __esm({
         const token2 = line.startsWith(ownPrefix) ? line.slice(ownPrefix.length) : null;
         if (!collector.started) {
           if (token2 === null) return false;
-          if (token2 !== "start" || !this.inReply || this.currentReplyFlags !== 0 || this.currentReplyNum === null) {
+          if (token2 !== "start" || !this.inReply || this.currentReplyFlags !== 0 || this.currentReplyNum === null || collector.spec.kind === "pause" && (!Number.isSafeInteger(this.currentReplyNum) || this.currentReplyNum < 0)) {
             collector.failureReason ??= "sentinel-order";
             return true;
           }
@@ -31125,6 +31285,8 @@ var init_control_channel = __esm({
           collector.failureReason ??= "capture-line-cap";
         if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
           collector.failureReason ??= "capture-byte-cap";
+        if (collector.spec.kind === "pause") return this.consumeOwnedPauseLine(line, token2);
+        const shift = collector.spec.dualCapture ? 2 : 0;
         const guard = parseControlLine(line, this.inReply);
         if (guard.kind === "begin") {
           if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
@@ -31139,15 +31301,23 @@ var init_control_channel = __esm({
           const guardInvalid = !this.inReply || guard.flags !== 0 || this.currentReplyFlags !== 0 || guard.num !== this.currentReplyNum;
           if (guardInvalid) collector.failureReason ??= "sentinel-order";
           if (guard.kind === "error") collector.failureReason ??= "sentinel-order";
-          const markerBranchOrdinal2 = 7 + collector.spec.observerCommandCount;
-          const statusOrdinal2 = 8 + collector.spec.observerCommandCount;
-          const completeOrdinal2 = 10 + collector.spec.observerCommandCount;
-          const contentRequired = /* @__PURE__ */ new Set([0, 2, 3, 4, statusOrdinal2, completeOrdinal2]);
-          const contentSilent = collector.blockOrdinal !== 1 && collector.blockOrdinal !== markerBranchOrdinal2 && !contentRequired.has(collector.blockOrdinal);
+          const markerBranchOrdinal2 = 7 + shift + collector.spec.observerCommandCount;
+          const statusOrdinal2 = 8 + shift + collector.spec.observerCommandCount;
+          const completeOrdinal2 = 10 + shift + collector.spec.observerCommandCount;
+          const contentRequired = /* @__PURE__ */ new Set([
+            0,
+            2,
+            3 + shift,
+            4 + shift,
+            ...shift ? [4] : [],
+            statusOrdinal2,
+            completeOrdinal2
+          ]);
+          const contentSilent = collector.blockOrdinal !== 1 && !(shift && collector.blockOrdinal === 3) && collector.blockOrdinal !== markerBranchOrdinal2 && !contentRequired.has(collector.blockOrdinal);
           const markerBranchValid = collector.blockOrdinal !== markerBranchOrdinal2 || collector.blockContentCount <= 1;
           if (contentRequired.has(collector.blockOrdinal) && collector.blockContentCount !== 1 || contentSilent && collector.blockContentCount !== 0 || !markerBranchValid)
             collector.failureReason ??= "sentinel-order";
-          if (guard.kind === "end" && !guardInvalid && collector.spec.observerCommandCount > 0 && collector.blockOrdinal === 5 + collector.spec.observerCommandCount)
+          if (guard.kind === "end" && !guardInvalid && collector.spec.observerCommandCount > 0 && collector.blockOrdinal === 5 + shift + collector.spec.observerCommandCount)
             collector.observerEmissionObserved = true;
           if (!guardInvalid && guard.kind === "end") {
             collector.lastCompletedOrdinal = collector.blockOrdinal;
@@ -31157,27 +31327,12 @@ var init_control_channel = __esm({
           this.currentReplyNum = null;
           this.currentReplyFlags = null;
           if (collector.blockOrdinal === completeOrdinal2) {
-            this.atomicCollector = null;
             const ok2 = collector.failureReason === null && collector.cursorLine !== null && collector.statusObserved;
-            collector.spec.onSettled(
-              Object.freeze({
-                ok: ok2,
-                captureLines: Object.freeze(ok2 ? [...collector.captureLines] : []),
-                cursorLine: ok2 ? collector.cursorLine : null,
-                continueObserved: collector.continueObserved,
-                statusObserved: collector.statusObserved,
-                observerEmissionObserved: collector.observerEmissionObserved,
-                started: collector.started,
-                lastCompletedOrdinal: collector.lastCompletedOrdinal,
-                captureLineCount: collector.captureLines.length,
-                captureByteCount: collector.captureBytes,
-                failureReason: ok2 ? null : collector.failureReason ?? "sentinel-order"
-              })
-            );
+            this.completeAtomicCollector(collector, ok2);
           }
           return true;
         }
-        if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
+        if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5 + shift) {
           if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
           collector.continueObserved = true;
           return true;
@@ -31190,21 +31345,24 @@ var init_control_channel = __esm({
           collector.failureReason ??= "unexpected-post-line";
           return true;
         }
-        const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-        const statusOrdinal = 8 + collector.spec.observerCommandCount;
-        const completeOrdinal = 10 + collector.spec.observerCommandCount;
+        const markerBranchOrdinal = 7 + shift + collector.spec.observerCommandCount;
+        const statusOrdinal = 8 + shift + collector.spec.observerCommandCount;
+        const completeOrdinal = 10 + shift + collector.spec.observerCommandCount;
         collector.blockContentCount += 1;
-        if (collector.blockOrdinal === 1) {
+        if (collector.blockOrdinal === 1 || shift && collector.blockOrdinal === 3) {
           collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
           if (collector.captureBytes > collector.spec.maxCaptureBytes)
             collector.failureReason ??= "capture-byte-cap";
-          if (collector.captureLines.length >= collector.spec.maxCaptureLines)
+          if (collector.captureLines.length + collector.ansiCaptureLines.length >= collector.spec.maxCaptureLines)
             collector.failureReason ??= "capture-line-cap";
-          else collector.captureLines.push(line);
+          else
+            (collector.blockOrdinal === 1 ? collector.captureLines : collector.ansiCaptureLines).push(
+              line
+            );
           this.reportAtomicPaneSnapshotProgress(collector);
           return true;
         }
-        if (collector.blockOrdinal === 3) {
+        if (collector.blockOrdinal === 3 + shift) {
           if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
           else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
             collector.failureReason ??= "cursor-byte-cap";
@@ -31216,7 +31374,7 @@ var init_control_channel = __esm({
           collector.failureReason ??= token2 === markerRejected ? "marker-rejected" : "sentinel-order";
           return true;
         }
-        const expectedToken = collector.blockOrdinal === 2 ? "capture-end" : collector.blockOrdinal === 4 ? "cursor-end" : collector.blockOrdinal === statusOrdinal ? "status-ok" : collector.blockOrdinal === completeOrdinal ? "complete" : null;
+        const expectedToken = collector.blockOrdinal === 2 ? "capture-end" : shift && collector.blockOrdinal === 4 ? "ansi-capture-end" : collector.blockOrdinal === 4 + shift ? "cursor-end" : collector.blockOrdinal === statusOrdinal ? "status-ok" : collector.blockOrdinal === completeOrdinal ? "complete" : null;
         if (expectedToken === null || token2 !== expectedToken)
           collector.failureReason ??= token2 === "start" ? "duplicate-sentinel" : "sentinel-order";
         if (collector.blockOrdinal === statusOrdinal && token2 === "status-ok") {
@@ -31225,13 +31383,98 @@ var init_control_channel = __esm({
         }
         return true;
       }
+      completeAtomicCollector(collector, ok2) {
+        if (!ok2) {
+          this.retireAtomicPaneSnapshotCollector(
+            collector.spec.nonce,
+            collector.failureReason ?? "sentinel-order"
+          );
+          return;
+        }
+        const result2 = Object.freeze({
+          ok: true,
+          captureLines: Object.freeze([...collector.captureLines]),
+          ...collector.spec.dualCapture ? { ansiCaptureLines: Object.freeze([...collector.ansiCaptureLines]) } : {},
+          cursorLine: collector.cursorLine,
+          continueObserved: collector.continueObserved,
+          statusObserved: collector.statusObserved,
+          observerEmissionObserved: collector.observerEmissionObserved,
+          started: collector.started,
+          lastCompletedOrdinal: collector.lastCompletedOrdinal,
+          captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
+          captureByteCount: collector.captureBytes,
+          failureReason: null,
+          ...collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}
+        });
+        collector.settled = true;
+        try {
+          collector.spec.onSettled(result2);
+        } catch {
+          this.failRetiredDrain("snapshot settlement callback failed");
+          return;
+        }
+        if (this.atomicCollector === collector) {
+          this.atomicCollector = null;
+          this.notifyAtomicDrained(collector, "complete");
+        }
+      }
+      consumeOwnedPauseLine(line, token2) {
+        const collector = this.atomicCollector;
+        const guard = parseControlLine(line, this.inReply);
+        if (guard.kind === "begin") {
+          if (guard.flags !== 0 || this.inReply || !Number.isSafeInteger(guard.num) || guard.num < 0)
+            collector.failureReason ??= "sentinel-order";
+          this.inReply = true;
+          this.currentReplyNum = guard.num;
+          this.currentReplyFlags = guard.flags;
+          collector.blockOrdinal += 1;
+          collector.blockContentCount = 0;
+          return true;
+        }
+        if (guard.kind === "end" || guard.kind === "error") {
+          const valid = this.inReply && guard.kind === "end" && guard.flags === 0 && this.currentReplyFlags === 0 && guard.num === this.currentReplyNum;
+          if (!valid || (collector.blockOrdinal === 1 ? collector.blockContentCount > 1 : collector.blockContentCount !== 1))
+            collector.failureReason ??= "sentinel-order";
+          if (valid) collector.lastCompletedOrdinal = collector.blockOrdinal;
+          this.inReply = false;
+          this.currentReplyNum = null;
+          this.currentReplyFlags = null;
+          this.currentReplyConsumesPending = false;
+          if (collector.blockOrdinal === 2)
+            this.completeAtomicCollector(
+              collector,
+              collector.failureReason === null && collector.statusObserved
+            );
+          return true;
+        }
+        if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
+          this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+          return false;
+        }
+        if (!this.inReply) {
+          collector.failureReason ??= "unexpected-post-line";
+          return true;
+        }
+        collector.blockContentCount += 1;
+        if (collector.blockOrdinal === 1 && line === `%pause ${collector.spec.runtimePaneId}`) {
+          if (collector.pauseObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.pauseObserved = true;
+        } else if (collector.blockOrdinal === 2 && token2 === "complete") {
+          if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.statusObserved = true;
+        } else collector.failureReason ??= "sentinel-order";
+        return true;
+      }
       reportAtomicPaneSnapshotProgress(collector) {
         if (collector.failureReason !== null) return;
         collector.spec.onProgress?.(
           Object.freeze({
             started: collector.started,
             lastCompletedOrdinal: collector.lastCompletedOrdinal,
-            captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
+            captureLineCount: Math.min(
+              collector.captureLines.length + collector.ansiCaptureLines.length,
+              ATOMIC_CAPTURE_LINE_HARD_CAP
+            ),
             captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
             continueObserved: collector.continueObserved,
             statusObserved: collector.statusObserved,
@@ -31251,7 +31494,7 @@ var init_control_channel = __esm({
       viewerPending = 0;
       verifiedAttach = false;
       guardedStart = null;
-      atomicCollectorTimer = null;
+      atomicCollectorOwner = null;
       constructor(opts) {
         this.opts = opts;
         this.core = new ControlChannelCore(
@@ -31267,7 +31510,13 @@ var init_control_channel = __esm({
               }
               if (!opts.nativeServerIdentity || this.verifiedAttach) opts.handlers.onNotify(name, rest);
             },
-            onExit: (reason) => this.noteExit(reason)
+            onExit: (reason) => {
+              try {
+                this.noteExit(reason);
+              } finally {
+                void this.dispose();
+              }
+            }
           },
           opts.nowMicros
         );
@@ -31305,13 +31554,13 @@ var init_control_channel = __esm({
           this.core.fail("control channel exited");
           this.noteExit(null);
         });
-        return new Promise((resolve41, reject) => {
+        return new Promise((resolve42, reject) => {
           let timer;
           const settle = (error) => {
             if (timer) clearTimeout(timer);
             this.guardedStart = null;
             if (error) reject(error);
-            else resolve41();
+            else resolve42();
           };
           if (this.opts.nativeServerIdentity) {
             this.guardedStart = { resolve: () => settle(), reject: (error) => settle(error) };
@@ -31390,7 +31639,7 @@ var init_control_channel = __esm({
         this.viewerHandshakeStarted = true;
         this.viewerConfig = config2;
         this.unsubscribeNativeViewerReady();
-        return new Promise((resolve41) => {
+        return new Promise((resolve42) => {
           let settled = false;
           const finish = (identity2) => {
             if (settled) return;
@@ -31403,7 +31652,7 @@ var init_control_channel = __esm({
             } catch {
               this.retireNativeViewer();
             }
-            resolve41();
+            resolve42();
           };
           const timer = setTimeout(() => finish(null), 1e3);
           timer.unref?.();
@@ -31459,8 +31708,8 @@ var init_control_channel = __esm({
       request(cmd) {
         const proc = this.proc;
         if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
-        return new Promise((resolve41, reject) => {
-          this.core.push({ kind: "promise", resolve: resolve41, reject, lines: [] });
+        return new Promise((resolve42, reject) => {
+          this.core.push({ kind: "promise", resolve: resolve42, reject, lines: [] });
           proc.stdin.write(`${cmd}
 `);
         });
@@ -31508,27 +31757,92 @@ var init_control_channel = __esm({
 `);
       }
       armAtomicPaneSnapshotCollector(spec, timeoutMs) {
+        if (this.exited || !this.proc?.stdin?.writable) return false;
         if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5e3) return false;
+        const owner = {
+          nonce: spec.nonce,
+          timer: null,
+          drainTimer: null,
+          retiring: false,
+          completed: false
+        };
+        const clear = () => {
+          if (owner.timer) clearTimeout(owner.timer);
+          if (owner.drainTimer) clearTimeout(owner.drainTimer);
+          owner.timer = owner.drainTimer = null;
+          if (this.atomicCollectorOwner === owner) this.atomicCollectorOwner = null;
+        };
         const wrapped = {
           ...spec,
           onSettled: (result2) => {
-            if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-            this.atomicCollectorTimer = null;
+            if (owner.timer) clearTimeout(owner.timer);
+            owner.timer = null;
+            owner.completed = result2.ok;
+            if (!result2.ok && result2.failureReason !== "channel-exit" && !owner.retiring) {
+              this.beginCollectorDrain(
+                spec.nonce,
+                result2.failureReason ?? "retired",
+                () => spec.onSettled(result2)
+              );
+              return;
+            }
             spec.onSettled(result2);
+          },
+          onDrained: (reason) => {
+            clear();
+            spec.onDrained?.(reason);
           }
         };
         if (!this.core.armAtomicPaneSnapshotCollector(wrapped)) return false;
-        this.atomicCollectorTimer = setTimeout(() => {
-          this.atomicCollectorTimer = null;
-          this.core.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout");
-        }, timeoutMs);
-        this.atomicCollectorTimer.unref?.();
+        this.atomicCollectorOwner = owner;
+        owner.timer = setTimeout(
+          () => this.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout"),
+          timeoutMs
+        );
+        owner.timer.unref?.();
         return true;
       }
       retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
-        if (!this.core.retireAtomicPaneSnapshotCollector(nonce, reason)) return;
-        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-        this.atomicCollectorTimer = null;
+        this.beginCollectorDrain(nonce, reason);
+      }
+      beginCollectorDrain(nonce, reason, settle) {
+        const owner = this.atomicCollectorOwner;
+        if (!owner || owner.nonce !== nonce || owner.retiring || owner.completed) return;
+        owner.retiring = true;
+        if (owner.timer) clearTimeout(owner.timer);
+        owner.timer = null;
+        const abort = (message) => {
+          if (this.atomicCollectorOwner !== owner) return;
+          try {
+            this.core.fail(message);
+            this.noteExit(message);
+          } finally {
+            void this.dispose();
+          }
+        };
+        owner.drainTimer = setTimeout(() => abort("retired snapshot drain timed out"), 5e3);
+        owner.drainTimer.unref?.();
+        try {
+          this.core.retireAtomicPaneSnapshotCollector(nonce, reason);
+          settle?.();
+        } catch {
+          abort("retired snapshot settlement callback failed");
+          return;
+        }
+        if (this.atomicCollectorOwner !== owner) return;
+        const fence = `tmux-ide-collector-drain-v1:${randomBytes3(24).toString("hex")}`;
+        this.commandBoundedInline(
+          `display-message -p -l ${fence}`,
+          { maxBytes: 256, maxLines: 1 },
+          (reply) => {
+            if (this.atomicCollectorOwner !== owner) return;
+            if (!reply.ok || reply.lines.length !== 1 || reply.lines[0] !== fence) {
+              abort("invalid retired snapshot drain fence");
+              return;
+            }
+            if (!this.core.releaseRetiredCollector(nonce)) abort("retired snapshot owner changed");
+          }
+        );
       }
       send(cmd, onReply) {
         const proc = this.proc;
@@ -31550,8 +31864,9 @@ var init_control_channel = __esm({
        */
       async dispose() {
         this.retireNativeViewer();
-        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-        this.atomicCollectorTimer = null;
+        const collectorOwner = this.atomicCollectorOwner;
+        if (collectorOwner?.timer) clearTimeout(collectorOwner.timer);
+        if (collectorOwner?.drainTimer) clearTimeout(collectorOwner.drainTimer);
         const proc = this.proc;
         this.proc = null;
         if (!proc) return;
@@ -31887,7 +32202,7 @@ var NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES, NATIVE_ATOMIC_DUAL_MAX_RECORDS, MAX_LINES,
 var init_native_atomic_snapshot = __esm({
   "packages/daemon/src/terminal/mirror/native-atomic-snapshot.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_native_grid_capture();
     NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024;
     NATIVE_ATOMIC_DUAL_MAX_RECORDS = 1e5;
@@ -32070,7 +32385,7 @@ var init_native_grid_reader = __esm({
           return Promise.resolve({ status: "unsupported" });
         if (!/^%\d+$/.test(runtimePaneId) || this.pending.size >= 64)
           return Promise.resolve({ status: "unavailable" });
-        return new Promise((resolve41) => {
+        return new Promise((resolve42) => {
           let settled = false;
           let timer;
           const finish = (result2) => {
@@ -32078,7 +32393,7 @@ var init_native_grid_reader = __esm({
             settled = true;
             clearTimeout(timer);
             if (result2.status !== "timeout") this.pending.delete(retire2);
-            resolve41(result2);
+            resolve42(result2);
           };
           const retire2 = () => finish({ status: "retired" });
           this.pending.add(retire2);
@@ -32407,7 +32722,7 @@ var RUNTIME_PANE_ID, DEFAULT_GENERATION_ATTEMPTS;
 var init_workspace_tmux_adapter = __esm({
   "packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     RUNTIME_PANE_ID = /^%[0-9]+$/u;
     DEFAULT_GENERATION_ATTEMPTS = 32;
   }
@@ -32419,7 +32734,7 @@ var WindowLinkResolutionError, WindowLinkAuthority;
 var init_window_link_authority = __esm({
   "packages/daemon/src/terminal/mirror/window-link-authority.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     WindowLinkResolutionError = class extends Error {
       constructor(reason) {
         super(reason);
@@ -32860,8 +33175,146 @@ var init_pane_feed = __esm({
   }
 });
 
+// packages/daemon/src/terminal/mirror/stock-pane-snapshot.ts
+var StockPaneSnapshot;
+var init_stock_pane_snapshot = __esm({
+  "packages/daemon/src/terminal/mirror/stock-pane-snapshot.ts"() {
+    "use strict";
+    StockPaneSnapshot = class _StockPaneSnapshot {
+      static MAX_BYTES = 1024 * 1024;
+      static MAX_CHUNKS = 512;
+      phase = "awaiting-pause";
+      failure = null;
+      context;
+      participants;
+      maxBytes;
+      maxChunks;
+      chunks = [];
+      bytes = 0;
+      constructor(context, limits = {}) {
+        if (!/^%(?:0|[1-9][0-9]*)$/u.test(context.paneId) || !Number.isSafeInteger(context.incarnation) || context.incarnation < 0 || !Number.isSafeInteger(context.layoutGeneration) || context.layoutGeneration < 0 || context.participants.length === 0 || new Set(context.participants).size !== context.participants.length || context.participants.some(
+          (participant) => participant === null || typeof participant !== "object"
+        ))
+          throw new TypeError("stock snapshot requires exact pane and participant identities");
+        this.maxBytes = limits.maxBytes ?? _StockPaneSnapshot.MAX_BYTES;
+        this.maxChunks = limits.maxChunks ?? _StockPaneSnapshot.MAX_CHUNKS;
+        if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes < 1 || this.maxBytes > _StockPaneSnapshot.MAX_BYTES || !Number.isSafeInteger(this.maxChunks) || this.maxChunks < 1 || this.maxChunks > _StockPaneSnapshot.MAX_CHUNKS)
+          throw new RangeError("stock snapshot buffer limits must be positive and bounded");
+        this.context = { ...context, participants: [...context.participants] };
+        this.participants = new Set(this.context.participants);
+      }
+      get state() {
+        return this.phase;
+      }
+      get failureReason() {
+        return this.failure;
+      }
+      get bufferedBytes() {
+        return this.bytes;
+      }
+      get bufferedChunks() {
+        return this.chunks.length;
+      }
+      matchesContext(context) {
+        if (this.phase === "invalidated") return false;
+        if (context.paneId !== this.context.paneId || context.incarnation !== this.context.incarnation || context.layoutGeneration !== this.context.layoutGeneration || context.participants.length !== this.participants.size || new Set(context.participants).size !== this.participants.size || context.participants.some((participant) => !this.participants.has(participant))) {
+          this.invalidate("context-changed");
+          return false;
+        }
+        return true;
+      }
+      current(context) {
+        return this.phase !== "committed" && this.matchesContext(context);
+      }
+      readCurrentContext(read) {
+        try {
+          return this.current(read());
+        } catch {
+          this.invalidate("context-unavailable");
+          return false;
+        }
+      }
+      /** Only an actual current connection's pause notification establishes the fence. */
+      observePause(context) {
+        if (!this.current(context)) return false;
+        if (this.phase !== "awaiting-pause") {
+          this.invalidate("repaused");
+          return false;
+        }
+        this.phase = "buffering";
+        return true;
+      }
+      acceptOutput(paneId, data, context) {
+        if (paneId !== this.context.paneId) return "unrelated";
+        if (!this.matchesContext(context)) return "invalid";
+        if (this.phase === "committed") return "live";
+        if (this.phase === "awaiting-pause") return "discarded";
+        if (data.byteLength === 0) return "held";
+        if (this.chunks.length >= this.maxChunks || this.bytes + data.byteLength > this.maxBytes) {
+          this.invalidate("overflow");
+          return "invalid";
+        }
+        this.chunks.push(data.slice());
+        this.bytes += data.byteLength;
+        return "held";
+      }
+      /** Revoke future routing even after commit; delivered events cannot be retracted. */
+      invalidate(reason = "cancelled") {
+        if (this.phase === "invalidated") return;
+        this.phase = "invalidated";
+        this.failure = reason;
+        this.chunks = [];
+        this.bytes = 0;
+      }
+      /**
+       * Publish an authenticated snapshot, then replay each retained chunk to every
+       * exact participant. Context is rechecked around callbacks. A callback may
+       * append more output, which joins this same bounded replay before commit.
+       * Failure cannot retract already delivered events: the caller must retire or
+       * reseed participants when false is returned, never release their live feeds.
+       */
+      publish(batches, currentContext, emit) {
+        if (!this.readCurrentContext(currentContext)) return false;
+        if (this.phase !== "buffering") {
+          this.invalidate(this.phase === "awaiting-pause" ? "pause-not-observed" : "invalid-snapshot");
+          return false;
+        }
+        if (batches.length !== this.participants.size || new Set(batches.map((batch) => batch.participant)).size !== this.participants.size || batches.some(
+          ({ participant, events }) => !this.participants.has(participant) || events.length !== 3 || events[0]?.type !== "reset" || events[1]?.type !== "seed" || events[2]?.type !== "cursor"
+        )) {
+          this.invalidate("invalid-snapshot");
+          return false;
+        }
+        this.phase = "publishing";
+        const deliver = (participant, event) => {
+          if (!this.readCurrentContext(currentContext)) return false;
+          try {
+            emit(participant, event);
+          } catch {
+            this.invalidate("consumer-error");
+            return false;
+          }
+          return this.readCurrentContext(currentContext);
+        };
+        for (const { participant, events } of batches)
+          for (const event of events) if (!deliver(participant, event)) return false;
+        for (let index = 0; index < this.chunks.length; index += 1) {
+          const data = this.chunks[index];
+          for (const participant of this.context.participants) {
+            if (!deliver(participant, { type: "delta", data: data.slice() })) return false;
+          }
+        }
+        this.chunks = [];
+        this.bytes = 0;
+        this.phase = "committed";
+        return true;
+      }
+    };
+  }
+});
+
 // packages/daemon/src/terminal/mirror/session-channel.ts
-import { createHash as createHash18, randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { hostname as hostname2 } from "node:os";
 function nativeBootstrapUnsupported(ok2, lines, native2) {
   if (ok2)
@@ -32869,28 +33322,6 @@ function nativeBootstrapUnsupported(ok2, lines, native2) {
   return lines.some(
     (line) => /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim())
   );
-}
-function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
-  const hash = createHash18("sha256");
-  const append = (bytes) => {
-    const length = Buffer.allocUnsafe(4);
-    length.writeUInt32BE(bytes.byteLength);
-    hash.update(length);
-    hash.update(bytes);
-  };
-  hash.update("tmux-ide/recovery-snapshot/v1\0");
-  const count = Buffer.allocUnsafe(4);
-  count.writeUInt32BE(captureLines.length);
-  hash.update(count);
-  for (const line of captureLines) append(Buffer.from(line, "latin1"));
-  append(Buffer.from(cursorLine, "utf8"));
-  append(
-    Buffer.from(
-      fallbackSize ? `${fallbackSize.cols}x${fallbackSize.rows}` : "no-layout-fallback",
-      "ascii"
-    )
-  );
-  return hash.digest("hex");
 }
 function tmuxSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -32900,12 +33331,12 @@ function layoutIdentitiesEqual(left, right) {
   return left.zoomed === right.zoomed && JSON.stringify(paneIds(left)) === JSON.stringify(paneIds(right)) && JSON.stringify(paneIds(left.unzoomed)) === JSON.stringify(paneIds(right.unzoomed));
 }
 function defaultMirrorPaneId() {
-  return `pane.mirror.${randomBytes3(8).toString("hex")}`;
+  return `pane.mirror.${randomBytes4(8).toString("hex")}`;
 }
 function defaultMirrorWindowId() {
-  return `window.mirror.${randomBytes3(8).toString("hex")}`;
+  return `window.mirror.${randomBytes4(8).toString("hex")}`;
 }
-var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, MAX_QUEUED_PLAIN_RESEEDS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
+var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, MAX_QUEUED_SNAPSHOTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -32913,7 +33344,7 @@ var init_session_channel = __esm({
     init_native_atomic_snapshot();
     init_tmux_interaction_retention();
     init_native_grid_capture();
-    init_src();
+    init_src2();
     init_control2();
     init_input_coalescer();
     init_native_grid_reader();
@@ -32926,6 +33357,7 @@ var init_session_channel = __esm({
     init_tmux_window_link_guard();
     init_flow_ledger();
     init_pane_feed();
+    init_stock_pane_snapshot();
     init_tmux_interaction_options();
     TMUX_SERVER_HOSTNAME = hostname2();
     STRUCTURAL_NOTIFICATIONS = /* @__PURE__ */ new Set([
@@ -32947,17 +33379,14 @@ var init_session_channel = __esm({
     NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
     SYNC_DEBOUNCE_MS = 40;
     DISPLAY_NAME_SYNC_INTERVAL_MS = 750;
-    RECOVERY_QUIET_MS = 40;
     RECOVERY_COMMAND_DEADLINE_MS = 500;
     RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
     RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
     RECOVERY_MAX_ATTEMPTS = 4;
-    MAX_QUEUED_PLAIN_RESEEDS = 64;
+    MAX_QUEUED_SNAPSHOTS = 64;
     RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
     RECOVERY_CAPTURE_MAX_LINES = RECOVERY_CAPTURE_MAX_BYTES / 64;
     RECOVERY_CURSOR_MAX_BYTES = 1024;
-    MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
-    MAX_CONTINUE_NOTIFICATION_DEBT = 65536;
     RECOVERY_CURSOR_PROBE_FORMAT = [
       "#{cursor_x}",
       "#{cursor_y}",
@@ -32993,7 +33422,6 @@ var init_session_channel = __esm({
     SessionChannel = class {
       nativeBootstrapUnavailable = false;
       nativeBootstrapConfirmed = false;
-      nativeProbeRetried = /* @__PURE__ */ new WeakSet();
       opts;
       io;
       ledger = new FlowLedger();
@@ -33020,6 +33448,7 @@ var init_session_channel = __esm({
       fittedWindows = /* @__PURE__ */ new Map();
       cancelSync = null;
       syncOrdinal = 0;
+      completedSyncOrdinal = 0;
       lastDisplayNameSyncAtMs = 0;
       disposed = false;
       nativeGrid;
@@ -33030,25 +33459,36 @@ var init_session_channel = __esm({
       windowIdentityOrdinal = 0;
       paneIncarnation = 0;
       recoveryOrdinal = 0;
-      plainReseedActive = null;
-      plainReseedQueue = /* @__PURE__ */ new Map();
+      snapshotQueue = /* @__PURE__ */ new Map();
+      snapshotActive = null;
+      observedPaused = /* @__PURE__ */ new Set();
       outputOrdinals = /* @__PURE__ */ new Map();
       pendingLayoutOutput = /* @__PURE__ */ new Map();
       recoveries = /* @__PURE__ */ new Map();
-      continueNotificationQueues = /* @__PURE__ */ new Map();
       trustedInventoryFlight = null;
       trustedInventoryFlightSessionId = null;
       attachedIdentity = null;
       /** Settles once the FIRST identity join lands (or is proven impossible), so
        *  `start()` returns a channel whose semantic ids are subscribable. */
       resolveFirstJoin = null;
-      firstJoin = new Promise((resolve41) => {
-        this.resolveFirstJoin = resolve41;
+      firstJoin = new Promise((resolve42) => {
+        this.resolveFirstJoin = resolve42;
       });
       input = new InputCoalescer(
         (action) => {
           const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1e3) : 0;
           const pendingBeforeSend = action.traceIds?.length ? this.io.pendingCount ?? 0 : 0;
+          const pane = action.traceIds?.length ? this.panesByRuntime.get(action.pane) : void 0;
+          const semanticPaneId3 = !this.disposed && pane?.descriptor ? pane.semanticId : null;
+          const paneIncarnation = pane?.incarnation;
+          const paneActive = pane?.active;
+          const birth = pane?.descriptor?.nativePaneBirthId;
+          let complete;
+          try {
+            if (action.traceIds?.length)
+              complete = this.opts.captureInputWrite?.(action, semanticPaneId3);
+          } catch {
+          }
           const onReply = action.traceIds?.length ? (reply) => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1e3), reply.ok) : void 0;
           if (this.trySendOwnedInput(action, onReply)) {
           } else if (action.kind === "literal") {
@@ -33063,6 +33503,15 @@ var init_session_channel = __esm({
             );
           } else {
             this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
+          }
+          try {
+            complete?.(
+              startedAtMicros,
+              Math.floor(performance.now() * 1e3),
+              pendingBeforeSend,
+              !this.disposed && pane !== void 0 && semanticPaneId3 !== null && this.panesByRuntime.get(action.pane) === pane && this.panesBySemantic.get(semanticPaneId3) === pane && pane.runtimeId === action.pane && pane.semanticId === semanticPaneId3 && pane.incarnation === paneIncarnation && pane.active === paneActive && pane.descriptor !== null && pane.descriptor.nativePaneBirthId === birth
+            );
+          } catch {
           }
           if (action.traceIds?.length)
             this.opts.onInputWrite?.(
@@ -33144,7 +33593,10 @@ var init_session_channel = __esm({
                 marker = value;
               },
               (reply) => {
-                if (!reply.ok && marker) this.retireInternalReadMarker(runtime, marker);
+                if (marker) {
+                  if (reply.ok) this.clearInternalReadMarkerOption(runtime, marker);
+                  else this.retireInternalReadMarker(runtime, marker);
+                }
                 onReply(reply);
               },
               limits
@@ -33296,12 +33748,12 @@ var init_session_channel = __esm({
           if (!listing && !resize) throw new Error("Invalid resize control command");
           const pinned = listing ? [...args.slice(0, 3), identity2.runtimeSessionId, ...args.slice(4)] : args;
           const command3 = pinned.map((arg, index) => resize && index === 5 ? ";" : tmuxSingleQuote(arg)).join(" ");
-          const lines = listing ? await this.io.request(command3) : await new Promise((resolve41, reject) => {
+          const lines = listing ? await this.io.request(command3) : await new Promise((resolve42, reject) => {
             this.io.commandListInline(
               command3,
               2,
               1,
-              (reply) => reply.ok ? resolve41(reply.lines) : reject(new Error("Resize control command failed"))
+              (reply) => reply.ok ? resolve42(reply.lines) : reject(new Error("Resize control command failed"))
             );
           });
           assertCurrent();
@@ -33346,8 +33798,8 @@ var init_session_channel = __esm({
             () => true,
             () => false
           ),
-          new Promise((resolve41) => {
-            timer = setTimeout(() => resolve41(false), 2e3);
+          new Promise((resolve42) => {
+            timer = setTimeout(() => resolve42(false), 2e3);
           })
         ]).finally(() => {
           if (timer !== void 0) clearTimeout(timer);
@@ -33391,6 +33843,7 @@ var init_session_channel = __esm({
           frozen: false,
           closed: false
         };
+        sub.feed.abortCurrent();
         pane.subs.add(sub);
         const recoveryReason = this.ledger.isRequested(pane.runtimeId) ? "requested" : this.ledger.isBackpressured(pane.runtimeId) ? "backpressure" : null;
         if (recoveryReason) this.beginRecovery(pane, recoveryReason);
@@ -33402,10 +33855,10 @@ var init_session_channel = __esm({
             semanticPaneId3,
             () => !sub.closed && sub.pane === pane && this.panesBySemantic.get(semanticPaneId3) === pane
           ),
-          readHistorySize: () => new Promise((resolve41) => {
+          readHistorySize: () => new Promise((resolve42) => {
             const current = () => !this.disposed && !sub.closed && !sub.frozen && this.panesByRuntime.get(pane.runtimeId) === pane;
             if (!current()) {
-              resolve41(null);
+              resolve42(null);
               return;
             }
             this.io.commandInline(
@@ -33413,7 +33866,7 @@ var init_session_channel = __esm({
               (reply) => {
                 const value = reply.lines[0]?.trim() ?? "";
                 const size = Number(value);
-                resolve41(
+                resolve42(
                   current() && reply.ok && /^[0-9]+$/u.test(value) && Number.isSafeInteger(size) ? size : null
                 );
               }
@@ -33430,6 +33883,13 @@ var init_session_channel = __esm({
           },
           close: () => this.closeSub(sub)
         };
+      }
+      qualificationListeners() {
+        return Object.freeze({
+          pane: [...this.panesByRuntime.values()].reduce((sum, pane) => sum + pane.subs.size, 0),
+          layout: this.layoutSubscribers.size,
+          layoutAuthority: this.layoutAuthoritySubscribers.size
+        });
       }
       /** Session geometry without a dummy pane feed or terminal-content seed. */
       subscribeLayout(onLayout) {
@@ -33607,13 +34067,16 @@ var init_session_channel = __esm({
       async dispose() {
         if (this.disposed) return;
         this.disposed = true;
+        this.snapshotActive?.cleanup?.();
+        this.snapshotActive?.cancelFence?.();
+        this.snapshotActive = null;
+        this.snapshotQueue.clear();
         this.windowLinkAuthority?.dispose();
         this.nativeGrid.dispose();
         this.settleFirstJoin();
         this.cancelSync?.();
         this.cancelSync = null;
         for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
-        this.continueNotificationQueues.clear();
         this.discovery.dispose();
         this.input.flush();
         this.opts.ownedViewer?.dispose();
@@ -33622,7 +34085,10 @@ var init_session_channel = __esm({
             if (!sub.closed) {
               sub.closed = true;
               sub.cancelCapture?.();
-              sub.onEvent({ type: "closed" });
+              try {
+                sub.onEvent({ type: "closed" });
+              } catch {
+              }
             }
           }
           pane.subs.clear();
@@ -33635,6 +34101,26 @@ var init_session_channel = __esm({
       }
       // ── Byte routing ─────────────────────────────────────────────────────────
       onOutput(runtimePane, data, ageMs, timing) {
+        const stockRecovery = this.recoveries.get(runtimePane);
+        const stockPane = this.panesByRuntime.get(runtimePane);
+        if (stockRecovery?.stock && stockPane && stockRecovery.lease) {
+          const disposition = stockRecovery.stock.acceptOutput(
+            runtimePane,
+            data,
+            this.snapshotContext(stockPane)
+          );
+          if (disposition !== "live" && disposition !== "unrelated") {
+            const ordinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
+            this.outputOrdinals.set(runtimePane, ordinal);
+            this.opts.onOutputObserved?.(stockPane.semanticId, ageMs, timing);
+            if (ageMs !== null) {
+              this.ageByRuntime.set(runtimePane, ageMs);
+              if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
+            }
+            if (disposition === "invalid") this.retrySnapshot(stockRecovery);
+            return;
+          }
+        }
         const windowId = this.panesByRuntime.get(runtimePane)?.windowRuntimeId;
         const pending = windowId ? this.pendingLayoutOutput.get(windowId) : void 0;
         if (pending) {
@@ -33668,264 +34154,21 @@ var init_session_channel = __esm({
           if (sub.feed.takeOverflowed()) overflowed = true;
         }
         if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
-        this.noteRecoveryOutput(pane, outputOrdinal);
       }
       // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
-      reseed(lease, onSettled, deferPublish = false, deadlineAt = this.recoveryNowMs() + RECOVERY_ABSOLUTE_DEADLINE_MS) {
-        const { sub } = lease;
-        if (sub.closed || sub.frozen || this.disposed) {
-          onSettled?.(FAILED_RESEED_RESULT);
-          return;
-        }
-        lease.cancelRecipe?.();
-        const runtime = sub.pane.runtimeId;
-        const epoch = sub.feed.beginReseed();
-        let settled = false;
-        let captureSucceeded = false;
-        let markerRetired = false;
-        let captureLines = null;
-        let capturedNativeSize = null;
-        let cancelDeadline = null;
-        let resumeLayoutCapture = null;
-        const clearLayoutWait = () => {
-          if (sub.resumeLayoutCapture === resumeLayoutCapture) sub.resumeLayoutCapture = null;
-          resumeLayoutCapture = null;
-        };
-        const settle = (result2) => {
-          if (settled) return;
-          settled = true;
-          clearLayoutWait();
-          cancelDeadline?.();
-          lease.cancelRecipe = null;
-          onSettled?.(result2);
-        };
-        this.input.flush();
-        const history = this.opts.historyLines ?? "";
-        let internalReadMarker = null;
-        const retireMarker = () => {
-          if (markerRetired) return;
-          markerRetired = true;
-          if (internalReadMarker) this.retireInternalReadMarker(runtime, internalReadMarker);
-        };
-        lease.cancelRecipe = () => {
-          if (settled) return;
-          settled = true;
-          clearLayoutWait();
-          cancelDeadline?.();
-          lease.cancelRecipe = null;
-          sub.feed.abort(epoch);
-          if (!captureSucceeded) retireMarker();
-        };
-        cancelDeadline = this.scheduleRecovery(
-          () => {
-            if (settled) return;
-            sub.feed.abort(epoch);
-            if (!captureSucceeded) retireMarker();
-            settle(FAILED_RESEED_RESULT);
-          },
-          Math.max(0, deadlineAt - this.recoveryNowMs())
-        );
-        this.captureWithViewer(
-          runtime,
-          [...sub.nativeBootstrap ? ["-R"] : ["-e", "-J"], "-S", `-${history}`],
-          (marker) => {
-            internalReadMarker = marker;
-          },
-          (reply) => {
-            if (settled) return;
-            const native2 = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
-            if (sub.nativeBootstrap && (!native2 || !isNativeBootstrapCapture(native2)) && !nativeBootstrapUnsupported(reply.ok, reply.lines, native2)) {
-              if (!this.nativeBootstrapConfirmed && !this.nativeProbeRetried.has(sub) && this.recoveryNowMs() < deadlineAt) {
-                this.nativeProbeRetried.add(sub);
-                settled = true;
-                sub.feed.abort(epoch);
-                cancelDeadline?.();
-                lease.cancelRecipe = null;
-                retireMarker();
-                this.reseed(lease, onSettled, deferPublish, deadlineAt);
-                return;
-              }
-              sub.feed.abort(epoch);
-              retireMarker();
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            if (sub.nativeBootstrap && (!native2 || !isNativeBootstrapCapture(native2))) {
-              settled = true;
-              retireMarker();
-              sub.feed.abort(epoch);
-              cancelDeadline?.();
-              lease.cancelRecipe = null;
-              sub.nativeBootstrap = false;
-              this.nativeBootstrapUnavailable = true;
-              this.reseed(lease, onSettled, deferPublish, deadlineAt);
-              return;
-            }
-            if (!reply.ok) {
-              retireMarker();
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            captureSucceeded = true;
-            if (sub.closed || sub.frozen || this.disposed) {
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            captureLines = [...reply.lines];
-            if (native2) {
-              this.nativeBootstrapConfirmed = true;
-              capturedNativeSize = { cols: native2.cols, rows: native2.rows };
-            }
-            if (native2) sub.feed.captureNativeReply(epoch, native2);
-            else sub.feed.captureReply(epoch, reply.lines);
-          }
-        );
-        this.io.commandInline(
-          `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
-          (reply) => {
-            if (settled) return;
-            if (sub.closed || sub.frozen || this.disposed) {
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            if (!reply.ok) {
-              if (!captureSucceeded) retireMarker();
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            const windowId = sub.pane.windowRuntimeId;
-            const probe = parseCursorProbe(reply.lines[0] ?? "");
-            const validCaptureGeometry = probe && Number.isSafeInteger(probe.x) && Number.isSafeInteger(probe.y) && probe.y < probe.rows && (!capturedNativeSize || capturedNativeSize.cols === probe.cols && capturedNativeSize.rows === probe.rows);
-            const layoutSize = validCaptureGeometry ? this.layoutCaptureSizeFor(sub) : null;
-            const pendingLayout = windowId !== null && this.pendingLayoutOutput.has(windowId);
-            const aheadOfLayout = layoutSize && probe && (layoutSize.cols !== probe.cols || layoutSize.rows !== probe.rows);
-            if (windowId && layoutSize && validCaptureGeometry && (pendingLayout || aheadOfLayout)) {
-              sub.feed.abort(epoch);
-              captureLines = null;
-              const waitingAfterSyncOrdinal = this.syncOrdinal;
-              resumeLayoutCapture = (completedSyncOrdinal) => {
-                if (settled) return;
-                if (this.recoveryNowMs() >= deadlineAt) {
-                  settle(FAILED_RESEED_RESULT);
-                  return;
-                }
-                const current = this.layoutCaptureSizeFor(sub);
-                if (!current) return;
-                if (completedSyncOrdinal !== void 0) {
-                  if (completedSyncOrdinal <= waitingAfterSyncOrdinal) return;
-                } else if (!pendingLayout && current.cols === layoutSize.cols && current.rows === layoutSize.rows)
-                  return;
-                settled = true;
-                clearLayoutWait();
-                cancelDeadline?.();
-                lease.cancelRecipe = null;
-                this.reseed(lease, onSettled, deferPublish, deadlineAt);
-              };
-              sub.resumeLayoutCapture = resumeLayoutCapture;
-              if (!pendingLayout) this.scheduleSync();
-              return;
-            }
-            const cursorLine = reply.lines[0] ?? "";
-            const historySize = Number(cursorLine.trim().split(/\s+/)[14]);
-            if (Number.isSafeInteger(historySize) && historySize >= 0)
-              sub.pane.historySize = historySize;
-            const fallbackSize = this.layoutSizeFor(runtime);
-            this.observeScrollOnClear(sub.pane, cursorLine);
-            const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
-            let published = false;
-            const publish = () => {
-              if (published) return true;
-              if (sub.closed || sub.frozen || this.disposed) return false;
-              published = true;
-              for (const event of events) sub.onEvent(event);
-              return true;
-            };
-            const ok2 = events.length > 0 && !sub.closed && captureLines !== null;
-            const result2 = {
-              ok: ok2,
-              fingerprint: ok2 ? snapshotFingerprint2(captureLines, cursorLine, fallbackSize) : null,
-              publish,
-              hold: () => sub.feed.quarantine(epoch)
-            };
-            if (!deferPublish) publish();
-            settle(result2);
-          }
-        );
-      }
       reseedPlain(sub, resumeReason = null) {
         if (sub.closed || sub.frozen || this.disposed) return;
-        if (sub.resumeLayoutCapture) return;
-        if (this.plainReseedActive?.sub === sub) sub.cancelCapture?.();
-        if (!this.plainReseedQueue.has(sub) && this.plainReseedQueue.size >= MAX_QUEUED_PLAIN_RESEEDS) {
-          this.failPlainReseed(sub);
-          return;
-        }
-        this.plainReseedQueue.set(sub, resumeReason);
-        if (this.plainReseedActive?.sub !== sub) {
-          sub.feed.beginReseed();
-          sub.cancelCapture = () => {
-            this.plainReseedQueue.delete(sub);
-            sub.cancelCapture = null;
-            sub.feed.abortCurrent();
-          };
-        }
-        this.drainPlainReseeds();
-      }
-      failPlainReseed(sub) {
-        if (sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
-          return;
-        this.beginLocalOverflowRecovery(sub.pane);
-      }
-      drainPlainReseeds() {
-        if (this.plainReseedActive || this.disposed) return;
-        const next = this.plainReseedQueue.entries().next().value;
-        if (!next) return;
-        const [sub, resumeReason] = next;
-        this.plainReseedQueue.delete(sub);
-        if (sub.closed || sub.frozen) {
-          this.drainPlainReseeds();
-          return;
-        }
-        sub.cancelCapture?.();
-        const lease = { sub, cancelRecipe: null };
-        this.plainReseedActive = lease;
-        sub.cancelCapture = () => {
-          if (this.plainReseedActive !== lease) return;
-          lease.cancelRecipe?.();
-          sub.cancelCapture = null;
-          this.plainReseedActive = null;
-          this.drainPlainReseeds();
-        };
-        this.reseed(
-          lease,
-          (result2) => {
-            if (this.plainReseedActive !== lease) return;
-            sub.cancelCapture = null;
-            this.plainReseedActive = null;
-            if (!result2.ok) {
-              const waiting = [...this.plainReseedQueue.keys()];
-              this.plainReseedQueue.clear();
-              for (const queued of waiting) queued.cancelCapture?.();
-              this.failPlainReseed(sub);
-              for (const queued of waiting) this.failPlainReseed(queued);
-              return;
-            }
-            this.drainPlainReseeds();
-            result2.publish();
-            if (resumeReason && !sub.closed && !sub.frozen)
-              sub.onEvent({ type: "flow", state: "resumed", reason: resumeReason });
-          },
-          true
-        );
+        this.beginRecovery(sub.pane, resumeReason ?? "requested");
       }
       retireInternalReadMarker(runtime, marker) {
         if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
           throw new TypeError("internal read cleanup requires a runtime pane id");
         retireInternalReadOperation(marker, runtime);
+        this.clearInternalReadMarkerOption(runtime, marker);
+      }
+      clearInternalReadMarkerOption(runtime, marker) {
+        if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
+          throw new TypeError("internal read cleanup requires a runtime pane id");
         this.io.commandListInline(
           `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" "display-message -p -t ${runtime} ''"`,
           2,
@@ -33965,6 +34208,9 @@ var init_session_channel = __esm({
         if (sub.frozen || sub.closed) return;
         sub.frozen = true;
         sub.cancelCapture?.();
+        const activeRecovery = this.recoveries.get(sub.pane.runtimeId);
+        if (activeRecovery && [...sub.pane.subs].some((candidate) => !candidate.closed && !candidate.frozen))
+          this.retrySnapshot(activeRecovery);
         sub.onEvent({ type: "flow", state: "paused", reason: "requested" });
         const pane = sub.pane;
         const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
@@ -34033,38 +34279,45 @@ var init_session_channel = __esm({
         const recovery = this.recoveries.get(runtime);
         if (!recovery) return;
         recovery.retired = true;
-        recovery.cancelQuiet?.();
+        this.recoveries.delete(runtime);
+        this.snapshotQueue.delete(runtime);
         recovery.cancelCommandDeadline?.();
         recovery.cancelNoProgressDeadline?.();
         recovery.cancelAbsoluteDeadline?.();
-        if (recovery.atomicCollectorNonce)
-          this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
-        recovery.atomicCollectorNonce = null;
-        this.recoveries.delete(runtime);
-        this.retireContinueNotificationOwner(recovery);
         const pane = this.panesByRuntime.get(runtime);
         if (pane?.incarnation === recovery.paneIncarnation)
           for (const sub of pane.subs) sub.feed.abortCurrent();
+        if (recovery.lease) this.retireSnapshotLease(recovery.lease);
+        else if (recovery.atomicCollectorNonce)
+          this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
+        recovery.atomicCollectorNonce = null;
       }
       beginRecovery(pane, reason) {
-        for (const sub of pane.subs) sub.cancelCapture?.();
-        const runtime = pane.runtimeId;
-        this.cancelRecovery(runtime);
+        if (this.disposed) return;
+        const current = this.recoveries.get(pane.runtimeId);
+        if (current && !current.retired) {
+          if (this.snapshotQueue.get(pane.runtimeId) === current) return;
+          this.retrySnapshot(current);
+          return;
+        }
+        if (this.snapshotQueue.size >= MAX_QUEUED_SNAPSHOTS) {
+          for (const sub of pane.subs) {
+            sub.feed.abortCurrent();
+            if (!sub.closed && !sub.frozen)
+              sub.onEvent({ type: "fault", reason: "native-recovery-failed" });
+          }
+          return;
+        }
         const recovery = {
           ordinal: ++this.recoveryOrdinal,
-          runtimeId: runtime,
+          runtimeId: pane.runtimeId,
           paneIncarnation: pane.incarnation,
           reason,
           startedAtMs: this.recoveryNowMs(),
           retired: false,
-          continueReply: false,
-          continueNotify: false,
-          stage: "continue",
+          stage: "queued",
           attempts: 0,
           reseedOrdinal: 0,
-          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
-          candidateFingerprint: null,
-          confirmationFingerprint: null,
           confirmationOrdinal: 0,
           atomicCollectorNonce: null,
           collectorStarted: false,
@@ -34075,98 +34328,319 @@ var init_session_channel = __esm({
           collectorStatusObserved: false,
           collectorObserverEmissionObserved: false,
           collectorFailureReason: null,
-          cancelQuiet: null,
           cancelCommandDeadline: null,
           cancelNoProgressDeadline: null,
           cancelAbsoluteDeadline: null
         };
-        this.recoveries.set(runtime, recovery);
-        for (const sub of pane.subs) {
-          if (!sub.frozen && !sub.closed) sub.feed.abortCurrent();
-        }
-        this.observeRecovery(pane, recovery, "pause");
-        const nativeTarget = this.nativeRecoveryTarget(pane);
-        if (nativeTarget) {
-          this.beginRecoveryConvergence(recovery);
-          this.recoverNativeAtomic(pane, recovery, nativeTarget);
-          return;
-        }
-        this.observeRecovery(pane, recovery, "continue-request");
-        recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
-          if (this.recoveryPane(recovery) && !recovery.continueReply)
-            this.failRecovery(recovery, "command-timeout");
-        }, RECOVERY_COMMAND_DEADLINE_MS);
-        const queue = this.continueNotificationQueues.get(runtime) ?? [];
-        if (queue.length >= MAX_CONTINUE_NOTIFICATION_QUEUE) {
-          this.failRecovery(recovery, "notification-queue-overflow");
-          return;
-        }
-        queue.push({ kind: "owner", recovery });
-        this.continueNotificationQueues.set(runtime, queue);
-        this.io.send(`refresh-client -A '${runtime}:continue'`, (reply) => {
-          const current = this.recoveryPane(recovery);
-          if (!reply.ok) {
-            this.removeContinueNotificationOwner(recovery);
-            if (current) this.failRecovery(recovery, "command-error");
-            return;
-          }
-          recovery.continueReply = true;
-          if (!current) {
-            this.retireContinueNotificationOwner(recovery);
-            return;
-          }
-          recovery.cancelCommandDeadline?.();
-          recovery.cancelCommandDeadline = null;
-          this.beginRecoveryConvergence(recovery);
-          this.observeRecovery(current, recovery, "continue-reply");
-          this.noteRecoveryProgress(recovery);
-          this.beginFinalRecovery(recovery);
-        });
+        this.recoveries.set(pane.runtimeId, recovery);
+        this.snapshotQueue.set(pane.runtimeId, recovery);
+        this.drainSnapshots();
       }
       beginLocalOverflowRecovery(pane) {
-        for (const sub of pane.subs) sub.cancelCapture?.();
-        const runtime = pane.runtimeId;
-        this.cancelRecovery(runtime);
-        const recovery = {
-          ordinal: ++this.recoveryOrdinal,
-          runtimeId: runtime,
-          paneIncarnation: pane.incarnation,
-          reason: "backpressure",
-          startedAtMs: this.recoveryNowMs(),
-          retired: false,
-          continueReply: true,
-          continueNotify: true,
-          stage: "continue",
-          attempts: 0,
-          reseedOrdinal: 0,
-          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
-          candidateFingerprint: null,
-          confirmationFingerprint: null,
-          confirmationOrdinal: 0,
-          atomicCollectorNonce: null,
-          collectorStarted: false,
-          collectorLastCompletedOrdinal: -1,
-          collectorCaptureLineCount: 0,
-          collectorCaptureByteCount: 0,
-          collectorContinueObserved: false,
-          collectorStatusObserved: false,
-          collectorObserverEmissionObserved: false,
-          collectorFailureReason: null,
-          cancelQuiet: null,
-          cancelCommandDeadline: null,
-          cancelNoProgressDeadline: null,
-          cancelAbsoluteDeadline: null
+        this.beginRecovery(pane, "backpressure");
+      }
+      snapshotContext(pane) {
+        return {
+          paneId: pane.runtimeId,
+          incarnation: pane.incarnation,
+          layoutGeneration: pane.snapshotLayoutGeneration,
+          participants: [...pane.subs].filter((sub) => !sub.closed && !sub.frozen)
         };
-        this.recoveries.set(runtime, recovery);
-        for (const sub of pane.subs) {
-          if (!sub.frozen && !sub.closed)
-            sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
+      }
+      snapshotLeaseCurrent(lease) {
+        return this.snapshotActive === lease && !lease.retired && this.recoveryPane(lease.recovery) !== null;
+      }
+      drainSnapshots() {
+        if (this.snapshotActive || this.disposed) return;
+        for (const [runtime, recovery] of this.snapshotQueue) {
+          if (recovery.waitForSyncAfter !== void 0 && this.completedSyncOrdinal <= recovery.waitForSyncAfter)
+            continue;
+          this.snapshotQueue.delete(runtime);
+          const pane = this.recoveryPane(recovery);
+          if (!pane || ![...pane.subs].some((sub) => !sub.closed && !sub.frozen)) {
+            this.cancelRecovery(runtime);
+            continue;
+          }
+          if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+            this.failRecovery(recovery, "attempts-exhausted");
+            continue;
+          }
+          const lease = {
+            recovery,
+            retired: false,
+            wireNonce: null,
+            retry: false,
+            fencePending: false,
+            cancelFence: null
+          };
+          this.snapshotActive = lease;
+          recovery.lease = lease;
+          if (!recovery.cancelAbsoluteDeadline) {
+            recovery.startedAtMs = this.recoveryNowMs();
+            this.beginRecoveryConvergence(recovery);
+          } else this.noteRecoveryProgress(recovery);
+          for (const sub of pane.subs) if (!sub.closed && !sub.frozen) sub.feed.abortCurrent();
+          const target = this.nativeRecoveryTarget(pane);
+          if (recovery.nativeOwner && (target?.serverEpoch !== recovery.nativeOwner.serverEpoch || target?.paneBirthId !== recovery.nativeOwner.paneBirthId)) {
+            this.failRecovery(recovery, "command-error");
+            return;
+          }
+          if (target) {
+            recovery.nativeOwner ??= target;
+            recovery.stock = void 0;
+            this.recoverNativeAtomic(pane, recovery, target);
+          } else this.startStockSnapshot(pane, recovery, lease);
+          return;
+        }
+      }
+      releaseSnapshotLease(lease) {
+        if (this.snapshotActive !== lease || lease.wireNonce || lease.fencePending) return;
+        lease.cancelFence?.();
+        lease.cancelFence = null;
+        const pane = this.panesByRuntime.get(lease.recovery.runtimeId);
+        if (lease.ownsPause && pane?.incarnation === lease.recovery.paneIncarnation && pane.subs.size === 0 && !this.ledger.isRequested(pane.runtimeId)) {
+          this.io.commandInline(`refresh-client -A '${pane.runtimeId}:continue'`, () => {
+          });
+          this.ledger.noteContinued(pane.runtimeId);
+        }
+        this.snapshotActive = null;
+        if (lease.recovery.lease === lease) lease.recovery.lease = void 0;
+        if (lease.retry && this.recoveryPane(lease.recovery)) {
+          lease.recovery.stage = "queued";
+          this.snapshotQueue.set(lease.recovery.runtimeId, lease.recovery);
+        }
+        this.drainSnapshots();
+      }
+      retireSnapshotLease(lease, retry = false) {
+        if (this.snapshotActive !== lease) return;
+        lease.retired = true;
+        if (this.disposed) {
+          lease.cancelFence?.();
+          lease.cancelFence = null;
+          this.snapshotActive = null;
+          this.snapshotQueue.clear();
+          return;
+        }
+        lease.retry ||= retry;
+        lease.recovery.stock?.invalidate();
+        lease.cleanup?.();
+        lease.cleanup = void 0;
+        lease.recovery.cancelCommandDeadline?.();
+        lease.recovery.cancelCommandDeadline = null;
+        if (lease.wireNonce) {
+          this.io.retireAtomicPaneSnapshotCollector?.(lease.wireNonce, "retired");
+          return;
+        }
+        if (lease.fencePending) return;
+        lease.fencePending = true;
+        const token2 = `tmux-ide-snapshot-admission:${randomBytes4(24).toString("hex")}`;
+        const failed = () => {
+          if (this.snapshotActive !== lease) return;
+          lease.retry = false;
+          lease.cancelFence?.();
+          void this.io.dispose();
+        };
+        lease.cancelFence = this.scheduleRecovery(failed, RECOVERY_ABSOLUTE_DEADLINE_MS);
+        const done = (reply) => {
+          if (this.snapshotActive !== lease) return;
+          if (!reply.ok || reply.lines.length !== 1 || reply.lines[0] !== token2) {
+            failed();
+            return;
+          }
+          lease.fencePending = false;
+          this.releaseSnapshotLease(lease);
+        };
+        if (this.io.commandBoundedInline)
+          this.io.commandBoundedInline(
+            `display-message -p -l ${token2}`,
+            { maxBytes: 256, maxLines: 1 },
+            done
+          );
+        else this.io.commandInline(`display-message -p -l ${token2}`, done);
+      }
+      awaitSnapshotLayout(recovery) {
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = null;
+        recovery.waitForSyncAfter = this.syncOrdinal;
+        this.scheduleSync();
+      }
+      retrySnapshot(recovery) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        for (const sub of pane.subs) if (!sub.closed && !sub.frozen) sub.feed.abortCurrent();
+        recovery.stock?.invalidate();
+        if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS || recovery.cancelAbsoluteDeadline && this.recoveryNowMs() - recovery.startedAtMs >= RECOVERY_ABSOLUTE_DEADLINE_MS) {
+          this.failRecovery(recovery, "attempts-exhausted");
+          return;
+        }
+        if (recovery.lease) this.retireSnapshotLease(recovery.lease, true);
+        else {
+          recovery.stage = "queued";
+          this.snapshotQueue.set(recovery.runtimeId, recovery);
+          this.drainSnapshots();
+        }
+      }
+      startStockSnapshot(pane, recovery, lease) {
+        if (!this.io.armAtomicPaneSnapshotCollector || !this.io.retireAtomicPaneSnapshotCollector) {
+          this.failRecovery(recovery, "command-error");
+          return;
+        }
+        if (!this.nativeBootstrapConfirmed && !this.nativeBootstrapUnavailable && [...pane.subs].some((sub) => !sub.closed && !sub.frozen && sub.nativeBootstrap)) {
+          recovery.nativeProbeAttempts = (recovery.nativeProbeAttempts ?? 0) + 1;
+          let marker = null;
+          let probeSettled = false;
+          recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
+            if (probeSettled || !this.snapshotLeaseCurrent(lease)) return;
+            probeSettled = true;
+            if ((recovery.nativeProbeAttempts ?? 0) < 2) this.retrySnapshot(recovery);
+            else this.failRecovery(recovery, "command-timeout");
+          }, RECOVERY_COMMAND_DEADLINE_MS);
+          this.captureWithViewer(
+            pane.runtimeId,
+            ["-R", "-S", "-"],
+            (value) => {
+              marker = value;
+            },
+            (reply) => {
+              if (marker) this.retireInternalReadMarker(pane.runtimeId, marker);
+              if (probeSettled || !this.snapshotLeaseCurrent(lease)) return;
+              probeSettled = true;
+              recovery.cancelCommandDeadline?.();
+              recovery.cancelCommandDeadline = null;
+              const native2 = reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+              if (native2 && isNativeBootstrapCapture(native2)) this.nativeBootstrapConfirmed = true;
+              else if (nativeBootstrapUnsupported(reply.ok, reply.lines, native2)) {
+                this.nativeBootstrapUnavailable = true;
+                for (const current of this.panesByRuntime.values())
+                  for (const sub of current.subs) sub.nativeBootstrap = false;
+              } else {
+                if ((recovery.nativeProbeAttempts ?? 0) < 2) this.retrySnapshot(recovery);
+                else this.failRecovery(recovery, "command-error");
+                return;
+              }
+              this.startStockSnapshot(pane, recovery, lease);
+            },
+            { maxBytes: RECOVERY_CAPTURE_MAX_BYTES, maxLines: RECOVERY_CAPTURE_MAX_LINES }
+          );
+          return;
+        }
+        recovery.attempts += 1;
+        recovery.stage = "stock-pause";
+        recovery.stock = new StockPaneSnapshot(this.snapshotContext(pane));
+        const pending = pane.windowRuntimeId ? this.pendingLayoutOutput.get(pane.windowRuntimeId) : null;
+        if (pending) {
+          pending.records = pending.records.filter((record) => record.pane !== pane.runtimeId);
+          pending.bytes = pending.records.reduce((bytes, record) => bytes + record.data.byteLength, 0);
         }
         this.observeRecovery(pane, recovery, "pause");
-        this.beginRecoveryConvergence(recovery);
-        const nativeTarget = this.nativeRecoveryTarget(pane);
-        if (nativeTarget) this.recoverNativeAtomic(pane, recovery, nativeTarget);
-        else this.beginFinalRecovery(recovery);
+        const nonce = randomBytes4(24).toString("hex");
+        const hook = `@tmux_ide_pause_${nonce}`;
+        const body = `display-message -p -l '%tmux-ide-atomic-v1 ${nonce} start' ; refresh-client -A '${pane.runtimeId}:pause' ; display-message -p -l '%tmux-ide-atomic-v1 ${nonce} complete'`;
+        let settled = false;
+        let accepted = false;
+        const cleanup = () => this.io.commandListInline(
+          `if-shell -t ${pane.runtimeId} -F ${tmuxSingleQuote(`#{==:#{${hook}},${body}}`)} ${tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${hook}`)} ${tmuxSingleQuote("display-message -p -l pause-cleanup-skipped")}`,
+          2,
+          1,
+          () => {
+          }
+        );
+        lease.cleanup = cleanup;
+        const failed = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (this.snapshotLeaseCurrent(lease)) this.retrySnapshot(recovery);
+        };
+        recovery.cancelCommandDeadline = this.scheduleRecovery(failed, RECOVERY_COMMAND_DEADLINE_MS);
+        this.input.flush();
+        this.io.commandInline(
+          `set-option -po -t ${pane.runtimeId} ${hook} ${tmuxSingleQuote(body)}`,
+          (reply) => {
+            if (settled || !this.snapshotLeaseCurrent(lease)) {
+              cleanup();
+              return;
+            }
+            if (!reply.ok) {
+              failed();
+              return;
+            }
+            lease.wireNonce = nonce;
+            const armed = this.io.armAtomicPaneSnapshotCollector(
+              {
+                nonce,
+                kind: "pause",
+                runtimePaneId: pane.runtimeId,
+                maxCaptureBytes: 1024,
+                maxCaptureLines: 16,
+                maxCursorBytes: 128,
+                observerCommandCount: 0,
+                onSettled: (result2) => {
+                  cleanup();
+                  if (settled || !this.snapshotLeaseCurrent(lease)) return;
+                  if (!result2.ok) {
+                    failed();
+                    return;
+                  }
+                  accepted = recovery.stock.observePause(this.snapshotContext(pane));
+                  if (!accepted) {
+                    failed();
+                    return;
+                  }
+                  lease.ownsPause = true;
+                  this.observedPaused.add(pane.runtimeId);
+                  this.ledger.notePause(pane.runtimeId);
+                  settled = true;
+                  recovery.cancelCommandDeadline?.();
+                  recovery.cancelCommandDeadline = null;
+                },
+                onDrained: (reason) => {
+                  if (lease.wireNonce === nonce) lease.wireNonce = null;
+                  if (reason === "channel-exit") {
+                    lease.retry = false;
+                    return;
+                  }
+                  if (!this.snapshotLeaseCurrent(lease) || !accepted) {
+                    this.releaseSnapshotLease(lease);
+                    return;
+                  }
+                  recovery.stage = "stock-capture";
+                  this.reseedRecoverySubscribersAtomic(
+                    pane,
+                    recovery,
+                    (result2) => {
+                      if (!this.snapshotLeaseCurrent(lease)) return;
+                      if (!result2.ok || !result2.publish()) this.retrySnapshot(recovery);
+                      else this.convergeRecovery(pane, recovery);
+                    },
+                    true
+                  );
+                }
+              },
+              Math.max(
+                1,
+                Math.floor(
+                  RECOVERY_ABSOLUTE_DEADLINE_MS - (this.recoveryNowMs() - recovery.startedAtMs)
+                )
+              )
+            );
+            if (!armed) {
+              lease.wireNonce = null;
+              failed();
+              return;
+            }
+            lease.ownsPause = true;
+            this.io.commandListInline(
+              `if-shell -t ${pane.runtimeId} -F ${tmuxSingleQuote(`#{==:#{${hook}},${body}}`)} ${tmuxSingleQuote(`set-hook -Rp -t ${pane.runtimeId} ${hook}`)} ${tmuxSingleQuote("display-message -p -l pause-hook-rejected")}`,
+              2,
+              1,
+              (result2) => {
+                if (settled || !this.snapshotLeaseCurrent(lease)) return;
+                if (!result2.ok || result2.lines.length) failed();
+              }
+            );
+          }
+        );
       }
       nativeRecoveryTarget(pane) {
         const live = [...pane.subs].filter((sub) => !sub.closed && !sub.frozen);
@@ -34181,7 +34655,8 @@ var init_session_channel = __esm({
         return live.length > 0 && birth && epoch ? { serverEpoch: epoch, paneId: pane.runtimeId, paneBirthId: birth, representation } : null;
       }
       recoverNativeAtomic(pane, recovery, target) {
-        if (this.recoveryPane(recovery) !== pane) return;
+        const lease = recovery.lease;
+        if (!lease || !this.snapshotLeaseCurrent(lease) || this.recoveryPane(recovery) !== pane) return;
         const currentTarget = this.nativeRecoveryTarget(pane);
         if (currentTarget?.serverEpoch !== target.serverEpoch || currentTarget.paneBirthId !== target.paneBirthId || currentTarget.representation !== target.representation) {
           this.failRecovery(recovery, "command-error");
@@ -34197,7 +34672,7 @@ var init_session_channel = __esm({
         const exact = () => {
           const current = this.nativeRecoveryTarget(pane);
           const live = [...pane.subs].filter((sub) => !sub.closed && !sub.frozen);
-          return this.recoveryPane(recovery) === pane && recovery.reseedOrdinal === ordinal && current?.serverEpoch === target.serverEpoch && current.paneBirthId === target.paneBirthId && current.representation === target.representation && live.length === participants.length && participants.every(({ sub }) => live.includes(sub));
+          return this.recoveryPane(recovery) === pane && this.snapshotLeaseCurrent(lease) && recovery.reseedOrdinal === ordinal && current?.serverEpoch === target.serverEpoch && current.paneBirthId === target.paneBirthId && current.representation === target.representation && live.length === participants.length && participants.every(({ sub }) => live.includes(sub));
         };
         let settled = false;
         const failed = () => {
@@ -34207,11 +34682,12 @@ var init_session_channel = __esm({
           recovery.cancelCommandDeadline?.();
           recovery.cancelCommandDeadline = null;
           for (const { sub } of participants) sub.feed.abortCurrent();
-          this.armRecoveryQuiet(recovery, () => this.recoverNativeAtomic(pane, recovery, target));
+          this.retrySnapshot(recovery);
         };
         recovery.stage = "native-pause";
         recovery.cancelCommandDeadline = this.scheduleRecovery(failed, RECOVERY_COMMAND_DEADLINE_MS);
         this.input.flush();
+        lease.ownsPause = true;
         this.io.commandInline(`refresh-client -A '${pane.runtimeId}:pause'`, (pauseReply) => {
           if (settled || !exact()) {
             failed();
@@ -34250,10 +34726,19 @@ var init_session_channel = __esm({
                 failed();
                 return;
               }
+              const probe = parseCursorProbe(result2.cursorLine);
+              const size = this.layoutCaptureSizeFor(participants[0].sub);
+              if (!probe || probe.y >= probe.rows || result2.capture.cols !== probe.cols || result2.capture.rows !== probe.rows) {
+                failed();
+                return;
+              }
+              if (pane.windowRuntimeId !== null && this.pendingLayoutOutput.has(pane.windowRuntimeId) || size && (size.cols !== probe.cols || size.rows !== probe.rows)) {
+                this.awaitSnapshotLayout(recovery);
+                failed();
+                return;
+              }
               this.nativeBootstrapConfirmed = true;
-              this.observeScrollOnClear(pane, result2.cursorLine);
-              recovery.continueReply = true;
-              recovery.continueNotify = true;
+              this.observeSnapshotMetadata(pane, result2.cursorLine);
               const ansiLines = result2.ansiCapture ? captureLinesFromAnsiBytes(result2.ansiCapture) : null;
               const deliveries = participants.map(({ sub, epoch }) => {
                 if (sub.nativeBootstrap) sub.feed.captureNativeReply(epoch, result2.capture);
@@ -34305,9 +34790,11 @@ var init_session_channel = __esm({
       noteRecoveryProgress(recovery) {
         if (!this.recoveryPane(recovery) || !recovery.cancelAbsoluteDeadline) return;
         recovery.cancelNoProgressDeadline?.();
-        recovery.cancelNoProgressDeadline = this.scheduleRecovery(() => {
+        const cancel = this.scheduleRecovery(() => {
+          if (recovery.cancelNoProgressDeadline !== cancel) return;
           if (this.recoveryPane(recovery)) this.failRecovery(recovery, "no-progress");
         }, RECOVERY_NO_PROGRESS_DEADLINE_MS);
+        recovery.cancelNoProgressDeadline = cancel;
       }
       noteAtomicCollectorProgress(recovery, nonce, progress) {
         if (this.recoveryPane(recovery) === null || recovery.atomicCollectorNonce !== nonce || !progress.started)
@@ -34330,139 +34817,23 @@ var init_session_channel = __esm({
         recovery.collectorObserverEmissionObserved ||= progress.observerEmissionObserved;
         this.noteRecoveryProgress(recovery);
       }
-      reseedRecoverySubscribers(pane, recovery, done, deferPublish = false) {
-        if (this.io.armAtomicPaneSnapshotCollector && this.io.retireAtomicPaneSnapshotCollector) {
-          this.reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish);
-          return;
-        }
-        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-        if (live.length === 0) {
-          done(FAILED_RESEED_RESULT);
-          return;
-        }
-        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
-        const nativeCapture = !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
-        const reseedOrdinal = ++recovery.reseedOrdinal;
-        let settled = false;
-        let captureSucceeded = false;
-        let markerRetired = false;
-        let captureLines = null;
-        this.input.flush();
-        const history = this.opts.historyLines ?? "";
-        let internalReadMarker = null;
-        const participantsExact = () => {
-          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
-            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
-          ))
-            return false;
-          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
-        };
-        const retireMarker = () => {
-          if (markerRetired) return;
-          markerRetired = true;
-          if (internalReadMarker) this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
-        };
-        const fail2 = () => {
-          if (settled) return;
-          settled = true;
-          if (!captureSucceeded) retireMarker();
-          for (const { sub } of participants) sub.feed.abortCurrent();
-          done(FAILED_RESEED_RESULT);
-        };
-        this.captureWithViewer(
-          pane.runtimeId,
-          [...nativeCapture ? ["-R"] : ["-e", "-J"], "-S", `-${history}`],
-          (marker) => {
-            internalReadMarker = marker;
-          },
-          (reply) => {
-            if (!reply.ok) {
-              if (nativeCapture && nativeBootstrapUnsupported(false, reply.lines, null)) {
-                this.nativeBootstrapUnavailable = true;
-                for (const { sub } of participants) sub.nativeBootstrap = false;
-              }
-              fail2();
-              return;
-            }
-            captureSucceeded = true;
-            if (!participantsExact()) {
-              fail2();
-              return;
-            }
-            captureLines = Object.freeze([...reply.lines]);
-            const native2 = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
-            if (nativeCapture && (!native2 || !isNativeBootstrapCapture(native2))) {
-              if (nativeBootstrapUnsupported(true, captureLines, native2)) {
-                this.nativeBootstrapUnavailable = true;
-                for (const { sub } of participants) sub.nativeBootstrap = false;
-              }
-              fail2();
-              return;
-            }
-            if (native2) this.nativeBootstrapConfirmed = true;
-            for (const { sub, epoch } of participants) {
-              if (native2) sub.feed.captureNativeReply(epoch, native2);
-              else sub.feed.captureReply(epoch, captureLines);
-            }
-          }
-        );
-        this.io.commandInline(
-          `display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
-          (reply) => {
-            if (settled) return;
-            if (!participantsExact() || captureLines === null || !reply.ok) {
-              fail2();
-              return;
-            }
-            const cursorLine = reply.lines[0] ?? "";
-            const fallbackSize = this.layoutSizeFor(pane.runtimeId);
-            this.observeScrollOnClear(pane, cursorLine);
-            const deliveries = participants.map(({ sub, epoch }) => ({
-              sub,
-              epoch,
-              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize).map(
-                (event) => event.type === "seed" && sub.nativeBootstrap && !nativeCapture ? { ...event, requiresNativeRecapture: true } : event
-              )
-            }));
-            if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
-              fail2();
-              return;
-            }
-            let published = false;
-            const publish = () => {
-              if (published) return true;
-              if (!participantsExact()) return false;
-              published = true;
-              for (const { sub, events } of deliveries) for (const event of events) sub.onEvent(event);
-              return participantsExact();
-            };
-            if (!deferPublish && !publish()) {
-              fail2();
-              return;
-            }
-            for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
-            settled = true;
-            done({
-              ok: true,
-              fingerprint: snapshotFingerprint2(captureLines, cursorLine, fallbackSize),
-              publish,
-              hold: () => {
-              }
-            });
-          }
-        );
-      }
       reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish) {
+        const lease = recovery.lease;
+        const stock = recovery.stock;
+        if (!lease || !stock || !this.snapshotLeaseCurrent(lease)) {
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
         const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
         if (live.length === 0) {
           done(FAILED_RESEED_RESULT);
           return;
         }
         const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
-        const nativeCapture = !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
+        const nativeCapture = !this.nativeBootstrapUnavailable && participants.some(({ sub }) => sub.nativeBootstrap);
+        const dualCapture = nativeCapture && participants.some(({ sub }) => !sub.nativeBootstrap);
         const reseedOrdinal = ++recovery.reseedOrdinal;
-        const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes3(24).toString("hex");
+        const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes4(24).toString("hex");
         if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
           for (const { sub } of participants) sub.feed.abortCurrent();
           done(FAILED_RESEED_RESULT);
@@ -34482,7 +34853,7 @@ var init_session_channel = __esm({
         recovery.collectorObserverEmissionObserved = false;
         recovery.collectorFailureReason = null;
         const participantsExact = () => {
-          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
+          if (this.recoveryPane(recovery) !== pane || !this.snapshotLeaseCurrent(lease) || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
             ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
           ))
             return false;
@@ -34522,6 +34893,7 @@ var init_session_channel = __esm({
             }
           );
         };
+        lease.cleanup = cleanupHook;
         const fail2 = (statusObserved = false) => {
           if (settled) return;
           settled = true;
@@ -34539,16 +34911,21 @@ var init_session_channel = __esm({
           fail2();
           return;
         }
+        const observerRequired = this.opts.internalReadHookEmission !== void 0;
         const safeObserver = observer !== null && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.bufferName) && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.signalChannel) && /^[A-Za-z0-9%:._|-]{1,1024}$/u.test(observer.record);
-        if (!safeObserver) {
+        if (observerRequired && !safeObserver) {
           fail2();
           return;
         }
         const sentinel = (kind) => `display-message -p -l -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
-        const observerCommands = ` ; ${boundedTmuxInteractionAppendCommand(observer.bufferName, observer.record)} ; wait-for -S ${observer.signalChannel}`;
-        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
+        const observerCommands = safeObserver ? ` ; ${boundedTmuxInteractionAppendCommand(observer.bufferName, observer.record)} ; wait-for -S ${observer.signalChannel}` : "";
+        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")}` + (dualCapture ? ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("ansi-capture-end")}` : "") + ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
         this.input.flush();
         const invoke = (reply) => {
+          if (settled || !this.snapshotLeaseCurrent(lease)) {
+            cleanupHook();
+            return;
+          }
           if (!reply.ok || !participantsExact()) {
             fail2();
             return;
@@ -34560,6 +34937,8 @@ var init_session_channel = __esm({
             fail2();
             return;
           }
+          lease.wireNonce = nonce;
+          this.observedPaused.delete(pane.runtimeId);
           const armed = this.io.armAtomicPaneSnapshotCollector(
             {
               nonce,
@@ -34567,7 +34946,16 @@ var init_session_channel = __esm({
               maxCaptureBytes: RECOVERY_CAPTURE_MAX_BYTES,
               maxCaptureLines: RECOVERY_CAPTURE_MAX_LINES,
               maxCursorBytes: RECOVERY_CURSOR_MAX_BYTES,
-              observerCommandCount: 2,
+              observerCommandCount: safeObserver ? 2 : 0,
+              dualCapture,
+              onDrained: (reason) => {
+                if (lease.wireNonce === nonce) lease.wireNonce = null;
+                if (reason === "channel-exit") {
+                  lease.retry = false;
+                  return;
+                }
+                this.releaseSnapshotLease(lease);
+              },
               onProgress: (progress) => this.noteAtomicCollectorProgress(recovery, nonce, progress),
               onSettled: (result2) => {
                 if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
@@ -34605,13 +34993,29 @@ var init_session_channel = __esm({
                   fail2(result2.statusObserved);
                   return;
                 }
+                if (dualCapture && !result2.ansiCaptureLines) {
+                  fail2(result2.statusObserved);
+                  return;
+                }
                 if (native2) this.nativeBootstrapConfirmed = true;
                 for (const { sub, epoch } of participants) {
-                  if (native2) sub.feed.captureNativeReply(epoch, native2);
-                  else sub.feed.captureReply(epoch, captureLines);
+                  if (native2 && sub.nativeBootstrap) sub.feed.captureNativeReply(epoch, native2);
+                  else sub.feed.captureReply(epoch, result2.ansiCaptureLines ?? captureLines);
+                }
+                const probe = parseCursorProbe(result2.cursorLine);
+                const layoutSize = this.layoutCaptureSizeFor(participants[0].sub);
+                const pendingLayout = pane.windowRuntimeId !== null && this.pendingLayoutOutput.has(pane.windowRuntimeId);
+                if (!probe || probe.y >= probe.rows || native2 && (native2.cols !== probe.cols || native2.rows !== probe.rows)) {
+                  fail2(result2.statusObserved);
+                  return;
+                }
+                if (pendingLayout || layoutSize && (layoutSize.cols !== probe.cols || layoutSize.rows !== probe.rows)) {
+                  this.awaitSnapshotLayout(recovery);
+                  fail2(result2.statusObserved);
+                  return;
                 }
                 const fallbackSize = this.layoutSizeFor(pane.runtimeId);
-                this.observeScrollOnClear(pane, result2.cursorLine);
+                this.observeSnapshotMetadata(pane, result2.cursorLine);
                 const deliveries = participants.map(({ sub, epoch }) => ({
                   sub,
                   epoch,
@@ -34627,20 +35031,24 @@ var init_session_channel = __esm({
                 const publish = () => {
                   if (published) return true;
                   if (!participantsExact()) return false;
-                  published = true;
-                  for (const { sub, events } of deliveries)
-                    for (const event of events) sub.onEvent(event);
-                  return participantsExact();
+                  published = stock.publish(
+                    deliveries.map(({ sub, events }) => ({ participant: sub, events })),
+                    () => {
+                      if (!participantsExact()) throw new Error("snapshot lease retired");
+                      return this.snapshotContext(pane);
+                    },
+                    (participant, event) => participant.onEvent(event)
+                  );
+                  return published && participantsExact();
                 };
                 if (!deferPublish && !publish()) {
                   fail2(true);
                   return;
                 }
-                for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
                 settled = true;
                 done({
                   ok: true,
-                  fingerprint: snapshotFingerprint2(captureLines, result2.cursorLine, fallbackSize),
+                  fingerprint: null,
                   publish,
                   hold: () => {
                   }
@@ -34650,6 +35058,7 @@ var init_session_channel = __esm({
             remaining
           );
           if (!armed) {
+            lease.wireNonce = null;
             fail2();
             return;
           }
@@ -34669,6 +35078,10 @@ var init_session_channel = __esm({
         this.io.commandInline(
           `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
           (ownerReply) => {
+            if (settled || !this.snapshotLeaseCurrent(lease)) {
+              cleanupHook();
+              return;
+            }
             if (!ownerReply.ok || !participantsExact()) {
               fail2();
               return;
@@ -34676,6 +35089,10 @@ var init_session_channel = __esm({
             this.io.commandInline(
               `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
               (expectedReply) => {
+                if (settled || !this.snapshotLeaseCurrent(lease)) {
+                  cleanupHook();
+                  return;
+                }
                 if (!expectedReply.ok || !participantsExact()) {
                   fail2();
                   return;
@@ -34689,106 +35106,6 @@ var init_session_channel = __esm({
           }
         );
       }
-      armRecoveryQuiet(recovery, callback) {
-        recovery.cancelQuiet?.();
-        recovery.cancelQuiet = this.scheduleRecovery(() => {
-          recovery.cancelQuiet = null;
-          if (this.recoveryPane(recovery)) callback();
-        }, RECOVERY_QUIET_MS);
-      }
-      beginFinalRecovery(recovery) {
-        const pane = this.recoveryPane(recovery);
-        if (!pane) return;
-        if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
-          this.failRecovery(recovery, "attempts-exhausted");
-          return;
-        }
-        recovery.attempts += 1;
-        recovery.stage = "final";
-        this.noteRecoveryProgress(recovery);
-        this.reseedRecoverySubscribers(
-          pane,
-          recovery,
-          ({ ok: ok2, fingerprint: fingerprint2 }) => {
-            const current = this.recoveryPane(recovery);
-            if (!current) return;
-            if (!ok2 || fingerprint2 === null) {
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            recovery.outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
-            recovery.candidateFingerprint = fingerprint2;
-            recovery.confirmationFingerprint = null;
-            recovery.confirmationOrdinal = 0;
-            recovery.stage = "confirm";
-            this.observeRecovery(current, recovery, "final-reseed");
-            this.noteRecoveryProgress(recovery);
-            this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-          },
-          true
-        );
-      }
-      confirmRecovery(recovery) {
-        const pane = this.recoveryPane(recovery);
-        if (!pane) return;
-        if ((this.outputOrdinals.get(recovery.runtimeId) ?? 0) !== recovery.outputOrdinal) {
-          this.beginFinalRecovery(recovery);
-          return;
-        }
-        recovery.stage = "final";
-        this.noteRecoveryProgress(recovery);
-        this.reseedRecoverySubscribers(
-          pane,
-          recovery,
-          ({ ok: ok2, fingerprint: fingerprint2, publish }) => {
-            const current = this.recoveryPane(recovery);
-            if (!current) return;
-            if (!ok2 || fingerprint2 === null) {
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            const outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
-            const ordinalExact = outputOrdinal === recovery.outputOrdinal;
-            const candidateExact = ordinalExact && fingerprint2 === recovery.candidateFingerprint;
-            const consecutiveExact = candidateExact && recovery.confirmationFingerprint !== null && fingerprint2 === recovery.confirmationFingerprint;
-            recovery.confirmationOrdinal += 1;
-            this.observeRecovery(current, recovery, "confirmation-reseed", null, consecutiveExact);
-            this.noteRecoveryProgress(recovery);
-            if (!ordinalExact) {
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            if (!candidateExact) {
-              if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
-                this.failRecovery(recovery, "attempts-exhausted");
-                return;
-              }
-              recovery.attempts += 1;
-              recovery.candidateFingerprint = fingerprint2;
-              recovery.confirmationFingerprint = null;
-              recovery.outputOrdinal = outputOrdinal;
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-              return;
-            }
-            if (!consecutiveExact) {
-              recovery.confirmationFingerprint = fingerprint2;
-              recovery.outputOrdinal = outputOrdinal;
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-              return;
-            }
-            if (!publish()) {
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            this.convergeRecovery(current, recovery);
-          },
-          true
-        );
-      }
       convergeRecovery(pane, recovery) {
         recovery.cancelCommandDeadline?.();
         recovery.cancelCommandDeadline = null;
@@ -34798,41 +35115,28 @@ var init_session_channel = __esm({
         recovery.cancelAbsoluteDeadline = null;
         this.recoveries.delete(recovery.runtimeId);
         recovery.retired = true;
-        this.retireContinueNotificationOwner(recovery);
         this.ledger.noteContinued(recovery.runtimeId);
         if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
         for (const sub of pane.subs) {
           if (!sub.frozen && !sub.closed) {
             sub.feed.releaseQuarantine();
-            sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
+            try {
+              sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
+            } catch {
+            }
           }
         }
-        this.observeRecovery(pane, recovery, "converged", null, true);
-      }
-      noteRecoveryOutput(pane, outputOrdinal) {
-        const recovery = this.recoveries.get(pane.runtimeId);
-        if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
-        recovery.outputOrdinal = outputOrdinal;
-        if (recovery.continueReply) this.noteRecoveryProgress(recovery);
-        if (recovery.stage === "quiet")
-          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-        else if (recovery.stage === "confirm")
-          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+        this.observeRecovery(pane, recovery, "converged", null);
+        if (recovery.lease) this.retireSnapshotLease(recovery.lease);
       }
       restartRecoveryAfterOutputOverflow(pane) {
         const recovery = this.recoveries.get(pane.runtimeId);
-        if (recovery?.paneIncarnation === pane.incarnation) {
-          if (recovery.stage === "quiet" || recovery.stage === "confirm")
-            this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-          return;
-        }
-        this.beginLocalOverflowRecovery(pane);
+        if (recovery) this.retrySnapshot(recovery);
+        else this.beginLocalOverflowRecovery(pane);
       }
       failRecovery(recovery, failureReason) {
         const pane = this.recoveryPane(recovery);
         if (!pane) return;
-        recovery.cancelQuiet?.();
-        recovery.cancelQuiet = null;
         recovery.cancelCommandDeadline?.();
         recovery.cancelCommandDeadline = null;
         recovery.cancelNoProgressDeadline?.();
@@ -34840,12 +35144,13 @@ var init_session_channel = __esm({
         recovery.cancelAbsoluteDeadline?.();
         recovery.cancelAbsoluteDeadline = null;
         recovery.retired = true;
+        this.snapshotQueue.delete(recovery.runtimeId);
+        this.recoveries.delete(recovery.runtimeId);
+        for (const sub of pane.subs) sub.feed.abortCurrent();
+        if (recovery.lease) this.retireSnapshotLease(recovery.lease);
         const collectorNonce = recovery.atomicCollectorNonce;
         recovery.atomicCollectorNonce = null;
         if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
-        this.recoveries.delete(recovery.runtimeId);
-        this.retireContinueNotificationOwner(recovery);
-        for (const sub of pane.subs) sub.feed.abortCurrent();
         this.observeRecovery(pane, recovery, "nonconverged", failureReason);
         for (const sub of pane.subs) {
           sub.cancelCapture?.();
@@ -34856,42 +35161,6 @@ var init_session_channel = __esm({
           }
         }
       }
-      removeContinueNotificationOwner(recovery) {
-        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
-        if (!queue) return;
-        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
-        if (index < 0) return;
-        queue.splice(index, 1);
-        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
-      }
-      retireContinueNotificationOwner(recovery) {
-        if (!recovery.continueReply) return;
-        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
-        if (!queue) return;
-        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
-        if (index < 0) return;
-        queue.splice(index, 1, { kind: "debt", count: 1, saturated: false });
-        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
-      }
-      compactContinueNotificationQueue(runtime, queue) {
-        for (let index = 1; index < queue.length; ) {
-          const previous = queue[index - 1];
-          const current = queue[index];
-          if (previous?.kind !== "debt" || current?.kind !== "debt") {
-            index += 1;
-            continue;
-          }
-          const total = previous.count + current.count;
-          previous.count = Math.min(total, MAX_CONTINUE_NOTIFICATION_DEBT);
-          previous.saturated = previous.saturated || current.saturated || total > MAX_CONTINUE_NOTIFICATION_DEBT;
-          queue.splice(index, 1);
-        }
-        if (queue.length === 0) this.continueNotificationQueues.delete(runtime);
-        else this.continueNotificationQueues.set(runtime, queue);
-      }
-      /** Continue + reseed EVERY backpressure-paused pane that still has an
-       *  unfrozen subscriber. %pause is sticky and hits quiet panes after any
-       *  stall — recovering only the noisy pane leaves siblings dark. */
       recoverSticky() {
         for (const runtime of this.ledger.stickyRecoverySet()) {
           if (this.recoveries.has(runtime)) continue;
@@ -34907,6 +35176,9 @@ var init_session_channel = __esm({
         sub.cancelCapture?.();
         const pane = sub.pane;
         pane.subs.delete(sub);
+        const activeRecovery = this.recoveries.get(pane.runtimeId);
+        if (activeRecovery && [...pane.subs].some((candidate) => !candidate.closed && !candidate.frozen))
+          this.retrySnapshot(activeRecovery);
         if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
           this.cancelRecovery(pane.runtimeId);
         if (pane.subs.size === 0 && this.ledger.isRequested(pane.runtimeId)) {
@@ -34915,8 +35187,11 @@ var init_session_channel = __esm({
         }
       }
       // ── Notifications (channel order is the invariant) ──────────────────────
-      observeScrollOnClear(pane, cursorLine) {
-        const value = cursorLine.trim().split(/\s+/)[22];
+      observeSnapshotMetadata(pane, cursorLine) {
+        const fields = cursorLine.trim().split(/\s+/);
+        const historySize = Number(fields[14]);
+        if (Number.isSafeInteger(historySize) && historySize >= 0) pane.historySize = historySize;
+        const value = fields[22];
         pane.scrollOnClear = value === "0" || value === "1" ? value === "1" : void 0;
       }
       onNotify(name, rest) {
@@ -34955,9 +35230,15 @@ var init_session_channel = __esm({
             return;
           }
         }
-        if (name === "subscription-changed" && (/^tmux-ide-pane-borders\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(top|bottom|off)\s*$/u.test(
+        const windowOptionHint = name === "subscription-changed" ? /^tmux-ide-pane-borders\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:top|bottom|off)\s*$/u.exec(
           rest
-        ) || /^tmux-ide-copy-keys\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(emacs|vi)\s*$/u.test(rest))) {
+        ) ?? /^tmux-ide-copy-keys\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:emacs|vi)\s*$/u.exec(
+          rest
+        ) : null;
+        if (windowOptionHint) {
+          for (const pane of this.panesByRuntime.values())
+            if (!pane.windowRuntimeId || pane.windowRuntimeId === windowOptionHint[1])
+              pane.snapshotLayoutGeneration += 1;
           this.windowAuthorityOrdinal += 1;
           this.windowIdentityOrdinal += 1;
           this.scheduleSync();
@@ -34965,6 +35246,7 @@ var init_session_channel = __esm({
         }
         if (name === "layout-change" || name === "window-pane-changed" || name === "session-window-changed" || STRUCTURAL_NOTIFICATIONS.has(name)) {
           this.windowAuthorityOrdinal += 1;
+          for (const pane of this.panesByRuntime.values()) pane.snapshotLayoutGeneration += 1;
           if (name !== "layout-change") this.windowIdentityOrdinal += 1;
         }
         if (this.opts.onNativeClientActivity && (NATIVE_CLIENT_NOTIFICATIONS.has(name) || name === "layout-change")) {
@@ -34973,8 +35255,18 @@ var init_session_channel = __esm({
         if (name === "pause") {
           const runtime = rest.trim().split(/\s+/)[0] ?? "";
           if (!runtime.startsWith("%")) return;
-          if (this.recoveries.get(runtime)?.stage === "native-pause") {
+          this.observedPaused.add(runtime);
+          const stockRecovery = this.recoveries.get(runtime);
+          if (stockRecovery?.stock && stockRecovery.lease) {
             this.ledger.notePause(runtime);
+            if (stockRecovery.stage !== "stock-pause") this.retrySnapshot(stockRecovery);
+            return;
+          }
+          const nativeRecovery = this.recoveries.get(runtime);
+          if (nativeRecovery) {
+            this.ledger.notePause(runtime);
+            if (nativeRecovery.stage !== "native-pause" && nativeRecovery.stage !== "queued")
+              this.retrySnapshot(nativeRecovery);
             return;
           }
           this.cancelRecovery(runtime);
@@ -34992,26 +35284,7 @@ var init_session_channel = __esm({
         }
         if (name === "continue") {
           const runtime = rest.trim().split(/\s+/)[0] ?? "";
-          if (runtime.startsWith("%")) {
-            const queue = this.continueNotificationQueues.get(runtime);
-            const entry = queue?.[0] ?? null;
-            if (entry?.kind === "debt") {
-              if (!entry.saturated) {
-                entry.count -= 1;
-                if (entry.count === 0) queue.shift();
-              }
-              this.compactContinueNotificationQueue(runtime, queue);
-            } else if (entry?.kind === "owner") {
-              queue.shift();
-              this.compactContinueNotificationQueue(runtime, queue);
-              const owner = entry.recovery;
-              const pane = this.recoveryPane(owner);
-              owner.continueNotify = true;
-              if (pane) {
-                this.observeRecovery(pane, owner, "continue-notify");
-              }
-            }
-          }
+          this.observedPaused.delete(runtime);
           return;
         }
         if (name === "layout-change") {
@@ -35027,6 +35300,14 @@ var init_session_channel = __esm({
             return;
           }
           this.layoutNotificationOrdinals.set(change.windowId, this.windowAuthorityOrdinal);
+          for (const pane of this.panesByRuntime.values()) {
+            if (pane.windowRuntimeId !== change.windowId) continue;
+            const recovery = this.recoveries.get(pane.runtimeId);
+            if (recovery?.lease && !recovery.lease.retired) {
+              this.awaitSnapshotLayout(recovery);
+              this.retrySnapshot(recovery);
+            }
+          }
           const pendingLayout = {
             ...parsed,
             zoomed: change.zoomed,
@@ -35267,6 +35548,8 @@ var init_session_channel = __esm({
           if (pane.windowRuntimeId && this.pendingLayoutOutput.has(pane.windowRuntimeId)) continue;
           for (const sub of pane.subs) sub.resumeLayoutCapture?.(syncOrdinal);
         }
+        this.completedSyncOrdinal = Math.max(this.completedSyncOrdinal, syncOrdinal);
+        this.drainSnapshots();
         this.discovery.discover(listed);
       }
       applyPaneTruth(truth) {
@@ -35288,11 +35571,11 @@ var init_session_channel = __esm({
             const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
             if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
               movedWindowRuntimeIds.add(nextWindowRuntimeId);
+            if (pane.windowRuntimeId !== nextWindowRuntimeId) pane.snapshotLayoutGeneration += 1;
             pane.windowRuntimeId = nextWindowRuntimeId;
             continue;
           }
           this.cancelRecovery(runtime);
-          this.continueNotificationQueues.delete(runtime);
           this.panesByRuntime.delete(runtime);
           this.outputOrdinals.delete(runtime);
           this.panesBySemantic.delete(pane.semanticId);
@@ -35302,7 +35585,10 @@ var init_session_channel = __esm({
             if (!sub.closed) {
               sub.closed = true;
               sub.cancelCapture?.();
-              sub.onEvent({ type: "closed" });
+              try {
+                sub.onEvent({ type: "closed" });
+              } catch {
+              }
             }
           }
           pane.subs.clear();
@@ -35742,7 +36028,6 @@ var init_session_channel = __esm({
           if (existingBySemantic && existingBySemantic.runtimeId !== verified.runtimePaneId) {
             const retiredRuntime = existingBySemantic.runtimeId;
             this.cancelRecovery(retiredRuntime);
-            this.continueNotificationQueues.delete(retiredRuntime);
             this.panesByRuntime.delete(retiredRuntime);
             this.outputOrdinals.delete(retiredRuntime);
             this.ledger.forget(retiredRuntime);
@@ -35750,6 +36035,8 @@ var init_session_channel = __esm({
             existingBySemantic.incarnation = ++this.paneIncarnation;
             existingBySemantic.descriptor = descriptor;
             existingBySemantic.active = verified.active;
+            if (existingBySemantic.windowRuntimeId !== windowRuntimeId)
+              existingBySemantic.snapshotLayoutGeneration += 1;
             existingBySemantic.windowRuntimeId = windowRuntimeId;
             this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
             for (const sub of existingBySemantic.subs) {
@@ -35760,13 +36047,14 @@ var init_session_channel = __esm({
           if (existingByRuntime && existingByRuntime.semanticId === verified.semanticPaneId) {
             existingByRuntime.descriptor = descriptor;
             existingByRuntime.active = verified.active;
+            if (existingByRuntime.windowRuntimeId !== windowRuntimeId)
+              existingByRuntime.snapshotLayoutGeneration += 1;
             existingByRuntime.windowRuntimeId = windowRuntimeId;
             continue;
           }
           if (existingByRuntime) {
             this.panesBySemantic.delete(existingByRuntime.semanticId);
             this.cancelRecovery(existingByRuntime.runtimeId);
-            this.continueNotificationQueues.delete(existingByRuntime.runtimeId);
             this.ledger.forget(existingByRuntime.runtimeId);
             this.outputOrdinals.delete(existingByRuntime.runtimeId);
             for (const sub of existingByRuntime.subs) {
@@ -35774,13 +36062,18 @@ var init_session_channel = __esm({
               sub.closed = true;
               sub.cancelCapture?.();
               sub.feed.abortCurrent();
-              sub.onEvent({ type: "closed" });
+              try {
+                sub.onEvent({ type: "closed" });
+              } catch {
+              }
             }
             existingByRuntime.subs.clear();
             existingByRuntime.incarnation = ++this.paneIncarnation;
             existingByRuntime.semanticId = verified.semanticPaneId;
             existingByRuntime.descriptor = descriptor;
             existingByRuntime.active = verified.active;
+            if (existingByRuntime.windowRuntimeId !== windowRuntimeId)
+              existingByRuntime.snapshotLayoutGeneration += 1;
             existingByRuntime.windowRuntimeId = windowRuntimeId;
             this.panesBySemantic.set(verified.semanticPaneId, existingByRuntime);
             continue;
@@ -35792,7 +36085,8 @@ var init_session_channel = __esm({
             active: verified.active,
             windowRuntimeId,
             subs: /* @__PURE__ */ new Set(),
-            incarnation: ++this.paneIncarnation
+            incarnation: ++this.paneIncarnation,
+            snapshotLayoutGeneration: 0
           };
           this.panesByRuntime.set(record.runtimeId, record);
           this.panesBySemantic.set(record.semanticId, record);
@@ -35880,18 +36174,24 @@ var init_session_channel = __esm({
       }
       onChannelExit() {
         if (this.disposed) return;
+        this.snapshotActive?.cancelFence?.();
+        this.snapshotActive = null;
+        this.snapshotQueue.clear();
+        for (const recovery of this.recoveries.values()) recovery.lease = void 0;
         this.opts.ownedViewer?.dispose();
         this.windowLinkAuthority?.dispose();
         this.nativeGrid.dispose();
         this.settleFirstJoin();
         for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
-        this.continueNotificationQueues.clear();
         for (const pane of this.panesByRuntime.values()) {
           for (const sub of pane.subs) {
             if (!sub.closed) {
               sub.closed = true;
               sub.cancelCapture?.();
-              sub.onEvent({ type: "closed" });
+              try {
+                sub.onEvent({ type: "closed" });
+              } catch {
+              }
             }
           }
           pane.subs.clear();
@@ -36227,6 +36527,44 @@ var init_mirror_service = __esm({
       flowSnapshot(session) {
         return this.channels.get(session)?.channel.flowSnapshot() ?? null;
       }
+      // Cumulative scalar totals sampled after each retired channel finishes disposal.
+      // Keep evidence of residual listeners without retaining retired channel objects.
+      retiredListenerCounts = {
+        channels: 0,
+        failures: 0,
+        pane: 0,
+        layout: 0,
+        layoutAuthority: 0
+      };
+      qualificationListeners() {
+        const active2 = { pane: 0, layout: 0, layoutAuthority: 0 };
+        for (const entry of this.channels.values()) {
+          const counts = entry.channel.qualificationListeners();
+          active2.pane += counts.pane;
+          active2.layout += counts.layout;
+          active2.layoutAuthority += counts.layoutAuthority;
+        }
+        return Object.freeze({
+          active: Object.freeze(active2),
+          retired: Object.freeze({ ...this.retiredListenerCounts }),
+          pendingDisposals: this.pendingDisposals.size,
+          sessionExit: this.sessionExitListeners.size
+        });
+      }
+      async disposeObservedChannel(channel) {
+        try {
+          await channel.dispose();
+        } catch (error) {
+          this.retiredListenerCounts.failures += 1;
+          throw error;
+        } finally {
+          const counts = channel.qualificationListeners();
+          this.retiredListenerCounts.channels += 1;
+          this.retiredListenerCounts.pane += counts.pane;
+          this.retiredListenerCounts.layout += counts.layout;
+          this.retiredListenerCounts.layoutAuthority += counts.layoutAuthority;
+        }
+      }
       activeChannelCount() {
         return this.channels.size;
       }
@@ -36242,7 +36580,7 @@ var init_mirror_service = __esm({
             this.updateWindowMembership(entry.channel, []);
             this.channelSessions.delete(entry.channel);
             try {
-              await entry.channel.dispose();
+              await this.disposeObservedChannel(entry.channel);
             } finally {
               entry.releaseAuthority();
             }
@@ -36309,14 +36647,14 @@ var init_mirror_service = __esm({
                   throw new Error("Window link mutation requires a pinned socket authority");
                 if (this.opts.resolveSocketPath) this.opts.resolveSocketPath();
                 const socket = revalidateUnixSocketIdentity(mutationSocketIdentity);
-                return new Promise((resolve41) => {
+                return new Promise((resolve42) => {
                   execFile8(
                     executable,
                     ["-N", "-u", "-S", socket, ...args],
                     { timeout: 5e3, maxBuffer: 65536, encoding: "utf8", env: environment },
                     (error, stdout) => {
                       const status2 = !error ? 0 : typeof error.code === "number" && !error.killed ? error.code : null;
-                      resolve41({ status: status2, stdout });
+                      resolve42({ status: status2, stdout });
                     }
                   );
                 });
@@ -36333,6 +36671,7 @@ var init_mirror_service = __esm({
                 }
               },
               onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+              captureInputWrite: (action, semanticPaneId3) => this.opts.captureInputWrite?.(session, action, semanticPaneId3),
               onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) => this.opts.onInputWrite?.(
                 session,
                 action,
@@ -36384,7 +36723,7 @@ var init_mirror_service = __esm({
         this.updateWindowMembership(entry.channel, []);
         this.channelSessions.delete(entry.channel);
         if (this.channels.get(session) === entry) this.channels.delete(session);
-        const disposal = entry.channel.dispose().catch(() => {
+        const disposal = this.disposeObservedChannel(entry.channel).catch(() => {
         }).finally(() => entry.releaseAuthority());
         this.drainingChannels.set(session, disposal);
         this.pendingDisposals.add(disposal);
@@ -36421,7 +36760,7 @@ function authoredInteractionEvidence(operationId, intent, phase, context, receiv
 var init_interaction_evidence_facts = __esm({
   "packages/daemon/src/terminal/session-runtime/interaction-evidence-facts.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -36585,7 +36924,7 @@ function sessionRuntimeIntentNeedsTmuxObservation(intent) {
 var init_interaction_receipt_facts = __esm({
   "packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -36640,7 +36979,7 @@ function semanticMutationResourceChanges(raw) {
 var init_semantic_mutation_resource_changes = __esm({
   "packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -36661,7 +37000,7 @@ var init_semantic_mutation_executor = __esm({
   "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts"() {
     "use strict";
     init_owned_native_interaction_bindings();
-    init_src();
+    init_src2();
     init_interaction_evidence_facts();
     init_interaction_receipt_facts();
     init_runtime_scheduler();
@@ -36918,8 +37257,8 @@ var init_semantic_mutation_executor = __esm({
         if (needsTmuxObservation) {
           let settleObservation;
           let rejectObservation;
-          observed = new Promise((resolve41, reject) => {
-            settleObservation = resolve41;
+          observed = new Promise((resolve42, reject) => {
+            settleObservation = resolve42;
             rejectObservation = reject;
           });
           let sessionPending = this.#pending.get(session);
@@ -37498,6 +37837,11 @@ function consumeCompactReplicaCapability(owner, baseline, hash) {
   if (!capability || capability.baseline !== baseline || capability.hash !== hash) return void 0;
   return capability.snapshot;
 }
+function consumeVerifiedTombstoneInterval(owner, baseline, hash, baseRevision, revision) {
+  const capability = compactReplicaCapabilities.get(owner);
+  compactReplicaCapabilities.delete(owner);
+  return capability !== void 0 && capability.baseline === baseline && capability.snapshot === null && capability.hash === hash && capability.tombstoneInterval?.baseRevision === baseRevision && capability.tombstoneInterval.revision === revision;
+}
 var compactReplicaCapabilities;
 var init_terminal_compact_capability = __esm({
   "packages/core/src/terminal-compact-capability.ts"() {
@@ -37507,6 +37851,21 @@ var init_terminal_compact_capability = __esm({
 });
 
 // packages/core/src/terminal-replica-owned-row.ts
+function isSchemaValidProjectedTerminalReplicaRow(row) {
+  return typeof row === "object" && row !== null && SCHEMA_VALID_PROJECTED_ROWS.has(row);
+}
+function freezeColor(color3) {
+  if (color3 === TERMINAL_REPLICA_DEFAULT_COLOR) return color3;
+  const copy = { ...color3 };
+  return copy.kind === "default" && Reflect.ownKeys(copy).length === 1 ? TERMINAL_REPLICA_DEFAULT_COLOR : Object.freeze(copy);
+}
+function freezeOwnedTerminalReplicaCell(cell) {
+  return cell === TERMINAL_REPLICA_EMPTY_CELL || cell === TERMINAL_REPLICA_SPACE_CELL ? cell : Object.freeze({
+    ...cell,
+    foreground: freezeColor(cell.foreground),
+    background: freezeColor(cell.background)
+  });
+}
 function isOwnedTerminalReplicaRow(row) {
   return typeof row === "object" && row !== null && OWNED_ROWS.has(row);
 }
@@ -37514,25 +37873,99 @@ function freezeOwnedTerminalReplicaRow(row) {
   if (OWNED_ROWS.has(row)) return row;
   const frozen = Object.freeze({
     wrapped: row.wrapped,
-    cells: Object.freeze(
-      Array.from(
-        row.cells,
-        (cell) => Object.freeze({
-          ...cell,
-          foreground: Object.freeze({ ...cell.foreground }),
-          background: Object.freeze({ ...cell.background })
-        })
-      )
-    )
+    cells: Object.freeze(Array.from(row.cells, freezeOwnedTerminalReplicaCell))
   });
   OWNED_ROWS.add(frozen);
   return frozen;
 }
-var OWNED_ROWS;
+function createOwnedTerminalReplicaRowBuilder() {
+  const cells = [];
+  let finished = false;
+  const assertOpen = () => {
+    if (finished) throw new Error("Terminal replica row builder already finished");
+  };
+  return Object.freeze({
+    append(source) {
+      assertOpen();
+      const cell = freezeOwnedTerminalReplicaCell(source);
+      cells.push(cell);
+      return cell;
+    },
+    finish(source, wrapped) {
+      assertOpen();
+      finished = true;
+      const row = Object.freeze({
+        ...source,
+        wrapped,
+        cells: Object.freeze(cells)
+      });
+      OWNED_ROWS.add(row);
+      return row;
+    }
+  });
+}
+function projectedColorIsSchemaValid(kind, value) {
+  return kind === "default" || Number.isInteger(value) && value >= 0 && value <= (kind === "indexed" ? 255 : 16777215);
+}
+function projectedColor(kind, value) {
+  if (typeof value !== "number")
+    throw new TypeError("Projected terminal color value must be primitive");
+  if (kind === "default") return TERMINAL_REPLICA_DEFAULT_COLOR;
+  if (kind === "indexed") return Object.freeze({ kind, index: value });
+  if (kind === "rgb") return Object.freeze({ kind, value });
+  throw new TypeError("Unknown projected terminal color kind");
+}
+function createProjectedTerminalReplicaRowBuilder() {
+  return new ProjectedTerminalReplicaRowBuilder();
+}
+var OWNED_ROWS, SCHEMA_VALID_PROJECTED_ROWS, TERMINAL_REPLICA_DEFAULT_COLOR, TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL, ProjectedTerminalReplicaRowBuilder;
 var init_terminal_replica_owned_row = __esm({
   "packages/core/src/terminal-replica-owned-row.ts"() {
     "use strict";
     OWNED_ROWS = /* @__PURE__ */ new WeakSet();
+    SCHEMA_VALID_PROJECTED_ROWS = /* @__PURE__ */ new WeakSet();
+    TERMINAL_REPLICA_DEFAULT_COLOR = Object.freeze({ kind: "default" });
+    TERMINAL_REPLICA_EMPTY_CELL = Object.freeze({
+      grapheme: "",
+      width: 1,
+      attributes: 0,
+      foreground: TERMINAL_REPLICA_DEFAULT_COLOR,
+      background: TERMINAL_REPLICA_DEFAULT_COLOR
+    });
+    TERMINAL_REPLICA_SPACE_CELL = Object.freeze({
+      ...TERMINAL_REPLICA_EMPTY_CELL,
+      grapheme: " "
+    });
+    ProjectedTerminalReplicaRowBuilder = class {
+      #cells = [];
+      #finished = false;
+      #schemaValid = true;
+      append(grapheme, width, attributes, foregroundKind, foregroundValue, backgroundKind, backgroundValue) {
+        this.#assertOpen();
+        if (typeof grapheme !== "string" || typeof width !== "number" || typeof attributes !== "number")
+          throw new TypeError("Projected terminal cell values must be primitive");
+        const foreground = projectedColor(foregroundKind, foregroundValue);
+        const background = projectedColor(backgroundKind, backgroundValue);
+        const cell = width === 1 && attributes === 0 && foreground === TERMINAL_REPLICA_DEFAULT_COLOR && background === TERMINAL_REPLICA_DEFAULT_COLOR && (grapheme === "" || grapheme === " ") ? grapheme === "" ? TERMINAL_REPLICA_EMPTY_CELL : TERMINAL_REPLICA_SPACE_CELL : Object.freeze({ grapheme, width, foreground, background, attributes });
+        this.#cells.push(cell);
+        this.#schemaValid = this.#schemaValid && (width === 0 || width === 1 || width === 2) && Number.isInteger(attributes) && attributes >= 0 && attributes <= 255 && projectedColorIsSchemaValid(foregroundKind, foregroundValue) && projectedColorIsSchemaValid(backgroundKind, backgroundValue);
+      }
+      finish(wrapped) {
+        this.#assertOpen();
+        if (typeof wrapped !== "boolean") throw new TypeError("Projected row wrapped must be boolean");
+        this.#finished = true;
+        const row = Object.freeze({
+          wrapped,
+          cells: Object.freeze(this.#cells)
+        });
+        OWNED_ROWS.add(row);
+        if (this.#schemaValid) SCHEMA_VALID_PROJECTED_ROWS.add(row);
+        return row;
+      }
+      #assertOpen() {
+        if (this.#finished) throw new Error("Projected terminal row already finished");
+      }
+    };
   }
 });
 
@@ -37941,18 +38374,20 @@ async function hashCanonicalTerminalValueCooperatively(value, yieldControl, work
     work = 0;
     return true;
   };
-  const stack = [{ kind: "value", value }];
-  while (stack.length > 0) {
-    const item = stack.pop();
-    if (item.kind === "ascii") {
-      if (checkpoint(hash.ascii(item.value))) await yieldControl();
+  const kinds = ["value"];
+  const values2 = [value];
+  while (values2.length > 0) {
+    const kind = kinds.pop();
+    const value2 = values2.pop();
+    if (kind === "ascii") {
+      if (checkpoint(hash.ascii(value2))) await yieldControl();
       continue;
     }
-    if (item.kind === "string") {
-      if (checkpoint(hash.string(item.value) + 8)) await yieldControl();
+    if (kind === "string") {
+      if (checkpoint(hash.string(value2) + 8)) await yieldControl();
       continue;
     }
-    const entry = item.value;
+    const entry = value2;
     if (entry === null) {
       hash.ascii("n;");
       if (checkpoint(2)) await yieldControl();
@@ -37974,19 +38409,23 @@ async function hashCanonicalTerminalValueCooperatively(value, yieldControl, work
     }
     if (Array.isArray(entry)) {
       if (checkpoint(hash.ascii(`a${entry.length}:`) + 1)) await yieldControl();
-      stack.push({ kind: "ascii", value: ";" });
-      for (let index = entry.length - 1; index >= 0; index -= 1)
-        stack.push({ kind: "value", value: entry[index] });
+      kinds.push("ascii");
+      values2.push(";");
+      for (let index = entry.length - 1; index >= 0; index -= 1) {
+        kinds.push("value");
+        values2.push(entry[index]);
+      }
       continue;
     }
     const record = entry;
     const keys = hash.keyOrder(record).sorted;
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
-    stack.push({ kind: "ascii", value: ";" });
+    kinds.push("ascii");
+    values2.push(";");
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key2 = keys[index];
-      stack.push({ kind: "value", value: record[key2] });
-      stack.push({ kind: "string", value: key2 });
+      kinds.push("value", "string");
+      values2.push(record[key2], key2);
     }
   }
   return hash.digest();
@@ -38079,14 +38518,22 @@ function isTerminalReplicaRowDeeplyFrozen(row) {
   DEEPLY_FROZEN_ROWS.add(row);
   return true;
 }
-var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache;
+var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, SHORT_ASCII_HEADERS, DEFAULT_COLOR_KEYS, DEFAULT_COLOR_KEY_ORDER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache, DECODED_DEFAULT_COLOR;
 var init_terminal_replica_hash_cache = __esm({
   "packages/core/src/terminal-replica-hash-cache.ts"() {
     "use strict";
+    init_terminal_replica_owned_row();
     init_terminal_fnv64_wasm();
     ROW_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     DEEPLY_FROZEN_ROWS = /* @__PURE__ */ new WeakSet();
     UTF8_ENCODER = new TextEncoder();
+    SHORT_ASCII_HEADERS = Array.from({ length: 33 }, (_, length) => `s${length}:`);
+    DEFAULT_COLOR_KEYS = Object.freeze(["kind"]);
+    DEFAULT_COLOR_KEY_ORDER = Object.freeze({
+      original: DEFAULT_COLOR_KEYS,
+      sorted: DEFAULT_COLOR_KEYS,
+      tokens: Object.freeze(["s4:kind;"])
+    });
     CanonicalFnv64 = class {
       #high = 3421674724;
       #low = 2216829733;
@@ -38107,6 +38554,7 @@ var init_terminal_replica_hash_cache = __esm({
       // values, or future calls. Tokens share the 16-layout/32-key cache bound.
       #keyOrders = null;
       keyOrder(record) {
+        if (record === TERMINAL_REPLICA_DEFAULT_COLOR) return DEFAULT_COLOR_KEY_ORDER;
         const keys = Object.keys(record);
         if (keys.length > 32) return { original: keys, sorted: keys.sort(), tokens: null };
         for (const order2 of this.#keyOrders ?? []) {
@@ -38172,7 +38620,7 @@ var init_terminal_replica_hash_cache = __esm({
           }
         }
         if (ascii) {
-          this.ascii(`s${value.length}:`);
+          this.ascii(SHORT_ASCII_HEADERS[value.length] ?? `s${value.length}:`);
           this.ascii(value);
           this.ascii(";");
           return value.length;
@@ -38184,11 +38632,41 @@ var init_terminal_replica_hash_cache = __esm({
         return bytes.byteLength;
       }
       number(value) {
+        if (value === 0) return void this.ascii("d1:0;");
+        if (value === 1) return void this.ascii("d1:1;");
+        if (value === 2) return void this.ascii("d1:2;");
         const text = String(value);
         this.ascii(`d${text.length}:${text};`);
       }
       boolean(value) {
         this.ascii(value ? "b1;" : "b0;");
+      }
+      #projectedRow(row) {
+        this.ascii("o2:s5:cells;");
+        const cells = row.cells;
+        this.ascii(`a${cells.length}:`);
+        let index = 0;
+        for (const cell of cells) {
+          if (index < cells.length && cell === cells[index]) {
+            this.ascii("o5:s10:attributes;");
+            this.number(cell.attributes);
+            this.ascii("s10:background;");
+            writeColor(this, cell.background);
+            this.ascii("s10:foreground;");
+            writeColor(this, cell.foreground);
+            this.ascii("s8:grapheme;");
+            this.string(cell.grapheme);
+            this.ascii("s5:width;");
+            this.number(cell.width);
+            this.ascii(";");
+          } else {
+            this.value(cell);
+          }
+          index++;
+        }
+        this.ascii(";s7:wrapped;");
+        this.boolean(row.wrapped);
+        this.ascii(";");
       }
       value(value) {
         if (value === null) {
@@ -38211,6 +38689,10 @@ var init_terminal_replica_hash_cache = __esm({
           this.ascii(`a${value.length}:`);
           for (const entry of value) this.value(entry);
           this.ascii(";");
+          return;
+        }
+        if (isSchemaValidProjectedTerminalReplicaRow(value)) {
+          this.#projectedRow(value);
           return;
         }
         const record = value;
@@ -38282,6 +38764,7 @@ var init_terminal_replica_hash_cache = __esm({
         return { prepared, allocatedBytes: graphemeBytes.byteLength, cacheMiss: true };
       }
     };
+    DECODED_DEFAULT_COLOR = Object.freeze({ kind: "default" });
   }
 });
 
@@ -38368,14 +38851,21 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
   if (update.revision <= current.revision) {
     if (update.type === "terminal.tombstone") {
       return complete(
-        update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && current.tombstone?.reason === update.tombstone.reason && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current }
+        update.revision === current.revision && (update.baseRevision === current.revision - 1 || verifiedTombstoneBases.get(current) === update.baseRevision) && update.stateHash === current.hash && current.tombstone?.reason === update.tombstone.reason && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current }
       );
     }
     return complete(
       update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && update.cols === current.snapshot?.cols && update.rows === current.snapshot?.rows && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current }
     );
   }
-  if (update.baseRevision !== current.revision || update.revision !== current.revision + 1) {
+  const verifiedTombstoneJump = update.type === "terminal.tombstone" && update.revision > current.revision + 1 && consumeVerifiedTombstoneInterval(
+    update.tombstone,
+    current.snapshot,
+    update.stateHash,
+    update.baseRevision,
+    update.revision
+  );
+  if (update.baseRevision !== current.revision || update.revision !== current.revision + 1 && !verifiedTombstoneJump) {
     return complete({
       status: "gap",
       state: current,
@@ -38404,6 +38894,7 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
       hash: hash2,
       frameHash: receivedFrameHash
     });
+    if (verifiedTombstoneJump) verifiedTombstoneBases.set(state2, update.baseRevision);
     return complete({ status: "applied", state: state2 });
   }
   if (current.snapshot === null) {
@@ -38561,33 +39052,23 @@ async function applyTerminalReplicaUpdateCooperatively(current, update, options)
     ]) {
       for (const row of sources) {
         if (row.cells.length !== cols) return complete(conflict());
-        const cells = [];
+        const owned = isOwnedTerminalReplicaRow(row);
+        const builder = owned ? null : createOwnedTerminalReplicaRowBuilder();
         let priorWidth = -1;
         const wrapped = row.wrapped;
         for (let index = 0; index < cols; index++) {
           const sourceCell = row.cells[index];
-          const cell = Object.freeze({
-            ...sourceCell,
-            foreground: Object.freeze({ ...sourceCell.foreground }),
-            background: Object.freeze({ ...sourceCell.background })
-          });
+          const cell = owned ? sourceCell : builder.append(sourceCell);
           if (priorWidth === 2 && cell.width !== 0 || cell.width === 0 && priorWidth !== 2)
             return complete(conflict());
           priorWidth = cell.width;
-          cells.push(cell);
           if (++work >= 256) {
             work = 0;
             await yieldControl();
           }
         }
         if (priorWidth === 2) return complete(conflict());
-        target.push(
-          Object.freeze({
-            ...row,
-            wrapped,
-            cells: Object.freeze(cells)
-          })
-        );
+        target.push(owned ? row : builder.finish(row, wrapped));
       }
     }
     const placements = [];
@@ -38793,8 +39274,8 @@ function blankRow(cols) {
         () => Object.freeze({
           grapheme: " ",
           width: 1,
-          foreground: DEFAULT_COLOR,
-          background: DEFAULT_COLOR,
+          foreground: TERMINAL_REPLICA_DEFAULT_COLOR,
+          background: TERMINAL_REPLICA_DEFAULT_COLOR,
           attributes: 0
         })
       )
@@ -38816,10 +39297,6 @@ function validateAndFreezeRow(row, profile) {
   if (profile && frozen !== row) profile.counts.frozenCells += row.cells.length;
   VALIDATED_PATCH_ROWS.add(frozen);
   return frozen;
-}
-function freezeTerminalReplicaRow(row) {
-  if (!terminalReplicaRowIsValid(row)) throw new TypeError("Malformed terminal replica row");
-  return freezeOwnedTerminalReplicaRow(row);
 }
 function freezeSnapshot(snapshot2) {
   return Object.freeze({
@@ -39010,17 +39487,18 @@ function terminalReplicaRowIsValid(row) {
   }
   return true;
 }
-var VALIDATED_PATCH_ROWS, DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE, TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
+var VALIDATED_PATCH_ROWS, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE, verifiedTombstoneBases, TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
 var init_terminal_replica2 = __esm({
   "packages/core/src/terminal-replica.ts"() {
     "use strict";
     init_terminal_compact_capability();
     init_terminal_replica_owned_row();
+    init_terminal_replica_owned_row();
     init_terminal_replica_hash_cache();
     VALIDATED_PATCH_ROWS = /* @__PURE__ */ new WeakSet();
-    DEFAULT_COLOR = Object.freeze({ kind: "default" });
     ROW_ARRAY_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_SEQUENCE_BASE = 0x100000001b3n;
+    verifiedTombstoneBases = /* @__PURE__ */ new WeakMap();
     TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS = 8192;
   }
 });
@@ -39126,6 +39604,24 @@ function preaccountSemanticTerminalUpdateBytes(input, maximum = TERMINAL_DELIVER
     return Object.freeze({ exact: false, atLeastBytes: maximum + 1 });
   }
 }
+function validateTrustedBlankCells() {
+  if (trustedBlankCellsValidated) return;
+  CompactCellSliceSchema.parse([TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL]);
+  trustedBlankCellsValidated = true;
+}
+function hasOwnedPatchRow(input) {
+  if (Object.getOwnPropertyDescriptor(input, "frame")?.value !== "patch") return false;
+  const patch = Object.getOwnPropertyDescriptor(input, "patch")?.value;
+  if (typeof patch !== "object" || patch === null) return false;
+  const first = (array) => Array.isArray(array) ? Object.getOwnPropertyDescriptor(array, "0")?.value : void 0;
+  const entry = first(Object.getOwnPropertyDescriptor(patch, "rows")?.value);
+  if (typeof entry === "object" && entry !== null && isOwnedTerminalReplicaRow(Object.getOwnPropertyDescriptor(entry, "row")?.value))
+    return true;
+  if (isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(patch, "history")?.value)))
+    return true;
+  const delta = Object.getOwnPropertyDescriptor(patch, "historyDelta")?.value;
+  return typeof delta === "object" && delta !== null && isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(delta, "append")?.value));
+}
 function hasOwnedSeedRow(input) {
   const snapshot2 = Object.getOwnPropertyDescriptor(input, "snapshot")?.value;
   if (typeof snapshot2 !== "object" || snapshot2 === null) return false;
@@ -39133,7 +39629,7 @@ function hasOwnedSeedRow(input) {
   return Array.isArray(grid) && isOwnedTerminalReplicaRow(Object.getOwnPropertyDescriptor(grid, "0")?.value);
 }
 function encodeCompactSemanticTerminalUpdate(input) {
-  const update = (hasOwnedSeedRow(input) ? CompactEncodingPayloadSchema : TerminalSemanticDeliveryPayloadSchemaZ).parse(input);
+  const update = (hasOwnedPatchRow(input) ? CompactPatchEncodingPayloadSchema : hasOwnedSeedRow(input) ? CompactEncodingPayloadSchema : TerminalSemanticDeliveryPayloadSchemaZ).parse(input);
   const wire = update.frame === "seed" ? {
     f: "s",
     k: COMPACT_SEMANTIC_KIND,
@@ -39158,6 +39654,29 @@ function encodeCompactSemanticTerminalUpdate(input) {
   const bytes = UTF8_ENCODER2.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
   return bytes;
+}
+function isValidatedTrustedBlankSlice(cells) {
+  if (!cells.every(
+    (cell) => cell === TERMINAL_REPLICA_EMPTY_CELL || cell === TERMINAL_REPLICA_SPACE_CELL
+  ))
+    return false;
+  validateTrustedBlankCells();
+  return true;
+}
+function prefersTrustedCellValidation(cells) {
+  let nontrusted = 0;
+  const limit = Math.floor(cells.length / 4);
+  for (const cell of cells) {
+    if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) {
+      if (++nontrusted > limit) return false;
+    }
+  }
+  return true;
+}
+function validateOwnedCellSlice(cells) {
+  if (!prefersTrustedCellValidation(cells)) return CompactCellSliceSchema.parse(cells);
+  const parsed = CompactOwnedCellSliceSchema.safeParse(cells);
+  return parsed.success ? parsed.data : CompactCellSliceSchema.parse(cells);
 }
 function terminalSemanticUpdateNeedsCooperativeEncoding(input) {
   return input?.frame === "seed" && Array.isArray(input.snapshot?.grid) && Array.isArray(input.snapshot?.history) && (input.snapshot.grid.length + input.snapshot.history.length) * input.snapshot.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS;
@@ -39206,7 +39725,7 @@ async function encodeCompactSemanticTerminalUpdateCooperatively(input, options) 
     for (let index = 0; index < rows.length; index++) {
       const row = rows[index];
       const owned = isOwnedTerminalReplicaRow(row);
-      const validatedRow = owned && validatedOwnedEncodingRows.has(row);
+      const validatedRow = owned && (validatedOwnedEncodingRows.has(row) || isSchemaValidProjectedTerminalReplicaRow(row));
       const { cells, ...rowHeaderInput } = row;
       const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
       if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
@@ -39224,7 +39743,7 @@ async function encodeCompactSemanticTerminalUpdateCooperatively(input, options) 
       };
       for (let offset2 = 0; offset2 < cells.length; offset2 += 256) {
         const slice = cells.slice(offset2, offset2 + 256);
-        const validated = validatedRow ? slice : CompactCellSliceSchema.parse(slice);
+        const validated = validatedRow || owned && isValidatedTrustedBlankSlice(slice) ? slice : owned ? validateOwnedCellSlice(slice) : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
@@ -39606,12 +40125,12 @@ function assertRepresentationSize(bytes) {
   if (bytes.byteLength > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
     throw new TerminalDeliveryStateTooLargeError(bytes.byteLength);
 }
-var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, validatedOwnedEncodingRows, CompactEncodingRowSchema, CompactEncodingPayloadSchema, TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS, CompactSeedHeaderSchema, CompactSeedMetadataSchema, CompactRowHeaderSchema, CompactCellSliceSchema, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
+var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, validatedOwnedEncodingRows, CompactCellSliceSchema, trustedBlankCellsValidated, CompactOwnedCellSchema, CompactOwnedCellSliceSchema, CompactOwnedEncodingRowSchema, CompactEncodingRowSchema, CompactPatchRowFailure, StrictCompactPatchRowSchema, CompactPatchEncodingRowSchema, CompactPatchEncodingPayloadSchema, CompactEncodingPayloadSchema, TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS, CompactSeedHeaderSchema, CompactSeedMetadataSchema, CompactRowHeaderSchema, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
 var init_terminal_delivery2 = __esm({
   "packages/core/src/terminal-delivery.ts"() {
     "use strict";
     init_terminal_replica_owned_row();
-    init_src();
+    init_src2();
     init_terminal_replica2();
     init_terminal_compact_capability();
     init_terminal_replica_hash_cache();
@@ -39635,16 +40154,76 @@ var init_terminal_delivery2 = __esm({
     UTF8_ENCODER2 = new TextEncoder();
     COMPACT_DEFAULT_COLOR = Object.freeze({ kind: "default" });
     validatedOwnedEncodingRows = /* @__PURE__ */ new WeakSet();
+    CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+    trustedBlankCellsValidated = false;
+    CompactOwnedCellSchema = z87.union([
+      z87.custom((cell) => {
+        if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) return false;
+        validateTrustedBlankCells();
+        return true;
+      }),
+      TerminalReplicaCellSchemaZ
+    ]);
+    CompactOwnedCellSliceSchema = CompactOwnedCellSchema.array();
+    CompactOwnedEncodingRowSchema = TerminalReplicaRowSchemaZ.extend({
+      cells: CompactOwnedCellSliceSchema
+    });
     CompactEncodingRowSchema = z87.union([
       z87.custom((input) => {
         if (!isOwnedTerminalReplicaRow(input)) return false;
-        if (validatedOwnedEncodingRows.has(input)) return true;
-        if (!TerminalReplicaRowSchemaZ.safeParse(input).success) return false;
+        if (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
+          return true;
+        const schema = prefersTrustedCellValidation(input.cells) ? CompactOwnedEncodingRowSchema : TerminalReplicaRowSchemaZ;
+        if (!schema.safeParse(input).success) return false;
         validatedOwnedEncodingRows.add(input);
         return true;
       }),
       TerminalReplicaRowSchemaZ
     ]);
+    CompactPatchRowFailure = class {
+      issues;
+      value;
+      constructor(issues2, value) {
+        this.issues = issues2;
+        this.value = value;
+      }
+    };
+    StrictCompactPatchRowSchema = TerminalReplicaRowSchemaZ.catch((context) => {
+      throw new CompactPatchRowFailure(context.issues, context.value);
+    });
+    CompactPatchEncodingRowSchema = z87.custom(() => true).transform((input, context) => {
+      const owned = isOwnedTerminalReplicaRow(input);
+      if (owned && (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input)))
+        return input;
+      if (owned && prefersTrustedCellValidation(input.cells)) {
+        const optimized = CompactOwnedEncodingRowSchema.safeParse(input);
+        if (optimized.success) {
+          validatedOwnedEncodingRows.add(input);
+          return input;
+        }
+      }
+      try {
+        const parsed = StrictCompactPatchRowSchema.parse(input);
+        if (!owned) return parsed;
+        validatedOwnedEncodingRows.add(input);
+        return input;
+      } catch (error) {
+        if (!(error instanceof CompactPatchRowFailure)) throw error;
+        for (const issue of error.issues) context.issues.push(issue);
+        return error.value;
+      }
+    });
+    CompactPatchEncodingPayloadSchema = TerminalSemanticDeliveryPayloadSchemaZ.options[1].safeExtend({
+      patch: TerminalReplicaPatchPayloadSchemaZ.extend({
+        rows: z87.array(
+          TerminalReplicaPatchPayloadSchemaZ.shape.rows.element.extend({
+            row: CompactPatchEncodingRowSchema
+          })
+        ),
+        history: z87.array(CompactPatchEncodingRowSchema).optional(),
+        historyDelta: TerminalReplicaPatchPayloadSchemaZ.shape.historyDelta.unwrap().extend({ append: z87.array(CompactPatchEncodingRowSchema) }).optional()
+      })
+    });
     CompactEncodingPayloadSchema = z87.discriminatedUnion("frame", [
       TerminalSemanticDeliveryPayloadSchemaZ.options[0].extend({
         snapshot: TerminalReplicaSnapshotSchemaZ.extend({
@@ -39663,7 +40242,6 @@ var init_terminal_delivery2 = __esm({
       placements: true
     });
     CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
-    CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
     COOPERATIVE_JSON_WORK_CHARS = 16 * 1024;
     COOPERATIVE_JSON_MAX_STRING_CHARS = COMPACT_MAX_STRING_BYTES * 6 + 2;
     TerminalDeliveryRepresentationHasher = class {
@@ -39788,7 +40366,7 @@ function stableAppWindowInstanceId(source, ordinal = 0) {
 var init_app_window_identity = __esm({
   "packages/core/src/app-window-identity.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -39814,7 +40392,7 @@ function changeSavedMachines(value, change) {
 var init_saved_machines2 = __esm({
   "packages/core/src/saved-machines.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -39942,13 +40520,20 @@ function color2(value) {
 }
 function paint(cell) {
   const bits = cell.attributes;
-  return Object.freeze({
+  return {
     grapheme: bits & 128 ? acs.get(cell.text) ?? cell.text : cell.text,
     width: cell.width === 2 ? 2 : 1,
     foreground: color2(cell.foreground),
     background: color2(cell.background),
     attributes: bits & 3 | (bits & 64 ? 4 : 0) | (bits & 7684 ? 8 : 0) | (bits & 8 ? 16 : 0) | (bits & 16 ? 32 : 0) | (bits & 32 ? 64 : 0) | (bits & 256 ? 128 : 0)
-  });
+  };
+}
+function freezePaint(cell) {
+  if (cell.width === 1 && cell.attributes === 0 && cell.foreground === defaultColor && cell.background === defaultColor) {
+    if (cell.grapheme === "") return TERMINAL_REPLICA_EMPTY_CELL;
+    if (cell.grapheme === " ") return TERMINAL_REPLICA_SPACE_CELL;
+  }
+  return Object.freeze(cell);
 }
 function projectNativeGridRow(source, columns, startColumn = 0, wrapped = false) {
   if (!Number.isSafeInteger(columns) || columns < 1 || columns > 16384 || !Number.isSafeInteger(startColumn) || startColumn < 0 || startColumn > 1e6)
@@ -39967,12 +40552,12 @@ function projectNativeGridRow(source, columns, startColumn = 0, wrapped = false)
     const styled = paint(clippedOwner ? previous : native2);
     if (native2.flags & (4 | 64 | 128) || native2.width < 1 || native2.width > 2 || x + native2.width > columns) {
       const span = native2.flags & 128 ? Math.max(1, Math.min(native2.width, columns - x)) : 1;
-      const blank = Object.freeze({ ...styled, grapheme: "", width: 1 });
+      const blank = freezePaint({ ...styled, grapheme: "", width: 1 });
       for (let offset = 0; offset < span; offset++) cells[x + offset] = blank;
       x += span - 1;
       continue;
     }
-    cells[x] = styled;
+    cells[x] = freezePaint(styled);
     if (native2.width === 2) {
       cells[++x] = Object.freeze({ ...styled, grapheme: "", width: 0 });
     }
@@ -39989,16 +40574,11 @@ var rowSources, paintCache, defaultColor, empty, acsKeys, acsValues, acs;
 var init_native_grid_projection = __esm({
   "packages/daemon/src/terminal/mirror/native-grid-projection.ts"() {
     "use strict";
+    init_src3();
     rowSources = /* @__PURE__ */ new WeakMap();
     paintCache = /* @__PURE__ */ new WeakMap();
     defaultColor = Object.freeze({ kind: "default" });
-    empty = Object.freeze({
-      grapheme: "",
-      width: 1,
-      foreground: defaultColor,
-      background: defaultColor,
-      attributes: 0
-    });
+    empty = TERMINAL_REPLICA_EMPTY_CELL;
     acsKeys = [..."+,-.0`abcdefghijklmnopqrstuvwxyz{|}~"];
     acsValues = [..."\u2192\u2190\u2191\u2193\u25AE\u25C6\u2592\u2409\u240C\u240D\u240A\xB0\xB1\u2424\u240B\u2518\u2510\u250C\u2514\u253C\u23BA\u23BB\u2500\u23BC\u23BD\u251C\u2524\u2534\u252C\u2502\u2264\u2265\u03C0\u2260\xA3\xB7"];
     acs = new Map(acsKeys.map((key2, index) => [key2, acsValues[index]]));
@@ -40488,7 +41068,7 @@ function paramToWindowOption(n, opts) {
 function isValidColorIndex(value) {
   return 0 <= value && value < 256;
 }
-var __defProp2, __getOwnPropDesc2, __decorateClass, __decorateParam, StringToUtf32, Utf8ToUtf32, DEFAULT_COLOR2, DEFAULT_ATTR, CHAR_DATA_ATTR_INDEX, CHAR_DATA_CHAR_INDEX, CHAR_DATA_WIDTH_INDEX, CHAR_DATA_CODE_INDEX, NULL_CELL_CHAR, NULL_CELL_WIDTH, NULL_CELL_CODE, WHITESPACE_CELL_CHAR, WHITESPACE_CELL_WIDTH, WHITESPACE_CELL_CODE, AttributeData, ExtendedAttrs, CellData, BufferLineApiView, BufferApiView, ErrorHandler, errorHandler, canceledName, CancellationError, ErrorNoTelemetry, _MonotonousArray, CompareResult, numberComparator, _CallbackIterable, _a, _b, SetWithKey, SetMap, Iterable, TRACK_DISPOSABLES, disposableTracker, _DisposableTracker, _DisposableStore, DisposableStore, Disposable, MutableDisposable, _Node, hasPerformanceNow, StopWatch, _enableListenerGCedWarning, _enableDisposeWithListenerWarning, _enableSnapshotPotentialLeakWarning, Event, _EventProfiling, EventProfiling, _globalLeakWarningThreshold, _LeakageMonitor, LeakageMonitor, Stacktrace, ListenerLeakError, ListenerRefusalError, id, UniqueContainer, compactionThreshold, forEachListener, _listenerFinalizers, Emitter, EventDeliveryQueuePrivate, BufferNamespaceApi, ParserApi, UnicodeApi, CELL_SIZE, DEFAULT_ATTR_DATA, $startIndex, CLEANUP_THRESHOLD, BufferLine, DI_TARGET, DI_DEPENDENCIES, serviceRegistry, IBufferService, ICoreMouseService, ICoreService, ICharsetService, IInstantiationService, ILogService, IOptionsService, IOscLinkService, IUnicodeService, IDecorationService, ServiceCollection, InstantiationService, optionsKeyToLogLevel, LOG_PREFIX, LogService, traceLogger, CircularList, isNode, userAgent, platform, isFirefox, isLegacyEdge, isSafari, isMac, isWindows, isLinux, isChromeOS, TaskQueue, PriorityTaskQueue, IdleTaskQueueInternal, IdleTaskQueue, _Marker, Marker, CHARSETS, DEFAULT_CHARSET, MAX_BUFFER_SIZE, Buffer2, BufferSet, MINIMUM_COLS, MINIMUM_ROWS, BufferService, DEFAULT_OPTIONS, FONT_WEIGHT_OPTIONS, OptionsService, DEFAULT_MODES, DEFAULT_DEC_PRIVATE_MODES, CoreService, DEFAULT_PROTOCOLS, S, DEFAULT_ENCODINGS, CoreMouseService, BMP_COMBINING, HIGH_COMBINING, table, UnicodeV6, UnicodeService, CharsetService, C0, C1, C1_ESCAPED, PAYLOAD_LIMIT, MAX_VALUE, MAX_SUBPARAMS, Params, EMPTY_HANDLERS, OscParser, OscHandler, EMPTY_HANDLERS2, DcsParser, EMPTY_PARAMS, DcsHandler, TransitionTable, NON_ASCII_PRINTABLE, VT500_TRANSITION_TABLE, EscapeSequenceParser, RGB_REX, HASH_REX, GLEVEL, MAX_PARSEBUFFER_LENGTH, STACK_LIMIT, SLOW_ASYNC_LIMIT, $temp, InputHandler, DirtyRowTracker, DISCARD_WATERMARK, WRITE_TIMEOUT_MS, WRITE_BUFFER_LENGTH_THRESHOLD, WriteBuffer, OscLinkService, hasWriteSyncWarnHappened, CoreTerminal, Terminal, AddonManager, CONSTRUCTOR_ONLY_OPTIONS, Terminal2;
+var __defProp2, __getOwnPropDesc2, __decorateClass, __decorateParam, StringToUtf32, Utf8ToUtf32, DEFAULT_COLOR, DEFAULT_ATTR, CHAR_DATA_ATTR_INDEX, CHAR_DATA_CHAR_INDEX, CHAR_DATA_WIDTH_INDEX, CHAR_DATA_CODE_INDEX, NULL_CELL_CHAR, NULL_CELL_WIDTH, NULL_CELL_CODE, WHITESPACE_CELL_CHAR, WHITESPACE_CELL_WIDTH, WHITESPACE_CELL_CODE, AttributeData, ExtendedAttrs, CellData, BufferLineApiView, BufferApiView, ErrorHandler, errorHandler, canceledName, CancellationError, ErrorNoTelemetry, _MonotonousArray, CompareResult, numberComparator, _CallbackIterable, _a, _b, SetWithKey, SetMap, Iterable, TRACK_DISPOSABLES, disposableTracker, _DisposableTracker, _DisposableStore, DisposableStore, Disposable, MutableDisposable, _Node, hasPerformanceNow, StopWatch, _enableListenerGCedWarning, _enableDisposeWithListenerWarning, _enableSnapshotPotentialLeakWarning, Event, _EventProfiling, EventProfiling, _globalLeakWarningThreshold, _LeakageMonitor, LeakageMonitor, Stacktrace, ListenerLeakError, ListenerRefusalError, id, UniqueContainer, compactionThreshold, forEachListener, _listenerFinalizers, Emitter, EventDeliveryQueuePrivate, BufferNamespaceApi, ParserApi, UnicodeApi, CELL_SIZE, DEFAULT_ATTR_DATA, $startIndex, CLEANUP_THRESHOLD, BufferLine, DI_TARGET, DI_DEPENDENCIES, serviceRegistry, IBufferService, ICoreMouseService, ICoreService, ICharsetService, IInstantiationService, ILogService, IOptionsService, IOscLinkService, IUnicodeService, IDecorationService, ServiceCollection, InstantiationService, optionsKeyToLogLevel, LOG_PREFIX, LogService, traceLogger, CircularList, isNode, userAgent, platform, isFirefox, isLegacyEdge, isSafari, isMac, isWindows, isLinux, isChromeOS, TaskQueue, PriorityTaskQueue, IdleTaskQueueInternal, IdleTaskQueue, _Marker, Marker, CHARSETS, DEFAULT_CHARSET, MAX_BUFFER_SIZE, Buffer2, BufferSet, MINIMUM_COLS, MINIMUM_ROWS, BufferService, DEFAULT_OPTIONS, FONT_WEIGHT_OPTIONS, OptionsService, DEFAULT_MODES, DEFAULT_DEC_PRIVATE_MODES, CoreService, DEFAULT_PROTOCOLS, S, DEFAULT_ENCODINGS, CoreMouseService, BMP_COMBINING, HIGH_COMBINING, table, UnicodeV6, UnicodeService, CharsetService, C0, C1, C1_ESCAPED, PAYLOAD_LIMIT, MAX_VALUE, MAX_SUBPARAMS, Params, EMPTY_HANDLERS, OscParser, OscHandler, EMPTY_HANDLERS2, DcsParser, EMPTY_PARAMS, DcsHandler, TransitionTable, NON_ASCII_PRINTABLE, VT500_TRANSITION_TABLE, EscapeSequenceParser, RGB_REX, HASH_REX, GLEVEL, MAX_PARSEBUFFER_LENGTH, STACK_LIMIT, SLOW_ASYNC_LIMIT, $temp, InputHandler, DirtyRowTracker, DISCARD_WATERMARK, WRITE_TIMEOUT_MS, WRITE_BUFFER_LENGTH_THRESHOLD, WriteBuffer, OscLinkService, hasWriteSyncWarnHappened, CoreTerminal, Terminal, AddonManager, CONSTRUCTOR_ONLY_OPTIONS, Terminal2;
 var init_xterm_headless = __esm({
   "node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.5.tgz/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs"() {
     __defProp2 = Object.defineProperty;
@@ -40735,8 +41315,8 @@ var init_xterm_headless = __esm({
         return size;
       }
     };
-    DEFAULT_COLOR2 = 0;
-    DEFAULT_ATTR = 0 << 18 | DEFAULT_COLOR2 << 9 | 256 << 0;
+    DEFAULT_COLOR = 0;
+    DEFAULT_ATTR = 0 << 18 | DEFAULT_COLOR << 9 | 256 << 0;
     CHAR_DATA_ATTR_INDEX = 0;
     CHAR_DATA_CHAR_INDEX = 1;
     CHAR_DATA_WIDTH_INDEX = 2;
@@ -42149,7 +42729,7 @@ ${stackTraceFormattedLines.join("\n")}
       }
       Event2.fromDOMEventEmitter = fromDOMEventEmitter;
       function toPromise(event) {
-        return new Promise((resolve41) => once(event)(resolve41));
+        return new Promise((resolve42) => once(event)(resolve42));
       }
       Event2.toPromise = toPromise;
       function fromPromise(promise) {
@@ -52762,21 +53342,27 @@ function projectRowCached(cache3, buffer, index, cols) {
       return prior.row;
   }
   const cell = buffer.getNullCell();
-  const cells = [];
+  const builder = createProjectedTerminalReplicaRowBuilder();
   for (let column = 0; column < cols; column += 1) {
     line?.getCell(column, cell);
-    cells.push({
-      // Empty width-one cells are unused storage; literal spaces are content.
-      // Both paint as blanks, but preserving the distinction is necessary for
-      // reflow and for recognizing padding before a wrapped wide glyph.
-      grapheme: line && column + cell.getWidth() <= cols ? cell.getChars() : "",
-      width: line && column + cell.getWidth() <= cols ? cell.getWidth() : 1,
-      foreground: line ? cellColor(cell, "foreground") : { kind: "default" },
-      background: line ? cellColor(cell, "background") : { kind: "default" },
-      attributes: line ? cellAttributes(cell) : 0
-    });
+    const grapheme = line && column + cell.getWidth() <= cols ? cell.getChars() : "";
+    const width = line && column + cell.getWidth() <= cols ? cell.getWidth() : 1;
+    const foregroundKind = line ? cellColorKind(cell, "foreground") : "default";
+    const foregroundValue = line ? cell.getFgColor() : 0;
+    const backgroundKind = line ? cellColorKind(cell, "background") : "default";
+    const backgroundValue = line ? cell.getBgColor() : 0;
+    const attributes = line ? cellAttributes(cell) : 0;
+    builder.append(
+      grapheme,
+      width,
+      attributes,
+      foregroundKind,
+      foregroundValue,
+      backgroundKind,
+      backgroundValue
+    );
   }
-  const row = freezeTerminalReplicaRow({ cells, wrapped: line?.isWrapped ?? false });
+  const row = builder.finish(line?.isWrapped ?? false);
   if (line && cacheKey2)
     cache3.set(cacheKey2, {
       data: lineData(line)?.slice() ?? null,
@@ -52801,13 +53387,12 @@ function rawRowsEqual(left, right) {
     if (left[index] !== right[index]) return false;
   return true;
 }
-function cellColor(cell, channel) {
+function cellColorKind(cell, channel) {
   const rgb2 = channel === "foreground" ? cell.isFgRGB() : cell.isBgRGB();
   const palette = channel === "foreground" ? cell.isFgPalette() : cell.isBgPalette();
-  const value = channel === "foreground" ? cell.getFgColor() : cell.getBgColor();
-  if (rgb2) return { kind: "rgb", value };
-  if (palette) return { kind: "indexed", index: value };
-  return { kind: "default" };
+  if (rgb2) return "rgb";
+  if (palette) return "indexed";
+  return "default";
 }
 function cellAttributes(cell) {
   return (cell.isBold() ? 1 : 0) | (cell.isDim() ? 2 : 0) | (cell.isItalic() ? 4 : 0) | (cell.isUnderline() ? 8 : 0) | (cell.isBlink() ? 16 : 0) | (cell.isInverse() ? 32 : 0) | (cell.isInvisible() ? 64 : 0) | (cell.isStrikethrough() ? 128 : 0);
@@ -52895,7 +53480,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         return this.#terminal.rows;
       }
       write(data) {
-        return new Promise((resolve41) => this.#terminal.write(data, resolve41));
+        return new Promise((resolve42) => this.#terminal.write(data, resolve42));
       }
       canImportNativeGrid() {
         const buffer = this.#terminal.buffer.active._buffer;
@@ -53435,8 +54020,9 @@ var TerminalReplicaInterpreter;
 var init_terminal_replica_interpreter = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts"() {
     "use strict";
+    init_stock_capture_fidelity();
     init_native_seed_backing();
-    init_src();
+    init_src2();
     init_src3();
     init_runtime_scheduler();
     init_runtime_observability();
@@ -53515,8 +54101,8 @@ var init_terminal_replica_interpreter = __esm({
           scrollback: this.#scrollback
         });
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
-        this.#seedReady = new Promise((resolve41, reject) => {
-          this.#resolveSeedReady = resolve41;
+        this.#seedReady = new Promise((resolve42, reject) => {
+          this.#resolveSeedReady = resolve42;
           this.#rejectSeedReady = reject;
         });
         void this.#seedReady.catch(() => void 0);
@@ -53533,8 +54119,8 @@ var init_terminal_replica_interpreter = __esm({
           const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
           if (this.#pendingWrites.length > 0 && (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null))
             this.#flushWrites();
-          const promise = new Promise((resolve41, reject) => {
-            this.#pendingWrites.push({ data, trace, resolve: resolve41, reject });
+          const promise = new Promise((resolve42, reject) => {
+            this.#pendingWrites.push({ data, trace, resolve: resolve42, reject });
           });
           if (!this.#writeFlushScheduled) {
             this.#writeFlushScheduled = true;
@@ -53543,7 +54129,11 @@ var init_terminal_replica_interpreter = __esm({
           return promise;
         }
         this.#flushWrites();
-        const admitted = operation.type === "reseed" ? { ...operation, chunks: operation.chunks.map((chunk) => chunk.slice()) } : operation;
+        const admitted = operation.type === "reseed" ? {
+          ...operation,
+          chunks: operation.chunks.map((chunk) => Uint8Array.from(chunk)),
+          ...operation.captureChunks ? { captureChunks: operation.captureChunks.map((chunk) => Uint8Array.from(chunk)) } : {}
+        } : operation;
         return this.#append(admitted);
       }
       whenIdle() {
@@ -53564,7 +54154,10 @@ var init_terminal_replica_interpreter = __esm({
         if (this.#closed) throw new Error("Terminal replica is closed");
         if (this.#causalCell) throw new Error("A causal-cell probe is already active");
         const seed = this.currentSeed();
-        if (!seed || seed.revision !== probe.baselineRevision || seed.stateHash !== probe.baselineStateHash || seed.incarnation !== probe.incarnation || this.#snapshot.cols !== probe.geometry.cols || this.#snapshot.rows !== probe.geometry.rows || JSON.stringify(this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column]) !== JSON.stringify(probe.before))
+        if (!seed || seed.revision !== probe.baselineRevision || seed.stateHash !== probe.baselineStateHash || seed.incarnation !== probe.incarnation || this.#snapshot.cols !== probe.geometry.cols || this.#snapshot.rows !== probe.geometry.rows || !cellsEqual(
+          this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column],
+          probe.before
+        ))
           throw new Error("Causal-cell baseline drifted before admission");
         const ledger2 = new CausalCellLedger({
           probe,
@@ -53613,6 +54206,8 @@ var init_terminal_replica_interpreter = __esm({
       async #apply(operation) {
         if (this.#closed) return;
         if (operation.type === "reseed") {
+          if (operation.bootstrap === "painted-capture" && !operation.native)
+            assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
           this.#causalCell?.fail("reseeded");
           const nativeCols = operation.nativeCols ?? operation.cols;
           const nativeRows = operation.nativeRows ?? operation.rows;
@@ -53663,6 +54258,12 @@ var init_terminal_replica_interpreter = __esm({
           this.#nativeSeedBackingCandidate = operation.native;
           try {
             this.#commit(true, void 0, operation.trace ?? null);
+          } catch (error) {
+            try {
+              previous.dispose();
+            } catch {
+            }
+            throw error;
           } finally {
             this.#nativeSeedBackingCandidate = void 0;
           }
@@ -54043,6 +54644,7 @@ var init_terminal_replica_owner = __esm({
             );
           },
           onUpdate: (update, trace) => {
+            this.#publishedIncarnation = update.incarnation;
             if (update.type === "terminal.seed") {
               this.#bootstrapped = true;
               this.#reseedRetryCount = 0;
@@ -54112,6 +54714,7 @@ var init_terminal_replica_owner = __esm({
       #reseedRetryCount = 0;
       #reseed = null;
       #bootstrapped = false;
+      #publishedIncarnation = null;
       #waitingForGeometryCapture = false;
       #historyTimer = null;
       #historyChecking = false;
@@ -54131,13 +54734,22 @@ var init_terminal_replica_owner = __esm({
       failCausalCell(reason, traceId) {
         this.#interpreter.failCausalCell(reason, traceId);
       }
+      /** Scalar diagnostic only: no seed construction, hashing, or owner creation. */
+      inputDispatchIncarnation() {
+        return this.#disposed ? null : this.#publishedIncarnation;
+      }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();
         return Object.freeze({
           incarnation: seed?.incarnation ?? null,
           revision: seed?.revision ?? null,
           stateHash: seed?.stateHash ?? null,
-          stats: this.#interpreter.stats()
+          stats: this.#interpreter.stats(),
+          listeners: Object.freeze({
+            canonical: this.#listeners.size,
+            raw: this.#rawListeners.size,
+            upstream: this.#upstream ? 1 : 0
+          })
         });
       }
       async captureNativeBacking() {
@@ -54283,6 +54895,7 @@ var init_terminal_replica_owner = __esm({
             layoutLease: this.#layoutLease,
             subscriptionEpoch: this.#subscriptionEpoch,
             chunks: [],
+            captureChunks: [],
             trace: this.#consumeOutputTrace()
           };
         } else if (event.type === "seed" || event.type === "delta") {
@@ -54291,7 +54904,11 @@ var init_terminal_replica_owner = __esm({
             if (event.type === "seed" && event.requiresNativeRecapture)
               this.#reseed.requiresNativeRecapture = true;
             if (event.type === "seed" && event.native) this.#reseed.native = event.native;
-            else this.#reseed.chunks.push(event.data.slice());
+            else {
+              const bytes = Uint8Array.from(event.data);
+              this.#reseed.chunks.push(bytes);
+              if (event.type === "seed") this.#reseed.captureChunks.push(bytes);
+            }
           } else
             this.#supervise(
               this.#interpreter.enqueue({
@@ -54313,6 +54930,7 @@ var init_terminal_replica_owner = __esm({
               cols: reseed.nativeCols,
               rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              captureChunks: reseed.captureChunks,
               native: reseed.native,
               historyLimit: event.historyLimit,
               historySize: event.historySize,
@@ -54696,7 +55314,7 @@ function terminalSelectionObservation(observation2) {
 function semanticSelectionObservationFromError(error) {
   return error instanceof TerminalDeliveryRepresentationSelectionError ? error.selectionObservation : null;
 }
-function semanticPayload(baselineRevision, baseline, target) {
+function semanticPayload(baselineRevision, baseline, target, baselineIncarnation) {
   const update = target.update;
   if (!target.state.snapshot) {
     if (update.type !== "terminal.tombstone") throw new TypeError("Missing tombstone update");
@@ -54714,6 +55332,41 @@ function semanticPayload(baselineRevision, baseline, target) {
       revision: update.revision,
       patch: update.patch
     };
+  const snapshot2 = target.state.snapshot;
+  if (baseline && baselineIncarnation === update.incarnation && baseline.cols === snapshot2.cols && baseline.rows === snapshot2.rows && baseline.history.length <= snapshot2.history.length) {
+    let comparisonCells = 0;
+    const equal = (left, right) => {
+      if (left === right) return true;
+      comparisonCells += right.cells.length;
+      return comparisonCells <= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS ? terminalReplicaRowsEqual(left, right) : null;
+    };
+    for (let index = 0; index < baseline.history.length; index++)
+      if (equal(baseline.history[index], snapshot2.history[index]) !== true)
+        return semanticSeed(target);
+    const rows = [];
+    for (let index = 0; index < snapshot2.grid.length; index++) {
+      const same5 = equal(baseline.grid[index], snapshot2.grid[index]);
+      if (same5 === null) return semanticSeed(target);
+      if (!same5) rows.push({ index, row: snapshot2.grid[index] });
+    }
+    const appendedRows = snapshot2.history.length - baseline.history.length;
+    if ((rows.length + appendedRows) * snapshot2.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS)
+      return semanticSeed(target);
+    const append = snapshot2.history.slice(baseline.history.length);
+    return {
+      frame: "patch",
+      baseRevision: baselineRevision,
+      revision: update.revision,
+      patch: {
+        rows,
+        ...append.length ? { historyDelta: { trim: 0, append } } : {},
+        cursor: snapshot2.cursor,
+        modes: snapshot2.modes,
+        placements: snapshot2.placements,
+        bootstrap: snapshot2.bootstrap
+      }
+    };
+  }
   return semanticSeed(target);
 }
 function canonicalUpdateCellCost(update) {
@@ -54774,8 +55427,9 @@ var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENT
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
+    init_stock_capture_fidelity();
     init_native_seed_backing();
-    init_src();
+    init_src2();
     init_src3();
     init_runtime_scheduler();
     init_runtime_observability();
@@ -54843,6 +55497,8 @@ var init_terminal_delivery_hub = __esm({
       #observability;
       #panes = /* @__PURE__ */ new Map();
       #clients = /* @__PURE__ */ new Map();
+      #sourceCloseFailures = 0;
+      #pendingSourceCloses = 0;
       /** Synchronous reservations held while an async pane source is starting. */
       #pendingClients = /* @__PURE__ */ new Map();
       #cache = /* @__PURE__ */ new Map();
@@ -54883,8 +55539,8 @@ var init_terminal_delivery_hub = __esm({
           const pane = await this.#ensurePane(semanticPaneId3);
           if (this.#closed) throw new Error("Terminal delivery hub is closed");
           let resolveClosed;
-          const closed = new Promise((resolve41) => {
-            resolveClosed = resolve41;
+          const closed = new Promise((resolve42) => {
+            resolveClosed = resolve42;
           });
           const client = {
             key: key2,
@@ -54910,6 +55566,7 @@ var init_terminal_delivery_hub = __esm({
             outgoing: [],
             sending: false,
             retireAfterDrain: false,
+            captureUnavailable: false,
             lastAck: null,
             sourceClosedFlight: null,
             backgroundTimer: null
@@ -54934,9 +55591,37 @@ var init_terminal_delivery_hub = __esm({
             },
             close: async () => this.#closeClient(client)
           };
+        } catch (error) {
+          if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
+          await accept({
+            type: "terminal.delivery.fault",
+            reason: "source-closed",
+            message: error.message,
+            deliveryNonce: negotiation.negotiated.deliveryNonce
+          });
+          return {
+            negotiation,
+            closed: Promise.resolve("closed"),
+            ack: () => {
+            },
+            nack: () => {
+            },
+            setVisibility: () => {
+            },
+            close: async () => {
+            }
+          };
         } finally {
           this.#pendingClients.delete(key2);
         }
+      }
+      /** Retire only this pane's delivery owners before its canonical owner is disposed. */
+      failPaneCapture(semanticPaneId3, error) {
+        for (const client of this.#clients.values())
+          if (client.paneId === semanticPaneId3 && !client.closed && !client.captureUnavailable) {
+            client.captureUnavailable = true;
+            this.#fault(client, "source-closed", error.message);
+          }
       }
       retainedNativeBacking(paneId, expected) {
         const pane = this.#panes.get(paneId);
@@ -54987,6 +55672,11 @@ var init_terminal_delivery_hub = __esm({
         return Object.freeze({
           clients: new Set([...this.#clients.values()].map((client) => client.clientId)).size,
           connections: this.#clients.size,
+          sourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source !== null).length,
+          pendingSourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source === null).length,
+          pendingClients: this.#pendingClients.size,
+          sourceCloseFailures: this.#sourceCloseFailures,
+          pendingSourceCloses: this.#pendingSourceCloses,
           inFlight: [...this.#clients.values()].filter((client) => client.inFlight).length,
           latestPointers: [...this.#clients.values()].filter((client) => client.latestRevision !== null).length,
           coalesced: this.#coalesced,
@@ -55064,8 +55754,19 @@ var init_terminal_delivery_hub = __esm({
           pane.pendingCanonicalCells = 0;
           pane.canonicalScheduled = false;
         }
-        await Promise.allSettled(panes.map((pane) => pane.source?.close()));
+        await Promise.allSettled(panes.map((pane) => pane.source && this.#closeSource(pane.source)));
         this.#clearCache();
+      }
+      async #closeSource(source) {
+        this.#pendingSourceCloses += 1;
+        try {
+          await source.close();
+        } catch (error) {
+          this.#sourceCloseFailures += 1;
+          throw error;
+        } finally {
+          this.#pendingSourceCloses -= 1;
+        }
       }
       async close() {
         if (this.#closed) return;
@@ -55114,7 +55815,7 @@ var init_terminal_delivery_hub = __esm({
           }
         ).then(async (source) => {
           if (this.#closed || this.#panes.get(semanticPaneId3) !== pane || pane?.canonicalAbort.signal.aborted) {
-            await source.close();
+            await this.#closeSource(source);
             throw new Error("Terminal delivery source retired during startup");
           }
           pane.source = source;
@@ -55201,13 +55902,13 @@ var init_terminal_delivery_hub = __esm({
       }
       #yieldCanonical(pane) {
         if (this.#scheduler.nowMs() - pane.canonicalYieldStartedAt < 2) return Promise.resolve();
-        return new Promise((resolve41) => {
+        return new Promise((resolve42) => {
           let timer;
           const finish = () => {
             timer?.cancel();
             pane.canonicalYieldStartedAt = this.#scheduler.nowMs();
             pane.canonicalAbort.signal.removeEventListener("abort", finish);
-            resolve41();
+            resolve42();
           };
           pane.canonicalAbort.signal.addEventListener("abort", finish, { once: true });
           if (pane.canonicalAbort.signal.aborted) finish();
@@ -55257,7 +55958,7 @@ var init_terminal_delivery_hub = __esm({
         pane.revisions.set(update.revision, record);
         this.#pruneCanonicalRevisions(semanticPaneId3);
         for (const client of this.#clients.values()) {
-          if (client.paneId !== semanticPaneId3 || client.closed) continue;
+          if (client.paneId !== semanticPaneId3 || client.closed || client.captureUnavailable) continue;
           if (!client.lifecycleOpenRecorded)
             client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
           if (update.type === "terminal.tombstone" && (client.inFlight !== null || client.encoding !== null || client.visibility !== "visible")) {
@@ -55284,7 +55985,7 @@ var init_terminal_delivery_hub = __esm({
             pane.pendingCanonical.length = 0;
             pane.pendingCanonicalCells = 0;
             pane.canonicalScheduled = false;
-            void pane.source?.close().catch(() => void 0);
+            void (pane.source && this.#closeSource(pane.source).catch(() => void 0));
             this.#clearCache();
           }, 0);
         }
@@ -55319,7 +56020,7 @@ var init_terminal_delivery_hub = __esm({
         }
       }
       #schedule(client) {
-        if (client.closed || client.inFlight || client.encoding || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
+        if (client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
           return;
         if (client.visibility === "background") {
           if (client.backgroundTimer) return;
@@ -55341,7 +56042,7 @@ var init_terminal_delivery_hub = __esm({
       #deliver(client, completed) {
         const pane = this.#panes.get(client.paneId);
         const target = completed?.target ?? pane?.latest;
-        if (!pane || !target || client.closed || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
+        if (!pane || !target || client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
           return;
         const traceStarted = completed?.traceStarted ?? (this.#observability.enabled ? this.#observability.nowMicros() : 0);
         let deferred = false;
@@ -55504,13 +56205,13 @@ var init_terminal_delivery_hub = __esm({
       }
       #yieldEncoding(job) {
         if (this.#scheduler.nowMs() - job.yieldStartedAt < 2) return Promise.resolve();
-        return new Promise((resolve41) => {
+        return new Promise((resolve42) => {
           let timer;
           const finish = () => {
             timer?.cancel();
             job.yieldStartedAt = this.#scheduler.nowMs();
             job.abort.signal.removeEventListener("abort", finish);
-            resolve41();
+            resolve42();
           };
           job.abort.signal.addEventListener("abort", finish, { once: true });
           if (job.abort.signal.aborted) finish();
@@ -55639,7 +56340,12 @@ var init_terminal_delivery_hub = __esm({
             };
             this.#reseeds += 1;
           } else {
-            const patchPayload = semanticPayload(client.baselineRevision, baseline, target);
+            const patchPayload = semanticPayload(
+              client.baselineRevision,
+              baseline,
+              target,
+              pane.revisions.get(client.baselineRevision)?.update.incarnation
+            );
             const seedPayload = patchPayload.frame === "tombstone" ? null : semanticSeed(target);
             const legacyAttempts = null;
             if (patchPayload.frame !== "patch") {
@@ -55916,6 +56622,9 @@ var init_terminal_delivery_hub = __esm({
       }
       #nack(client, input) {
         const nack = TerminalDeliveryNackSchemaZ.parse(input);
+        const closed = client.sourceClosedFlight;
+        if (client.captureUnavailable && !client.inFlight && closed && nack.workspaceName === closed.workspaceName && nack.semanticPaneId === closed.semanticPaneId && nack.generation === closed.generation && nack.incarnation === closed.incarnation && nack.deliveryNonce === closed.deliveryNonce && nack.transactionId === closed.transactionId)
+          return;
         const envelope = client.inFlight?.envelope;
         if (!envelope || nack.workspaceName !== envelope.workspaceName || nack.semanticPaneId !== envelope.semanticPaneId || nack.generation !== envelope.generation || nack.incarnation !== envelope.incarnation || nack.deliveryNonce !== envelope.deliveryNonce || nack.transactionId !== envelope.transactionId) {
           this.#fault(client, "protocol-violation", "NACK does not identify the in-flight delivery");
@@ -56050,7 +56759,7 @@ var init_terminal_delivery_hub = __esm({
           pane.pendingCanonicalCells = 0;
           pane.canonicalScheduled = false;
         }
-        await pane?.source?.close().catch(() => void 0);
+        if (pane?.source) await this.#closeSource(pane.source).catch(() => void 0);
         this.#clearCache();
       }
       #recordDeliveryLifecycle(client, pane, event) {
@@ -56259,7 +56968,7 @@ var AUTHORITY_KINDS, SessionRuntimeAuthorityArbiter;
 var init_authority_arbiter = __esm({
   "packages/daemon/src/terminal/session-runtime/authority-arbiter.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     AUTHORITY_KINDS = ["input", "focus", "geometry"];
     SessionRuntimeAuthorityArbiter = class {
       generation;
@@ -56480,10 +57189,10 @@ import { z as z89 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
   signal.throwIfAborted();
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(resolve41, reject).then(
+    void promise.then(resolve42, reject).then(
       () => signal.removeEventListener("abort", onAbort),
       () => signal.removeEventListener("abort", onAbort)
     );
@@ -56495,11 +57204,12 @@ function authoredOriginForSurface(surface) {
   if (surface === "cli") return "cli";
   return "gui";
 }
-var SessionRuntimeControllerLeaseError, SessionRuntimeRegistry, SessionRuntime, SessionRuntimeConsumerImpl;
+var emptyListenerDisposal, SessionRuntimeControllerLeaseError, SessionRuntimeRegistry, SessionRuntime, SessionRuntimeConsumerImpl;
 var init_registry2 = __esm({
   "packages/daemon/src/terminal/session-runtime/registry.ts"() {
     "use strict";
-    init_src();
+    init_stock_capture_fidelity();
+    init_src2();
     init_mirror_service();
     init_semantic_mutation_executor();
     init_terminal_replica_owner();
@@ -56508,6 +57218,21 @@ var init_registry2 = __esm({
     init_runtime_observability();
     init_runtime_trace_correlator();
     init_authority_arbiter();
+    emptyListenerDisposal = () => ({
+      sessions: 0,
+      owners: 0,
+      failures: 0,
+      canonical: 0,
+      raw: 0,
+      upstream: 0,
+      authority: 0,
+      consumerHandles: 0,
+      deliveryConnections: 0,
+      deliverySources: 0,
+      pendingDeliverySources: 0,
+      pendingSourceCloses: 0,
+      pendingDeliveryClients: 0
+    });
     SessionRuntimeControllerLeaseError = class extends Error {
       constructor(code2, message) {
         super(message);
@@ -56527,6 +57252,7 @@ var init_registry2 = __esm({
       #observability;
       #createTraceCorrelator;
       #sessions = /* @__PURE__ */ new Map();
+      #listenerDisposal = null;
       #proofPrewarmOwnership = /* @__PURE__ */ new Map();
       #trustedInventoryTokens = /* @__PURE__ */ new WeakMap();
       #executionHandles = /* @__PURE__ */ new WeakMap();
@@ -56559,28 +57285,42 @@ var init_registry2 = __esm({
           },
           ...this.#observability.enabled ? {
             nowMicros: () => this.#observability.nowMicros(),
-            onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
-              for (const traceId of action.traceIds ?? []) {
-                const trace = this.#observability.beginTrace(
-                  "terminal-input-to-paint",
-                  { generation: this.generation, incarnation: null },
-                  traceId
-                );
-                this.#observability.recordSpan(
-                  "tmux",
-                  "control-write",
-                  startedAtMicros,
-                  endedAtMicros,
-                  trace
-                );
-                this.#observability.recordSpan(
-                  "tmux",
-                  pendingBeforeSend === 0 ? "control-queue-empty-at-send" : "control-queue-nonempty-at-send",
-                  endedAtMicros,
-                  endedAtMicros,
-                  trace
-                );
-              }
+            captureInputWrite: (session, action, semanticPaneId3) => {
+              const runtime = this.#sessions.get(session);
+              const binding = runtime?.captureInputDispatch(semanticPaneId3);
+              return (startedAtMicros, endedAtMicros, pendingBeforeSend, paneCurrent) => {
+                const incarnation = paneCurrent && this.#sessions.get(session) === runtime ? binding?.() ?? null : null;
+                for (const traceId of action.traceIds ?? []) {
+                  const trace = this.#observability.beginTrace(
+                    "terminal-input-to-paint",
+                    {
+                      generation: this.generation,
+                      incarnation,
+                      controlDispatch: Object.freeze({
+                        workspaceName: session,
+                        nativePaneId: action.pane,
+                        semanticPaneId: paneCurrent ? semanticPaneId3 : null,
+                        scope: "dispatch-time"
+                      })
+                    },
+                    traceId
+                  );
+                  this.#observability.recordSpan(
+                    "tmux",
+                    "control-write",
+                    startedAtMicros,
+                    endedAtMicros,
+                    trace
+                  );
+                  this.#observability.recordSpan(
+                    "tmux",
+                    pendingBeforeSend === 0 ? "control-queue-empty-at-send" : "control-queue-nonempty-at-send",
+                    endedAtMicros,
+                    endedAtMicros,
+                    trace
+                  );
+                }
+              };
             }
           } : {}
         };
@@ -57067,6 +57807,8 @@ var init_registry2 = __esm({
         return Object.freeze({
           generation: this.generation,
           controlChannels: this.activeControlChannelCount(),
+          mirrorListeners: this.#mirror.qualificationListeners(),
+          listenerDisposal: this.#listenerDisposal,
           controllerLeases: this.activeControllerLeaseCount(),
           sessions: Object.freeze(
             [...this.#sessions.values()].map((runtime) => runtime.qualificationSnapshot())
@@ -57081,7 +57823,30 @@ var init_registry2 = __esm({
           this.#stopExitObserver();
           this.#disposePromise = (async () => {
             await this.#semanticMutations?.dispose();
-            await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
+            const runtimes = [...this.#sessions.values()];
+            const results = await Promise.allSettled(runtimes.map((runtime) => runtime.dispose()));
+            const final = { ...emptyListenerDisposal(), sessions: runtimes.length };
+            runtimes.forEach((runtime, index) => {
+              const counts = runtime.listenerDisposal;
+              if (!counts || results[index]?.status === "rejected") final.failures += 1;
+              if (counts)
+                for (const key2 of [
+                  "owners",
+                  "failures",
+                  "canonical",
+                  "raw",
+                  "upstream",
+                  "authority",
+                  "consumerHandles",
+                  "deliveryConnections",
+                  "deliverySources",
+                  "pendingDeliverySources",
+                  "pendingSourceCloses",
+                  "pendingDeliveryClients"
+                ])
+                  final[key2] += counts[key2];
+            });
+            this.#listenerDisposal = Object.freeze(final);
             this.#sessions.clear();
             this.#proofPrewarmOwnership.clear();
             await this.#mirror.dispose();
@@ -57195,6 +57960,7 @@ var init_registry2 = __esm({
       session;
       #mirror;
       #consumers = /* @__PURE__ */ new Set();
+      listenerDisposal = null;
       #consumersByClientId = /* @__PURE__ */ new Map();
       #terminalReplicas = /* @__PURE__ */ new Map();
       #terminalReplicaClocks = /* @__PURE__ */ new Map();
@@ -57294,11 +58060,32 @@ var init_registry2 = __esm({
       hasConsumers() {
         return this.#consumers.size > 0;
       }
+      listenerCounts() {
+        const counts = {
+          authority: this.#authorityListeners.size,
+          mirrorSubscriptions: 0,
+          replicaSubscriptions: 0,
+          deliveryConnections: 0
+        };
+        for (const consumer of this.#consumers) {
+          const handles = consumer.qualificationListeners();
+          counts.mirrorSubscriptions += handles.mirrorSubscriptions;
+          counts.replicaSubscriptions += handles.replicaSubscriptions;
+          counts.deliveryConnections += handles.deliveryConnections;
+        }
+        return Object.freeze(counts);
+      }
+      captureInputDispatch(semanticPaneId3) {
+        const owner = this.#disposed || semanticPaneId3 === null ? void 0 : this.#terminalReplicas.get(semanticPaneId3);
+        const incarnation = owner?.inputDispatchIncarnation() ?? null;
+        return () => !this.#disposed && semanticPaneId3 !== null && owner !== void 0 && this.#terminalReplicas.get(semanticPaneId3) === owner && owner.inputDispatchIncarnation() === incarnation ? incarnation : null;
+      }
       qualificationSnapshot() {
         return Object.freeze({
           session: this.session,
           consumers: this.#consumers.size,
           retained: this.#retention !== null,
+          listeners: this.listenerCounts(),
           delivery: this.#terminalDeliveryHub.metrics(),
           convergence: this.#terminalDeliveryHub.convergenceSnapshot(),
           replicas: Object.freeze(
@@ -57680,8 +58467,10 @@ var init_registry2 = __esm({
                 current.epoch += 1;
                 this.#terminalReplicaClocks.set(semanticPaneId3, current);
               },
-              onFault: () => {
+              onFault: (error) => {
                 if (this.#terminalReplicas.get(semanticPaneId3) !== candidate) return;
+                if (error instanceof StockCaptureTabUnavailableError)
+                  this.#terminalDeliveryHub.failPaneCapture(semanticPaneId3, error);
                 this.#outputTraces?.clearPane(semanticPaneId3);
                 this.#terminalReplicas.delete(semanticPaneId3);
                 this.#restartBarrier = this.#restartBarrier.then(async () => {
@@ -57789,22 +58578,49 @@ var init_registry2 = __esm({
         this.#trustedInventoryRuntimeSessionId = null;
         this.#trustedInventoryEpoch += 1;
         const consumers = [...this.#consumers];
-        await Promise.allSettled(consumers.map((consumer) => consumer.close()));
+        const consumerResults = await Promise.allSettled(consumers.map((consumer) => consumer.close()));
         this.#clearController();
         this.#authority.dispose();
         this.#authorityListeners.clear();
         this.#completedHandoffs.clear();
         this.#releasedLeases.clear();
         this.#outputTraces?.clear();
-        await Promise.allSettled(
-          [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed"))
+        const owners = [...this.#terminalReplicas.values()];
+        const results = await Promise.allSettled(
+          owners.map((owner) => owner.dispose("runtime-disposed"))
         );
+        const final = {
+          ...emptyListenerDisposal(),
+          sessions: 1,
+          owners: owners.length,
+          failures: [...results, ...consumerResults].filter((result2) => result2.status === "rejected").length
+        };
+        for (const owner of owners) {
+          const counts = owner.qualificationSnapshot().listeners;
+          final.canonical += counts.canonical;
+          final.raw += counts.raw;
+          final.upstream += counts.upstream;
+        }
+        for (const consumer of consumers) {
+          const counts = consumer.qualificationListeners();
+          final.failures += counts.closeFailures;
+          final.consumerHandles += counts.mirrorSubscriptions + counts.replicaSubscriptions + counts.deliveryConnections;
+        }
+        final.authority = this.#authorityListeners.size;
         this.#terminalReplicas.clear();
         await this.#terminalDeliveryHub.close();
         await this.#startPromise?.catch(() => void 0);
         await this.#restartBarrier;
         await this.#retention?.close();
         this.#retention = null;
+        const delivery = this.#terminalDeliveryHub.metrics();
+        final.deliveryConnections = delivery.connections;
+        final.deliverySources = delivery.sourceSubscriptions;
+        final.pendingDeliverySources = delivery.pendingSourceSubscriptions;
+        final.pendingSourceCloses = delivery.pendingSourceCloses;
+        final.pendingDeliveryClients = delivery.pendingClients;
+        final.failures += delivery.sourceCloseFailures;
+        this.listenerDisposal = Object.freeze(final);
       }
       #assertConnected(clientId) {
         if (!this.#consumersByClientId.has(clientId)) {
@@ -58030,6 +58846,15 @@ var init_registry2 = __esm({
         this.#deliveryConnections.add(connection);
         return connection;
       }
+      #closeFailures = 0;
+      qualificationListeners() {
+        return Object.freeze({
+          closeFailures: this.#closeFailures,
+          mirrorSubscriptions: this.#subscriptions.size,
+          replicaSubscriptions: this.#replicaSubscriptions.size,
+          deliveryConnections: this.#deliveryConnections.size
+        });
+      }
       async close() {
         if (this.#closed) return;
         this.#closed = true;
@@ -58040,9 +58865,18 @@ var init_registry2 = __esm({
         this.#replicaSubscriptions.clear();
         this.#deliveryConnections.clear();
         this.#runtime.release(this);
-        await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
-        await Promise.allSettled(replicaSubscriptions.map((subscription) => subscription.close()));
-        await Promise.allSettled(deliveryConnections.map((connection) => connection.close()));
+        const mirrorResults = await Promise.allSettled(
+          subscriptions.map((subscription) => subscription.close())
+        );
+        const replicaResults = await Promise.allSettled(
+          replicaSubscriptions.map((subscription) => subscription.close())
+        );
+        const deliveryResults = await Promise.allSettled(
+          deliveryConnections.map((connection) => connection.close())
+        );
+        this.#closeFailures += [...mirrorResults, ...replicaResults, ...deliveryResults].filter(
+          (result2) => result2.status === "rejected"
+        ).length;
       }
       #assertOpen() {
         if (this.#closed) throw new Error(`SessionRuntime consumer ${this.surface} is closed`);
@@ -58091,7 +58925,7 @@ var TransportSchemaZ, LeaseIdSchemaZ, HostClientIdSchemaZ, clientsByRegistry, Se
 var init_transport_binding = __esm({
   "packages/daemon/src/terminal/session-runtime/transport-binding.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_registry2();
     TransportSchemaZ = z90.enum(["terminal-attachment", "pane-stream"]);
     LeaseIdSchemaZ = z90.uuid();
@@ -58564,7 +59398,7 @@ var init_transport_binding = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash19, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash18, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -58612,7 +59446,7 @@ function safeCloseSocket(socket, code2, reason) {
   }
 }
 function digestSecret(secret) {
-  return createHash19("sha256").update(secret, "utf8").digest();
+  return createHash18("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
@@ -58785,7 +59619,7 @@ var GROUPED_TMUX_VIEW_SESSION_PREFIX, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT, GROU
 var init_grouped_tmux = __esm({
   "packages/daemon/src/terminal/attachments/grouped-tmux.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     GROUPED_TMUX_VIEW_SESSION_PREFIX = "_tmux-ide-view-v1-";
     GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT = "TMUX_IDE_ATTACHMENT_VIEW";
     GROUPED_TMUX_MAX_GENERATION = 65535;
@@ -58818,7 +59652,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash20, randomBytes as randomBytes4, randomUUID as randomUUID22, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash19, randomBytes as randomBytes5, randomUUID as randomUUID22, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 import { z as z93 } from "zod";
 function positiveDuration(value, fallback, label4) {
   const resolved2 = value ?? fallback;
@@ -58828,7 +59662,7 @@ function positiveDuration(value, fallback, label4) {
   return resolved2;
 }
 function hashTicket(ticket) {
-  return createHash20("sha256").update(ticket, "utf8").digest();
+  return createHash19("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
@@ -58853,7 +59687,7 @@ var BindingIdSchemaZ, RequestIdSchemaZ, RuntimeWindowId, AttachmentViewOperation
 var init_lease_manager = __esm({
   "packages/daemon/src/terminal/attachments/lease-manager.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_grouped_tmux();
     BindingIdSchemaZ = z93.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     RequestIdSchemaZ = z93.uuid();
@@ -58890,7 +59724,7 @@ var init_lease_manager = __esm({
         this.#catalog = options.catalog;
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
-        this.#randomBytes = options.randomBytes ?? randomBytes4;
+        this.#randomBytes = options.randomBytes ?? randomBytes5;
         this.#createId = options.createId ?? randomUUID22;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
@@ -59575,7 +60409,7 @@ var init_direct_websocket = __esm({
     "use strict";
     init_admission_util();
     init_terminal_attachment_stream();
-    init_src();
+    init_src2();
     init_lease_manager();
     init_registry2();
     TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL;
@@ -61062,8 +61896,8 @@ var MAX_TMUX_OUTPUT_BYTES2, MAX_ENUMERATED_VIEWS, MAX_ENUMERATED_WINDOWS_PER_VIE
 var init_tmux_view_executor = __esm({
   "packages/daemon/src/terminal/attachments/tmux-view-executor.ts"() {
     "use strict";
-    init_src2();
     init_src();
+    init_src2();
     init_grouped_tmux();
     MAX_TMUX_OUTPUT_BYTES2 = 128 * 1024;
     MAX_ENUMERATED_VIEWS = 256;
@@ -61834,8 +62668,8 @@ var init_pty_tmux_attachment_launcher = __esm({
         const lifecycleEpoch = this.#lifecycleEpoch;
         const attemptId = randomUUID23();
         let resolveOutcome;
-        const outcome = new Promise((resolve41) => {
-          resolveOutcome = resolve41;
+        const outcome = new Promise((resolve42) => {
+          resolveOutcome = resolve42;
         });
         const earlyFrames = [];
         let earlyBytes = 0;
@@ -62259,7 +63093,7 @@ function defaultCommandExecutor(executable, argv, options) {
   });
 }
 function defaultReadCommandExecutor(executable, argv, options) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     execFile9(
       executable,
       [...argv],
@@ -62272,7 +63106,7 @@ function defaultReadCommandExecutor(executable, argv, options) {
         signal: options.signal,
         windowsHide: true
       },
-      (error, stdout) => error ? reject(error) : resolve41(stdout)
+      (error, stdout) => error ? reject(error) : resolve42(stdout)
     );
   });
 }
@@ -62472,6 +63306,7 @@ function analyzeInventoryPanes(panes) {
         active: _active,
         role: _role,
         name: _name,
+        nameSource: _nameSource,
         type: _type,
         missionStamp: _missionStamp,
         dir: _dir,
@@ -62714,6 +63549,7 @@ async function discoverWorkspaceRegistryTerminalInventory(registry, runner, sign
         active: _active,
         role: _role,
         name: _name,
+        nameSource: _nameSource,
         type: _type,
         missionStamp: _missionStamp,
         dir: _dir,
@@ -62761,8 +63597,8 @@ var init_native_runtime = __esm({
     "use strict";
     init_native_pane_identity();
     init_tmux_server_generation_runner();
-    init_src();
     init_src2();
+    init_src();
     init_runtime_observability();
     init_transport_binding();
     init_unix_socket_authority();
@@ -62974,6 +63810,7 @@ var init_native_runtime = __esm({
                 active: _active,
                 role: _role,
                 name: _name,
+                nameSource: _nameSource,
                 type: _type,
                 missionStamp: _missionStamp,
                 dir: _dir,
@@ -63504,6 +64341,7 @@ var init_native_runtime = __esm({
                 active: _active,
                 role: _role,
                 name: _name,
+                nameSource: _nameSource,
                 type: _type,
                 missionStamp: _missionStamp,
                 dir: _dir,
@@ -63731,6 +64569,7 @@ var init_native_runtime = __esm({
               active: _active,
               role: _role,
               name: _name,
+              nameSource: _nameSource,
               type: _type,
               missionStamp: _missionStamp,
               dir: _dir,
@@ -64113,13 +64952,13 @@ function createTmuxAgentStatusProbe(deps2) {
       );
       if (!signal) return result2;
       if (signal.aborted) return Promise.reject(signal.reason);
-      return new Promise((resolve41, reject) => {
+      return new Promise((resolve42, reject) => {
         const aborted = () => reject(signal.reason);
         signal.addEventListener("abort", aborted, { once: true });
         void result2.then(
           (value) => {
             signal.removeEventListener("abort", aborted);
-            resolve41(value);
+            resolve42(value);
           },
           (error) => {
             signal.removeEventListener("abort", aborted);
@@ -64160,7 +64999,7 @@ var init_agent_status_probe = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash21, randomBytes as randomBytes5, randomUUID as randomUUID24, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash20, randomBytes as randomBytes6, randomUUID as randomUUID24, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z97 } from "zod";
 function positiveDuration2(value, fallback, label4) {
   const resolved2 = value ?? fallback;
@@ -64170,7 +65009,7 @@ function positiveDuration2(value, fallback, label4) {
   return resolved2;
 }
 function hashTicket2(ticket) {
-  return createHash21("sha256").update(ticket, "utf8").digest();
+  return createHash20("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
@@ -64186,7 +65025,7 @@ var BindingIdSchemaZ3, RequestIdSchemaZ2, SessionNameSchemaZ, TicketPattern2, Pa
 var init_lease_manager2 = __esm({
   "packages/daemon/src/terminal/pane-stream/lease-manager.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     BindingIdSchemaZ3 = z97.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     RequestIdSchemaZ2 = z97.uuid();
     SessionNameSchemaZ = z97.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
@@ -64212,7 +65051,7 @@ var init_lease_manager2 = __esm({
       constructor(options) {
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
-        this.#randomBytes = options.randomBytes ?? randomBytes5;
+        this.#randomBytes = options.randomBytes ?? randomBytes6;
         this.#createId = options.createId ?? randomUUID24;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
@@ -64566,8 +65405,8 @@ var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
-    init_src();
-    init_src();
+    init_src2();
+    init_src2();
     init_admission_util();
     init_registry2();
     init_terminal_delivery_observation_identity();
@@ -65296,7 +66135,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
         for (const waiters of this.#semanticDrainWaiters.values())
-          for (const resolve41 of waiters) resolve41();
+          for (const resolve42 of waiters) resolve42();
         this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
@@ -65662,9 +66501,9 @@ var init_pane_stream_websocket = __esm({
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
-        return new Promise((resolve41) => {
+        return new Promise((resolve42) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
-          waiters.push(resolve41);
+          waiters.push(resolve42);
           this.#semanticDrainWaiters.set(pane, waiters);
           this.#ensureDrainTick();
         });
@@ -65976,7 +66815,7 @@ var init_pane_stream_websocket = __esm({
           const waiters = this.#semanticDrainWaiters.get(pane);
           if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
-            for (const resolve41 of waiters) resolve41();
+            for (const resolve42 of waiters) resolve42();
           }
         }
       }
@@ -66798,14 +67637,14 @@ function tmuxInteractionWaitCommand(bufferName, channel) {
 }
 function defaultWaiter(authority2, bufferName) {
   const prefix = socketArguments(authority2);
-  return (channel, signal) => new Promise((resolve41, reject) => {
+  return (channel, signal) => new Promise((resolve42, reject) => {
     execFile10(
       authority2.executablePath,
       [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
       { signal, encoding: "utf8", windowsHide: true },
       (error) => {
-        if (!error) resolve41();
-        else if (signal.aborted) resolve41();
+        if (!error) resolve42();
+        else if (signal.aborted) resolve42();
         else reject(error);
       }
     );
@@ -66813,12 +67652,12 @@ function defaultWaiter(authority2, bufferName) {
 }
 function abortableDelay(milliseconds, signal) {
   if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     const timer = setTimeout(done, milliseconds);
     function done() {
       signal.removeEventListener("abort", done);
       clearTimeout(timer);
-      resolve41();
+      resolve42();
     }
     signal.addEventListener("abort", done, { once: true });
   });
@@ -66888,8 +67727,8 @@ var HOOK_MARKER, OWNED_HOOK_MARKER, FIELD_SEPARATOR, EVENT_SEPARATOR2, RUNTIME_P
 var init_tmux_external_interaction_observer = __esm({
   "packages/daemon/src/lib/tmux-external-interaction-observer.ts"() {
     "use strict";
-    init_src();
-    init_src();
+    init_src2();
+    init_src2();
     init_log();
     init_tmux_interaction_retention();
     init_workspace_pane_creation2();
@@ -67571,8 +68410,8 @@ var init_workspace_multiplexer_verbs = __esm({
   "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
     "use strict";
     init_discovery();
-    init_src();
     init_src2();
+    init_src();
     init_workspace_pane_creation2();
     init_tmux_terminal_color();
     init_workspace_registry();
@@ -68911,7 +69750,7 @@ var InteractionReceiptJournal;
 var init_interaction_receipt_journal = __esm({
   "packages/daemon/src/lib/interaction-receipt-journal.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     InteractionReceiptJournal = class {
       #capacity;
       #receipts = [];
@@ -69038,7 +69877,7 @@ var InteractionObservationStatusStore;
 var init_interaction_observation_status = __esm({
   "packages/daemon/src/lib/interaction-observation-status.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     InteractionObservationStatusStore = class {
       #status;
       #listeners = /* @__PURE__ */ new Set();
@@ -69143,7 +69982,7 @@ var HISTORY_CAPACITY, HISTORY_MS, runtimeKey, bindingKey, InteractionEvidenceAut
 var init_interaction_evidence_authority = __esm({
   "packages/daemon/src/lib/interaction-evidence-authority.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     HISTORY_CAPACITY = 4096;
     HISTORY_MS = 3e4;
     runtimeKey = (row) => `${row.sessionId}\0${row.runtimePaneId}\0${row.semanticPaneId}`;
@@ -69349,15 +70188,25 @@ function createTmuxInteractionObservationHandler(policy) {
 var init_tmux_interaction_observation_handler = __esm({
   "packages/daemon/src/lib/tmux-interaction-observation-handler.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
 // packages/daemon/src/lib/tmux-server-owner.ts
 import { execFileSync as execFileSync17 } from "node:child_process";
-import { randomUUID as randomUUID27 } from "node:crypto";
+import { createHash as createHash21, randomUUID as randomUUID27 } from "node:crypto";
 import { mkdirSync as mkdirSync21 } from "node:fs";
 import { z as z100 } from "zod";
+function discoveredWorkspaceName(registry, sessionName) {
+  if (WorkspaceIdSchemaZ.safeParse(sessionName).success && !registry.has(sessionName))
+    return sessionName;
+  for (let suffix = 0; suffix <= registry.list().length; suffix += 1) {
+    const digest3 = createHash21("sha256").update(`tmux-ide.discovered-workspace.v1\0${sessionName}\0${suffix}`).digest("hex");
+    const name = `session-${digest3}`;
+    if (!registry.has(name)) return name;
+  }
+  throw new Error("Unable to allocate discovered workspace identity");
+}
 function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () => void 0) {
   return async () => {
     assertOpen();
@@ -69391,9 +70240,9 @@ function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () =
       if (workspaceRegistry.isVolatile(workspace.name) && !names.has(workspace.sessionName))
         workspaceRegistry.remove(workspace.name);
     for (const { summary, dir } of rows.values())
-      if (!workspaceRegistry.has(summary.sessionName) && !workspaceRegistry.list().some((workspace) => workspace.sessionName === summary.sessionName))
+      if (!workspaceRegistry.list().some((workspace) => workspace.sessionName === summary.sessionName))
         workspaceRegistry.add({
-          name: summary.sessionName,
+          name: discoveredWorkspaceName(workspaceRegistry, summary.sessionName),
           sessionName: summary.sessionName,
           projectDir: dir,
           persistence: "volatile"
@@ -69836,6 +70685,7 @@ var init_tmux_server_owner = __esm({
     init_tmux_server_session_create();
     init_tmux_session_mutation_fence();
     init_tmux_server_session_open();
+    init_src2();
     init_discovery();
     init_native_runtime();
     init_agent_status_probe();
@@ -69861,7 +70711,7 @@ var MAX_TMUX_SERVER_OWNERS, TmuxServerSelectorSchemaZ, TmuxServerRegistrationSch
 var init_tmux_server_owners = __esm({
   "packages/daemon/src/lib/tmux-server-owners.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     MAX_TMUX_SERVER_OWNERS = 16;
     TmuxServerSelectorSchemaZ = TmuxServerRegistrationRequestSchemaZ.shape.selector;
     TmuxServerRegistrationSchemaZ = TmuxServerRegistrationRequestSchemaZ.extend({
@@ -70243,14 +71093,14 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve41) => wss.close(() => resolve41()));
+      await new Promise((resolve42) => wss.close(() => resolve42()));
     }
   };
 }
 var init_pane_stream_upgrade = __esm({
   "packages/daemon/src/server/pane-stream-upgrade.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_pane_stream_websocket();
   }
 });
@@ -70423,7 +71273,7 @@ async function createEmbeddedTmuxServerOwners(options) {
 var init_embedded_tmux_server_owners = __esm({
   "packages/daemon/src/lib/embedded-tmux-server-owners.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_tmux_server_owners();
     init_tmux_server_registration();
     init_tmux_server_owner();
@@ -70836,6 +71686,139 @@ var init_embedded_daemon_lifecycle = __esm({
   }
 });
 
+// packages/daemon/src/lib/runtime-trace-writer.ts
+function createRuntimeTraceWriter(stream, identity2, closeTimeoutMs = 1e3) {
+  const counts = {
+    offeredRecords: 0,
+    acceptedRecords: 0,
+    droppedRecords: 0,
+    saturatedDrops: 0,
+    failedDrops: 0,
+    oversizedRecords: 0,
+    constructionFailures: 0,
+    rejectedWrites: 0,
+    writeFailures: 0
+  };
+  let saturated = false;
+  let failed = false;
+  let closed = false;
+  let closing;
+  let closeFailure;
+  const snapshot2 = () => ({ ...counts, failed, saturated, writableLength: stream.writableLength });
+  stream.on("drain", () => {
+    if (!failed) saturated = false;
+  });
+  stream.on("error", (error) => {
+    counts.writeFailures++;
+    failed = true;
+    closeFailure?.(error);
+  });
+  return {
+    snapshot: snapshot2,
+    append(build) {
+      if (closed) return;
+      counts.offeredRecords++;
+      if (failed || stream.destroyed) {
+        counts.failedDrops++;
+        counts.droppedRecords++;
+        return;
+      }
+      if (saturated) {
+        counts.saturatedDrops++;
+        counts.droppedRecords++;
+        return;
+      }
+      let line;
+      try {
+        const json2 = JSON.stringify(build());
+        if (json2 === void 0) throw new Error("Trace record is not JSON");
+        line = `${json2}
+`;
+        if (Buffer.byteLength(line) > MAX_RECORD_BYTES) {
+          counts.oversizedRecords++;
+          counts.droppedRecords++;
+          return;
+        }
+      } catch {
+        counts.constructionFailures++;
+        counts.droppedRecords++;
+        failed = true;
+        return;
+      }
+      try {
+        saturated = !stream.write(line);
+        counts.acceptedRecords++;
+      } catch {
+        counts.rejectedWrites++;
+        counts.droppedRecords++;
+        failed = true;
+      }
+    },
+    close(incomplete = false) {
+      if (closing) return closing;
+      closed = true;
+      if (incomplete) failed = true;
+      closing = new Promise((resolve42, reject) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          stream.off("drain", end);
+          stream.off("close", prematureClose);
+          closeFailure = void 0;
+          if (error) {
+            failed = true;
+            stream.destroy();
+            reject(error);
+          } else resolve42();
+        };
+        const prematureClose = () => finish(new Error("Runtime trace closed before final summary completion"));
+        const end = () => {
+          try {
+            if (stream.destroyed || !stream.writable)
+              throw new Error("Runtime trace stream unavailable");
+            const summary = {
+              version: 1,
+              type: "performance.daemon-trace.summary",
+              ...identity2,
+              ...snapshot2(),
+              maxRecordBytes: MAX_RECORD_BYTES,
+              acceptedRecordsExcludeSummary: true,
+              shutdownKind: incomplete ? "startup-rollback" : "normal",
+              ringTailOverwrites: "not-file-loss"
+            };
+            stream.end(
+              `${JSON.stringify(summary)}
+`,
+              () => finish(failed ? new Error("Runtime trace recorded failures") : void 0)
+            );
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error("Runtime trace end failed"));
+          }
+        };
+        const timer = setTimeout(
+          () => finish(new Error("Runtime trace close timed out")),
+          closeTimeoutMs
+        );
+        closeFailure = finish;
+        stream.on("close", prematureClose);
+        if (stream.destroyed) finish(new Error("Runtime trace stream destroyed"));
+        else if (saturated && stream.writableNeedDrain) stream.once("drain", end);
+        else end();
+      });
+      return closing;
+    }
+  };
+}
+var MAX_RECORD_BYTES;
+var init_runtime_trace_writer = __esm({
+  "packages/daemon/src/lib/runtime-trace-writer.ts"() {
+    "use strict";
+    MAX_RECORD_BYTES = 64 * 1024;
+  }
+});
+
 // packages/daemon/src/lib/tmux-authority-replacement.ts
 import { execFile as execFile12 } from "node:child_process";
 import { lstatSync as lstatSync11 } from "node:fs";
@@ -71042,14 +72025,14 @@ function parseDaemonMonitorPanes(raw) {
   });
 }
 function execMonitorCommandAsync(executable, args, signal) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     execFile13(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve41(stdout.trim());
+        else resolve42(stdout.trim());
       }
     );
   });
@@ -72198,8 +73181,8 @@ var init_daemon_fleet_facts_observer = __esm({
           }
         }
         let resolveReady;
-        const ready = new Promise((resolve41) => {
-          resolveReady = resolve41;
+        const ready = new Promise((resolve42) => {
+          resolveReady = resolve42;
         });
         const waiter = { demands: unique, resolve: resolveReady };
         this.#waiters.add(waiter);
@@ -72323,8 +73306,8 @@ var init_daemon_fleet_facts_observer = __esm({
         }
         let done;
         let timedOut = false;
-        const cancelled = new Promise((resolve41) => {
-          done = () => resolve41(null);
+        const cancelled = new Promise((resolve42) => {
+          done = () => resolve42(null);
         });
         const controller = new AbortController();
         const abort = () => {
@@ -72640,7 +73623,7 @@ var init_directory_watcher = __esm({
 
 // packages/daemon/src/command-center/workspace-resource-observer.ts
 import { execFileSync as execFileSync19 } from "node:child_process";
-import { isAbsolute as isAbsolute18, resolve as resolve21 } from "node:path";
+import { isAbsolute as isAbsolute18, resolve as resolve22 } from "node:path";
 function slot() {
   return {
     epoch: 0,
@@ -72663,7 +73646,7 @@ function resolveGitDirectory(projectDir) {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }
     }).trim();
     if (!value) return null;
-    return isAbsolute18(value) ? value : resolve21(projectDir, value);
+    return isAbsolute18(value) ? value : resolve22(projectDir, value);
   } catch {
     return null;
   }
@@ -73732,7 +74715,7 @@ var init_ws_events = __esm({
     init_application_shell2();
     init_project_registry();
     init_workspace_registry();
-    init_src();
+    init_src2();
     init_workspace_resource_observer();
     WS_OPEN5 = 1;
     KEEPALIVE_INTERVAL_MS = 25e3;
@@ -73758,9 +74741,9 @@ var init_ws_events = __esm({
 });
 
 // packages/daemon/src/lib/auth-token.ts
-import { randomBytes as randomBytes6 } from "node:crypto";
+import { randomBytes as randomBytes7 } from "node:crypto";
 function generateAuthToken() {
-  return randomBytes6(32).toString("base64url");
+  return randomBytes7(32).toString("base64url");
 }
 var init_auth_token = __esm({
   "packages/daemon/src/lib/auth-token.ts"() {
@@ -74172,8 +75155,8 @@ var MAX_OPERATIONS2, MAX_REPLAYABLE_FAILURES3, MAX_TMUX_OUTPUT_BYTES4, SESSION_M
 var init_workspace_open2 = __esm({
   "packages/daemon/src/lib/workspace-open.ts"() {
     "use strict";
-    init_src();
     init_src2();
+    init_src();
     init_config_context();
     init_workspace_pane_creation2();
     init_workspace_registry();
@@ -75402,7 +76385,7 @@ var NATIVE_DOCK_ORDER, LEGACY_DOCK_TABS, LEGACY_PANELS;
 var init_app_window_state2 = __esm({
   "packages/daemon/src/lib/app-window-state.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_src3();
     init_src3();
     NATIVE_DOCK_ORDER = ["files", "changes", "missions", "activity"];
@@ -75963,7 +76946,7 @@ var APP_WINDOW_FLOAT_MIN_WIDTH, APP_WINDOW_FLOAT_MIN_HEIGHT, APP_WINDOW_COORDINA
 var init_app_window_kernel = __esm({
   "packages/daemon/src/lib/app-window-kernel.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_app_window_state2();
     APP_WINDOW_FLOAT_MIN_WIDTH = 20;
     APP_WINDOW_FLOAT_MIN_HEIGHT = 6;
@@ -76351,7 +77334,7 @@ var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError
 var init_app_window_repository = __esm({
   "packages/daemon/src/lib/app-window-repository.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_project_runtime_repository();
     init_app_window_kernel();
     init_app_window_state2();
@@ -76468,7 +77451,7 @@ var MAX_OPERATIONS3, ERROR_MESSAGES7, AppWindowMutationError, AppWindowMutationA
 var init_app_window_mutation2 = __esm({
   "packages/daemon/src/lib/app-window-mutation.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_app_window_kernel();
     init_app_window_repository();
     init_project_runtime_repository();
@@ -76677,7 +77660,7 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator(false)?.shutdown();
-      await new Promise((resolve41) => wss.close(() => resolve41()));
+      await new Promise((resolve42) => wss.close(() => resolve42()));
     }
   };
 }
@@ -76685,7 +77668,7 @@ var init_terminal_attachment_upgrade = __esm({
   "packages/daemon/src/server/terminal-attachment-upgrade.ts"() {
     "use strict";
     init_terminal_attachment_stream();
-    init_src();
+    init_src2();
     init_direct_websocket();
   }
 });
@@ -76798,7 +77781,7 @@ import {
   realpathSync as realpathSync20,
   statSync as statSync18
 } from "node:fs";
-import { join as join38, resolve as resolve22 } from "node:path";
+import { join as join38, resolve as resolve23 } from "node:path";
 function classifySupervisor(facts) {
   if (facts.launcher === "embedded")
     return { kind: "embedded", evidence: "startEmbeddedDaemon host" };
@@ -77203,7 +78186,7 @@ function discoverLogFiles(options) {
       consider(join38(dir, entry.name));
     }
   }
-  for (const path2 of options.extraPaths ?? []) consider(resolve22(path2));
+  for (const path2 of options.extraPaths ?? []) consider(resolve23(path2));
   if (files.length >= MAX_DISCOVERED_FILES)
     warnings.push(`log discovery capped at ${MAX_DISCOVERED_FILES} files`);
   return { files, warnings };
@@ -77625,7 +78608,7 @@ var AutomationRequestError, label3, same4;
 var init_automation = __esm({
   "packages/daemon/src/command-center/automation.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_automation_operation_registry();
     init_pane_source_credentials();
     init_owner_authority();
@@ -77735,9 +78718,9 @@ function streamTmuxInteractions(c, server, journal, after, assertCurrent, observ
           cursor2 = next;
           continue;
         }
-        await new Promise((resolve41) => {
-          wake = resolve41;
-          if (dirty || stopped) resolve41();
+        await new Promise((resolve42) => {
+          wake = resolve42;
+          if (dirty || stopped) resolve42();
         });
         wake = null;
       }
@@ -77752,7 +78735,7 @@ function streamTmuxInteractions(c, server, journal, after, assertCurrent, observ
 var init_tmux_server_interaction_events2 = __esm({
   "packages/daemon/src/command-center/tmux-server-interaction-events.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -77794,7 +78777,7 @@ function mountTmuxServerNativeBackingRoute(app, options) {
 var init_tmux_server_native_backing = __esm({
   "packages/daemon/src/command-center/tmux-server-native-backing.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_tmux_server_owners();
     init_terminal_native_backing_route();
   }
@@ -77969,7 +78952,7 @@ var MAX_ISSUE_REQUEST_BYTES;
 var init_pane_stream_issue = __esm({
   "packages/daemon/src/command-center/pane-stream-issue.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_owner_authority();
     init_lease_manager2();
     init_pane_stream_websocket();
@@ -78004,7 +78987,7 @@ function terminalRuntimeInventoryEnvelope(daemon, session, resourceRevision) {
 var init_terminal_runtime_inventory2 = __esm({
   "packages/daemon/src/command-center/resources/terminal-runtime-inventory.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_application_shell2();
   }
 });
@@ -78321,11 +79304,11 @@ function mountTmuxServerRoutes(app, options) {
           let sent = revision;
           let nextIdentityCheck = Date.now() + 5e3;
           while (!stopped) {
-            await new Promise((resolve41) => {
-              const timer = setTimeout(resolve41, 1e3);
+            await new Promise((resolve42) => {
+              const timer = setTimeout(resolve42, 1e3);
               wake = () => {
                 clearTimeout(timer);
-                resolve41();
+                resolve42();
               };
               if (stopped || revision !== sent) wake();
             });
@@ -78437,7 +79420,7 @@ var init_tmux_servers = __esm({
     init_tmux_server_native_backing();
     init_application_shell2();
     init_fleet_catalog2();
-    init_src();
+    init_src2();
     init_tmux_server_owners();
     init_workspace_multiplexer_verbs();
     init_owner_authority();
@@ -78542,13 +79525,13 @@ async function streamBoundedLogs(stream, options) {
     while (!closed) {
       const item = queue[0];
       if (!item) {
-        await new Promise((resolve41) => {
-          wake = resolve41;
+        await new Promise((resolve42) => {
+          wake = resolve42;
         });
         continue;
       }
-      const cancelled = new Promise((resolve41) => {
-        cancelWrite = resolve41;
+      const cancelled = new Promise((resolve42) => {
+        cancelWrite = resolve42;
       });
       timer = setTimeout(abort, options.writeTimeoutMs ?? 5e3);
       timer.unref?.();
@@ -78601,7 +79584,7 @@ function mountWorkspaceAdmissionRoute(app, options) {
 var init_workspace_admission_route = __esm({
   "packages/daemon/src/command-center/resources/workspace-admission-route.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_owner_authority();
   }
 });
@@ -78681,7 +79664,7 @@ var init_saved_machines3 = __esm({
   "packages/daemon/src/lib/saved-machines.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src();
+    init_src2();
     init_src3();
     init_runtime_namespace();
     MAX_REGISTRY_BYTES = 64 * 1024;
@@ -78767,7 +79750,7 @@ var Request2, MutationRequest;
 var init_saved_machine_route = __esm({
   "packages/daemon/src/command-center/resources/saved-machine-route.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_saved_machines();
     init_saved_machines3();
     init_owner_authority();
@@ -79390,7 +80373,7 @@ var init_sizes = __esm({
 });
 
 // packages/daemon/src/lib/launch-plan.ts
-import { resolve as resolve23 } from "node:path";
+import { resolve as resolve24 } from "node:path";
 import { createHash as createHash26 } from "node:crypto";
 function semanticWindowIdForSession(session) {
   const digest3 = createHash26("sha256").update("tmux-ide.launch.window.v1\0", "utf8").update(session, "utf8").digest("hex").slice(0, 20);
@@ -79468,7 +80451,7 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
         paneType
       };
       if (pane.dir && firstPanesOfRows.has(tmuxPane)) {
-        action.chdir = resolve23(dir, pane.dir);
+        action.chdir = resolve24(dir, pane.dir);
       }
       if (pane.env && typeof pane.env === "object") {
         action.exports = Object.entries(pane.env).map(
@@ -79539,7 +80522,7 @@ function paneIdentityLabel(pane) {
 var init_launch_plan = __esm({
   "packages/daemon/src/lib/launch-plan.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_agent_kind();
     init_shell();
   }
@@ -79631,7 +80614,7 @@ __export(validate_exports, {
   validate: () => validate,
   validateConfig: () => validateConfig
 });
-import { resolve as resolve24 } from "node:path";
+import { resolve as resolve25 } from "node:path";
 function validateConfig(config2) {
   if (config2 == null || typeof config2 !== "object" || Array.isArray(config2)) {
     return ["config must be an object"];
@@ -79755,7 +80738,7 @@ function mapZodIssue(issue, config2) {
   return `${display}: ${issue.message ?? "invalid value"}`;
 }
 async function validate(targetDir, { json: json2 } = {}) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve25(targetDir ?? ".");
   const resolved2 = await resolveConfig(dir);
   const config2 = resolved2.launchConfig;
   if (!config2) {
@@ -79809,13 +80792,13 @@ __export(resolve_exports, {
   resolveWidgetCommand: () => resolveWidgetCommand,
   resolveWidgetSpawn: () => resolveWidgetSpawn
 });
-import { resolve as resolve25, dirname as dirname36 } from "node:path";
+import { resolve as resolve26, dirname as dirname36 } from "node:path";
 import { existsSync as existsSync30 } from "node:fs";
-import { fileURLToPath as fileURLToPath8 } from "node:url";
+import { fileURLToPath as fileURLToPath9 } from "node:url";
 function widgetEntryPath(entry) {
-  const sibling = resolve25(__dirname3, entry);
+  const sibling = resolve26(__dirname3, entry);
   if (existsSync30(sibling)) return sibling;
-  return resolve25(__dirname3, "../packages/daemon/src/widgets", entry);
+  return resolve26(__dirname3, "../packages/daemon/src/widgets", entry);
 }
 function widgetArgs(opts) {
   const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
@@ -79870,7 +80853,7 @@ var init_resolve = __esm({
     "use strict";
     init_shell();
     init_compiled();
-    __dirname3 = dirname36(fileURLToPath8(import.meta.url));
+    __dirname3 = dirname36(fileURLToPath9(import.meta.url));
     WIDGET_ENTRY_POINTS = {
       explorer: "explorer/index.tsx",
       changes: "changes/index.tsx",
@@ -79879,7 +80862,7 @@ var init_resolve = __esm({
       config: "config/index.tsx",
       sidebar: "sidebar/index.tsx"
     };
-    REPO_ROOT = existsSync30(resolve25(__dirname3, "explorer/index.tsx")) ? resolve25(__dirname3, "../../../..") : resolve25(__dirname3, "..");
+    REPO_ROOT = existsSync30(resolve26(__dirname3, "explorer/index.tsx")) ? resolve26(__dirname3, "../../../..") : resolve26(__dirname3, "..");
     WIDGET_TYPES = Object.keys(WIDGET_ENTRY_POINTS);
   }
 });
@@ -79892,7 +80875,7 @@ __export(launch_exports, {
   launchRuntimeDir: () => launchRuntimeDir,
   waitForPaneCommand: () => waitForPaneCommand
 });
-import { resolve as resolve26 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash as createHash27 } from "node:crypto";
 function stripWidgetPanes(rows) {
@@ -79952,7 +80935,7 @@ function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
     for (let paneIdx = 1; paneIdx < panes.length; paneIdx++) {
       const pane = panes[paneIdx];
       const targetPane = rowPanes[paneIdx - 1];
-      const paneDir = pane.dir ? resolve26(dir, pane.dir) : dir;
+      const paneDir = pane.dir ? resolve27(dir, pane.dir) : dir;
       const newPaneId = splitPaneFn({
         targetPane,
         direction: "horizontal",
@@ -80010,7 +80993,7 @@ async function launch(targetDir, {
   attach: attach2 = true,
   sessionName
 } = {}) {
-  const inputDir = resolve26(targetDir ?? ".");
+  const inputDir = resolve27(targetDir ?? ".");
   const context = await resolveProjectConfigContext(inputDir);
   const dir = launchRuntimeDir(context);
   const config2 = await loadLaunchConfig(context, json2);
@@ -80128,9 +81111,9 @@ var init_launch = __esm({
     init_sizes();
     init_output();
     init_launch_plan();
-    init_src();
-    init_session_options();
     init_src2();
+    init_session_options();
+    init_src();
     init_validate();
     init_sidebar();
     init_resolve();
@@ -80167,7 +81150,7 @@ var init_resolve_project = __esm({
   "packages/daemon/src/command-center/actions/handlers/_resolve-project.ts"() {
     "use strict";
     init_project_registry();
-    init_src2();
+    init_src();
     init_errors3();
   }
 });
@@ -80215,7 +81198,7 @@ var TERMINAL_TAB_ID_PREFIX, TERMINAL_TAB_ID_SUFFIX;
 var init_project_open_terminal = __esm({
   "packages/daemon/src/command-center/actions/handlers/project-open-terminal.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_launch();
     init_active_projects();
     init_pty_bridge();
@@ -80294,7 +81277,7 @@ async function projectLaunchHandler(input, deps2 = {}) {
 var init_project_launch = __esm({
   "packages/daemon/src/command-center/actions/handlers/project-launch.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_launch();
     init_errors3();
     init_resolve_project();
@@ -80333,7 +81316,7 @@ async function projectStopHandler(input, deps2 = {}) {
 var init_project_stop = __esm({
   "packages/daemon/src/command-center/actions/handlers/project-stop.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_errors3();
     init_resolve_project();
   }
@@ -80344,9 +81327,9 @@ var restart_exports = {};
 __export(restart_exports, {
   restart: () => restart
 });
-import { resolve as resolve27 } from "node:path";
+import { resolve as resolve28 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve27(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result2 = killSession(session);
@@ -80360,7 +81343,7 @@ var init_restart = __esm({
     "use strict";
     init_config_context();
     init_launch();
-    init_src2();
+    init_src();
   }
 });
 
@@ -80519,7 +81502,7 @@ __export(config_exports, {
   configSetValue: () => configSetValue,
   mutateConfig: () => mutateConfig
 });
-import { resolve as resolve28 } from "node:path";
+import { resolve as resolve29 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -80653,7 +81636,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve28(targetDir ?? ".");
+  const dir = resolve29(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -81669,7 +82652,7 @@ var CommandRegistry;
 var init_command_registry = __esm({
   "packages/daemon/src/lib/command-registry.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     CommandRegistry = class {
       definitions = /* @__PURE__ */ new Map();
       constructor(definitions = []) {
@@ -81778,7 +82761,7 @@ var ACTION_COMMAND_METADATA, DAEMON_ACTION_COMMAND_DEFINITIONS, daemonActionComm
 var init_command_definitions = __esm({
   "packages/daemon/src/command-center/actions/command-definitions.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_command_registry();
     ACTION_COMMAND_METADATA = {
       "project.openTerminal": { label: "Open project terminal", category: "project" },
@@ -82127,7 +83110,7 @@ var init_dispatcher = __esm({
     init_pane_source_credentials();
     init_registry3();
     init_ws_events();
-    init_src();
+    init_src2();
     init_command_definitions();
     init_semantic_multiplexer_actions();
     ownerAuthorizedContexts = /* @__PURE__ */ new WeakSet();
@@ -82299,7 +83282,7 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync22, readdirSync as readdirSync6, statSync as statSync19 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { isAbsolute as isAbsolute20, join as join43, resolve as resolve29, sep as sep10 } from "node:path";
+import { isAbsolute as isAbsolute20, join as join43, resolve as resolve30, sep as sep10 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep10) ? root : root + sep10;
@@ -82334,14 +83317,14 @@ __export(detect_exports, {
   detectStack: () => detectStack,
   suggestConfig: () => suggestConfig
 });
-import { resolve as resolve30, basename as basename15 } from "node:path";
+import { resolve as resolve31, basename as basename15 } from "node:path";
 import { readFileSync as readFileSync31, existsSync as existsSync31 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync31(resolve30(dir, name));
+  return existsSync31(resolve31(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync31(resolve30(dir, name), "utf-8"));
+    return JSON.parse(readFileSync31(resolve31(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -82403,7 +83386,7 @@ function detectStack(dir) {
     detected2.language = detected2.language ?? "python";
     detected2.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync31(resolve30(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync31(resolve31(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected2, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -82491,7 +83474,7 @@ function suggestConfig(dir, detected2) {
   return config2;
 }
 async function detect(targetDir, { json: json2, write: write2 } = {}) {
-  const inputDir = resolve30(targetDir ?? ".");
+  const inputDir = resolve31(targetDir ?? ".");
   const context = write2 ? await resolveProjectConfigContext(inputDir) : null;
   const dir = context?.configWriteRoot ?? inputDir;
   const detected2 = detectStack(dir);
@@ -82543,7 +83526,7 @@ var init_detect = __esm({
 
 // packages/daemon/src/lib/project-inspect.ts
 import { existsSync as existsSync32 } from "node:fs";
-import { isAbsolute as isAbsolute21, resolve as resolve31 } from "node:path";
+import { isAbsolute as isAbsolute21, resolve as resolve32 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -82554,7 +83537,7 @@ function inferTestCommand(packageManager) {
 }
 async function inspectProject(dir, io = {}) {
   const exists = io.exists ?? existsSync32;
-  const absoluteDir = isAbsolute21(dir) ? dir : resolve31(dir);
+  const absoluteDir = isAbsolute21(dir) ? dir : resolve32(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -82831,7 +83814,7 @@ var ALWAYS_IGNORED_NAMES, LANGUAGE_BY_EXTENSION, MEDIA_TYPE_BY_EXTENSION, FilesA
 var init_workspace_files_authority = __esm({
   "packages/daemon/src/command-center/resources/workspace-files-authority.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_workspace_resource_ids();
     ALWAYS_IGNORED_NAMES = /* @__PURE__ */ new Set([
       "node_modules",
@@ -83406,7 +84389,7 @@ var HUNK_HEADER;
 var init_workspace_changes_git = __esm({
   "packages/daemon/src/command-center/resources/workspace-changes-git.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
   }
 });
@@ -83529,7 +84512,7 @@ var DIFF_MAX_BYTES, DIFF_TOTAL_LINE_BUDGET, GIT_TIMEOUT_MS2, GIT_MAX_BUFFER, Cha
 var init_workspace_changes_authority = __esm({
   "packages/daemon/src/command-center/resources/workspace-changes-authority.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_workspace_files_authority();
     init_workspace_resource_ids();
     init_workspace_changes_git();
@@ -84094,7 +85077,7 @@ var MAX_SPLIT_CHILDREN, FIRST_RUN_WINDOW_WIDTH, FIRST_RUN_WINDOW_HEIGHT, FIRST_R
 var init_application_shell_app_windows = __esm({
   "packages/daemon/src/lib/application-shell-app-windows.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_app_window_repository();
     init_project_runtime_repository();
     init_app_window_state2();
@@ -84600,7 +85583,7 @@ var MissionProjectionError, BOARD_COLUMNS, TERMINAL_MISSION_STATUSES;
 var init_mission_projections2 = __esm({
   "packages/daemon/src/lib/mission-projections.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_errors2();
     init_mission_repository();
     MissionProjectionError = class extends IdeError {
@@ -84741,7 +85724,7 @@ var COLUMN_ORDER, DESKTOP_MISSION_MAX_SOURCE_MISSIONS, DESKTOP_MISSION_MAX_SOURC
 var init_desktop_missions2 = __esm({
   "packages/daemon/src/command-center/resources/desktop-missions.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_mission_projections2();
     COLUMN_ORDER = ["running", "blocked", "review", "planned", "done"];
     DESKTOP_MISSION_MAX_SOURCE_MISSIONS = 512;
@@ -84928,7 +85911,7 @@ var MAX_ISSUE_REQUEST_BYTES2;
 var init_terminal_attachment_issue = __esm({
   "packages/daemon/src/command-center/terminal-attachment-issue.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_lease_manager();
     init_direct_websocket();
     init_semantic_pane_catalog();
@@ -85033,7 +86016,7 @@ function mountWorkspaceResourceRoutes(app, options) {
 var init_workspace_resource_routes = __esm({
   "packages/daemon/src/command-center/resources/workspace-resource-routes.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_owner_authority();
     init_workspace_changes_authority();
     init_workspace_files_authority();
@@ -85230,7 +86213,7 @@ var INFERRED_SUBORDINATE_ROLES;
 var init_agent_graph_overlay2 = __esm({
   "packages/daemon/src/command-center/resources/agent-graph-overlay.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_application_shell2();
     INFERRED_SUBORDINATE_ROLES = /* @__PURE__ */ new Set([
       "teammate",
@@ -85309,7 +86292,7 @@ var missionUnavailable;
 var init_workspace_missions_route = __esm({
   "packages/daemon/src/command-center/resources/workspace-missions-route.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_owner_authority();
     init_application_shell2();
     init_agent_graph_overlay2();
@@ -85544,7 +86527,7 @@ function projectStartupReadinessLadder(facts, observedAt) {
 var init_startup_readiness2 = __esm({
   "packages/daemon/src/command-center/resources/startup-readiness.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_application_shell2();
   }
 });
@@ -85648,7 +86631,7 @@ function mountStartupReadinessRoute(app, options) {
 var init_startup_readiness_route = __esm({
   "packages/daemon/src/command-center/resources/startup-readiness-route.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_canonical();
     init_owner_authority();
     init_startup_readiness2();
@@ -85813,7 +86796,7 @@ var init_widget_asset_store = __esm({
   "packages/daemon/src/lib/widget-asset-store.ts"() {
     "use strict";
     init_runtime_namespace();
-    init_src();
+    init_src2();
     init_state_home();
     init_widget_asset_policy();
     init_widget_asset_policy();
@@ -85842,7 +86825,7 @@ import { execFile as execFile14 } from "node:child_process";
 import { promisify as promisify4 } from "node:util";
 import { existsSync as existsSync34, readdirSync as readdirSync9 } from "node:fs";
 import { join as join45, dirname as dirname38, basename as basename18 } from "node:path";
-import { fileURLToPath as fileURLToPath9 } from "node:url";
+import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono as Hono3 } from "hono";
 import { streamSSE as streamSSE3 } from "hono/streaming";
 import { cors } from "hono/cors";
@@ -87083,7 +88066,7 @@ function createApp(options = {}) {
   return app;
 }
 function listAvailableTemplates() {
-  const __filename = fileURLToPath9(import.meta.url);
+  const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname38(__filename);
   const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
   const templatesDir = configuredTemplatesDir && isAbsolute23(configuredTemplatesDir) ? configuredTemplatesDir : join45(__dir, "..", "..", "..", "..", "templates");
@@ -87164,7 +88147,7 @@ var init_server2 = __esm({
     init_discovery();
     init_pane_comms();
     init_send();
-    init_src2();
+    init_src();
     init_yaml_io();
     init_resolved_config();
     init_config_context();
@@ -87172,9 +88155,9 @@ var init_server2 = __esm({
     init_log();
     init_semantic_multiplexer_actions();
     init_workspace_registry();
-    init_src();
+    init_src2();
     init_schemas();
-    init_src();
+    init_src2();
     init_terminals_store();
     init_ws_route();
     init_ws_events();
@@ -87277,14 +88260,14 @@ __export(types_exports, {
 var init_types = __esm({
   "packages/daemon/src/lib/auth/types.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { join as join46 } from "node:path";
 import { execFileSync as execFileSync21 } from "node:child_process";
-import { randomBytes as randomBytes8, randomUUID as randomUUID39 } from "node:crypto";
+import { randomBytes as randomBytes9, randomUUID as randomUUID39 } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
@@ -87369,13 +88352,13 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
 }
 async function pickFreePort(hostname4) {
   const probe = createServer2();
-  return await new Promise((resolve41, reject) => {
+  return await new Promise((resolve42, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname4, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve41(port);
+        if (port) resolve42(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -87466,24 +88449,24 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve41) => wss.close(() => resolve41())), delay2(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve42) => wss.close(() => resolve42())), delay2(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve41();
+      else resolve42();
     });
   });
 }
 function delay2(ms) {
-  return new Promise((resolve41) => setTimeout(resolve41, ms));
+  return new Promise((resolve42) => setTimeout(resolve42, ms));
 }
 function generateLocalBypassToken() {
-  return randomBytes8(32).toString("base64url");
+  return randomBytes9(32).toString("base64url");
 }
 function createTakeoverDeadline(timeoutMs) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -87513,13 +88496,13 @@ function assertTakeoverDeadline(deadline, message) {
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
   const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
-  await new Promise((resolve41) => {
+  await new Promise((resolve42) => {
     const timer = setTimeout(finish, waitMs);
     const onAbort = () => finish();
     function finish() {
       clearTimeout(timer);
       deadline.signal.removeEventListener("abort", onAbort);
-      resolve41();
+      resolve42();
     }
     deadline.signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -87812,7 +88795,7 @@ async function startHttpServer({
   );
   serverOwners.attach(server);
   try {
-    await new Promise((resolve41, reject) => {
+    await new Promise((resolve42, reject) => {
       const onError = (err) => {
         server.off("listening", onListening);
         if (err.code === "EADDRINUSE") {
@@ -87838,7 +88821,7 @@ async function startHttpServer({
             `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
           );
         }
-        resolve41();
+        resolve42();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -88164,14 +89147,11 @@ async function startEmbeddedDaemonGeneration(opts) {
         if (serverOwners?.defaultRetired) throw new Error("Default tmux owner is retired");
       }
     });
-    let runtimeTraceStream = null;
-    const closeRuntimeTraceStream = async () => {
+    let runtimeTraceWriter = null;
+    const closeRuntimeTraceStream = async (incomplete = false) => {
       externalInteractionObserver.setDiagnostics(null);
       setFleetFactsObserverDiagnostics(null);
-      const stream = runtimeTraceStream;
-      runtimeTraceStream = null;
-      if (!stream || stream.closed || stream.destroyed) return;
-      await new Promise((resolve41) => stream.end(resolve41));
+      await runtimeTraceWriter?.close(incomplete);
     };
     let startedServer;
     try {
@@ -88206,14 +89186,10 @@ async function startEmbeddedDaemonGeneration(opts) {
         );
       };
       const runtimeTracePath = process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
-      runtimeTraceStream = runtimeTracePath ? createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1024 }) : null;
-      let runtimeTraceSaturated = false;
-      runtimeTraceStream?.on("error", () => {
-        runtimeTraceSaturated = true;
-      });
-      runtimeTraceStream?.on("drain", () => {
-        runtimeTraceSaturated = false;
-      });
+      runtimeTraceWriter = runtimeTracePath ? createRuntimeTraceWriter(
+        createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1024 }),
+        { processId: `daemon:${process.pid}`, daemonInstanceId: instanceId }
+      ) : null;
       const runtimeObservability = runtimeTracePath ? createSessionRuntimeObservability({
         // The JSONL stream is the qualifying record. Keep only a small
         // in-memory diagnostic tail so a sustained terminal flood cannot
@@ -88221,28 +89197,21 @@ async function startEmbeddedDaemonGeneration(opts) {
         // pauses on the daemon's input/output event loop.
         capacity: 1024,
         onSpan: (span) => {
-          if (!runtimeTraceStream || runtimeTraceSaturated) return;
-          runtimeTraceSaturated = !runtimeTraceStream.write(
-            `${JSON.stringify({ version: 1, type: "performance.stage", ...span })}
-`
-          );
+          runtimeTraceWriter?.append(() => ({
+            version: 1,
+            type: "performance.stage",
+            ...span
+          }));
         }
       }) : void 0;
       if (runtimeTracePath) {
         const publishObserverDiagnostic = (event) => {
-          try {
-            if (!runtimeTraceStream || runtimeTraceSaturated) return;
-            runtimeTraceSaturated = !runtimeTraceStream.write(
-              `${JSON.stringify({
-                version: 1,
-                type: "performance.daemon-observer",
-                ...event,
-                generation: instanceId
-              })}
-`
-            );
-          } catch {
-          }
+          runtimeTraceWriter?.append(() => ({
+            version: 1,
+            type: "performance.daemon-observer",
+            ...event,
+            generation: instanceId
+          }));
         };
         const diagnostics = {
           nowMicros: () => Math.floor(performance3.now() * 1e3),
@@ -88318,7 +89287,7 @@ async function startEmbeddedDaemonGeneration(opts) {
               );
             }
             const semanticPaneId3 = layout.panes.find((pane) => pane.semanticPaneId === preferredPaneId)?.semanticPaneId ?? layout.panes.find((pane) => pane.active)?.semanticPaneId ?? layout.panes[0].semanticPaneId;
-            const seed = await new Promise((resolve41, reject) => {
+            const seed = await new Promise((resolve42, reject) => {
               const timeout = setTimeout(
                 () => reject(new Error("Timed out awaiting first coherent terminal seed.")),
                 5e3
@@ -88326,7 +89295,7 @@ async function startEmbeddedDaemonGeneration(opts) {
               void consumer.subscribeReplica(semanticPaneId3, (update) => {
                 if (update.type !== "terminal.seed") return;
                 clearTimeout(timeout);
-                resolve41({ revision: update.revision, stateHash: update.stateHash });
+                resolve42({ revision: update.revision, stateHash: update.stateHash });
               }).catch((error) => {
                 clearTimeout(timeout);
                 reject(error);
@@ -88676,7 +89645,7 @@ async function startEmbeddedDaemonGeneration(opts) {
         appWindowMutation.dispose(),
         workspaceMultiplexer.dispose(),
         disposeInteractionObservation(),
-        closeRuntimeTraceStream()
+        closeRuntimeTraceStream(true)
       ]);
       await Promise.allSettled([sessionRuntimeRegistry?.dispose() ?? Promise.resolve()]);
       throw error;
@@ -88741,7 +89710,7 @@ async function startEmbeddedDaemonGeneration(opts) {
         appWindowMutationDisposal,
         workspaceMultiplexerDisposal,
         externalInteractionDisposal,
-        closeRuntimeTraceStream(),
+        closeRuntimeTraceStream(true),
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay2(100)]),
@@ -89051,11 +90020,12 @@ var init_daemon_embed = __esm({
     init_fleet_preview_route();
     init_terminal_native_backing_route();
     init_embedded_daemon_lifecycle();
+    init_runtime_trace_writer();
     init_owner_authority();
     init_tmux_authority_replacement();
     init_tmux_named_socket_fence();
     init_fleet_catalog2();
-    init_src();
+    init_src2();
     init_daemon_session_monitor();
     init_errors2();
     init_ws_route();
@@ -89218,7 +90188,7 @@ async function findLiveCanonicalDaemon(deps2, options, predecessor) {
   return existing.info;
 }
 function delay3(ms) {
-  return new Promise((resolve41) => setTimeout(resolve41, ms));
+  return new Promise((resolve42) => setTimeout(resolve42, ms));
 }
 function isTransientAttachabilityError(error) {
   return error instanceof IdeError && (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY");
@@ -89343,8 +90313,8 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve41) => {
-      resolveStopped = resolve41;
+    const stopped = new Promise((resolve42) => {
+      resolveStopped = resolve42;
     });
     let stopFailure;
     let ownedPublication;
@@ -89443,7 +90413,7 @@ var init_headless_daemon = __esm({
     init_canonical_daemon_bootstrap();
     init_runtime_namespace();
     init_canonical_daemon();
-    init_src();
+    init_src2();
     init_daemon_embed();
     init_errors2();
     init_auth_token();
@@ -89574,11 +90544,11 @@ import {
   readdirSync as readdirSync10,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve32, join as join48, basename as basename19, dirname as dirname39 } from "node:path";
-import { fileURLToPath as fileURLToPath10 } from "node:url";
+import { resolve as resolve33, join as join48, basename as basename19, dirname as dirname39 } from "node:path";
+import { fileURLToPath as fileURLToPath11 } from "node:url";
 function copyTemplateSkills(targetDir) {
   const created = [];
-  const templateSkillsDir = resolve32(__dirname4, "..", "..", "..", "templates", "skills");
+  const templateSkillsDir = resolve33(__dirname4, "..", "..", "..", "templates", "skills");
   if (!existsSync35(templateSkillsDir)) return created;
   mkdirSync29(targetDir, { recursive: true });
   for (const file of readdirSync10(templateSkillsDir)) {
@@ -89632,7 +90602,7 @@ function scaffoldValidationContract(dir) {
 }
 function scaffoldAgentsMd(dir, name) {
   const created = [];
-  const agentsTemplatePath = resolve32(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
+  const agentsTemplatePath = resolve33(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
   if (existsSync35(agentsTemplatePath)) {
     const agentsPath = join48(dir, "AGENTS.md");
     if (!existsSync35(agentsPath)) {
@@ -89671,7 +90641,7 @@ async function init({
     outputError(`workspace config already exists at ${context.configPath}`, "EXISTS");
   }
   if (template) {
-    const templatePath = resolve32(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
+    const templatePath = resolve33(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
     if (!existsSync35(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
@@ -89718,7 +90688,7 @@ async function init({
       console.log("Edit it to customize, then run: tmux-ide");
     }
   } else {
-    const templatePath = resolve32(__dirname4, "..", "..", "..", "templates", "default.yml");
+    const templatePath = resolve33(__dirname4, "..", "..", "..", "templates", "default.yml");
     let content = readFileSync35(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const yaml6 = (await import("js-yaml")).default;
@@ -89750,8 +90720,8 @@ var init_init = __esm({
     init_yaml_io();
     init_legacy_config_migration();
     init_config_context();
-    init_src();
-    __dirname4 = dirname39(fileURLToPath10(import.meta.url));
+    init_src2();
+    __dirname4 = dirname39(fileURLToPath11(import.meta.url));
   }
 });
 
@@ -89760,9 +90730,9 @@ var stop_exports = {};
 __export(stop_exports, {
   stop: () => stop
 });
-import { resolve as resolve33 } from "node:path";
+import { resolve as resolve34 } from "node:path";
 async function stop(targetDir, { json: json2 } = {}) {
-  const dir = resolve33(targetDir ?? ".");
+  const dir = resolve34(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result2 = killSession(session);
@@ -89780,7 +90750,7 @@ var init_stop = __esm({
   "packages/daemon/src/stop.ts"() {
     "use strict";
     init_output();
-    init_src2();
+    init_src();
     init_config_context();
   }
 });
@@ -89790,9 +90760,9 @@ var attach_exports = {};
 __export(attach_exports, {
   attach: () => attach
 });
-import { resolve as resolve34 } from "node:path";
+import { resolve as resolve35 } from "node:path";
 async function attach(targetDir, { json: _json } = {}) {
-  const dir = resolve34(targetDir ?? ".");
+  const dir = resolve35(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const state = getSessionState(session);
   if (!state.running) {
@@ -89805,7 +90775,7 @@ var init_attach = __esm({
   "packages/daemon/src/attach.ts"() {
     "use strict";
     init_output();
-    init_src2();
+    init_src();
     init_config_context();
   }
 });
@@ -89907,7 +90877,7 @@ var runCommand, DaemonServiceManagerError;
 var init_daemon_service_manager = __esm({
   "packages/daemon/src/lib/daemon-service-manager.ts"() {
     "use strict";
-    runCommand = (file, args) => new Promise((resolve41) => {
+    runCommand = (file, args) => new Promise((resolve42) => {
       execFile15(
         file,
         [...args],
@@ -89917,7 +90887,7 @@ var init_daemon_service_manager = __esm({
           maxBuffer: 256 * 1024,
           env: { ...process.env, LC_ALL: "C", LANG: "C" }
         },
-        (error, stdout, stderr) => resolve41({
+        (error, stdout, stderr) => resolve42({
           code: error ? typeof error.code === "number" ? error.code : null : 0,
           stdout,
           stderr
@@ -90174,7 +91144,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
             instanceId: state.info.instanceId
           };
       }
-      await new Promise((resolve41) => setTimeout(resolve41, 100));
+      await new Promise((resolve42) => setTimeout(resolve42, 100));
     } while (Date.now() < deadline);
     refused(
       "Service did not publish a verified daemon before the deadline; inspect service logs, then retry restart or remove"
@@ -90237,7 +91207,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
       let stopped = await inspectManager();
       const stopDeadline = Date.now() + deps2.waitMs;
       while ((stopped.active || stopped.pid !== null) && Date.now() < stopDeadline) {
-        await new Promise((resolve41) => setTimeout(resolve41, 100));
+        await new Promise((resolve42) => setTimeout(resolve42, 100));
         stopped = await inspectManager();
       }
       if (stopped.active || stopped.pid !== null)
@@ -90312,11 +91282,11 @@ async function restartCanonicalDaemon(options = {}, deps2 = defaults2) {
   );
   const timer = setTimeout(() => controller.abort(timeout), timeoutMs);
   const signal = controller.signal;
-  const wait = (operation) => new Promise((resolve41, reject) => {
+  const wait = (operation) => new Promise((resolve42, reject) => {
     const abort = () => reject(signal.reason);
     if (signal.aborted) return abort();
     signal.addEventListener("abort", abort, { once: true });
-    operation.then(resolve41, reject).finally(() => signal.removeEventListener("abort", abort));
+    operation.then(resolve42, reject).finally(() => signal.removeEventListener("abort", abort));
   });
   const verified = async (info) => {
     const read = async (path2) => {
@@ -90416,20 +91386,20 @@ var defaults2, failure2;
 var init_restart_canonical_daemon = __esm({
   "packages/daemon/src/lib/restart-canonical-daemon.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_canonical_daemon();
     init_errors2();
     defaults2 = {
       inspect: inspectCanonicalDaemonInfo,
       fetch,
-      sleep: (ms, signal) => new Promise((resolve41, reject) => {
+      sleep: (ms, signal) => new Promise((resolve42, reject) => {
         const abort = () => {
           clearTimeout(timer);
           reject(signal.reason);
         };
         const timer = setTimeout(() => {
           signal.removeEventListener("abort", abort);
-          resolve41();
+          resolve42();
         }, ms);
         if (signal.aborted) abort();
         else signal.addEventListener("abort", abort, { once: true });
@@ -90739,7 +91709,7 @@ var SAFE_SESSION_ID2, AGENT_RESUME_COMMANDS, DEFAULT_RESTORE_PREFS;
 var init_restore = __esm({
   "packages/daemon/src/restore.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_app_config();
     init_errors2();
     init_project_registry();
@@ -90819,7 +91789,7 @@ __export(skill_sync_exports, {
 });
 import { existsSync as existsSync36, mkdirSync as mkdirSync31, readFileSync as readFileSync37, writeFileSync as writeFileSync29 } from "node:fs";
 import { dirname as dirname41, join as join51 } from "node:path";
-import { fileURLToPath as fileURLToPath11 } from "node:url";
+import { fileURLToPath as fileURLToPath12 } from "node:url";
 function claudeDir() {
   return resolveRuntimeNamespace().claudeDir;
 }
@@ -90830,7 +91800,7 @@ function skillTargetFile() {
   return join51(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
-  const here = dirname41(fileURLToPath11(import.meta.url));
+  const here = dirname41(fileURLToPath12(import.meta.url));
   const candidates = [
     join51(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
@@ -90901,8 +91871,8 @@ __export(doctor_exports, {
 });
 import { execSync as execSync3, execFileSync as execFileSync22 } from "node:child_process";
 import { accessSync as accessSync11, constants as constants15, existsSync as existsSync37 } from "node:fs";
-import { resolve as resolve35, dirname as dirname42 } from "node:path";
-import { fileURLToPath as fileURLToPath12 } from "node:url";
+import { resolve as resolve36, dirname as dirname42 } from "node:path";
+import { fileURLToPath as fileURLToPath13 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
     const label4 = `agent: ${agent.id}`;
@@ -91055,15 +92025,15 @@ async function doctor({
       { optional: true }
     )
   );
-  checks.push(await workspaceConfigRow(resolve35(".")));
+  checks.push(await workspaceConfigRow(resolve36(".")));
   checks.push(
     check(
       "TUI surfaces (cockpit / widgets)",
       () => {
-        const here = dirname42(fileURLToPath12(import.meta.url));
+        const here = dirname42(fileURLToPath13(import.meta.url));
         const checkoutEntry = [
-          resolve35(here, "../packages/daemon/src/tui/team/index.tsx"),
-          resolve35(here, "tui/team/index.tsx")
+          resolve36(here, "../packages/daemon/src/tui/team/index.tsx"),
+          resolve36(here, "tui/team/index.tsx")
         ].find(existsSync37);
         const binary = findCompiledTui();
         if (checkoutEntry && hasDevelopmentTuiSource(checkoutEntry) && isBunAvailable()) {
@@ -91254,8 +92224,8 @@ async function createSshDaemonRelay(options) {
   const requests = /* @__PURE__ */ new Set();
   let disposed = false, starting = false, listenerClosed = false, pending = 0, admitted = 0;
   let finish;
-  const closed = new Promise((resolve41) => {
-    finish = resolve41;
+  const closed = new Promise((resolve42) => {
+    finish = resolve42;
   });
   const maybeClosed = () => {
     if (disposed && listenerClosed && sockets.size === 0 && pending === 0 && requests.size === 0)
@@ -91310,7 +92280,7 @@ async function createSshDaemonRelay(options) {
   const authenticate = async (lease) => {
     const timer = setTimeout(() => lease.controller.abort(), probeTimeout);
     try {
-      const actual = await new Promise((resolve41, reject) => {
+      const actual = await new Promise((resolve42, reject) => {
         const req = ownRequest(
           lease,
           request(
@@ -91339,7 +92309,7 @@ async function createSshDaemonRelay(options) {
                 try {
                   if (response3.statusCode !== 200 || !response3.complete || response3.headers.connection === "close")
                     throw refused2();
-                  resolve41(
+                  resolve42(
                     DaemonIdentitySchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")))
                   );
                 } catch {
@@ -91353,7 +92323,7 @@ async function createSshDaemonRelay(options) {
         req.end();
       });
       if (!sameIdentity(actual, expected)) throw new IdentityMismatch();
-      await new Promise((resolve41) => setImmediate(resolve41));
+      await new Promise((resolve42) => setImmediate(resolve42));
       if (lease.retired || lease.controller.signal.aborted || !lease.agent.socket || lease.agent.socket.destroyed || lease.agent.socket.readableLength !== 0)
         throw refused2();
     } finally {
@@ -91527,13 +92497,13 @@ ${lines.join("")}\r
     throw refused2();
   }
   try {
-    await new Promise((resolve41, reject) => {
+    await new Promise((resolve42, reject) => {
       const cancelled = () => done(refused2());
       const done = (error) => {
         options.signal?.removeEventListener("abort", cancelled);
         server.removeListener("error", done);
         if (error) reject(error);
-        else resolve41();
+        else resolve42();
       };
       server.once("error", done);
       options.signal?.addEventListener("abort", cancelled, { once: true });
@@ -91559,7 +92529,7 @@ var refused2, IdentityMismatch, VerifiedConnectionAgent, bounded3;
 var init_ssh_daemon_relay = __esm({
   "packages/daemon/src/lib/ssh-daemon-relay.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     refused2 = () => new Error("SSH daemon relay unavailable");
     IdentityMismatch = class extends Error {
     };
@@ -91635,7 +92605,7 @@ function stop2(child) {
 }
 async function allocatePort() {
   const server = createServer4();
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
@@ -91644,7 +92614,7 @@ async function allocatePort() {
         reject(failure3("could not allocate local port"));
         return;
       }
-      server.close((error) => error ? reject(error) : resolve41(address.port));
+      server.close((error) => error ? reject(error) : resolve42(address.port));
     });
   });
 }
@@ -91689,16 +92659,16 @@ async function probeSshDaemonIdentity(baseUrl, daemon, signal, request3 = fetch)
   return parsed.success && parsed.data.status === "ok" && matches(parsed.data.daemon);
 }
 function cancellable(work, signal) {
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     const abort = () => reject(failure3("cancelled or timed out"));
     signal.addEventListener("abort", abort, { once: true });
-    work.then(resolve41, reject).finally(() => signal.removeEventListener("abort", abort));
+    work.then(resolve42, reject).finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
 }
 function discover(child, signal) {
   const sshFailure = observeSshFailure(child);
-  return new Promise((resolve41, reject) => {
+  return new Promise((resolve42, reject) => {
     const chunks = [];
     let bytes = 0;
     let settled = false;
@@ -91710,7 +92680,7 @@ function discover(child, signal) {
       if (error) {
         stop2(child);
         reject(error);
-      } else resolve41(daemon);
+      } else resolve42(daemon);
     };
     const abort = () => finish(failure3("cancelled or timed out"));
     child.stdout?.on("data", (chunk) => {
@@ -91758,11 +92728,11 @@ function discover(child, signal) {
   });
 }
 function delay4(signal) {
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     const done = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", done);
-      resolve41();
+      resolve42();
     };
     const timer = setTimeout(done, 50);
     signal.addEventListener("abort", done, { once: true });
@@ -91837,14 +92807,14 @@ async function openSshDaemonTransport(options, dependencies = defaults3) {
     child.stdout?.resume();
     const sshFailure = observeSshFailure(child);
     child.once("exit", dispose2);
-    const tunnelClosed = new Promise((resolve41) => {
+    const tunnelClosed = new Promise((resolve42) => {
       child.once("close", () => {
         dispose2();
-        resolve41();
+        resolve42();
       });
       child.once("error", () => {
         dispose2();
-        resolve41();
+        resolve42();
       });
     });
     relay = await (dependencies.relay ?? createSshDaemonRelay)({
@@ -91884,7 +92854,7 @@ var init_ssh_daemon_transport = __esm({
     "use strict";
     init_remote_tmux_command();
     init_ssh_daemon_relay();
-    init_src();
+    init_src2();
     RemoteDaemonHandshakeSchema = z111.object({
       version: z111.literal(1),
       daemon: CanonicalDaemonInfoSchema.strict().extend({
@@ -91964,7 +92934,7 @@ var RemoteDaemonInfoError;
 var init_remote_daemon_info = __esm({
   "packages/daemon/src/lib/remote-daemon-info.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_canonical_daemon();
     init_ssh_daemon_transport();
     RemoteDaemonInfoError = class extends Error {
@@ -92150,7 +93120,7 @@ var TmuxServerClientError;
 var init_tmux_server_client = __esm({
   "packages/daemon-client/src/tmux-server-client.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     TmuxServerClientError = class extends Error {
       constructor(code2, status2) {
         super(`tmux server client ${code2}`);
@@ -92292,7 +93262,7 @@ async function runTmuxServersCli(options, connect3) {
 var init_tmux_servers_cli = __esm({
   "packages/daemon/src/lib/tmux-servers-cli.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_tmux_server_client();
     init_canonical_daemon();
     init_canonical_daemon_bootstrap();
@@ -92362,7 +93332,7 @@ async function startInstalledRemoteDaemon(alias, options = {}) {
     AbortSignal.timeout(3e4)
   ]);
   if (signal.aborted) throw new Error("Remote daemon start cancelled");
-  await new Promise((resolve41, reject) => {
+  await new Promise((resolve42, reject) => {
     const child = (options.spawn ?? spawn11)(
       "ssh",
       [
@@ -92385,7 +93355,7 @@ async function startInstalledRemoteDaemon(alias, options = {}) {
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", abort);
-      if (ok2) resolve41();
+      if (ok2) resolve42();
       else
         reject(
           new Error(
@@ -92547,9 +93517,9 @@ var status_exports = {};
 __export(status_exports, {
   status: () => status
 });
-import { resolve as resolve36 } from "node:path";
+import { resolve as resolve37 } from "node:path";
 async function status(targetDir, { json: json2 } = {}) {
-  const dir = resolve36(targetDir ?? ".");
+  const dir = resolve37(targetDir ?? ".");
   const context = await resolveProjectConfigContext(dir);
   const session = context.sessionName;
   const state = getSessionState(session);
@@ -92600,7 +93570,7 @@ Panes:`);
 var init_status = __esm({
   "packages/daemon/src/status.ts"() {
     "use strict";
-    init_src2();
+    init_src();
     init_canonical_daemon();
     init_config_context();
   }
@@ -92612,7 +93582,7 @@ __export(inspect_exports, {
   buildInspection: () => buildInspection,
   inspect: () => inspect
 });
-import { resolve as resolve37 } from "node:path";
+import { resolve as resolve38 } from "node:path";
 function buildInspection(dir, {
   config: config2,
   configPath,
@@ -92670,7 +93640,7 @@ function buildInspection(dir, {
   };
 }
 async function inspect(targetDir, { json: json2 } = {}) {
-  const dir = resolve37(targetDir ?? ".");
+  const dir = resolve38(targetDir ?? ".");
   let config2;
   let configPath;
   let configKind;
@@ -92756,7 +93726,7 @@ var init_inspect2 = __esm({
     init_validate();
     init_output();
     init_errors2();
-    init_src2();
+    init_src();
     init_config_context();
   }
 });
@@ -92767,7 +93737,7 @@ __export(migrate_exports, {
   migrate: () => migrate
 });
 import { execFileSync as execFileSync23 } from "node:child_process";
-import { dirname as dirname43, resolve as resolve38 } from "node:path";
+import { dirname as dirname43, resolve as resolve39 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync23("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -92813,7 +93783,7 @@ async function migrate(targetDir, {
   write: write2,
   onAfterRead
 } = {}) {
-  const dir = resolve38(targetDir ?? ".");
+  const dir = resolve39(targetDir ?? ".");
   if (!dryRun && !write2) dryRun = true;
   if (dryRun && write2) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -92896,8 +93866,8 @@ function subscribeTmuxServerInteractions(options) {
   const lifetime = new AbortController();
   let resolveReady;
   let rejectReady;
-  const ready = new Promise((resolve41, reject) => {
-    resolveReady = resolve41;
+  const ready = new Promise((resolve42, reject) => {
+    resolveReady = resolve42;
     rejectReady = reject;
   });
   void ready.catch(() => void 0);
@@ -93007,7 +93977,7 @@ function subscribeTmuxServerInteractions(options) {
 var init_tmux_server_interaction_events3 = __esm({
   "packages/daemon-client/src/tmux-server-interaction-events.ts"() {
     "use strict";
-    init_src();
+    init_src2();
   }
 });
 
@@ -93152,7 +94122,7 @@ var AutomationInvocationError;
 var init_automation_client = __esm({
   "packages/daemon-client/src/automation-client.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_tmux_server_interaction_events3();
     AutomationInvocationError = class extends Error {
       constructor(code2, handle) {
@@ -93331,7 +94301,7 @@ var AutomationCliError, AutomationInvocationIntentSchemaZ;
 var init_automation2 = __esm({
   "packages/daemon/src/automation.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_automation_client();
     init_canonical_daemon();
     init_pane_source_credentials();
@@ -93443,8 +94413,8 @@ function createTmuxIdeMcpServer(client) {
     },
     async ({ resume, waitMs }, context) => call(async () => {
       let resolveBatch;
-      const first = new Promise((resolve41) => {
-        resolveBatch = resolve41;
+      const first = new Promise((resolve42) => {
+        resolveBatch = resolve42;
       });
       const subscription = client.subscribe({
         server: resume.server,
@@ -93492,7 +94462,7 @@ var result;
 var init_mcp = __esm({
   "packages/daemon/src/mcp.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_automation_client();
     init_automation2();
     result = (value) => ({
@@ -93580,8 +94550,8 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   try {
     const alive = await Promise.race([
       probeAlive(info),
-      new Promise((resolve41) => {
-        probeTimer = setTimeout(() => resolve41(null), remaining());
+      new Promise((resolve42) => {
+        probeTimer = setTimeout(() => resolve42(null), remaining());
         probeTimer.unref?.();
       })
     ]);
@@ -93607,7 +94577,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   } catch {
     return null;
   }
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     let settled = false;
     let subscribed = false;
     let ready = false;
@@ -93625,7 +94595,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
         socket.close();
       } catch {
       }
-      resolve41(result2);
+      resolve42(result2);
     };
     const refreshStatus = () => {
       if (settled) return;
@@ -93710,7 +94680,7 @@ var RECEIPT_CONNECT_TIMEOUT_MS;
 var init_wait_receipts = __esm({
   "packages/daemon/src/tui/team/wait-receipts.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     init_canonical_daemon();
     init_classify();
     init_report();
@@ -93981,7 +94951,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync26 } from "node:child_process";
-import { basename as basename21, dirname as dirname45, isAbsolute as isAbsolute26, join as join53, resolve as resolve39 } from "node:path";
+import { basename as basename21, dirname as dirname45, isAbsolute as isAbsolute26, join as join53, resolve as resolve40 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -93989,11 +94959,11 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve39(repoDir);
+  const abs = resolve40(repoDir);
   return join53(dirname45(abs), `${basename21(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute26(configuredDir) ? configuredDir : resolve39(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute26(configuredDir) ? configuredDir : resolve40(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
   return join53(base2, branch);
 }
 function parseWorktreeList(porcelain) {
@@ -94200,7 +95170,7 @@ var init_managed_installer_update = __esm({
 // packages/daemon/src/lib/install-origin.ts
 import { existsSync as existsSync39, readFileSync as readFileSync41, realpathSync as realpathSync29 } from "node:fs";
 import { dirname as dirname47, join as join55 } from "node:path";
-import { fileURLToPath as fileURLToPath13 } from "node:url";
+import { fileURLToPath as fileURLToPath14 } from "node:url";
 function detectPackageManager(path2) {
   if (/\/share\/tmux-ide\/releases\/install-[^/]+\/npm\/lib\/node_modules\/tmux-ide\/bin$/.test(path2))
     return "installer";
@@ -94229,7 +95199,7 @@ function findGitCheckoutRoot(startDir) {
     dir = parent;
   }
 }
-function installOrigin(cliDir = dirname47(fileURLToPath13(import.meta.url))) {
+function installOrigin(cliDir = dirname47(fileURLToPath14(import.meta.url))) {
   let path2;
   try {
     path2 = realpathSync29(cliDir);
@@ -94499,7 +95469,7 @@ var PaneWidgetRefusal, IMAGE_MEDIA_BY_EXTENSION, PANE_WIDGET_IMAGE_MAX_BYTES, PA
 var init_pane_widget = __esm({
   "packages/daemon/src/lib/pane-widget.ts"() {
     "use strict";
-    init_src();
+    init_src2();
     PaneWidgetRefusal = class extends Error {
       constructor(reason, message) {
         super(message);
@@ -94540,10 +95510,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer5(listener);
-  return new Promise((resolve41) => {
+  return new Promise((resolve42) => {
     server.listen(port, hostname4, () => {
       console.log(`Command Center API on http://${hostname4}:${port}`);
-      resolve41(server);
+      resolve42(server);
     });
   });
 }
@@ -94597,11 +95567,11 @@ async function start(port) {
       handlePtyWebSocket(ws, id2);
     });
   });
-  await new Promise((resolve41, reject) => {
+  await new Promise((resolve42, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, SERVER_BIND_HOST, () => {
       server.off("error", reject);
-      resolve41();
+      resolve42();
     });
   });
   console.warn(
@@ -94611,10 +95581,10 @@ async function start(port) {
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve41, reject) => {
+    close: () => new Promise((resolve42, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve41());
+      server.close((err) => err ? reject(err) : resolve42());
     })
   };
 }
@@ -94629,11 +95599,13 @@ var init_server3 = __esm({
 });
 
 // bin/cli.ts
+init_src();
+init_tmux_client_execution();
 import { parseArgs as parseArgs2 } from "node:util";
-import { resolve as resolve40, dirname as dirname49, join as join57 } from "node:path";
+import { resolve as resolve41, dirname as dirname49, join as join57 } from "node:path";
 import { execFileSync as execFileSync29 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync40, mkdirSync as mkdirSync33, writeFileSync as writeFileSync31 } from "node:fs";
-import { fileURLToPath as fileURLToPath14 } from "node:url";
+import { fileURLToPath as fileURLToPath15 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
 function resolveEntry(opts) {
@@ -94650,9 +95622,10 @@ init_errors2();
 init_output();
 init_state_home();
 init_hosted();
-var __dirname5 = dirname49(fileURLToPath14(import.meta.url));
-var selfPath = fileURLToPath14(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve40(__dirname5, "cli.js");
+configureTmuxClientResolver(resolveOrdinaryTmuxClient);
+var __dirname5 = dirname49(fileURLToPath15(import.meta.url));
+var selfPath = fileURLToPath15(import.meta.url);
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve41(__dirname5, "cli.js");
 var { positionals, values } = parseArgs2({
   allowPositionals: true,
   strict: false,
@@ -95008,7 +95981,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     if (launch2.mode === "bun") {
       execFileSync29(launch2.bin, launch2.argv, {
         stdio: "inherit",
-        cwd: resolve40(__dirname5, ".."),
+        cwd: resolve41(__dirname5, ".."),
         env
       });
       markChildExited();
@@ -95065,7 +96038,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve40(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
+    const cwd = launch2.mode === "bun" ? resolve41(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -95127,8 +96100,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve40(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve40(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve41(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve41(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 async function launchTeamCockpit() {
   await execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -95285,7 +96258,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve40(startTargetDir || ".");
+      const targetDir = resolve41(startTargetDir || ".");
       if (startTargetDir && !existsSync40(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -95503,11 +96476,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve40(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve41(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         await execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve40(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve41(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -95516,8 +96489,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve40(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve40(startTargetDir || ".")];
+      const scriptPath = resolve41(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve41(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       await execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -95541,11 +96514,11 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve40(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      const scriptPath = resolve41(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
       await execBunWidget(
         "config",
         scriptPath,
-        ["--dir=" + resolve40(startTargetDir || ".")],
+        ["--dir=" + resolve41(startTargetDir || ".")],
         "settings"
       );
       break;
@@ -95948,13 +96921,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key2 = await new Promise((resolve41) => {
+            const key2 = await new Promise((resolve42) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve41(data.toString()));
+                process.stdin.once("data", (data) => resolve42(data.toString()));
               } catch {
-                resolve41("");
+                resolve42("");
               }
             });
             try {
@@ -96162,7 +97135,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve40(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve41(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync29("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -96204,7 +97177,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           closeSidebarPane2(existing);
           break;
         }
-        const { getSessionCwd: getSessionCwd3 } = await Promise.resolve().then(() => (init_src2(), src_exports));
+        const { getSessionCwd: getSessionCwd3 } = await Promise.resolve().then(() => (init_src(), src_exports));
         let dir = process.cwd();
         try {
           dir = getSessionCwd3(session) ?? dir;
@@ -96252,7 +97225,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         removeWorktree: removeWorktree2,
         WorktreeError: WorktreeError2
       } = await Promise.resolve().then(() => (init_worktree(), worktree_exports));
-      const { getSessionCwd: getSessionCwd3, hasSession: hasSession2, killSession: killSession2, createDetachedSession: createDetachedSession2 } = await Promise.resolve().then(() => (init_src2(), src_exports));
+      const { getSessionCwd: getSessionCwd3, hasSession: hasSession2, killSession: killSession2, createDetachedSession: createDetachedSession2 } = await Promise.resolve().then(() => (init_src(), src_exports));
       let repoDir = process.cwd();
       const sessionArg = typeof values.session === "string" ? values.session.trim() : "";
       if (sessionArg && !sessionArg.includes("#{")) {
@@ -96624,7 +97597,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve40(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve41(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync29("node", serverArgs, { stdio: "inherit" });

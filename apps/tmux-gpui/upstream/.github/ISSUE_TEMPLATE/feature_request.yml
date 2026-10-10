@@ -1,0 +1,37 @@
+name: Feature Request
+description: Suggest an improvement to Herdr GPUI
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/penso/herdr-gpui/issues) for duplicates.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your workflow and what is currently difficult or missing.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe how you would like the native client to behave.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include any current workarounds or relevant Herdr TUI behavior.
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Mockups or examples are welcome. Redact secrets and private terminal content.

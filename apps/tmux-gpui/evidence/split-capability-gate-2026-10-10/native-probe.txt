@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "binary": "/private/tmp/tmux-ide-295-release-nkydyctm/bin/tmux",
+      "expected": false,
+      "disabledProbePreserved": true
+    },
+    {
+      "binary": "/private/tmp/tmux-split-membership-ccxveo/source/tmux",
+      "expected": true,
+      "disabledProbePreserved": true
+    }
+  ],
+  "cleanup": true
+}

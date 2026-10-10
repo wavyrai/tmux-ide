@@ -1,0 +1,20 @@
+✔ private signing sequence preserves historical inputs and binds transformation (48.484416ms)
+✔ sign-native failure exposes only safe stage, no usable artifacts (6.661375ms)
+✔ notarize failure exposes only safe stage, no usable artifacts (6.326708ms)
+✔ verify failure exposes only safe stage, no usable artifacts (6.356959ms)
+✔ package failure exposes only safe stage, no usable artifacts (7.069459ms)
+✔ notary non-Accepted and debug entitlement fail closed before later tools (10.833584ms)
+✔ existing output and unknown CLI switches refuse without tool calls (2.526708ms)
+✔ unsupported host refuses before creating output or executing tools (1.7735ms)
+✔ caller mutation cannot change validated identity or profile across awaits (37.561958ms)
+✔ numeric policy scalars reject before copy or signing (2.205125ms)
+✔ roundtrip rejects altered packaged bytes before final publication (36.059542ms)
+✔ extracted app must independently pass Apple verification (36.454208ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 239.269167

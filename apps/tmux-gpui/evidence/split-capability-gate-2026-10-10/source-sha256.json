@@ -1,0 +1,11 @@
+{
+  "packages/daemon/src/lib/native-split-capability.ts": "393f4f24d0ced4f67266a11c962922a7f45ad54244e13c8f97cacab4017bcd86",
+  "packages/daemon/src/lib/native-split-capability.test.ts": "c0982cb143414192b44b7a732d42a7efe671223708fa302b5295614b15f6179c",
+  "packages/daemon/src/lib/daemon-embed.ts": "7170a4e1d6788a727106d23e392b6141542daf249acb52ce70351c495f61e148",
+  "packages/daemon/src/lib/tmux-server-owner.ts": "0c306c0a6ac6a34250a85c126d3fb8985644a4d5d71642c7c63f324f8aae89e4",
+  "packages/daemon/src/terminal/protocol/native-split-resize.ts": "4a4c3d658827e4cdfb0bd6d4a823002d67e5ad534263fa24d60dab09f2e10236",
+  "packages/daemon/src/terminal/mirror/mirror-service.ts": "e81973c44661c8f3f02da515583cff821c73a57a37aa6afc3d8d27182078a486",
+  "packages/daemon/src/terminal/mirror/mirror-service-split-layout.test.ts": "936489bbdcb46f5a3591f722329e3b36d1c5671cf27288109cfe00646861ca4b",
+  "packages/daemon/src/terminal/mirror/mirror-service-split-execution.test.ts": "b1f64b4cde36e3df5af294cadb8cd0c9e6149810a2ff538d8b3cb7fbf8c5f255",
+  "native/tmux/tests/split-canonical-runner.mjs": "e1c4c108d260a4b1fd3b4db313c7847f9ead0996a232ac6743218e1dc36e230e"
+}

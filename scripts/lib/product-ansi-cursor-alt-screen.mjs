@@ -4213,7 +4213,9 @@ function exactPreAlternate(value, expected, evidence) {
   );
 }
 
-export function assessAnsiCursorAltScreenEvidence(evidence, expected) {
+export function assessAnsiCursorAltScreenEvidence(evidence, expected, { evidenceScope } = {}) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const topLevelExact =
     exactKeys(evidence, [
       "baseline",
@@ -4227,7 +4229,7 @@ export function assessAnsiCursorAltScreenEvidence(evidence, expected) {
       "resourceSamples",
       "resourceLifecycle",
       "idle",
-      "web",
+      ...(evidenceScope === "terminal-only" ? [] : ["web"]),
       "tmux",
       "writer",
     ]) &&
@@ -4242,7 +4244,7 @@ export function assessAnsiCursorAltScreenEvidence(evidence, expected) {
       "workloadFinalities",
       "resourceSamples",
       "resourceLifecycle",
-      "web",
+      ...(evidenceScope === "terminal-only" ? [] : ["web"]),
     ]);
   const distribution = assessAnsiCursorPresentationSamples(
     evidence?.cursorSamples,
@@ -4552,7 +4554,7 @@ export function assessAnsiCursorAltScreenEvidence(evidence, expected) {
     lineageExact,
     workloadExact,
     idleExact,
-    webExact: web.qualified,
+    ...(evidenceScope === "terminal-only" ? {} : { webExact: web.qualified }),
     tmuxExact,
     writerExact,
   });
@@ -4564,11 +4566,22 @@ export function assessAnsiCursorAltScreenEvidence(evidence, expected) {
     resources,
     resourceLifecycle,
     workloadPredicates,
-    web,
+    web:
+      evidenceScope === "terminal-only"
+        ? { status: "unmeasured", reason: "retired-browser-client" }
+        : web,
+    ...(evidenceScope === "terminal-only" ? { evidenceScope } : {}),
   });
 }
 
-export function ansiCursorAltJourneyStatus({ timeline, assessment, correlationComplete }) {
+export function ansiCursorAltJourneyStatus({
+  timeline,
+  assessment,
+  correlationComplete,
+  evidenceScope,
+}) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = [
     "ansi-normal-baseline",
     "ansi-rich-presentation",
@@ -4577,7 +4590,7 @@ export function ansiCursorAltJourneyStatus({ timeline, assessment, correlationCo
     "ansi-normal-restored",
     "ansi-sustained-workload",
     "ansi-idle-quiescent",
-    "ansi-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["ansi-web-correlation"]),
   ];
   const observed =
     Array.isArray(timeline) && timeline.length <= 4_096
@@ -4610,6 +4623,12 @@ export function ansiCursorAltJourneyStatus({ timeline, assessment, correlationCo
   );
   const firstBrokenBoundary = boundaries.find(({ status }) => status !== "passed")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: firstBrokenBoundary === null ? "passed" : "failed",
     firstBrokenBoundary,
     firstUnmeasuredBoundary: null,

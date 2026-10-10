@@ -1,0 +1,20 @@
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-theme-smoke.mjs:188
+if (failures.length) throw new AggregateError(failures, "Native theme fixture failed");
+                           ^
+
+AggregateError: Native theme fixture failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-theme-smoke.mjs:188:28 {
+  [errors]: [
+    Error: ENOENT: no such file or directory, open '/tmp/tmi-e2e-gpui-native-theme-m8m3ed/state/config.json'
+        at async open (node:internal/fs/promises:1345:25)
+        at async writeFile (node:internal/fs/promises:1965:14)
+        at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-theme-smoke.mjs:77:3 {
+      errno: -2,
+      code: 'ENOENT',
+      syscall: 'open',
+      path: '/tmp/tmi-e2e-gpui-native-theme-m8m3ed/state/config.json'
+    }
+  ]
+}
+
+Node.js v24.21.0

@@ -312,7 +312,9 @@ function qualifyPreviewSample(sample, expected, ordinal, deliveryAnchor) {
 }
 
 /** Pure fail-closed assessment for the ProductRig keyboard/pointer resize journey. */
-export function assessProductKeyboardPointerResize({ evidence, expected }) {
+export function assessProductKeyboardPointerResize({ evidence, expected, evidenceScope }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const samples = Array.isArray(evidence?.pointerPreviews) ? evidence.pointerPreviews : [];
   const sampleCountExact = samples.length >= 30 && samples.length <= MAX_SAMPLES;
   const samplesExact =
@@ -402,9 +404,13 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
     evidence?.workspaceClient?.semanticPaneId === expected?.semanticPaneId &&
     evidence?.workspaceClient?.lastReceiptOperationId === pointerRelease?.operationId &&
     evidence?.workspaceClient?.lastReceiptPhase === "observed";
-  const correlationExact = ["daemon", "workspaceClient", "tui", "web", "tmux"].every(
-    (key) => evidence?.correlation?.[key] === true,
-  );
+  const correlationExact = [
+    "daemon",
+    "workspaceClient",
+    "tui",
+    ...(evidenceScope === "terminal-only" ? [] : ["web"]),
+    "tmux",
+  ].every((key) => evidence?.correlation?.[key] === true);
   const contentContinuityExact =
     exactContentContinuity(keyboard?.frame?.contentContinuity) &&
     exactContentContinuity(pointerRelease?.frame?.contentContinuity) &&
@@ -434,6 +440,12 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
   ]);
   const firstFailedPredicate = predicates.find(({ passed }) => !passed)?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     qualified: firstFailedPredicate === null,
     firstFailedPredicate,
     predicates,
@@ -442,10 +454,13 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
 }
 
 export function assessKeyboardPointerResizeJourneyBoundaries({
+  evidenceScope,
   timeline,
   assessment,
   correlationComplete,
 }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = [
     "resize-namespace-ready",
     "resize-daemon-ready",
@@ -457,7 +472,7 @@ export function assessKeyboardPointerResizeJourneyBoundaries({
     "resize-keyboard-proved",
     "resize-pointer-preview-distribution",
     "resize-pointer-release-proved",
-    "resize-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["resize-web-correlation"]),
   ];
   const phases = new Set(
     Array.isArray(timeline) && timeline.length <= 4_096
@@ -481,6 +496,12 @@ export function assessKeyboardPointerResizeJourneyBoundaries({
   );
   const firstBrokenBoundary = boundaries.find(({ status }) => status !== "passed")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: firstBrokenBoundary === null ? "passed" : "failed",
     firstBrokenBoundary,
     firstUnmeasuredBoundary: null,

@@ -19,6 +19,16 @@ export function sessionRuntimeInteractionFacts(
   intent: SessionRuntimeSemanticIntent,
 ): SessionRuntimeInteractionFacts {
   switch (intent.verb) {
+    case "workspace.window.split.resize":
+      return {
+        target: { kind: "window-link", target: intent.target.window },
+        summary: {
+          operationKind: intent.verb,
+          layoutId: intent.target.layoutId,
+          splitId: intent.target.splitId,
+          boundary: intent.target.boundary,
+        },
+      };
     case "workspace.window.split":
       return {
         target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
@@ -118,6 +128,20 @@ export function sessionRuntimeObservedProof(
   if (result.verb !== intent.verb)
     throw new TypeError("Mutation result verb does not match intent");
   switch (result.verb) {
+    case "workspace.window.split.resize":
+      if (
+        intent.verb !== result.verb ||
+        JSON.stringify(result.target) !== JSON.stringify(intent.target)
+      )
+        throw new TypeError("Split resize result does not match intent");
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        target: result.target,
+        axis: result.axis,
+        boundary: result.boundary,
+        ...(result.successor === undefined ? {} : { successor: result.successor }),
+      };
     case "workspace.window.link.select":
     case "workspace.window.link.unlink":
       return { operationKind: result.verb, outcome: result.outcome, target: result.target };

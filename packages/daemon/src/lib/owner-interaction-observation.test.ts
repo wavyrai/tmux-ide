@@ -283,3 +283,87 @@ it("requires explicit snapshot capability plus all owned pane guards and retires
   await r.selector.dispose();
   expect(r.selector.atomicPaneSnapshot).toBe(false);
 });
+
+it("activates the default stock owner once for an explicit supported split read and awaits readiness", async () => {
+  const r = rig(false);
+  await r.selector.start();
+  const first = r.selector.activateForSplit(id);
+  const second = r.selector.activateForSplit(id);
+  expect(r.factory).toHaveBeenCalledTimes(1);
+  expect(r.factory.mock.calls[0]![0].expectedServerEpoch).toBe(id);
+  let complete = false;
+  void first.then(() => {
+    complete = true;
+  });
+  await Promise.resolve();
+  expect(complete).toBe(false);
+  r.event({
+    type: "state",
+    status: "ready",
+    capability: {
+      ...cap,
+      ownedOperationTransport: "direct-wrapper-v1",
+      ownedOperationEpochGuard: "server-epoch-v1",
+      ownedOperationPaneGuard: "direct-pane-v1",
+      ownedOperationSessionGuard: "direct-session-v1",
+    },
+  });
+  r.finish("ready");
+  expect(await first).toBe(true);
+  expect(await second).toBe(true);
+  expect(await r.selector.activateForSplit(id)).toBe(true);
+  expect(r.factory).toHaveBeenCalledTimes(1);
+  await r.selector.dispose();
+});
+
+it.each(["disposed", "failed", "wrong-epoch"])(
+  "lazy activation cannot expose retired or failed readiness: %s",
+  async (scenario) => {
+    const r = rig(false);
+    await r.selector.start();
+    const result = r.selector.activateForSplit(id);
+    if (scenario === "disposed") await r.selector.dispose();
+    r.event({
+      type: "state",
+      status: scenario === "failed" ? "unavailable" : "ready",
+      capability:
+        scenario === "failed"
+          ? null
+          : {
+              ...cap,
+              serverEpoch: scenario === "wrong-epoch" ? epoch : id,
+              ownedOperationTransport: "direct-wrapper-v1",
+              ownedOperationEpochGuard: "server-epoch-v1",
+              ownedOperationPaneGuard: "direct-pane-v1",
+              ownedOperationSessionGuard: "direct-session-v1",
+            },
+    });
+    r.finish(scenario === "failed" ? "unavailable" : "ready");
+    expect(await result).toBe(false);
+    expect(await r.selector.activateForSplit(id)).toBe(false);
+    expect(r.factory).toHaveBeenCalledTimes(1);
+    await r.selector.dispose();
+  },
+);
+
+it("bounds a stuck lazy initialization and refuses late ready callbacks", async () => {
+  vi.useFakeTimers();
+  const r = rig(false);
+  try {
+    const result = r.selector.activateForSplit(id);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(await result).toBe(false);
+    expect(r.dispose).toHaveBeenCalled();
+    r.event({ type: "state", status: "ready", capability: cap });
+    r.finish("ready");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(r.selector.allowStockPublication()).toBe(false);
+    expect(r.status.getSnapshot().method).toBe("unavailable");
+    expect(r.selector.nativeServerEpoch).toBeNull();
+    expect(await r.selector.activateForSplit(id)).toBe(false);
+  } finally {
+    await r.selector.dispose();
+    vi.useRealTimers();
+  }
+});

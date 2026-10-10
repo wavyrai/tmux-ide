@@ -1,0 +1,37 @@
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/pane-split-smoke.mjs:223
+if (failures.length) throw new AggregateError(failures, "Pane-split fixture failed");
+                           ^
+
+AggregateError: Pane-split fixture failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/pane-split-smoke.mjs:223:28 {
+  [errors]: [
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        id: 'live-session.644abf16856ca6f60b93',
+        label: 'e2e-gpui-pane-split-94677-0',
+    +   paneCount: 1
+    -   paneCount: 2
+      }
+
+        at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/pane-split-smoke.mjs:133:12 {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: {
+        id: 'live-session.644abf16856ca6f60b93',
+        label: 'e2e-gpui-pane-split-94677-0',
+        paneCount: 1
+      },
+      expected: {
+        id: 'live-session.644abf16856ca6f60b93',
+        label: 'e2e-gpui-pane-split-94677-0',
+        paneCount: 2
+      },
+      operator: 'deepStrictEqual',
+      diff: 'simple'
+    }
+  ]
+}
+
+Node.js v24.21.0

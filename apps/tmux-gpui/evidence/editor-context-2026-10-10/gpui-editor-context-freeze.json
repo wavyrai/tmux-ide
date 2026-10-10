@@ -1,0 +1,39 @@
+{
+  "scope": "daemon-local selected-pane editor context observation; no route/editor launch",
+  "files": [
+    {
+      "path": "packages/daemon/src/lib/tmux-pane-editor-context.ts",
+      "sha256": "4cff17d8e2bf4015544d542d81768949234dd8e3f5f7bd62385e04a3dc197c06"
+    },
+    {
+      "path": "packages/daemon/src/lib/tmux-pane-editor-context.test.ts",
+      "sha256": "096b914742e58172bcbd6be581f436002e4ebfbced3ca9f4e3efc1b2199b0da5"
+    },
+    {
+      "path": "packages/daemon/src/lib/tmux-server-owner.ts",
+      "sha256": "3548c370fe6c83fe9b883d7ee3e13a8f78f704712010f1a22441bf82e5f28b85"
+    },
+    {
+      "path": "packages/daemon/src/lib/workspace-state.ts",
+      "sha256": "9776de66c2da2c8b5751a6af91a5e036a122739741f72cb486fb8c2d7806ccfa"
+    },
+    {
+      "path": "packages/daemon/src/lib/daemon-embed.ts",
+      "sha256": "ab8336fa8c1e206e8a418e10fbc61ed197d1420541c9be7c05d960a7aa344dc2"
+    },
+    {
+      "path": "packages/daemon/src/lib/embedded-tmux-server-owners.test.ts",
+      "sha256": "c17984ac4270ae0828711b93c5d33b00cb18c3732fe0b58f4fa3fa810d8695ed"
+    }
+  ],
+  "checks": {
+    "focused": "41 passed in 4 suites",
+    "types": "daemon plus workbench dock passed",
+    "lint": "passed"
+  },
+  "logs": [
+    "/tmp/gpui-editor-context-focused-lossless.log",
+    "/tmp/gpui-editor-context-types-lossless.log",
+    "/tmp/gpui-editor-context-lint-lossless.log"
+  ]
+}

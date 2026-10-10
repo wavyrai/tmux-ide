@@ -1,0 +1,9 @@
+{
+  "apps/tmux-gpui/bridge/pane-actions.ts": "bb0cd21625b78a7fdaea3e1d27de367ff715336b082d6bde76682c0b5c4d5ac4",
+  "apps/tmux-gpui/bridge/live.ts": "9b55e1eab74fbed04ce6a8fa065d5d2182b83974c99da5e535ffc68a3f651606",
+  "apps/tmux-gpui/bridge/browser.ts": "bcf7c6f4706504827109c2f4c40ebf253562f824e8f9b50e70d17760d08eff1d",
+  "apps/tmux-gpui/bridge/pane-split-refresh.ts": "ceb1d6a4fc0e0e5f2874b7fa8cd6c733e800e93e16a1af698ba81b525782c572",
+  "apps/tmux-gpui/bridge/pane-split-refresh.test.ts": "e618b89ffbd30ebdf2a86be3164dac0320a5d27dad5a265add531bfc2ceb508d",
+  "apps/tmux-gpui/bridge/pane-split.test.ts": "29d33325d228cec410bd17bfdbcd7816224e6d495740432e434f4598716e66a2",
+  "apps/tmux-gpui/bridge/pane-split-smoke.mjs": "7a317b783ade3f6514a55329b78b68d46ee5e3bdc906a570be2bedb2b49c0e14"
+}

@@ -1,0 +1,218 @@
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -125,6 +125,7 @@
+ 	cmd-pipe-pane.c \
+ 	cmd-queue.c \
+ 	tmux-ide-journal.c \
++	cmd-tmux-ide-resize-split.c \
+ 	tmux-ide-journal.h \
+ 	tmux-ide-snapshot-buffer.h \
+ 	cmd-refresh-client.c \
+--- a/cmd.c
++++ b/cmd.c
+@@ -118,6 +118,7 @@
+ extern const struct cmd_entry cmd_unbind_key_entry;
+ extern const struct cmd_entry cmd_unlink_window_entry;
+ extern const struct cmd_entry cmd_wait_for_entry;
++extern const struct cmd_entry cmd_tmux_ide_resize_split_entry;
+ extern const struct cmd_entry cmd_tmux_ide_events_entry;
+ extern const struct cmd_entry cmd_tmux_ide_run_entry;
+ 
+@@ -213,6 +214,7 @@
+ 	&cmd_unbind_key_entry,
+ 	&cmd_unlink_window_entry,
+ 	&cmd_wait_for_entry,
++	&cmd_tmux_ide_resize_split_entry,
+ 	&cmd_tmux_ide_events_entry,
+ 	&cmd_tmux_ide_run_entry,
+ 	NULL
+--- /dev/null
++++ b/cmd-tmux-ide-resize-split.c
+@@ -0,0 +1,187 @@
++/*
++ * Prototype split-level resize. Uses tmux's native mouse-resize operation.
++ * ISC license: see COPYING. No stock command behavior is changed.
++ */
++#include <sys/types.h>
++#include <limits.h>
++#include <stdlib.h>
++#include <string.h>
++#include "tmux.h"
++
++#define TI_SPLIT_MAX_DEPTH 64
++#define TI_SPLIT_MAX_LEAVES 512
++#define TI_SPLIT_MAX_NODES 1023
++#define TI_SPLIT_MAX_LAYOUT 65536
++#define TI_SPLIT_MAX_GRID 4096
++#define TI_SPLIT_SERIALIZED_CAPACITY 8192
++
++static enum cmd_retval ti_split_exec(struct cmd *, struct cmdq_item *);
++const struct cmd_entry cmd_tmux_ide_resize_split_entry = {
++	.name = "tmux-ide-resize-split",
++	.args = { "VE:a:c:p:s:t:", 0, 0, NULL },
++	.usage = "-V | -s $session -t @window -E layout -p child.path -a cols|rows -c border",
++	.exec = ti_split_exec
++};
++
++/* Canonical bounded decimal, without signs, whitespace or leading zeroes. */
++static int
++ti_split_uint(const char *s, size_t len, u_int max, u_int *out)
++{
++	u_int value = 0, digit;
++	size_t i;
++	if (len == 0 || len > 10 || (len > 1 && s[0] == '0'))
++		return 0;
++	for (i = 0; i < len; i++) {
++		if (s[i] < '0' || s[i] > '9')
++			return 0;
++		digit = s[i] - '0';
++		if (digit > max || value > (max - digit) / 10)
++			return 0;
++		value = value * 10 + digit;
++	}
++	*out = value;
++	return 1;
++}
++
++/* Bound traversal and reject floating or otherwise unsupported trees. */
++static int
++ti_split_tree(struct layout_cell *lc, u_int depth, u_int *nodes,
++    u_int *leaves, size_t *serialized)
++{
++	struct layout_cell *child;
++	u_int count = 0, id;
++	if (!lc || depth > TI_SPLIT_MAX_DEPTH || ++*nodes > TI_SPLIT_MAX_NODES ||
++	    lc->flags & LAYOUT_CELL_FLOATING || lc->sx == 0 || lc->sy == 0 ||
++	    lc->sx > TI_SPLIT_MAX_GRID || lc->sy > TI_SPLIT_MAX_GRID ||
++	    lc->xoff < 0 || lc->yoff < 0 ||
++	    (u_int)lc->xoff > TI_SPLIT_MAX_GRID - lc->sx ||
++	    (u_int)lc->yoff > TI_SPLIT_MAX_GRID - lc->sy)
++		return 0;
++	/* Worst-case body: 19 geometry chars/node, one opening delimiter per
++	 * split, one comma per leaf, and one separator per tree edge. This is
++	 * 21*nodes + sum(pane-id digits) - 1. Initial budget includes checksum
++	 * prefix and NUL too, conservatively sharing layout_dump's 8192 bytes.
++	 * Resizing changes neither tree shape nor pane IDs; each coordinate
++	 * stays within the admitted 4096 grid. */
++	*serialized += 21;
++	if (lc->type == LAYOUT_WINDOWPANE) {
++		if (!lc->wp || ++*leaves > TI_SPLIT_MAX_LEAVES)
++			return 0;
++		id = lc->wp->id;
++		do { (*serialized)++; id /= 10; } while (id != 0);
++		return *serialized <= TI_SPLIT_SERIALIZED_CAPACITY;
++	}
++	if (*serialized > TI_SPLIT_SERIALIZED_CAPACITY)
++		return 0;
++	if (lc->type != LAYOUT_LEFTRIGHT && lc->type != LAYOUT_TOPBOTTOM)
++		return 0;
++	TAILQ_FOREACH(child, &lc->cells, entry) {
++		if (child->parent != lc || !ti_split_tree(child, depth + 1, nodes, leaves, serialized))
++			return 0;
++		count++;
++	}
++	return count >= 2;
++}
++
++static enum cmd_retval
++ti_split_exec(struct cmd *self, struct cmdq_item *item)
++{
++	struct args *args = cmd_get_args(self);
++	struct window *w;
++	struct session *session;
++	struct layout_cell *lc, *child;
++	const char *target, *session_target, *expected, *path, *axis, *position, *part, *end;
++	const char *flags = "stEpac";
++	char *before, *after;
++	u_int id, session_id, border, index, i, depth = 0, nodes = 0, leaves = 0;
++	size_t serialized = 5;
++	int delta;
++	enum layout_type type;
++
++	if (args_has(args, 'V')) {
++		if (args_has(args, 'V') != 1)
++			goto invalid;
++		for (i = 0; flags[i]; i++)
++			if (args_has(args, flags[i]))
++				goto invalid;
++		cmdq_print(item, "{\"schemaVersion\":1,\"capability\":\"split-resize-v1\","
++		    "\"sessionMembership\":\"exact-session-link-v1\",\"maxDepth\":64,\"maxLeaves\":512,\"maxGrid\":4096}");
++		return CMD_RETURN_NORMAL;
++	}
++	for (i = 0; flags[i]; i++)
++		if (args_has(args, flags[i]) != 1)
++			goto invalid;
++	target = args_get(args, 't');
++	session_target = args_get(args, 's');
++	expected = args_get(args, 'E');
++	path = args_get(args, 'p');
++	axis = args_get(args, 'a');
++	position = args_get(args, 'c');
++	if (session_target[0] != '$' ||
++	    !ti_split_uint(session_target + 1, strlen(session_target + 1), UINT_MAX, &session_id) ||
++	    target[0] != '@' ||
++	    !ti_split_uint(target + 1, strlen(target + 1), UINT_MAX, &id) ||
++	    strlen(expected) > TI_SPLIT_MAX_LAYOUT || strlen(path) > 256 ||
++	    !ti_split_uint(position, strlen(position), TI_SPLIT_MAX_GRID, &border))
++		goto invalid;
++	if (strcmp(axis, "cols") == 0)
++		type = LAYOUT_LEFTRIGHT;
++	else if (strcmp(axis, "rows") == 0)
++		type = LAYOUT_TOPBOTTOM;
++	else
++		goto invalid;
++	session = session_find_by_id(session_id);
++	w = window_find_by_id(id);
++	if (!session || !w || !winlink_find_by_window(&session->windows, w) || (w->flags & WINDOW_ZOOMED) || window_has_floating_panes(w) ||
++	    !ti_split_tree(w->layout_root, 1, &nodes, &leaves, &serialized) ||
++	    w->layout_root->xoff != 0 || w->layout_root->yoff != 0)
++		goto invalid;
++	before = layout_dump(w, w->layout_root);
++	if (!before || strcmp(before, expected) != 0) {
++		free(before);
++		cmdq_error(item, "split layout mismatch");
++		return CMD_RETURN_ERROR;
++	}
++	free(before);
++	lc = w->layout_root;
++	part = path;
++	for (;;) {
++		end = strchr(part, '.');
++		if (!end)
++			end = part + strlen(part);
++		if (++depth >= TI_SPLIT_MAX_DEPTH ||
++		    !ti_split_uint(part, end - part, TI_SPLIT_MAX_LEAVES - 1, &index) ||
++		    lc->type == LAYOUT_WINDOWPANE)
++			goto invalid;
++		child = TAILQ_FIRST(&lc->cells);
++		for (i = 0; child && i < index; i++)
++			child = TAILQ_NEXT(child, entry);
++		if (!child)
++			goto invalid;
++		lc = child;
++		if (!*end)
++			break;
++		part = end + 1;
++	}
++	if (!lc->parent || lc->parent->type != type || !TAILQ_NEXT(lc, entry))
++		goto invalid;
++	delta = (int)border - (type == LAYOUT_LEFTRIGHT ? lc->xoff + (int)lc->sx : lc->yoff + (int)lc->sy);
++	/* No yield between exact layout comparison and native mutation. */
++	layout_resize_layout(w, lc, type, delta, 0);
++	server_redraw_window(w);
++	border = type == LAYOUT_LEFTRIGHT ? lc->xoff + lc->sx : lc->yoff + lc->sy;
++	after = layout_dump(w, w->layout_root);
++	if (!after) {
++		/* Admission proves capacity; retain truthful failure if an unrelated
++		 * serializer invariant ever changes. Mutation has already occurred. */
++		cmdq_error(item, "split resized but result serialization unavailable");
++		return CMD_RETURN_ERROR;
++	}
++	/* layout_dump is generated numeric/bracket grammar, safe inside JSON. */
++	cmdq_print(item, "{\"schemaVersion\":1,\"boundary\":%u,\"layout\":\"%s\"}", border, after);
++	free(after);
++	return CMD_RETURN_NORMAL;
++invalid:
++	cmdq_error(item, "invalid or unavailable split resize");
++	return CMD_RETURN_ERROR;
++}

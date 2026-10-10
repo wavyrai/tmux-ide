@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "path": "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts",
+      "sha256": "50b6fb0b81b20edb06214f1d67f70ce9fd57c3cc7892a67758e578e593dea4f1"
+    },
+    {
+      "path": "packages/daemon/src/terminal/session-runtime/registry.ts",
+      "sha256": "7427934ca6fdc1545add8a4e9eb448da93032b8c96daf8b185ed55add21cb4f9"
+    },
+    {
+      "path": "packages/daemon/src/terminal/session-runtime/transport-binding.ts",
+      "sha256": "31513008ab09c1ed1eece88442ac4903a1b04446fa476773d25a506c601c7bfc"
+    },
+    {
+      "path": "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts",
+      "sha256": "790e45e4d19284a30967a78505335f50774cb26144e478db5193098b0ae4dbd3"
+    },
+    {
+      "path": "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.test.ts",
+      "sha256": "9282173c1d9247ee846cf4458c029b4d7395b806e62be7f23de1a3dd6b86a245"
+    },
+    {
+      "path": "packages/daemon/src/terminal/session-runtime/terminal-delivery-address.test.ts",
+      "sha256": "acc414e6b3020f5cc3e43aae58471498c5170d3d6ca92a19391d86d938e4155e"
+    }
+  ],
+  "checks": {
+    "before": "/tmp/gpui-delivery-alias-before.log",
+    "regression": "/tmp/gpui-delivery-alias-regression.log",
+    "types": "/tmp/gpui-delivery-alias-types.log",
+    "lint": "/tmp/gpui-delivery-alias-lint.log"
+  },
+  "scope": "Canonical/native source identity preserved, validated per-connection public delivery address"
+}

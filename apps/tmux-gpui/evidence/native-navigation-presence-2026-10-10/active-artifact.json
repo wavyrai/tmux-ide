@@ -1,0 +1,54 @@
+{
+  "scope": "Instrumented disposable app; original artifact qualification does not transfer to wrapper",
+  "source": "/tmp/Tmux IDE Split Count Physical.app",
+  "copy": "/tmp/Tmux IDE Navigation Trace QA.app",
+  "unchanged": [
+    {
+      "path": "Contents/MacOS/tmux-ide-gpui",
+      "sha256": "31792088c01d1d5666476711d1e61f781381ef32b3d4664cbcc2f0af78c63bd3",
+      "matches": true
+    },
+    {
+      "path": "Contents/MacOS/tmux-ide-launcher",
+      "sha256": "d8e6376e2d826713c168df47bf78461dd62c8f4de13ce2db7c24e63bc68cc604",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/node",
+      "sha256": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/bridge/preview-launcher.bundle.mjs",
+      "sha256": "f3c627fc96739193f4f1d55948fa444a7fa58d91a3e0ebe6e632e8c0a12fe3ad",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/bridge/live.bundle.mjs",
+      "sha256": "6624fdd3c3a872b4596300ab27aec746662205d04a1f51727a656869b10b4b6e",
+      "matches": true
+    }
+  ],
+  "renamedBrowser": {
+    "originalSha256": "feecdffb3da4b683310bad9597c51ddc8cfa2a493df9c315768b012d42145691",
+    "copySha256": "feecdffb3da4b683310bad9597c51ddc8cfa2a493df9c315768b012d42145691"
+  },
+  "added": [
+    {
+      "path": "/tmp/Tmux IDE Navigation Trace QA.app/Contents/Resources/bridge/browser.bundle.mjs",
+      "sha256": "2cf0b327c88a7a8983de62375b9f2786949abb939d28950a5e3af193f72dceef"
+    },
+    {
+      "path": "/tmp/Tmux IDE Navigation Trace QA.app/Contents/Resources/bridge/browser-trace-fixture.mjs",
+      "sha256": "a85cd8c91cab19337b111089de1f27bd79fc646143e170f02368acb9d06885a7"
+    },
+    {
+      "path": "/tmp/Tmux IDE Navigation Trace QA.app/Contents/Resources/bridge/fixture-child.mjs",
+      "sha256": "602aa799b3e6306827dc5ecdaecf57eef80e02f8795159e662efb8ddebda590a"
+    }
+  ],
+  "trace": "/tmp/gpui-navigation-metadata-20261010-e.jsonl",
+  "diagnosticBundleId": "com.tmux-ide.gpui.navigation-trace-qa",
+  "diagnosticInfoPlistSha256": "19d3d40ff379a9f9a0c07b830eddad9c3f32972ced23ad3e56ebc0f976efe042",
+  "activeRunWrapperSha256": "43f5d937dce1152366ea27675918b96adbc6c8f958fe55b4e07b1a2ab9acc002"
+}

@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "label": "trailing-session-and-window",
+      "exactCatalogName": true,
+      "nameLength": 95,
+      "open": "success",
+      "panes": 2
+    },
+    {
+      "label": "trimmed-session-trailing-window",
+      "exactCatalogName": true,
+      "nameLength": 94,
+      "open": "success",
+      "panes": 2
+    }
+  ],
+  "cleanup": [
+    "daemon-stopped",
+    "fleet-disposed"
+  ]
+}

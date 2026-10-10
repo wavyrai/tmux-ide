@@ -1,0 +1,8 @@
+Open the sole session and wait for THEME_READY. Activate the app. Click Theme…, click its search input, type Dracula, then press Enter. Do not type into the terminal.
+sandbox_extension_issue_file_to_process failed for /tmp/Tmux IDE Visual Qualification.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+{"stage":"theme-persisted","preset":"dracula","unrelatedRetained":true,"terminalInputBytes":0}
+Dracula persisted. In the open Theme picker search input press Cmd-A, type Nord, then press Enter. If picker closed, reopen Theme… first. Capture the visual state as needed.
+{"stage":"theme-persisted","preset":"nord","unrelatedRetained":true,"terminalInputBytes":0}
+Nord persisted and picker input stayed out of terminal. Capture Nord if needed, press Escape to close picker, then Cmd-Q to close this owned app.
+{"passed":true,"physicalNativeThemeSelection":["dracula","nord"],"persistedMode":"dark","unrelatedRetained":true,"terminalInputBytes":0,"sourceSurvivesClose":true,"producerPid":"64934","osAppearanceChanged":false,"renderedPixels":"operator evidence required","cleanup":true}

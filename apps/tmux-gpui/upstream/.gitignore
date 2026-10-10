@@ -1,0 +1,28 @@
+/target/
+/dist/
+.DS_Store
+
+# Generated from git history at release time; never tracked.
+/CHANGELOG.md
+/release-notes/
+
+# Local signing configuration and credential backups must never be committed.
+.env
+.env.*
+.envrc
+.envrc.*
+.direnv/
+.release-credentials/
+.herdr-sign.*/
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
+*.keychain
+*.keychain-db
+id_rsa*
+id_ed25519*
+
+# Machine-local mise overrides.
+mise.local.toml

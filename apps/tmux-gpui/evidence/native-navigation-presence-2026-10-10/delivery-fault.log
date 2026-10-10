@@ -1,0 +1,2 @@
+FAULT:{"reason": "protocol-violation", "message": "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"invalid_format\",\n    \"format\": \"regex\",\n    \"pattern\": \"/^[A-Za-z0-9][A-Za-z0-9._-]*$/u\",\n    \"path\": [\n      \"workspaceName\"\n    ],\n    \"message\": \"Invalid string: must match pattern /^[A-Za-z0-9][A-Za-z0-9._-]*$/u\"\n  }\n]"}
+Preview stream validation failed: Error: Terminal source unavailable

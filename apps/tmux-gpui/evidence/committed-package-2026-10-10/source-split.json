@@ -1,0 +1,14 @@
+{
+  "binarySha256": "f546fd08b555d819c3416a8dc91d6ab75750b8245d28787fdcf7dc597eca572a",
+  "helper": {
+    "mode": "source-bridge",
+    "nodeSha256": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b",
+    "entrySha256": "3fbeaefc37ee7b490957d87523b3f37ce4c066dae7fdc5506a7da6b5dfb1a1dc"
+  },
+  "cleanup": true,
+  "movedBeforeRelease": true,
+  "boundary": 49,
+  "paneIdentitiesStable": true,
+  "phase": "settled",
+  "sameViewerPostActivationInput": true
+}

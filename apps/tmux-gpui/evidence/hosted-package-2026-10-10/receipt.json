@@ -1,0 +1,20 @@
+{
+  "run": 38080028723,
+  "url": "https://github.com/wavyrai/tmux-ide/actions/runs/38080028723",
+  "branchHead": "4876fa44d95072e915c5a91e122b74a7f410e73f",
+  "checkoutCommit": "e8dada73528cdb4dfcc8aa1be4000baadda7b371",
+  "native": {
+    "bytes": 13365632,
+    "mode": 493,
+    "sha256": "23a7eea24510293c889c8c9955aca1b5d595ed1582063c712a70bc86f7ee47cf"
+  },
+  "buildKind": "local-nonhermetic-native-build",
+  "artifacts": {
+    "assembly.log": "ae062b4ec15dd6cada4851115a3da58a67f83d2e92947d90715af6117eea23e7",
+    "package-tests.log": "b1e05babf0892197ad87d48d361b034e66bb13adf76258186fcf8fe3b6eb51d2",
+    "build-errors.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native-build.json": "5b8393462cbef75321759af30a29ae801d48ad9e7866b405fc147c7891992fee",
+    "build.log": "34ceef67e6e2c97761ff011287b985e7521adc1e4e7fac42f6b89b97d4eb2780",
+    "Tmux IDE CI.app/Contents/Resources/development-manifest.json": "5a432a42c2763312e8f157d0c166a04dbc43470ced9a3e0960cf08d194c9b27f"
+  }
+}

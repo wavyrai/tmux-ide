@@ -1,0 +1,36 @@
+[package]
+edition.workspace      = true
+license.workspace      = true
+name                   = "herdr-client"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[lints]
+workspace = true
+
+[features]
+# `ConnectTarget::Cloud`: machines a cloud provider created, reached through an
+# application-built command. Each provider adds its `CloudProvider` variant.
+cloud = []
+coder = ["cloud"]
+daytona = ["cloud"]
+
+[dependencies]
+crossbeam-channel.workspace = true
+herdr-protocol.workspace    = true
+serde.workspace             = true
+serde_json.workspace        = true
+thiserror.workspace         = true
+tracing.workspace           = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+# The Windows daemon binds a named pipe, not an AF_UNIX socket; `interprocess`
+# maps a socket path into the NPFS namespace exactly as upstream Herdr does.
+# `windows-sys` supplies only `PeekNamedPipe`, which has no safe wrapper and
+# which the session loop's bounded polling cannot do without.
+[target.'cfg(windows)'.dependencies]
+interprocess.workspace = true
+windows-sys.workspace  = true

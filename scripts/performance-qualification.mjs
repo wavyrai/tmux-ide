@@ -58,11 +58,13 @@ const suites = [
       "src/performance-qualification.test.ts",
       "src/performance-metrics.test.ts",
       "src/interaction-receipts.test.ts",
+      "src/resize-transaction.test.ts",
     ],
     assertions: [
       "the exact 60 Hz budget and deterministic percentiles are enforced",
       "2/4/8-client convergence identities and queue bounds are evaluated",
       "authenticated and external interaction projections remain distinct",
+      "pane-resize floods keep one in-flight mutation and the latest target",
     ],
   },
   {
@@ -93,34 +95,15 @@ const suites = [
       "src/tui/mirror/runtime/performance-hud-optional-feature.test.ts",
       "src/tui/mirror/semantic-pane-render-source.test.ts",
       "src/tui/mirror/frame-coalescer.test.ts",
-      "src/tui/mirror/resize-transaction.test.ts",
       "src/tui/mirror/theme.test.ts",
       "src/tui/mirror/pane-mirror.test.ts",
     ],
     assertions: [
       "the HUD remains demand-loaded and installs no polling loop",
       "terminal delivery metrics publish only after retained state applies",
-      "frame requests coalesce; pane-resize floods keep one in-flight mutation and the latest target",
+      "frame requests coalesce",
       "idle panes do not advance content work",
       "full ANSI, truecolor, and explicit black terminal backgrounds remain protocol-faithful",
-    ],
-  },
-  {
-    name: "web",
-    workspace: "@tmux-ide/desktop-renderer",
-    files: [
-      "src/runtime/gui-performance-telemetry.test.ts",
-      "src/runtime/gui-performance-hud.test.tsx",
-      "src/experience/workspace-tiled-surface.test.tsx",
-      "src/terminal/workspace-pane-compositor.test.ts",
-      "src/terminal/xterm-renderer.test.ts",
-    ],
-    assertions: [
-      "the HUD remains opt-in and browser-frame work coalesces across panes",
-      "drag, swap, and resize floods produce one preview cadence and durable mutation",
-      "terminal presentation fanout fences stale work and bounds replay and layout candidates",
-      "authenticated pane relationships render without inventing external sources",
-      "explicit ANSI colors remain protocol-faithful across themes",
     ],
   },
 ];
@@ -141,18 +124,15 @@ const scenarioDefinitions = [
   ),
   scenario(
     "resize-flood",
-    ["opentui", "web"],
-    [
-      "1,000 OpenTUI pointer moves stay local and submit once",
-      "web pointer floods coalesce to one preview frame and one durable resize",
-    ],
+    ["core"],
+    ["pane-resize motion keeps one in-flight mutation and only the latest queued target"],
   ),
   scenario(
     "drag-split-and-move",
-    ["daemon-runtime", "web"],
+    ["daemon-runtime"],
     [
       "structural intents share one ordered semantic mutation lane",
-      "web pane dragging commits one canonical swap and adopts tmux confirmation",
+      "semantic mutation receipts retain canonical confirmation",
     ],
   ),
   scenario(
@@ -167,18 +147,20 @@ const scenarioDefinitions = [
   ),
   scenario(
     "drop-socket-crash-and-generation",
-    ["daemon-runtime", "web"],
-    ["NACK reseed, control exit, daemon generation rollover, and web reconnect are bounded"],
+    ["daemon-runtime"],
+    ["NACK reseed, control exit, daemon generation rollover, and reconnect are bounded"],
   ),
   scenario(
     "authenticated-and-external-interactions",
-    ["core", "daemon-runtime", "web"],
+    ["core", "daemon-runtime"],
     ["authenticated sends/reads retain source identity while external tmux traffic does not"],
   ),
   scenario(
     "themes-and-terminal-colors",
-    ["opentui", "web"],
-    ["both adapters preserve the complete ANSI palette, truecolor, and explicit backgrounds"],
+    ["opentui"],
+    [
+      "the OpenTUI adapter preserves the complete ANSI palette, truecolor, and explicit backgrounds",
+    ],
   ),
   scenario(
     "bounded-queues-and-idle-work",
@@ -251,7 +233,7 @@ const scenarioDefinitions = [
       portableEvidence?.measurements.resizeResponsiveness.status === "passed"
         ? "partially-measured-portable"
         : "not-measured",
-    suites: ["opentui", "web"],
+    suites: ["opentui"],
     assertions: ["resize geometry settles within a portable command budget"],
     reason: portableEvidence
       ? `Resize is ${portableEvidence.measurements.resizeResponsiveness.status}; drag is ${portableEvidence.measurements.dragResponsiveness.status}.`

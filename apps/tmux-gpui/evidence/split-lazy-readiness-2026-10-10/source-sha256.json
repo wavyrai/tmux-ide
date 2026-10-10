@@ -1,0 +1,16 @@
+{
+  "packages/daemon/src/lib/native-split-capability.ts": "3c0f48af2d8fcab3622e8cddb60f7a4962acc57380eaed8bc2384f819df3ebe8",
+  "packages/daemon/src/lib/native-split-capability.test.ts": "8a6e2af48b3a7b7f9e1899b39f24fa1a3d9d9b106c66bddafc3d6dbcf88612f1",
+  "packages/daemon/src/lib/owner-interaction-observation.ts": "8ef10a021521ba73a27ad7f6189ff2c5360d7cfc21bcded4239986dab2c8535f",
+  "packages/daemon/src/lib/owner-interaction-observation.test.ts": "197c78d14cd7c4ded1284ecce02f729b17639254896e60c97431ef6fa34a5ba9",
+  "packages/daemon/src/lib/native-tmux-interaction-observer.ts": "c3b8679b08dee73a956983a0b98d328090fac527c5af411ac8442ba0d459c4e0",
+  "packages/daemon/src/lib/native-tmux-interaction-observer.test.ts": "a3193e688973dba0c47739806bc084053465962f3e4cdbb41566eedb394acebd",
+  "packages/daemon/src/lib/tmux-server-owner.ts": "13794ff06b7a74a5867d6c0e0abd468ae1c74371a79111b2d5a3decbe821834e",
+  "packages/daemon/src/lib/daemon-embed.ts": "4e2423011e7510bf4eda69ceb37505d2da63b883783cb9105037f47994fab840",
+  "packages/daemon/src/terminal/mirror/mirror-service.ts": "bf804d3df12c638f5fb27fa53f7d7556c229d8609b61f18fc82547b81c828bc8",
+  "packages/daemon/src/terminal/mirror/mirror-service-split-layout.test.ts": "4a27d196677ebaf6ac3541b01a58cb60948193c8ae08e1aad83632ae959b1a7b",
+  "packages/daemon-client/src/tmux-server-client.ts": "8a1ebcbe71d69719e1f88b497fa8a0742da28c5d9ef9290d6fd01f78c844a86e",
+  "packages/daemon-client/src/tmux-server-split-layout.test.ts": "47227f57d659aa8bee72b1ae18e849a7e94a874da31dfc2301fcb1ac3b9e3adc",
+  "native/tmux/tests/split-owner-runner.mjs": "bc4e00ade3c45afd73bbe6ea2a103bb9fc66c5418279b9022cf93ed78be205d6",
+  "apps/tmux-gpui/bridge/split-gesture-smoke.mjs": "ae93370ff28c62626d993b21f7485548062fb7b220b5098a9b7914a224a2b055"
+}

@@ -1,0 +1,25 @@
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:85
+if (failures.length) throw new AggregateError(failures, "Session-open fixture failed");
+                           ^
+
+AggregateError: Session-open fixture failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:85:28 {
+  [errors]: [
+    AssertionError [ERR_ASSERTION]: metadata must identify authoritative current-window active pane
+    + actual - expected
+    
+    + undefined
+    - 'pane.promoted.98d9b541e632bca41faf'
+    
+        at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/session-open-smoke.mjs:66:10 {
+      generatedMessage: false,
+      code: 'ERR_ASSERTION',
+      actual: undefined,
+      expected: 'pane.promoted.98d9b541e632bca41faf',
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+  ]
+}
+
+Node.js v24.21.0

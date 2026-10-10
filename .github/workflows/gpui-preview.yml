@@ -1,0 +1,115 @@
+name: GPUI preview correctness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpui-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge:
+    name: Bridge contracts and isolated lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: ./.github/actions/setup-tmux
+        with:
+          test-node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Bridge typecheck and deterministic tests
+        run: bash apps/tmux-gpui/scripts/check-bridge.sh
+      - name: Real isolated daemon journeys
+        run: |
+          node --import tsx apps/tmux-gpui/bridge/session-create-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/session-open-smoke.mjs
+          TMUX_GPUI_TEST_LONG_SESSION_NAME=1 node --import tsx apps/tmux-gpui/bridge/session-open-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/startup-recovery-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/discovery-recovery-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/sustained-output-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/pane-resize-gesture-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/competing-viewers-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/pane-replacement-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/history-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/home-agents-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/workspace-agents-smoke.mjs
+          TMUX_GPUI_TEST_DISCOVERY=1 node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs
+
+  native:
+    name: macOS Rust correctness (no physical UI claim)
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/tmux-gpui/upstream
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          architecture: arm64
+          cache: pnpm
+      - name: Install JavaScript packaging dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+      - name: Load repository-pinned Rust toolchain
+        run: rustup show
+      - name: Formatting and file size
+        run: |
+          cargo fmt --all -- --check
+          bash scripts/check-file-size.sh
+      - name: Lint both feature configurations
+        run: |
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+      - name: Workspace tests
+        run: |
+          cargo test --locked --workspace
+          cargo test --locked --workspace --all-features
+      - name: Build and check the release preview executable
+        run: |
+          cargo build --locked --release -p herdr-gpui --bin tmux-ide-gpui
+          cargo test --locked --release -p herdr-gpui --test tmux_cli
+      - name: Install pinned license-report generator
+        run: cargo install cargo-about --version 0.9.2 --locked --features cli
+      # Offline metadata reads the full lockfile, including non-macOS dependencies.
+      - name: Fetch locked dependencies for offline packaging
+        run: cargo fetch --locked
+      - name: Assemble and test the macOS ARM64 app
+        working-directory: .
+        shell: bash
+        run: |
+          node_binary=$(node -p 'process.execPath')
+          node_root=$(dirname "$(dirname "$node_binary")")
+          bash apps/tmux-gpui/scripts/check-packaged-app.sh \
+            "$node_binary" "$node_root/LICENSE" "$RUNNER_TEMP/gpui-package-check"
+      - name: Preserve packaging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-macos-packaging-evidence
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/gpui-package-check/*.log
+            ${{ runner.temp }}/gpui-package-check/native-build.json
+            ${{ runner.temp }}/gpui-package-check/Tmux IDE CI.app/Contents/Resources/development-manifest.json

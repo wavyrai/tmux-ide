@@ -1,0 +1,12 @@
+{
+  "theme": {
+    "mode": "dark",
+    "preset": "dracula"
+  },
+  "unrelated": {
+    "retained": "native-theme-isolated-sentinel",
+    "nested": {
+      "value": 42
+    }
+  }
+}

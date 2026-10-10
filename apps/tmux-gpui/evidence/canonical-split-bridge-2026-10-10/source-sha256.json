@@ -1,0 +1,7 @@
+{
+  "apps/tmux-gpui/bridge/split-layout.ts": "3849ecf426064d16493cffd2ed2521d659615ec8e767bf2a91716486c4b9a3d6",
+  "apps/tmux-gpui/bridge/split-layout.test.ts": "8af70e683ef2e9003cd5bbb0f67305cff085f077bf40be0bc6eca279fb481b5e",
+  "apps/tmux-gpui/bridge/split-resize.ts": "deddb48415b7704a8012a9e1405c590eaa78e688744e440d37d6a3382a5c8ff3",
+  "apps/tmux-gpui/bridge/split-resize.test.ts": "a6f049162ac01ad29a8551d6d643b1e0820545eeb9ca9b51bcf21f221c754b0d",
+  "apps/tmux-gpui/bridge/live.ts": "453fa703ae37e8f47d36a091159bb5b16258ea1e856102bcd3c1d80e8c903e1d"
+}

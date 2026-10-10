@@ -1,3 +1,7 @@
+import {
+  WindowSplitResizeTargetSchemaZ,
+  WindowSplitSuccessorSchemaZ,
+} from "./window-split-layout.ts";
 /**
  * Contracts for the multiplexer mutation routes — split, kill, rename, zoom and
  * select.
@@ -227,7 +231,17 @@ export const WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend
 export type WorkspacePaneResizeArguments = z.infer<typeof WorkspacePaneResizeArgumentsSchemaZ>;
 
 /** Every multiplexer intent, discriminated by the route that carries it. */
+export const WorkspaceWindowSplitResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  target: WindowSplitResizeTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowSplitResizeArguments = z.infer<
+  typeof WorkspaceWindowSplitResizeArgumentsSchemaZ
+>;
+
 export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowSplitResizeArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.window.split.resize"),
+  }).strict(),
   WorkspaceWindowLinkSelectArgumentsSchemaZ.extend({
     verb: z.literal("workspace.window.link.select"),
   }).strict(),
@@ -406,7 +420,35 @@ export const WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 }).strict();
 export type WorkspacePaneResizeResult = z.infer<typeof WorkspacePaneResizeResultSchemaZ>;
 
+export const WorkspaceWindowSplitResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.window.split.resize"),
+  target: WindowSplitResizeTargetSchemaZ,
+  axis: WorkspaceResizeAxisSchemaZ,
+  boundary: z.number().int().min(0).max(4096),
+  successor: WindowSplitSuccessorSchemaZ.nullable().optional(),
+})
+  .strict()
+  .superRefine((result, context) => {
+    const successor = result.successor;
+    if (!successor) return;
+    const split = successor.resource.splits.find((split) => split.splitId === successor.splitId);
+    if (
+      JSON.stringify(successor.resource.window) !== JSON.stringify(result.target.window) ||
+      split?.axis !== result.axis ||
+      split?.boundary !== result.boundary
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["successor"],
+        message: "Successor must match the observed window, axis and boundary",
+      });
+  });
+export type WorkspaceWindowSplitResizeResult = z.infer<
+  typeof WorkspaceWindowSplitResizeResultSchemaZ
+>;
+
 export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowSplitResizeResultSchemaZ,
   WorkspaceWindowLinkSelectResultSchemaZ,
   WorkspaceWindowLinkUnlinkResultSchemaZ,
   WorkspaceWindowSplitResultSchemaZ,

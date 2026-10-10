@@ -1,0 +1,26 @@
+[
+  {
+    "journey": "window-canvas-smoke",
+    "exitCode": 0
+  },
+  {
+    "journey": "pane-replacement-smoke",
+    "exitCode": 0
+  },
+  {
+    "journey": "pane-resize-gesture-smoke",
+    "exitCode": 0
+  },
+  {
+    "journey": "history-smoke",
+    "exitCode": 0
+  },
+  {
+    "journey": "discovery-recovery-smoke",
+    "exitCode": 0
+  },
+  {
+    "journey": "competing-viewers-smoke",
+    "exitCode": 0
+  }
+]

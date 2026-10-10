@@ -5,6 +5,7 @@ import type {
   TerminalNativeBackingResponse,
 } from "./native-seed-backing.ts";
 import {
+  WorkspaceIdSchemaZ,
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
@@ -222,6 +223,8 @@ export interface SessionRuntimeConsumer {
   noteActivity(activity: SessionRuntimeActivityKind): void;
   acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
   releaseAuthority(authority: SessionRuntimeAuthorityKind): void;
+  /** Assert an existing exact geometry grant without acquiring authority or fitting. */
+  assertGeometryAuthority(lease: SessionRuntimeAuthorityLease): void;
   acquireController(): SessionRuntimeControllerLease;
   handoffController(
     lease: SessionRuntimeControllerLease,
@@ -274,6 +277,7 @@ export interface SessionRuntimeConsumer {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection>;
   close(): Promise<void>;
 }
@@ -293,6 +297,7 @@ interface ExecutionHandleState {
   readonly allowedSourcePaneIds: ReadonlySet<string>;
   readonly sourceSemanticPaneId: string | null;
   readonly authorizeLiveScope: ((semanticPaneId?: string) => void) | null;
+  readonly authorizeGeometry: (() => void) | null;
 }
 
 /**
@@ -635,6 +640,21 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#mirror.paneResizeTransport(session);
   }
 
+  readWindowSplitLayout(
+    session: string,
+    target: Parameters<MirrorService["readWindowSplitLayout"]>[1],
+  ): ReturnType<MirrorService["readWindowSplitLayout"]> {
+    if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
+    return this.#mirror.readWindowSplitLayout(session, target);
+  }
+
+  resizeWindowSplit(
+    ...args: Parameters<MirrorService["resizeWindowSplit"]>
+  ): ReturnType<MirrorService["resizeWindowSplit"]> {
+    if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
+    return this.#mirror.resizeWindowSplit(...args);
+  }
+
   executeWindowLinkAction(
     session: string,
     request: Parameters<MirrorService["executeWindowLinkAction"]>[1],
@@ -668,6 +688,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     lease: SessionRuntimeControllerLease,
     allowedSourcePaneIds: readonly string[],
     authorizeLiveScope?: (semanticPaneId?: string) => void,
+    authorizeGeometry?: () => void,
   ): SessionRuntimeExecutionHandle {
     const runtime = this.#sessions.get(consumer.session);
     if (!runtime || !runtime.ownsConsumer(consumer)) {
@@ -685,6 +706,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       allowedSourcePaneIds: new Set(allowedSourcePaneIds),
       sourceSemanticPaneId: null,
       authorizeLiveScope: authorizeLiveScope ?? null,
+      authorizeGeometry: authorizeGeometry ?? null,
     });
     return handle;
   }
@@ -823,6 +845,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       authenticatedSourceSemanticPaneId,
       () => this.#assertExecutionHandle(handle, state.sourceSemanticPaneId ?? undefined),
       authoredOriginForSurface(state.consumer.surface),
+      state.authorizeGeometry ?? undefined,
     );
   }
 
@@ -965,10 +988,20 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     authenticatedSourceSemanticPaneId: string | null = null,
     authorizeBeforeEffect?: () => void,
     authenticatedOrigin?: AuthoredInteractionOrigin,
+    authorizeGeometry?: () => void,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
     let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    const requiresGeometry = intent.verb === "workspace.window.split.resize";
+    if (requiresGeometry && !authorizeGeometry) {
+      return Promise.reject(
+        new SessionRuntimeControllerLeaseError(
+          "invalid-client-capability",
+          "Split resize requires explicit geometry authority.",
+        ),
+      );
+    }
     const resolvedSession =
       intent.verb === "workspace.session.kill" && intent.fleetTarget
         ? intent.fleetTarget.daemonInstanceId === this.generation
@@ -997,7 +1030,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#semanticMutations.submit(operationId, intent, {
       origin: authenticatedOrigin ?? "sdk",
       authenticatedSourceSemanticPaneId,
-      authorizeBeforeEffect,
+      authorizeBeforeEffect: requiresGeometry
+        ? () => {
+            authorizeBeforeEffect?.();
+            authorizeGeometry!();
+          }
+        : authorizeBeforeEffect,
     });
   }
 
@@ -1695,13 +1733,8 @@ class SessionRuntime {
     else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
-  fitViewportWithAuthority(
-    clientId: string,
-    lease: SessionRuntimeAuthorityLease,
-    cols: number,
-    rows: number,
-    semanticWindowId?: string,
-  ): void {
+  assertGeometryAuthority(clientId: string, lease: SessionRuntimeAuthorityLease): void {
+    if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
     this.assertNoSharedWindow();
     const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
     let exact: SessionRuntimeAuthorityLease;
@@ -1719,6 +1752,16 @@ class SessionRuntime {
         "The client does not own this geometry authority lease.",
       );
     }
+  }
+
+  fitViewportWithAuthority(
+    clientId: string,
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
+    this.assertGeometryAuthority(clientId, lease);
     this.#mirror.setGeometryParticipation(this.session, true);
     if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
     else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
@@ -1851,7 +1894,9 @@ class SessionRuntime {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection> {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     await this.whenReady();
     await this.#restartBarrier;
     this.#assertConnected(clientId);
@@ -1866,6 +1911,7 @@ class SessionRuntime {
         laneId: deliverySubscriberId,
         requestId: deliveryRequestId,
       }),
+      address,
     );
   }
 
@@ -2196,6 +2242,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return this.#runtime.acquireAuthority(this.clientId, authority);
   }
 
+  assertGeometryAuthority(lease: SessionRuntimeAuthorityLease): void {
+    this.#assertOpen();
+    this.#runtime.assertGeometryAuthority(this.clientId, lease);
+  }
+
   releaseAuthority(authority: SessionRuntimeAuthorityKind): void {
     this.#assertOpen();
     this.#runtime.releaseAuthority(this.clientId, authority);
@@ -2336,7 +2387,9 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection> {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     this.#assertOpen();
     const upstream = await this.#runtime.openTerminalDelivery(
       this.clientId,
@@ -2346,6 +2399,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
       semanticPaneId,
       offer,
       onMessage,
+      address,
     );
     if (this.#closed) {
       await upstream.close();

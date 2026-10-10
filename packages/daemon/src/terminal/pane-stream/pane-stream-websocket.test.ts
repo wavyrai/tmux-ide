@@ -541,7 +541,8 @@ function harness(
         assertController: () => undefined,
         openTerminalDelivery:
           options.openTerminalDelivery ??
-          (async (pane, _offer, onMessage) => {
+          (async (pane, _offer, onMessage, deliveryWorkspaceName) => {
+            expect(deliveryWorkspaceName).toBe("workspace.alpha");
             deliveryListeners.set(pane, onMessage as (message: never) => void);
             return {
               negotiation: {
@@ -1507,7 +1508,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
     await h.deliveryListeners.get("pane.shell")?.({
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:0`,
@@ -1639,7 +1640,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     const transactionId = "00000000-0000-4000-8000-000000000095";
     await h.deliveryListeners.get("pane.shell")?.({
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:0`,
@@ -1668,7 +1669,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         stage: "transport",
         operation: "pane-stream-socket-send",
         terminalDelivery: expect.objectContaining({
-          workspaceName: SESSION,
+          workspaceName: "workspace.alpha",
           semanticPaneId: "pane.shell",
           canonicalGeneration: INSTANCE,
           canonicalIncarnation: `${INSTANCE}:0`,
@@ -1699,7 +1700,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
       },
     });
     expect(h.deliveryAcks).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceName: SESSION, transactionId }),
+      expect.objectContaining({ workspaceName: "workspace.alpha", transactionId }),
     );
 
     // The server may publish a replacement incarnation before the client has
@@ -1708,7 +1709,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     // ordered transaction validation instead of tearing down the whole stream.
     const untracedReplacement = {
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:1`,
@@ -1744,7 +1745,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         stage: "transport",
         operation: "pane-stream-socket-send",
         terminalDelivery: expect.objectContaining({
-          workspaceName: SESSION,
+          workspaceName: "workspace.alpha",
           semanticPaneId: "pane.shell",
           canonicalGeneration: INSTANCE,
           canonicalIncarnation: `${INSTANCE}:1`,
@@ -1863,6 +1864,57 @@ describe("PaneStreamAdmissionCoordinator", () => {
       },
     });
     expect(JSON.stringify(socket.framesOfType("semantic-intent-ack")[2])).not.toContain("%99");
+
+    // Admission can refuse synchronously before an execution promise exists.
+    h.submitIntent.mockImplementationOnce(() => {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    });
+    expect(() =>
+      socket.message({
+        type: "semantic-intent",
+        operationId: "00000000-0000-4000-8000-000000000086",
+        intent: {
+          verb: "workspace.pane.resize",
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.editor",
+          axis: "cols",
+          cells: 60,
+        },
+      }),
+    ).not.toThrow();
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(4));
+    expect(socket.framesOfType("semantic-intent-ack")[3]).toMatchObject({
+      outcome: { status: "rejected", code: "stale-controller-lease" },
+    });
+    expect(socket.closed).toBeNull();
+
+    h.submitIntent.mockRejectedValueOnce(
+      new SessionRuntimeIntentError("rejected", "internal detail", {
+        cause: new WorkspaceMultiplexerError("mutation_unverified"),
+      }),
+    );
+    socket.message({
+      type: "semantic-intent",
+      operationId: "00000000-0000-4000-8000-000000000085",
+      intent: {
+        verb: "workspace.pane.resize",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+        axis: "cols",
+        cells: 60,
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(5));
+    expect(socket.framesOfType("semantic-intent-ack")[4]).toMatchObject({
+      outcome: {
+        status: "rejected",
+        code: "mutation_unverified",
+        message: "Mutation outcome is uncertain; do not retry with a new operation ID.",
+      },
+    });
 
     // Terminal input stays FIFO and byte-exact across named keys and bracketed
     // paste while both daemon transport edges retain the originating trace.
@@ -2438,7 +2490,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         if (pane === "pane.hidden-one")
           void onMessage({
             type: "terminal.delivery",
-            workspaceName: SESSION,
+            workspaceName: "workspace.alpha",
             semanticPaneId: pane,
             generation: INSTANCE,
             incarnation: `${INSTANCE}:0`,

@@ -1,35 +1,13 @@
-# GUI and TUI release quality
+# Terminal release quality
 
 “Bug free” is treated as an evidence standard: no known critical defects, no
 uncaught errors or lifecycle warnings, and the real daemon/tmux paths must pass
 within explicit latency budgets. Preview fixtures are not release evidence.
 
-## Web GUI gate
+## Retired desktop clients
 
-```bash
-pnpm test:web-live
-```
-
-The test owns an isolated tmux server, canonical daemon, Vite gateway, and
-browser. It proves the runtime shell, fleet catalog, event socket, passive pane
-stream, and interactive terminal attachment. Console warnings/errors fail the
-run. Defaults:
-
-- live runtime shell: at most 5,000 ms
-- interactive terminal settled: at most 12,000 ms from navigation
-
-Use `WEB_BUDGET_LIVE_SHELL_MS` and `WEB_BUDGET_TERMINAL_READY_MS` only to make
-a local gate stricter or to diagnose a known slow host.
-
-For a human/browser test against the canonical local daemon:
-
-```bash
-node bin/cli.js --headless
-pnpm dev:web
-```
-
-Then open `http://127.0.0.1:5173/?devHost=1`. The development gateway keeps the
-owner bearer out of browser JavaScript.
+The Solid browser renderer and Electron shell have been removed. Their former
+Web/desktop gates do not qualify the terminal product or a future native client.
 
 ## OpenTUI gates
 

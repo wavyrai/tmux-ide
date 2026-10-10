@@ -1,0 +1,5 @@
+Visual specimen ready: select e2e-gpui-native-visual-61017-0 / its only pane. Do not type. Compare ASCII, wide/combining/emoji, colors, blank background, wrap and cursor. Save a native screenshot separately, then create /tmp/gpui-visual-current-20261010/capture.request to record the current source. Then Cmd-Q.
+sandbox_extension_issue_file_to_process failed for /tmp/Tmux IDE Visual Qualification.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+Source checkpoint saved; visual assessment remains manual. Close the app with Cmd-Q.
+{"sourcePrepared":true,"nativeLaunched":true,"sourceSurvivesNativeClose":true,"visualVerdict":"unassessed — separate native screenshot comparison required","matrixComplete":false}

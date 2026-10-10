@@ -1476,7 +1476,14 @@ export async function launchAndWaitForExactProductTui({ start, status, waitForCo
   return Object.freeze(coherent);
 }
 
-export function assessFirstKeyPasteBoundaries({ timeline, evidence, correlationComplete }) {
+export function assessFirstKeyPasteBoundaries({
+  evidenceScope,
+  timeline,
+  evidence,
+  correlationComplete,
+}) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = Object.freeze([
     "first-input-namespace-ready",
     "first-input-daemon-ready",
@@ -1484,7 +1491,7 @@ export function assessFirstKeyPasteBoundaries({ timeline, evidence, correlationC
     "first-input-causal-paint",
     "distribution-lane-fresh",
     "distribution-samples",
-    "first-input-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["first-input-web-correlation"]),
   ]);
   let previous = -1;
   const boundaries = required.map((id) => {
@@ -1517,7 +1524,9 @@ export function assessFirstKeyPasteBoundaries({ timeline, evidence, correlationC
       id: "diagnostic-correlation",
       status: correlationComplete ? "passed" : "unmeasured",
       detail: correlationComplete
-        ? "exact daemon/client/TUI/Web correlation"
+        ? evidenceScope === "terminal-only"
+          ? "exact daemon/native/TUI correlation"
+          : "exact daemon/client/TUI/Web correlation"
         : "correlation incomplete",
     }),
   );
@@ -1525,6 +1534,12 @@ export function assessFirstKeyPasteBoundaries({ timeline, evidence, correlationC
   const firstUnmeasuredBoundary =
     boundaries.find(({ status }) => status === "unmeasured")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: firstBrokenBoundary ? "failed" : firstUnmeasuredBoundary ? "incomplete" : "passed",
     firstBrokenBoundary,
     firstUnmeasuredBoundary,

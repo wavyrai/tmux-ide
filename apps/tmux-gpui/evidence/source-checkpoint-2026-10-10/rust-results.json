@@ -1,0 +1,100 @@
+[
+  {
+    "stage": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exitCode": 0,
+    "seconds": 2.835,
+    "log": "/tmp/gpui-source-checkpoint-rust-fmt.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "stage": "file-size",
+    "command": [
+      "bash",
+      "scripts/check-file-size.sh"
+    ],
+    "exitCode": 0,
+    "seconds": 0.135,
+    "log": "/tmp/gpui-source-checkpoint-rust-file-size.log",
+    "sha256": "705d8371125dcb7b17ce5d83a50fcbeb88f40335b10ac92632af429591bd1305"
+  },
+  {
+    "stage": "clippy-all",
+    "command": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exitCode": 0,
+    "seconds": 36.471,
+    "log": "/tmp/gpui-source-checkpoint-rust-clippy-all.log",
+    "sha256": "9b76bfcf3c711ff3219e76198d9ff718562fb867c6d224f6ed80e025be32a7e0"
+  },
+  {
+    "stage": "clippy-no-default",
+    "command": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--workspace",
+      "--all-targets",
+      "--no-default-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exitCode": 0,
+    "seconds": 29.799,
+    "log": "/tmp/gpui-source-checkpoint-rust-clippy-no-default.log",
+    "sha256": "11278ef3c8a777314f4ce4f907eb1db05bcb5b6d239a2924c03ab629a865a4d6"
+  },
+  {
+    "stage": "tests-default",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--workspace"
+    ],
+    "exitCode": 0,
+    "seconds": 165.244,
+    "log": "/tmp/gpui-source-checkpoint-rust-tests-default.log",
+    "sha256": "5f59db34048fe1cbd16e7b2c27d72f225f8ec4a03b2736de0963cdce2b5d15ce",
+    "counts": {
+      "passed": 2802,
+      "failed": 0,
+      "ignored": 10
+    }
+  },
+  {
+    "stage": "tests-all",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--workspace",
+      "--all-features"
+    ],
+    "exitCode": 0,
+    "seconds": 168.988,
+    "log": "/tmp/gpui-source-checkpoint-rust-tests-all.log",
+    "sha256": "15d6ab9fd056a029d0b88f58f0073a0c35299239282bf03e83c2f3e5f844f6fc",
+    "counts": {
+      "passed": 2836,
+      "failed": 0,
+      "ignored": 17
+    }
+  }
+]

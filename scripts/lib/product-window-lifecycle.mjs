@@ -1017,7 +1017,9 @@ export function qualifyWindowWorkspaceState(records, expected) {
 }
 
 /** Pure, fail-closed proof for one isolated real-tmux window lifecycle. */
-export function assessProductWindowLifecycle({ evidence, expected }) {
+export function assessProductWindowLifecycle({ evidence, expected, evidenceScope }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const predicates = [];
   const check = (id, passed, actual = null) =>
     predicates.push(Object.freeze({ id, passed: passed === true, actual }));
@@ -1247,30 +1249,37 @@ export function assessProductWindowLifecycle({ evidence, expected }) {
     evidence?.correlation?.daemon === true &&
       evidence.correlation.workspaceClient === true &&
       evidence.correlation.tui === true &&
-      evidence.correlation.web === true &&
+      (evidenceScope === "terminal-only" || evidence.correlation.web === true) &&
       evidence.correlation.tmux === true,
   );
   const webWindows = evidence?.web?.semantic?.windows;
   const expectedWebWindows = [expected.initial, expected.created];
-  check(
-    "window-web-labels",
-    Array.isArray(webWindows) &&
-      webWindows.length === 2 &&
-      expectedWebWindows.every((window) => {
-        const matches = webWindows.filter(
-          (candidate) =>
-            candidate?.windowResourceId === (window.windowResourceId ?? window.resourceId),
-        );
-        if (matches.length !== 1) return false;
-        const match = matches[0];
-        return (
-          match.label === (window === expected.created ? expected.renamedName : window.name) &&
-          match.active === (window === expected.created ? "true" : "false")
-        );
-      }),
-  );
+  if (evidenceScope !== "terminal-only")
+    check(
+      "window-web-labels",
+      Array.isArray(webWindows) &&
+        webWindows.length === 2 &&
+        expectedWebWindows.every((window) => {
+          const matches = webWindows.filter(
+            (candidate) =>
+              candidate?.windowResourceId === (window.windowResourceId ?? window.resourceId),
+          );
+          if (matches.length !== 1) return false;
+          const match = matches[0];
+          return (
+            match.label === (window === expected.created ? expected.renamedName : window.name) &&
+            match.active === (window === expected.created ? "true" : "false")
+          );
+        }),
+    );
   const firstFailedPredicate = predicates.find(({ passed }) => !passed)?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     qualified: firstFailedPredicate === null,
     firstFailedPredicate,
     predicates: Object.freeze(predicates),
@@ -1320,10 +1329,13 @@ export function assessProductWindowLifecycle({ evidence, expected }) {
 }
 
 export function assessWindowLifecycleJourneyBoundaries({
+  evidenceScope,
   timeline,
   assessment,
   correlationComplete,
 }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = [
     "window-namespace-ready",
     "window-daemon-ready",
@@ -1336,7 +1348,7 @@ export function assessWindowLifecycleJourneyBoundaries({
     "window-switch-visible",
     "window-rename-visible",
     "window-switch-distribution",
-    "window-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["window-web-correlation"]),
   ];
   let cursor = -1;
   const boundaries = required.map((id) => {
@@ -1359,6 +1371,12 @@ export function assessWindowLifecycleJourneyBoundaries({
   );
   const failed = boundaries.find(({ status }) => status !== "passed")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: failed === null ? "passed" : "failed",
     firstBrokenBoundary: failed,
     firstUnmeasuredBoundary: null,

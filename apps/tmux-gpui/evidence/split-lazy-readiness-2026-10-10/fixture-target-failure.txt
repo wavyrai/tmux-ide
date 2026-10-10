@@ -1,0 +1,22 @@
+{
+  "binarySha256": "f546fd08b555d819c3416a8dc91d6ab75750b8245d28787fdcf7dc597eca572a",
+  "cleanup": true,
+  "movedBeforeRelease": true,
+  "boundary": 49,
+  "paneIdentitiesStable": true,
+  "phase": "settled"
+}
+file:///private/tmp/gpui-split-lazy-gesture.mjs:199
+if (failures.length) throw new AggregateError(failures, "Split gesture smoke failed");
+                           ^
+
+AggregateError: Split gesture smoke failed
+    at file:///private/tmp/gpui-split-lazy-gesture.mjs:199:28 {
+  [errors]: [
+    Error: same-viewer input after activation:  {"status":"Keyboard ready — click terminal to type","split":{"version":1,"window":{"liveSessionId":"live-session.99342ac278546a1d6aea","linkId":"window-link.11c54fad09b34f3ab5496cc598f60acf","expectedSemanticWindowId":"window.promoted.7a60194aaa2dcf81a554","linkRevision":1},"layoutId":"678589a0-3549-41ba-9687-117775186051","cols":80,"rows":24,"panes":[{"semanticPaneId":"pane.promoted.cabd7d42f0e2c826607c","left":0,"top":0,"width":49,"height":24},{"semanticPaneId":"pane.promoted.76512fcf892259705886","left":50,"top":0,"width":30,"height":24}],"splits":[{"splitId":"74408b04-e5dc-4634-9ee3-fb49e3d2ad10","axis":"cols","boundary":49,"start":0,"length":24}]},"gesture":{"gesture":"ac8fadbd-2940-4b24-b6de-d8a0a1628ad8","phase":"settled","revision":6,"boundary":49,"target":{"window":{"liveSessionId":"live-session.99342ac278546a1d6aea","linkId":"window-link.11c54fad09b34f3ab5496cc598f60acf","expectedSemanticWindowId":"window.promoted.7a60194aaa2dcf81a554","linkRevision":1},"layoutId":"678589a0-3549-41ba-9687-117775186051","splitId":"74408b04-e5dc-4634-9ee3-fb49e3d2ad10","boundary":49}},"inputReady":true}
+        at wait (file:///private/tmp/gpui-split-lazy-gesture.mjs:53:13)
+        at async file:///private/tmp/gpui-split-lazy-gesture.mjs:178:3
+  ]
+}
+
+Node.js v24.21.0

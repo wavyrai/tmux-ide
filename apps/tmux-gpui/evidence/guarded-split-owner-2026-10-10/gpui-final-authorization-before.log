@@ -1,0 +1,55 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts (3 tests | 3 failed) 7ms
+   × rechecks final effect authority after asynchronous preparation: valid 6ms
+   × rechecks final effect authority after asynchronous preparation: revoked 1ms
+   × rechecks final effect authority after asynchronous preparation: replaced 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts > rechecks final effect authority after asynchronous preparation: valid
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts:73:25
+     71|       resume.resolve();
+     72|       const result = await outcome;
+     73|       expect(result.ok).toBe(scenario === "valid");
+       |                         ^
+     74|       expect(effects).toBe(scenario === "valid" ? 1 : 0);
+     75|       expect(validations).toBe(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts > rechecks final effect authority after asynchronous preparation: revoked
+ FAIL  src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts > rechecks final effect authority after asynchronous preparation: replaced
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts:75:27
+     73|       expect(result.ok).toBe(scenario === "valid");
+     74|       expect(effects).toBe(scenario === "valid" ? 1 : 0);
+     75|       expect(validations).toBe(2);
+       |                           ^
+     76|       expect(authorizations).toBe(scenario === "replaced" ? 1 : 2);
+     77|       if (!result.ok) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  18:13:35
+   Duration  368ms (transform 189ms, setup 0ms, import 301ms, tests 7ms, environment 0ms)
+

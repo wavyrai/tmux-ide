@@ -1,0 +1,5 @@
+# zizmor workflow-security audit configuration.
+# Run locally with: zizmor .github/
+# No repository-wide or workflow-wide audit exceptions.
+
+rules: {}

@@ -14,8 +14,7 @@ The current product surface is deliberately narrow:
 - the minimal command palette
 
 The web and native desktop clients are future consumers of the daemon contract;
-they are not part of the 2.9 release cut. The retained Solid desktop renderer
-provides browser-specific fixtures used by cross-client qualification. Shared daemon,
+they are not part of the 2.9 release cut. The former Solid/Electron clients have been retired. Shared daemon,
 private tmux fleet, process ownership, and retirement fixtures live in
 `scripts/lib/product-fixtures`, independent of renderer packages.
 The separate experimental React workspace client and its Electron launch variants
@@ -112,7 +111,6 @@ colors, duplicate input listeners, and direct renderer-side tmux mutation.
 - `packages/presentation` — renderer-neutral pane and workspace presentation models
 - `packages/sdk` — public programmatic API
 - `packages/tmux-bridge` — tmux protocol/process integration
-- `apps/desktop-renderer`, `apps/electron-shell` and `app/` — deferred desktop surfaces and retained cross-client qualification fixtures
 - `docs/` — marketing site and user documentation
 
 The SDK shares HTTP/retry behavior through the exported
@@ -203,3 +201,15 @@ Keep new work behind the existing ownership boundaries:
 
 Do not create a second application root, terminal replica, workspace authority,
 or browser-only version of the TUI.
+
+## Experimental GPUI client
+
+`apps/tmux-gpui/` contains the pinned Herdr GPUI source baseline and native
+client integration plan. It is part of this repository, outside npm publication
+and the terminal release gate. The native browser reuses the upstream painter
+and the existing TypeScript terminal delivery validator for session/pane
+selection, authenticated input, resize, scroll/copy and explicit Refresh recovery.
+Its theme picker shares the TUI's named preset catalog and palette projection.
+The daemon remains authoritative. This is an experimental native preview;
+physical qualification and signed distribution remain unfinished. See its
+README before running any imported code.

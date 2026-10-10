@@ -1006,7 +1006,14 @@ export function qualifyProductFocusEvidence({
   });
 }
 
-export function assessFocusJourneyBoundaries({ timeline, evidence, correlationComplete }) {
+export function assessFocusJourneyBoundaries({
+  evidenceScope,
+  timeline,
+  evidence,
+  correlationComplete,
+}) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const ids = timeline.map((entry) => entry?.phase).filter((entry) => typeof entry === "string");
   const expected = [
     "focus-namespace-ready",
@@ -1017,7 +1024,7 @@ export function assessFocusJourneyBoundaries({ timeline, evidence, correlationCo
     "focus-tui-coherent",
     "focus-blur-proved",
     "focus-reclaim-proved",
-    "focus-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["focus-web-correlation"]),
   ];
   const boundaries = [];
   let cursor = -1;
@@ -1043,6 +1050,12 @@ export function assessFocusJourneyBoundaries({ timeline, evidence, correlationCo
     }),
   );
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: failed === null ? "passed" : "failed",
     firstBrokenBoundary: failed,
     firstUnmeasuredBoundary: null,

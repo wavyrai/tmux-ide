@@ -1,0 +1,13 @@
+✔ source unsupported daemon stays credential-free and refresh rechecks compatibility (453.296667ms)
+✔ packaged unsupported daemon stays credential-free and refresh rechecks compatibility (776.360458ms)
+✔ local app retains binary identity and refuses replacement (1394.865416ms)
+✔ local launcher never resolves dirname through caller PATH (7.965666ms)
+✔ assembler rejects a mismatched executable before running supplied tools (175.603458ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1665.347166

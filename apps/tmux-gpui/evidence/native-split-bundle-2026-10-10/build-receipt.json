@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "node",
+    "scripts/build-bundled-tmux.mjs",
+    "--source",
+    "/Volumes/Samsung_T5/Developer/tmux-ide/.tasks/sfora-foundation-mission/tmux-upstream",
+    "--output",
+    "/private/tmp/gpui-split-promoted-eg12r6nf/bundle",
+    "--jobs",
+    "2"
+  ],
+  "exitCode": 0,
+  "seconds": 17.276880741119385,
+  "groupAbsent": true
+}

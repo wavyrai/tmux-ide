@@ -1,0 +1,41 @@
+RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/lib/canonical-split-mutation.test.ts (5 tests | 1 failed) 6ms
+   × maps verified native clamping into an exact target receipt 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/canonical-split-mutation.test.ts > maps verified native clamping into an exact target receipt
+AssertionError: expected { …(9) } to deeply equal { …(8) }
+
+- Expected
++ Received
+
+@@ -2,10 +2,11 @@
+    "axis": "cols",
+    "boundary": 3,
+    "daemonInstanceId": "55ee81c3-3165-4601-b63b-7cfc757e176e",
+    "operationId": "f5ab2e9e-08ab-47be-912a-c11b0e8e53d3",
+    "outcome": "applied",
++   "successor": null,
+    "target": {
+      "boundary": 0,
+      "layoutId": "6682d4eb-b76a-48c8-80af-1c5da0978d0c",
+      "splitId": "69af9833-feb0-4405-b343-13b5b5b8f368",
+      "window": {
+
+ ❯ src/lib/canonical-split-mutation.test.ts:50:77
+     48|   const id = randomUUID();
+     49|   const fence = vi.fn();
+     50|   expect(await executeCanonicalSplitMutation(f.options, id, intent, fe…
+       |                                                                             ^
+     51|     operationId: id,
+     52|     daemonInstanceId: generation,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 36 passed (37)
+   Start at  19:05:56
+   Duration  800ms (transform 604ms, setup 0ms, import 1.19s, tests 72ms, environment 0ms)

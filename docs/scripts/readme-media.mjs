@@ -3,8 +3,8 @@
 // in the site's light and dark themes, into .github/assets (outside the npm
 // package). Run `pnpm docs:build` first; then `pnpm readme:media`.
 //
-// Needs: the production docs build, Playwright's Chromium (the desktop
-// renderer workspace depends on Playwright; set PLAYWRIGHT_CHROMIUM_EXECUTABLE
+// Needs: the production docs build, Playwright's Chromium (the docs
+// workspace depends on Playwright; set PLAYWRIGHT_CHROMIUM_EXECUTABLE
 // to use another Chromium) and uv, which provides ffmpeg (imageio-ffmpeg) and
 // Pillow for encoding without system packages.
 import { spawn, spawnSync } from "node:child_process";
@@ -26,7 +26,7 @@ const LOOP_SECONDS = 18; // --pf-loop on .pf-team (components/figures/pane-figur
 if (!existsSync(join(docsDir, ".next/BUILD_ID")))
   throw new Error("No production docs build found: run `pnpm docs:build` first.");
 
-const require = createRequire(resolve(docsDir, "../apps/desktop-renderer/package.json"));
+const require = createRequire(resolve(docsDir, "package.json"));
 const { chromium } = require("@playwright/test");
 
 function uv(args, options = {}) {

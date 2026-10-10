@@ -104,6 +104,8 @@ function semanticBackendRefusal(error: unknown): string | null {
   let candidate = error;
   for (let depth = 0; depth < 3; depth += 1) {
     if (!candidate || typeof candidate !== "object") return null;
+    if ("code" in candidate && candidate.code === "mutation_unverified")
+      return "mutation_unverified";
     const context = "context" in candidate ? candidate.context : null;
     const reason =
       context && typeof context === "object" && "reason" in context ? context.reason : null;
@@ -282,6 +284,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<SessionRuntimeTerminalDeliveryConnection>;
   submitIntent(
     operationId: string,
@@ -1463,6 +1466,7 @@ export class PaneStreamLiveConnection {
           if (!ready) pending.push(message);
           else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
         },
+        this.#descriptor.workspaceName,
       );
       return {
         channel,
@@ -1496,7 +1500,7 @@ export class PaneStreamLiveConnection {
       for (const message of pending) {
         if (message.type !== "terminal.delivery") continue;
         if (
-          message.workspaceName !== this.#descriptor.sessionName ||
+          message.workspaceName !== this.#descriptor.workspaceName ||
           message.semanticPaneId !== channel.semanticPaneId ||
           message.generation !== negotiated.generation ||
           message.deliveryNonce !== negotiated.deliveryNonce ||
@@ -1616,9 +1620,8 @@ export class PaneStreamLiveConnection {
       }
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-      // SessionRuntime keys canonical replicas by the tmux session, while the
-      // public pane-stream lease is keyed by its workspace identity. Translate
-      // at this boundary so the renderer has one coherent address vocabulary.
+      // The trusted lease address was fixed at delivery admission; preserve the
+      // exact envelope and its observation identity through transmission.
       const detailedDeliveryObservation = this.#observability?.enabled === true;
       const trace =
         message.performanceTraceId && detailedDeliveryObservation
@@ -1646,7 +1649,7 @@ export class PaneStreamLiveConnection {
       this.#sendFrame(pane, {
         type: "terminal-delivery-envelope",
         pane,
-        envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
+        envelope: message,
       });
       if (startedAtMicros !== null) {
         let endedAtMicros: number;
@@ -2262,13 +2265,13 @@ export class PaneStreamLiveConnection {
     if (frame.type === "terminal-delivery-ack") {
       const channel = this.#deliveryChannel(frame.ack);
       if (!channel) return;
-      channel.delivery!.ack({ ...frame.ack, workspaceName: this.#descriptor.sessionName });
+      channel.delivery!.ack(frame.ack);
       return;
     }
     if (frame.type === "terminal-delivery-nack") {
       const channel = this.#deliveryChannel(frame.nack);
       if (!channel) return;
-      channel.delivery!.nack({ ...frame.nack, workspaceName: this.#descriptor.sessionName });
+      channel.delivery!.nack(frame.nack);
       return;
     }
     if (frame.type === "terminal-delivery-visibility") {
@@ -2420,7 +2423,8 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (!this.#prepareInputAuthority(false)) return;
-    void this.#sessionRuntimeBinding!.submitIntent(operationId, intent)
+    // Normalize synchronous admission refusals into the same rejected ACK path.
+    void (async () => this.#sessionRuntimeBinding!.submitIntent(operationId, intent))()
       .then((result) => {
         this.#sendFrame(null, {
           type: "semantic-intent-ack",
@@ -2449,6 +2453,7 @@ export class PaneStreamLiveConnection {
           "pane_inventory_not_ready",
           "pane_identity_changed_before_select",
           "pane_not_active",
+          "mutation_unverified",
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";
@@ -2459,7 +2464,11 @@ export class PaneStreamLiveConnection {
             status: "rejected",
             code,
             message:
-              error instanceof Error ? error.message.slice(0, 512) : "Semantic intent failed",
+              code === "mutation_unverified"
+                ? "Mutation outcome is uncertain; do not retry with a new operation ID."
+                : error instanceof Error
+                  ? error.message.slice(0, 512)
+                  : "Semantic intent failed",
           },
         });
       });

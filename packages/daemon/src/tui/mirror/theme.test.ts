@@ -654,3 +654,45 @@ it("uses light mode defaults for partial ANSI replies without treating slots 0/7
   );
   expect(createTerminalPaletteProjection(theme, xterm16).ansiForeground[0]).toBe(0x000000);
 });
+
+it("matches the pre-extraction terminal palette formula for all presets and built-in modes", () => {
+  const snapshots = [
+    DARK_THEME,
+    LIGHT_THEME,
+    ...VISUAL_THEME_PRESETS.map((preset) => createSemanticThemeSnapshot({ preset: preset.id })),
+  ];
+  for (const snapshot of snapshots) {
+    const p = colorToPackedRgb;
+    const fg = p(snapshot.roles.text.primary);
+    const normal = [
+      p(snapshot.roles.surfaces.terminal),
+      p(snapshot.roles.statusTone.danger),
+      p(snapshot.roles.statusTone.success),
+      p(snapshot.roles.statusTone.warning),
+      p(snapshot.roles.text.link),
+      p(snapshot.colors.accent),
+      p(snapshot.roles.statusTone.info),
+      p(snapshot.roles.text.secondary),
+    ];
+    const brighten = (color: number) => {
+      const channel = (shift: number) =>
+        Math.round(((color >>> shift) & 255) * 0.8 + ((fg >>> shift) & 255) * 0.2);
+      return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+    };
+    const expected = [
+      ...normal,
+      p(snapshot.roles.text.muted),
+      ...normal.slice(1, 7).map(brighten),
+      p(snapshot.roles.text.bright),
+      ...XTERM_PALETTE.slice(16),
+    ];
+    const projection = createTerminalPaletteProjection(snapshot);
+    expect(projection.ansiForeground).toEqual(expected);
+    expect(projection.ansiBackground).toBe(projection.ansiForeground);
+    expect(Object.isFrozen(projection.ansiForeground)).toBe(true);
+    expect(projection.foreground).toBe(fg);
+    expect(projection.background).toBe(normal[0]);
+    expect(projection.resolveForeground(0x123456)).toBe(0x123456);
+    expect(projection.resolveBackground(0xabcdef)).toBe(0xabcdef);
+  }
+});

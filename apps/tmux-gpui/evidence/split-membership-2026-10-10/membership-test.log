@@ -1,0 +1,16 @@
+{
+  "sha256": "147ae81ec60e9cf1a4eb37ba2d9d856cd7bf3ff0fd6b4b81089feebfc3150368",
+  "cleanup": true,
+  "before": "a54b,160x80,0,0{80x80,0,0,1,79x80,81,0,2}",
+  "after": "a54b,160x80,0,0{80x80,0,0,1,79x80,81,0,2}",
+  "commandExit": 1,
+  "sessionAndPaneLifetimesUnchanged": true,
+  "capability": {
+    "schemaVersion": 1,
+    "capability": "split-resize-v1",
+    "sessionMembership": "exact-session-link-v1",
+    "maxDepth": 64,
+    "maxLeaves": 512,
+    "maxGrid": 4096
+  }
+}

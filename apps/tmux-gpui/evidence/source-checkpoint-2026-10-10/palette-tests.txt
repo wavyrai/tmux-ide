@@ -1,0 +1,8 @@
+
+ RUN  v4.1.6 /private/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/gpui-source-clean-6cgdgkqc/packages/contracts
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  19:39:33
+   Duration  103ms (transform 16ms, setup 0ms, import 24ms, tests 2ms, environment 0ms)

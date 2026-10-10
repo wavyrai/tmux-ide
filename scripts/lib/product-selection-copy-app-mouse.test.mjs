@@ -1618,3 +1618,29 @@ test("copy fences use native content dimensions, excluding the pane header", () 
     "selectionFenceHealthy",
   );
 });
+
+test("terminal-only scope excludes browser proof but retains native correlation", () => {
+  const value = structuredClone(fixture());
+  delete value.web;
+  delete value.correlation.web;
+  const result = assessProductSelectionCopyAppMouse({
+    evidence: value,
+    expected: expected,
+    evidenceScope: "terminal-only",
+  });
+  assert.equal(result.qualified, true);
+  assert.equal(result.browserEvidence.status, "unmeasured");
+  assert.equal(
+    assessProductSelectionCopyAppMouse({ evidence: value, expected: expected }).qualified,
+    false,
+  );
+  value.correlation.tmux = false;
+  assert.equal(
+    assessProductSelectionCopyAppMouse({
+      evidence: value,
+      expected: expected,
+      evidenceScope: "terminal-only",
+    }).qualified,
+    false,
+  );
+});

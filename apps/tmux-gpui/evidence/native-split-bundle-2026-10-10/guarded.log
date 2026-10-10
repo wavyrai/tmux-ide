@@ -1,0 +1,26 @@
+{
+  "binary": "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux",
+  "sha256": "f546fd08b555d819c3416a8dc91d6ab75750b8245d28787fdcf7dc597eca572a",
+  "cases": [
+    {
+      "kind": "ancestor-moved",
+      "boundary": 83
+    },
+    {
+      "kind": "stale-native-refusal",
+      "result": {
+        "status": "uncertain",
+        "reason": "command-failed"
+      }
+    },
+    {
+      "kind": "clamp-and-repeat",
+      "boundary": 3
+    },
+    {
+      "kind": "revoked-after-capability",
+      "mutationDispatches": 0
+    }
+  ],
+  "cleanup": true
+}

@@ -1,0 +1,58 @@
+{
+  "expected": {
+    "version": 1,
+    "cols": 80,
+    "rows": 24,
+    "anchors": [
+      "GPUI_VISUAL_BEGIN",
+      "ASCII |0123456789|ABCDEFGHIJKLMNOPQRSTUVWXYZ|",
+      "WIDE |界語| END",
+      "COMBINING |é Å| END",
+      "EMOJI |😀 🚀| END",
+      "GPUI_VISUAL_END"
+    ],
+    "cursor": {
+      "x": 8,
+      "y": 16,
+      "visible": true
+    },
+    "wrap": {
+      "row": 11,
+      "width": 80,
+      "continuationRow": 12,
+      "continuation": "WRAP_END"
+    },
+    "styledBlank": {
+      "row": 9,
+      "startColumn": 7,
+      "cells": 8,
+      "backgroundRGB": [
+        192,
+        32,
+        160
+      ]
+    },
+    "rgb": {
+      "foreground": [
+        255,
+        96,
+        32
+      ],
+      "background": [
+        16,
+        64,
+        128
+      ]
+    },
+    "visualVerdict": "unassessed; compare native screenshot with source evidence"
+  },
+  "plain": "GPUI_VISUAL_BEGIN\nASCII |0123456789|ABCDEFGHIJKLMNOPQRSTUVWXYZ|\nWIDE |界語| END\nCOMBINING |é Å| END\nEMOJI |😀 🚀| END\n\nPALETTE  0  1  2  3  4  5  6  7\nRGB | TRUECOLOR | END\nSTYLE |BOLD ITALIC UNDERLINE|\nBLANK |        | END\n\nWRAP>wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nWRAP_END\n\nGPUI_VISUAL_END\n\nCURSOR |X| (cursor on X)\n\n\n\n\n\n\n\n",
+  "sgr": "GPUI_VISUAL_BEGIN\nASCII |0123456789|ABCDEFGHIJKLMNOPQRSTUVWXYZ|\nWIDE |界語| END\nCOMBINING |é Å| END\nEMOJI |😀 🚀| END\n\nPALETTE \u001b[97m\u001b[40m 0 \u001b[41m 1 \u001b[42m 2 \u001b[43m 3 \u001b[44m 4 \u001b[45m 5 \u001b[46m 6 \u001b[47m 7 \u001b[39m\u001b[49m\nRGB |\u001b[38;2;255;96;32m\u001b[48;2;16;64;128m TRUECOLOR \u001b[39m\u001b[49m| END\nSTYLE |\u001b[1mBOLD\u001b[0m \u001b[3mITALIC\u001b[0m \u001b[4mUNDERLINE\u001b[0m|\nBLANK |\u001b[48;2;192;32;160m        \u001b[49m| END\n\nWRAP>wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\nWRAP_END\n\nGPUI_VISUAL_END\n\nCURSOR |X| (cursor on X)\n\n\n\n\n\n\n\n",
+  "joined": "GPUI_VISUAL_BEGIN\nASCII |0123456789|ABCDEFGHIJKLMNOPQRSTUVWXYZ|\nWIDE |界語| END\nCOMBINING |é Å| END\nEMOJI |😀 🚀| END\n\nPALETTE  0  1  2  3  4  5  6  7 \nRGB | TRUECOLOR | END\nSTYLE |BOLD ITALIC UNDERLINE|\nBLANK |        | END\n\nWRAP>wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwWRAP_END\n\nGPUI_VISUAL_END\n\nCURSOR |X| (cursor on X)\n\n\n\n\n\n\n\n",
+  "geometryBracket": "80|24|8|16|1|1",
+  "modes": {
+    "cursorVisible": true,
+    "autoWrap": true
+  },
+  "scope": "Real tmux text/SGR capture and cursor; no native pixel or font assertion"
+}

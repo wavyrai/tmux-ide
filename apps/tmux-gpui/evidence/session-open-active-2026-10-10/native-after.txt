@@ -1,0 +1,7 @@
+Package: /tmp/gpui-session-open-package/Tmux IDE Session Opening.app
+Source commit: 3b3abe18
+Native window navigation fixture passed, initial window two.
+Caveat: initial background CUA Open left selection cancelled; a manual tab click was used before first input marker. This run is not a clean first-open acceptance proof.
+After input activated the native window, Home -> Open automatically selected window two and rendered its pane with no intervening tab click. Both WINDOW_TWO_OK and WINDOW_ONE_OK reached distinct expected panes. Cmd-Q completed fixture successfully.
+Fresh demo independently launched from same package: Escape activated app, Refresh, Open automatically displayed two side-by-side live panes with Keyboard ready. No window-tab fallback used in fresh demo.
+New demo controller 54706, session e2e-new-demo-54706-0, private root /tmp/tmi-e2e-new-demo-mQ4dvY. Old demo native PID7229 terminated explicitly; production sessions untouched.

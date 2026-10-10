@@ -1,3 +1,9 @@
+import {
+  createNativeSplitCapabilityProbe,
+  createNativeSplitReadiness,
+} from "./native-split-capability.ts";
+import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
+import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
 import { execFileSync } from "node:child_process";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
 import { PaneSourceDiscovery } from "./pane-source-discovery.ts";
@@ -19,8 +25,14 @@ import { createNativeTmuxSessionCreator } from "./tmux-server-session-create.ts"
 import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
+import { createPaneEditorContextResolver } from "./tmux-pane-editor-context.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { WorkspaceIdSchemaZ } from "@tmux-ide/contracts";
+import {
+  WorkspaceIdSchemaZ,
+  WindowLinkTargetSchemaZ,
+  type WindowLinkTarget,
+} from "@tmux-ide/contracts";
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { mkdirSync } from "node:fs";
 import { z } from "zod";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
@@ -272,8 +284,27 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
           throw new Error("Interaction target lifetime is no longer current");
       },
       resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
-      execute: (operationId, intent, timing, execution) => {
+      execute: (operationId, intent, timing, execution, authorizeBeforeEffect) => {
         assertOpen();
+        if (intent.verb === "workspace.window.split.resize")
+          return executeCanonicalSplitMutation(
+            {
+              generation,
+              registry: sessionRuntimeRegistry,
+              resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
+              runNative: createGuardedNativeSplitResize({
+                observation: () => observationSelector,
+                runPinnedTmux: generationRun,
+              }),
+            },
+            operationId,
+            intent,
+            () => {
+              assertOpen();
+              if (!authorizeBeforeEffect) throw new Error("Missing execution authorization");
+              authorizeBeforeEffect();
+            },
+          );
         if (intent.verb === "workspace.pane.read")
           return multiplexer.readPane(operationId, intent, execution);
         if (
@@ -306,6 +337,15 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       traceAuthority: { generation, incarnation: null },
     },
     mirror: {
+      splitLayoutEpoch: () => observationSelector.nativeServerEpoch,
+      splitLayoutPrepare: createNativeSplitReadiness({
+        observation: () => observationSelector ?? null,
+        runPinnedTmux: generationRun,
+      }),
+      splitLayoutCapability: createNativeSplitCapabilityProbe({
+        observation: () => observationSelector ?? null,
+        runPinnedTmux: generationRun,
+      }),
       createOwnedViewerAdapter: createOwnedViewerAdapterFactory({
         environmentId: options.environmentId,
         serverScope: { serverId: options.serverId, generation },
@@ -464,6 +504,13 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     terminalInventoryRuntime.invalidate();
     return result;
   };
+  const resolvePaneEditorContext = createPaneEditorContextResolver({
+    generation,
+    assertOpen,
+    registry: workspaceRegistry,
+    catalog,
+    inventory: terminalInventoryRuntime,
+  });
   const multiplexerBackend: WorkspaceMultiplexerBackend = {
     mutate: async (...args) => {
       assertOpen();
@@ -535,7 +582,25 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
   return {
     serverId: options.serverId,
     generation,
+    resolvePaneEditorContext,
     catalog,
+    readWindowSplitLayout: async (workspaceName: string, input: WindowLinkTarget) => {
+      assertOpen();
+      const target = WindowLinkTargetSchemaZ.parse(input);
+      const sessions = await catalog();
+      assertOpen();
+      const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
+      if (
+        !sessionName ||
+        !sessions.some(
+          (row) => row.sessionName === sessionName && row.liveSessionId === target.liveSessionId,
+        )
+      )
+        throw new WindowSplitLayoutUnavailable();
+      const resource = await sessionRuntimeRegistry.readWindowSplitLayout(sessionName, target);
+      assertOpen();
+      return resource;
+    },
     openSession,
     createSession: sessionCreator.createSession,
     createSessionPane: async (

@@ -1,3 +1,7 @@
+import {
+  WindowSplitResizeTargetSchemaZ,
+  WindowSplitSuccessorSchemaZ,
+} from "./window-split-layout.ts";
 import { WindowLinkTargetSchemaZ } from "./window-links.ts";
 import { z } from "zod";
 import { InteractionEvidenceSchemaZ } from "./interaction-evidence.ts";
@@ -16,6 +20,7 @@ export type AuthoredInteractionOrigin = z.infer<typeof AuthoredInteractionOrigin
 
 /** Every semantic session-runtime verb; raw tmux addresses never enter this vocabulary. */
 export const InteractionOperationKindSchemaZ = z.enum([
+  "workspace.window.split.resize",
   "workspace.window.link.select",
   "workspace.window.link.unlink",
   "workspace.window.split",
@@ -68,6 +73,14 @@ const MutationOutcomeSchemaZ = z.enum(["applied", "unchanged", "replayed"]);
  * different verb.
  */
 export const InteractionSafeSummarySchemaZ = z.union([
+  z
+    .object({
+      operationKind: z.literal("workspace.window.split.resize"),
+      layoutId: z.uuid(),
+      splitId: z.uuid(),
+      boundary: z.number().int().min(0).max(4096),
+    })
+    .strict(),
   z.object({ operationKind: z.literal("workspace.window.link.unlink") }).strict(),
   z.object({ operationKind: z.literal("workspace.window.link.select") }).strict(),
   z
@@ -136,6 +149,16 @@ export type PaneReadSafeSummary = Extract<
  * terminal bytes never enter the replay journal.
  */
 export const InteractionProofSchemaZ = z.discriminatedUnion("operationKind", [
+  z
+    .object({
+      operationKind: z.literal("workspace.window.split.resize"),
+      outcome: MutationOutcomeSchemaZ,
+      target: WindowSplitResizeTargetSchemaZ,
+      axis: z.enum(["cols", "rows"]),
+      boundary: z.number().int().min(0).max(4096),
+      successor: WindowSplitSuccessorSchemaZ.nullable().optional(),
+    })
+    .strict(),
   z
     .object({
       operationKind: z.literal("workspace.window.link.unlink"),
@@ -318,6 +341,49 @@ export const InteractionReceiptV1SchemaZ = z
           path: ["proof"],
           message: "Window link proof must match its target",
         });
+      }
+    }
+    if (receipt.operationKind === "workspace.window.split.resize") {
+      if (receipt.target.kind !== "window-link")
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "Split resize requires a window link target",
+        });
+      if (
+        receipt.proof?.operationKind === "workspace.window.split.resize" &&
+        receipt.summary.operationKind === "workspace.window.split.resize"
+      ) {
+        const successor = receipt.proof.successor;
+        if (successor) {
+          const split = successor.resource.splits.find(
+            (split) => split.splitId === successor.splitId,
+          );
+          if (
+            JSON.stringify(successor.resource.window) !==
+              JSON.stringify(receipt.proof.target.window) ||
+            split?.axis !== receipt.proof.axis ||
+            split?.boundary !== receipt.proof.boundary
+          )
+            context.addIssue({
+              code: "custom",
+              path: ["proof", "successor"],
+              message: "Successor must match the observed window, axis and boundary",
+            });
+        }
+        const target = receipt.proof.target;
+        if (
+          receipt.target.kind !== "window-link" ||
+          JSON.stringify(target.window) !== JSON.stringify(receipt.target.target) ||
+          target.layoutId !== receipt.summary.layoutId ||
+          target.splitId !== receipt.summary.splitId ||
+          target.boundary !== receipt.summary.boundary
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["proof", "target"],
+            message: "Split resize proof must echo its exact request target",
+          });
       }
     }
     const paneVerb = receipt.operationKind.startsWith("workspace.pane.");

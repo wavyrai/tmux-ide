@@ -1,0 +1,92 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/terminal/session-runtime/terminal-delivery-address.test.ts (4 tests | 4 failed) 12ms
+     × keeps ordinary native identity separate from two delivery aliases 6ms
+     × keeps session with spaces  native identity separate from two delivery aliases 2ms
+     × keeps 开发 — workspace  native identity separate from two delivery aliases 1ms
+     × rejects invalid default or explicit aliases before subscribing, but keeps valid direct defaults 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/terminal/session-runtime/terminal-delivery-address.test.ts > delivery workspace address > keeps ordinary native identity separate from two delivery aliases
+AssertionError: expected 'ordinary' to be 'workspace-a' // Object.is equality
+
+Expected: "workspace-a"
+Received: "ordinary"
+
+ ❯ src/terminal/session-runtime/terminal-delivery-address.test.ts:30:42
+     28|       const cb=await f.hub.open("b","pane-a",offer,m=>{b.push(m)},unde…
+     29|       f.emit(0);await settle();
+     30|       expect(envelope(a)?.workspaceName).toBe("workspace-a");expect(en…
+       |                                          ^
+     31|       expect(envelope(a).canonicalStateHash).toBe(envelope(b).canonica…
+     32|       expect(envelope(a).representationHash).toBe(envelope(b).represen…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/terminal/session-runtime/terminal-delivery-address.test.ts > delivery workspace address > keeps session with spaces  native identity separate from two delivery aliases
+ FAIL  src/terminal/session-runtime/terminal-delivery-address.test.ts > delivery workspace address > keeps 开发 — workspace  native identity separate from two delivery aliases
+AssertionError: expected undefined to be 'workspace-a' // Object.is equality
+
+- Expected:
+"workspace-a"
+
++ Received:
+undefined
+
+ ❯ src/terminal/session-runtime/terminal-delivery-address.test.ts:30:42
+     28|       const cb=await f.hub.open("b","pane-a",offer,m=>{b.push(m)},unde…
+     29|       f.emit(0);await settle();
+     30|       expect(envelope(a)?.workspaceName).toBe("workspace-a");expect(en…
+       |                                          ^
+     31|       expect(envelope(a).canonicalStateHash).toBe(envelope(b).canonica…
+     32|       expect(envelope(a).representationHash).toBe(envelope(b).represen…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/terminal/session-runtime/terminal-delivery-address.test.ts > delivery workspace address > rejects invalid default or explicit aliases before subscribing, but keeps valid direct defaults
+AssertionError: promise resolved "{ negotiation: { …(2) }, …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "ack": [Function ack],
++   "close": [Function close],
++   "closed": Promise {},
++   "nack": [Function nack],
++   "negotiation": {
++     "accepted": true,
++     "negotiated": {
++       "deliveryNonce": "f5034170-1a46-4d8b-aaef-b5d9a0dadb71",
++       "encoding": "semantic-compact-v1",
++       "generation": "00000000-0000-4000-8000-000000000001",
++       "protocolVersion": 1,
++       "richPlacements": false,
++     },
++   },
++   "setVisibility": [Function setVisibility],
+  }
+
+ ❯ src/terminal/session-runtime/terminal-delivery-address.test.ts:48:64
+     46|     const invalid=fixture("raw session "); const valid=fixture("worksp…
+     47|     try{
+     48|       await expect(invalid.hub.open("a","pane-a",offer,()=>{})).reject…
+       |                                                                ^
+     49|       await expect(valid.hub.open("a","pane-a",offer,()=>{},undefined,…
+     50|       expect(invalid.subscribeSource).not.toHaveBeenCalled();expect(va…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  21:57:40
+   Duration  464ms (transform 257ms, setup 0ms, import 388ms, tests 12ms, environment 0ms)
+
+undefined
+/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run src/terminal/session-runtime/terminal-delivery-address.test.ts

@@ -1,0 +1,69 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/terminal/mirror/mirror-service-split-layout.test.ts (7 tests | 1 failed | 6 skipped) 13ms
+   × withholds split resources for an observation-capable server without split mutation support 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/terminal/mirror/mirror-service-split-layout.test.ts > withholds split resources for an observation-capable server without split mutation support
+AssertionError: promise resolved "{ version: 1, window: { …(4) }, …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "cols": 200,
++   "layoutId": "199b4dae-ea6c-4535-8ad0-b84ce3b19250",
++   "panes": [
++     {
++       "height": 50,
++       "left": 0,
++       "semanticPaneId": "pane.alpha",
++       "top": 0,
++       "width": 100,
++     },
++     {
++       "height": 50,
++       "left": 101,
++       "semanticPaneId": "pane.beta",
++       "top": 0,
++       "width": 99,
++     },
++   ],
++   "rows": 50,
++   "splits": [
++     {
++       "axis": "cols",
++       "boundary": 100,
++       "length": 50,
++       "splitId": "1a560fcf-f7be-4071-af99-7146e6168544",
++       "start": 0,
++     },
++   ],
++   "version": 1,
++   "window": {
++     "expectedSemanticWindowId": "window.test.one",
++     "linkId": "window-link.b2e323bc26504199b9c536f6095df810",
++     "linkRevision": 1,
++     "liveSessionId": "live-session.6cc7c0a15a8b9c274ac4",
++   },
+  }
+
+ ❯ src/terminal/mirror/mirror-service-split-layout.test.ts:141:83
+    139|   try {
+    140|     const current = await retained(r.service);
+    141|     await expect(r.service.readWindowSplitLayout(FIXTURE.session, curr…
+       |                                                                                   ^
+    142|     supported = true;
+    143|     const resource = await r.service.readWindowSplitLayout(FIXTURE.ses…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  19:22:40
+   Duration  463ms (transform 254ms, setup 0ms, import 387ms, tests 13ms, environment 0ms)

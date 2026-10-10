@@ -1,3 +1,4 @@
+import { terminalAgentStatusLabel } from "@tmux-ide/presentation";
 import type { WindowLinkTarget } from "@tmux-ide/contracts";
 import type { AgentActivity } from "@tmux-ide/contracts";
 
@@ -43,22 +44,7 @@ export interface ApplicationPaneSeparator {
   readonly nativeCellsPerDisplayCell?: number;
 }
 
-export function terminalAgentStatusLabel(activity: AgentActivity): string {
-  switch (activity) {
-    case "running":
-      return "WORKING";
-    case "waiting":
-      return "BLOCKED";
-    case "complete":
-      return "DONE";
-    case "failed":
-      return "FAILED";
-    case "disconnected":
-      return "DISCONNECTED";
-    case "idle":
-      return "IDLE";
-  }
-}
+export { terminalAgentStatusLabel } from "@tmux-ide/presentation";
 
 function labelWithReservedStatus(
   marker: string,

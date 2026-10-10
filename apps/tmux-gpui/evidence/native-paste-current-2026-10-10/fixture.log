@@ -1,0 +1,6 @@
+{"stage":"paste-ready","payload":"PASTE_界_é_🙂\nSECOND_LINE","payloadFile":"/tmp/gpui-native-paste-20261010-a/payload.txt","expectedBytes":42,"expectedHex":"1b5b3230307e50415354455fe7958c5f65cc815ff09f99820a5345434f4e445f4c494e451b5b3230317e"}
+Open the sole session, wait Keyboard ready, activate/click its terminal, then paste payload.txt exactly once. Do not press Return.
+sandbox_extension_issue_file_to_process failed for /tmp/Tmux IDE Visual Qualification.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+Exact bracketed Unicode/multiline bytes received. Close this owned app with Cmd-Q.
+{"passed":true,"physicalNativePaste":true,"bracketPasteFlag":1,"exactBytes":42,"sha256":"3a20d8c9c1610d2be49f4e464b11f3e6d77c7ab93569a41cbc3d283c12c8aa91","sourceSurvivesClose":true,"producerPid":"62891","cleanup":true}

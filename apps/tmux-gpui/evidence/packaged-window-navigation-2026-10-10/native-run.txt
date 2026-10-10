@@ -1,0 +1,6 @@
+Packaged app ready: select session/pane, type echo WINDOW_ONE_OK in window one and Return; then use the window strip
+sandbox_extension_issue_file_to_process failed for /var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/gpui-nav-proof-jxycn_sp/Tmux IDE Navigation Proof.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+First window verified. Click window two in the top strip, type echo WINDOW_TWO_OK and Return.
+Window-strip routing verified; close with Cmd-Q
+{"passed":true,"distinctWindowTargets":true,"packagedRuntime":true,"isolatedCwd":true,"minimalPath":true,"sourceSurvivesClose":true}

@@ -1,0 +1,31 @@
+name: Refresh star history
+
+# GitHub's camo proxy caches README images indefinitely; purging the cached
+# star-history charts makes the next README view fetch a fresh SVG.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  purge:
+    if: github.repository == 'penso/herdr-gpui'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Purge cached star-history images
+        run: |
+          set -euo pipefail
+          urls=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}" \
+            | grep -oE 'https://camo\.githubusercontent\.com/[0-9a-f]+/[0-9a-f]+' \
+            | sort -u)
+          if [ -z "$urls" ]; then
+            echo "::error::No camo image URLs found in the rendered README"
+            exit 1
+          fi
+          for url in $urls; do
+            echo "Purging $url"
+            curl -fsS -X PURGE "$url" > /dev/null
+          done

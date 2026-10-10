@@ -1,3 +1,15 @@
+import { setTimeout as waitForPublication } from "node:timers/promises";
+import {
+  WindowSplitResizeTargetSchemaZ,
+  type WindowLinkTarget,
+  type WindowSplitLayoutResource,
+  type WindowSplitResizeTarget,
+} from "@tmux-ide/contracts";
+import type {
+  createGuardedNativeSplitResize,
+  GuardedNativeSplitResizeResult,
+} from "../../lib/guarded-native-split-resize.ts";
+import { WindowSplitAuthority, WindowSplitLayoutUnavailable } from "./window-split-authority.ts";
 import { SharedWindowIndex } from "./shared-window-index.ts";
 import { RegisteredWindowGuard, type RegisteredWindowReader } from "./registered-window-guard.ts";
 import type { OwnedViewerAdapter } from "./owned-viewer-adapter.ts";
@@ -9,7 +21,6 @@ import {
   revalidateUnixSocketIdentity,
 } from "../../lib/unix-socket-authority.ts";
 import { execFile } from "node:child_process";
-import type { WindowLinkTarget } from "@tmux-ide/contracts";
 /**
  * MirrorService — the daemon-side shared mirror layer (m43 card 1).
  *
@@ -49,6 +60,12 @@ import {
 } from "./control-mode-ownership.ts";
 
 export interface MirrorServiceOptions {
+  /** Native server epoch for split observations; absent means unsupported. */
+  splitLayoutEpoch?: () => string | null;
+  /** Explicit split reads may prepare a supported observation owner once. */
+  splitLayoutPrepare?: () => Promise<boolean>;
+  /** Positively probe this native epoch before issuing handles; absent denies. */
+  splitLayoutCapability?: (epoch: string) => boolean | Promise<boolean>;
   onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
   createOwnedViewerAdapter?: (session: string) => OwnedViewerAdapter | undefined;
   nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
@@ -145,6 +162,7 @@ export interface MirrorSessionRetention {
 }
 
 interface ChannelEntry {
+  splitAuthority?: WindowSplitAuthority;
   channel: SessionChannel;
   started: Promise<void>;
   refs: number;
@@ -362,6 +380,99 @@ export class MirrorService {
     };
   }
 
+  /** Read existing canonical ownership only; never attach or retain a new channel. */
+  async readWindowSplitLayout(
+    session: string,
+    target: WindowLinkTarget,
+  ): Promise<WindowSplitLayoutResource> {
+    const entry = this.channels.get(session);
+    if (this.disposed || !entry || entry.retired) throw new WindowSplitLayoutUnavailable();
+    await entry.started;
+    if (this.disposed || entry.retired || this.channels.get(session) !== entry)
+      throw new WindowSplitLayoutUnavailable();
+    if (this.opts.splitLayoutPrepare) {
+      let ready = false;
+      try {
+        ready = await this.opts.splitLayoutPrepare();
+      } catch {
+        /* Unavailable owner. */
+      }
+      if (!ready || this.disposed || entry.retired || this.channels.get(session) !== entry)
+        throw new WindowSplitLayoutUnavailable();
+    }
+    const epoch = this.opts.splitLayoutEpoch?.();
+    let supported = false;
+    try {
+      supported = Boolean(epoch && (await this.opts.splitLayoutCapability?.(epoch)));
+    } catch {
+      // Unsupported/retired servers never receive actionable split handles.
+    }
+    if (
+      !supported ||
+      this.disposed ||
+      entry.retired ||
+      this.channels.get(session) !== entry ||
+      this.opts.splitLayoutEpoch?.() !== epoch
+    )
+      throw new WindowSplitLayoutUnavailable();
+    entry.splitAuthority ??= new WindowSplitAuthority({
+      describe: (window) => entry.channel.describeSplitLayout(window),
+      serverEpoch: () => this.opts.splitLayoutEpoch?.() ?? null,
+    });
+    return entry.splitAuthority.read(target);
+  }
+
+  /** Resolve only issued handles, then revalidate immediately at native dispatch. */
+  async resizeWindowSplit(
+    session: string,
+    target: WindowSplitResizeTarget,
+    operationId: string,
+    authorizeBeforeEffect: () => void,
+    runNative: ReturnType<typeof createGuardedNativeSplitResize>,
+  ): Promise<
+    GuardedNativeSplitResizeResult & {
+      successor?: { resource: WindowSplitLayoutResource; splitId: string } | null;
+    }
+  > {
+    const captured = WindowSplitResizeTargetSchemaZ.parse(target);
+    const entry = this.channels.get(session);
+    const current = () => {
+      if (this.disposed || !entry || entry.retired || this.channels.get(session) !== entry)
+        throw new WindowSplitLayoutUnavailable();
+      if (!entry.splitAuthority) throw new WindowSplitLayoutUnavailable();
+      return entry.splitAuthority;
+    };
+    current();
+    await entry!.started;
+    const resolved = current().resolve(captured);
+    const successor = current().prepareSuccessor(captured);
+    const result = await runNative(resolved.request, {
+      operationId,
+      serverEpoch: resolved.serverEpoch,
+      session: resolved.session,
+      anchor: resolved.anchor,
+      authorizeBeforeEffect: () => {
+        current().resolve(captured);
+        authorizeBeforeEffect();
+      },
+    });
+    if (result.status !== "applied") return result;
+    // Native success is retained even if canonical publication is late or diverges.
+    // This grace period observes only; it never retries a native mutation.
+    const deadline = performance.now() + 100;
+    for (;;) {
+      try {
+        current();
+      } catch {
+        return { ...result, successor: null };
+      }
+      const next = successor(result.layout);
+      if (next !== undefined) return { ...result, successor: next };
+      if (performance.now() >= deadline) return { ...result, successor: null };
+      await waitForPublication(5);
+    }
+  }
+
   async executeWindowLinkAction(
     session: string,
     request: { action: "select" | "unlink"; target?: WindowLinkTarget; paneId?: string },
@@ -554,6 +665,7 @@ export class MirrorService {
     await Promise.allSettled(
       entries.map(async (entry) => {
         entry.retired = true;
+        entry.splitAuthority?.dispose();
         this.updateWindowMembership(entry.channel, []);
         this.channelSessions.delete(entry.channel);
         try {
@@ -730,6 +842,7 @@ export class MirrorService {
   private retire(session: string, entry: ChannelEntry): void {
     if (entry.retired) return;
     entry.retired = true;
+    entry.splitAuthority?.dispose();
     this.updateWindowMembership(entry.channel, []);
     this.channelSessions.delete(entry.channel);
     if (this.channels.get(session) === entry) this.channels.delete(session);

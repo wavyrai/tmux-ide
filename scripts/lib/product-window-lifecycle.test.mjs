@@ -1353,3 +1353,29 @@ test("window-link phase evidence requires its own measured operations and preser
   delete evidence.switches[1].phaseTiming.daemon.window_link_effect_proofMs;
   assert.equal(summarizeWindowSwitchPhaseOutliers([evidence.switches[1]]).length, 0);
 });
+
+test("terminal-only scope excludes browser proof but retains native correlation", () => {
+  const value = structuredClone(exactEvidence());
+  delete value.web;
+  delete value.correlation.web;
+  const result = assessProductWindowLifecycle({
+    evidence: value,
+    expected: expected,
+    evidenceScope: "terminal-only",
+  });
+  assert.equal(result.qualified, true);
+  assert.equal(result.browserEvidence.status, "unmeasured");
+  assert.equal(
+    assessProductWindowLifecycle({ evidence: value, expected: expected }).qualified,
+    false,
+  );
+  value.correlation.tmux = false;
+  assert.equal(
+    assessProductWindowLifecycle({
+      evidence: value,
+      expected: expected,
+      evidenceScope: "terminal-only",
+    }).qualified,
+    false,
+  );
+});

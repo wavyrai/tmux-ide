@@ -1,0 +1,22 @@
+{
+  "binary": "/private/tmp/tmux-split-prototype-iNRcZY/tmux-serialization-guard",
+  "sha256": "713991dc7d0cd85ea61376883caae8d915da3cede6ed80fba408ee6b85685395",
+  "cases": [
+    {
+      "kind": "ancestor-moved",
+      "boundary": 83
+    },
+    {
+      "kind": "stale-native-refusal",
+      "result": {
+        "status": "uncertain",
+        "reason": "command-failed"
+      }
+    },
+    {
+      "kind": "clamp-and-repeat",
+      "boundary": 3
+    }
+  ],
+  "cleanup": true
+}

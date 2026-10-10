@@ -583,3 +583,20 @@ describe("observation batching defaults and failure", () => {
     await f.observer.dispose();
   });
 });
+
+it("refuses a lazy preflight epoch replacement before issuing enable", async () => {
+  const seen: string[][] = [];
+  const f = fixture(
+    async (args) => {
+      seen.push([...args]);
+      return JSON.stringify({ ...capability, enabled: false });
+    },
+    { enable: true, expectedServerEpoch: otherEpoch },
+  );
+  try {
+    await f.observer.start();
+    expect(seen).toEqual([["tmux-ide-events", "-V"]]);
+  } finally {
+    await f.observer.dispose();
+  }
+});

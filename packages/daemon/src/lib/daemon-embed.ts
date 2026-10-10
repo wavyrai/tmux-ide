@@ -1,3 +1,11 @@
+import {
+  createNativeSplitCapabilityProbe,
+  createNativeSplitReadiness,
+} from "./native-split-capability.ts";
+import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
+import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
+import { WindowLinkTargetSchemaZ } from "@tmux-ide/contracts";
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
 import { join } from "node:path";
 import { createClaudeTeamMembershipReader } from "../terminal/attachments/claude-team-names.ts";
@@ -14,6 +22,7 @@ import {
 import { createNativeTmuxSessionCreator } from "./tmux-server-session-create.ts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
+import { createPaneEditorContextResolver } from "./tmux-pane-editor-context.ts";
 import {
   createServerGenerationFencedTmuxRunner,
   createServerGenerationFencedTmuxAsyncRunner,
@@ -1389,6 +1398,7 @@ async function startEmbeddedDaemonGeneration(
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
+    let defaultEditorContextRetired = false;
     const defaultSessionCreator = createNativeTmuxSessionCreator({
       generation: instanceId,
       registry: workspaceRegistry,
@@ -1419,7 +1429,25 @@ async function startEmbeddedDaemonGeneration(
         intent: SessionRuntimeSemanticIntent,
         timing?: Parameters<typeof workspaceMultiplexer.mutate>[1],
         execution?: Parameters<typeof workspaceMultiplexer.mutate>[2],
+        authorizeBeforeEffect?: () => void,
       ) => {
+        if (intent.verb === "workspace.window.split.resize") {
+          if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+          return executeCanonicalSplitMutation(
+            {
+              generation: instanceId,
+              registry: sessionRuntimeRegistry,
+              resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
+              runNative: createGuardedNativeSplitResize({
+                observation: () => observationSelector,
+                runPinnedTmux: nativeGenerationTmuxRunner,
+              }),
+            },
+            operationId,
+            intent,
+            authorizeBeforeEffect,
+          );
+        }
         if (intent.verb === "workspace.pane.read") {
           return workspaceMultiplexer.readPane(operationId, intent, execution);
         }
@@ -1527,6 +1555,15 @@ async function startEmbeddedDaemonGeneration(
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
+          splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
+          splitLayoutPrepare: createNativeSplitReadiness({
+            observation: () => observationSelector ?? null,
+            runPinnedTmux: nativeGenerationTmuxRunner,
+          }),
+          splitLayoutCapability: createNativeSplitCapabilityProbe({
+            observation: () => observationSelector ?? null,
+            runPinnedTmux: nativeGenerationTmuxRunner,
+          }),
           createOwnedViewerAdapter: () => ownedViewerFactory?.(),
           nativeServerIdentity: initialNativeServerIdentity,
           executable: tmuxAuthority.executablePath,
@@ -1786,7 +1823,40 @@ async function startEmbeddedDaemonGeneration(
             return grant ? interactionEvidence.captureSourceBinding(grant) : null;
           },
           interactionReceipts,
+          resolvePaneEditorContext: createPaneEditorContextResolver({
+            generation: instanceId,
+            registry: workspaceRegistry,
+            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            inventory: terminalInventoryRuntime,
+            assertOpen: () => {
+              if (
+                defaultEditorContextRetired ||
+                serverOwners?.defaultRetired ||
+                !initialNativeServerIdentity ||
+                terminalInventoryRuntime?.lifecycleState() !== "ready"
+              )
+                throw new Error("Default tmux editor context owner is unavailable");
+            },
+          }),
           catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+          readWindowSplitLayout: async (workspaceName, input) => {
+            const target = WindowLinkTargetSchemaZ.parse(input);
+            const sessions = await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+            )();
+            const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
+            if (
+              !sessionName ||
+              !sessions.some(
+                (row) =>
+                  row.sessionName === sessionName && row.liveSessionId === target.liveSessionId,
+              )
+            )
+              throw new WindowSplitLayoutUnavailable();
+            if (!sessionRuntimeRegistry) throw new WindowSplitLayoutUnavailable();
+            return sessionRuntimeRegistry.readWindowSplitLayout(sessionName, target);
+          },
           openSession: async (liveSessionId) => {
             await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
             const result = await defaultSessionOpener.openSession(liveSessionId);
@@ -1832,6 +1902,7 @@ async function startEmbeddedDaemonGeneration(
           terminalInventoryRuntime,
           paneStreamRuntime,
           dispose: async () => {
+            defaultEditorContextRetired = true;
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
             const transportResults = await Promise.allSettled([

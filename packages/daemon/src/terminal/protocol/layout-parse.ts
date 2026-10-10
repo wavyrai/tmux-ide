@@ -20,6 +20,10 @@
  * tmux 3.7b server (splits, zoom, storms) — no tmux at test time.
  */
 
+// Internal parsing bound, matching fleet catalog capacity. This is NOT the
+// smaller pane-stream publication limit; future wire callers must enforce that.
+const MAX_TREE_LEAVES = 512;
+
 /** One visible pane rectangle, in window cells. `id` is `%`-prefixed. */
 export interface LayoutLeaf {
   id: string;
@@ -35,6 +39,39 @@ export interface ParsedLayout {
   width: number;
   height: number;
   leaves: LayoutLeaf[];
+}
+
+/** Opt-in validated ancestry. Runtime pane IDs are not semantic pane identities. */
+export type LayoutTreeNode =
+  | ({ kind: "leaf" } & LayoutLeaf)
+  | {
+      kind: "split";
+      axis: "cols" | "rows";
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      children: LayoutTreeNode[];
+    };
+
+interface TreeContext {
+  nodes: number;
+  ids: Set<string>;
+}
+
+/**
+ * Bounded ancestry parser, deliberately stricter than the legacy flat parser.
+ * Up to 512 leaves (fleet catalog bound), 1023 nodes, depth 64 and 64 KiB.
+ * Validates exact ordered tiling with one separator cell, including parent
+ * bounds. The checksum prefix is grammar only, not an authenticity proof.
+ */
+export function parseLayoutTree(layout: string): LayoutTreeNode | null {
+  if (layout.length > 64 * 1024 || !/^[0-9a-fA-F]{4},/.test(layout)) return null;
+  const s = layout.slice(5);
+  const root = parseCell(s, 0, [], { nodes: 0, ids: new Set() });
+  if (!root?.node || root.pos !== s.length || root.node.left !== 0 || root.node.top !== 0)
+    return null;
+  return root.node;
 }
 
 /** Parse a tmux layout string (`csum,WxH,X,Y…`). Null on any malformed input
@@ -53,37 +90,90 @@ function parseCell(
   s: string,
   pos: number,
   leaves: LayoutLeaf[],
-): { width: number; height: number; pos: number } | null {
+  tree?: TreeContext,
+  depth = 1,
+): { width: number; height: number; pos: number; node?: LayoutTreeNode } | null {
+  if (tree && (depth > 64 || ++tree.nodes > MAX_TREE_LEAVES * 2 - 1)) return null;
   const dims = readDims(s, pos);
   if (!dims) return null;
   const { width, height, left, top } = dims;
+  if (
+    tree &&
+    (![width, height, left, top, left + width, top + height].every(Number.isSafeInteger) ||
+      width <= 0 ||
+      height <= 0 ||
+      left < 0 ||
+      top < 0)
+  )
+    return null;
   pos = dims.pos;
   const ch = s[pos];
   if (ch === ",") {
     // Leaf: the numeric pane id.
     const id = readInt(s, pos + 1);
     if (!id) return null;
-    leaves.push({ id: `%${id.value}`, left, top, width, height });
-    return { width, height, pos: id.pos };
+    const leaf = { id: `%${id.value}`, left, top, width, height };
+    if (tree) {
+      if (
+        !Number.isSafeInteger(id.value) ||
+        tree.ids.has(leaf.id) ||
+        tree.ids.size >= MAX_TREE_LEAVES
+      )
+        return null;
+      tree.ids.add(leaf.id);
+    }
+    leaves.push(leaf);
+    return {
+      width,
+      height,
+      pos: id.pos,
+      ...(tree ? { node: { kind: "leaf" as const, ...leaf } } : {}),
+    };
   }
   if (ch === "{" || ch === "[") {
     const close = ch === "{" ? "}" : "]";
+    const children: LayoutTreeNode[] = [];
     pos++;
     for (;;) {
-      const child = parseCell(s, pos, leaves);
+      const child = parseCell(s, pos, leaves, tree, depth + 1);
       if (!child) return null;
+      if (tree && child.node) children.push(child.node);
       pos = child.pos;
       if (s[pos] === ",") {
         pos++;
         continue;
       }
-      if (s[pos] === close) return { width, height, pos: pos + 1 };
+      if (s[pos] === close) {
+        if (!tree) return { width, height, pos: pos + 1 };
+        const axis = ch === "{" ? "cols" : "rows";
+        const node: LayoutTreeNode = { kind: "split", axis, left, top, width, height, children };
+        if (!tilesParent(node)) return null;
+        return { width, height, pos: pos + 1, node };
+      }
       return null;
     }
   }
   // A bare root leaf ends the string (`…,0,0,445`): ch is undefined only when
   // the leaf id was consumed above, so anything else here is malformed.
   return null;
+}
+
+/** Child ordering and separator widths must describe precisely this parent. */
+function tilesParent(node: Extract<LayoutTreeNode, { kind: "split" }>): boolean {
+  if (node.children.length < 2) return false;
+  const cols = node.axis === "cols";
+  let next = cols ? node.left : node.top;
+  for (const child of node.children) {
+    if (
+      (cols ? child.left : child.top) !== next ||
+      (cols ? child.top : child.left) !== (cols ? node.top : node.left) ||
+      (cols ? child.height : child.width) !== (cols ? node.height : node.width)
+    )
+      return false;
+    next += (cols ? child.width : child.height) + 1;
+    if (!Number.isSafeInteger(next)) return false;
+  }
+  return next - 1 === (cols ? node.left + node.width : node.top + node.height);
 }
 
 /** Read `WxH,X,Y` at `pos`. */

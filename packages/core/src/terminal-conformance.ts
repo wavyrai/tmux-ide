@@ -7,34 +7,7 @@
  * a private interpretation of ANSI colors, resets, attributes, or graphemes.
  */
 
-/** The canonical xterm 256-color palette, packed as `0xRRGGBB`. */
-export const XTERM_PALETTE: readonly number[] = Object.freeze(buildXtermPalette());
-
-/** The same protocol palette in the CSS form accepted by xterm.js themes. */
-export const XTERM_PALETTE_HEX: readonly string[] = Object.freeze(
-  XTERM_PALETTE.map((color) => `#${color.toString(16).padStart(6, "0")}`),
-);
-
-function buildXtermPalette(): number[] {
-  const base = [
-    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
-    0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
-  ];
-  const palette = [...base];
-  const levels = [0, 95, 135, 175, 215, 255];
-  for (let index = 16; index < 232; index += 1) {
-    const offset = index - 16;
-    const red = levels[Math.floor(offset / 36)]!;
-    const green = levels[Math.floor(offset / 6) % 6]!;
-    const blue = levels[offset % 6]!;
-    palette.push((red << 16) | (green << 8) | blue);
-  }
-  for (let index = 232; index < 256; index += 1) {
-    const value = 8 + 10 * (index - 232);
-    palette.push((value << 16) | (value << 8) | value);
-  }
-  return palette;
-}
+export { XTERM_PALETTE, XTERM_PALETTE_HEX } from "@tmux-ide/contracts";
 
 export type TerminalConformanceColor =
   | { readonly kind: "default" }

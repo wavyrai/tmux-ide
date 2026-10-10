@@ -1,0 +1,33 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts (5 tests | 1 failed) 10ms
+   × forwards final authorization for resize without authored context (allowed=true) 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts > forwards final authorization for resize without authored context (allowed=true)
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts:141:28
+    139|       authorized = allowed;
+    140|       resume.resolve();
+    141|       expect(await result).toBe(allowed);
+       |                            ^
+    142|       expect(effects).toBe(allowed ? 1 : 0);
+    143|     } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 34 passed (35)
+   Start at  18:14:03
+   Duration  1.31s (transform 429ms, setup 0ms, import 699ms, tests 914ms, environment 0ms)
+

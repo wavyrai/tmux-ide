@@ -144,10 +144,10 @@ These recipes are not evidence that the terminal release uses Ghostty:
   `448062571c5edf010b7490d06869b88b5ebf8f80`, Zig 0.16.0,
   `aarch64-macos.13.0`, external-I/O ABI 1 and
   [external-io.patch](../native/ghostty/external-io.patch). Build with
-  [build-library.mjs](../native/ghostty/build-library.mjs); the
-  [experimental Electron smoke](../native/ghostty/experimental-electron/smoke.mjs)
-  is scoped to that experiment. Promotion/removal requires that experiment's ABI
-  and behavior to be requalified; no upstream replacement status is asserted.
+  [build-library.mjs](../native/ghostty/build-library.mjs). The experimental
+  Electron harness was retired with the desktop clients. This retained library
+  recipe is not qualified for a replacement client; no upstream replacement
+  status is asserted.
 - [Parser-only libghostty-vt prototype](../packages/daemon/native/ghostty-vt/README.md):
   a different Ghostty commit, `48ccec182a932c2ec04c344d45a5fc553861cb13`, with
   toolchain and three API patches pinned in

@@ -1,0 +1,14 @@
+
+> @tmux-ide/docs@0.0.0 check:tui-demo /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs
+> node scripts/check-tui-demo.mjs
+
+TUI demo check failed:
+- docs/public/tui-demo.svg is older than the app code it shows. Run `pnpm demo:tui` from the repo root and commit docs/public/tui-demo*.svg and docs/scripts/tui-demo.sources.json. Changed since the last render:
+    packages/contracts/src/visual-terminal-palette.ts
+    packages/contracts/src/visual-theme-presets.ts
+    packages/daemon/src/tui/mirror/runtime/application-home-agents.ts
+    packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-policy.ts
+    packages/daemon/src/tui/mirror/theme.ts
+/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @tmux-ide/docs@0.0.0 check:tui-demo: `node scripts/check-tui-demo.mjs`
+Exit status 1

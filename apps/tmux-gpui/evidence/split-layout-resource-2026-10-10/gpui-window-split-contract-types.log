@@ -1,0 +1,4 @@
+
+> @tmux-ide/contracts@0.0.1 typecheck /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/contracts
+> tsc --noEmit
+

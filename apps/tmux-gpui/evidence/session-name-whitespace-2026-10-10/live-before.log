@@ -1,0 +1,33 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+
+ ❯ src/lib/tmux-server-session-open-live.test.ts (7 tests | 1 failed) 679ms
+     × preserves trailing session whitespace without adopting its trimmed-name neighbor 84ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/tmux-server-session-open-live.test.ts > scoped ordinary session admission > preserves trailing session whitespace without adopting its trimmed-name neighbor
+AssertionError: expected 'zzzz whitespace session' to be 'zzzz whitespace session ' // Object.is equality
+
+Expected: "zzzz whitespace session "
+Received: "zzzz whitespace session"
+
+ ❯ src/lib/tmux-server-session-open-live.test.ts:76:76
+     74|       "#{@tmux_ide_pane_id}\t#{@tmux_ide_window_id}"]);
+     75|     const opened = await owner.openSession(selected.liveSessionId);
+     76|     expect(owner.workspaceRegistry.get(opened.workspaceName)?.sessionN…
+       |                                                                            ^
+     77|     const first = stamps();
+     78|     expect(first.split("\t").every(Boolean)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 passed (7)
+   Start at  21:41:25
+   Duration  1.51s (transform 569ms, setup 0ms, import 780ms, tests 679ms, environment 0ms)
+
+undefined
+/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run --config vitest.live.config.ts src/lib/tmux-server-session-open-live.test.ts

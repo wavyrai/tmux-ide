@@ -9,7 +9,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -18,7 +17,7 @@ import {
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
-export const PRODUCT_DIAGNOSTIC_BUNDLE_VERSION = 1;
+export const PRODUCT_DIAGNOSTIC_BUNDLE_VERSION = 2;
 export const PRODUCT_DIAGNOSTIC_BUNDLE_FILES = Object.freeze([
   "report.json",
   "alignment.json",
@@ -27,7 +26,7 @@ export const PRODUCT_DIAGNOSTIC_BUNDLE_FILES = Object.freeze([
   "daemon-state.json",
   "client-state.json",
   "tui.ansi",
-  "web.png",
+  "scope.json",
   "stderr.log",
   "reproduction.sh",
 ]);
@@ -61,13 +60,11 @@ const GOLDEN_JOURNEYS = Object.freeze(
       "ansi-cursor-alt-screen",
       ["ansi", "cursor", "alternate-screen", "unchanged-grid-walk", "memory-slope"],
     ],
-    ["cross-client-handoff", ["opentui", "web", "native", "authority-handoff"]],
-    ["daemon-restart", ["daemon-restart", "generation-recovery"]],
     ["session-recreate", ["session-kill", "session-recreate"]],
   ].map(([id, coverage]) =>
     Object.freeze({
       id,
-      coverage: Object.freeze(coverage),
+      coverage: Object.freeze([...coverage, "opentui"]),
       executor: id,
       variants: Object.freeze(id === "first-key-paste" ? ["key", "paste"] : [null]),
       implementation: [
@@ -89,30 +86,16 @@ const GOLDEN_JOURNEYS = Object.freeze(
   ),
 );
 
-/**
- * The existing monolithic diagnosis remains selectable while it is split into
- * the golden journeys above. It does not claim the missing journey coverage.
- */
-export const PRODUCT_JOURNEY_REGISTRY = Object.freeze([
-  ...GOLDEN_JOURNEYS,
-  Object.freeze({
-    id: "runtime-qualification",
-    executor: "runtime-qualification",
-    variants: Object.freeze([null]),
-    coverage: Object.freeze([
-      "coherent-frame",
-      "key-input",
-      "pointer-resize",
-      "window-switch",
-      "opentui",
-      "web",
-      "daemon-restart",
-      "memory",
-      "idle-work",
-    ]),
-    implementation: "implemented",
-  }),
+export const PRODUCT_RETIRED_JOURNEYS = Object.freeze([
+  "cross-client-handoff",
+  "daemon-restart",
+  "runtime-qualification",
 ]);
+export const PRODUCT_TERMINAL_EVIDENCE_SCOPE = Object.freeze({
+  evidenceScope: "terminal-only",
+  browserEvidence: Object.freeze({ status: "unmeasured", reason: "retired-browser-client" }),
+});
+export const PRODUCT_JOURNEY_REGISTRY = GOLDEN_JOURNEYS;
 
 const JOURNEYS_BY_ID = new Map(PRODUCT_JOURNEY_REGISTRY.map((journey) => [journey.id, journey]));
 
@@ -140,11 +123,6 @@ export const PRODUCT_REQUIRED_JOURNEY_COVERAGE = Object.freeze([
   "cursor",
   "alternate-screen",
   "opentui",
-  "web",
-  "native",
-  "authority-handoff",
-  "daemon-restart",
-  "generation-recovery",
   "session-kill",
   "session-recreate",
   "queue-depth",
@@ -216,12 +194,15 @@ export function parseProductDiagnoseOptions(args) {
     repeat,
     variant,
     journeyIds: Object.freeze(
-      sawJourney ? journeyIds : journeyIds.length > 0 ? journeyIds : ["runtime-qualification"],
+      sawJourney ? journeyIds : journeyIds.length > 0 ? journeyIds : ["coherent-first-pane"],
     ),
   });
 }
 
 export function resolveProductJourneyPlan({ journeyIds, repeat, variant = null }) {
+  const retired = journeyIds.filter((id) => PRODUCT_RETIRED_JOURNEYS.includes(id));
+  if (retired.length)
+    throw new Error(`retired browser-dependent ProductRig journey: ${retired.join(", ")}`);
   if (journeyIds.includes("all") && journeyIds.length !== 1)
     throw new Error("ProductRig journey all cannot be combined with another journey id");
   const selected = journeyIds.includes("all")
@@ -266,6 +247,11 @@ export async function runProductJourneyPlan(plan, run) {
 }
 
 export async function dispatchProductJourneyExecutor(entry, executors) {
+  if (
+    PRODUCT_RETIRED_JOURNEYS.includes(entry?.journey?.id) ||
+    PRODUCT_RETIRED_JOURNEYS.includes(entry?.journey?.executor)
+  )
+    throw new Error("retired browser-dependent ProductRig executor");
   const executor = executors[entry.journey.executor];
   if (typeof executor !== "function")
     throw new Error(`ProductRig journey executor is unavailable: ${entry.journey.executor}`);
@@ -282,11 +268,18 @@ export async function runConfiglessProductJourneyOwnerBoot(operations) {
   const discovered = await operations.observeOrdinarySessionDiscovery(namespace, daemon);
   const adopted = await operations.adoptThroughPublicApp(namespace, daemon, discovered);
   const coherent = await operations.proveCoherentPublication(namespace, daemon, adopted);
-  const web = await operations.startWebAfterColdBoundary(namespace, daemon, coherent);
-  return Object.freeze({ namespace, publicProcess, daemon, discovered, adopted, coherent, web });
+  return Object.freeze({
+    namespace,
+    publicProcess,
+    daemon,
+    discovered,
+    adopted,
+    coherent,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
+  });
 }
 
-/** Targeted coherent boot: preseed namespace → daemon/workspace → TUI → proof → Web. */
+/** Targeted coherent boot: preseed namespace → daemon/workspace → TUI → proof; browser client retired. */
 export async function runCoherentFirstPaneOwnerBoot(operations) {
   const atBoundary = async (boundary, operation) => {
     try {
@@ -318,10 +311,13 @@ export async function runCoherentFirstPaneOwnerBoot(operations) {
   const coherent = await atBoundary("coherent-terminal-publication", () =>
     operations.proveCoherentPublication(namespace, daemon, identity, targetedProcess),
   );
-  const web = await atBoundary("web-started-after-coherent-boundary", () =>
-    operations.startWebAfterCoherentBoundary(namespace, daemon, identity, coherent),
-  );
-  return Object.freeze({ namespace, identity, targetedProcess, coherent, web });
+  return Object.freeze({
+    namespace,
+    identity,
+    targetedProcess,
+    coherent,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
+  });
 }
 
 /** Dedicated first-input journey: one detailed first input, then a fresh timing host. */
@@ -365,9 +361,6 @@ export async function runFirstKeyPasteOwnerBoot(operations) {
   const distribution = await atBoundary("distribution-samples", () =>
     operations.driveDistribution(namespace, daemon, identity, distributionProcess, firstInput),
   );
-  const web = await atBoundary("first-input-web-correlation", () =>
-    operations.startWebAfterInput(namespace, daemon, identity, distribution),
-  );
   return Object.freeze({
     namespace,
     identity,
@@ -375,11 +368,11 @@ export async function runFirstKeyPasteOwnerBoot(operations) {
     firstInput,
     distributionProcess,
     distribution,
-    web,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
   });
 }
 
-/** Dedicated focus journey: coherent target → exact blur/yield → focus/reclaim → Web. */
+/** Dedicated focus journey: coherent target → exact blur/yield → focus/reclaim; browser client retired. */
 export async function runFocusOwnerBoot(operations) {
   const atBoundary = async (boundary, operation) => {
     try {
@@ -422,13 +415,18 @@ export async function runFocusOwnerBoot(operations) {
   const reclaim = await atBoundary("focus-reclaim-proved", () =>
     operations.driveFocus(namespace, daemon, identity, process, baseline, blur),
   );
-  const web = await atBoundary("focus-web-correlation", () =>
-    operations.startWebAfterFocus(namespace, daemon, identity, process, reclaim),
-  );
-  return Object.freeze({ namespace, identity, process, baseline, blur, reclaim, web });
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    baseline,
+    blur,
+    reclaim,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
+  });
 }
 
-/** Dedicated window lifecycle: coherent baseline → create → warm switches → rename → Web. */
+/** Dedicated window lifecycle: coherent baseline → create → warm switches → rename; browser client retired. */
 export async function runWindowLifecycleOwnerBoot(operations) {
   const atBoundary = async (boundary, operation) => {
     operations.onBoundary?.(boundary);
@@ -478,18 +476,6 @@ export async function runWindowLifecycleOwnerBoot(operations) {
   const switches = await atBoundary("window-switch-distribution", () =>
     operations.driveWarmSwitches(namespace, daemon, identity, process, baseline, created, renamed),
   );
-  const web = await atBoundary("window-web-correlation", () =>
-    operations.startWebAfterWindowLifecycle(
-      namespace,
-      daemon,
-      identity,
-      process,
-      baseline,
-      created,
-      switches,
-      renamed,
-    ),
-  );
   return Object.freeze({
     namespace,
     identity,
@@ -499,11 +485,11 @@ export async function runWindowLifecycleOwnerBoot(operations) {
     primed,
     switches,
     renamed,
-    web,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
   });
 }
 
-/** Dedicated resize journey: coherent two-pane baseline → keyboard → pointer previews/release → Web. */
+/** Dedicated resize journey: coherent two-pane baseline → keyboard → pointer previews/release; browser client retired. */
 export async function runKeyboardPointerResizeOwnerBoot(operations) {
   const atBoundary = async (boundary, operation) => {
     operations.onBoundary?.(boundary);
@@ -562,17 +548,6 @@ export async function runKeyboardPointerResizeOwnerBoot(operations) {
       pointerPreviews,
     ),
   );
-  const web = await atBoundary("resize-web-correlation", () =>
-    operations.startWebAfterResize(
-      namespace,
-      daemon,
-      identity,
-      process,
-      baseline,
-      keyboard,
-      pointerRelease,
-    ),
-  );
   return Object.freeze({
     namespace,
     identity,
@@ -581,11 +556,11 @@ export async function runKeyboardPointerResizeOwnerBoot(operations) {
     keyboard,
     pointerPreviews,
     pointerRelease,
-    web,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
   });
 }
 
-/** Dedicated selection journey: coherent pane → local selection/copy → app mouse → Web. */
+/** Dedicated selection journey: coherent pane → local selection/copy → app mouse; browser client retired. */
 export async function runSelectionCopyAppMouseOwnerBoot(operations) {
   const atBoundary = async (boundary, operation) => {
     operations.onBoundary?.(boundary);
@@ -635,9 +610,6 @@ export async function runSelectionCopyAppMouseOwnerBoot(operations) {
   const localMode = await atBoundary("selection-local-mode-proved", () =>
     operations.driveLocalMode(namespace, daemon, identity, process, baseline, appMouse),
   );
-  const web = await atBoundary("selection-web-correlation", () =>
-    operations.startWeb(namespace, daemon, identity, process, baseline, localMode),
-  );
   return Object.freeze({
     namespace,
     identity,
@@ -648,7 +620,7 @@ export async function runSelectionCopyAppMouseOwnerBoot(operations) {
     copy,
     appMouse,
     localMode,
-    web,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
   });
 }
 
@@ -706,9 +678,6 @@ export async function runAnsiCursorAltScreenOwnerBoot(operations) {
   const idle = await atBoundary("ansi-idle-quiescent", () =>
     operations.proveIdle(namespace, daemon, identity, process, baseline, sustained),
   );
-  const web = await atBoundary("ansi-web-correlation", () =>
-    operations.startWeb(namespace, daemon, identity, process, baseline, restored, idle),
-  );
   return Object.freeze({
     namespace,
     identity,
@@ -721,7 +690,7 @@ export async function runAnsiCursorAltScreenOwnerBoot(operations) {
     restored,
     sustained,
     idle,
-    web,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
   });
 }
 
@@ -2593,6 +2562,10 @@ export function prepareProductDiagnosticBundlePublication({
   evidence,
   cleanupReceipt,
 }) {
+  for (const document of [report, evidence?.alignment]) {
+    if (document?.evidenceScope !== undefined && document.evidenceScope !== "terminal-only")
+      throw new Error("diagnostic bundle evidence scope conflicts with terminal-only v2");
+  }
   const exactCleanupReceipt = validateProductRigCleanupReceipt(cleanupReceipt, runId);
   const reportPath = join(root, runId, "report.json");
   if (
@@ -2603,6 +2576,7 @@ export function prepareProductDiagnosticBundlePublication({
     throw new Error("diagnostic reportPath does not match its immutable bundle destination");
   const sealedReport = Object.freeze({
     ...report,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
     reportPath,
     cleanupReceipt: exactCleanupReceipt,
   });
@@ -2614,6 +2588,7 @@ export function prepareProductDiagnosticBundlePublication({
       report: sealedReport,
       alignment: Object.freeze({
         ...evidence.alignment,
+        ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
         reportPath,
         cleanupReceipt: exactCleanupReceipt,
       }),
@@ -2645,41 +2620,35 @@ export function createProductDiagnosticBundle({ root, runId, evidence }) {
   for (const field of ["report", "alignment", "tmuxTruth", "daemonState", "clientState"])
     if (!evidence?.[field] || typeof evidence[field] !== "object" || Array.isArray(evidence[field]))
       throw new TypeError(`diagnostic bundle ${field} must be an object`);
+  for (const document of [evidence.report, evidence.alignment]) {
+    if (document.evidenceScope !== undefined && document.evidenceScope !== "terminal-only")
+      throw new Error("diagnostic bundle evidence scope conflicts with terminal-only v2");
+  }
   if (typeof evidence.report.runId === "string") {
     const receipt = validateProductRigCleanupReceipt(evidence.report.cleanupReceipt, runId);
     if (JSON.stringify(evidence.alignment.cleanupReceipt) !== JSON.stringify(receipt))
       throw new Error("diagnostic bundle cleanup receipt diverges between report and alignment");
   }
-  const webPng = Buffer.isBuffer(evidence.webPng)
-    ? evidence.webPng
-    : typeof evidence.webPngPath === "string" && existsSync(evidence.webPngPath)
-      ? readFileSync(evidence.webPngPath)
-      : null;
-  if (!webPng) throw new Error("diagnostic bundle web PNG evidence is missing");
-  const signature = webPng.subarray(0, 8).toString("hex");
-  if (signature !== "89504e470d0a1a0a")
-    throw new Error("diagnostic bundle web PNG source is not a PNG");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const runDir = join(root, runId);
   if (existsSync(runDir)) throw new Error(`diagnostic bundle already exists: ${runId}`);
   const temporary = join(root, `.${runId}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   mkdirSync(temporary, { recursive: false, mode: 0o700 });
   try {
-    writeExclusive(join(temporary, "report.json"), json(evidence.report));
-    writeExclusive(join(temporary, "alignment.json"), json(evidence.alignment));
+    writeExclusive(
+      join(temporary, "report.json"),
+      json({ ...evidence.report, ...PRODUCT_TERMINAL_EVIDENCE_SCOPE }),
+    );
+    writeExclusive(
+      join(temporary, "alignment.json"),
+      json({ ...evidence.alignment, ...PRODUCT_TERMINAL_EVIDENCE_SCOPE }),
+    );
     writeExclusive(join(temporary, "timeline.jsonl"), evidence.timeline);
     writeExclusive(join(temporary, "tmux-truth.json"), json(evidence.tmuxTruth));
     writeExclusive(join(temporary, "daemon-state.json"), json(evidence.daemonState));
     writeExclusive(join(temporary, "client-state.json"), json(evidence.clientState));
     writeExclusive(join(temporary, "tui.ansi"), evidence.tuiAnsi);
-    const copiedPng = join(temporary, "web.png");
-    writeExclusive(copiedPng, webPng);
-    const pngHandle = openSync(copiedPng, "r");
-    try {
-      fsyncSync(pngHandle);
-    } finally {
-      closeSync(pngHandle);
-    }
+    writeExclusive(join(temporary, "scope.json"), json(PRODUCT_TERMINAL_EVIDENCE_SCOPE));
     writeExclusive(join(temporary, "stderr.log"), evidence.stderr);
     writeExclusive(join(temporary, "reproduction.sh"), evidence.reproduction, 0o700);
     for (const file of PRODUCT_DIAGNOSTIC_BUNDLE_FILES) {
@@ -2715,5 +2684,10 @@ export function createProductDiagnosticBundle({ root, runId, evidence }) {
     rmSync(temporary, { recursive: true, force: true });
     throw error;
   }
-  return Object.freeze({ version: PRODUCT_DIAGNOSTIC_BUNDLE_VERSION, runId, runDir });
+  return Object.freeze({
+    version: PRODUCT_DIAGNOSTIC_BUNDLE_VERSION,
+    runId,
+    runDir,
+    ...PRODUCT_TERMINAL_EVIDENCE_SCOPE,
+  });
 }

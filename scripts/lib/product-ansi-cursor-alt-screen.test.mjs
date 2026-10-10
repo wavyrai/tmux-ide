@@ -4118,3 +4118,22 @@ test("requires the exact ordered journey boundary cardinality", () => {
   assert.equal(status([phases[1], phases[0], ...phases.slice(2)]).status, "failed");
   assert.equal(status(phases.slice(1)).status, "failed");
 });
+
+test("terminal-only ANSI scope retains exact native proof and excludes only browser fields", () => {
+  const value = evidence();
+  const expected = expectedContract();
+  delete value.web;
+  delete expected.web;
+  const result = assessAnsiCursorAltScreenEvidence(value, expected, {
+    evidenceScope: "terminal-only",
+  });
+  assert.equal(result.qualified, true);
+  assert.equal(result.web.status, "unmeasured");
+  assert.equal(assessAnsiCursorAltScreenEvidence(value, expected).qualified, false);
+  value.writer.failed = true;
+  assert.equal(
+    assessAnsiCursorAltScreenEvidence(value, expected, { evidenceScope: "terminal-only" })
+      .qualified,
+    false,
+  );
+});
