@@ -1,0 +1,13 @@
+{
+  "apps/tmux-gpui/bridge/split-gesture.ts": "fb791d0e9ea7349e7e3b780a16f42d11eef083959fca1471aaa171726cc3ba7b",
+  "apps/tmux-gpui/bridge/split-gesture.test.ts": "fc5c41a60bc9bfb0328054dd062ee02a2b8a9febaed48677fb3972fc97d718b6",
+  "apps/tmux-gpui/bridge/split-gesture-smoke.mjs": "e7193f1dc3fccdbba195e6cf05e7a724f83def6469e334ca7bacec299f3c458b",
+  "apps/tmux-gpui/bridge/live.ts": "7c6c3ee9dca5ca171e77e13d597ca2ca3654bc8b969b8baa113ebb3db293a4f4",
+  "apps/tmux-gpui/bridge/browser.ts": "3fbeaefc37ee7b490957d87523b3f37ce4c066dae7fdc5506a7da6b5dfb1a1dc",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser.rs": "2a9dbb3d4916e7216fc2f13702dbd74e3ea947e54557df63a7d6a83bf5b6cbab",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/divider.rs": "fc75b190683caf8d98fa87900abe762cdcee6174cf31e6f87b32249a1202ccc6",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/divider/gesture.rs": "4eea32da3271a6704a2965d442fa297851c359c78fce1f42ab69fae349e33ee4",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/divider/canonical.rs": "adf69f9ab302131bce771049f4d3eb0998018a319cbba1d8d28ce7d87e2be795",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/divider/tests.rs": "d7503c530e58b90151f88869e6042c8fa7c96cbbfd76025fda9ebc6abd272ca3",
+  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/divider/tests/canonical_cases.rs": "73c820adebdb28f8fe9933790876efcf3f2a69fa7119cae0b459acb4a7597e8f"
+}

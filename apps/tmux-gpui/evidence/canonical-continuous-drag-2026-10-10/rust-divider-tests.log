@@ -1,0 +1,24 @@
+Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-98b04e9ce7606de7)
+
+running 15 tests
+test tmux_snapshot::divider::tests::both_axes_commit_exact_outer_cells_only_after_motion_and_clamp_both_panes ... ok
+test tmux_snapshot::divider::tests::canonical_cases::canonical_both_axes_emit_only_absolute_split_commands_and_latest_release ... ok
+test tmux_snapshot::divider::tests::canonical_cases::canonical_resource_mismatch_cannot_fall_back_to_inferred_pane_resize ... ok
+test tmux_snapshot::divider::tests::canonical_cases::canonical_segments_reject_content_and_crossings_without_inventing_ancestry ... ok
+test tmux_snapshot::divider::tests::canonical_cases::canonical_successor_requires_exact_current_resource_and_holds_pending_without_rebase ... ok
+test tmux_snapshot::divider::tests::content_only_updates_survive_but_topology_lifetime_selection_and_presence_do_not ... ok
+test tmux_snapshot::divider::tests::content_outer_edges_nonoverlapping_splits_and_styled_gaps_are_not_handles ... ok
+test tmux_snapshot::divider::tests::continuous_ack_preserves_pending_but_requires_same_settled_split_and_identity ... ok
+test tmux_snapshot::divider::tests::continuous_owner_coalesces_motion_retains_release_and_orders_cancel_under_backpressure ... ok
+test tmux_snapshot::divider::tests::healthy_idle_gesture_outlives_ten_seconds_but_stalled_transport_is_bounded ... ok
+test tmux_snapshot::divider::tests::native_handler_path_emits_one_resize_never_terminal_input_or_optimistic_frame ... ok
+test tmux_snapshot::divider::tests::native_lower_header_preserves_horizontal_drag_and_external_row_excludes_resize ... ok
+test tmux_snapshot::divider::tests::nonorigin_alternating_axis_outer_boundaries_are_not_guessed_from_rectangles ... ok
+test tmux_snapshot::divider::tests::origin_t_and_inverse_t_segments_target_leading_pane_and_exclude_junctions ... ok
+test tmux_snapshot::divider::tests::rendered_continuous_drag_sends_during_motion_and_final_cells_on_release ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 2529 filtered out; finished in 0.07s
