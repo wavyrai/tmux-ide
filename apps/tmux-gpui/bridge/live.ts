@@ -53,6 +53,10 @@ const actionFence = createPaneActionFence();
 const executePaneAction = createPaneActionExecutor();
 let actionBusy = false;
 let actionFailed = false;
+let paneSplitReceipt: {
+  token: string;
+  result: import("../../../packages/contracts/src/workspace-multiplexer.ts").WorkspaceWindowSplitResult;
+} | null = null;
 let selectedActionPane: string | null = null;
 let foreground = false;
 let presenceRevision = 0;
@@ -112,6 +116,7 @@ function output(snapshot: typeof latest.snapshot) {
                     lifetimes.get(selectedActionPane),
                   )
                 : null,
+            paneSplitReceipt,
             paneActionError: actionFailed
               ? "Pane action unavailable — reselect pane to retry"
               : null,
@@ -515,9 +520,13 @@ try {
           };
           if (target()?.token !== paneAction.data.token) continue;
           actionBusy = true;
+          paneSplitReceipt = null;
           output(latest.snapshot);
           try {
-            actionFailed = !(await executePaneAction(runtime, target, paneAction.data));
+            const result = await executePaneAction(runtime, target, paneAction.data);
+            actionFailed = !result;
+            if (typeof result === "object")
+              paneSplitReceipt = { token: paneAction.data.token, result };
           } catch {
             actionFailed = true;
           } finally {

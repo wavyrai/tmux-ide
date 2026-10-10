@@ -767,8 +767,8 @@ crate/file license. These are next design candidates, not implemented behavior.
 
 ### Native pane actions (source preview)
 
-Open **Actions…** in the selected pane’s bottom context bar to rename it or
-choose **Zoom / Restore**. Rename uses a native text field; Enter submits and
+Open **Actions…** in the selected pane’s bottom context bar to rename it,
+choose **Zoom / Restore**, or **Split pane right / Split pane down**. Rename uses a native text field; Enter submits and
 Escape cancels outside active text composition. The menu overlays the terminal
 and does not resize it. It reuses Herdr’s captured-target menu and SearchInput
 patterns while dispatching through tmux-ide’s existing daemon actions.
@@ -779,6 +779,14 @@ history or without current authority. A submitted action is not replayed or
 optimistically shown as successful; verified daemon state updates the label or
 zoomed layout. Rename currently requires a nonempty title of at most 80 UTF-16
 code units, matching the daemon contract. Clearing a manual name is not exposed.
+
+Split submits one daemon operation against the captured selected pane. The
+original pane remains selected; the new pane becomes selectable after verified
+daemon inventory and layout refresh. A background transition, changed selection,
+or uncertain result cancels the follow-up rather than replaying the split.
+Both split directions were physically qualified on the local macOS preview; see
+`evidence/native-pane-split-2026-10-10/`. The sidebar pane count currently remains
+stale after a split; terminal membership and original selection refresh correctly.
 
 Run the isolated real-tmux path with:
 

@@ -1,0 +1,47 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 45s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-98b04e9ce7606de7)
+
+running 7 tests
+test tmux_snapshot::pane_actions::tests::bounded_titles_and_exact_zoom_wire ... ok
+test tmux_snapshot::pane_actions::tests::stale_capability_or_availability_dismisses_without_sending ... ok
+test tmux_snapshot::pane_actions::tests::captured_target_zoom_is_absolute_once_and_never_rearms_input ... ok
+test tmux_snapshot::pane_actions::tests::split::split_revalidates_captured_capability_and_queue_failure_keeps_menu ... ok
+test tmux_snapshot::pane_actions::tests::opening_menu_and_editor_does_not_resize_terminal_canvas ... ok
+test tmux_snapshot::pane_actions::tests::split::rendered_split_choices_queue_exact_target_once_without_input_or_navigation ... ok
+test tmux_snapshot::pane_actions::tests::rename_uses_real_search_input_and_ime_never_submits_or_leaks ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2543 filtered out; finished in 0.07s
+
+     Running unittests src/main.rs (target/debug/deps/herdr_gpui-d2bd98b5fd2f8d17)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/tmux_main.rs (target/debug/deps/tmux_ide_gpui-c787f38ba83a935e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/build_identity.rs (target/debug/deps/build_identity-ff8731cfc480311a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-c5b07d033e9e9593)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/tmux_cli.rs (target/debug/deps/tmux_cli-70742ee23918c503)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+

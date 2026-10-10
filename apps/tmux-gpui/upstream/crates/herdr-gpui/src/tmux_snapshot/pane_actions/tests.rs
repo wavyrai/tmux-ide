@@ -220,3 +220,5 @@ fn opening_menu_and_editor_does_not_resize_terminal_canvas(cx: &mut TestAppConte
         assert!(view.read_with(cx, |view, _| view.pane_actions.is_some()));
     }
 }
+
+mod split;

@@ -5,6 +5,8 @@ import {
   WorkspaceMultiplexerNameSchemaZ,
   WorkspaceRenameResultSchemaZ,
   WorkspacePaneZoomToggleResultSchemaZ,
+  WorkspaceWindowSplitResultSchemaZ,
+  type WorkspaceWindowSplitResult,
 } from "../../../packages/contracts/src/workspace-multiplexer.ts";
 import type { Layout } from "./topology.ts";
 const base = {
@@ -14,6 +16,7 @@ const base = {
   token: z.string().uuid(),
 };
 export const paneActionSchema = z.discriminatedUnion("action", [
+  z.object({ ...base, action: z.literal("split"), direction: z.enum(["right", "down"]) }).strict(),
   z
     .object({ ...base, action: z.literal("rename"), name: WorkspaceMultiplexerNameSchemaZ })
     .strict(),
@@ -74,7 +77,7 @@ export function createPaneActionExecutor() {
     >,
     current: () => PaneActionTarget | null,
     command: PaneAction,
-  ): Promise<boolean> => {
+  ): Promise<boolean | WorkspaceWindowSplitResult> => {
     const input = paneActionSchema.parse(command);
     const expected = current();
     if (
@@ -99,7 +102,7 @@ export function createPaneActionExecutor() {
       );
     };
     if (
-      input.action === "zoom" &&
+      input.action !== "rename" &&
       !runtime.ownsConnectionAuthority("geometry") &&
       !(await runtime.requestAuthority("geometry"))
     )
@@ -107,7 +110,7 @@ export function createPaneActionExecutor() {
     if (
       !same(true) ||
       !runtime.ownsConnectionAuthority("input") ||
-      (input.action === "zoom" && !runtime.ownsConnectionAuthority("geometry"))
+      (input.action !== "rename" && !runtime.ownsConnectionAuthority("geometry"))
     )
       return false;
     const operationId = randomUUID();
@@ -121,19 +124,41 @@ export function createPaneActionExecutor() {
             semanticPaneId: input.id,
             name: input.name,
           }
-        : {
-            verb: "workspace.pane.zoom.toggle",
-            workspaceName: expected.workspace,
-            semanticPaneId: input.id,
-            desired: input.desired,
-          },
+        : input.action === "split"
+          ? {
+              verb: "workspace.window.split",
+              workspaceName: expected.workspace,
+              semanticPaneId: input.id,
+              direction: input.direction,
+            }
+          : {
+              verb: "workspace.pane.zoom.toggle",
+              workspaceName: expected.workspace,
+              semanticPaneId: input.id,
+              desired: input.desired,
+            },
     );
     const parsed =
       input.action === "rename"
         ? WorkspaceRenameResultSchemaZ.safeParse(raw)
-        : WorkspacePaneZoomToggleResultSchemaZ.safeParse(raw);
+        : input.action === "split"
+          ? WorkspaceWindowSplitResultSchemaZ.safeParse(raw)
+          : WorkspacePaneZoomToggleResultSchemaZ.safeParse(raw);
     if (!same(false) || !parsed.success) return false;
     const result = parsed.data;
+    if (input.action === "split") {
+      return runtime.ownsConnectionAuthority("input") &&
+        runtime.ownsConnectionAuthority("geometry") &&
+        result.verb === "workspace.window.split" &&
+        result.operationId === operationId &&
+        result.daemonInstanceId === expected.generation &&
+        result.workspaceName === expected.workspace &&
+        result.outcome === "applied" &&
+        result.direction === input.direction &&
+        result.semanticPaneId !== input.id
+        ? result
+        : false;
+    }
     return (
       result.operationId === operationId &&
       result.daemonInstanceId === expected.generation &&

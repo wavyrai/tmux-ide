@@ -9,12 +9,19 @@ use serde::Serialize;
 pub(super) enum Action {
     Rename { name: String },
     Zoom { desired: Zoom },
+    Split { direction: SplitDirection },
 }
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum Zoom {
     Zoomed,
     Unzoomed,
+}
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum SplitDirection {
+    Right,
+    Down,
 }
 #[derive(Clone)]
 struct Target {
@@ -155,6 +162,21 @@ impl SnapshotView {
                 },
             }
         };
+        self.queue_pane_action(action, window, cx);
+    }
+    fn split_pane(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.queue_pane_action(Action::Split { direction }, window, cx);
+    }
+    fn queue_pane_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_pane_actions(cx);
+        let Some(menu) = self.pane_actions.as_ref() else {
+            return;
+        };
         let command = browser::Command::PaneAction {
             request: menu.target.request,
             id: menu.target.actions.id.clone(),
@@ -210,11 +232,9 @@ impl SnapshotView {
             .py_1()
             .flex_shrink_0()
             .text_color(rgb(self.theme().muted))
-            .child(if available {
-                "Actions…"
-            } else {
-                "Actions unavailable"
-            })
+            // Capability changes must not reflow the status row and resize panes.
+            .child("Actions…")
+            .when(!available, |button| button.opacity(0.5))
             .when(available, |button| {
                 button
                     .cursor_pointer()
@@ -287,6 +307,34 @@ impl SnapshotView {
                             } else {
                                 view.send_pane_action(false, window, cx)
                             }
+                        })),
+                );
+            }
+            for (direction, id, label) in [
+                (
+                    SplitDirection::Right,
+                    "pane-action-split-right",
+                    "Split pane right",
+                ),
+                (
+                    SplitDirection::Down,
+                    "pane-action-split-down",
+                    "Split pane down",
+                ),
+            ] {
+                panel = panel.child(
+                    div()
+                        .id(id)
+                        .debug_selector(move || id.into())
+                        .min_h(px(crate::config::Config::default().ui.line_height() + 12.))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .hover(move |row| row.bg(rgb(active)))
+                        .child(label)
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.split_pane(direction, window, cx)
                         })),
                 );
             }

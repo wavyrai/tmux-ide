@@ -71,7 +71,7 @@ The original hashes remain in `upstream-provenance.json`; do not regenerate
 that manifest to hide downstream changes. All other upstream files must match.
 
 `tmux_snapshot/pane_actions.rs` adapts Herdr’s pane-menu captured-target pattern,
-hover rows and native SearchInput into a tmux-only Rename/Zoom/Restore menu. The
+hover rows and native SearchInput into a tmux-only Rename/Zoom/Restore and Split right/down menu. The
 overlay preserves terminal geometry, validates the bridge capability and isolates
 composition/terminal input. It uses the existing tmux daemon actions rather than
 Herdr RPC. No Zed source was copied for this slice; its popover example served
