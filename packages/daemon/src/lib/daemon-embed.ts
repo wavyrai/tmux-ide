@@ -1,3 +1,5 @@
+import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
+import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
 import { WindowLinkTargetSchemaZ } from "@tmux-ide/contracts";
 import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
@@ -1421,7 +1423,25 @@ async function startEmbeddedDaemonGeneration(
         intent: SessionRuntimeSemanticIntent,
         timing?: Parameters<typeof workspaceMultiplexer.mutate>[1],
         execution?: Parameters<typeof workspaceMultiplexer.mutate>[2],
+        authorizeBeforeEffect?: () => void,
       ) => {
+        if (intent.verb === "workspace.window.split.resize") {
+          if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+          return executeCanonicalSplitMutation(
+            {
+              generation: instanceId,
+              registry: sessionRuntimeRegistry,
+              resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
+              runNative: createGuardedNativeSplitResize({
+                observation: () => observationSelector,
+                runPinnedTmux: nativeGenerationTmuxRunner,
+              }),
+            },
+            operationId,
+            intent,
+            authorizeBeforeEffect,
+          );
+        }
         if (intent.verb === "workspace.pane.read") {
           return workspaceMultiplexer.readPane(operationId, intent, execution);
         }

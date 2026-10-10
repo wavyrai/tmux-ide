@@ -176,6 +176,8 @@ export function interactionSummaryLabel(
 ): string {
   const observed = phase === "observed";
   switch (operationKind) {
+    case "workspace.window.split.resize":
+      return observed ? "divider resized" : "resize divider";
     case "workspace.window.link.select":
       return observed ? "window link selected" : "select window link";
     case "workspace.window.link.unlink":

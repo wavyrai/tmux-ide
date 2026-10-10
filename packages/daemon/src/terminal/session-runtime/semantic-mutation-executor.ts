@@ -575,7 +575,12 @@ export class SessionSemanticMutationExecutor {
       if (needsTmuxObservation) this.#deletePending(session, operationId);
       const error = new SessionRuntimeIntentError(
         "rejected",
-        "tmux rejected the semantic interaction",
+        cause &&
+          typeof cause === "object" &&
+          "code" in cause &&
+          cause.code === "mutation_unverified"
+          ? "Mutation outcome is uncertain; do not retry with a new operation ID."
+          : "tmux rejected the semantic interaction",
         { cause },
       );
       this.#publish(operationId, intent, "rejected", null, undefined, origin, interactionContext);

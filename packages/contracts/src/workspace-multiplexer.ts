@@ -1,3 +1,4 @@
+import { WindowSplitResizeTargetSchemaZ } from "./window-split-layout.ts";
 /**
  * Contracts for the multiplexer mutation routes — split, kill, rename, zoom and
  * select.
@@ -227,7 +228,17 @@ export const WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend
 export type WorkspacePaneResizeArguments = z.infer<typeof WorkspacePaneResizeArgumentsSchemaZ>;
 
 /** Every multiplexer intent, discriminated by the route that carries it. */
+export const WorkspaceWindowSplitResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  target: WindowSplitResizeTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowSplitResizeArguments = z.infer<
+  typeof WorkspaceWindowSplitResizeArgumentsSchemaZ
+>;
+
 export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowSplitResizeArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.window.split.resize"),
+  }).strict(),
   WorkspaceWindowLinkSelectArgumentsSchemaZ.extend({
     verb: z.literal("workspace.window.link.select"),
   }).strict(),
@@ -406,7 +417,18 @@ export const WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 }).strict();
 export type WorkspacePaneResizeResult = z.infer<typeof WorkspacePaneResizeResultSchemaZ>;
 
+export const WorkspaceWindowSplitResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.window.split.resize"),
+  target: WindowSplitResizeTargetSchemaZ,
+  axis: WorkspaceResizeAxisSchemaZ,
+  boundary: z.number().int().min(0).max(4096),
+}).strict();
+export type WorkspaceWindowSplitResizeResult = z.infer<
+  typeof WorkspaceWindowSplitResizeResultSchemaZ
+>;
+
 export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowSplitResizeResultSchemaZ,
   WorkspaceWindowLinkSelectResultSchemaZ,
   WorkspaceWindowLinkUnlinkResultSchemaZ,
   WorkspaceWindowSplitResultSchemaZ,

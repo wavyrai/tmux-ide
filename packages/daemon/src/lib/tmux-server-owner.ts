@@ -1,3 +1,5 @@
+import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
+import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
 import { execFileSync } from "node:child_process";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
 import { PaneSourceDiscovery } from "./pane-source-discovery.ts";
@@ -277,8 +279,27 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
           throw new Error("Interaction target lifetime is no longer current");
       },
       resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
-      execute: (operationId, intent, timing, execution) => {
+      execute: (operationId, intent, timing, execution, authorizeBeforeEffect) => {
         assertOpen();
+        if (intent.verb === "workspace.window.split.resize")
+          return executeCanonicalSplitMutation(
+            {
+              generation,
+              registry: sessionRuntimeRegistry,
+              resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
+              runNative: createGuardedNativeSplitResize({
+                observation: () => observationSelector,
+                runPinnedTmux: generationRun,
+              }),
+            },
+            operationId,
+            intent,
+            () => {
+              assertOpen();
+              if (!authorizeBeforeEffect) throw new Error("Missing execution authorization");
+              authorizeBeforeEffect();
+            },
+          );
         if (intent.verb === "workspace.pane.read")
           return multiplexer.readPane(operationId, intent, execution);
         if (

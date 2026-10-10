@@ -295,6 +295,7 @@ interface ExecutionHandleState {
   readonly allowedSourcePaneIds: ReadonlySet<string>;
   readonly sourceSemanticPaneId: string | null;
   readonly authorizeLiveScope: ((semanticPaneId?: string) => void) | null;
+  readonly authorizeGeometry: (() => void) | null;
 }
 
 /**
@@ -685,6 +686,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     lease: SessionRuntimeControllerLease,
     allowedSourcePaneIds: readonly string[],
     authorizeLiveScope?: (semanticPaneId?: string) => void,
+    authorizeGeometry?: () => void,
   ): SessionRuntimeExecutionHandle {
     const runtime = this.#sessions.get(consumer.session);
     if (!runtime || !runtime.ownsConsumer(consumer)) {
@@ -702,6 +704,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       allowedSourcePaneIds: new Set(allowedSourcePaneIds),
       sourceSemanticPaneId: null,
       authorizeLiveScope: authorizeLiveScope ?? null,
+      authorizeGeometry: authorizeGeometry ?? null,
     });
     return handle;
   }
@@ -840,6 +843,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       authenticatedSourceSemanticPaneId,
       () => this.#assertExecutionHandle(handle, state.sourceSemanticPaneId ?? undefined),
       authoredOriginForSurface(state.consumer.surface),
+      state.authorizeGeometry ?? undefined,
     );
   }
 
@@ -982,10 +986,20 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     authenticatedSourceSemanticPaneId: string | null = null,
     authorizeBeforeEffect?: () => void,
     authenticatedOrigin?: AuthoredInteractionOrigin,
+    authorizeGeometry?: () => void,
   ): Promise<SessionRuntimeIntentResult> {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
     let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+    const requiresGeometry = intent.verb === "workspace.window.split.resize";
+    if (requiresGeometry && !authorizeGeometry) {
+      return Promise.reject(
+        new SessionRuntimeControllerLeaseError(
+          "invalid-client-capability",
+          "Split resize requires explicit geometry authority.",
+        ),
+      );
+    }
     const resolvedSession =
       intent.verb === "workspace.session.kill" && intent.fleetTarget
         ? intent.fleetTarget.daemonInstanceId === this.generation
@@ -1014,7 +1028,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#semanticMutations.submit(operationId, intent, {
       origin: authenticatedOrigin ?? "sdk",
       authenticatedSourceSemanticPaneId,
-      authorizeBeforeEffect,
+      authorizeBeforeEffect: requiresGeometry
+        ? () => {
+            authorizeBeforeEffect?.();
+            authorizeGeometry!();
+          }
+        : authorizeBeforeEffect,
     });
   }
 

@@ -104,6 +104,8 @@ function semanticBackendRefusal(error: unknown): string | null {
   let candidate = error;
   for (let depth = 0; depth < 3; depth += 1) {
     if (!candidate || typeof candidate !== "object") return null;
+    if ("code" in candidate && candidate.code === "mutation_unverified")
+      return "mutation_unverified";
     const context = "context" in candidate ? candidate.context : null;
     const reason =
       context && typeof context === "object" && "reason" in context ? context.reason : null;
@@ -2450,6 +2452,7 @@ export class PaneStreamLiveConnection {
           "pane_inventory_not_ready",
           "pane_identity_changed_before_select",
           "pane_not_active",
+          "mutation_unverified",
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";
@@ -2460,7 +2463,11 @@ export class PaneStreamLiveConnection {
             status: "rejected",
             code,
             message:
-              error instanceof Error ? error.message.slice(0, 512) : "Semantic intent failed",
+              code === "mutation_unverified"
+                ? "Mutation outcome is uncertain; do not retry with a new operation ID."
+                : error instanceof Error
+                  ? error.message.slice(0, 512)
+                  : "Semantic intent failed",
           },
         });
       });

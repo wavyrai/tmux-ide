@@ -1,0 +1,20 @@
+{
+  "packages/contracts/src/__tests__/window-split-layout.test.ts": "a7c55abb7ac4bc0a0fdfd7b9c81767fa06c0484918cab9e05044a6fb6349ad37",
+  "packages/contracts/src/interaction-receipts.ts": "113eb67a5b337162065c244d3234626516eaa2a9fb63316d28ee3625bdaefc61",
+  "packages/contracts/src/workspace-multiplexer.ts": "465dfefd21fbf29b2131ccc4be2cf6336819c79d700f28a8e10f2d5cacee5b98",
+  "packages/core/src/interaction-receipts.ts": "010806cfd358067dbbfc274e1fc249d9531a5b7625cbdda3feeb6557ba61b6f1",
+  "packages/daemon/src/command-center/actions/handlers/workspace-multiplexer.ts": "8eec225176149c6e279c82b76528c987df9358b84a23f4fed40148c8f45244d1",
+  "packages/daemon/src/lib/daemon-embed.ts": "da77c26866cd464d602758ab27a54bf2b242cc5867703ed5862622bc902b61e0",
+  "packages/daemon/src/lib/tmux-server-owner.ts": "1ad3b6ffc1bef27909233e4aa24f19195798a95df33440e8732597820046bbe5",
+  "packages/daemon/src/lib/workspace-multiplexer-verbs.ts": "f4170764801f0260d95d658926f86ca8064b39f04fd91c935fdd0c8d54568314",
+  "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.test.ts": "d79abb1ef81ce8841251787c44d4de3138d4bd042779e8b699ce1f96e7d61c2c",
+  "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts": "57d60531e2f4ebc44b1dab2f03b1d2b2221cfc0c87e0530ffb9a5c0c5fc6b765",
+  "packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts": "bf0fe5a9f4ddae88c4514cb8c71b669adaaded3ecac1ed19f8a60aef0e544393",
+  "packages/daemon/src/terminal/session-runtime/registry.ts": "2d37998c618e4d99be195b9586edbe79ab24b649ebe8b1fe54a5ac4543ff4ede",
+  "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts": "28816bb0f29cb689df62a381ed0c1390f7c9ad1d5f68faf686ea9b7559eae25a",
+  "packages/daemon/src/terminal/session-runtime/transport-binding.ts": "f5bb22a63d0fb4101a3d66fe4a39f3fb7b8d4bd6474c5e4a7c4b267b1eb53e00",
+  "packages/daemon/src/lib/canonical-split-mutation.ts": "cf08ea4ef0018462988b75d22c9249df306835647fea4f6aad4bfee54c937303",
+  "packages/daemon/src/lib/canonical-split-mutation.test.ts": "29cc62b2623f96f23f959b0c26c555d2c668bf4529b144290643221d4ebec5cf",
+  "packages/daemon/src/terminal/session-runtime/semantic-split-resize.test.ts": "d236bb792890a86bafbd25d68171a22373b5e50df531bc8ada0ccfe0539ddf32",
+  "packages/daemon/src/terminal/session-runtime/transport-split-geometry-authority.test.ts": "26044e423f5cedec6c7d4170545af79f5a7a4dd64504e3ae8bda89baf5ce2528"
+}

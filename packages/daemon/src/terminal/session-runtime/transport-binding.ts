@@ -339,7 +339,9 @@ export class SessionRuntimeTransportBinding {
       );
     }
     const geometryFence =
-      intent.verb === "workspace.pane.resize" ? this.#captureResizeGeometryFence() : undefined;
+      intent.verb === "workspace.pane.resize" || intent.verb === "workspace.window.split.resize"
+        ? this.#captureResizeGeometryFence()
+        : undefined;
     const scopeKey = paneId ?? "session";
     // Geometry authority is operation-specific; never reuse an input-only handle.
     let handle = geometryFence ? undefined : this.#intentHandles.get(scopeKey);
@@ -360,6 +362,7 @@ export class SessionRuntimeTransportBinding {
             );
           }
         },
+        geometryFence,
       );
       if (!geometryFence) this.#intentHandles.set(scopeKey, handle);
     }

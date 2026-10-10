@@ -1890,6 +1890,31 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(socket.closed).toBeNull();
 
+    h.submitIntent.mockRejectedValueOnce(
+      new SessionRuntimeIntentError("rejected", "internal detail", {
+        cause: new WorkspaceMultiplexerError("mutation_unverified"),
+      }),
+    );
+    socket.message({
+      type: "semantic-intent",
+      operationId: "00000000-0000-4000-8000-000000000085",
+      intent: {
+        verb: "workspace.pane.resize",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+        axis: "cols",
+        cells: 60,
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(5));
+    expect(socket.framesOfType("semantic-intent-ack")[4]).toMatchObject({
+      outcome: {
+        status: "rejected",
+        code: "mutation_unverified",
+        message: "Mutation outcome is uncertain; do not retry with a new operation ID.",
+      },
+    });
+
     // Terminal input stays FIFO and byte-exact across named keys and bracketed
     // paste while both daemon transport edges retain the originating trace.
     const keyTrace = "00000000-0000-4000-8000-000000000091";

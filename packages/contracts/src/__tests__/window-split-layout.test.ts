@@ -96,3 +96,82 @@ it("enforces bounded collections, UUID handles and integral geometry", () => {
     target.safeParse({ window, layoutId: "native-path", splitId: uuid, boundary: 1 }).success,
   ).toBe(false);
 });
+
+it("split resize mutation and receipt preserve request identity while allowing clamped observation", async () => {
+  const { WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ } =
+    await import("../workspace-multiplexer.ts");
+  const { InteractionReceiptV1SchemaZ } = await import("../interaction-receipts.ts");
+  const requestTarget = { window, layoutId: uuid, splitId: uuid, boundary: 79 };
+  const intent = {
+    verb: "workspace.window.split.resize",
+    workspaceName: "project",
+    target: requestTarget,
+  };
+  expect(WorkspaceMultiplexerIntentSchemaZ.parse(intent)).toEqual(intent);
+  expect(WorkspaceMultiplexerIntentSchemaZ.safeParse({ ...intent, cells: 42 }).success).toBe(false);
+  expect(
+    WorkspaceMultiplexerIntentSchemaZ.safeParse({
+      ...intent,
+      target: { ...requestTarget, path: [0] },
+    }).success,
+  ).toBe(false);
+  const result = {
+    ...intent,
+    operationId: uuid,
+    daemonInstanceId: uuid,
+    outcome: "applied",
+    axis: "cols",
+    boundary: 70,
+  };
+  expect(WorkspaceMultiplexerMutationResultSchemaZ.parse(result)).toEqual(result);
+  expect(
+    WorkspaceMultiplexerMutationResultSchemaZ.safeParse({ ...result, nativeWindowId: "@1" })
+      .success,
+  ).toBe(false);
+  const receipt = {
+    type: "interaction.receipt",
+    sequence: 1,
+    operationId: uuid,
+    origin: "gui",
+    workspaceName: "project",
+    sourceSemanticPaneId: null,
+    target: { kind: "window-link", target: window },
+    operationKind: intent.verb,
+    phase: "observed",
+    summary: { operationKind: intent.verb, layoutId: uuid, splitId: uuid, boundary: 79 },
+    proof: {
+      operationKind: intent.verb,
+      outcome: "applied",
+      target: requestTarget,
+      axis: "cols",
+      boundary: 70,
+    },
+    at: "2026-10-10T12:00:00.000Z",
+    resourceRevision: 1,
+  };
+  expect(InteractionReceiptV1SchemaZ.safeParse(receipt).success).toBe(true);
+  for (const change of [
+    { layoutId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+    { splitId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+    { boundary: 78 },
+    { window: { ...window, linkRevision: 2 } },
+  ])
+    expect(
+      InteractionReceiptV1SchemaZ.safeParse({
+        ...receipt,
+        proof: { ...receipt.proof, target: { ...requestTarget, ...change } },
+      }).success,
+    ).toBe(false);
+  expect(
+    InteractionReceiptV1SchemaZ.safeParse({
+      ...receipt,
+      target: { kind: "pane", semanticPaneId: "pane.one" },
+    }).success,
+  ).toBe(false);
+  expect(
+    InteractionReceiptV1SchemaZ.safeParse({
+      ...receipt,
+      summary: { ...receipt.summary, nativePath: [0] },
+    }).success,
+  ).toBe(false);
+});
