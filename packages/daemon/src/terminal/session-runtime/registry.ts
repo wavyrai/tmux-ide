@@ -222,6 +222,8 @@ export interface SessionRuntimeConsumer {
   noteActivity(activity: SessionRuntimeActivityKind): void;
   acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
   releaseAuthority(authority: SessionRuntimeAuthorityKind): void;
+  /** Assert an existing exact geometry grant without acquiring authority or fitting. */
+  assertGeometryAuthority(lease: SessionRuntimeAuthorityLease): void;
   acquireController(): SessionRuntimeControllerLease;
   handoffController(
     lease: SessionRuntimeControllerLease,
@@ -1703,13 +1705,8 @@ class SessionRuntime {
     else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
-  fitViewportWithAuthority(
-    clientId: string,
-    lease: SessionRuntimeAuthorityLease,
-    cols: number,
-    rows: number,
-    semanticWindowId?: string,
-  ): void {
+  assertGeometryAuthority(clientId: string, lease: SessionRuntimeAuthorityLease): void {
+    if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
     this.assertNoSharedWindow();
     const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
     let exact: SessionRuntimeAuthorityLease;
@@ -1727,6 +1724,16 @@ class SessionRuntime {
         "The client does not own this geometry authority lease.",
       );
     }
+  }
+
+  fitViewportWithAuthority(
+    clientId: string,
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
+    this.assertGeometryAuthority(clientId, lease);
     this.#mirror.setGeometryParticipation(this.session, true);
     if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
     else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
@@ -2202,6 +2209,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null {
     this.#assertOpen();
     return this.#runtime.acquireAuthority(this.clientId, authority);
+  }
+
+  assertGeometryAuthority(lease: SessionRuntimeAuthorityLease): void {
+    this.#assertOpen();
+    this.#runtime.assertGeometryAuthority(this.clientId, lease);
   }
 
   releaseAuthority(authority: SessionRuntimeAuthorityKind): void {

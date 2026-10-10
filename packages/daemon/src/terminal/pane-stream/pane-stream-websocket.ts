@@ -2420,7 +2420,8 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (!this.#prepareInputAuthority(false)) return;
-    void this.#sessionRuntimeBinding!.submitIntent(operationId, intent)
+    // Normalize synchronous admission refusals into the same rejected ACK path.
+    void (async () => this.#sessionRuntimeBinding!.submitIntent(operationId, intent))()
       .then((result) => {
         this.#sendFrame(null, {
           type: "semantic-intent-ack",

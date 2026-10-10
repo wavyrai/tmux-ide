@@ -1864,6 +1864,32 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(JSON.stringify(socket.framesOfType("semantic-intent-ack")[2])).not.toContain("%99");
 
+    // Admission can refuse synchronously before an execution promise exists.
+    h.submitIntent.mockImplementationOnce(() => {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    });
+    expect(() =>
+      socket.message({
+        type: "semantic-intent",
+        operationId: "00000000-0000-4000-8000-000000000086",
+        intent: {
+          verb: "workspace.pane.resize",
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.editor",
+          axis: "cols",
+          cells: 60,
+        },
+      }),
+    ).not.toThrow();
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(4));
+    expect(socket.framesOfType("semantic-intent-ack")[3]).toMatchObject({
+      outcome: { status: "rejected", code: "stale-controller-lease" },
+    });
+    expect(socket.closed).toBeNull();
+
     // Terminal input stays FIFO and byte-exact across named keys and bracketed
     // paste while both daemon transport edges retain the originating trace.
     const keyTrace = "00000000-0000-4000-8000-000000000091";
