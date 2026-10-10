@@ -24,3 +24,11 @@ repository secret names. Positive Developer ID/notarization, final archive
 round-trip, signed launch/install, clean-machine tests and publication remain
 open. SIGNING.md documents the exact command and limits. The existing user's
 isolated demo remains running; no production sessions touched.
+
+## Mandatory archive roundtrip follow-up
+
+Independent review approved source 05555a5daa2305f81f400a7f21ed1131363d221bdf633f44fb53c2b896d19b8f and tests b36d332085f15168f2f7750e5671a798aa252ef152064c6ed6f83a495ab6458e. The producer now invokes the actual installer extractor on its generated archive, compares all normalized paths/modes/content hashes, and independently applies Apple policy verification to the extracted app before finalizing. Ephemeral authentication exists only in memory to enter the production extraction boundary; it is not public release authentication.
+
+Twelve focused tests pass with the actual Python packager and production extractor (Apple tools mocked), including altered content and second-verification denial. Full bridge gate241passed/0failed/5optional artifact skips; types/lint/format/diff checks pass. npm boundary check passes3886files/4329480bytes, no native preview leakage. Neither check rebuilds or qualifies the production CLI binary.
+
+The extractor has its own120s cancellation budget; the signing wrapper tool-admission deadline is not a hard overall filesystem wall-clock bound. Actual Apple signing, final signed archive validation and clean-machine installed launch remain unproven.

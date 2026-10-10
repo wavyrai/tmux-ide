@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const execute = promisify(execFile);
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -62,8 +65,7 @@ async function fixture(fn) {
       if (tool.endsWith("lipo")) stdout = "arm64";
       if (tool.endsWith("otool"))
         stdout = "Load command 0\n cmd LC_BUILD_VERSION\n platform 1\n minos 14.2\n";
-      if (tool.endsWith("python3"))
-        await writeFile(args.at(-1), "synthetic archive; not distribution proof");
+      if (tool.endsWith("python3")) return execute(tool, args, opts);
       return { stdout, stderr: "" };
     };
     await fn({ options, runner, calls });
@@ -123,6 +125,10 @@ test("private signing sequence preserves historical inputs and binds transformat
       result.receipt.executables[0].afterSha256,
     );
     assert.ok(!JSON.stringify(result).includes("private-profile"));
+    assert.equal(calls.filter((c) => c.tool.endsWith("sw_vers")).length, 2);
+    assert.match(result.receipt.roundtrip.inventorySha256, /^[0-9a-f]{64}$/);
+    assert.ok(!Object.hasOwn(result.receipt, "publicKey"));
+    assert.ok(!(await readdir(options.output)).includes(".staging"));
   }));
 for (const denied of ["sign-native", "notarize", "verify", "package"])
   test(`${denied} failure exposes only safe stage, no usable artifacts`, () =>
@@ -207,4 +213,33 @@ test("numeric policy scalars reject before copy or signing", () =>
     assert.deepEqual(await signPreviewApp(options, { runner }), { ok: false, stage: "inputs" });
     assert.equal(calls.length, 0);
     await assert.rejects(readdir(options.output), { code: "ENOENT" });
+  }));
+
+test("roundtrip rejects altered packaged bytes before final publication", () =>
+  fixture(async ({ options, runner }) => {
+    const result = await signPreviewApp(options, {
+      runner: async (tool, args, opts) => {
+        if (tool.endsWith("python3"))
+          await writeFile(
+            join(args[args.indexOf("--app") + 1], "Contents/Info.plist"),
+            "unexpected changed content",
+          );
+        return runner(tool, args, opts);
+      },
+    });
+    assert.deepEqual(result, { ok: false, stage: "roundtrip-inventory" });
+    assert.deepEqual(await readdir(options.output), ["failure.json"]);
+  }));
+test("extracted app must independently pass Apple verification", () =>
+  fixture(async ({ options, runner }) => {
+    let checks = 0;
+    const result = await signPreviewApp(options, {
+      runner: async (tool, args, opts) => {
+        if (tool.endsWith("sw_vers") && ++checks === 2)
+          throw new Error("denied extracted candidate");
+        return runner(tool, args, opts);
+      },
+    });
+    assert.deepEqual(result, { ok: false, stage: "roundtrip-verify" });
+    assert.deepEqual(await readdir(options.output), ["failure.json"]);
   }));

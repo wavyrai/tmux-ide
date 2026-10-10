@@ -20,8 +20,10 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, dirname, basename, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { verifyMacApp } from "./mac-app-verifier.mjs";
+import { createManifest } from "./preview-release-manifest.mjs";
+import { extractArchive } from "./preview-release-extract.mjs";
 
 const execute = promisify(execFile);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -228,16 +230,19 @@ export async function signPreviewApp(
     await run("/usr/bin/xcrun", ["stapler", "staple", app]);
     await run("/usr/bin/xcrun", ["stapler", "validate", app]);
     stage = "verify";
-    await verifyMacApp(app, policy, {
-      runner: (tool, args, opts) =>
-        run(tool, args, opts.timeout).then((stdout) => ({ stdout, stderr: "" })),
-      expectedVersion: version,
-      platform,
-      architecture,
-    });
+    const verify = (candidate) =>
+      verifyMacApp(candidate, policy, {
+        runner: (tool, args, opts) =>
+          run(tool, args, opts.timeout).then((stdout) => ({ stdout, stderr: "" })),
+        expectedVersion: version,
+        platform,
+        architecture,
+      });
+    await verify(app);
     for (const name of historical)
       if (hash(await readFile(join(app, name))) !== before.find((r) => r[0] === name)[2])
         throw new Error("Historical receipt changed");
+    const signedInventory = await inventory(app);
     stage = "package";
     const archive = join(staging, `tmux-ide-gpui-${version}-macos-arm64.app.tar.gz`);
     await run(
@@ -253,7 +258,44 @@ export async function signPreviewApp(
       ],
       120_000,
     );
+    stage = "roundtrip-extract";
+    const archiveBytes = await readFile(archive);
+    // Local ephemeral authentication invokes the production extractor. This key is
+    // never persisted, published or accepted as publisher trust.
+    const ephemeralKeys = generateKeyPairSync("ed25519");
+    const manifestBytes = createManifest({
+      version,
+      archiveSize: archiveBytes.length,
+      sha256: hash(archiveBytes),
+    });
+    const extracted = await extractArchive({
+      archivePath: archive,
+      manifestBytes,
+      signature: sign(null, manifestBytes, ephemeralKeys.privateKey),
+      policy: {
+        publicKey: ephemeralKeys.publicKey.export({ type: "spki", format: "der" }).subarray(-32),
+        expectedVersion: version,
+      },
+      destinationRoot: staging,
+    });
+    stage = "roundtrip-inventory";
+    const normalized = signedInventory.map(([path, mode, digest]) => [
+      path,
+      digest === null || mode & 0o111 ? 0o755 : 0o644,
+      digest,
+    ]);
+    const extractedInventory = await inventory(extracted.appPath);
+    if (JSON.stringify(normalized) !== JSON.stringify(extractedInventory))
+      throw new Error("Archive roundtrip mismatch");
+    stage = "roundtrip-verify";
+    await verify(extracted.appPath);
+    await rm(extracted.stagingRoot, { recursive: true });
     const receipt = {
+      roundtrip: {
+        scope:
+          "Local archive byte/mode equivalence and Apple verification; ephemeral authentication is not publisher manifest authorization",
+        inventorySha256: hash(JSON.stringify(normalized)),
+      },
       version: 1,
       scope:
         "Signing transformation; embedded assembly/build receipts describe pre-signing bytes, not signed build provenance",

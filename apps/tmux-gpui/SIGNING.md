@@ -76,8 +76,12 @@ An external transformation receipt must connect input/output hashes, metadata,
 source receipt identity, entitlement policy and notarization result. Such a receipt
 is local evidence, not a separately authenticated update manifest or trust root.
 
-A signed app must pass the real macOS verifier, then the strict update archive must
-survive extraction and verification again. On failure, the producer removes its creation-owned attempt and leaves a redacted
+The signing producer requires the staged app to pass the real macOS verifier,
+then requires the strict update archive to survive the installer’s production
+extractor, match the signed file inventory and pass that verifier again. An
+ephemeral in-memory key authenticates this local extraction check only; it is never
+persisted or offered as publisher trust. The public update manifest still needs
+the independently provisioned release key. On failure, the producer removes its creation-owned attempt and leaves a redacted
 `failure.json` stage record; the original input app remains intact. If cleanup
 cannot establish ownership, it reports cleanup failure rather than deleting an
 unverified path. Failed attempts are not publishable artifacts.
