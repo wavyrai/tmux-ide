@@ -25,6 +25,7 @@ import { createNativeTmuxSessionCreator } from "./tmux-server-session-create.ts"
 import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
+import { createPaneEditorContextResolver } from "./tmux-pane-editor-context.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   WorkspaceIdSchemaZ,
@@ -503,6 +504,13 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     terminalInventoryRuntime.invalidate();
     return result;
   };
+  const resolvePaneEditorContext = createPaneEditorContextResolver({
+    generation,
+    assertOpen,
+    registry: workspaceRegistry,
+    catalog,
+    inventory: terminalInventoryRuntime,
+  });
   const multiplexerBackend: WorkspaceMultiplexerBackend = {
     mutate: async (...args) => {
       assertOpen();
@@ -574,6 +582,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
   return {
     serverId: options.serverId,
     generation,
+    resolvePaneEditorContext,
     catalog,
     readWindowSplitLayout: async (workspaceName: string, input: WindowLinkTarget) => {
       assertOpen();

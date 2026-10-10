@@ -22,6 +22,7 @@ import {
 import { createNativeTmuxSessionCreator } from "./tmux-server-session-create.ts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
+import { createPaneEditorContextResolver } from "./tmux-pane-editor-context.ts";
 import {
   createServerGenerationFencedTmuxRunner,
   createServerGenerationFencedTmuxAsyncRunner,
@@ -1397,6 +1398,7 @@ async function startEmbeddedDaemonGeneration(
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
+    let defaultEditorContextRetired = false;
     const defaultSessionCreator = createNativeTmuxSessionCreator({
       generation: instanceId,
       registry: workspaceRegistry,
@@ -1821,6 +1823,21 @@ async function startEmbeddedDaemonGeneration(
             return grant ? interactionEvidence.captureSourceBinding(grant) : null;
           },
           interactionReceipts,
+          resolvePaneEditorContext: createPaneEditorContextResolver({
+            generation: instanceId,
+            registry: workspaceRegistry,
+            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            inventory: terminalInventoryRuntime,
+            assertOpen: () => {
+              if (
+                defaultEditorContextRetired ||
+                serverOwners?.defaultRetired ||
+                !initialNativeServerIdentity ||
+                terminalInventoryRuntime?.lifecycleState() !== "ready"
+              )
+                throw new Error("Default tmux editor context owner is unavailable");
+            },
+          }),
           catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
           readWindowSplitLayout: async (workspaceName, input) => {
             const target = WindowLinkTargetSchemaZ.parse(input);
@@ -1885,6 +1902,7 @@ async function startEmbeddedDaemonGeneration(
           terminalInventoryRuntime,
           paneStreamRuntime,
           dispose: async () => {
+            defaultEditorContextRetired = true;
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
             const transportResults = await Promise.allSettled([

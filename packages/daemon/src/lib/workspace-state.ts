@@ -794,7 +794,7 @@ function requireProjectRoot(projectRoot: string): string {
   return resolve(root);
 }
 
-function normalizePaneCwd(cwd: string | null, projectRoot: string): WorkspacePaneCwd | null {
+export function normalizePaneCwd(cwd: string | null, projectRoot: string): WorkspacePaneCwd | null {
   if (cwd === null) return null;
   const absolutePath = resolve(projectRoot, cwd);
   const portablePath = relative(projectRoot, absolutePath);
@@ -806,7 +806,10 @@ function normalizePaneCwd(cwd: string | null, projectRoot: string): WorkspacePan
     : { kind: "absolute", path: absolutePath };
 }
 
-function materializePaneCwd(cwd: WorkspacePaneCwd | null, projectRoot: string): string | null {
+export function materializePaneCwd(
+  cwd: WorkspacePaneCwd | null,
+  projectRoot: string,
+): string | null {
   if (!cwd) return null;
   if (cwd.kind === "absolute") return cwd.path;
   const root = requireProjectRoot(projectRoot);
