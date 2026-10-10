@@ -1,9 +1,10 @@
 # Experimental split-level resize prototype
 
-This additive patch is **not included in native provenance, build manifests or
-release artifacts**. Apply it after the three existing patches to tmux commit
-`e476c1230b958df0cb12977517d24b3dc931375b`. It adds a command without changing stock
-commands. It is not a qualified native extension or daemon capability yet.
+This additive patch is included as the fourth patch in the development branch's
+native provenance, after the three existing patches to tmux commit
+`e476c1230b958df0cb12977517d24b3dc931375b`. Maintained builds record its hash in
+their manifests. It adds a command without changing stock commands. This source
+promotion does not qualify a released artifact or enable a daemon capability.
 
 ```text
 tmux-ide-resize-split -V
@@ -71,6 +72,9 @@ leaf resize. An optional native command wrapper should correlate successful
 readback with canonical layout publication before settling client gestures.
 
 The local prototype build is not hermetic and links local Homebrew libraries.
-Native private-server correctness tests, sanitizer checks, regression tests,
-platform builds, provenance updates and release qualification remain separate.
+Native private-server correctness tests, sanitizer checks and regression tests
+remain separate from source promotion. Release acceptance still requires the
+maintained bundled build and split-specific checks on darwin-arm64, darwin-x64,
+linux-arm64 and linux-x64, followed by the release qualification gates on the
+exact candidate. A local macOS build does not establish those platform results.
 No GUI, user session, production daemon or installation is changed by this patch.

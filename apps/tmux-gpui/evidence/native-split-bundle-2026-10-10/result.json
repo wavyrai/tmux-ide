@@ -1,0 +1,70 @@
+{
+  "scope": "Development provenance promotion and maintained darwin-arm64 private bundle; not a published release or four-platform qualification",
+  "sourceCommit": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "bundle": "/private/tmp/gpui-split-promoted-eg12r6nf/bundle",
+  "binarySha256": "f546fd08b555d819c3416a8dc91d6ab75750b8245d28787fdcf7dc597eca572a",
+  "verifiedManifestFiles": 2904,
+  "build": {
+    "argv": [
+      "node",
+      "scripts/build-bundled-tmux.mjs",
+      "--source",
+      "/Volumes/Samsung_T5/Developer/tmux-ide/.tasks/sfora-foundation-mission/tmux-upstream",
+      "--output",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle",
+      "--jobs",
+      "2"
+    ],
+    "exitCode": 0,
+    "seconds": 17.276880741119385,
+    "groupAbsent": true
+  },
+  "tests": [
+    {
+      "name": "split",
+      "argv": [
+        "python3",
+        "native/tmux/tests/split-resize.py",
+        "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+      ],
+      "exitCode": 0,
+      "seconds": 2.501786231994629,
+      "groupAbsent": true
+    },
+    {
+      "name": "membership",
+      "argv": [
+        "python3",
+        "native/tmux/tests/split-membership-regression.py",
+        "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+      ],
+      "exitCode": 0,
+      "seconds": 0.14421558380126953,
+      "groupAbsent": true
+    },
+    {
+      "name": "guarded",
+      "argv": [
+        "node",
+        "--import",
+        "tsx",
+        "native/tmux/tests/split-guarded-runner.mjs",
+        "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+      ],
+      "exitCode": 0,
+      "seconds": 0.41015028953552246,
+      "groupAbsent": true
+    }
+  ],
+  "cleanup": {
+    "split": true,
+    "membership": true,
+    "guarded": true
+  },
+  "remaining": [
+    "darwin-x64/linux-arm64/linux-x64 maintained builds and split tests",
+    "exact candidate release qualification incl standard native regression gates",
+    "daemon lazy capability policy and canonical owner tests coordinated separately",
+    "no public release/production replacement authorized by this result"
+  ]
+}

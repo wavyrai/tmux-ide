@@ -1,0 +1,37 @@
+[
+  {
+    "name": "split",
+    "argv": [
+      "python3",
+      "native/tmux/tests/split-resize.py",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0,
+    "seconds": 2.501786231994629,
+    "groupAbsent": true
+  },
+  {
+    "name": "membership",
+    "argv": [
+      "python3",
+      "native/tmux/tests/split-membership-regression.py",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0,
+    "seconds": 0.14421558380126953,
+    "groupAbsent": true
+  },
+  {
+    "name": "guarded",
+    "argv": [
+      "node",
+      "--import",
+      "tsx",
+      "native/tmux/tests/split-guarded-runner.mjs",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0,
+    "seconds": 0.41015028953552246,
+    "groupAbsent": true
+  }
+]
