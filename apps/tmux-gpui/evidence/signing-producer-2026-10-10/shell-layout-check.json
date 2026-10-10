@@ -1,0 +1,18 @@
+{
+  "scope": "minimal disposable shell-main app, ad-hoc signature only; not Developer ID or notarization acceptance",
+  "commands": [
+    "codesign --force --sign - --options runtime Test.app",
+    "codesign --verify --deep --strict Test.app",
+    "preview-release-package.py --version 0.0.0",
+    "extract generated owned archive to fresh directory",
+    "codesign --verify --deep --strict extracted/TmuxIDE.app"
+  ],
+  "results": [
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "conclusion": "No observed signature-layout loss through strict archive; does not qualify actual signed preview launcher"
+}

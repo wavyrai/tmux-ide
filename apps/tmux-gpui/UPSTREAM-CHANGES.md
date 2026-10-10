@@ -76,3 +76,9 @@ overlay preserves terminal geometry, validates the bridge capability and isolate
 composition/terminal input. It uses the existing tmux daemon actions rather than
 Herdr RPC. No Zed source was copied for this slice; its popover example served
 as an additional reference for layering.
+
+- `scripts/sign-preview-app.mjs` outside the vendored tree adapts the signing
+  sequence from pinned Herdr `scripts/release/sign-macos.sh`: private copy, nested
+  signing, notarization, stapling and verification. It uses tmux-ide identities,
+  explicit Node entitlement policy and the existing strict archive format; no
+  Herdr endpoint, credential import, universal build or DMG configuration is used.

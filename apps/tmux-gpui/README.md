@@ -788,3 +788,10 @@ node --import tsx apps/tmux-gpui/bridge/pane-actions-smoke.mjs
 
 It verifies exact-pane rename, literal tmux-format text, stale-command refusal,
 absolute zoom/restore, duplicate suppression, and absence of shell input.
+
+### Native signing pipeline
+
+See [SIGNING.md](SIGNING.md) for the explicit existing-identity notarization command,
+Node entitlement review, pre/post-signing provenance, and remaining release gates.
+The producer does not import credentials or publish artifacts. Its tool-injected
+checks do not establish successful Developer ID signing or clean-machine installation.

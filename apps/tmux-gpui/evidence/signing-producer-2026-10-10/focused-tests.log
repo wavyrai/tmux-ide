@@ -1,0 +1,18 @@
+✔ private signing sequence preserves historical inputs and binds transformation (13.239041ms)
+✔ sign-native failure exposes only safe stage, no usable artifacts (6.788917ms)
+✔ notarize failure exposes only safe stage, no usable artifacts (6.266209ms)
+✔ verify failure exposes only safe stage, no usable artifacts (6.265208ms)
+✔ package failure exposes only safe stage, no usable artifacts (6.43525ms)
+✔ notary non-Accepted and debug entitlement fail closed before later tools (10.65725ms)
+✔ existing output and unknown CLI switches refuse without tool calls (2.486542ms)
+✔ unsupported host refuses before creating output or executing tools (1.628334ms)
+✔ caller mutation cannot change validated identity or profile across awaits (6.616042ms)
+✔ numeric policy scalars reject before copy or signing (1.670916ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 95.939542
