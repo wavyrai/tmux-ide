@@ -1,0 +1,7 @@
+# Native two-window keyboard routing — 10 October 2026
+
+At source HEAD 393692f2, ran `native-window-nav-smoke.mjs` with a disposable copy of the a43136e0 package. Only Info.plist bundle identifier/name changed to isolate this app from the user's running demo. Executable and bundled helper hashes are recorded. This is an unsigned development app test, not signed installation qualification.
+
+CUA opened the private e2e-gpui-window-nav-8411-0 session, selected window one, and attempted its marker during activation. The UI reported interrupted input. After clicking the ready terminal and retyping, WINDOW_ONE_OK rendered. Switched to window two and typed WINDOW_TWO_OK. The existing fixture verified exact output rows, no cross-target marker leakage, and source survival after Cmd-Q. Process exited 0. The fixture was not configured with its interruption signal; this run does not independently prove the premature-input invariant.
+
+The fixture uses an isolated cwd/private daemon and minimal launch PATH, including invalid inherited Node options to exercise launcher scrubbing. It reaped its own processes and disposed its fixture. User demo controller 7139/native 7229 remained alive afterward. Screenshots are in the conversation only. No full clipboard/IME/DPI or signed-release claim. The macOS sandbox-extension warning was emitted but the fixture completed successfully; no conclusion about its cause is established here.
