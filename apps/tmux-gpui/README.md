@@ -11,7 +11,7 @@ notices. `upstream-provenance.json` records the source commit and SHA-256 digest
 of every imported file. Upstream crate names are retained for comparison.
 The adapter renders snapshots and the selected live window’s pane arrangement
 through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. A local TypeScript helper reuses the existing daemon delivery validator;
-Rust reads bounded, complete publications off the UI thread. Initial window resizing uses daemon geometry authority; competing-viewer and focus-release qualification is still pending. Automatic reconnect is not implemented. Native text composition is
+Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry restoration on background/close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Automatic reconnect is not implemented. Native text composition is
 implemented with further IME qualification pending. If you click or type before
 keyboard input is ready, the preview keeps input interrupted until you click the
 ready terminal again and retype. It never replays discarded input. This also
