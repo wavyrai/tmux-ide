@@ -1,0 +1,13 @@
+# Native navigation presence diagnostic — 2026-10-10
+
+Reviewed fixture-only relay forwards original browser/native bytes with backpressure and records bounded allowlisted metadata: request/sequence, hashed identities, presence, membership and readiness booleans. It never records input payload, terminal cells, connection credentials or tokens. Three relay tests cover fragmented byte preservation/redaction, abort, EOF-ignoring child, blocked output and spawn failure. Independent review approved helper a85cd8c91cab19337b111089de1f27bd79fc646143e170f02368acb9d06885a7 and tests d64e6e6a72adea70834c1c0c892a8a631d2c9b3d0e37c4c5f2f020d0527b96f1. Full bridge gate:263 passed,0 failed,5 optional skipped.
+
+The disposable Navigation Trace QA app copies the existing native31792088…/Node/launcher/live unchanged; original browser bytes are renamed and transparently wrapped. Its unique diagnostic bundle ID/plist and trace-path wrapper change are recorded. This is instrumented diagnosis, not qualification of an unchanged release artifact.
+
+First trace: inactive presence revision1 precedes explicit session request1 and completed catalog with no preferred pane. Later activation revision2 (during close) permits a preferred-pane publication, but the earlier inactive state already retired the one-shot open intent. No pane command follows, consistent with the documented focus guard. The640×400-point Home labels clipped, but no navigation pass is claimed.
+
+Second trace: an Escape key before Home Open produced verified active presence revision2. The explicit session action then produced a valid preferred pane and automatic native Pane command request2. No window tab was clicked. This rules out a reproduced automatic-selection defect on this path. Attempts to resize this active run did not change its1000×650-point viewport, so no narrow-layout pass is claimed for it.
+
+The selected pane then stayed unavailable. A separate packaged live-helper observation against the same private daemon captured terminal.delivery.fault reason protocol-violation: workspaceName failed WorkspaceId ASCII-slug validation. Source trace finds TerminalReplicaOwner passes raw tmux session name to the interpreter as workspaceName before websocket outgoing remapping. The configured semantic workspace ID is valid; owner fix and same-path stream proof remain outstanding. Do not weaken the workspace schema.
+
+Both runs ended by operator Cmd-Q before any marker input, with fixture exit1 and normal cleanup. No observation checkpoint was written. Screenshots were observed in chat, not saved. User demos93795/54706 remained untouched. Source admission fix0256c99f remains separately validated; this evidence does not claim complete rendering/input/navigation or a public release.

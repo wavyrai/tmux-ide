@@ -1,0 +1,20 @@
+Packaged app ready: open the session without clicking a window tab; the initial window must be one. Click its ready terminal, type echo WINDOW_ONE_OK and Return; then use the window strip.
+{"stage":"NARROW_LONG_LABELS_READY","sessionName":"LONG SESSION — workspace navigation and clipped labels workspace navigation and clipped labels ","windows":{"one":{"label":"ONE — long window navigation label long window navigation label long window navigation label ","paneLabel":"ONE — terminal pane title terminal pane title terminal pane title "},"two":{"label":"TWO — long window navigation label long window navigation label long window navigation label ","paneLabel":"TWO — terminal pane title terminal pane title terminal pane title "}},"operator":"Resize native window to 640×400. Capture Home session card, selected workspace sidebar/header and both window tabs. Labels must clip inside their chrome; terminal cells and controls must remain usable. Complete the ordinary marker route before signaling.","observationSignal":"/tmp/gpui-narrow-labels-observed-20261010-d"}
+sandbox_extension_issue_file_to_process failed for /tmp/Tmux IDE Navigation Trace QA.app: 1 (Operation not permitted)
+2026-10-10 21:49:44.660 tmux-ide-gpui[36516:17254801] Warning: Window move completed without beginning
+tmux-preview: native sidebar glass true
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:214
+if (errors.length) throw new AggregateError(errors, "Native window navigation fixture failed");
+                         ^
+
+AggregateError: Native window navigation fixture failed
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:214:26 {
+  [errors]: [
+    Error: App closed before input proof
+        at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:148:13
+        at wait (file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:54:11)
+        at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:146:3
+  ]
+}
+
+Node.js v24.21.0
