@@ -1,0 +1,11 @@
+{
+  "baseCommit": "253d07659d6fdf8fa5b4c387de16b2665a71c0ab",
+  "files": {
+    "packages/contracts/src/window-split-layout.ts": "d26d393606314a02be30f95b592ec116b1fff87879dbd6d218834c7766691e39",
+    "packages/contracts/src/__tests__/window-split-layout.test.ts": "4ae62940aae9373150696940fe493c498f0f55c4004eda039f22eec7b265196f",
+    "packages/daemon/src/terminal/mirror/session-channel.ts": "a368fe53a965393da661e707e4e2af61aaa39f1457f3eea1f2256721c677e2c2",
+    "packages/daemon/src/terminal/mirror/session-channel-split-layout.test.ts": "32d0fd4aa1a3f1548e9ea591cb94f46992e51d8e904c6e9cf49bd3fe117b60fb",
+    "packages/daemon/src/terminal/mirror/window-split-authority.ts": "4a958f2fe3f6c6517fb4e6566418e3760811088c57d92fcf3c2d4e7cae10e3bc",
+    "packages/daemon/src/terminal/mirror/window-split-authority.test.ts": "7cab793b89cab5e536caa2c85aaff10fa1255b410bb819fb2255710b6afcc536"
+  }
+}

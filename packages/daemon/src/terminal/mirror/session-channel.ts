@@ -59,6 +59,7 @@ import type { InputAction } from "../protocol/input-coalescer.ts";
 import type { OwnedViewerAdapter } from "./owned-viewer-adapter.ts";
 import {
   parseLayout,
+  parseLayoutTree,
   parseLayoutChange,
   parseSessionWindowChanged,
   parseWindowPaneChanged,
@@ -415,7 +416,22 @@ interface WindowRecord {
   modeKeys?: "emacs" | "vi";
 }
 
-type WindowLayout = ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout };
+type WindowLayout = ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout; rawLayout: string };
+
+/** Daemon-internal captured observation; execution still needs native identity guards. */
+export interface NativeSplitLayoutSnapshot {
+  readonly sessionName: string;
+  readonly sessionCreated: string;
+  readonly runtimeSessionId: string;
+  readonly runtimeWindowId: string;
+  readonly semanticWindowId: string;
+  readonly rawLayout: string;
+  readonly panes: readonly {
+    readonly runtimePaneId: string;
+    readonly semanticPaneId: string;
+    readonly nativePaneBirthId: string;
+  }[];
+}
 
 function layoutIdentitiesEqual(left: WindowLayout, right: WindowLayout): boolean {
   const paneIds = (layout: ParsedLayout | undefined) => layout?.leaves.map((leaf) => leaf.id);
@@ -429,7 +445,7 @@ function layoutIdentitiesEqual(left: WindowLayout, right: WindowLayout): boolean
 interface WindowSyncStage {
   readonly observedAuthorityOrdinal: number;
   readonly windows: Map<string, WindowRecord>;
-  readonly layouts: Map<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>;
+  readonly layouts: Map<string, WindowLayout>;
   readonly currentWindow: string;
   readonly repairedIdentity: boolean;
   readonly links: readonly {
@@ -458,10 +474,7 @@ export class SessionChannel {
   private readonly panesByRuntime = new Map<string, PaneRecord>();
   private readonly panesBySemantic = new Map<string, PaneRecord>();
   private readonly windowsByRuntime = new Map<string, WindowRecord>();
-  private readonly layoutByWindow = new Map<
-    string,
-    ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }
-  >();
+  private readonly layoutByWindow = new Map<string, WindowLayout>();
   private readonly activePaneByWindow = new Map<string, string>();
   private readonly layoutSubscribers = new Set<(event: MirrorLayoutEvent) => void>();
   private readonly layoutAuthoritySubscribers = new Set<
@@ -500,7 +513,7 @@ export class SessionChannel {
   private readonly pendingLayoutOutput = new Map<
     string,
     {
-      layout: ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout };
+      layout: WindowLayout;
       bytes: number;
       overflowed: boolean;
       records: Array<{
@@ -914,6 +927,70 @@ export class SessionChannel {
         })
         .join("\n");
     };
+  }
+
+  /** Exact native ancestry, never reconstructed from published pane rectangles. */
+  describeSplitLayout(target: WindowLinkTarget): NativeSplitLayoutSnapshot {
+    const authority = this.windowLinkAuthority;
+    const identity = this.attachedIdentity;
+    const generation = this.attachedServerGeneration;
+    if (this.disposed || this.degraded || !authority || !identity || !generation)
+      throw new Error("Split layout unavailable");
+    const resolved = authority.resolve(target);
+    const window = this.windowsByRuntime.get(resolved.runtimeWindowId);
+    const layout = this.layoutByWindow.get(resolved.runtimeWindowId);
+    if (
+      resolved.runtimeSessionId !== identity.runtimeSessionId ||
+      !window?.semanticId ||
+      window.semanticId !== target.expectedSemanticWindowId ||
+      !layout ||
+      layout.zoomed ||
+      this.pendingLayoutOutput.has(resolved.runtimeWindowId) ||
+      !parseLayoutTree(layout.rawLayout)
+    )
+      throw new Error("Split layout unavailable");
+    const native = parseLayout(layout.rawLayout)!;
+    const records = [...this.panesByRuntime.values()].filter(
+      (pane) => pane.windowRuntimeId === resolved.runtimeWindowId,
+    );
+    if (records.length !== native.leaves.length || native.leaves.length !== layout.leaves.length)
+      throw new Error("Split layout pane identity incomplete");
+    const panes = native.leaves.map((leaf) => {
+      const pane = this.panesByRuntime.get(leaf.id);
+      const birth = pane?.descriptor?.nativePaneBirthId;
+      if (
+        !pane ||
+        pane.windowRuntimeId !== resolved.runtimeWindowId ||
+        pane.descriptor?.runtimeSessionId !== identity.runtimeSessionId ||
+        pane.descriptor?.windowId !== resolved.runtimeWindowId ||
+        this.panesBySemantic.get(pane.semanticId) !== pane ||
+        !birth ||
+        !/^[1-9]\d*$/u.test(birth) ||
+        !layout.leaves.some(
+          (visible) =>
+            visible.id === leaf.id &&
+            visible.left === leaf.left &&
+            visible.top === leaf.top &&
+            visible.width === leaf.width &&
+            visible.height === leaf.height,
+        )
+      )
+        throw new Error("Split layout pane identity incomplete");
+      return Object.freeze({
+        runtimePaneId: pane.runtimeId,
+        semanticPaneId: pane.semanticId,
+        nativePaneBirthId: birth,
+      });
+    });
+    return Object.freeze({
+      sessionName: identity.sessionName,
+      sessionCreated: generation.sessionCreated,
+      runtimeSessionId: resolved.runtimeSessionId,
+      runtimeWindowId: resolved.runtimeWindowId,
+      semanticWindowId: window.semanticId,
+      rawLayout: layout.rawLayout,
+      panes: Object.freeze(panes),
+    });
   }
 
   async executeWindowLinkAction(request: {
@@ -2847,6 +2924,7 @@ export class SessionChannel {
         ...parsed,
         zoomed: change.zoomed,
         unzoomed: parseLayout(change.layout) ?? undefined,
+        rawLayout: change.layout,
       };
       const previousLayout =
         this.pendingLayoutOutput.get(change.windowId)?.layout ??
@@ -3683,10 +3761,7 @@ export class SessionChannel {
         throw new Error("Inconsistent linked backing observation");
       backingRows.set(row.runtimeId, row);
     }
-    const nextLayoutByWindow = new Map<
-      string,
-      ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }
-    >();
+    const nextLayoutByWindow = new Map<string, WindowLayout>();
     for (const row of backingRows.values()) {
       const parsed = parseLayout(row.visible);
       if (!parsed) {
@@ -3694,7 +3769,12 @@ export class SessionChannel {
       }
       const unzoomed = parseLayout(row.full);
       if (!unzoomed) throw new Error(`full window layout for ${this.opts.session} is malformed`);
-      nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed, unzoomed });
+      nextLayoutByWindow.set(row.runtimeId, {
+        ...parsed,
+        zoomed: row.zoomed,
+        unzoomed,
+        rawLayout: row.full,
+      });
     }
     // Publish validated physical membership before any identity repair writes.
     // The receiving session may introduce duplicate stamps by linking a window.
@@ -3926,7 +4006,7 @@ export class SessionChannel {
 
   private async repairTrustedPaneIdentity(
     descriptors: readonly SessionPaneDescriptor[],
-    layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>,
+    layouts: ReadonlyMap<string, WindowLayout>,
   ): Promise<boolean> {
     if (this.opts.hasSharedWindowConflict?.())
       throw new Error(
