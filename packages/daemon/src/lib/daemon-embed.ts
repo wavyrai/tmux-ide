@@ -1,3 +1,4 @@
+import { createNativeSplitCapabilityProbe } from "./native-split-capability.ts";
 import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
 import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
 import { WindowLinkTargetSchemaZ } from "@tmux-ide/contracts";
@@ -1550,6 +1551,10 @@ async function startEmbeddedDaemonGeneration(
         },
         mirror: {
           splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
+          splitLayoutCapability: createNativeSplitCapabilityProbe({
+            observation: () => observationSelector ?? null,
+            runPinnedTmux: nativeGenerationTmuxRunner,
+          }),
           createOwnedViewerAdapter: () => ownedViewerFactory?.(),
           nativeServerIdentity: initialNativeServerIdentity,
           executable: tmuxAuthority.executablePath,

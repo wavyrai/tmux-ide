@@ -9,12 +9,17 @@ import {
 } from "./__tests__/simulated-channel.ts";
 import type { MirrorLayoutAuthoritySnapshot } from "./events.ts";
 
-function rig(epoch: string | null = "11111111-1111-4111-8111-111111111111", heldStart = false) {
+function rig(
+  epoch: string | null = "11111111-1111-4111-8111-111111111111",
+  heldStart = false,
+  capability = async () => true,
+) {
   const sims: SimulatedChannel[] = [];
   const releases: (() => void)[] = [];
   const exits: (() => void)[] = [];
   const service = new MirrorService({
     splitLayoutEpoch: () => epoch,
+    splitLayoutCapability: capability,
     createIo: (_session, handlers) => {
       const state = fixtureState();
       state.descriptorRows[2] = state.descriptorRows[2]!.replace(
@@ -37,7 +42,15 @@ function rig(epoch: string | null = "11111111-1111-4111-8111-111111111111", held
       return sim;
     },
   });
-  return { service, sims, releases, exits };
+  return {
+    service,
+    sims,
+    releases,
+    exits,
+    setEpoch: (value: string | null) => {
+      epoch = value;
+    },
+  };
 }
 
 async function retained(service: MirrorService) {
@@ -127,6 +140,50 @@ it("retires handles when the underlying control client exits", async () => {
     ).rejects.toThrow();
     await current.subscription.close();
   } finally {
+    await r.service.dispose();
+  }
+});
+
+it("withholds split resources for an observation-capable server without split mutation support", async () => {
+  let supported = false;
+  const r = rig(undefined, false, async () => supported);
+  try {
+    const current = await retained(r.service);
+    await expect(
+      r.service.readWindowSplitLayout(FIXTURE.session, current.target),
+    ).rejects.toThrow();
+    supported = true;
+    const resource = await r.service.readWindowSplitLayout(FIXTURE.session, current.target);
+    expect(resource.splits).toHaveLength(1);
+    supported = false;
+    await expect(
+      r.service.readWindowSplitLayout(FIXTURE.session, current.target),
+    ).rejects.toThrow();
+    await current.subscription.close();
+  } finally {
+    await r.service.dispose();
+  }
+});
+
+it.each(["epoch", "retire"])("rejects capability completion after %s changes", async (change) => {
+  const entered = Promise.withResolvers<void>();
+  const ready = Promise.withResolvers<boolean>();
+  const r = rig(undefined, false, () => {
+    entered.resolve();
+    return ready.promise;
+  });
+  try {
+    const current = await retained(r.service);
+    const reading = r.service.readWindowSplitLayout(FIXTURE.session, current.target);
+    const rejected = expect(reading).rejects.toThrow();
+    await entered.promise;
+    if (change === "epoch") r.setEpoch("22222222-2222-4222-8222-222222222222");
+    else await current.subscription.close();
+    ready.resolve(true);
+    await rejected;
+    await current.subscription.close();
+  } finally {
+    ready.resolve(false);
     await r.service.dispose();
   }
 });

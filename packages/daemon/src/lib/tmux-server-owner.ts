@@ -1,3 +1,4 @@
+import { createNativeSplitCapabilityProbe } from "./native-split-capability.ts";
 import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
 import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
 import { execFileSync } from "node:child_process";
@@ -333,6 +334,10 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     },
     mirror: {
       splitLayoutEpoch: () => observationSelector.nativeServerEpoch,
+      splitLayoutCapability: createNativeSplitCapabilityProbe({
+        observation: () => observationSelector ?? null,
+        runPinnedTmux: generationRun,
+      }),
       createOwnedViewerAdapter: createOwnedViewerAdapterFactory({
         environmentId: options.environmentId,
         serverScope: { serverId: options.serverId, generation },

@@ -62,6 +62,8 @@ import {
 export interface MirrorServiceOptions {
   /** Native server epoch for split observations; absent means unsupported. */
   splitLayoutEpoch?: () => string | null;
+  /** Positively probe this native epoch before issuing handles; absent denies. */
+  splitLayoutCapability?: (epoch: string) => boolean | Promise<boolean>;
   onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
   createOwnedViewerAdapter?: (session: string) => OwnedViewerAdapter | undefined;
   nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
@@ -385,6 +387,21 @@ export class MirrorService {
     if (this.disposed || !entry || entry.retired) throw new WindowSplitLayoutUnavailable();
     await entry.started;
     if (this.disposed || entry.retired || this.channels.get(session) !== entry)
+      throw new WindowSplitLayoutUnavailable();
+    const epoch = this.opts.splitLayoutEpoch?.();
+    let supported = false;
+    try {
+      supported = Boolean(epoch && (await this.opts.splitLayoutCapability?.(epoch)));
+    } catch {
+      // Unsupported/retired servers never receive actionable split handles.
+    }
+    if (
+      !supported ||
+      this.disposed ||
+      entry.retired ||
+      this.channels.get(session) !== entry ||
+      this.opts.splitLayoutEpoch?.() !== epoch
+    )
       throw new WindowSplitLayoutUnavailable();
     entry.splitAuthority ??= new WindowSplitAuthority({
       describe: (window) => entry.channel.describeSplitLayout(window),

@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {createNativeSplitCapabilityProbe} from '/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon/src/lib/native-split-capability.ts';
+const results=[];
+for (const [binary, expected] of [['/private/tmp/tmux-ide-295-release-nkydyctm/bin/tmux',false],['/private/tmp/tmux-split-membership-ccxveo/source/tmux',true]] as const) {
+ const root=mkdtempSync('/tmp/gpui-cap-only-'); const socket=root+'/s';
+ const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('TMUX')&&!k.startsWith('NODE_')));
+ Object.assign(env,{HOME:root,XDG_CONFIG_HOME:root});
+ const run=(args:readonly string[])=>execFileSync(binary,['-S',socket,'-f','/dev/null',...args],{env,encoding:'utf8',timeout:5000,maxBuffer:32768,stdio:['ignore','pipe','pipe']});
+ try {
+  run(['new-session','-d','-s','proof','sleep 60']);
+  const before=JSON.parse(run(['tmux-ide-events','-V']));
+  assert.equal(before.enabled,false);
+  const observer={nativeServerEpoch:before.serverEpoch,ownedOperationTransport:true,ownedOperationEpochGuard:true,ownedOperationPaneGuard:true,ownedOperationSessionGuard:true};
+  const probe=createNativeSplitCapabilityProbe({observation:()=>observer,runPinnedTmux:run});
+  assert.equal(await probe(before.serverEpoch),false);
+  assert.equal(JSON.parse(run(['tmux-ide-events','-V'])).enabled,false);
+  // Explicit setup on this owned test server only; gate must never enable it.
+  run(['tmux-ide-events','-e']);
+  assert.equal(await probe(before.serverEpoch),expected);
+  results.push({binary,expected,disabledProbePreserved:true});
+ } finally {
+  try {run(['kill-server']);} finally {rmSync(root,{recursive:true,force:true});}
+ }
+}
+console.log(JSON.stringify({results,cleanup:true},null,2));

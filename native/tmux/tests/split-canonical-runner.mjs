@@ -1,3 +1,4 @@
+import { createNativeSplitCapabilityProbe } from "../../../packages/daemon/src/lib/native-split-capability.ts";
 // Real retained control channel -> opaque split handle -> guarded native command.
 // Run with node --import tsx and a split-patched tmux binary argument.
 import assert from "node:assert/strict";
@@ -49,6 +50,10 @@ try {
     socketPath,
     executable: binary,
     splitLayoutEpoch: () => capability.serverEpoch,
+    splitLayoutCapability: createNativeSplitCapabilityProbe({
+      observation: () => observer,
+      runPinnedTmux: run,
+    }),
     createIo: (session, handlers) =>
       new MirrorControlChannel({
         session,

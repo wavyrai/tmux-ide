@@ -16,6 +16,7 @@ function rig(epoch: string | null = "11111111-1111-4111-8111-111111111111", held
   const exits: (() => void)[] = [];
   const service = new MirrorService({
     splitLayoutEpoch: () => epoch,
+    splitLayoutCapability: () => true,
     createIo: (_session, handlers) => {
       const state = fixtureState();
       state.descriptorRows[2] = state.descriptorRows[2]!.replace(

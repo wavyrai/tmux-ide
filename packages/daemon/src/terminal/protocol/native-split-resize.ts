@@ -51,6 +51,15 @@ function capability(text: string): boolean {
     value.maxGrid === 4096
   );
 }
+/** Read-only, uncached probe; the caller pins and bounds the selected server. */
+export async function supportsNativeSplitResize(runTmux: NativeSplitRunner): Promise<boolean> {
+  try {
+    return capability(await runTmux(["tmux-ide-resize-split", "-V"]));
+  } catch {
+    return false;
+  }
+}
+
 function validTree(tree: LayoutTreeNode): boolean {
   let budget = 5;
   const visit = (node: LayoutTreeNode): boolean => {
