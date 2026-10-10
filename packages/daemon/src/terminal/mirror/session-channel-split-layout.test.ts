@@ -1,3 +1,4 @@
+import { SplitLayoutPublicationPending } from "./session-channel.ts";
 import { expect, it } from "vitest";
 import type { WindowLinkTarget } from "@tmux-ide/contracts";
 import { SessionChannel } from "./session-channel.ts";
@@ -97,7 +98,7 @@ it("refuses pending geometry then retains exact notification layout over an olde
     const changed = "cccc,200x50,0,0{120x50,0,0,1,79x50,121,0,2}";
     // The older list-windows command precedes the border reply in control FIFO.
     r.sim.feedLines(`%layout-change @1 ${changed} ${changed} 0`);
-    expect(() => r.channel.describeSplitLayout(r.target)).toThrow();
+    expect(() => r.channel.describeSplitLayout(r.target)).toThrow(SplitLayoutPublicationPending);
     const rows = fixtureAutoReply(r.state)("list-windows")!;
     r.sim.reply(rows);
     r.sim.reply(["off"]);

@@ -419,6 +419,13 @@ interface WindowRecord {
 type WindowLayout = ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout; rawLayout: string };
 
 /** Daemon-internal captured observation; execution still needs native identity guards. */
+export class SplitLayoutPublicationPending extends Error {
+  constructor() {
+    super("Split layout publication pending");
+    this.name = "SplitLayoutPublicationPending";
+  }
+}
+
 export interface NativeSplitLayoutSnapshot {
   readonly sessionName: string;
   readonly sessionCreated: string;
@@ -945,10 +952,11 @@ export class SessionChannel {
       window.semanticId !== target.expectedSemanticWindowId ||
       !layout ||
       layout.zoomed ||
-      this.pendingLayoutOutput.has(resolved.runtimeWindowId) ||
       !parseLayoutTree(layout.rawLayout)
     )
       throw new Error("Split layout unavailable");
+    if (this.pendingLayoutOutput.has(resolved.runtimeWindowId))
+      throw new SplitLayoutPublicationPending();
     const native = parseLayout(layout.rawLayout)!;
     const records = [...this.panesByRuntime.values()].filter(
       (pane) => pane.windowRuntimeId === resolved.runtimeWindowId,

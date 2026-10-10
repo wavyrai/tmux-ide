@@ -54,5 +54,6 @@ export async function executeCanonicalSplitMutation(
     target: intent.target,
     axis: split.axis,
     boundary: result.boundary,
+    successor: result.successor ?? null,
   });
 }

@@ -12,7 +12,10 @@ import {
 import { supportsNativeSessionGuard } from "../../lib/native-operation-command.ts";
 import type { NativeSplitResizeRequest } from "../protocol/native-split-resize.ts";
 import { parseLayoutTree, type LayoutTreeNode } from "../protocol/layout-parse.ts";
-import type { NativeSplitLayoutSnapshot } from "./session-channel.ts";
+import {
+  SplitLayoutPublicationPending,
+  type NativeSplitLayoutSnapshot,
+} from "./session-channel.ts";
 
 const MAX_RETAINED_WINDOWS = 32;
 interface SnapshotRecord {
@@ -146,6 +149,45 @@ export class WindowSplitAuthority {
       this.#records.delete(window.linkId);
       throw new WindowSplitLayoutUnavailable();
     }
+  }
+
+  /** Capture ancestry before dispatch; mint a successor only from matching canonical publication. */
+  prepareSuccessor(rawTarget: WindowSplitResizeTarget) {
+    const target = WindowSplitResizeTargetSchemaZ.parse(rawTarget);
+    this.resolve(target);
+    const original = this.#records.get(target.window.linkId)!;
+    const path = original.paths.get(target.splitId)!;
+    return (
+      postLayout: string,
+    ): { resource: WindowSplitLayoutResource; splitId: string } | null | undefined => {
+      try {
+        const current = this.#capture(target.window);
+        const expectedIdentity = JSON.stringify({
+          window: target.window,
+          serverEpoch: original.serverEpoch,
+          ...original.snapshot,
+          rawLayout: postLayout,
+          panes: [...original.snapshot.panes].sort((a, b) =>
+            a.runtimePaneId.localeCompare(b.runtimePaneId),
+          ),
+        });
+        // A clamped no-op can already equal both the original and the post-state.
+        if (current.identity === expectedIdentity) {
+          const resource = this.read(target.window);
+          const canonical = this.#records.get(target.window.linkId)!;
+          if (canonical.identity !== expectedIdentity) return null;
+          const splitId = [...canonical.paths].find(
+            ([, candidate]) =>
+              candidate.length === path.length &&
+              candidate.every((part, index) => part === path[index]),
+          )?.[0];
+          return splitId ? { resource, splitId } : null;
+        }
+        return current.identity === original.identity ? undefined : null;
+      } catch (error) {
+        return error instanceof SplitLayoutPublicationPending ? undefined : null;
+      }
+    };
   }
 
   resolve(rawTarget: WindowSplitResizeTarget) {

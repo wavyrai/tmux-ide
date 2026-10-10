@@ -104,6 +104,7 @@ try {
   const operationId = randomUUID();
   const result = await binding.submitIntent(operationId, intent);
   assert.equal(result.boundary, 83);
+  assert.ok(result.successor, "canonical successor must be published for this isolated resize");
   assert.equal(identities(), beforeIds);
   const duplicate = await binding.submitIntent(operationId, intent);
   assert.deepEqual(duplicate, { ...result, outcome: "replayed" });
@@ -115,6 +116,8 @@ try {
   }
   assert.notEqual(changed.layoutId, resource.layoutId);
   assert.equal(changed.splits[0].boundary, 83);
+  assert.deepEqual(result.successor.resource, changed);
+  assert.equal(changed.splits.find((s) => s.splitId === result.successor.splitId)?.boundary, 83);
   await assert.rejects(binding.submitIntent(randomUUID(), intent));
   replacement = bind();
   replacement.requestAuthority("geometry");
@@ -137,6 +140,7 @@ try {
     kind: "real-owner-observer-geometry-native-effect",
     boundary: 83,
     duplicateStable: true,
+    canonicalSuccessorMatched: true,
     paneIdentitiesStable: true,
     inputOnlyRefused: true,
     staleTargetRefused: true,

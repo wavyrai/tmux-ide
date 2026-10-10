@@ -1,0 +1,16 @@
+{
+  "packages/contracts/src/window-split-layout.ts": "2be0d57951082b2ed8b30bef3b30826d76351b29e255c747749ae4f991581c4d",
+  "packages/contracts/src/workspace-multiplexer.ts": "2e69d72256491f93d38eaec90848a60d400b8b9fa03dee6ff2ac27a2af901959",
+  "packages/contracts/src/interaction-receipts.ts": "4ea6a84d36f2e7af627bfb7aba49303997b6e528d34a2d74f978888be503a9d0",
+  "packages/contracts/src/__tests__/window-split-layout.test.ts": "7bfff01ff0c98b90e1441acd19038661a6ce9048faec4ea38b9472005eac3fff",
+  "packages/daemon/src/terminal/mirror/window-split-authority.ts": "801c3c4d8fded1cbfd113ec15172addb9b8d7870a2584493ebd035a11c7dc3e0",
+  "packages/daemon/src/terminal/mirror/window-split-authority.test.ts": "b29e9759e5b18b7a7dbc6eb91f5b7fcd77a8df1a98b8529c85ea2ac2e6397bc4",
+  "packages/daemon/src/terminal/mirror/session-channel.ts": "5bf2e8bdf6180f08a79f25aa34cf25ff24e080e77ffe9a610a5d7e65168c3eb2",
+  "packages/daemon/src/terminal/mirror/session-channel-split-layout.test.ts": "4548319d344a05a711dcfaa405d269bd62f3352e044ba8c61d14f844af54651b",
+  "packages/daemon/src/terminal/mirror/mirror-service.ts": "1b807dccfd7edbc69089a0213ef5486a26464568f44fc1ef5009fae4e6c9b669",
+  "packages/daemon/src/terminal/mirror/mirror-service-split-execution.test.ts": "afd15a1134599a3e27fc550e1e171e43e9c2768d82e5ffafec9b517edf9f800d",
+  "packages/daemon/src/lib/canonical-split-mutation.ts": "ff4e4fe25ef9a38c017136b3be78766c470646206f60562130b6161f3c2c0ea4",
+  "packages/daemon/src/lib/canonical-split-mutation.test.ts": "a49b25d910fe4c0125c7415fc0fec1be7264b57023baf6707d1beb64db31bb2f",
+  "packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts": "1a64d1477cb89e1b7013a9bac45f1425e143c6b5364e858370683b3eaeaa7075",
+  "native/tmux/tests/split-owner-runner.mjs": "f38af1450d8d95acef12db71edd49c138c47eea6e7051ec53ae170db9504d004"
+}

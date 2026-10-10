@@ -1,4 +1,7 @@
-import { WindowSplitResizeTargetSchemaZ } from "./window-split-layout.ts";
+import {
+  WindowSplitResizeTargetSchemaZ,
+  WindowSplitSuccessorSchemaZ,
+} from "./window-split-layout.ts";
 import { WindowLinkTargetSchemaZ } from "./window-links.ts";
 import { z } from "zod";
 import { InteractionEvidenceSchemaZ } from "./interaction-evidence.ts";
@@ -153,6 +156,7 @@ export const InteractionProofSchemaZ = z.discriminatedUnion("operationKind", [
       target: WindowSplitResizeTargetSchemaZ,
       axis: z.enum(["cols", "rows"]),
       boundary: z.number().int().min(0).max(4096),
+      successor: WindowSplitSuccessorSchemaZ.nullable().optional(),
     })
     .strict(),
   z
@@ -350,6 +354,23 @@ export const InteractionReceiptV1SchemaZ = z
         receipt.proof?.operationKind === "workspace.window.split.resize" &&
         receipt.summary.operationKind === "workspace.window.split.resize"
       ) {
+        const successor = receipt.proof.successor;
+        if (successor) {
+          const split = successor.resource.splits.find(
+            (split) => split.splitId === successor.splitId,
+          );
+          if (
+            JSON.stringify(successor.resource.window) !==
+              JSON.stringify(receipt.proof.target.window) ||
+            split?.axis !== receipt.proof.axis ||
+            split?.boundary !== receipt.proof.boundary
+          )
+            context.addIssue({
+              code: "custom",
+              path: ["proof", "successor"],
+              message: "Successor must match the observed window, axis and boundary",
+            });
+        }
         const target = receipt.proof.target;
         if (
           receipt.target.kind !== "window-link" ||

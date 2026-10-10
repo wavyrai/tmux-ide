@@ -1,3 +1,4 @@
+import { setTimeout as waitForPublication } from "node:timers/promises";
 import {
   WindowSplitResizeTargetSchemaZ,
   type WindowLinkTarget,
@@ -399,7 +400,11 @@ export class MirrorService {
     operationId: string,
     authorizeBeforeEffect: () => void,
     runNative: ReturnType<typeof createGuardedNativeSplitResize>,
-  ): Promise<GuardedNativeSplitResizeResult> {
+  ): Promise<
+    GuardedNativeSplitResizeResult & {
+      successor?: { resource: WindowSplitLayoutResource; splitId: string } | null;
+    }
+  > {
     const captured = WindowSplitResizeTargetSchemaZ.parse(target);
     const entry = this.channels.get(session);
     const current = () => {
@@ -411,7 +416,8 @@ export class MirrorService {
     current();
     await entry!.started;
     const resolved = current().resolve(captured);
-    return await runNative(resolved.request, {
+    const successor = current().prepareSuccessor(captured);
+    const result = await runNative(resolved.request, {
       operationId,
       serverEpoch: resolved.serverEpoch,
       session: resolved.session,
@@ -421,6 +427,21 @@ export class MirrorService {
         authorizeBeforeEffect();
       },
     });
+    if (result.status !== "applied") return result;
+    // Native success is retained even if canonical publication is late or diverges.
+    // This grace period observes only; it never retries a native mutation.
+    const deadline = performance.now() + 100;
+    for (;;) {
+      try {
+        current();
+      } catch {
+        return { ...result, successor: null };
+      }
+      const next = successor(result.layout);
+      if (next !== undefined) return { ...result, successor: next };
+      if (performance.now() >= deadline) return { ...result, successor: null };
+      await waitForPublication(5);
+    }
   }
 
   async executeWindowLinkAction(

@@ -1,0 +1,11 @@
+> @tmux-ide/contracts@0.0.1 test /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/contracts
+> vitest run src/__tests__/window-split-layout.test.ts src/__tests__/session-runtime.test.ts
+
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/contracts
+
+
+ Test Files  2 passed (2)
+      Tests  31 passed (31)
+   Start at  19:06:45
+   Duration  207ms (transform 132ms, setup 0ms, import 213ms, tests 49ms, environment 0ms)

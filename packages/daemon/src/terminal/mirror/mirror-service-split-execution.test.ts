@@ -172,3 +172,54 @@ it("never creates split authority or calls native for missing/malformed handles"
     await r.service.dispose();
   }
 });
+
+it.each(["unchanged", "publication-timeout", "retired"] as const)(
+  "preserves applied native outcome without redispatch when successor is %s",
+  async (scenario) => {
+    const r = rig();
+    const retainedState = await retained(r.service);
+    let calls = 0;
+    try {
+      const resource = await r.service.readWindowSplitLayout(FIXTURE.session, retainedState.target);
+      const split = resource.splits[0]!;
+      const target = {
+        window: retainedState.target,
+        layoutId: resource.layoutId,
+        splitId: split.splitId,
+        boundary: split.boundary,
+      };
+      const run: ReturnType<typeof createGuardedNativeSplitResize> = async (request, authority) => {
+        authority.authorizeBeforeEffect();
+        calls++;
+        if (scenario === "retired") await r.service.dispose();
+        // The timeout case deliberately withholds matching canonical publication.
+        const layout =
+          scenario === "publication-timeout"
+            ? request.expectedLayout.replace(/^[^,]+/, "ffff")
+            : request.expectedLayout;
+        const { parseLayoutTree } = await import("../protocol/layout-parse.ts");
+        return {
+          status: "applied",
+          boundary: split.boundary,
+          layout,
+          tree: parseLayoutTree(layout)!,
+          changed: false,
+        };
+      };
+      const result = await r.service.resizeWindowSplit(
+        FIXTURE.session,
+        target,
+        "22222222-2222-4222-8222-222222222222",
+        () => {},
+        run,
+      );
+      expect(result.status).toBe("applied");
+      expect(calls).toBe(1);
+      if (scenario === "unchanged") expect(result.successor?.resource).toEqual(resource);
+      else expect(result.successor).toBeNull();
+    } finally {
+      await retainedState.subscription.close();
+      await r.service.dispose();
+    }
+  },
+);

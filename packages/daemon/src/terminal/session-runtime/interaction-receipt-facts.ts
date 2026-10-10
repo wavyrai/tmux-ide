@@ -140,6 +140,7 @@ export function sessionRuntimeObservedProof(
         target: result.target,
         axis: result.axis,
         boundary: result.boundary,
+        ...(result.successor === undefined ? {} : { successor: result.successor }),
       };
     case "workspace.window.link.select":
     case "workspace.window.link.unlink":

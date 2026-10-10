@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { parseLayoutTree } from "../protocol/layout-parse.ts";
-import type { NativeSplitLayoutSnapshot } from "./session-channel.ts";
+import {
+  SplitLayoutPublicationPending,
+  type NativeSplitLayoutSnapshot,
+} from "./session-channel.ts";
 import { WindowSplitAuthority } from "./window-split-authority.ts";
 const epoch = "11111111-1111-4111-8111-111111111111";
 const window = {
@@ -27,9 +30,11 @@ function rig() {
   };
   let nativeEpoch: string | null = epoch;
   let failed = false;
+  let pending = false;
   const authority = new WindowSplitAuthority({
     describe: () => {
       if (failed) throw Error("canonical unavailable");
+      if (pending) throw new SplitLayoutPublicationPending();
       return snapshot;
     },
     serverEpoch: () => nativeEpoch,
@@ -43,6 +48,9 @@ function rig() {
   };
   return {
     authority,
+    pending: (value: boolean) => {
+      pending = value;
+    },
     resource,
     target,
     change: (update: Partial<NativeSplitLayoutSnapshot>) => {
@@ -187,4 +195,54 @@ it("refuses a deep 256-pane layout that exceeds native serialization admission",
   expect(parseLayoutTree(r.snapshot().rawLayout)).not.toBeNull();
   expect(Buffer.byteLength(r.snapshot().rawLayout)).toBeLessThan(8192);
   expect(() => r.authority.read(window)).toThrow();
+});
+
+it("issues the captured split successor only after full canonical post-layout publication", () => {
+  const r = rig();
+  const before = "abcd,81x24,0,0{40x24,0,0,1,40x24,41,0,2}";
+  const after = "abcd,81x24,0,0{50x24,0,0,1,30x24,51,0,2}";
+  r.change({ rawLayout: before, panes: r.snapshot().panes.slice(0, 2) });
+  const start = r.authority.read(window);
+  const target = {
+    window,
+    layoutId: start.layoutId,
+    splitId: start.splits[0]!.splitId,
+    boundary: 50,
+  };
+  const observe = r.authority.prepareSuccessor(target);
+  expect(observe(after)).toBeUndefined();
+  r.pending(true);
+  expect(observe(after)).toBeUndefined();
+  r.pending(false);
+  r.change({ rawLayout: after });
+  const next = observe(after)!;
+  expect(next.resource).toEqual(r.authority.read(window));
+  expect(next.resource.layoutId).not.toBe(start.layoutId);
+  expect(next.resource.splits.find((s) => s.splitId === next.splitId)?.boundary).toBe(50);
+  expect(() => r.authority.resolve(target)).toThrow();
+  expect(
+    r.authority.resolve({
+      window,
+      layoutId: next.resource.layoutId,
+      splitId: next.splitId,
+      boundary: 55,
+    }).request.path,
+  ).toEqual([0]);
+});
+
+it("returns an immediate successor for an unchanged clamp and refuses lifetime/external changes", () => {
+  for (const change of ["noop", "birth", "layout", "dispose"] as const) {
+    const r = rig();
+    const observe = r.authority.prepareSuccessor(r.target);
+    if (change === "birth")
+      r.change({
+        panes: r.snapshot().panes.map((p, i) => (i ? p : { ...p, nativePaneBirthId: "999" })),
+      });
+    if (change === "layout")
+      r.change({ rawLayout: r.snapshot().rawLayout.replace("abcd,", "ffff,") });
+    if (change === "dispose") r.authority.dispose();
+    const result = observe(rawLayout);
+    if (change === "noop") expect(result?.resource).toEqual(r.resource);
+    else expect(result).toBeNull();
+  }
 });

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   WindowSplitLayoutResourceSchemaZ as layout,
   WindowSplitResizeTargetSchemaZ as target,
+  WindowSplitSuccessorSchemaZ as successorSchema,
 } from "../window-split-layout.ts";
 const uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const window = {
@@ -150,6 +151,69 @@ it("split resize mutation and receipt preserve request identity while allowing c
     resourceRevision: 1,
   };
   expect(InteractionReceiptV1SchemaZ.safeParse(receipt).success).toBe(true);
+
+  const successor = {
+    resource: {
+      ...fixture(),
+      layoutId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      splits: [
+        {
+          splitId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          axis: "cols",
+          boundary: 70,
+          start: 0,
+          length: 24,
+        },
+      ],
+    },
+    splitId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  };
+  for (const value of [undefined, null, successor]) {
+    expect(
+      WorkspaceMultiplexerMutationResultSchemaZ.safeParse({ ...result, successor: value }).success,
+    ).toBe(true);
+    expect(
+      InteractionReceiptV1SchemaZ.safeParse({
+        ...receipt,
+        proof: { ...receipt.proof, successor: value },
+      }).success,
+    ).toBe(true);
+  }
+  expect(successorSchema.parse(successor)).toEqual(successor);
+  // Each malformed successor is independently well-shaped except for the binding under test.
+  for (const invalid of [
+    { ...successor, splitId: uuid },
+    { ...successor, nativePath: [0] },
+    { ...successor, resource: { ...successor.resource, window: { ...window, linkRevision: 2 } } },
+    {
+      ...successor,
+      resource: {
+        ...successor.resource,
+        splits: [{ ...successor.resource.splits[0]!, boundary: 69 }],
+      },
+    },
+    {
+      ...successor,
+      resource: {
+        ...successor.resource,
+        rows: 80,
+        splits: [{ ...successor.resource.splits[0]!, axis: "rows" }],
+      },
+    },
+  ]) {
+    expect(
+      WorkspaceMultiplexerMutationResultSchemaZ.safeParse({ ...result, successor: invalid })
+        .success,
+    ).toBe(false);
+    expect(
+      InteractionReceiptV1SchemaZ.safeParse({
+        ...receipt,
+        proof: { ...receipt.proof, successor: invalid },
+      }).success,
+    ).toBe(false);
+  }
+  expect(successorSchema.safeParse({ ...successor, splitId: uuid }).success).toBe(false);
+
   for (const change of [
     { layoutId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
     { splitId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },

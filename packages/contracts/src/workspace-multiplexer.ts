@@ -1,4 +1,7 @@
-import { WindowSplitResizeTargetSchemaZ } from "./window-split-layout.ts";
+import {
+  WindowSplitResizeTargetSchemaZ,
+  WindowSplitSuccessorSchemaZ,
+} from "./window-split-layout.ts";
 /**
  * Contracts for the multiplexer mutation routes — split, kill, rename, zoom and
  * select.
@@ -422,7 +425,24 @@ export const WorkspaceWindowSplitResizeResultSchemaZ = MutationEnvelopeSchemaZ.e
   target: WindowSplitResizeTargetSchemaZ,
   axis: WorkspaceResizeAxisSchemaZ,
   boundary: z.number().int().min(0).max(4096),
-}).strict();
+  successor: WindowSplitSuccessorSchemaZ.nullable().optional(),
+})
+  .strict()
+  .superRefine((result, context) => {
+    const successor = result.successor;
+    if (!successor) return;
+    const split = successor.resource.splits.find((split) => split.splitId === successor.splitId);
+    if (
+      JSON.stringify(successor.resource.window) !== JSON.stringify(result.target.window) ||
+      split?.axis !== result.axis ||
+      split?.boundary !== result.boundary
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["successor"],
+        message: "Successor must match the observed window, axis and boundary",
+      });
+  });
 export type WorkspaceWindowSplitResizeResult = z.infer<
   typeof WorkspaceWindowSplitResizeResultSchemaZ
 >;

@@ -56,6 +56,7 @@ it("maps verified native clamping into an exact target receipt", async () => {
     target,
     axis: "cols",
     boundary: 3,
+    successor: null,
   });
   expect(fence).toHaveBeenCalledTimes(2);
 });

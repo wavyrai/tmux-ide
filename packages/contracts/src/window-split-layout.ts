@@ -97,3 +97,20 @@ export const WindowSplitResizeTargetSchemaZ = z
   .strict();
 export type WindowSplitLayoutResource = z.infer<typeof WindowSplitLayoutResourceSchemaZ>;
 export type WindowSplitResizeTarget = z.infer<typeof WindowSplitResizeTargetSchemaZ>;
+
+/** Canonical post-mutation resource and the matching surviving split handle. */
+export const WindowSplitSuccessorSchemaZ = z
+  .object({
+    resource: WindowSplitLayoutResourceSchemaZ,
+    splitId: z.uuid(),
+  })
+  .strict()
+  .superRefine((successor, context) => {
+    if (!successor.resource.splits.some((split) => split.splitId === successor.splitId))
+      context.addIssue({
+        code: "custom",
+        path: ["splitId"],
+        message: "Successor split must exist in its resource",
+      });
+  });
+export type WindowSplitSuccessor = z.infer<typeof WindowSplitSuccessorSchemaZ>;
