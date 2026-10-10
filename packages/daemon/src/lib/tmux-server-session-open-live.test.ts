@@ -61,6 +61,53 @@ describe.skipIf(!hasTmux).sequential("scoped ordinary session admission", () => 
       ]),
     ).toBe(stamps);
   }, 20000);
+  it("preserves trailing session whitespace without adopting its trimmed-name neighbor", async () => {
+    const name = "zzzz whitespace session ";
+    const neighbor = name.trim();
+    run(["new-session", "-d", "-s", neighbor, "exec sleep 300"]);
+    const createdId = run([
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{session_id}",
+      "-s",
+      "whitespace-before-rename",
+      "-n",
+      "long window title ",
+      "exec sleep 300",
+    ]);
+    run(["rename-session", "-t", createdId, name]);
+    const selected = (await owner.catalog()).find((entry) => entry.sessionName === name)!;
+    expect(selected).toBeDefined();
+    const nativeId = run(["display-message", "-p", "-t", `=${name}`, "#{session_id}"]);
+    const stamps = () =>
+      run([
+        "display-message",
+        "-p",
+        "-t",
+        nativeId,
+        "#{@tmux_ide_pane_id}\t#{@tmux_ide_window_id}",
+      ]);
+    const opened = await owner.openSession(selected.liveSessionId);
+    expect(owner.workspaceRegistry.get(opened.workspaceName)?.sessionName).toBe(name);
+    const first = stamps();
+    expect(first.split("\t").every(Boolean)).toBe(true);
+    expect(await owner.openSession(selected.liveSessionId)).toEqual(opened);
+    expect(stamps()).toBe(first);
+    expect(
+      run([
+        "display-message",
+        "-p",
+        "-t",
+        `=${neighbor}`,
+        "#{@tmux_ide_pane_id}#{@tmux_ide_window_id}",
+      ]),
+    ).toBe("");
+    expect((await owner.catalog()).find((entry) => entry.sessionName === name)?.liveSessionId).toBe(
+      selected.liveSessionId,
+    );
+  }, 20000);
   it("refuses replacement between selection validation and the first stamping command", async () => {
     run(["new-session", "-d", "-s", "race", "exec sleep 300"]);
     const selected = (await owner.catalog()).find((s) => s.sessionName === "race")!;

@@ -28,8 +28,9 @@ export function createNativeTmuxSessionOpener(options: {
       "-F",
       "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}",
     ]);
+    // The final field is an exact session identity; spaces are valid name bytes.
     const matches = records
-      .trim()
+      .replace(/\n+$/u, "")
       .split("\n")
       .map((line) => line.split("\t"))
       .filter(

@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "label": "trailing-session-and-window",
+      "exactCatalogName": true,
+      "nameLength": 95,
+      "open": "failure",
+      "error": "TmuxServerClientError: tmux server client request-failed",
+      "status": 503,
+      "code": "request-failed"
+    },
+    {
+      "label": "trimmed-session-trailing-window",
+      "exactCatalogName": true,
+      "nameLength": 94,
+      "open": "success",
+      "panes": 2
+    }
+  ],
+  "cleanup": [
+    "daemon-stopped",
+    "fleet-disposed"
+  ]
+}
