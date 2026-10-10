@@ -17,7 +17,7 @@ for (const key of Object.keys(process.env))
   if (key.startsWith("TMUX") || ["NODE_OPTIONS", "NODE_PATH"].includes(key))
     delete process.env[key];
 process.env.PATH = dirname(binary) + ":" + process.env.PATH;
-process.env.TMUX_IDE_NATIVE_OBSERVATION = "1";
+delete process.env.TMUX_IDE_NATIVE_OBSERVATION;
 const fleet = await createScratchFleet({
   sessions: 1,
   windowsPerSession: 1,
@@ -172,6 +172,33 @@ try {
   proof.boundary = latest().splitGesture.boundary;
   proof.paneIdentitiesStable = true;
   proof.phase = "settled";
+  await wait(() => latest()?.inputReady, "post-activation input ready");
+  const selectedRuntime = tmux(
+    "list-panes",
+    "-t",
+    session,
+    "-F",
+    "#{pane_id}\t#{@tmux_ide_pane_id}",
+  )
+    .split("\n")
+    .map((line) => line.split("\t"))
+    .find((row) => row[1] === latest().selectedPane)?.[0];
+  assert.ok(selectedRuntime);
+  const marker = "LAZY_" + randomUUID().replaceAll("-", "").slice(0, 16);
+  send({
+    type: "input",
+    request,
+    id: latest().selectedPane,
+    input: { kind: "text", data: "echo " + marker + "\n" },
+  });
+  await wait(
+    () =>
+      tmux("capture-pane", "-p", "-t", selectedRuntime)
+        .split("\n")
+        .some((line) => line.trim() === marker),
+    "same-viewer input after activation",
+  );
+  proof.sameViewerPostActivationInput = true;
 } catch (error) {
   failures.push(error);
 } finally {

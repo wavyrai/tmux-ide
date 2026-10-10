@@ -1,6 +1,10 @@
 import { NATIVE_JOURNAL_COVERAGE } from "@tmux-ide/contracts";
 import { expect, it } from "vitest";
-import { createNativeSplitCapabilityProbe } from "./native-split-capability.ts";
+import type { OwnerInteractionObservation } from "./owner-interaction-observation.ts";
+import {
+  createNativeSplitCapabilityProbe,
+  createNativeSplitReadiness,
+} from "./native-split-capability.ts";
 
 const epoch = "11111111-1111-4111-8111-111111111111";
 const journal = {
@@ -107,5 +111,51 @@ it.each(["disabled", "degraded", "wrapper", "pane", "session", "schema", "observ
       runPinnedTmux: (args) => (args[0] === "tmux-ide-events" ? JSON.stringify(capability) : split),
     });
     expect(await probe(epoch)).toBe(false);
+  },
+);
+
+it.each(["supported", "unsupported", "replaced", "epoch"])(
+  "lazy preflight never enables an unproven owner: %s",
+  async (scenario) => {
+    let activations = 0;
+    let splitProbes = 0;
+    let epochReads = 0;
+    const ready = Promise.withResolvers<boolean>();
+    let observation = {
+      nativeServerEpoch: null,
+      activateForSplit: async (captured: string) => {
+        expect(captured).toBe(epoch);
+        activations++;
+        return ready.promise;
+      },
+    } as unknown as OwnerInteractionObservation;
+    const prepare = createNativeSplitReadiness({
+      observation: () => observation,
+      runPinnedTmux: async (args) => {
+        expect(args[1]).toBe("-V");
+        if (args[0] === "tmux-ide-resize-split") {
+          splitProbes++;
+          if (scenario === "replaced")
+            observation = { ...observation } as OwnerInteractionObservation;
+          return scenario === "unsupported" ? "unknown command" : split;
+        }
+        epochReads++;
+        return JSON.stringify({
+          ...journal,
+          enabled: false,
+          serverEpoch:
+            scenario === "epoch" && epochReads === 2
+              ? "22222222-2222-4222-8222-222222222222"
+              : epoch,
+        });
+      },
+    });
+    const first = prepare();
+    const second = prepare();
+    expect(second).toBe(first);
+    ready.resolve(true);
+    expect(await first).toBe(scenario === "supported");
+    expect(activations).toBe(scenario === "supported" ? 1 : 0);
+    expect(splitProbes).toBe(1);
   },
 );

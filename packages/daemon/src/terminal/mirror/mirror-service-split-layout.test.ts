@@ -13,6 +13,7 @@ function rig(
   epoch: string | null = "11111111-1111-4111-8111-111111111111",
   heldStart = false,
   capability = async () => true,
+  prepare?: () => Promise<boolean>,
 ) {
   const sims: SimulatedChannel[] = [];
   const releases: (() => void)[] = [];
@@ -20,6 +21,7 @@ function rig(
   const service = new MirrorService({
     splitLayoutEpoch: () => epoch,
     splitLayoutCapability: capability,
+    splitLayoutPrepare: prepare,
     createIo: (_session, handlers) => {
       const state = fixtureState();
       state.descriptorRows[2] = state.descriptorRows[2]!.replace(
@@ -184,6 +186,36 @@ it.each(["epoch", "retire"])("rejects capability completion after %s changes", a
     await current.subscription.close();
   } finally {
     ready.resolve(false);
+    await r.service.dispose();
+  }
+});
+
+it("does not issue handles after retirement during lazy preparation", async () => {
+  const entered = Promise.withResolvers<void>();
+  const prepared = Promise.withResolvers<boolean>();
+  const r = rig(
+    undefined,
+    false,
+    async () => true,
+    () => {
+      entered.resolve();
+      return prepared.promise;
+    },
+  );
+  try {
+    const current = await retained(r.service);
+    const reading = r.service.readWindowSplitLayout(FIXTURE.session, current.target);
+    const rejected = expect(reading).rejects.toThrow();
+    await entered.promise;
+    await current.subscription.close();
+    const replacement = await retained(r.service);
+    prepared.resolve(true);
+    await rejected;
+    const result = await r.service.readWindowSplitLayout(FIXTURE.session, replacement.target);
+    expect(result.splits).toHaveLength(1);
+    await replacement.subscription.close();
+  } finally {
+    prepared.resolve(false);
     await r.service.dispose();
   }
 });

@@ -56,6 +56,8 @@ export interface NativeTmuxInteractionObserverOptions {
   readonly nativeServerIdentity: NativeTmuxServerIdentity;
   /** Merely probing must never turn observation on. */
   readonly enable?: boolean;
+  /** Lazy split activation pins the positive preflight epoch before enabling. */
+  readonly expectedServerEpoch?: string;
   readonly cursor?: NativeJournalCursor;
   /** Synchronous ingestion, without per-reader queues. A throw stops observation explicitly. */
   readonly onEvent: (event: NativeJournalObserverEvent) => void;
@@ -292,6 +294,8 @@ export class NativeTmuxInteractionObserver {
       return false;
     }
     if (
+      (this.#options.expectedServerEpoch !== undefined &&
+        this.#options.expectedServerEpoch !== capability.serverEpoch) ||
       (this.#capability && this.#capability.serverEpoch !== capability.serverEpoch) ||
       (this.#cursor && this.#cursor.serverEpoch !== capability.serverEpoch)
     ) {

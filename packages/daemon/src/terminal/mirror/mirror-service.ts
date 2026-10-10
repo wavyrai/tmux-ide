@@ -62,6 +62,8 @@ import {
 export interface MirrorServiceOptions {
   /** Native server epoch for split observations; absent means unsupported. */
   splitLayoutEpoch?: () => string | null;
+  /** Explicit split reads may prepare a supported observation owner once. */
+  splitLayoutPrepare?: () => Promise<boolean>;
   /** Positively probe this native epoch before issuing handles; absent denies. */
   splitLayoutCapability?: (epoch: string) => boolean | Promise<boolean>;
   onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
@@ -388,6 +390,16 @@ export class MirrorService {
     await entry.started;
     if (this.disposed || entry.retired || this.channels.get(session) !== entry)
       throw new WindowSplitLayoutUnavailable();
+    if (this.opts.splitLayoutPrepare) {
+      let ready = false;
+      try {
+        ready = await this.opts.splitLayoutPrepare();
+      } catch {
+        /* Unavailable owner. */
+      }
+      if (!ready || this.disposed || entry.retired || this.channels.get(session) !== entry)
+        throw new WindowSplitLayoutUnavailable();
+    }
     const epoch = this.opts.splitLayoutEpoch?.();
     let supported = false;
     try {

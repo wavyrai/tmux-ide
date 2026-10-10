@@ -1,0 +1,16 @@
+{
+  "sha256": "f546fd08b555d819c3416a8dc91d6ab75750b8245d28787fdcf7dc597eca572a",
+  "cases": [
+    {
+      "kind": "real-owner-observer-geometry-native-effect",
+      "boundary": 83,
+      "duplicateStable": true,
+      "canonicalSuccessorMatched": true,
+      "paneIdentitiesStable": true,
+      "inputOnlyRefused": true,
+      "staleTargetRefused": true,
+      "replacedGeometryRefused": true
+    }
+  ],
+  "cleanup": true
+}

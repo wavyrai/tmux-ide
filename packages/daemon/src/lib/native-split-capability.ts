@@ -52,3 +52,53 @@ export function createNativeSplitCapabilityProbe(options: {
     }
   };
 }
+
+/** Only an explicit canonical split read activates an otherwise stock owner.
+ * Preflight is read-only; unsupported binaries never reach the enabling reader. */
+export function createNativeSplitReadiness(options: {
+  observation: () => OwnerInteractionObservation | null;
+  runPinnedTmux: NativeSplitRunner;
+}): () => Promise<boolean> {
+  let pending: Promise<boolean> | null = null;
+  const prepare = async () => {
+    const observation = options.observation();
+    if (!observation) return false;
+    if (
+      observation.nativeServerEpoch &&
+      observation.ownedOperationSessionGuard &&
+      observation.ownedOperationPaneGuard
+    )
+      return true;
+    const probe = async () => {
+      const text = await options.runPinnedTmux(["tmux-ide-events", "-V"]);
+      if (typeof text !== "string" || Buffer.byteLength(text) > 16384)
+        throw new Error("Invalid capability");
+      const value = NativeJournalCapabilitySchemaZ.parse(JSON.parse(text));
+      if (
+        value.degraded !== 0 ||
+        value.ownedOperationTransport !== "direct-wrapper-v1" ||
+        value.ownedOperationEpochGuard !== "server-epoch-v1" ||
+        value.ownedOperationPaneGuard !== "direct-pane-v1" ||
+        value.ownedOperationSessionGuard !== "direct-session-v1"
+      )
+        throw new Error("Unsupported capability");
+      return value.serverEpoch;
+    };
+    try {
+      const epoch = await probe();
+      if (
+        options.observation() !== observation ||
+        !(await supportsNativeSplitResize(options.runPinnedTmux))
+      )
+        return false;
+      if ((await probe()) !== epoch || options.observation() !== observation) return false;
+      return (await observation.activateForSplit(epoch)) && options.observation() === observation;
+    } catch {
+      return false;
+    }
+  };
+  return () =>
+    (pending ??= prepare().finally(() => {
+      pending = null;
+    }));
+}

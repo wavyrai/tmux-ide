@@ -131,9 +131,19 @@ export function createTmuxServerClient(
     body?: unknown,
     headers?: Record<string, string>,
     signal?: AbortSignal,
+    defaultTimeoutMs?: number,
   ) {
     assertCurrent();
-    const result = await request(options, `${base}/${suffix}`, body, headers, undefined, signal);
+    const result = await request(
+      defaultTimeoutMs === undefined
+        ? options
+        : { ...options, timeoutMs: options.timeoutMs ?? defaultTimeoutMs },
+      `${base}/${suffix}`,
+      body,
+      headers,
+      undefined,
+      signal,
+    );
     assertCurrent();
     return result;
   }
@@ -190,6 +200,9 @@ export function createTmuxServerClient(
         target,
         undefined,
         signal,
+        // Six 5s capability probes + 6s lazy readiness + 5s owner catalog
+        // validation and transport margin. Other reads retain their 5s default.
+        45_000,
       );
       if (
         !raw ||

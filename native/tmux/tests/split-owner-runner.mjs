@@ -30,8 +30,8 @@ const evidence = {
   cleanup: false,
 };
 
-// Import after the isolated environment is established: native observation is opt-in.
-process.env.TMUX_IDE_NATIVE_OBSERVATION = "1";
+// No environment opt-in: the first supported split read must activate this owner.
+delete process.env.TMUX_IDE_NATIVE_OBSERVATION;
 const { createNativeTmuxServerOwner } =
   await import("../../../packages/daemon/src/lib/tmux-server-owner.ts");
 const { SessionRuntimeTransportBinder } =
@@ -70,7 +70,9 @@ try {
     linkRevision: latest.windowLinks.linkRevision,
     expectedSemanticWindowId: link.semanticWindowId,
   };
+  assert.equal(JSON.parse(run(["tmux-ide-events", "-V"])).enabled, false);
   const resource = await owner.readWindowSplitLayout(opened.workspaceName, window);
+  assert.equal(JSON.parse(run(["tmux-ide-events", "-V"])).enabled, true);
   assert.equal(resource.splits.length, 1);
   const binder = new SessionRuntimeTransportBinder(registry);
   const bind = () =>

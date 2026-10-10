@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it, spyOn } from "bun:test";
 import { createTmuxServerClient } from "./tmux-server-client.ts";
 
 const scope = {
@@ -126,4 +126,42 @@ it("does not fetch when already aborted", async () => {
   });
   await expect(c.windowSplitLayout("docs", target, AbortSignal.abort())).rejects.toThrow();
   expect(calls).toBe(0);
+});
+
+it("gives first split readiness a scoped budget while preserving explicit caller deadlines", async () => {
+  const deadline = new AbortController();
+  const timeouts: number[] = [];
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    timeouts.push(ms);
+    return deadline.signal;
+  });
+  try {
+    const ready = Promise.withResolvers<Response>();
+    const c = client(async () => ready.promise);
+    const reading = c.windowSplitLayout("docs", target);
+    expect(timeouts).toEqual([45_000]);
+    let finished = false;
+    void reading.then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    ready.resolve(Response.json(envelope()));
+    expect((await reading).resource.window).toEqual(target);
+    const explicit = createTmuxServerClient(
+      {
+        baseUrl: "http://127.0.0.1:4000",
+        ownerToken: "private-owner",
+        hostClientId: "test",
+        origin: "tmux-ide://app",
+        timeoutMs: 73,
+        fetch: (async () => Response.json(envelope())) as typeof fetch,
+      },
+      scope,
+    );
+    await explicit.windowSplitLayout("docs", target);
+    expect(timeouts).toEqual([45_000, 73]);
+  } finally {
+    timeout.mockRestore();
+  }
 });

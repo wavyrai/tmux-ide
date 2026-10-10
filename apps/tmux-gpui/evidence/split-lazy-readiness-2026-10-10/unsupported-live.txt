@@ -1,0 +1,10 @@
+{
+  "sha256": "68e33af0b2b4b7cdc3cf5b0b994bafbb265e685fea8fa90e6598516e4e9f4582",
+  "cases": [
+    {
+      "unsupportedRefused": true,
+      "observationStayedDisabled": true
+    }
+  ],
+  "cleanup": true
+}

@@ -55,6 +55,8 @@ export class OwnerInteractionObservation {
   #projector: NativeInteractionProjector | null = null;
   #capability: NativeJournalCapability | null = null;
   #start: Promise<void> | null = null;
+  #splitActivation: Promise<boolean> | null = null;
+  #expectedSplitEpoch: string | undefined;
   #bindings: OwnedNativeInteractionBindings | null = null;
   #bindingTimer: ReturnType<typeof setTimeout> | null = null;
   #bindingDeadline: number | null = null;
@@ -257,8 +259,52 @@ export class OwnerInteractionObservation {
   start(): Promise<void> {
     return (this.#start ??= this.#initialize());
   }
+  /** Called only after the canonical split owner's read-only positive preflight.
+   * Ordinary start remains opt-in. A failed lazy reader is never restarted. */
+  activateForSplit(expectedEpoch: string): Promise<boolean> {
+    if (this.#disposed || this.#halted || !this.#options.nativeServerIdentity)
+      return Promise.resolve(false);
+    if (this.#selection === "native")
+      return Promise.resolve(
+        this.nativeServerEpoch === expectedEpoch && this.ownedOperationSessionGuard,
+      );
+    return (this.#splitActivation ??= this.#activateForSplit(expectedEpoch));
+  }
+  async #activateForSplit(expectedEpoch: string): Promise<boolean> {
+    if (this.#selection === "stock") {
+      if (this.#reader) return false;
+      this.#selection = "pending";
+      this.#expectedSplitEpoch = expectedEpoch;
+      this.#start = null; // Default stock start completed without creating a reader.
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const completed = await Promise.race([
+        this.start().then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 6_000);
+        }),
+      ]);
+      if (!completed) {
+        this.#halted = true;
+        this.#retireBindings(false);
+        this.#unavailable();
+        void this.#reader?.dispose().catch(() => undefined);
+      }
+      return (
+        completed &&
+        !this.#disposed &&
+        !this.#halted &&
+        this.nativeServerEpoch === expectedEpoch &&
+        this.ownedOperationSessionGuard &&
+        this.ownedOperationPaneGuard
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async #initialize() {
-    if (this.#disposed || this.#selection === "stock") return;
+    if (this.#disposed || this.#halted || this.#selection === "stock") return;
     const factory =
       this.#options.readerFactory ?? ((options) => new NativeTmuxInteractionObserver(options));
     try {
@@ -266,13 +312,14 @@ export class OwnerInteractionObservation {
         tmuxAuthority: this.#options.tmuxAuthority,
         nativeServerIdentity: this.#options.nativeServerIdentity!,
         enable: true,
+        expectedServerEpoch: this.#expectedSplitEpoch,
         onEvent: (event) => this.#event(event),
       });
       await this.#reader.start();
     } catch {
       if (this.#selection === "native") this.#unavailable();
     }
-    if (this.#disposed) return;
+    if (this.#disposed || this.#halted) return;
     if (this.#selection === "pending") {
       this.#selection = "stock";
       this.#options.status.setStockAvailable(this.#stockAvailable);
