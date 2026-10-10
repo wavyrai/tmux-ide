@@ -19,3 +19,15 @@ Limits: channel tests use simulated control and HTTP tests use mocked owners. Th
 checks do not qualify a real authenticated live read, split execution capability,
 geometry lease admission, or GPUI end-to-end dragging. No native provenance update,
 merge, release or production session change. Existing preview remains running.
+
+## Typed client follow-up
+
+`createTmuxServerClient().windowSplitLayout(workspaceName, target, signal)` snapshots
+and validates the semantic target before I/O; validates exact server generation and
+all four returned window-link identity fields. Unknown envelope/resource fields,
+stale HTTP responses, cancellation, and client disposal refuse without retry/fallback.
+
+22 focused client tests pass (6 new split tests, 11 base, 5 existing shell tests).
+The exact staged client, excluding unrelated preexisting shell changes, separately
+passes the 17 base/split tests. Client typecheck and affected lint/formatting pass.
+This supplies client access only: no native UI gesture or geometry mutation integration.

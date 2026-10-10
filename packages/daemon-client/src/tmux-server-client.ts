@@ -1,4 +1,7 @@
 import {
+  WindowLinkTargetSchemaZ,
+  WindowSplitLayoutResourceSchemaZ,
+  type WindowLinkTarget,
   TMUX_SERVERS_API_PATH,
   PANE_STREAM_REDEEM_PATH,
   TmuxServerIdSchemaZ,
@@ -49,6 +52,7 @@ async function request(
   body?: unknown,
   headers?: Record<string, string>,
   method?: "DELETE",
+  signal?: AbortSignal,
 ) {
   const response = await (options.fetch ?? fetch)(new URL(path, options.baseUrl), {
     method: method ?? (body === undefined ? "GET" : "POST"),
@@ -60,10 +64,14 @@ async function request(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "error",
     cache: "no-store",
-    signal: AbortSignal.timeout(options.timeoutMs ?? 5_000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
+      : AbortSignal.timeout(options.timeoutMs ?? 5_000),
   });
   if (!response.ok) throw new TmuxServerClientError("request-failed", response.status);
-  return (await response.json()) as unknown;
+  const result: unknown = await response.json();
+  signal?.throwIfAborted();
+  return result;
 }
 export async function listTmuxServers(options: TmuxServerClientOptions) {
   return TmuxServersResourceSchemaZ.parse(await request(options, TMUX_SERVERS_API_PATH));
@@ -118,9 +126,14 @@ export function createTmuxServerClient(
     if (candidate.serverId !== scope.serverId || candidate.generation !== scope.generation)
       throw new TmuxServerClientError("scope-mismatch");
   }
-  async function scopedRequest(suffix: string, body?: unknown, headers?: Record<string, string>) {
+  async function scopedRequest(
+    suffix: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
     assertCurrent();
-    const result = await request(options, `${base}/${suffix}`, body, headers);
+    const result = await request(options, `${base}/${suffix}`, body, headers, undefined, signal);
     assertCurrent();
     return result;
   }
@@ -160,6 +173,45 @@ export function createTmuxServerClient(
         workspaceName: raw.workspaceName,
         liveSessionId,
       };
+    },
+    /** Observe canonical split handles; does not acquire a channel or resize a pane. */
+    async windowSplitLayout(workspaceName: string, input: WindowLinkTarget, signal?: AbortSignal) {
+      if (
+        typeof workspaceName !== "string" ||
+        !workspaceName.length ||
+        workspaceName.length > 160 ||
+        /[\0\r\n]/u.test(workspaceName)
+      )
+        throw new TypeError("Invalid split-layout workspace name");
+      const target = WindowLinkTargetSchemaZ.parse(input);
+      signal?.throwIfAborted();
+      const raw = await scopedRequest(
+        `split-layout/${encodeURIComponent(workspaceName)}`,
+        target,
+        undefined,
+        signal,
+      );
+      if (
+        !raw ||
+        typeof raw !== "object" ||
+        !("version" in raw) ||
+        raw.version !== 1 ||
+        !("server" in raw) ||
+        !("resource" in raw) ||
+        Object.keys(raw).length !== 3
+      )
+        throw new TypeError("Invalid scoped split-layout response");
+      assertScope(TmuxServerScopeSchemaZ.parse(raw.server));
+      const resource = WindowSplitLayoutResourceSchemaZ.parse(raw.resource);
+      const actual = resource.window;
+      if (
+        actual.liveSessionId !== target.liveSessionId ||
+        actual.linkId !== target.linkId ||
+        actual.expectedSemanticWindowId !== target.expectedSemanticWindowId ||
+        actual.linkRevision !== target.linkRevision
+      )
+        throw new TmuxServerClientError("scope-mismatch");
+      return { version: 1 as const, server: scope, resource };
     },
     async inventory(workspaceName: string) {
       const raw = await scopedRequest(`inventory/${encodeURIComponent(workspaceName)}`);
