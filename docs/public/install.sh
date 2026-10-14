@@ -265,7 +265,7 @@ JS
 if [ "${1:-}" = --native-alpha ]; then
   shift
   if [ "${1:-}" = --help ]; then
-    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Installs the CLI prerequisite if missing; native actions preserve daemon and tmux processes.'
+    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Ensures CLI 2.9.5 for native install/update; native actions preserve daemon and tmux processes.'
     exit 0
   fi
   [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Native alpha requires an Apple Silicon Mac'
@@ -283,8 +283,20 @@ if [ "${1:-}" = --native-alpha ]; then
   native_validate "$@"
   native_os=$(sw_vers -productVersion)
   [ "${native_os%%.*}" -ge 26 ] || fail 'The complete native alpha + CLI installation requires macOS 26 or newer'
+  native_cli_needed=false
   if [ ! -x "$HOME/.local/share/tmux-ide/current/node/bin/node" ]; then
     case "$native_action" in rollback|uninstall) fail 'Managed CLI runtime is missing; restore it before native maintenance' ;; esac
+    native_cli_needed=true
+  fi
+  case "$native_action" in
+    install|update)
+      native_cli_version=''
+      if [ -x "$HOME/.local/bin/tmux-ide" ]; then
+        native_cli_version=$("$HOME/.local/bin/tmux-ide" --version 2>/dev/null) || native_cli_version=''
+      fi
+      [ "$native_cli_version" = 'tmux-ide v2.9.5' ] || native_cli_needed=true ;;
+  esac
+  if [ "$native_cli_needed" = true ]; then
     (main --version 2.9.5 --prefix "$HOME/.local" --no-claude-agent-teams)
   fi
   native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")

@@ -34,7 +34,7 @@ and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/
 include the exact signed build used by the installer.
 
 Install the native alpha with one command. This also installs CLI 2.9.5 at
-`~/.local` when the managed runtime is missing:
+`~/.local` when the managed CLI is missing or a different version:
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha
@@ -62,6 +62,10 @@ build and message. Do not remove quarantine attributes or disable Gatekeeper to
 make an unexpected download run.
 
 ## First session
+
+If you have no sessions yet, select **Local** and its **Default** server on
+Home, choose **New session…**, enter a name and select **Create**. Open that
+session to get a shell.
 
 On **Home**, browse your machines and sessions, or select an available agent.
 **Terminals** shows the selected session's windows and panes. Names can repeat,

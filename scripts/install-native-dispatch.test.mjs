@@ -59,10 +59,13 @@ function fixture(t) {
       encoding: "utf8",
       timeout: 10000,
     });
-  const runtime = () => {
+  const runtime = (version = "2.9.5") => {
     const dir = join(home, ".local/share/tmux-ide/current/node/bin");
     mkdirSync(dir, { recursive: true });
     script(join(dir, "node"), "exit 0");
+    const launcherDir = join(home, ".local/bin");
+    mkdirSync(launcherDir, { recursive: true });
+    script(join(launcherDir, "tmux-ide"), `printf '%s\\n' 'tmux-ide v${version}'`);
   };
   return { run, runtime, temp, paths, home };
 }
@@ -148,4 +151,31 @@ test("dispatcher pin matches the maintained native bootstrap bytes", () => {
     .update(readFileSync(resolve("docs/public/install-native-alpha.sh")))
     .digest("hex");
   assert.ok(source.includes(digest));
+});
+
+for (const args of [[], ["--update"]]) {
+  test(`old managed CLI is upgraded before native ${args[0] || "install"}`, (t) => {
+    const f = fixture(t);
+    f.runtime("2.9.4");
+    assert.equal(f.run(args).status, 0);
+    const bootstrap = readFileSync(f.paths.TEST_CLI_ARGS, "utf8").trimEnd().split("\n");
+    assert.equal(bootstrap[bootstrap.indexOf("--version") + 1], "2.9.5");
+    assert.equal(bootstrap[bootstrap.indexOf("--prefix") + 1], join(f.home, ".local"));
+    assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
+  });
+}
+for (const action of ["--rollback", "--uninstall"]) {
+  test(`${action} never upgrades an older managed CLI`, (t) => {
+    const f = fixture(t);
+    f.runtime("2.9.4");
+    assert.equal(f.run([action]).status, 0);
+    assert.ok(!existsSync(f.paths.TEST_CLI_ARGS));
+    assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
+  });
+}
+test("old CLI bootstrap failure prevents native installation", (t) => {
+  const f = fixture(t);
+  f.runtime("2.9.4");
+  assert.equal(f.run([], { TEST_CLI_FAIL: "1" }).status, 19);
+  assert.ok(!existsSync(f.paths.TEST_FETCHED));
 });
