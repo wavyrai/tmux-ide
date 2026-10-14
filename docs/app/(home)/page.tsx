@@ -136,6 +136,9 @@ export default async function HomePage() {
                 <div className="hero-cta-row">
                   <CopyAgentPrompt size="hero" showPrompt={false} />
                   <div className="hero-cta-links">
+                    <Link href="/docs/native-alpha" className="hero-secondary">
+                      <span>macOS native alpha →</span>
+                    </Link>
                     <Link href="/docs/getting-started" className="hero-secondary">
                       <DocsMark />
                       <span>Docs</span>

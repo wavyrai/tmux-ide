@@ -261,4 +261,38 @@ JS
   export PATH="$root/current/node/bin:$PATH"
   "$launcher" --version
 }
-main "$@"
+# Native alpha is explicit; ordinary CLI installs keep their existing behavior.
+if [ "${1:-}" = --native-alpha ]; then
+  shift
+  if [ "${1:-}" = --help ]; then
+    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Installs the CLI prerequisite if missing; native actions preserve daemon and tmux processes.'
+    exit 0
+  fi
+  [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Native alpha requires an Apple Silicon Mac'
+  native_validate() {
+    native_action_seen=false
+    native_action=install
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --prefix) [ "$#" -ge 2 ] || fail '--prefix requires a value'; case "$2" in /*) ;; *) fail 'Native prefix must be absolute' ;; esac; shift 2 ;;
+        --update|--rollback|--uninstall) [ "$native_action_seen" = false ] || fail 'Choose one native action'; native_action_seen=true; native_action=${1#--}; shift ;;
+        *) fail "Unknown native option: $1" ;;
+      esac
+    done
+  }
+  native_validate "$@"
+  native_os=$(sw_vers -productVersion)
+  [ "${native_os%%.*}" -ge 26 ] || fail 'The complete native alpha + CLI installation requires macOS 26 or newer'
+  if [ ! -x "$HOME/.local/share/tmux-ide/current/node/bin/node" ]; then
+    case "$native_action" in rollback|uninstall) fail 'Managed CLI runtime is missing; restore it before native maintenance' ;; esac
+    (main --version 2.9.5 --prefix "$HOME/.local" --no-claude-agent-teams)
+  fi
+  native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")
+  trap 'rm -rf "$native_stage"' 0
+  trap 'exit 1' INT TERM
+  fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101406/install-native-alpha.sh "$native_stage/install.sh"
+  [ "$(digest "$native_stage/install.sh")" = 83b20635c1fef2ce4b218093b8396940f78424431b61c6a472d9dee87368ff77 ] || fail 'Native installer checksum mismatch'
+  sh "$native_stage/install.sh" "$@"
+else
+  main "$@"
+fi

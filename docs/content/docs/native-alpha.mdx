@@ -1,0 +1,145 @@
+---
+title: Native macOS alpha
+metaTitle: "Native macOS alpha: install, update and troubleshoot"
+description: "Install the tmux-ide native macOS alpha: requirements, daemon compatibility, installation, updates, rollback and reporting problems."
+---
+
+The native alpha brings Home, Terminals and searchable Commands to a macOS
+window. It connects to the tmux-ide daemon that owns your tmux sessions.
+The terminal app remains available alongside it.
+
+**Public alpha — version 0.1.0, build 2026101406.** The app is Developer ID
+signed and Apple notarized. Local installation and published-daemon compatibility
+checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
+keep the terminal app available as a fallback.
+
+## Requirements
+
+- **Apple Silicon and macOS 26 or later** for the complete one-Mac setup below,
+  including the CLI/daemon. The native app itself declares macOS 14.2 as its
+  minimum; that alone does not establish full setup support on older macOS.
+- **tmux-ide CLI/daemon 2.9.5**, qualified with this packaged alpha for terminal
+  input and history using the bundled patched tmux. The app bundles its own
+  Node.js runtime. The installer requires the managed Node 24 supplied by the
+  [universal CLI installer](/docs/getting-started#install).
+- Claude Code or Codex on the target machine if you use **New agent**. Opening
+  existing terminals does not require either harness.
+
+This alpha does not provide an Intel Mac, Windows or Linux native app.
+
+## Download and install
+
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026101406)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101406/tmux-ide-gpui-0.1.0-macos-arm64.app.tar.gz)
+include the exact signed build used by the installer.
+
+Install the native alpha with one command. This also installs CLI 2.9.5 at
+`~/.local` when the managed runtime is missing:
+
+```bash
+curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha
+```
+
+The native installer verifies pinned download checksums and the app's Apple
+signing identity. It installs under your user account, without sudo, and does
+not open the app or start the daemon. Start or update the daemon explicitly:
+
+```bash
+~/.local/bin/tmux-ide update --daemon --json
+```
+
+In Finder, choose **Go → Go to Folder**, paste this path, and open the app:
+
+```text
+~/Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app
+```
+
+You can keep the app in the Dock after opening it. Keep the managed installation
+in place so update and rollback use the same installation history.
+
+If macOS rejects the app's signature or says it is damaged, stop and report the
+build and message. Do not remove quarantine attributes or disable Gatekeeper to
+make an unexpected download run.
+
+## First session
+
+On **Home**, browse your machines and sessions, or select an available agent.
+**Terminals** shows the selected session's windows and panes. Names can repeat,
+so check the machine and server context before selecting a destination.
+
+Open **Commands** with `F5` to search sessions, agents and actions. Its
+**Keyboard shortcuts** and **Using tmux-ide** pages describe the native app's
+controls. Depending on your macOS keyboard settings, use `Fn` with function keys.
+
+`F8` goes back through accepted session visits; `Shift+F8` goes forward. Open two
+different sessions first: no previous visit means there is nowhere to go back.
+`F9` cycles retained session tabs. Closing a session tab leaves its tmux session
+running; **Close pane** is a separate, destructive action with confirmation.
+
+Use the native reference pages for this alpha. The [terminal app tour](/docs/app-surfaces) provides additional context for
+Home and Terminals; native controls can differ.
+
+## Update, roll back or uninstall
+
+Quit the native app before changing its installation. These explicit actions do
+not stop the daemon or tmux sessions. Updating the CLI does not update the native
+bundle, and the alpha installer currently selects the pinned build above rather
+than an automatic update channel.
+
+```bash
+# Install the alpha selected by the published installer
+curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha --update
+
+# Restore the previous retained, verified native build
+curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha --rollback
+
+# Detach the native app, retaining version files and configuration
+curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha --uninstall
+```
+
+Keep `--native-alpha` first. On the initial installation there is no previous
+build: rollback refusing in that case is expected. Reinstalling the same pinned
+build does not create a new rollback destination.
+
+Rollback changes the native app only, not the daemon or preference data. Check
+the older build's daemon requirements before using it. Do not delete settings
+or restart/kill tmux servers as an installation step. Quitting the client is
+separate from **Close pane** or stopping a session.
+
+## Troubleshooting
+
+**Home stays on “Loading sessions” or no sessions appear.** Check that a
+compatible daemon is running with `tmux-ide daemon info --json`, and run
+`tmux-ide doctor --json`. Record whether the app changes after you bring its
+window to the foreground. A window that updates only after a click is a bug worth
+reporting; an empty agent list alone does not mean your sessions have stopped.
+
+**Back or Forward does nothing.** First visit two distinct sessions and wait for
+each terminal to appear. Use the action in Commands to distinguish function-key
+handling from an unavailable history destination.
+
+**A machine or agent is unavailable.** Check the displayed connection state and
+[remote-machine setup](/docs/remote-machines). Retry through the app once the
+connection is restored. Do not recreate the session merely to clear a status.
+
+**The window is narrow or text is hard to read.** Try a larger window and use
+Commands to change the terminal font or theme. Report clipped controls with the
+window dimensions and macOS display scaling. Include whether scrolling, resizing
+or switching sessions caused it.
+
+## Report a bug
+
+Open an issue in the [tmux-ide issue tracker](https://github.com/wavyrai/tmux-ide/issues)
+and include:
+
+- Native version and build number, CLI version (`tmux-ide --version`), macOS
+  version and Mac architecture.
+- The shortest steps to reproduce, expected behavior and what actually happened.
+- Whether the session was local or remote, and whether the problem followed an
+  update, reconnect, resize or background/foreground transition.
+- Relevant `tmux-ide doctor --json` output and a screenshot or short recording
+  when it helps explain the problem.
+
+Review diagnostics before sharing them. Remove tokens, credentials, private
+paths and terminal contents you do not want to publish. Do not attach raw daemon
+discovery files. See [Troubleshooting](/docs/troubleshooting) for CLI checks.
