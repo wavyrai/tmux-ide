@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { writeFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
+import { parseDiagnosticLine, diagnosticStatus } from "./live-diagnostics.ts";
 const fleet = await createScratchFleet({
   sessions: 2,
   slug: "gpui-browser",
@@ -359,9 +360,43 @@ try {
     assert.ok(event.request >= lastRequest);
     lastRequest = event.request;
   }
+  assert.equal(stderr, "", "healthy browser must not report a diagnostic before shutdown");
+  const stopIndex = events.length;
+  const stopRequest = events.at(-1).request;
   await daemon.stop();
   daemon = undefined;
-  await until(() => events.some((e) => e.status.includes("unavailable") && !e.snapshot));
+  const shutdownDiagnostic = () =>
+    stderr
+      .split("\n")
+      .map(parseDiagnosticLine)
+      .find(
+        (diagnostic) =>
+          diagnostic &&
+          ["source-closed", "transport-closed", "transport-error"].includes(diagnostic.code),
+      );
+  await until(() => {
+    const diagnostic = shutdownDiagnostic();
+    return (
+      diagnostic &&
+      events
+        .slice(stopIndex)
+        .some(
+          (event) =>
+            event.request === stopRequest &&
+            event.status === diagnosticStatus(diagnostic) &&
+            event.snapshot === null &&
+            event.inputReady === false,
+        )
+    );
+  });
+  const retiredIndex = events.findIndex(
+    (event, index) => index >= stopIndex && event.status === diagnosticStatus(shutdownDiagnostic()),
+  );
+  for (const event of events.slice(retiredIndex)) {
+    assert.equal(event.request, stopRequest);
+    assert.equal(event.snapshot, null, "shutdown must clear terminal contents");
+    assert.equal(event.inputReady, false, "shutdown must revoke input");
+  }
   if (!native) {
     // Keep the same browser process across a real daemon replacement.
     daemon = await startDaemon(fleet);
