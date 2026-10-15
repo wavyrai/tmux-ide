@@ -1,6 +1,7 @@
 //! Catalog-backed Home. No daemon queries or invented activity in the render path.
 use super::{SnapshotView, browser, browser_ui::Selection, controls as native_controls};
 use gpui::{prelude::*, *};
+mod action_focus;
 pub(super) mod filters;
 mod fleet;
 pub(super) mod machine_filter;
@@ -64,11 +65,16 @@ impl SnapshotView {
             self.select(Selection::Session(id.into()), window, cx);
         }
     }
-    fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_state.surface == browser::Surface::Home
+    fn home_action_current(&self, request: u64) -> bool {
+        self.browser_state.surface == browser::Surface::Home
             && self.browser_commands.is_some()
             && self.browser_request == request
-        {
+            && self.picker.is_none()
+            && self.new_session.is_none()
+            && self.pane_actions.is_none()
+    }
+    fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.home_action_current(request) {
             self.select(Selection::Refresh, window, cx);
         }
     }
@@ -129,9 +135,14 @@ impl SnapshotView {
             ));
         }
         if connected {
+            let action_focus = self
+                .home_filter
+                .as_ref()
+                .map(|controls| controls.actions.clone());
             body = body.child(
                 div()
                     .mt_4()
+                    .tab_group()
                     .flex()
                     .flex_wrap()
                     .gap_2()
@@ -144,11 +155,17 @@ impl SnapshotView {
                             native_controls::ButtonStyle::Primary,
                             &theme,
                         )
+                        .when_some(action_focus.as_ref(), |control, focus| {
+                            action_focus::focus_control(
+                                control,
+                                &focus[0],
+                                0,
+                                theme.ink(theme.primary()),
+                            )
+                        })
                         .on_click(cx.listener(
                             move |view, _, window, cx| {
-                                if view.browser_request == request
-                                    && view.browser_state.surface == browser::Surface::Home
-                                {
+                                if view.home_action_current(request) {
                                     view.open_picker(window, cx);
                                 }
                             },
@@ -162,11 +179,17 @@ impl SnapshotView {
                             native_controls::Icon::Theme,
                             &theme,
                         )
+                        .when_some(action_focus.as_ref(), |control, focus| {
+                            action_focus::focus_control(
+                                control,
+                                &focus[1],
+                                1,
+                                theme.ink(theme.primary()),
+                            )
+                        })
                         .on_click(cx.listener(
                             move |view, _, window, cx| {
-                                if view.browser_request == request
-                                    && view.browser_state.surface == browser::Surface::Home
-                                {
+                                if view.home_action_current(request) {
                                     view.open_theme_picker(window, cx);
                                 }
                             },
@@ -181,6 +204,14 @@ impl SnapshotView {
                             native_controls::ButtonStyle::Secondary,
                             &theme,
                         )
+                        .when_some(action_focus.as_ref(), |control, focus| {
+                            action_focus::focus_control(
+                                control,
+                                &focus[2],
+                                2,
+                                theme.ink(theme.primary()),
+                            )
+                        })
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 cx.stop_propagation();

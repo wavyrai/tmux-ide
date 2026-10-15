@@ -174,3 +174,6 @@ mod preferences;
 
 #[path = "tests/fleet_admission.rs"]
 mod fleet_admission;
+
+#[path = "tests/action_admission.rs"]
+mod action_admission;

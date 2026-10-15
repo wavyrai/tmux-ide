@@ -35,6 +35,7 @@ impl Filter {
 }
 pub(in crate::tmux_snapshot) struct Controls {
     pub(super) search: Entity<SearchInput>,
+    pub(super) actions: [FocusHandle; 3],
     pub(super) filter: Filter,
     pub(super) selected: Option<String>,
     pub(super) recovery_queued: Option<(u64, u64)>,
@@ -63,6 +64,7 @@ impl SnapshotView {
             let changed = cx.subscribe(&search, |_, _, _: &Changed, cx| cx.notify());
             self.home_filter = Some(Controls {
                 search,
+                actions: std::array::from_fn(|_| cx.focus_handle()),
                 filter: Filter::All,
                 selected: None,
                 recovery_queued: None,
@@ -105,6 +107,14 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.home_action_key(event, window, cx) {
+            return true;
+        }
+        // Enter/Space belong to GPUI's focused-button key-up activation. Other
+        // Home agent shortcuts must not navigate behind a focused action either.
+        if self.home_action_index(window).is_some() {
+            return false;
+        }
         let key = &event.keystroke;
         if self.browser_state.surface != browser::Surface::Home
             || self.browser_state.home_agents.is_none()

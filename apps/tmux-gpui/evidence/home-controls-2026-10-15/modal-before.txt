@@ -1,0 +1,24 @@
+   Compiling herdr-gpui v0.1.0 (<checkout>/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 12s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 2`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-98b04e9ce7606de7)
+
+running 1 test
+test tmux_snapshot::home::tests::home_refresh_cannot_activate_behind_picker ... FAILED
+
+failures:
+
+---- tmux_snapshot::home::tests::home_refresh_cannot_activate_behind_picker stdout ----
+
+thread 'tmux_snapshot::home::tests::home_refresh_cannot_activate_behind_picker' (25683790) panicked at crates/herdr-gpui/src/tmux_snapshot/home/tests.rs:187:13:
+background Refresh bypassed picker ownership
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tmux_snapshot::home::tests::home_refresh_cannot_activate_behind_picker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2766 filtered out; finished in 0.06s
+
+error: test failed, to rerun pass `-p herdr-gpui --lib`
