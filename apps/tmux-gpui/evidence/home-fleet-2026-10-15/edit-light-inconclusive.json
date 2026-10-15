@@ -1,0 +1,12 @@
+{
+  "result": "inconclusive",
+  "scope": "private synthetic stdio QA; no production daemon",
+  "observations": [
+    "AX exposed Save changes/Cancel while screenshot showed workspace",
+    "Escape removed dialog buttons; subsequent F5 image showed previous Edit dialog",
+    "Final attempt to activate exact QA window returned noWindowsAvailable"
+  ],
+  "mutation_count": 0,
+  "cleanup": "Exact owned executable/PID checked; SIGTERM, wrapper64556 confirmed exit=-15",
+  "acceptance": "Light Edit save and focus NOT verified; retain artifact as failed observation, not passing UI evidence"
+}
