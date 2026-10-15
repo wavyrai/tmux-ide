@@ -1,0 +1,20 @@
+{
+  "scope": "independent read-only pre-signing artifact review",
+  "candidate": "0.1.2 / 2026101501",
+  "nativeSha256": "39caead96ecae652fa3684fce3fd4f0734cab4e4191b3687a6233de596d3776c",
+  "findings": {
+    "copiedLicenseAndProvenanceFilesMatchSource": 10,
+    "heroiconsHashesMatchProvenance": 19,
+    "rustNoticePackages": 753,
+    "rustNoticesMatchLockfile": true,
+    "bridgeAndNodeNoticeHashesVerified": true,
+    "systemNativeDependenciesOnly": true,
+    "minimumOsVersionsFitDeclared14_2": true
+  },
+  "limitations": [
+    "Unsigned pre-signing app; cached nonhermetic build",
+    "Native CLI identity says development preview (unreleased); support should use bundle version/build metadata",
+    "Signing/notarization, exact candidate GUI and second-Mac qualification outstanding"
+  ],
+  "result": "No concrete missing-notice or artifact-integrity blocker found"
+}
