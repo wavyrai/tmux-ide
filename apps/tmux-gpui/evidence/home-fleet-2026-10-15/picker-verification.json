@@ -7,7 +7,7 @@
   ],
   "found": "Applied checkmark absent in dark native capture; Svg paint requires explicit style.text.color",
   "change": "Added explicit foreground color to the applied checkmark at theme_style.rs",
-  "currentValidation": "115 focused picker tests and native build passed after explicit checkmark tint; formatting and later titlebar build also passed. Same-path checkmark visual verification pending.",
+  "currentValidation": "115 focused tests/native build passed. Same-path dark native Appearance capture now shows checkmark: theme-checkmark-dark-fixed.png. Light/custom/disabled states remain open.",
   "interruption": "User confirmed testing NP10 Neutral Picker Dark QA; further GUI interaction stopped",
   "status": "Reviewed branch increment; not merged or released"
 }

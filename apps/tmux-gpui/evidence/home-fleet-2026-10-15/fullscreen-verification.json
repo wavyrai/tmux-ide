@@ -6,7 +6,7 @@
   "regression": "Windowed/fullscreen/windowed at1200x780,640x400,360x400; spacer width and center allocation checked",
   "firstRun": "Failed existing center bounds expectation: actual x32/width1128 versus old x112/width1048 at1200 fullscreen. Updated fullscreen-specific center expectation; full log retained locally",
   "latestRun": "Passed: formatting, 1 native-chrome headless transition test, 3 titlebar tests, native build; exit0",
-  "physicalVerification": "Pending; user actively testing QA app, no additional GUI inputs",
+  "physicalVerification": "Native full-screen entry captured: Home begins at left edge; fullscreen-left-tabs.png. Exit/auto-reveal verification remains open: automation handle changed and keyboard shortcut did not establish exit. Private QA process cleaned by exact executable identity.",
   "releaseStatus": "Reviewed branch increment; not merged or released",
   "binarySha256": "e777a297bff0b1ff091ee42e1726cf8abba45c5e0db40546f463a95fb4fd0994"
 }
