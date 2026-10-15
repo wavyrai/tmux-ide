@@ -14,6 +14,7 @@ Home Browse, Theme and Refresh now use the same native control foundation with p
 - Independent final diff review: no blockers; original quiet styling and Home action guards preserved.
 - Native light/dark inspection at 1000 x 650 logical pixels: consistent heights, readable icons and labels, no action-row clipping.
 - Native Browse click opened Sessions and panes; Escape dismissed it. Theme click opened Appearance.
+- Native Refresh click emitted exactly `{"type":"refresh","request":1}` on the isolated browser wire. This verifies native click routing, not daemon completion.
 
 Screenshots use the repository browser-fleet fixture, isolated HOME and unique ad-hoc QA app identities; no production daemon connection. Baseline is native alpha 2026101410. New source binary SHA-256: `cac19b6ba405d4574e404c6cf73ef7f83e5c1481d6f1a05af6ca1f1130e7f3ac`.
 
