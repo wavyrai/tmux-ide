@@ -1,0 +1,418 @@
+{
+  "run": {
+    "conclusion": "success",
+    "databaseId": 38770253051,
+    "headSha": "378197bb5e68ba78ffde0efaa8648324fb1eec18",
+    "jobs": [
+      {
+        "completedAt": "2026-10-15T17:27:44Z",
+        "conclusion": "success",
+        "databaseId": 116544372057,
+        "name": "macOS Rust correctness (no physical UI claim)",
+        "startedAt": "2026-10-15T16:36:26Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T16:36:29Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T16:36:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:35Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T16:36:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:37Z",
+            "conclusion": "success",
+            "name": "Run pnpm/action-setup@v4",
+            "number": 3,
+            "startedAt": "2026-10-15T16:36:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:51Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-10-15T16:36:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:59Z",
+            "conclusion": "success",
+            "name": "Install JavaScript packaging dependencies",
+            "number": 5,
+            "startedAt": "2026-10-15T16:36:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:37:08Z",
+            "conclusion": "success",
+            "name": "Load repository-pinned Rust toolchain",
+            "number": 6,
+            "startedAt": "2026-10-15T16:36:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:37:22Z",
+            "conclusion": "success",
+            "name": "Formatting and file size",
+            "number": 7,
+            "startedAt": "2026-10-15T16:37:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:43:21Z",
+            "conclusion": "success",
+            "name": "Lint both feature configurations",
+            "number": 8,
+            "startedAt": "2026-10-15T16:37:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:03:16Z",
+            "conclusion": "success",
+            "name": "Workspace tests",
+            "number": 9,
+            "startedAt": "2026-10-15T16:43:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:17:46Z",
+            "conclusion": "success",
+            "name": "Build and check the release preview executable",
+            "number": 10,
+            "startedAt": "2026-10-15T17:03:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:20:13Z",
+            "conclusion": "success",
+            "name": "Install pinned license-report generator",
+            "number": 11,
+            "startedAt": "2026-10-15T17:17:46Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:20:25Z",
+            "conclusion": "success",
+            "name": "Fetch locked dependencies for offline packaging",
+            "number": 12,
+            "startedAt": "2026-10-15T17:20:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:26:24Z",
+            "conclusion": "success",
+            "name": "Assemble and test the macOS ARM64 app",
+            "number": 13,
+            "startedAt": "2026-10-15T17:20:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:26:28Z",
+            "conclusion": "success",
+            "name": "Install private tmux build prerequisites",
+            "number": 14,
+            "startedAt": "2026-10-15T17:26:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:10Z",
+            "conclusion": "success",
+            "name": "Build pinned tmux for packaged fleet journeys",
+            "number": 15,
+            "startedAt": "2026-10-15T17:26:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:37Z",
+            "conclusion": "success",
+            "name": "Exact packaged Home and fleet journeys (no GUI)",
+            "number": 16,
+            "startedAt": "2026-10-15T17:27:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:38Z",
+            "conclusion": "success",
+            "name": "Preserve packaging evidence",
+            "number": 17,
+            "startedAt": "2026-10-15T17:27:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:39Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 32,
+            "startedAt": "2026-10-15T17:27:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:39Z",
+            "conclusion": "success",
+            "name": "Post Run pnpm/action-setup@v4",
+            "number": 33,
+            "startedAt": "2026-10-15T17:27:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:39Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 34,
+            "startedAt": "2026-10-15T17:27:39Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T17:27:43Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 35,
+            "startedAt": "2026-10-15T17:27:39Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wavyrai/tmux-ide/actions/runs/38770253051/job/116544372057"
+      },
+      {
+        "completedAt": "2026-10-15T16:41:21Z",
+        "conclusion": "success",
+        "databaseId": 116544372521,
+        "name": "Bridge contracts and isolated lifecycle",
+        "startedAt": "2026-10-15T16:36:21Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-15T16:36:22Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-15T16:36:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:24Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-15T16:36:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:25Z",
+            "conclusion": "success",
+            "name": "Run pnpm/action-setup@v4",
+            "number": 3,
+            "startedAt": "2026-10-15T16:36:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:30Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v4",
+            "number": 4,
+            "startedAt": "2026-10-15T16:36:25Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:36:31Z",
+            "conclusion": "success",
+            "name": "Run oven-sh/setup-bun@v2",
+            "number": 5,
+            "startedAt": "2026-10-15T16:36:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:37:02Z",
+            "conclusion": "success",
+            "name": "Run ./.github/actions/setup-tmux",
+            "number": 6,
+            "startedAt": "2026-10-15T16:36:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:37:05Z",
+            "conclusion": "success",
+            "name": "Run pnpm install --frozen-lockfile",
+            "number": 7,
+            "startedAt": "2026-10-15T16:37:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:37:59Z",
+            "conclusion": "success",
+            "name": "Bridge typecheck and deterministic tests",
+            "number": 8,
+            "startedAt": "2026-10-15T16:37:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:38:36Z",
+            "conclusion": "success",
+            "name": "Home and fleet source journeys",
+            "number": 9,
+            "startedAt": "2026-10-15T16:37:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:38:37Z",
+            "conclusion": "success",
+            "name": "Preserve Home and fleet source evidence",
+            "number": 10,
+            "startedAt": "2026-10-15T16:38:36Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:19Z",
+            "conclusion": "success",
+            "name": "Real isolated daemon journeys",
+            "number": 11,
+            "startedAt": "2026-10-15T16:38:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:19Z",
+            "conclusion": "success",
+            "name": "Post Run ./.github/actions/setup-tmux",
+            "number": 18,
+            "startedAt": "2026-10-15T16:41:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:19Z",
+            "conclusion": "success",
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "number": 19,
+            "startedAt": "2026-10-15T16:41:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:19Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v4",
+            "number": 20,
+            "startedAt": "2026-10-15T16:41:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:19Z",
+            "conclusion": "success",
+            "name": "Post Run pnpm/action-setup@v4",
+            "number": 21,
+            "startedAt": "2026-10-15T16:41:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 22,
+            "startedAt": "2026-10-15T16:41:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-15T16:41:20Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 23,
+            "startedAt": "2026-10-15T16:41:20Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wavyrai/tmux-ide/actions/runs/38770253051/job/116544372521"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/wavyrai/tmux-ide/actions/runs/38770253051"
+  },
+  "logSha256": "e70dd6710510f8116076040fd72a039bab767ea4558066bf3766172082f0eeac",
+  "packageTests": {
+    "passed": 10,
+    "failed": 0
+  },
+  "packagedJourneys": [
+    {
+      "passed": true,
+      "packaged": true,
+      "genuinelyEmptyServers": 2,
+      "duplicateLabels": true,
+      "selectedSecondByIdentity": true,
+      "firstStillEmpty": true,
+      "sourceIdentityGeometryStampsUnchanged": true,
+      "exactCreationCount": 1,
+      "nativeUi": false,
+      "ownedCleanup": true
+    },
+    {
+      "passed": true,
+      "packaged": true,
+      "sessions": 2,
+      "machineSelectedAndCleared": true,
+      "staleRevisionRefused": true,
+      "sameConnection": true,
+      "attentionScopeRetained": true,
+      "homeAndAttentionContext": true,
+      "sourceIdentityGeometryAndStampsUnchanged": true,
+      "noPromotion": true,
+      "multipleMachinesAndRemovalTested": false,
+      "ownedCleanup": true,
+      "nativeUi": false
+    },
+    {
+      "passed": true,
+      "harness": null,
+      "structuredAgentMetadata": false,
+      "distinctCreatedWindowSelected": true,
+      "exactNewPaneInput": true,
+      "exactOneCreation": true,
+      "duplicateAndStaleRefused": true,
+      "sourceIdentityPreserved": true,
+      "cleanup": true
+    },
+    {
+      "passed": true,
+      "scrolledHistoryOffset": true,
+      "backToLiveInput": true,
+      "navigationClearsOffset": true,
+      "sourceIdentityPreserved": true,
+      "packaged": true,
+      "cleanup": true
+    },
+    {
+      "passed": true,
+      "layout": "panes",
+      "closedWindow": false,
+      "exactPaneRemoved": true,
+      "canonicalSurvivorSelected": true,
+      "survivorInput": true,
+      "siblingIdentityPreserved": true,
+      "lastPaneRefused": true,
+      "refusedPaneInput": true,
+      "duplicateStaleBackgroundRefused": true,
+      "cleanup": true
+    },
+    {
+      "passed": true,
+      "layout": "windows",
+      "closedWindow": true,
+      "exactPaneRemoved": true,
+      "canonicalSurvivorSelected": true,
+      "survivorInput": true,
+      "siblingIdentityPreserved": true,
+      "lastPaneRefused": true,
+      "refusedPaneInput": true,
+      "duplicateStaleBackgroundRefused": true,
+      "cleanup": true
+    }
+  ],
+  "scope": "Hosted qualification of submitted head; separate from local candidate artifact. No native GUI, signing, notarization, second-Mac, merge or release claim."
+}
