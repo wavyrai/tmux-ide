@@ -69,11 +69,7 @@ pub(super) fn row(
     let applied = matches!(&target, Target::Theme(id)
         if view.browser_state.appearance.as_ref().is_some_and(|a| &a.selected == id));
     let focused = view.picker.as_ref().is_some_and(|p| p.selected == index);
-    let fill = if focused {
-        theme.primary_wash()
-    } else {
-        theme.surface
-    };
+    let fill = if focused { theme.active } else { theme.surface };
     div()
         .id(("picker-row", index))
         .debug_selector(move || format!("picker-row-{index}"))
@@ -94,7 +90,12 @@ pub(super) fn row(
                 .hover(|style| style.bg(rgb(theme.active)))
         })
         .child(div().size(px(16.)).flex_shrink_0().when(applied, |slot| {
-            slot.child(svg().path("icons/check.svg").size_full())
+            slot.child(
+                svg()
+                    .path("icons/check.svg")
+                    .size_full()
+                    .text_color(rgb(theme.foreground)),
+            )
         }))
         .child(div().flex_1().min_w_0().truncate().child(row.label.clone()))
         .when(applied, |item| item.child(div().text_xs().child("Applied")))

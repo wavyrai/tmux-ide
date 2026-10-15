@@ -150,3 +150,7 @@ as an additional reference for layering.
   selection fills; shared tabs no longer use colored underline/divider styling.
   Terminal cell colors and custom preset values remain canonical. Source and
   package checks do not substitute for native visual qualification.
+- Shared titlebar spacing now follows native full-screen state: the leading
+  traffic-light reservation is removed in full screen and restored on exit.
+  Native-picker decoration uses the shared subtle separator and neutral active
+  fill; the applied theme icon has an explicit tint required by GPUI SVG paint.

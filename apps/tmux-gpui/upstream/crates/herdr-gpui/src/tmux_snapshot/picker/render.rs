@@ -70,7 +70,7 @@ impl SnapshotView {
                         .overflow_hidden()
                         .rounded(px(crate::config::corners::PANEL))
                         .border_1()
-                        .border_color(rgb(theme.active))
+                        .border_color(super::super::controls::separator(&theme))
                         .bg(rgb(theme.surface))
                         .shadow_lg()
                         .occlude()
