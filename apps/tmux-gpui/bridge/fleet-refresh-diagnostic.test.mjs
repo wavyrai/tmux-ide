@@ -57,6 +57,9 @@ for (const mode of ["retired", "inflight", "active-failure"])
         buffer = "",
         stderr = "";
       const failures = [];
+      let routeRemoved = false;
+      let routeRetirementObserved = false;
+      let unavailablePublications = 0;
       let holdIdentity = false,
         heldIdentity,
         failIdentity = false;
@@ -168,6 +171,17 @@ for (const mode of ["retired", "inflight", "active-failure"])
             let end;
             while ((end = buffer.indexOf("\n")) >= 0) {
               latest = JSON.parse(buffer.slice(0, end));
+              if (routeRemoved && latest.home.phase === "unavailable") {
+                // Every intermediate retirement/failure publication must stay safe,
+                // even before the requested refresh has produced its final guidance.
+                unavailablePublications++;
+                if (latest.status === "Machine connection changed — refresh sessions to reconnect")
+                  routeRetirementObserved = true;
+                assert.equal(latest.snapshot, null);
+                assert.equal(latest.inputReady, false);
+                assert.equal(latest.selectedServer, null);
+                assert.deepEqual(latest.sessions, []);
+              }
               buffer = buffer.slice(end + 1);
             }
           } catch (error) {
@@ -212,8 +226,13 @@ for (const mode of ["retired", "inflight", "active-failure"])
             send({ type: "refresh", request: 2 });
             await until(() => heldIdentity !== undefined);
           }
+          routeRemoved = true;
           await rm(record);
-          await until(() => latest?.home.phase === "unavailable" && latest.selectedServer === null);
+          // Home can become unavailable before the selected route is retired.
+          // Wait for the actual retirement, not just its first visible symptom.
+          // Latch the decoded event: an aborted inflight refresh may immediately
+          // publish its failure guidance in the same stdout chunk.
+          await until(() => routeRetirementObserved);
           holdIdentity = false;
           heldIdentity?.end(JSON.stringify({ ...identity, ok: true }));
           for (const request of [3, 4]) {
@@ -222,7 +241,8 @@ for (const mode of ["retired", "inflight", "active-failure"])
               () =>
                 latest?.request === request &&
                 latest.home.phase === "unavailable" &&
-                latest.status !== "Loading",
+                latest.status ===
+                  "Machine or session changed. Refresh the fleet and select the session again.",
             );
             assert.equal(stderr, "", "retired route must not be misclassified as private config");
             assert.equal(
@@ -235,6 +255,7 @@ for (const mode of ["retired", "inflight", "active-failure"])
             assert.equal(latest.selectedServer, null);
             assert.deepEqual(latest.sessions, []);
           }
+          assert.ok(unavailablePublications > 0, "retirement publications were checked");
           assert.equal(stderr, "", "retired route must not be misclassified as private config");
         }
       } catch (error) {
