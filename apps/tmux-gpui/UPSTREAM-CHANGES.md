@@ -102,7 +102,7 @@ The tmux-only `glass.rs` / `glass/macos.rs` boundary adds Apple's public
 `NSGlassEffectView` behind the GPUI Metal view using the raw-handle borrowing
 pattern from `browser/native.rs`. It owns only its inserted sibling and its
 accessibility observer. The member Cargo manifest enables existing objc2 AppKit
-and Foundation features; dependency versions and lockfile are unchanged. Sidebar
+and Foundation features; dependency versions and lockfile are unchanged. Navigation
 chrome exposes the material only when the native boundary reports success;
 unsupported/accessibility modes and terminal content remain opaque. This is a
 new tmux adaptation, not a Liquid Glass implementation copied from Herdr.
@@ -164,9 +164,15 @@ as an additional reference for layering.
   fullscreen action, including when terminal or picker inputs have focus. It does
   not import the Herdr terminal/session keymap or change daemon authority.
 
-- The tmux sidebar uses the shared panel/control corner radii and a neutral
-  outline. Its native AppKit glass view uses the same panel radius; the terminal
-  canvas stays rectangular and retains daemon-projected geometry.
+- The tmux shell uses one rectangular native AppKit glass view beneath the full
+  viewport and one root tint for continuous header/sidebar chrome. Navigation
+  bands inherit that material; the former rounded sidebar outline and corner
+  cutouts are removed. The rounded opaque workspace sits inside an 8px gutter,
+  with window/pane headers and a rectangular terminal canvas inset far enough
+  to avoid its corner silhouette. Home uses the same content treatment. The
+  shared navigation-header wrapper accepts a fill override; other Herdr
+  titlebar renderers keep their existing backgrounds. Accessibility and
+  unsupported-platform fallback remains opaque, using the same chrome color.
 
 - Saved-machine removal reuses the editor's dialog-local focus pattern for
   Remove and Cancel/Done. Forward/reverse Tab and GPUI key-up activation retain
@@ -177,3 +183,9 @@ as an additional reference for layering.
   pattern for its SSH target, Cancel and Save footer. GPUI key-up callbacks
   retain form/request identity and composition guards. SSH validation and the
   existing daemon connection path are unchanged.
+
+- Saved-machine removal feedback distinguishes an actually pending registry
+  operation from an unconfirmed result. The latter directs users to Cancel and
+  refresh; an uncorrelated registry error is not presented as proof that this
+  removal failed. Confirmed absence and existing mutation/admission guards are
+  unchanged.

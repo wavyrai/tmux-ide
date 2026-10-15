@@ -23,25 +23,18 @@ pub(super) fn options() -> WindowOptions {
 }
 #[cfg(test)]
 pub(super) fn frame(body: impl IntoElement, window: &mut Window) -> AnyElement {
-    themed_frame(
-        body,
-        window,
-        &Theme::default(),
-        Theme::default().background,
-        false,
-        "Home",
-    )
+    themed_frame(body, window, &Theme::default(), false, "Home")
 }
 pub(super) fn themed_frame(
     body: impl IntoElement,
     window: &mut Window,
     theme: &Theme,
-    canvas: u32,
     glass: bool,
     navigation: impl IntoElement,
 ) -> AnyElement {
     let font = Config::default().ui;
-    let header = crate::titlebar::navigation_header(theme, window, navigation.into_any_element());
+    let header =
+        crate::titlebar::navigation_header(theme, window, navigation.into_any_element(), rgba(0));
     let content = div()
         .on_action(|action: &crate::RunCommand, window, cx| {
             if action.command == crate::controls::Command::ToggleFullScreen {
@@ -56,7 +49,7 @@ pub(super) fn themed_frame(
         .overflow_hidden()
         .text_font(&font)
         .text_size(px(font.size))
-        .when(!glass, |content| content.bg(rgb(canvas)))
+        .bg(chrome_fill(theme.surface, glass))
         .text_color(rgb(theme.foreground))
         .child(header)
         .child(
@@ -75,10 +68,29 @@ pub(super) fn themed_frame(
 mod tests;
 
 // Tint only the navigation chrome; terminal surfaces retain opaque theme colors.
-pub(super) fn sidebar_fill(color: u32, glass: bool) -> Rgba {
+pub(super) fn chrome_fill(color: u32, glass: bool) -> Rgba {
     if glass {
         rgba((color << 8) | 0x55)
     } else {
         rgb(color)
     }
+}
+
+/// Insets keep native material visible while every terminal cell stays opaque.
+pub(super) const CONTENT_INSET: f32 = 8.;
+pub(super) fn content_panel(canvas: u32) -> Stateful<Div> {
+    div()
+        .id("workspace-content")
+        .debug_selector(|| "tmux-workspace-content".into())
+        .size_full()
+        .min_w_0()
+        .min_h_0()
+        .rounded(px(crate::config::corners::PANEL))
+        // Child backgrounds and the rectangular terminal canvas stay inside the
+        // rounded silhouette; GPUI's overflow clip itself is rectangular.
+        .p(px(crate::config::corners::PANEL / 3.))
+        .overflow_hidden()
+        .bg(rgb(canvas))
+        .flex()
+        .flex_col()
 }

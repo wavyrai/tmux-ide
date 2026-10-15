@@ -27,7 +27,6 @@ mod session_history;
 mod session_open;
 mod session_tabs;
 mod shell;
-mod sidebar_backdrop;
 mod stream;
 mod terminal_font;
 mod terminal_links;

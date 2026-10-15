@@ -101,8 +101,8 @@ pub(super) fn sync(
     if slot.is_none() {
         let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         glass.setStyle(NSGlassEffectViewStyle::Regular);
-        // Match the GPUI sidebar surface; the terminal remains outside these bounds.
-        glass.setCornerRadius(f64::from(crate::config::corners::PANEL));
+        // A single continuous chrome material; GPUI paints the inset content opaquely.
+        glass.setCornerRadius(0.);
         parent.addSubview_positioned_relativeTo(&glass, NSWindowOrderingMode::Below, Some(&view));
         *slot = Some(Native {
             glass,

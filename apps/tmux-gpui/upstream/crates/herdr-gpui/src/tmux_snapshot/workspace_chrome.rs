@@ -100,7 +100,6 @@ impl SnapshotView {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .bg(rgb(theme.surface))
             .pr_2();
         for (id, label, tab, selected) in [
             (

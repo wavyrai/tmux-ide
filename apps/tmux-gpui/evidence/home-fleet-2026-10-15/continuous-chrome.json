@@ -1,0 +1,89 @@
+{
+  "scope": "Continuous header/sidebar native material and rounded opaque inset content",
+  "nativeBinarySha256": "c2fac17a7be5572a7a28e25a7aab617d20c4b47594407bec87cd28625d5bc468",
+  "checks": {
+    "focusedTmuxSnapshot": 371,
+    "workspaceDefault": {
+      "gpuiPassed": 2786,
+      "gpuiIgnored": 7,
+      "clientPassed": 217
+    },
+    "workspaceAllFeatures": {
+      "gpuiPassed": 2817,
+      "gpuiIgnored": 8,
+      "clientPassed": 217
+    },
+    "format": "passed",
+    "fileSize": "passed",
+    "clippyBoth": "passed",
+    "nativeBuild": "passed",
+    "fullGateExit": 0,
+    "independentSourceReview": "np01_review: no blocking layout defect"
+  },
+  "logs": [
+    ".tasks/native-polish-np07/continuous-chrome-focused.log",
+    ".tasks/native-polish-np07/continuous-chrome-full-gates.log",
+    ".tasks/native-polish-np07/continuous-chrome-compile-before.log"
+  ],
+  "sourceHashes": {
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/titlebar.rs": "18c5b923570ff19e803e17fa9ee5befc304a5f90b1065431805796b43c962010",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs": "2422f9b6bfafd8c0dd73c0f9f74da7c440909a6ada1433db1b56837a4c98c053",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs": "ab037aea2842f90eb943fe40728a183074a1cd615a0530a5325db1dcd5980c7c",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/glass.rs": "fe1388177dc96a0b91f6068260be469b7192bb8bc3276c4a75828479e31f2d46",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/glass/macos.rs": "752d35462e4d5ef917eeffd6d8356eef33bd1c2fe08756ed5ec59322bd9d3d4d",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/session_tabs/render.rs": "7aacaf022cfe4e8ece93635051146b78dba7dcaf24f69c1109601eed20db0c20",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/shell.rs": "908ce813af33a8662d37aa679150cb47e39e65ea397765438a87f7415db8044a",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/shell_tests.rs": "584a35564a1d09647c4972a1ad5539e09265b6d395ec07de964e3c0bcf35118c",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/shell_tests/content_geometry.rs": "921b909fc3176149d6e647f0a85087890493cc9ca2e88b99a0f2c29fa095b583",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/workspace_chrome.rs": "9822ba648d74a397291c09dd707dfc08350158a98839f8ce4631fe3a941451d0",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/picker/machine_remove.rs": "d989118e5178c9512f8f11b5e34edcd46d343bd10858f71d23a5723ea87be091",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/picker/tests/machine_remove_focus.rs": "dbcb4b92a1910b39a925e7648b9ca9621dac14fd31c980a52afcfd366c4f32cb"
+  },
+  "deleted": [
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/sidebar_backdrop.rs"
+  ],
+  "limits": [
+    "Native visual acceptance pending on exact candidate.",
+    "Windows/Linux cross checks not run: just and mingw compiler unavailable; pinned custom toolchain has no installed cross targets.",
+    "Existing tests cover dynamic translated divider/pane-header hit regions and fullscreen; physical native clipping/fallback still requires observation.",
+    "Binary also includes separately reviewed Remove pending/unconfirmed feedback fix.",
+    "Branch work; not merged or released."
+  ],
+  "nativeObservations": {
+    "dark": {
+      "image": "continuous-chrome-dark.png",
+      "window": "NP05 Continuous Glass Dark QA",
+      "backendLog": "tmux-preview: native chrome glass true",
+      "observed": "Continuous header/sidebar surround with inset opaque terminal content; no separate rounded sidebar border",
+      "scope": "synthetic stdio snapshot; not actual daemon or performance qualification"
+    },
+    "interruption": "User-change notification before F5 input; further native actions withheld pending response",
+    "remaining": [
+      "light",
+      "Home and sidebar-hide roundtrip",
+      "fullscreen/narrow",
+      "accessibility fallback",
+      "native grid edge and resize interactions",
+      "removal-refusal same-path test"
+    ]
+  },
+  "packagedQualification": {
+    "exitCode": 0,
+    "tests": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "nativeSha256": "2a6609726cbc5aff9d10c24568b7a090618b6685cb8a634ab2ea81c8d4c1635a",
+    "sourceSha256": "830413d8bddce3b7be342c29644647f90e66cd830948d981784f63923beb7c86",
+    "limits": [
+      "Cached nonhermetic release build, not clean build.",
+      "No GUI launch, signing or publication.",
+      "Protected root CLI not rebuilt.",
+      "Existing installed official pinned toolchain used; rustc SHA matches manual temp toolchain."
+    ],
+    "receipt": ".tasks/continuous-chrome-package-20261015-02/qualification.json",
+    "scope": "App assembly and packaged bridge process tests; not physical GUI, real tmux fleet journey, signing, or publication.",
+    "testLog": "continuous-chrome-package-tests.log"
+  }
+}

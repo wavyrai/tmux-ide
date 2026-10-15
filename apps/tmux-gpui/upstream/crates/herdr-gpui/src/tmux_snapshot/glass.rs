@@ -14,8 +14,8 @@ pub(super) struct Glass {
     active: bool,
 }
 impl Glass {
-    /// Bounds are GPUI logical points from the content view's top-left, excluding
-    /// the header. False means the caller must render opaque chrome.
+    /// Bounds cover the shell in GPUI logical points from the content view's top-left.
+    /// Callers paint workspace content opaquely. False requires opaque chrome.
     pub(super) fn sync(&mut self, window: &Window, bounds: Bounds<Pixels>, surface: u32) -> bool {
         #[cfg(target_os = "macos")]
         {
@@ -30,7 +30,7 @@ impl Glass {
                     gpui::WindowBackgroundAppearance::Opaque
                 });
                 self.active = active;
-                eprintln!("tmux-preview: native sidebar glass {active}");
+                eprintln!("tmux-preview: native chrome glass {active}");
             }
             active
         }
@@ -51,8 +51,8 @@ impl Glass {
         }
     }
 }
-// This API intentionally cannot cover a terminal: callers provide sidebar bounds,
-// and width is capped at the preview's fixed 224-point navigation column.
+// Material is bounded by the native content view. The shell covers its workspace
+// panel opaquely, exposing this single material only through navigation and gutters.
 #[cfg(any(target_os = "macos", test))]
 fn rect(
     x: f64,
@@ -69,7 +69,6 @@ fn rect(
         || x != 0.
         || y < 0.
         || width <= 0.
-        || width > 224.
         || height <= 0.
         || x + width > view_width
         || y + height > view_height
@@ -88,7 +87,7 @@ mod tests {
     use super::*;
     use core::prelude::v1::test;
     #[test]
-    fn sidebar_rect_is_bounded_and_handles_native_coordinates() {
+    fn chrome_rect_is_bounded_and_handles_native_coordinates() {
         assert_eq!(
             rect(0., 32., 224., 368., 640., 400., false),
             Some([0., 0., 224., 368.])
@@ -97,8 +96,12 @@ mod tests {
             rect(0., 32., 224., 368., 640., 400., true),
             Some([0., 32., 224., 368.])
         );
+        assert_eq!(
+            rect(0., 0., 640., 400., 640., 400., false),
+            Some([0., 0., 640., 400.])
+        );
         for values in [
-            [0., 32., 225., 368.],
+            [0., 32., 641., 368.],
             [0., 32., 224., 369.],
             [1., 32., 224., 368.],
             [0., -1., 224., 368.],

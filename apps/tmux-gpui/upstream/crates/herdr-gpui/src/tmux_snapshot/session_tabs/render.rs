@@ -25,7 +25,6 @@ impl SnapshotView {
             .items_center()
             .overflow_x_scroll()
             .track_scroll(&self.session_tabs.scroll)
-            .bg(rgb(theme.surface))
             .border_b_1()
             .border_color(rgb(theme.muted).opacity(0.25));
         for (index, row) in p.rows.iter().enumerate() {
@@ -124,17 +123,5 @@ impl SnapshotView {
             );
         }
         Some(strip.into_any_element())
-    }
-    pub(in crate::tmux_snapshot) fn retained_session_height(&self) -> f32 {
-        if self
-            .browser_state
-            .session_tabs
-            .as_ref()
-            .is_some_and(|p| !p.rows.is_empty())
-        {
-            HEIGHT
-        } else {
-            0.
-        }
     }
 }
