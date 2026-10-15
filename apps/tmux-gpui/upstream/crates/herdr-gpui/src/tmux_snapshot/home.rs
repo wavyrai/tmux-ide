@@ -161,6 +161,7 @@ impl SnapshotView {
                                 &focus[0],
                                 0,
                                 theme.ink(theme.primary()),
+                                theme.active,
                             )
                         })
                         .on_click(cx.listener(
@@ -185,6 +186,7 @@ impl SnapshotView {
                                 &focus[1],
                                 1,
                                 theme.ink(theme.primary()),
+                                self.canvas(),
                             )
                         })
                         .on_click(cx.listener(
@@ -210,6 +212,7 @@ impl SnapshotView {
                                 &focus[2],
                                 2,
                                 theme.ink(theme.primary()),
+                                self.canvas(),
                             )
                         })
                         .on_click(cx.listener(

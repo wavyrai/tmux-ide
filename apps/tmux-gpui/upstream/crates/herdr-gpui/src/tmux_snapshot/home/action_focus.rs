@@ -6,12 +6,15 @@ pub(super) fn focus_control(
     focus: &FocusHandle,
     index: isize,
     color: u32,
+    background: u32,
 ) -> Stateful<Div> {
     control
         .track_focus(focus)
         .tab_index(index)
         .focus_visible(move |style| {
-            style.shadow(vec![BoxShadow {
+            // An outer shadow paints beneath the full box. Cover its interior
+            // on otherwise transparent controls so focus remains a ring.
+            style.bg(rgb(background)).shadow(vec![BoxShadow {
                 color: rgb(color).into(),
                 offset: point(px(0.), px(0.)),
                 blur_radius: px(0.),

@@ -56,3 +56,14 @@ Fresh private stdio fixtures verified light/dark confirmation appearance at 1000
 ![Close pane dark](close-pane-dark.png)
 
 The fresh Home preview verified Tab→Tab→Space opens Appearance, Escape returns to Home, Shift-Tab reaches Refresh, and Enter emits one Refresh command. Browse's focus ring is now visibly stronger. A new native paint defect was found on transparent Theme/Refresh controls: their outer shadow fills the interior blue. A separate reviewed correction is rebuilding; these captures do not claim final focus acceptance. Narrow geometry, direct VoiceOver and live daemon journeys remain outstanding.
+
+
+## Focus-paint correction verified
+
+Native reproduction showed an outer box shadow filling transparent Theme/Refresh button interiors. The focus helper now supplies an opaque interior: existing active fill for Browse, Home canvas for Theme/Refresh. Hover/pressed styles still apply afterward, and geometry is unchanged. Independent review passed. Full formatting/file-size, both Clippy variants, default/all-feature workspace tests and native debug build passed again for this correction.
+
+Fresh isolated native windows verify the focused Refresh interior remains unchanged in light and dark; its ring is visible. Tab/Tab/Space still opens Appearance after the correction. Screenshot dimensions remain 1000×650 logical points; attempted edge drags did not resize, so narrow physical layout remains unverified. These are static wire fixtures, not live-daemon qualification or direct VoiceOver dispatch.
+
+![Incorrect filled interior](focus-transparent-before.png)
+![Corrected light focus ring](focus-refresh-light-after.png)
+![Corrected dark focus ring](focus-refresh-dark-after.png)
