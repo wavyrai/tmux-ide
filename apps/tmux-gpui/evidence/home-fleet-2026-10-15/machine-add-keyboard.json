@@ -1,0 +1,38 @@
+{
+  "scope": "Add-machine dialog keyboard footer accessibility",
+  "baseCommit": "aaa8aa70",
+  "behavior": [
+    "Tab/Shift-Tab traverses SSH target, Cancel, Save and connect in visible order.",
+    "Focused footer controls activate on key-up with captured form/request identity.",
+    "Validation, composition and terminal authority guards remain unchanged."
+  ],
+  "verification": {
+    "focusedPickerTests": 125,
+    "newTests": 4,
+    "workspaceDefault": {
+      "gpuiPassed": 2784,
+      "gpuiIgnored": 7,
+      "clientPassed": 217
+    },
+    "workspaceAllFeatures": {
+      "gpuiPassed": 2815,
+      "gpuiIgnored": 8,
+      "clientPassed": 217
+    },
+    "clippyBoth": "passed",
+    "format": "passed after conditional-only formatting repair",
+    "fileSize": "passed",
+    "independentSourceReview": "parent and np01_review: no blockers",
+    "fullGate": "exit 0 including native build",
+    "logs": [
+      ".tasks/native-polish-np07/machine-add-focused.log",
+      ".tasks/native-polish-np07/machine-add-full-gates.log",
+      ".tasks/native-polish-np07/machine-add-format-before.log"
+    ],
+    "nativeBinarySha256": "972f8a8b0dded0f4c1b00b3de16516a75ca37fbacea6ecf803da3eb95efe3bfa"
+  },
+  "limits": [
+    "No physical Add-dialog keyboard acceptance claimed by this receipt.",
+    "Branch implementation, not merged or released."
+  ]
+}

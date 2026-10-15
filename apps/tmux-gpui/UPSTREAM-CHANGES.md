@@ -172,3 +172,8 @@ as an additional reference for layering.
   Remove and Cancel/Done. Forward/reverse Tab and GPUI key-up activation retain
   captured form/request identity; a submitted removal keeps Cancel reachable.
   Registry revision/profile checks and the daemon mutation path are unchanged.
+
+- The Add-machine form reuses the saved-machine editor/removal dialog focus
+  pattern for its SSH target, Cancel and Save footer. GPUI key-up callbacks
+  retain form/request identity and composition guards. SSH validation and the
+  existing daemon connection path are unchanged.
