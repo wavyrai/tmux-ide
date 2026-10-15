@@ -3,7 +3,7 @@ pub(super) mod sidebar;
 pub(super) use sidebar::Keyboard as SidebarKeyboard;
 #[path = "workspace_agents.rs"]
 mod workspace_agents;
-use super::{SnapshotView, browser, controls};
+use super::{SnapshotView, browser};
 use gpui::{prelude::*, *};
 pub(super) enum Selection {
     WorkspaceAgent {
@@ -804,62 +804,7 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .child(sidebar)
-            .child(
-                div()
-                    .debug_selector(|| "tmux-sidebar-footer".into())
-                    .flex_none()
-                    .flex()
-                    .gap_2()
-                    .px_2()
-                    .py_2()
-                    .child(
-                        controls::button(
-                            "open-picker",
-                            Some("Switch"),
-                            "Switch session",
-                            controls::Icon::Sessions,
-                            &theme,
-                        )
-                        .on_click(cx.listener(|view, _, window, cx| view.open_picker(window, cx))),
-                    )
-                    .child(
-                        controls::action_button(
-                            "open-theme-picker",
-                            None,
-                            "Choose theme",
-                            controls::Icon::Theme,
-                            if self.browser_state.appearance.is_some() {
-                                controls::ButtonStyle::Quiet
-                            } else {
-                                controls::ButtonStyle::Unavailable
-                            },
-                            &theme,
-                        )
-                        .when(self.browser_state.appearance.is_none(), |control| {
-                            control.aria_description("Appearance settings are not available yet")
-                        })
-                        .when(
-                            self.browser_state.appearance.is_some(),
-                            |control| {
-                                control.on_click(cx.listener(|view, _, window, cx| {
-                                    view.open_theme_picker(window, cx)
-                                }))
-                            },
-                        ),
-                    )
-                    .child(
-                        controls::button(
-                            "refresh-sessions",
-                            None,
-                            "Refresh sessions",
-                            controls::Icon::Refresh,
-                            &theme,
-                        )
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.select(Selection::Refresh, window, cx)
-                        })),
-                    ),
-            );
+            .child(self.sidebar_footer(cx));
         let application_tabs = self.application_tabs(window, cx);
         let session_tabs = self.retained_session_strip(cx);
         let window_strip = self.workspace_window_strip(window, cx);

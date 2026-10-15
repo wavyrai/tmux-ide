@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+#[path = "control_focus_tests.rs"]
+mod control_focus_tests;
 #[path = "keyboard_tests.rs"]
 mod keyboard_tests;
 use crate::tmux_snapshot::{SnapshotView, decode, presence::Presence};

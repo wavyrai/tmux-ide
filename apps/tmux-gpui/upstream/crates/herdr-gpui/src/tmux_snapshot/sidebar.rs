@@ -1,4 +1,8 @@
 //! Session navigation, matching the TUI shell. Windows belong to the workspace strip.
+#[path = "sidebar/control_focus.rs"]
+mod control_focus;
+#[path = "sidebar/footer.rs"]
+mod footer;
 #[path = "sidebar/hierarchy.rs"]
 mod hierarchy;
 #[path = "sidebar/keyboard.rs"]

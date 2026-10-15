@@ -81,3 +81,30 @@ Home and sidebar Theme controls now share the unavailable presentation while app
 The private native fixture verifies unavailable-to-ready keyboard recovery and search input retained in an open Appearance picker after appearance disappears. See `theme-readiness.json` and its three screenshots. The fixture exited cleanly. These checks do not establish live-daemon integration, VoiceOver activation, or narrow native layout. Two new regression cases are included in the 56 passing theme-filter tests; independent review found no blocker.
 
 Full local Rust gates passed (session 2384, exit 0): formatting/file-size, both Clippy configurations, default/all-feature workspace tests, and native debug build. GPUI counts are 2764/2795 passed, with 7/8 existing opt-in ignores; ignored checks are not claimed.
+
+
+## Sidebar keyboard controls
+
+Ctrl+G now owns an opt-in Tab/Shift+Tab cycle through session rows, Switch,
+Theme, Refresh, sidebar visibility and the available new-window control.
+Ordinary terminal Tab remains terminal input. Recovery footer clicks remain
+available while terminal presence is pending; stale requests and modal changes
+cannot activate an old control.
+
+`sidebar-keyboard-verification.json` records the exact binary SHA-256, screenshot
+hashes and private fixture command receipts. Native light checks opened the
+session picker and hid/restored the sidebar; native dark checks showed the focus
+ring and emitted one Refresh request without terminal key leakage. Both private
+fixtures exited 0. No production daemon or tmux server was involved.
+
+Final local gate session 33892 exited 0: formatting, file-size checks, both
+Clippy configurations, native build and workspace tests passed. GPUI default:
+2772 passed / 7 ignored; all features: 2803 passed / 8 ignored. Client tests:
+217 passed in each configuration. Eight focused control tests passed. Earlier
+failed test/build attempts are indexed in the JSON; they are retained under
+`.tasks/native-polish-np04`, together with the passing logs.
+
+Independent final source and capture review found no blockers. Two window-edge
+drag attempts did not change window geometry, so narrow-window behavior is not
+verified. VoiceOver and live-daemon qualification remain open. This is branch
+work, not a merged or released feature.

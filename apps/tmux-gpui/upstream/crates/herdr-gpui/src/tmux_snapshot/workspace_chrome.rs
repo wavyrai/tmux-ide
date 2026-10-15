@@ -91,6 +91,9 @@ impl SnapshotView {
         let request = self.browser_request;
         let mut tabs = div()
             .id("application-tabs")
+            // The titlebar is a sibling of the browser body. Its focused
+            // chrome controls need the same navigation owner on this path.
+            .on_key_down(cx.listener(Self::picker_key))
             .flex_1()
             .min_w_0()
             .h(px(APPLICATION_TABS_HEIGHT))
@@ -138,11 +141,15 @@ impl SnapshotView {
                     .debug_selector(|| "application-drag-region".into()),
             )
             .child(
-                controls::button(
-                    "sidebar-toggle",
-                    None,
-                    "Show / hide sidebar · F10",
-                    controls::Icon::Sidebar,
+                self.sidebar_focus_control(
+                    controls::button(
+                        "sidebar-toggle",
+                        None,
+                        "Show / hide sidebar · F10",
+                        controls::Icon::Sidebar,
+                        &theme,
+                    ),
+                    3,
                     &theme,
                 )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -295,6 +302,7 @@ impl SnapshotView {
         } else {
             add = add.aria_description("Unavailable until the selected terminal is ready");
         }
+        let add = self.sidebar_focus_control(add, 4, &theme);
         div()
             .w_full()
             .flex()
