@@ -274,11 +274,16 @@ impl SnapshotView {
         let enabled = captured.is_some()
             && self.presence.ready()
             && self.browser_state.request == self.browser_request;
-        let mut add = controls::button(
+        let mut add = controls::action_button(
             "workspace-new-window",
             None,
             "New terminal window",
             controls::Icon::Plus,
+            if enabled {
+                controls::ButtonStyle::Quiet
+            } else {
+                controls::ButtonStyle::Unavailable
+            },
             &theme,
         );
         if enabled {
@@ -288,7 +293,7 @@ impl SnapshotView {
                 }));
             }
         } else {
-            add = add.opacity(0.5).cursor_default();
+            add = add.aria_description("Unavailable until the selected terminal is ready");
         }
         div()
             .w_full()

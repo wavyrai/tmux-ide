@@ -65,3 +65,11 @@ Fresh isolated native windows verify the focused Refresh interior remains unchan
 ![Incorrect filled interior](focus-transparent-before.png)
 ![Corrected light focus ring](focus-refresh-light-after.png)
 ![Corrected dark focus ring](focus-refresh-dark-after.png)
+
+## Unavailable new-window control
+
+The existing unavailable Plus had no command callback but still painted hover and pressed feedback. The shared unavailable presentation now suppresses those affordances, keeps its accessible name, and describes why the action is unavailable. Existing capability, presence, request, modal and queue admission remain with their original owners. Herdr's `titlebar/navigation.rs` at the audited reference supplies the enabled-only styling pattern.
+
+`unavailable-plus-before.png` captures the preserved earlier binary's hover wash. `unavailable-plus-light.png` and `unavailable-plus-dark.png` show the updated control after a click, without that wash; the pointer partly covers the icon, so these are interaction-state evidence rather than pixel-level icon verification. No pane-action command was emitted in either updated private fixture. `unavailable-plus.json` retains binary hashes and fixture caveats, including the updated light fixture's misleading local name. All three previews exited cleanly.
+
+Focused tests passed: 13 unavailable-filter cases (including accessible name/reason/no Click action and unavailable-to-ready transition) and two existing new-window-strip cases. The transition test verifies no command or geometry change before capability arrives, then exactly one new-window command. Parent implementation review and subsequent source/evidence review found no blocker. Full workspace gates subsequently passed: format/file-size, both Clippy configurations, default/all-feature workspace tests and native debug build (session 93312 exit 0). No platform-disabled accessibility flag, VoiceOver activation, native narrow layout, or daemon integration is claimed by these fixtures.

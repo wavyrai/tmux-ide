@@ -48,12 +48,13 @@ fn glyph(icon: Icon, foreground: u32) -> Svg {
         .text_color(rgb(foreground))
 }
 
-/// Visual emphasis is independent of command admission, which stays with callers.
+/// Visual presentation is independent of command admission, which stays with callers.
 #[derive(Clone, Copy)]
 pub(super) enum ButtonStyle {
     Primary,
     Secondary,
     Destructive,
+    Unavailable,
     Quiet,
 }
 
@@ -112,19 +113,26 @@ pub(super) fn action_button(
             ButtonStyle::Primary => control.bg(rgb(active)).font_weight(FontWeight::MEDIUM),
             ButtonStyle::Secondary => control.border_1().border_color(rgb(active)),
             ButtonStyle::Destructive => control.border_1().border_color(rgb(icon_foreground)),
-            ButtonStyle::Quiet => control,
+            ButtonStyle::Quiet | ButtonStyle::Unavailable => control,
         })
-        .cursor_pointer()
-        .hover(move |hover| {
-            hover.bg(match style {
-                ButtonStyle::Primary => rgb(active).blend(rgba((foreground << 8) | 0x14)),
-                ButtonStyle::Secondary | ButtonStyle::Destructive | ButtonStyle::Quiet => {
-                    rgb(active)
-                }
-            })
+        // Adapt Herdr titlebar/navigation.rs: unavailable controls never paint
+        // hover/pressed affordances. Owners still decide whether to attach a callback.
+        .when(matches!(style, ButtonStyle::Unavailable), |control| {
+            control.opacity(0.5).cursor_default()
         })
-        // Follow Herdr titlebar/navigation.rs: held controls receive a stronger wash.
-        .active(move |pressed| pressed.bg(rgb(active).blend(rgba((foreground << 8) | 0x24))))
+        .when(!matches!(style, ButtonStyle::Unavailable), |control| {
+            control
+                .cursor_pointer()
+                .hover(move |hover| {
+                    hover.bg(match style {
+                        ButtonStyle::Primary => rgb(active).blend(rgba((foreground << 8) | 0x14)),
+                        _ => rgb(active),
+                    })
+                })
+                .active(move |pressed| {
+                    pressed.bg(rgb(active).blend(rgba((foreground << 8) | 0x24)))
+                })
+        })
         .child(glyph(icon, icon_foreground))
         .children(label.map(|label| div().min_w_0().truncate().child(label)))
         .tooltip(move |_, cx| {

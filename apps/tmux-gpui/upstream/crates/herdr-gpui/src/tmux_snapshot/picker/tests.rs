@@ -426,3 +426,5 @@ mod reference;
 
 #[path = "tests/font_controls.rs"]
 mod font_controls;
+
+mod unavailable_window_control;

@@ -52,3 +52,6 @@ fn compact_controls_share_height_and_selection_does_not_reflow_tabs(cx: &mut Tes
     assert_eq!(inactive.left(), labelled.right());
     assert_eq!(selected.left(), inactive.right());
 }
+
+#[path = "controls_tests/unavailable.rs"]
+mod unavailable;
