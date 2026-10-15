@@ -50,6 +50,7 @@ fn send(stream: &mut Stream, message: ServerMessage) {
 fn receive(stream: &mut Stream) -> ClientMessage {
     read_message(stream, MAX_FRAME_SIZE).unwrap()
 }
+#[track_caller]
 fn event(client: &Client) -> ClientEvent {
     client.events.recv_timeout(Duration::from_secs(3)).unwrap()
 }

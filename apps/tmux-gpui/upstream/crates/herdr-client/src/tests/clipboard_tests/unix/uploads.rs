@@ -20,8 +20,22 @@ fn sustained_inbound_progress_survives_a_backpressured_outgoing_image() {
                 bytes: vec![value; 24 * 1024 * 1024],
             },
         );
+        let send_elapsed = started.elapsed();
+        let received = client
+            .events
+            .recv_timeout(Duration::from_secs(3))
+            .inspect_err(|_| {
+                eprintln!(
+                    "graphics receive failed: value={value}, send_elapsed={send_elapsed:?}, \
+                     total_elapsed={:?}, worker_finished={}, upload_finished={}",
+                    started.elapsed(),
+                    worker.is_finished(),
+                    cancel.is_finished(),
+                );
+            })
+            .unwrap();
         assert!(
-            matches!(event(&client), ClientEvent::Message(ServerMessage::Graphics { bytes })
+            matches!(received, ClientEvent::Message(ServerMessage::Graphics { bytes })
             if bytes.len() == 24 * 1024 * 1024 && bytes.iter().all(|byte| *byte == value))
         );
         assert!(started.elapsed() < TIMEOUT);
