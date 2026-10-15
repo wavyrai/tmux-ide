@@ -299,7 +299,7 @@ JS
 if [ "${1:-}" = --native-alpha ]; then
   shift
   if [ "${1:-}" = --help ]; then
-    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Bootstraps CLI 2.9.5; preserves qualified CLI 2.9.5 or 2.9.6 for native install/update; native actions preserve daemon and tmux processes.'
+    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Bootstraps CLI 2.9.6; upgrades older stable CLI versions and preserves 2.9.6; newer or unrecognized versions require explicit review; native actions preserve daemon and tmux processes.'
     exit 0
   fi
   [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Native alpha requires an Apple Silicon Mac'
@@ -326,15 +326,31 @@ if [ "${1:-}" = --native-alpha ]; then
     install|update)
       native_cli_version=''
       if [ -x "$HOME/.local/bin/tmux-ide" ]; then
-        native_cli_version=$("$HOME/.local/bin/tmux-ide" --version 2>/dev/null) || native_cli_version=''
+        native_cli_version=$("$HOME/.local/bin/tmux-ide" --version 2>/dev/null) || fail 'Existing CLI preserved: its version could not be read; repair or review it explicitly before continuing'
+        [ -n "$native_cli_version" ] || fail 'Existing CLI preserved: its version could not be read; repair or review it explicitly before continuing'
       fi
       case "$native_cli_version" in
-        'tmux-ide v2.9.5'|'tmux-ide v2.9.6') ;;
-        *) native_cli_needed=true ;;
+        'tmux-ide v2.9.6') ;;
+        '') native_cli_needed=true ;;
+        *)
+          # Only upgrade a recognized older stable release. Unknown/newer
+          # installations are never replaced by this pinned prerequisite.
+          if printf '%s\n' "$native_cli_version" | awk '
+            /^tmux-ide v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$/ {
+              sub(/^tmux-ide v/, ""); split($0, v, ".");
+              older = v[1] < 2 || (v[1] == 2 && (v[2] < 9 || (v[2] == 9 && v[3] < 6)));
+              count++;
+            }
+            END { exit !(count == 1 && NR == 1 && older) }
+          '; then
+            native_cli_needed=true
+          else
+            fail 'Existing CLI preserved: its version is not qualified for this pinned native bootstrap; review it explicitly before continuing'
+          fi ;;
       esac ;;
   esac
   if [ "$native_cli_needed" = true ]; then
-    (main --version 2.9.5 --prefix "$HOME/.local" --no-claude-agent-teams)
+    (main --version 2.9.6 --prefix "$HOME/.local" --no-claude-agent-teams)
   fi
   native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")
   trap 'rm -rf "$native_stage"' 0
