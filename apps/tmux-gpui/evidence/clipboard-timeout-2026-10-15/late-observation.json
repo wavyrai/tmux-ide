@@ -1,0 +1,30 @@
+{
+  "scope": "Failure-only diagnostics for hosted macOS clipboard receive timeout",
+  "baseCommit": "edd27c72",
+  "behavior": "Existing 3-second receive timeout remains a failure. On timeout only, observe at most one event within the remaining original 10-second budget. Report event kind, Graphics length, elapsed time and worker/upload completion without payload data.",
+  "validation": {
+    "clientDefault": {
+      "passed": 217
+    },
+    "clientAllFeatures": {
+      "passed": 217
+    },
+    "integrationPerConfiguration": {
+      "passed": 2,
+      "ignored": 3
+    },
+    "docTestsPerConfiguration": {
+      "passed": 1
+    },
+    "clippyDefault": "passed",
+    "clippyAllFeatures": "passed",
+    "format": "passed",
+    "fileSize": "passed",
+    "log": ".tasks/native-polish-np04/clipboard-late-observation-gates.log"
+  },
+  "limits": [
+    "Hosted failure not reproduced locally.",
+    "Root cause remains unproven.",
+    "No test deadline, workload, production behavior or success criterion changed."
+  ]
+}
