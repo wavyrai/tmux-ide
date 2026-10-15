@@ -1,0 +1,39 @@
+{
+  "conclusion": "success",
+  "headSha": "f037e0a4d203fe0d02f8981affeabb063decf810",
+  "status": "completed",
+  "url": "https://github.com/wavyrai/tmux-ide/actions/runs/38757783196",
+  "artifactId": 11987651571,
+  "journeys": {
+    "fleet-server": {
+      "passed": true,
+      "originalLogSha256": "587c88205ae49994ccecf654cef367ba5a6a3de1cac18c46259145d106ead67f"
+    },
+    "browser-history": {
+      "passed": true,
+      "originalLogSha256": "7a5a9e69870132a18c3daea0c10fe22f1b7fd8ce4b4493dc6622e233713015dc"
+    },
+    "close-pane": {
+      "passed": true,
+      "originalLogSha256": "fded258bea867351fb286446f1341e1bfb56a744327e4e99153d77b99e5b1677"
+    },
+    "new-window": {
+      "passed": true,
+      "originalLogSha256": "4f698c4c8ed57af6516ebe76094cf85d169b9955dbd7ae907174431a77d9ed41"
+    },
+    "home-machine-filter": {
+      "passed": true,
+      "originalLogSha256": "a82520792c78b94f4e396819cdfd1fc21876a1c7b306a8d8f1f9e2afb95945d5"
+    },
+    "close-window": {
+      "passed": true,
+      "originalLogSha256": "845cd39cf184a92060a80a8cf1854001833de80ba86ca0d0451dd8c6336fa0ef"
+    }
+  },
+  "limits": [
+    "Hosted earlier pushed head; excludes subsequent local dialog and continuous-chrome changes.",
+    "Headless packaged bridge journeys, not physical native GUI verification.",
+    "A passing run does not establish the cause or elimination of the earlier intermittent clipboard timeout.",
+    "No signing, merge, or publication."
+  ]
+}
