@@ -154,3 +154,9 @@ as an additional reference for layering.
   traffic-light reservation is removed in full screen and restored on exit.
   Native-picker decoration uses the shared subtle separator and neutral active
   fill; the applied theme icon has an explicit tint required by GPUI SVG paint.
+
+- The tmux-ide saved-machine editor uses dialog-local focus handles to include
+  Save and Cancel/Done in forward and reverse Tab navigation. Footer activation
+  reuses GPUI key-up clicks with captured form/request identity; submitted Save
+  leaves focus on Cancel. Terminal key routing and daemon mutation guards remain
+  at their existing owners.

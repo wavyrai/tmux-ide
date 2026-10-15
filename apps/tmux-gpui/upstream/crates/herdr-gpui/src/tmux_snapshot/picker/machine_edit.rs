@@ -9,6 +9,8 @@ pub(super) struct Form {
     pub(super) label: Entity<SearchInput>,
     pub(super) target: Entity<SearchInput>,
     submitted: Option<(String, String)>,
+    save_focus: FocusHandle,
+    cancel_focus: FocusHandle,
 }
 fn same_profile(a: &browser::machines::Profile, b: &browser::machines::Profile) -> bool {
     a.id == b.id
@@ -69,6 +71,8 @@ impl SnapshotView {
                 label,
                 target,
                 submitted: None,
+                save_focus: cx.focus_handle(),
+                cancel_focus: cx.focus_handle(),
             });
             picker.error = None;
         }
@@ -81,10 +85,13 @@ impl SnapshotView {
             .is_some_and(|f| f.label.read(cx).is_composing() || f.target.read(cx).is_composing())
     }
     pub(super) fn machine_edit_identity_current(&self, identity: &std::rc::Rc<()>) -> bool {
-        self.picker
-            .as_ref()
-            .and_then(|p| p.edit.as_ref())
-            .is_some_and(|f| std::rc::Rc::ptr_eq(&f.identity, identity))
+        self.picker.as_ref().is_some_and(|p| {
+            p.mode == Mode::ManageMachines
+                && p.request == self.browser_request
+                && p.edit.as_ref().is_some_and(|f| {
+                    f.request == self.browser_request && std::rc::Rc::ptr_eq(&f.identity, identity)
+                })
+        })
     }
     pub(super) fn save_machine_edit_identity(
         &mut self,
@@ -180,16 +187,31 @@ impl SnapshotView {
         if self.machine_edit_composing(cx) {
             return true;
         }
+        let footer_focused =
+            form.save_focus.is_focused(window) || form.cancel_focus.is_focused(window);
         match event.keystroke.key.as_str() {
             "escape" => self.close_picker(window, cx),
+            // Focused buttons activate on key-up through their captured identity.
+            // The picker owner returns before any terminal/row key handler runs.
+            "enter" | "space" if footer_focused => return false,
             "enter" => self.save_machine_edit(cx),
             "tab" => {
-                let focus = if form.label.read(cx).focus.is_focused(window) {
-                    form.target.read(cx).focus.clone()
-                } else {
-                    form.label.read(cx).focus.clone()
+                let mut order = vec![
+                    form.label.read(cx).focus.clone(),
+                    form.target.read(cx).focus.clone(),
+                ];
+                if form.submitted.is_none() {
+                    order.push(form.save_focus.clone());
+                }
+                order.push(form.cancel_focus.clone());
+                let current = order.iter().position(|focus| focus.is_focused(window));
+                let next = match (current, event.keystroke.modifiers.shift) {
+                    (Some(index), true) => (index + order.len() - 1) % order.len(),
+                    (Some(index), false) => (index + 1) % order.len(),
+                    (None, true) => order.len() - 1,
+                    (None, false) => 0,
                 };
-                focus.focus(window, cx);
+                order[next].focus(window, cx);
             }
             _ => return false,
         }
@@ -291,9 +313,30 @@ impl SnapshotView {
                                 ButtonStyle::Primary,
                                 &theme,
                             )
+                            .track_focus(&form.save_focus)
+                            .tab_index(0)
+                            .focus_visible({
+                                let theme = theme.clone();
+                                move |style| {
+                                    style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
+                                        color: rgb(theme.ink(theme.primary())).into(),
+                                        offset: point(px(0.), px(0.)),
+                                        blur_radius: px(0.),
+                                        spread_radius: px(2.),
+                                        inset: false,
+                                    }])
+                                }
+                            })
                             .on_click(cx.listener(
-                                move |view, _, _, cx| {
-                                    view.save_machine_edit_identity(&save_identity, cx)
+                                move |view, _, window, cx| {
+                                    view.save_machine_edit_identity(&save_identity, cx);
+                                    if let Some(form) =
+                                        view.picker.as_ref().and_then(|p| p.edit.as_ref())
+                                        && form.submitted.is_some()
+                                        && form.save_focus.is_focused(window)
+                                    {
+                                        form.cancel_focus.focus(window, cx);
+                                    }
                                 },
                             )),
                         )
@@ -307,6 +350,20 @@ impl SnapshotView {
                             ButtonStyle::Quiet,
                             &theme,
                         )
+                        .track_focus(&form.cancel_focus)
+                        .tab_index(0)
+                        .focus_visible({
+                            let theme = theme.clone();
+                            move |style| {
+                                style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
+                                    color: rgb(theme.ink(theme.primary())).into(),
+                                    offset: point(px(0.), px(0.)),
+                                    blur_radius: px(0.),
+                                    spread_radius: px(2.),
+                                    inset: false,
+                                }])
+                            }
+                        })
                         .on_click(cx.listener(
                             move |view, _, window, cx| {
                                 if view.machine_edit_identity_current(&cancel_identity) {
@@ -319,3 +376,7 @@ impl SnapshotView {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/machine_edit_focus.rs"]
+mod focus_tests;
