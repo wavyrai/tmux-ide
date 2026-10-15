@@ -45,7 +45,6 @@ A separate regression reproduced a real owner-guard gap: background Refresh coul
 
 Native Tab/Enter was verified on the earlier build. Native Space, the revised higher-contrast focus ring and final modal behavior remain unverified because the Mac is locked. The focus group currently covers the three Home actions, not whole-page keyboard traversal. Final keyboard/modal increment: formatting, file-size guard, both Clippy configurations, default and all-feature workspace tests, and native debug build all passed (gate process exit 0). Opt-in ignored GUI tests do not count as physical verification.
 
-
 ## Destructive pane control and unlocked native checks
 
 Close pane confirmation now uses the existing Herdr `menu::danger` mark color for its icon and border; label and tooltip keep normal foreground contrast. Cancel remains quiet. No owner guard, request or queue behavior changed. Independent final review and full Rust gates (format/file size, both Clippy variants, default/all-feature tests and native build) passed before the following captures.
@@ -56,7 +55,6 @@ Fresh private stdio fixtures verified light/dark confirmation appearance at 1000
 ![Close pane dark](close-pane-dark.png)
 
 The fresh Home preview verified Tab→Tab→Space opens Appearance, Escape returns to Home, Shift-Tab reaches Refresh, and Enter emits one Refresh command. Browse's focus ring is now visibly stronger. A new native paint defect was found on transparent Theme/Refresh controls: their outer shadow fills the interior blue. A separate reviewed correction is rebuilding; these captures do not claim final focus acceptance. Narrow geometry, direct VoiceOver and live daemon journeys remain outstanding.
-
 
 ## Focus-paint correction verified
 
