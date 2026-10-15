@@ -1,0 +1,15 @@
+{
+  "scope": "Machine headings, distinct server/session icons, neutral selected marker, singular pane count",
+  "ownership": "Presentation only; target generation, routing, collapse exceptions and keyboard focus unchanged",
+  "review": "Parent source review of independently implemented two-file diff; no blocker",
+  "checks": {
+    "format": "passed",
+    "sidebarTests": 41,
+    "nativeBuild": "passed"
+  },
+  "testCommand": "apps/tmux-gpui/upstream/target/debug/deps/herdr_gpui-98b04e9ce7606de7 tmux_snapshot::browser_ui::sidebar::",
+  "initialFilterCorrection": "Initial tmux_snapshot::sidebar:: matched zero tests; corrected full module and executed freshly compiled test binary. Zero-test run is not counted.",
+  "binarySha256": "0a46d525a6b710b4de37cea722fc18ee62f1eb51c7749357f8b4b2394275bd05",
+  "remaining": "Real native narrow/light/dark/sidebar-glass visual checks remain open; user currently testing preview",
+  "status": "Branch increment, not merged or released"
+}

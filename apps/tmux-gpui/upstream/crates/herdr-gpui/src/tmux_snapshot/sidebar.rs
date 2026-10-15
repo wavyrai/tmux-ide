@@ -73,7 +73,7 @@ pub(super) fn rows(state: &browser::State) -> Vec<Row> {
             depth: 0,
             machine: None,
             agent: None,
-            icon: None,
+            icon: Some("icons/terminal.svg"),
             favorite: None,
         })
         .collect()
@@ -106,7 +106,7 @@ pub(super) fn render_row(
     index: usize,
     row: &Row,
     theme: &Theme,
-    accent: u32,
+    _accent: u32,
     _glass: bool,
 ) -> Stateful<Div> {
     let active = theme.active;
@@ -130,7 +130,7 @@ pub(super) fn render_row(
             rgba(0)
         })
         .text_color(rgb(theme.foreground))
-        .font_weight(if row.selected {
+        .font_weight(if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
@@ -142,7 +142,7 @@ pub(super) fn render_row(
                 .h(px(12.))
                 .flex_none()
                 .rounded(px(1.))
-                .when(row.selected, |mark| mark.bg(rgb(accent))),
+                .when(row.selected, |mark| mark.bg(rgb(theme.foreground))),
         )
         .children(row.icon.map(|path| {
             svg()

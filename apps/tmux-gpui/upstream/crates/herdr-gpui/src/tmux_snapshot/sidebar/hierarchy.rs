@@ -40,8 +40,9 @@ fn session_row(_state: &browser::State, g: &Group, s: &Session) -> Row {
     let mut r = row(
         s.name.clone(),
         Some(format!(
-            "{} panes{}",
+            "{} {}{}",
             s.pane_count,
+            if s.pane_count == 1 { "pane" } else { "panes" },
             if target.is_none() {
                 " · Unavailable"
             } else {
@@ -51,6 +52,7 @@ fn session_row(_state: &browser::State, g: &Group, s: &Session) -> Row {
         2,
         target,
     );
+    r.icon = Some("icons/terminal.svg");
     r.selected = s.active;
     r.favorite = Some((s.favorite_action.clone(), s.favorite));
     r
@@ -144,7 +146,7 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
                 1,
                 target,
             );
-            r.icon = Some("icons/terminal.svg");
+            r.icon = Some("icons/sessions.svg");
             out.push(r);
             out.extend(children.into_iter().map(|s| session_row(state, g, s)));
         }
@@ -202,7 +204,7 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
             selected: active.is_empty() && state.selected_session.as_ref() == Some(&s.id),
             target: Some(Target::Session(s.id.clone())),
             depth: 1,
-            icon: None,
+            icon: Some("icons/terminal.svg"),
             favorite: None,
             machine: None,
             agent: None,
