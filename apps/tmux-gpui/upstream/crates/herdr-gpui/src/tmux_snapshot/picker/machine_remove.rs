@@ -1,3 +1,4 @@
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::*;
 pub(super) struct Confirmation {
     pub(super) identity: std::rc::Rc<()>,
@@ -161,7 +162,7 @@ impl SnapshotView {
                     .rounded(px(8.))
                     .bg(rgb(theme.surface))
                     .border_1()
-                    .border_color(rgb(theme.active))
+                    .border_color(controls::separator(&theme))
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -187,35 +188,36 @@ impl SnapshotView {
                     )
                     .when(!captured.submitted, |d| {
                         d.child(
-                            div()
-                                .id("machine-remove-confirm")
-                                .debug_selector(|| "machine-remove-confirm".into())
-                                .px_3()
-                                .py_2()
-                                .rounded(px(crate::config::corners::CONTROL))
-                                .bg(rgb(theme.active))
-                                .cursor_pointer()
-                                .child("Remove saved connection")
-                                .on_click(cx.listener(move |view, _, window, cx| {
+                            controls::action_button(
+                                "machine-remove-confirm",
+                                Some("Remove saved connection"),
+                                "Remove saved connection",
+                                Icon::Trash,
+                                ButtonStyle::Destructive,
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |view, _, window, cx| {
                                     view.confirm_machine_removal_identity(
                                         &confirm_identity,
                                         window,
                                         cx,
                                     );
-                                })),
+                                },
+                            )),
                         )
                     })
                     .child(
-                        div()
-                            .id("machine-remove-cancel")
-                            .debug_selector(|| "machine-remove-cancel".into())
-                            .px_3()
-                            .py_2()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .hover(move |style| style.bg(rgb(theme.active)))
-                            .cursor_pointer()
-                            .child(if removed { "Done" } else { "Cancel" })
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                        controls::action_button(
+                            "machine-remove-cancel",
+                            Some(if removed { "Done" } else { "Cancel" }),
+                            "Close dialog",
+                            Icon::Close,
+                            ButtonStyle::Quiet,
+                            &theme,
+                        )
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
                                 if view
                                     .picker
                                     .as_ref()
@@ -226,7 +228,8 @@ impl SnapshotView {
                                 {
                                     view.close_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     ),
             )
             .into_any_element()

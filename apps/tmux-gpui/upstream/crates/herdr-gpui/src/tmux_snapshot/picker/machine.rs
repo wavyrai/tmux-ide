@@ -1,4 +1,5 @@
 //! Machine connection form shares picker focus, IME and terminal-input exclusion.
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::{Mode, Selection, SnapshotView};
 use gpui::{prelude::*, *};
 
@@ -75,17 +76,16 @@ impl SnapshotView {
             .flex().items_center().justify_center().bg(rgba(0x00000088))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().id("machine-dialog").w(px(440.)).max_w_full().p_4().rounded(px(8.))
-                .bg(rgb(theme.surface)).border_1().border_color(rgb(theme.active))
+                .bg(rgb(theme.surface)).border_1().border_color(controls::separator(&theme))
                 .flex().flex_col().gap_3()
                 .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Add machine"))
                 .child(div().text_color(rgb(theme.muted)).child("Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary."))
                 .child(picker.search.clone())
                 .children(picker.error.map(|error| div().child(error)))
                 .child(div().flex().justify_end().gap_2()
-                    .child(div().id("machine-cancel").px_3().py_2().cursor_pointer().child("Cancel")
+                    .child(controls::action_button("machine-cancel", Some("Cancel"), "Cancel", Icon::Close, ButtonStyle::Quiet, &theme)
                         .on_click(cx.listener(|view, _, window, cx| view.close_picker(window, cx))))
-                    .child(div().id("machine-connect").px_3().py_2().rounded(px(4.)).bg(rgb(theme.active))
-                        .cursor_pointer().child("Save and connect")
+                    .child(controls::action_button("machine-connect", Some("Save and connect"), "Save and connect", Icon::Plus, ButtonStyle::Primary, &theme)
                         .on_click(cx.listener(|view, _, window, cx| view.submit_machine(window, cx))))))
             .into_any_element())
     }

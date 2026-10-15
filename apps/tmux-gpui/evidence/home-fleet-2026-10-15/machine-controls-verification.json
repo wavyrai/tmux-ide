@@ -1,0 +1,18 @@
+{
+  "scope": "Machine dialogs share neutral separators and accessible action controls",
+  "checks": {
+    "pickerTests": 115,
+    "nativeBuild": "passed",
+    "diffCheck": "passed"
+  },
+  "native": "Add machine was visible in the live tool observation, but the retained capture shows F6 navigation instead. No reproducible machine-dialog visual acceptance claimed; capture retained as machine-qa-navigation-interruption.png.",
+  "limitations": [
+    "Dark/edit/remove/saved-machine physical checks open",
+    "Cancel pointer check inconclusive: stale AX id after screenshot; not counted",
+    "Narrow/short viewport physical verification open"
+  ],
+  "binarySha256": "7658ff58c3434901443218ed8acd7c3bc9469bda8f26a0d6f008a17c1f8a1c0b",
+  "cleanup": "Exact isolated QA child terminated; no production sessions touched",
+  "status": "branch increment; not released",
+  "review": "Independent source review no blocker; reviewer identified incorrect screenshot subject, now corrected"
+}

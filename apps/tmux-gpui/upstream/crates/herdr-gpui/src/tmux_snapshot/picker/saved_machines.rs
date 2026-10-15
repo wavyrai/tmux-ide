@@ -1,3 +1,4 @@
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::{Action, Mode, Row, SnapshotView, Target, browser};
 use gpui::{prelude::*, *};
 
@@ -160,7 +161,7 @@ impl SnapshotView {
                     .rounded(px(8.))
                     .bg(rgb(theme.surface))
                     .border_1()
-                    .border_color(rgb(theme.active))
+                    .border_color(controls::separator(&theme))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -179,17 +180,17 @@ impl SnapshotView {
                     .child(self.picker_render(cx))
                     .child(
                         div().flex().justify_end().child(
-                            div()
-                                .id("saved-machines-cancel")
-                                .px_3()
-                                .py_2()
-                                .cursor_pointer()
-                                .child("Cancel")
-                                .on_click(
-                                    cx.listener(|view, _, window, cx| {
-                                        view.close_picker(window, cx)
-                                    }),
-                                ),
+                            controls::action_button(
+                                "saved-machines-cancel",
+                                Some("Cancel"),
+                                "Close dialog",
+                                Icon::Close,
+                                ButtonStyle::Quiet,
+                                &theme,
+                            )
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.close_picker(window, cx)),
+                            ),
                         ),
                     ),
             )

@@ -1,4 +1,5 @@
 //! Local-registry form. Identity and environment pin are never editable fields.
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::*;
 pub(super) struct Form {
     pub(super) identity: std::rc::Rc<()>,
@@ -254,7 +255,7 @@ impl SnapshotView {
                     .rounded(px(crate::config::corners::PANEL))
                     .bg(rgb(theme.surface))
                     .border_1()
-                    .border_color(rgb(theme.active))
+                    .border_color(controls::separator(&theme))
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -282,34 +283,37 @@ impl SnapshotView {
                     )
                     .when(form.submitted.is_none(), |d| {
                         d.child(
-                            div()
-                                .id("machine-edit-save")
-                                .debug_selector(|| "machine-edit-save".into())
-                                .px_3()
-                                .py_2()
-                                .rounded(px(crate::config::corners::CONTROL))
-                                .bg(rgb(theme.active))
-                                .cursor_pointer()
-                                .child("Save changes")
-                                .on_click(cx.listener(move |view, _, _, cx| {
+                            controls::action_button(
+                                "machine-edit-save",
+                                Some("Save changes"),
+                                "Save changes",
+                                Icon::Check,
+                                ButtonStyle::Primary,
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |view, _, _, cx| {
                                     view.save_machine_edit_identity(&save_identity, cx)
-                                })),
+                                },
+                            )),
                         )
                     })
                     .child(
-                        div()
-                            .id("machine-edit-cancel")
-                            .debug_selector(|| "machine-edit-cancel".into())
-                            .px_3()
-                            .py_2()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .cursor_pointer()
-                            .child(if saved { "Done" } else { "Cancel" })
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                        controls::action_button(
+                            "machine-edit-cancel",
+                            Some(if saved { "Done" } else { "Cancel" }),
+                            "Close dialog",
+                            Icon::Close,
+                            ButtonStyle::Quiet,
+                            &theme,
+                        )
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
                                 if view.machine_edit_identity_current(&cancel_identity) {
                                     view.close_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     ),
             )
             .into_any_element()

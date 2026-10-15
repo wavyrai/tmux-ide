@@ -32,6 +32,7 @@ pub(super) enum Icon {
     Sessions,
     Theme,
     Refresh,
+    Check,
 }
 impl Icon {
     fn path(self) -> &'static str {
@@ -45,6 +46,7 @@ impl Icon {
             Self::Sessions => "icons/sessions.svg",
             Self::Theme => "icons/theme.svg",
             Self::Refresh => "icons/refresh.svg",
+            Self::Check => "icons/check.svg",
         }
     }
 }
