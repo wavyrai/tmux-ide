@@ -58,12 +58,19 @@ impl SnapshotView {
             "tab" if selected.is_some() || self.terminal_focus.is_focused(window) => {
                 self.prepare_home_filter(cx);
                 if let Some(controls) = &self.home_filter {
-                    let next = match (selected, event.keystroke.modifiers.shift) {
+                    let mut next = match (selected, event.keystroke.modifiers.shift) {
                         (None, false) => 0,
                         (None, true) => 2,
                         (Some(index), false) => (index + 1) % 3,
                         (Some(index), true) => (index + 2) % 3,
                     };
+                    if next == 1 && self.browser_state.appearance.is_none() {
+                        next = if event.keystroke.modifiers.shift {
+                            0
+                        } else {
+                            2
+                        };
+                    }
                     controls.actions[next].focus(window, cx);
                 }
             }

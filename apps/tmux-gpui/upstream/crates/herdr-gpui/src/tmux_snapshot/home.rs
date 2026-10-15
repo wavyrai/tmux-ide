@@ -80,11 +80,17 @@ impl SnapshotView {
     }
     pub(super) fn home_render(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
+        if self.browser_state.appearance.is_none()
+            && self.home_action_current(self.browser_request)
+            && self.home_action_index(window) == Some(1)
+        {
+            self.terminal_focus.focus(window, cx);
+        }
         self.reconcile_home_selection(cx);
         if let Some(controls) = &mut self.home_filter {
             controls.rendered_revision =
@@ -93,6 +99,7 @@ impl SnapshotView {
         let theme = self.theme();
         let request = self.browser_request;
         let connected = self.browser_commands.is_some();
+        let theme_ready = self.browser_state.appearance.is_some();
         let is_live = live(&self.browser_state, connected)
             || (connected
                 && self.browser_state.fleet.as_ref().is_some_and(|f| {
@@ -173,29 +180,38 @@ impl SnapshotView {
                         )),
                     )
                     .child(
-                        native_controls::button(
+                        native_controls::action_button(
                             "home-theme",
                             Some("Theme…"),
                             "Choose a theme",
                             native_controls::Icon::Theme,
+                            if theme_ready {
+                                native_controls::ButtonStyle::Quiet
+                            } else {
+                                native_controls::ButtonStyle::Unavailable
+                            },
                             &theme,
                         )
-                        .when_some(action_focus.as_ref(), |control, focus| {
-                            action_focus::focus_control(
-                                control,
-                                &focus[1],
-                                1,
-                                theme.ink(theme.primary()),
-                                self.canvas(),
-                            )
+                        .when(!theme_ready, |control| {
+                            control.aria_description("Appearance settings are not available yet")
                         })
-                        .on_click(cx.listener(
-                            move |view, _, window, cx| {
-                                if view.home_action_current(request) {
-                                    view.open_theme_picker(window, cx);
-                                }
-                            },
-                        )),
+                        .when(theme_ready, |control| {
+                            control
+                                .when_some(action_focus.as_ref(), |control, focus| {
+                                    action_focus::focus_control(
+                                        control,
+                                        &focus[1],
+                                        1,
+                                        theme.ink(theme.primary()),
+                                        self.canvas(),
+                                    )
+                                })
+                                .on_click(cx.listener(move |view, _, window, cx| {
+                                    if view.home_action_current(request) {
+                                        view.open_theme_picker(window, cx);
+                                    }
+                                }))
+                        }),
                     )
                     .child(
                         native_controls::action_button(

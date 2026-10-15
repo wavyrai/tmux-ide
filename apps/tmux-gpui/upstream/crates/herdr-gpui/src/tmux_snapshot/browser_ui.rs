@@ -823,15 +823,28 @@ impl SnapshotView {
                         .on_click(cx.listener(|view, _, window, cx| view.open_picker(window, cx))),
                     )
                     .child(
-                        controls::button(
+                        controls::action_button(
                             "open-theme-picker",
                             None,
                             "Choose theme",
                             controls::Icon::Theme,
+                            if self.browser_state.appearance.is_some() {
+                                controls::ButtonStyle::Quiet
+                            } else {
+                                controls::ButtonStyle::Unavailable
+                            },
                             &theme,
                         )
-                        .on_click(
-                            cx.listener(|view, _, window, cx| view.open_theme_picker(window, cx)),
+                        .when(self.browser_state.appearance.is_none(), |control| {
+                            control.aria_description("Appearance settings are not available yet")
+                        })
+                        .when(
+                            self.browser_state.appearance.is_some(),
+                            |control| {
+                                control.on_click(cx.listener(|view, _, window, cx| {
+                                    view.open_theme_picker(window, cx)
+                                }))
+                            },
                         ),
                     )
                     .child(
