@@ -48,11 +48,30 @@ fn glyph(icon: Icon, foreground: u32) -> Svg {
         .text_color(rgb(foreground))
 }
 
+/// Visual emphasis is independent of command admission, which stays with callers.
+#[derive(Clone, Copy)]
+pub(super) enum ButtonStyle {
+    Primary,
+    Secondary,
+    Quiet,
+}
+
 pub(super) fn button(
     id: &'static str,
     label: Option<&'static str>,
     hint: &'static str,
     icon: Icon,
+    theme: &Theme,
+) -> Stateful<Div> {
+    action_button(id, label, hint, icon, ButtonStyle::Quiet, theme)
+}
+
+pub(super) fn action_button(
+    id: &'static str,
+    label: Option<&'static str>,
+    hint: &'static str,
+    icon: Icon,
+    style: ButtonStyle,
     theme: &Theme,
 ) -> Stateful<Div> {
     let (foreground, surface, active) = (theme.foreground, theme.surface, theme.active);
@@ -77,8 +96,18 @@ pub(super) fn button(
         .font_weight(FontWeight::NORMAL)
         .rounded(px(crate::config::corners::CONTROL))
         .text_color(rgb(foreground))
+        .map(|control| match style {
+            ButtonStyle::Primary => control.bg(rgb(active)).font_weight(FontWeight::MEDIUM),
+            ButtonStyle::Secondary => control.border_1().border_color(rgb(active)),
+            ButtonStyle::Quiet => control,
+        })
         .cursor_pointer()
-        .hover(move |style| style.bg(rgb(active)))
+        .hover(move |hover| {
+            hover.bg(match style {
+                ButtonStyle::Primary => rgb(active).blend(rgba((foreground << 8) | 0x14)),
+                ButtonStyle::Secondary | ButtonStyle::Quiet => rgb(active),
+            })
+        })
         .child(glyph(icon, foreground))
         .children(label.map(|label| div().min_w_0().truncate().child(label)))
         .tooltip(move |_, cx| {

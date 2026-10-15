@@ -1,5 +1,5 @@
 //! Catalog-backed Home. No daemon queries or invented activity in the render path.
-use super::{SnapshotView, browser, browser_ui::Selection};
+use super::{SnapshotView, browser, browser_ui::Selection, controls as native_controls};
 use gpui::{prelude::*, *};
 pub(super) mod filters;
 mod fleet;
@@ -136,55 +136,57 @@ impl SnapshotView {
                     .flex_wrap()
                     .gap_2()
                     .child(
-                        div()
-                            .id("home-browse")
-                            .px_3()
-                            .py_1()
-                            .rounded(px(4.))
-                            .bg(rgb(theme.active))
-                            .cursor_pointer()
-                            .child("Browse sessions  ⌘K")
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                        native_controls::action_button(
+                            "home-browse",
+                            Some("Browse sessions"),
+                            "Browse sessions (⌘K)",
+                            native_controls::Icon::Sessions,
+                            native_controls::ButtonStyle::Primary,
+                            &theme,
+                        )
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
                                 if view.browser_request == request
                                     && view.browser_state.surface == browser::Surface::Home
                                 {
                                     view.open_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     )
                     .child(
-                        div()
-                            .id("home-theme")
-                            .px_3()
-                            .py_1()
-                            .rounded(px(4.))
-                            .cursor_pointer()
-                            .child("Theme…")
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                        native_controls::button(
+                            "home-theme",
+                            Some("Theme…"),
+                            "Choose a theme",
+                            native_controls::Icon::Theme,
+                            &theme,
+                        )
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
                                 if view.browser_request == request
                                     && view.browser_state.surface == browser::Surface::Home
                                 {
                                     view.open_theme_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     )
                     .child(
-                        div()
-                            .id("tmux-home-refresh")
-                            .w(px(160.))
-                            .debug_selector(|| "tmux-home-refresh".into())
-                            .px_3()
-                            .py_1()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .border_1()
-                            .border_color(rgb(theme.active))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(rgb(theme.active)))
-                            .child("Refresh sessions")
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        native_controls::action_button(
+                            "tmux-home-refresh",
+                            Some("Refresh sessions"),
+                            "Refresh sessions",
+                            native_controls::Icon::Refresh,
+                            native_controls::ButtonStyle::Secondary,
+                            &theme,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.home_refresh(request, window, cx);
-                            })),
+                            },
+                        )),
                     ),
             );
         }
