@@ -33,8 +33,10 @@ The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/nativ
 and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101410/tmux-ide-gpui-0.1.1-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
-Install the native alpha with one command. This also installs CLI 2.9.5 at
-`~/.local` when the managed CLI is missing or a different version:
+Install the native alpha with one command. This also installs CLI 2.9.6 at
+`~/.local` when the managed CLI is missing, or upgrades an older stable version.
+An existing 2.9.6 installation is preserved. Newer or unrecognized CLI versions
+are left untouched and require explicit review before native installation:
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha

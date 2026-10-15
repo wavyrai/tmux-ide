@@ -1606,6 +1606,15 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
           readonly validatedCellAllocations: number;
         }[];
       };
+      // Retain the child's existing sample series and completion evidence on failure.
+      // Never dump the environment: CI identity is restricted to a full commit hash.
+      const memoryEvidence = JSON.stringify({
+        sourceCommit: /^[a-f0-9]{40}$/i.test(process.env.GITHUB_SHA ?? "")
+          ? process.env.GITHUB_SHA
+          : null,
+        lane,
+        measurement,
+      });
       expect(measurement.workloadCycles).toBe(24);
       expect(measurement.explicitGcAvailable).toBe(true);
       expect(measurement.explicitCollectionsDuringWorkload).toBe(retainedMemory ? 24 : 0);
@@ -1619,26 +1628,28 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         expect(measurement.p99HeartbeatDelayMs).toBeLessThanOrEqual(60);
         expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(100);
       }
-      expect(measurement.peakRssBytes).toBeLessThan(1_073_741_824);
-      expect(measurement.peakHeapBytes).toBeLessThan(536_870_912);
+      expect(measurement.peakRssBytes, memoryEvidence).toBeLessThan(1_073_741_824);
+      expect(measurement.peakHeapBytes, memoryEvidence).toBeLessThan(536_870_912);
       // Natural-GC heapUsed includes dead nursery allocations, so its short
       // slope measures collection timing rather than retained objects. Keep the
       // original slope budgets in an identical isolated post-GC workload; the
       // natural-GC lane still proves latency and peak memory. Both lanes
       // compare post-GC endpoints outside the latency window for bounded growth.
       if (retainedMemory) {
-        expect(measurement.rssSlopeBytesPerSample).toBeLessThanOrEqual(262_144);
-        expect(measurement.heapSlopeBytesPerSample).toBeLessThanOrEqual(131_072);
+        expect(measurement.rssSlopeBytesPerSample, memoryEvidence).toBeLessThanOrEqual(262_144);
+        expect(measurement.heapSlopeBytesPerSample, memoryEvidence).toBeLessThanOrEqual(131_072);
       }
-      expect(measurement.rssGrowthBytes).toBeLessThanOrEqual(67_108_864);
-      expect(measurement.heapGrowthBytes).toBeLessThanOrEqual(33_554_432);
+      expect(measurement.rssGrowthBytes, memoryEvidence).toBeLessThanOrEqual(67_108_864);
+      expect(measurement.heapGrowthBytes, memoryEvidence).toBeLessThanOrEqual(33_554_432);
       expect(
         Math.max(...measurement.measuredExternalBytes) -
           Math.min(...measurement.measuredExternalBytes),
+        memoryEvidence,
       ).toBeLessThanOrEqual(262_144);
       expect(
         Math.max(...measurement.measuredArrayBufferBytes) -
           Math.min(...measurement.measuredArrayBufferBytes),
+        memoryEvidence,
       ).toBeLessThanOrEqual(262_144);
       expect(measurement.deliveryCount).toBe(28);
       expect(measurement.ackCount).toBe(28);
