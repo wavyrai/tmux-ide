@@ -29,6 +29,21 @@ export function splitRefreshGuard(read: () => SplitRefreshIdentity) {
     );
   };
 }
+type RefreshStage =
+  | "retire"
+  | "inventory"
+  | "created-pane"
+  | "original-pane"
+  | "sessions"
+  | "selected-session"
+  | "attach";
+/** Fixed stage only: raw transport errors may contain private configuration. */
+export class SplitRefreshError extends Error {
+  constructor(readonly stage: RefreshStage) {
+    super(`Pane refresh failed at ${stage}`);
+    this.name = "SplitRefreshError";
+  }
+}
 /** Read-only topology refresh after one validated mutation receipt; never submits an action. */
 export async function refreshSplitInventory(options: {
   current: () => boolean;
@@ -44,21 +59,35 @@ export async function refreshSplitInventory(options: {
     sessions: ReturnType<typeof sessionChoice>[],
   ) => Promise<void>;
 }) {
-  if (!options.current()) return;
-  await options.retire();
-  if (!options.current()) return;
-  const choices = await options.read();
-  if (!options.current()) return;
-  if (choices.length > 512 || !choices.some((pane) => pane.semanticPaneId === options.createdPane))
-    throw new Error("Created pane unavailable");
-  const original = choices.find((pane) => pane.semanticPaneId === options.originalPane);
-  if (!original) throw new Error("Original pane unavailable");
-  const sessions = await options.readSessions();
-  if (!options.current()) return;
-  if (
-    sessions.length > 512 ||
-    sessions.filter((session) => session.id === options.selectedSession).length !== 1
-  )
-    throw new Error("Selected session unavailable");
-  await options.attach(original, choices, sessions);
+  let stage: RefreshStage = "retire";
+  try {
+    if (!options.current()) return;
+    await options.retire();
+    if (!options.current()) return;
+    stage = "inventory";
+    const choices = await options.read();
+    if (!options.current()) return;
+    stage = "created-pane";
+    if (
+      choices.length > 512 ||
+      !choices.some((pane) => pane.semanticPaneId === options.createdPane)
+    )
+      throw new Error("Created pane unavailable");
+    stage = "original-pane";
+    const original = choices.find((pane) => pane.semanticPaneId === options.originalPane);
+    if (!original) throw new Error("Original pane unavailable");
+    stage = "sessions";
+    const sessions = await options.readSessions();
+    if (!options.current()) return;
+    stage = "selected-session";
+    if (
+      sessions.length > 512 ||
+      sessions.filter((session) => session.id === options.selectedSession).length !== 1
+    )
+      throw new Error("Selected session unavailable");
+    stage = "attach";
+    await options.attach(original, choices, sessions);
+  } catch {
+    throw new SplitRefreshError(stage);
+  }
 }

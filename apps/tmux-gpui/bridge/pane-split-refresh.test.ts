@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   refreshSplitInventory,
+  SplitRefreshError,
   splitRefreshGuard,
   type SplitRefreshIdentity,
 } from "./pane-split-refresh.ts";
@@ -181,3 +182,57 @@ test("missing or ambiguous selected session metadata cannot commit a split refre
     assert.equal(committed, false);
   }
 });
+
+for (const failure of [
+  "retire",
+  "inventory",
+  "created-pane",
+  "original-pane",
+  "sessions",
+  "selected-session",
+  "attach",
+] as const)
+  test(`refresh failure identifies ${failure} without leaking raw error details`, async () => {
+    let attached = false;
+    const secret = "private transport configuration";
+    const fail = () => {
+      throw new Error(secret);
+    };
+    await assert.rejects(
+      refreshSplitInventory({
+        current: () => true,
+        originalPane: "source",
+        createdPane: "created",
+        selectedSession: "session",
+        retire: async () => {
+          if (failure === "retire") fail();
+        },
+        read: async () => {
+          if (failure === "inventory") fail();
+          return (
+            failure === "created-pane"
+              ? ["source"]
+              : failure === "original-pane"
+                ? ["created"]
+                : ["source", "created"]
+          ).map(connection);
+        },
+        readSessions: async () => {
+          if (failure === "sessions") fail();
+          return failure === "selected-session" ? [] : [{ id: "session", label: "Session" }];
+        },
+        attach: async () => {
+          attached = true;
+          fail();
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof SplitRefreshError);
+        assert.equal(error.stage, failure);
+        assert.equal(error.cause, undefined);
+        assert.ok(!error.message.includes(secret));
+        return true;
+      },
+    );
+    assert.equal(attached, failure === "attach");
+  });

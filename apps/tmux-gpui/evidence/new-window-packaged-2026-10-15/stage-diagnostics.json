@@ -1,0 +1,21 @@
+{
+  "purpose": "isolate refresh stage on recurrence; not a runtime fix",
+  "diagnostics": "fixed enum labels only; no raw error/cause/host configuration",
+  "review": "independent source/test review found no blocker",
+  "checks": {
+    "focusedRefreshTests": 20,
+    "bridgeTypecheck": "passed",
+    "eslint": "passed",
+    "bridgeNode22": {
+      "passed": 536,
+      "skipped": 5,
+      "failed": 0
+    },
+    "ambientNode26": "3 stderr assertion failures caused by DEP0205 warning; failed log retained under .tasks",
+    "sourceNewWindow": "passed",
+    "bundledNode24NewWindow": "passed"
+  },
+  "bundledControl": "Private Resources/bridge payload + copied Node24.21.0, restricted PATH, isolated HOME/daemon/tmux; no native executable or signed app; not exact CI artifact qualification",
+  "rootCause": "unknown",
+  "nativeUi": false
+}

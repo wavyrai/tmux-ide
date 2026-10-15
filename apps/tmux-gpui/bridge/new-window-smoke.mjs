@@ -140,6 +140,13 @@ function failureEvidence(error) {
       },
       // The browser's public publication deliberately does not expose the helper receipt.
       receiptCreatedPaneAvailable: false,
+      // Only retain our fixed diagnostic labels, never arbitrary helper stderr.
+      refreshFailureStage:
+        [
+          ...stderr.matchAll(
+            /\{"stage":"new-window-refresh-failed","refreshStage":"(retire|inventory|created-pane|original-pane|sessions|selected-session|attach|unknown)"\}/g,
+          ),
+        ].at(-1)?.[1] ?? null,
       observedCreatedPanePresent:
         observedCreatedPane && native
           ? native.some((pane) => pane.semanticPane === observedCreatedPane)

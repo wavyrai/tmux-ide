@@ -46,7 +46,11 @@ import {
   SavedMachineSchema,
   SavedMachineMutationSchema,
 } from "../../../packages/contracts/src/saved-machines.ts";
-import { splitRefreshGuard, refreshSplitInventory } from "./pane-split-refresh.ts";
+import {
+  splitRefreshGuard,
+  refreshSplitInventory,
+  SplitRefreshError,
+} from "./pane-split-refresh.ts";
 import { WorkspaceWindowSplitResultSchemaZ } from "../../../packages/contracts/src/workspace-multiplexer.ts";
 import {
   splitGestureSchema,
@@ -1265,8 +1269,15 @@ async function openPane(
                   current,
                 );
               },
-            }).catch(() => {
+            }).catch((error: unknown) => {
               if (current()) {
+                // Fixed stage only; do not expose raw transport/configuration errors.
+                console.error(
+                  JSON.stringify({
+                    stage: "new-window-refresh-failed",
+                    refreshStage: error instanceof SplitRefreshError ? error.stage : "unknown",
+                  }),
+                );
                 snapshot = null;
                 inputReady = false;
                 status = "New window created; pane unavailable — refresh";
