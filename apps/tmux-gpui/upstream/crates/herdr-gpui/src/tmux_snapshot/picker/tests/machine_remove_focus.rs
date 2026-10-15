@@ -161,3 +161,64 @@ fn removal_stale_request_keyup_and_pointer_cannot_confirm_or_cancel(cx: &mut Tes
         assert!(receiver.try_recv().is_err());
     }
 }
+
+#[gpui::test]
+fn removal_feedback_tracks_registry_confirmation_without_retrying(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|w, cx| tests::make_view(w, cx, sender));
+    cx.update(|w, cx| view.update(cx, |v, cx| prepare(v, w, cx)));
+    receiver.try_iter().for_each(drop);
+    cx.update(|w, cx| view.update(cx, |v, cx| v.confirm_machine_removal(w, cx)));
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::Machines { .. }
+    ));
+    for (available, pending, present, confirmed, text) in [
+        (true, false, true, false, "Removal not confirmed."),
+        (true, true, true, false, "Removal submitted"),
+        (true, false, true, false, "Removal not confirmed."),
+        (false, false, false, false, "Removal not confirmed."),
+        (true, false, false, true, "Saved connection removed."),
+    ] {
+        cx.update(|w, cx| {
+            view.update(cx, |v, cx| {
+                let captured = v.picker.as_ref().unwrap().removal.as_ref().unwrap();
+                let registry = v.browser_state.machines.as_mut().unwrap();
+                registry.available = available;
+                registry.pending = pending;
+                registry.machines = if present {
+                    vec![captured.profile.clone()]
+                } else {
+                    vec![]
+                };
+                // Feedback is uncorrelated: neither stale errors nor uncertain messages prove failure.
+                registry.error = Some("Earlier registry error".into());
+                registry.message = Some("Could not confirm write".into());
+                let (removed, status) = captured.feedback(Some(registry));
+                assert_eq!(removed, confirmed);
+                assert!(status.starts_with(text));
+                v.confirm_machine_removal(w, cx);
+            });
+            w.draw(cx).clear(cx);
+        });
+        assert!(cx.debug_bounds("machine-remove-confirm").is_none());
+        assert!(receiver.try_recv().is_err());
+    }
+    cx.update(|w, cx| {
+        view.update(cx, |v, _| {
+            v.browser_state.machines = None;
+            let captured = v.picker.as_ref().unwrap().removal.as_ref().unwrap();
+            assert!(!captured.feedback(None).0);
+            assert!(
+                captured
+                    .feedback(None)
+                    .1
+                    .starts_with("Removal not confirmed.")
+            );
+        });
+        w.draw(cx).clear(cx);
+    });
+    cx.simulate_keystrokes("escape");
+    assert!(view.read_with(cx, |v, _| v.picker.is_none()));
+    assert!(receiver.try_recv().is_err());
+}

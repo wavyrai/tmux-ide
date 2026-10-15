@@ -9,6 +9,24 @@ pub(super) struct Confirmation {
     confirm_focus: FocusHandle,
     cancel_focus: FocusHandle,
 }
+impl Confirmation {
+    fn feedback(&self, registry: Option<&browser::machines::Registry>) -> (bool, &'static str) {
+        let removed = self.submitted
+            && registry.is_some_and(|r| {
+                r.available && !r.pending && !r.machines.iter().any(|p| p.id == self.profile.id)
+            });
+        let status = if removed {
+            "Saved connection removed."
+        } else if self.submitted && registry.is_some_and(|r| r.pending) {
+            "Removal submitted — waiting for saved machines. Cancel and refresh if unconfirmed."
+        } else if self.submitted {
+            "Removal not confirmed. Cancel and refresh saved machines before trying again."
+        } else {
+            "Remove this saved connection? Remote sessions keep running."
+        };
+        (removed, status)
+    }
+}
 impl SnapshotView {
     pub(super) fn begin_machine_removal(
         &mut self,
@@ -177,17 +195,7 @@ impl SnapshotView {
         let cancel_identity = captured.identity.clone();
         let theme = self.theme();
         let registry = self.browser_state.machines.as_ref();
-        let removed = captured.submitted
-            && registry.is_some_and(|r| {
-                r.available && !r.pending && !r.machines.iter().any(|p| p.id == captured.profile.id)
-            });
-        let status = if removed {
-            "Saved connection removed."
-        } else if captured.submitted {
-            "Removal submitted — waiting for saved machines. Cancel and refresh if unconfirmed."
-        } else {
-            "Remove this saved connection? Remote sessions keep running."
-        };
+        let (removed, status) = captured.feedback(registry);
         div()
             .id("machine-remove-overlay")
             .absolute()
