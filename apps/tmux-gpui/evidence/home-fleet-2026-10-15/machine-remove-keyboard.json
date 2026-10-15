@@ -33,7 +33,7 @@
     "nativeBinarySha256": "c42a2a4fa81e0afb13034190931d1f3274419c0adc1ba9e2c53ece5e48c0e8b2"
   },
   "limits": [
-    "Light/narrow/pending/error native checks remain open.",
+    "Short-height and error/refusal native checks remain open.",
     "Synthetic registry proves GUI dispatch and acknowledgement display, not real daemon persistence.",
     "Earlier baseline attempts remain inconclusive; user subsequently confirmed Mac had been locked.",
     "Branch implementation only; not merged or released."
@@ -64,5 +64,28 @@
         "id": "00000000-0000-4000-8000-000000000001"
       }
     }
+  },
+  "nativeLight": {
+    "sourceCommit": "dcb9f573",
+    "passed": [
+      "Visible focus ring on Remove at normal width",
+      "Narrow 1282px screenshot (approximately 641 logical points) contains dialog and both controls",
+      "Tab reaches Cancel and Space dismisses without mutation or terminal keys"
+    ],
+    "images": [
+      "remove-focus-light.png",
+      "remove-narrow-light.png"
+    ],
+    "notVerified": "Bottom-edge drag did not change height; no short-window claim."
+  },
+  "nativePending": {
+    "passed": [
+      "Pending status wraps visibly; Remove is absent",
+      "Tab and Shift-Tab retain Cancel focus",
+      "Enter cancels pending dialog",
+      "Exactly one mutation and no terminal keys in private fixture trace"
+    ],
+    "image": "remove-pending-dark.png",
+    "scope": "Synthetic pending registry, not real backend latency"
   }
 }
