@@ -1,0 +1,67 @@
+{
+  "session": 33576,
+  "exitCode": 0,
+  "checkout": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-journey-checkout",
+  "head": "e0c6f260",
+  "script": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/run-terminal-journeys.sh",
+  "results": {
+    "browser-history": {
+      "passed": true,
+      "scrolledHistoryOffset": true,
+      "backToLiveInput": true,
+      "navigationClearsOffset": true,
+      "sourceIdentityPreserved": true,
+      "packaged": true,
+      "cleanup": true
+    },
+    "new-window": {
+      "passed": true,
+      "harness": null,
+      "structuredAgentMetadata": false,
+      "distinctCreatedWindowSelected": true,
+      "exactNewPaneInput": true,
+      "exactOneCreation": true,
+      "duplicateAndStaleRefused": true,
+      "sourceIdentityPreserved": true,
+      "cleanup": true
+    },
+    "close-pane": {
+      "passed": true,
+      "layout": "panes",
+      "closedWindow": false,
+      "exactPaneRemoved": true,
+      "canonicalSurvivorSelected": true,
+      "survivorInput": true,
+      "siblingIdentityPreserved": true,
+      "lastPaneRefused": true,
+      "refusedPaneInput": true,
+      "duplicateStaleBackgroundRefused": true,
+      "cleanup": true
+    },
+    "close-window": {
+      "passed": true,
+      "layout": "windows",
+      "closedWindow": true,
+      "exactPaneRemoved": true,
+      "canonicalSurvivorSelected": true,
+      "survivorInput": true,
+      "siblingIdentityPreserved": true,
+      "lastPaneRefused": true,
+      "refusedPaneInput": true,
+      "duplicateStaleBackgroundRefused": true,
+      "cleanup": true
+    }
+  },
+  "inputHashesUnchanged": {
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/bin/cli.js": true,
+    "/Volumes/Samsung_T5/Developer/tmux-ide/bin/cli.js": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon/dist/native/tmux/darwin-arm64/tmux": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/MacOS/tmux-ide-gpui": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/Resources/node": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/Resources/bridge/browser.bundle.mjs": true
+  },
+  "limits": [
+    "Headless packaged browser/Node with disposable real daemon/tmux only; native GUI not exercised.",
+    "No source or native rebuilds, signing or publication."
+  ]
+}
