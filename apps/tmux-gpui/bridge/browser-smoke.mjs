@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { writeFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 const fleet = await createScratchFleet({
   sessions: 2,
   slug: "gpui-browser",
@@ -15,6 +16,42 @@ const fleet = await createScratchFleet({
 let daemon, browser, native;
 const events = [];
 let stderr = "";
+// Fixed-field, bounded failure evidence: never retain terminal text or credentials.
+const traceStarted = performance.now();
+const lifecycleTrace = [];
+let previousPublication;
+let selectedTarget;
+const trace = (value) => {
+  if (value.event === "publication") {
+    const key = JSON.stringify(value);
+    if (key === previousPublication) return;
+    previousPublication = key;
+  }
+  lifecycleTrace.push({ ms: Math.round(performance.now() - traceStarted), ...value });
+  if (lifecycleTrace.length > 80) lifecycleTrace.shift();
+};
+const send = (command) => {
+  if (command.type === "pane") selectedTarget = command.id;
+  trace({
+    event: "send",
+    type: command.type,
+    request: command.request,
+    active: command.type === "presence" ? command.active : undefined,
+    revision: command.type === "presence" ? (command.revision ?? 0) : undefined,
+    resize: command.input?.kind === "resize" ? command.input.data : undefined,
+  });
+  browser.stdin.write(JSON.stringify(command) + "\n");
+};
+let previousGrid;
+const observedGrid = (session) => {
+  const grid = fleet.windowGrid(session);
+  const key = JSON.stringify(grid);
+  if (key !== previousGrid) {
+    previousGrid = key;
+    trace({ event: "grid", cols: grid.cols, rows: grid.rows });
+  }
+  return grid;
+};
 const until = async (predicate) => {
   const end = Date.now() + (process.env.TMUX_GPUI_TEST_BINARY ? 120000 : 20000);
   while (!predicate()) {
@@ -64,7 +101,18 @@ try {
     buffer += b.toString();
     let end;
     while ((end = buffer.indexOf("\n")) >= 0) {
-      events.push(JSON.parse(buffer.slice(0, end)));
+      const event = JSON.parse(buffer.slice(0, end));
+      events.push(event);
+      trace({
+        event: "publication",
+        request: event.request,
+        selectedPaneMatches: selectedTarget ? event.selectedPane === selectedTarget : undefined,
+        inputReady: event.inputReady,
+        presenceRevision: event.presenceRevision,
+        snapshot: !!event.snapshot,
+        cols: event.snapshot?.cols,
+        rows: event.snapshot?.rows,
+      });
       buffer = buffer.slice(end + 1);
     }
   });
@@ -148,7 +196,6 @@ try {
       await new Promise((r) => setTimeout(r, 15000));
     }
   } else {
-    const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
     await until(() => events.some((e) => e.sessions.length === 2));
     const sessions = events.at(-1).sessions;
     send({ type: "session", request: 1, id: sessions[0].id });
@@ -278,7 +325,7 @@ try {
       send({ type: "input", request: 6, id: second, input: { kind: "text", data } });
     send({ type: "input", request: 6, id: second, input: { kind: "key", data: "Enter" } });
     await until(() => {
-      const grid = fleet.windowGrid(fleet.sessionNames[1]);
+      const grid = observedGrid(fleet.sessionNames[1]);
       return grid.cols === 91 && grid.rows === 27;
     });
     await until(() =>
@@ -304,7 +351,7 @@ try {
         input: { kind: "resize", data: { cols: 92 + n, rows: 28 + n } },
       });
     await until(() => {
-      const grid = fleet.windowGrid(fleet.sessionNames[1]);
+      const grid = observedGrid(fleet.sessionNames[1]);
       return grid.cols === 111 && grid.rows === 47;
     });
     send({ type: "presence", active: false });
@@ -331,7 +378,7 @@ try {
       input: { kind: "resize", data: { cols: 95, rows: 30 } },
     });
     await until(() => {
-      const grid = fleet.windowGrid(fleet.sessionNames[1]);
+      const grid = observedGrid(fleet.sessionNames[1]);
       return grid.cols === 95 && grid.rows === 30;
     });
     assert.ok(
@@ -382,7 +429,6 @@ try {
       }),
       { mode: 0o600 },
     );
-    const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
     send({ type: "refresh", request: 8 });
     await until(
       () =>
@@ -423,6 +469,15 @@ try {
       unavailable: true,
     }),
   );
+} catch (error) {
+  console.error(
+    JSON.stringify({
+      lifecycleFailure: true,
+      browserExitCode: browser?.exitCode ?? null,
+      trace: lifecycleTrace,
+    }),
+  );
+  throw error;
 } finally {
   if (native && native.exitCode === null) {
     const close = once(native, "close");
