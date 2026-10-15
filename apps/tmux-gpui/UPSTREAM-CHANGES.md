@@ -137,7 +137,6 @@ as an additional reference for layering.
   remain owned by the existing local tmux-ide daemon resource. No Herdr protocol,
   dependency versions, upstream source hashes or terminal painter are changed.
 
-
 - Native polish replaces 19 shared interface SVG filenames with unchanged
   Heroicons assets from tailwindlabs/heroicons commit
   `616b7a4dbbf3d011760af8066262cd5c6b3868f3`. Exact mappings and SHA-256 values
@@ -164,3 +163,7 @@ as an additional reference for layering.
 - The native tmux shell binds Control-Command-F to Herdr’s existing window-only
   fullscreen action, including when terminal or picker inputs have focus. It does
   not import the Herdr terminal/session keymap or change daemon authority.
+
+- The tmux sidebar uses the shared panel/control corner radii and a neutral
+  outline. Its native AppKit glass view uses the same panel radius; the terminal
+  canvas stays rectangular and retains daemon-projected geometry.

@@ -721,7 +721,6 @@ impl SnapshotView {
             .min_h_0()
             .overflow_y_scroll()
             .p_2()
-            .bg(super::shell::sidebar_fill(theme.surface, glass))
             .flex()
             .flex_col()
             .gap_1()
@@ -795,16 +794,27 @@ impl SnapshotView {
         sidebar = div()
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())
+            .relative()
             .w(px(224.))
             .h_full()
             .min_h_0()
             .flex_shrink_0()
             .overflow_hidden()
-            .bg(super::shell::sidebar_fill(theme.surface, glass))
-            .flex()
-            .flex_col()
-            .child(sidebar)
-            .child(self.sidebar_footer(cx));
+            .child(super::sidebar_backdrop::corners(self.canvas()))
+            .child(
+                div()
+                    .size_full()
+                    .min_h_0()
+                    .rounded(px(crate::config::corners::PANEL))
+                    .border_1()
+                    .border_color(super::controls::separator(&theme))
+                    .overflow_hidden()
+                    .bg(super::shell::sidebar_fill(theme.surface, glass))
+                    .flex()
+                    .flex_col()
+                    .child(sidebar)
+                    .child(self.sidebar_footer(cx)),
+            );
         let application_tabs = self.application_tabs(window, cx);
         let session_tabs = self.retained_session_strip(cx);
         let window_strip = self.workspace_window_strip(window, cx);

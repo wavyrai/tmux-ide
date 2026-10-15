@@ -120,7 +120,7 @@ pub(super) fn render_row(
         .pl(px(8. + f32::from(row.depth) * 10.))
         .pr_2()
         .py_1()
-        .rounded(px(4.))
+        .rounded(px(crate::config::corners::CONTROL))
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
