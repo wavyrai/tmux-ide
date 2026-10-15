@@ -1,0 +1,40 @@
+✔ actual client identifies each HTTP failure stage without leaking response or credentials (50.660292ms)
+✔ schema, stale selection and scope failures are distinct and sanitized (9.618583ms)
+✔ successful catalog returns the same exact scoped pane configuration (2.353208ms)
+✔ untrusted messages/names and invalid HTTP status cannot enter public diagnostics (0.274333ms)
+✔ workspace refresh identifies each HTTP boundary without retries or private errors (38.189542ms)
+✔ workspace refresh distinguishes absent identity before and after inventory (4.814ms)
+✔ workspace refresh distinguishes invalid inventory and connection projection (3.784708ms)
+✔ workspace refresh still returns successful inventory in the same request order (1.620916ms)
+✔ workspace inventory scope rejection is distinct from schema and HTTP failure (1.375709ms)
+✔ failure receipt accepts fixed classifications and strips private fields (0.636084ms)
+✔ old diagnostics remain readable and malformed or oversized lines are ignored (0.06375ms)
+✔ split refresh cannot attach after background while fresh inventory is pending (0.53575ms)
+✔ split refresh cannot attach after navigation while fresh inventory is pending (0.17575ms)
+✔ split refresh cannot attach after session while fresh inventory is pending (0.113041ms)
+✔ split refresh cannot attach after catalog while fresh inventory is pending (0.118417ms)
+✔ split refresh cannot attach after stop while fresh inventory is pending (0.114292ms)
+✔ split refresh requires both exact receipt-created pane and retained source, without fallback (0.488167ms)
+✔ split metadata cannot commit after background during session read (0.279834ms)
+✔ split metadata cannot commit after navigation during session read (0.094041ms)
+✔ split metadata cannot commit after session during session read (0.1365ms)
+✔ split metadata cannot commit after catalog during session read (0.188833ms)
+✔ split metadata cannot commit after stop during session read (0.097667ms)
+✔ split refresh retains authoritative whole-session count and unknown counts without inference (0.665542ms)
+✔ missing or ambiguous selected session metadata cannot commit a split refresh (0.142917ms)
+✔ refresh failure identifies retire without leaking raw error details (0.383125ms)
+✔ refresh failure identifies inventory without leaking raw error details (0.184166ms)
+✔ refresh failure identifies created-pane without leaking raw error details (0.079041ms)
+✔ refresh failure identifies original-pane without leaking raw error details (0.0875ms)
+✔ refresh failure identifies sessions without leaking raw error details (0.115375ms)
+✔ refresh failure identifies selected-session without leaking raw error details (0.068541ms)
+✔ refresh failure identifies attach without leaking raw error details (0.101833ms)
+✔ refresh preserves sanitized catalog failure without raw causes or follow-up reads (0.885584ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 451.001583

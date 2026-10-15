@@ -1,3 +1,4 @@
+import { newWindowDiagnostic } from "./new-window-diagnostic.mjs";
 // Real scoped terminal-window creation in a private session; no GUI or CLI build.
 // Only the receipt-created pane in a distinct canonical window may become selected.
 import assert from "node:assert/strict";
@@ -141,12 +142,8 @@ function failureEvidence(error) {
       // The browser's public publication deliberately does not expose the helper receipt.
       receiptCreatedPaneAvailable: false,
       // Only retain our fixed diagnostic labels, never arbitrary helper stderr.
-      refreshFailureStage:
-        [
-          ...stderr.matchAll(
-            /\{"stage":"new-window-refresh-failed","refreshStage":"(retire|inventory|created-pane|original-pane|sessions|selected-session|attach|unknown)"\}/g,
-          ),
-        ].at(-1)?.[1] ?? null,
+      refreshFailureStage: newWindowDiagnostic(stderr)?.refreshStage ?? null,
+      refreshCatalogFailure: newWindowDiagnostic(stderr)?.catalog ?? null,
       observedCreatedPanePresent:
         observedCreatedPane && native
           ? native.some((pane) => pane.semanticPane === observedCreatedPane)

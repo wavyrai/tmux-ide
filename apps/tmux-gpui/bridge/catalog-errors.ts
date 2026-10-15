@@ -12,6 +12,7 @@ type CatalogStage = keyof typeof stages;
 
 /** Public diagnostics contain only fixed labels and a bounded numeric HTTP status. */
 export class CatalogStageError extends Error {
+  readonly diagnostic: Readonly<{ stage: CatalogStage; reason: string; status?: number }>;
   constructor(stage: CatalogStage, error?: unknown, selectionMissing = false) {
     let reason = selectionMissing ? "selection unavailable" : "unclassified failure";
     let status: number | undefined;
@@ -37,6 +38,7 @@ export class CatalogStageError extends Error {
       `Catalog unavailable (${Object.hasOwn(stages, stage) ? stages[stage] : "unknown stage"}: ${reason}${status === undefined ? "" : `; HTTP ${status}`}) — refresh the catalog`,
     );
     this.name = "CatalogStageError";
+    this.diagnostic = Object.freeze({ stage, reason, ...(status === undefined ? {} : { status }) });
     // Deliberately do not retain raw causes: they may contain private response/config data.
   }
 }

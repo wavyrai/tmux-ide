@@ -1,3 +1,4 @@
+import { CatalogStageError } from "./catalog-errors.ts";
 import type { sessionChoice } from "./catalog.ts";
 import type { z } from "zod";
 import type { connectionSchema } from "./config.ts";
@@ -39,9 +40,14 @@ type RefreshStage =
   | "attach";
 /** Fixed stage only: raw transport errors may contain private configuration. */
 export class SplitRefreshError extends Error {
-  constructor(readonly stage: RefreshStage) {
+  readonly catalog: CatalogStageError["diagnostic"] | undefined;
+  constructor(
+    readonly stage: RefreshStage,
+    error?: unknown,
+  ) {
     super(`Pane refresh failed at ${stage}`);
     this.name = "SplitRefreshError";
+    this.catalog = error instanceof CatalogStageError ? error.diagnostic : undefined;
   }
 }
 /** Read-only topology refresh after one validated mutation receipt; never submits an action. */
@@ -87,7 +93,7 @@ export async function refreshSplitInventory(options: {
       throw new Error("Selected session unavailable");
     stage = "attach";
     await options.attach(original, choices, sessions);
-  } catch {
-    throw new SplitRefreshError(stage);
+  } catch (error) {
+    throw new SplitRefreshError(stage, error);
   }
 }

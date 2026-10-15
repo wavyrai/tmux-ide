@@ -82,7 +82,6 @@ The private native fixture verifies unavailable-to-ready keyboard recovery and s
 
 Full local Rust gates passed (session 2384, exit 0): formatting/file-size, both Clippy configurations, default/all-feature workspace tests, and native debug build. GPUI counts are 2764/2795 passed, with 7/8 existing opt-in ignores; ignored checks are not claimed.
 
-
 ## Sidebar keyboard controls
 
 Ctrl+G now owns an opt-in Tab/Shift+Tab cycle through session rows, Switch,

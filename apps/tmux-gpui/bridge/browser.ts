@@ -1276,6 +1276,7 @@ async function openPane(
                   JSON.stringify({
                     stage: "new-window-refresh-failed",
                     refreshStage: error instanceof SplitRefreshError ? error.stage : "unknown",
+                    catalog: error instanceof SplitRefreshError ? error.catalog : undefined,
                   }),
                 );
                 snapshot = null;
