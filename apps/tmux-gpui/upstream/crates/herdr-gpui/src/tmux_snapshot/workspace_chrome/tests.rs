@@ -108,7 +108,9 @@ fn application_clicks_return_to_verified_session_without_terminal_input(cx: &mut
     });
     receiver.try_iter().for_each(drop);
     let terminals = cx.debug_bounds("application-terminals").unwrap();
-    assert_eq!(terminals.size.height, px(APPLICATION_TABS_HEIGHT));
+    // Rounded tabs leave draggable space above and below the control.
+    assert_eq!(terminals.size.height, px(26.));
+    assert!(terminals.size.height < px(APPLICATION_TABS_HEIGHT));
     cx.simulate_click(terminals.center(), Modifiers::default());
     assert!(receiver.try_recv().is_err());
     assert!(view.read_with(cx, |view, _| view.picker.is_none()));

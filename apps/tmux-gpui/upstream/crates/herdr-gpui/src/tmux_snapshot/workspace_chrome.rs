@@ -100,6 +100,7 @@ impl SnapshotView {
             .flex_shrink_0()
             .flex()
             .items_center()
+            .gap_1()
             .pr_2();
         for (id, label, tab, selected) in [
             (

@@ -189,3 +189,8 @@ as an additional reference for layering.
   refresh; an uncorrelated registry error is not presented as proof that this
   removal failed. Confirmed absence and existing mutation/admission guards are
   unchanged.
+
+- Home/Terminals titlebar tabs use the shared control corner radius and a compact
+  height within the existing titlebar. Inactive tabs inherit the continuous
+  chrome instead of painting a separate surface, including on hover. Only the
+  selected tab receives a theme-derived highlight. Navigation and drag-region ownership are unchanged.

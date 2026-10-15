@@ -202,21 +202,18 @@ pub(super) fn titlebar_tab(
     selected: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let background = if selected {
-        theme.active
-    } else {
-        theme.surface
-    };
+    let background = if selected { rgb(theme.active) } else { rgba(0) };
     let foreground = if selected {
         theme.foreground
     } else {
         theme.muted
     };
-    // Keep selection unmistakable while hovering the current destination.
-    let hover = if selected { background } else { theme.active };
+    // Inactive destinations remain ghost controls, including while hovered.
+    let hover = background;
     div()
         .id(id)
-        .h_full()
+        .h(px(26.))
+        .rounded(px(crate::config::corners::CONTROL))
         .min_w(px(108.))
         .flex_none()
         .flex()
@@ -226,9 +223,9 @@ pub(super) fn titlebar_tab(
         .text_size(px(LABEL_SIZE))
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(foreground))
-        .bg(rgb(background))
+        .bg(background)
         .cursor_pointer()
-        .hover(move |tab| tab.bg(rgb(hover)))
+        .hover(move |tab| tab.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(glyph(icon, foreground))
         .child(label)
