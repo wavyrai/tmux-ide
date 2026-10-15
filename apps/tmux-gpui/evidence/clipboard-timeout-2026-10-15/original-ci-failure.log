@@ -1,0 +1,21 @@
+2026-10-15T11:17:56.4860260Z test wsl::tests::utf8_listings_drop_stray_nuls_markers_and_docker_internals ... ok
+2026-10-15T11:17:56.6797890Z test upload::posix::tests::successful_upload_paths_can_be_cleaned_after_late_cancellation_and_retried ... ok
+2026-10-15T11:17:57.7876720Z test tests::clipboard_tests::unix::uploads::sustained_inbound_progress_survives_a_backpressured_outgoing_image ... FAILED
+2026-10-15T11:17:57.7979770Z error: test failed, to rerun pass `-p herdr-client --lib`
+2026-10-15T11:17:57.7980570Z 
+2026-10-15T11:17:57.8084050Z failures:
+2026-10-15T11:17:57.8207230Z 
+2026-10-15T11:17:57.8232510Z ---- tests::clipboard_tests::unix::uploads::sustained_inbound_progress_survives_a_backpressured_outgoing_image stdout ----
+2026-10-15T11:17:57.8233310Z 
+2026-10-15T11:17:57.8235890Z thread 'tests::clipboard_tests::unix::uploads::sustained_inbound_progress_survives_a_backpressured_outgoing_image' (70709) panicked at crates/herdr-client/src/tests.rs:54:56:
+2026-10-15T11:17:57.8237160Z called `Result::unwrap()` on an `Err` value: Timeout
+2026-10-15T11:17:57.8237950Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-15T11:17:57.8238430Z 
+2026-10-15T11:17:57.8238550Z 
+2026-10-15T11:17:57.8238810Z failures:
+2026-10-15T11:17:57.8239830Z     tests::clipboard_tests::unix::uploads::sustained_inbound_progress_survives_a_backpressured_outgoing_image
+2026-10-15T11:17:57.8240320Z 
+2026-10-15T11:17:57.8241040Z test result: FAILED. 216 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.39s
+2026-10-15T11:17:57.8241580Z 
+2026-10-15T11:17:57.8328750Z ##[error]Process completed with exit code 101.
+2026-10-15T11:17:57.9072950Z ##[group]Run actions/upload-artifact@v4
