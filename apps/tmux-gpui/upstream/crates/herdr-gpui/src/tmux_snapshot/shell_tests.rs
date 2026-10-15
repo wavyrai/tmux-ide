@@ -207,3 +207,6 @@ fn glass_tint_is_confined_to_chrome_and_fallback_is_opaque() {
         assert!(glass.a > 0. && glass.a < solid.a);
     }
 }
+
+#[path = "shell_tests/fullscreen.rs"]
+mod fullscreen;

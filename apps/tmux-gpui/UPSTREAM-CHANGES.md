@@ -160,3 +160,7 @@ as an additional reference for layering.
   reuses GPUI key-up clicks with captured form/request identity; submitted Save
   leaves focus on Cancel. Terminal key routing and daemon mutation guards remain
   at their existing owners.
+
+- The native tmux shell binds Control-Command-F to Herdr’s existing window-only
+  fullscreen action, including when terminal or picker inputs have focus. It does
+  not import the Herdr terminal/session keymap or change daemon authority.

@@ -104,6 +104,7 @@ fn show(
         })
         .detach();
         cx.bind_keys([KeyBinding::new("cmd-q", crate::Quit, None)]);
+        shell::bind_keys(cx);
         cx.on_action(|_: &crate::Quit, cx| cx.quit());
         let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
         let result = cx.open_window(
