@@ -1,0 +1,17 @@
+{
+  "scope": "Old-binary Remove-dialog baseline attempt",
+  "binarySha256": "afa55738219a01ceb8a062e381cc197bf03600cb1da1374619dc614fb2283d00",
+  "result": "inconclusive",
+  "observations": [
+    "F5 opened visibly. Manage saved command produced machines read in private fixture and saved-machines-cancel AX node.",
+    "Screenshot continued showing F5 after AX transitioned and after Escape removed the Cancel node.",
+    "No Remove dialog or focus ring visually verified."
+  ],
+  "image": "remove-baseline-inconclusive.png",
+  "cleanup": "Exact owned child command verified before SIGTERM; no production sessions or preview touched.",
+  "secondAttempt": {
+    "result": "native tool reported noWindowsAvailable after F5 snapshot; exact QA process remained alive",
+    "interpretation": "Native observation/input unavailable; no proof of a product crash or dialog behavior",
+    "cleanup": "Verified exact second QA command before SIGTERM"
+  }
+}

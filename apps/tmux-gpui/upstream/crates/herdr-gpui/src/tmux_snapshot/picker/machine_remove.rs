@@ -6,6 +6,8 @@ pub(super) struct Confirmation {
     revision: u64,
     profile: browser::machines::Profile,
     submitted: bool,
+    confirm_focus: FocusHandle,
+    cancel_focus: FocusHandle,
 }
 impl SnapshotView {
     pub(super) fn begin_machine_removal(
@@ -41,6 +43,8 @@ impl SnapshotView {
                 revision,
                 profile,
                 submitted: false,
+                confirm_focus: cx.focus_handle(),
+                cancel_focus: cx.focus_handle(),
             });
             picker.error = None;
         }
@@ -53,16 +57,56 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .picker
-            .as_ref()
-            .and_then(|p| p.removal.as_ref())
-            .is_some_and(|c| std::rc::Rc::ptr_eq(&c.identity, identity))
-        {
+        if self.machine_removal_identity_current(identity) {
             self.confirm_machine_removal(window, cx);
         }
     }
-    pub(super) fn confirm_machine_removal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn machine_removal_identity_current(&self, identity: &std::rc::Rc<()>) -> bool {
+        self.picker.as_ref().is_some_and(|p| {
+            p.mode == Mode::ManageMachines
+                && p.request == self.browser_request
+                && p.removal.as_ref().is_some_and(|c| {
+                    c.request == self.browser_request && std::rc::Rc::ptr_eq(&c.identity, identity)
+                })
+        })
+    }
+    pub(super) fn machine_removal_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(captured) = self.picker.as_ref().and_then(|p| p.removal.as_ref()) else {
+            return;
+        };
+        let footer_focused =
+            captured.confirm_focus.is_focused(window) || captured.cancel_focus.is_focused(window);
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_picker(window, cx),
+            // GPUI activates focused buttons on key-up through their captured identity.
+            "enter" | "space" if footer_focused => return,
+            "enter" => self.confirm_machine_removal(window, cx),
+            "tab" => {
+                let mut order = Vec::with_capacity(2);
+                if !captured.submitted {
+                    order.push(captured.confirm_focus.clone());
+                }
+                order.push(captured.cancel_focus.clone());
+                let current = order.iter().position(|focus| focus.is_focused(window));
+                let next = match (current, event.keystroke.modifiers.shift) {
+                    (Some(index), true) => (index + order.len() - 1) % order.len(),
+                    (Some(index), false) => (index + 1) % order.len(),
+                    (None, true) => order.len() - 1,
+                    (None, false) => 0,
+                };
+                order[next].focus(window, cx);
+            }
+            _ => {}
+        }
+        cx.stop_propagation();
+        window.prevent_default();
+    }
+    pub(super) fn confirm_machine_removal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(picker) = &mut self.picker else {
             return;
         };
@@ -113,6 +157,9 @@ impl SnapshotView {
             .is_some_and(|sender| sender.try_send(command).is_ok())
         {
             captured.submitted = true;
+            if captured.confirm_focus.is_focused(window) {
+                captured.cancel_focus.focus(window, cx);
+            }
             picker.error = None;
         } else {
             picker.error = Some("Machine change queue unavailable — try again");
@@ -196,6 +243,20 @@ impl SnapshotView {
                                 ButtonStyle::Destructive,
                                 &theme,
                             )
+                            .track_focus(&captured.confirm_focus)
+                            .tab_index(0)
+                            .focus_visible({
+                                let theme = theme.clone();
+                                move |style| {
+                                    style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
+                                        color: rgb(theme.ink(theme.primary())).into(),
+                                        offset: point(px(0.), px(0.)),
+                                        blur_radius: px(0.),
+                                        spread_radius: px(2.),
+                                        inset: false,
+                                    }])
+                                }
+                            })
                             .on_click(cx.listener(
                                 move |view, _, window, cx| {
                                     view.confirm_machine_removal_identity(
@@ -216,16 +277,23 @@ impl SnapshotView {
                             ButtonStyle::Quiet,
                             &theme,
                         )
+                        .track_focus(&captured.cancel_focus)
+                        .tab_index(0)
+                        .focus_visible({
+                            let theme = theme.clone();
+                            move |style| {
+                                style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
+                                    color: rgb(theme.ink(theme.primary())).into(),
+                                    offset: point(px(0.), px(0.)),
+                                    blur_radius: px(0.),
+                                    spread_radius: px(2.),
+                                    inset: false,
+                                }])
+                            }
+                        })
                         .on_click(cx.listener(
                             move |view, _, window, cx| {
-                                if view
-                                    .picker
-                                    .as_ref()
-                                    .and_then(|p| p.removal.as_ref())
-                                    .is_some_and(|c| {
-                                        std::rc::Rc::ptr_eq(&c.identity, &cancel_identity)
-                                    })
-                                {
+                                if view.machine_removal_identity_current(&cancel_identity) {
                                     view.close_picker(window, cx);
                                 }
                             },
@@ -235,3 +303,7 @@ impl SnapshotView {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/machine_remove_focus.rs"]
+mod focus_tests;

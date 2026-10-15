@@ -876,13 +876,7 @@ impl SnapshotView {
             return;
         }
         if self.picker.as_ref().is_some_and(|p| p.removal.is_some()) {
-            match key.key.as_str() {
-                "escape" => self.close_picker(window, cx),
-                "enter" => self.confirm_machine_removal(window, cx),
-                _ => {}
-            }
-            cx.stop_propagation();
-            window.prevent_default();
+            self.machine_removal_key(event, window, cx);
             return;
         }
         let Some(picker) = &mut self.picker else {

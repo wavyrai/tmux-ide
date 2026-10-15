@@ -1,0 +1,40 @@
+{
+  "scope": "Remove saved-machine dialog keyboard navigation",
+  "baseCommit": "f037e0a4",
+  "behavior": [
+    "Tab and Shift-Tab cycle Remove and Cancel/Done.",
+    "Focused buttons use native GPUI key-up activation.",
+    "Successful submission omits Remove and moves its focus to Cancel.",
+    "Pointer/key-up callbacks retain captured form and request identity.",
+    "Daemon mutation, registry revision and profile guards remain unchanged."
+  ],
+  "verification": {
+    "focusedRemoveTests": {
+      "passed": 7,
+      "newKeyboardTests": 3,
+      "existingTests": 4
+    },
+    "workspaceDefault": {
+      "gpuiPassed": 2780,
+      "gpuiIgnored": 7,
+      "clientPassed": 217
+    },
+    "workspaceAllFeatures": {
+      "gpuiPassed": 2811,
+      "gpuiIgnored": 8,
+      "clientPassed": 217
+    },
+    "clippyBoth": "passed",
+    "format": "passed",
+    "fileSize": "passed",
+    "independentSourceReview": "np01_review: no blocking findings",
+    "nativeBuild": "passed; gate exit 0",
+    "log": ".tasks/native-polish-np07/machine-remove-full-gates.log",
+    "nativeBinarySha256": "c42a2a4fa81e0afb13034190931d1f3274419c0adc1ba9e2c53ece5e48c0e8b2"
+  },
+  "limits": [
+    "Real native focus-ring and keyboard activation acceptance remains open.",
+    "Two old-binary native baseline attempts were inconclusive; see remove-baseline-inconclusive.json.",
+    "Branch implementation only; not merged or released."
+  ]
+}

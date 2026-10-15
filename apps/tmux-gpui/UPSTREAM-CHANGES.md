@@ -167,3 +167,8 @@ as an additional reference for layering.
 - The tmux sidebar uses the shared panel/control corner radii and a neutral
   outline. Its native AppKit glass view uses the same panel radius; the terminal
   canvas stays rectangular and retains daemon-projected geometry.
+
+- Saved-machine removal reuses the editor's dialog-local focus pattern for
+  Remove and Cancel/Done. Forward/reverse Tab and GPUI key-up activation retain
+  captured form/request identity; a submitted removal keeps Cancel reachable.
+  Registry revision/profile checks and the daemon mutation path are unchanged.
