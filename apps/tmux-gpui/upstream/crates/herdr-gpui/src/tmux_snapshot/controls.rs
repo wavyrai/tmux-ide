@@ -53,6 +53,7 @@ fn glyph(icon: Icon, foreground: u32) -> Svg {
 pub(super) enum ButtonStyle {
     Primary,
     Secondary,
+    Destructive,
     Quiet,
 }
 
@@ -74,6 +75,14 @@ pub(super) fn action_button(
     style: ButtonStyle,
     theme: &Theme,
 ) -> Stateful<Div> {
+    // Reuse Herdr's palette-derived danger ink (menu/devices/host_menu.rs).
+    // This helper guarantees mark contrast, not small-text contrast. Keep labels
+    // and tooltips in the normal foreground; tint only the icon and border.
+    // GPUI packs Rgba as RRGGBBAA; glyph consumes RGB only.
+    let icon_foreground = match style {
+        ButtonStyle::Destructive => u32::from(crate::menu::danger(theme)) >> 8,
+        _ => theme.foreground,
+    };
     let (foreground, surface, active) = (theme.foreground, theme.surface, theme.active);
     div()
         .id(id)
@@ -102,18 +111,21 @@ pub(super) fn action_button(
         .map(|control| match style {
             ButtonStyle::Primary => control.bg(rgb(active)).font_weight(FontWeight::MEDIUM),
             ButtonStyle::Secondary => control.border_1().border_color(rgb(active)),
+            ButtonStyle::Destructive => control.border_1().border_color(rgb(icon_foreground)),
             ButtonStyle::Quiet => control,
         })
         .cursor_pointer()
         .hover(move |hover| {
             hover.bg(match style {
                 ButtonStyle::Primary => rgb(active).blend(rgba((foreground << 8) | 0x14)),
-                ButtonStyle::Secondary | ButtonStyle::Quiet => rgb(active),
+                ButtonStyle::Secondary | ButtonStyle::Destructive | ButtonStyle::Quiet => {
+                    rgb(active)
+                }
             })
         })
         // Follow Herdr titlebar/navigation.rs: held controls receive a stronger wash.
         .active(move |pressed| pressed.bg(rgb(active).blend(rgba((foreground << 8) | 0x24))))
-        .child(glyph(icon, foreground))
+        .child(glyph(icon, icon_foreground))
         .children(label.map(|label| div().min_w_0().truncate().child(label)))
         .tooltip(move |_, cx| {
             cx.new(|_| crate::usage::Hint {

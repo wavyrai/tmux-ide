@@ -1,0 +1,13 @@
+{
+  "binarySha256": "391f67bb7017ad5ad7c94e549c3693be1ae56926d59c7edfa604805ca14e6234",
+  "commands": [
+    {
+      "type": "pane-action",
+      "request": 0,
+      "id": "qa-pane",
+      "token": "312b2c16-a13d-4411-82e5-1fdb58adab92",
+      "action": "close"
+    }
+  ],
+  "fixtureOnly": true
+}
