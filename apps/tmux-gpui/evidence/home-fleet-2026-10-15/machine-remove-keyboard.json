@@ -33,8 +33,36 @@
     "nativeBinarySha256": "c42a2a4fa81e0afb13034190931d1f3274419c0adc1ba9e2c53ece5e48c0e8b2"
   },
   "limits": [
-    "Real native focus-ring and keyboard activation acceptance remains open.",
-    "Two old-binary native baseline attempts were inconclusive; see remove-baseline-inconclusive.json.",
+    "Light/narrow/pending/error native checks remain open.",
+    "Synthetic registry proves GUI dispatch and acknowledgement display, not real daemon persistence.",
+    "Earlier baseline attempts remain inconclusive; user subsequently confirmed Mac had been locked.",
     "Branch implementation only; not merged or released."
-  ]
+  ],
+  "nativeDark": {
+    "sourceCommit": "dcb9f573",
+    "packagedAdhocBinarySha256": "d0a77cf27b3562b5bbf52a36373ca1086904c9b45dde8cbe84e6f35034f7fdd5",
+    "fixture": "private HOME and stdio synthetic machine registry; no actual SSH/daemon mutation",
+    "passed": [
+      "F5 search opens saved-machine management",
+      "Tab and Shift-Tab move visible focus between Remove/Cancel",
+      "Space cancels without mutation",
+      "Reopen and Enter on focused Remove sends exactly one mutation",
+      "Acknowledged fixture removal shows focused Done; Enter closes",
+      "No terminal keystrokes in fixture command trace"
+    ],
+    "images": [
+      "remove-focus-dark.png",
+      "remove-done-dark.png"
+    ],
+    "mutation": {
+      "type": "machines",
+      "request": 0,
+      "operation": "mutate",
+      "revision": 12,
+      "change": {
+        "operation": "remove",
+        "id": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  }
 }
