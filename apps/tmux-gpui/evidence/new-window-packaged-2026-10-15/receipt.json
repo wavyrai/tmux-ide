@@ -1,0 +1,27 @@
+{
+  "run": 38736582810,
+  "pr": 267,
+  "head": "9e755fb1c102d07ecd227616f6c931fad0ec938b",
+  "testedMergeCommit": "b8a3729422a10d105bc38f63338ea614cf3cb3df",
+  "status": "failed; not merged or released",
+  "passed": [
+    "Rust correctness",
+    "release build",
+    "app assembly/package tests",
+    "packaged fleet-server",
+    "packaged home-machine-filter"
+  ],
+  "failure": "new-window: tmux created @1/%1 with semantic pane ID, bridge remained on original pane with no snapshot and pane unavailable status",
+  "cause": "unproven; inventory refresh/retire/attach path throws but original stage is not retained",
+  "next": "Compare isolated local source path, then instrument exact packaged refresh stages without weakening success assertions or deadlines",
+  "localControl": {
+    "sourceJourney": "passed",
+    "packaged": false,
+    "host": "local macOS ARM64",
+    "cli": "freshly built private CLI",
+    "cleanup": true,
+    "limitation": "Does not reproduce or explain hosted packaged failure"
+  },
+  "nativeUi": false,
+  "independentReview": "No blocker; stage/cause unproven; fixture IDs and public runner paths only"
+}
