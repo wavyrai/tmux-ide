@@ -2,6 +2,9 @@
 use super::*;
 use core::prelude::v1::test;
 
+#[path = "controls_tests/accessibility.rs"]
+mod accessibility;
+
 struct Controls;
 impl Render for Controls {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

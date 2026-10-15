@@ -30,3 +30,13 @@ Narrow native geometry has not been verified: attempted edge drags did not resiz
 | Dark  | ![Before dark](before-dark.png)   | ![After dark](after-dark.png)   |
 
 ![Browse action opens picker](browse-light.png)
+
+## Accessibility follow-up
+
+The shared action control now exposes Button role, a stable accessibility identifier and a visible-label-or-tooltip accessible name. Pressed feedback follows Herdr `titlebar/navigation.rs`'s stronger foreground wash (reference commit f75df59eb53d69a11322f092eb3e45706b72db87).
+
+Both workspace test configurations passed the new public Element/AccessKit metadata test. The full formatting/file-size, both Clippy configurations, workspace suites and native build completed successfully for the semantic change. Tests confirm metadata and registered Click action, not platform AX dispatch.
+
+A fresh private QA app exposed Browse sessions, Theme, Refresh sessions and the sidebar control in the real macOS accessibility tree (retained in accessibility-tree.txt). Activating Refresh by its named element emitted one refresh request. The automation API may implement this using pointer input; this is not a VoiceOver/AXPress certification.
+
+Home keyboard traversal is a separate in-progress change. Native Tab/Enter opened the picker, but two new headless activation tests currently fail; no keyboard qualification is claimed. The initial light-theme focus ring is too faint and is being revised.

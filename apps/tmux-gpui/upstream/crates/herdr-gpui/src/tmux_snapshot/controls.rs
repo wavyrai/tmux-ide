@@ -77,6 +77,9 @@ pub(super) fn action_button(
     let (foreground, surface, active) = (theme.foreground, theme.surface, theme.active);
     div()
         .id(id)
+        .role(Role::Button)
+        .accessibility_id(id)
+        .aria_label(label.unwrap_or(hint))
         .debug_selector(move || id.to_owned())
         .h(px(CONTROL_HEIGHT))
         .min_w(px(CONTROL_HEIGHT))
@@ -108,6 +111,8 @@ pub(super) fn action_button(
                 ButtonStyle::Secondary | ButtonStyle::Quiet => rgb(active),
             })
         })
+        // Follow Herdr titlebar/navigation.rs: held controls receive a stronger wash.
+        .active(move |pressed| pressed.bg(rgb(active).blend(rgba((foreground << 8) | 0x24))))
         .child(glyph(icon, foreground))
         .children(label.map(|label| div().min_w_0().truncate().child(label)))
         .tooltip(move |_, cx| {
