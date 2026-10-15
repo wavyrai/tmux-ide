@@ -1,0 +1,19 @@
+{
+  "base_commit": "3b520cb640b5001b79a0a6bb05ec84975279be45",
+  "ci_failure": "https://github.com/wavyrai/tmux-ide/actions/runs/38724668509/job/116387441781",
+  "mechanism": "Unproven; original event helper location does not identify handshake versus graphics stage.",
+  "change": "Test-only track_caller plus failure-only frame value, elapsed durations and worker/upload completion flags. Same 3s deadline, workload and assertions.",
+  "focused_result": "1 passed, 216 filtered, 5.13s",
+  "full_gate_status": "passed",
+  "validation": {
+    "format": "passed",
+    "file_size": "passed",
+    "clippy_all_features": "passed",
+    "clippy_no_default": "passed",
+    "herdr_client_default": "217 passed",
+    "herdr_client_all_features": "217 passed",
+    "gpui_default": "2755 passed, 7 opt-in ignored",
+    "gpui_all_features": "2786 passed, 8 opt-in ignored",
+    "native_debug_build": "passed"
+  }
+}
