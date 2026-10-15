@@ -132,7 +132,21 @@ as an additional reference for layering.
 - Native fleet preference controls add optional strict metadata and explicit
   favorite/collapse commands in the tmux-only browser boundary. Home cards reuse
   existing GPUI hover, tooltip, theme and chevron assets; new
-  `assets/icons/fleet-star.svg` and `fleet-star-filled.svg` are original tmux-ide
-  vector artwork. `icons.rs` embeds these assets. Preference state and persistence
+  `assets/icons/fleet-star.svg` and `fleet-star-filled.svg` were initially original
+  tmux-ide vector artwork and are now Heroicons assets (see below). `icons.rs` embeds these assets. Preference state and persistence
   remain owned by the existing local tmux-ide daemon resource. No Herdr protocol,
   dependency versions, upstream source hashes or terminal painter are changed.
+
+
+- Native polish replaces 19 shared interface SVG filenames with unchanged
+  Heroicons assets from tailwindlabs/heroicons commit
+  `616b7a4dbbf3d011760af8066262cd5c6b3868f3`. Exact mappings and SHA-256 values
+  are retained in `upstream/assets/icons/heroicons-provenance.json`; the MIT
+  license is in `LICENSE-heroicons` beside it. Shared filenames also affect
+  imported menu/settings/review glyphs. Agent brand artwork is unchanged.
+  The app assembler includes the license and provenance in Resources.
+- Home fleet layout uses explicit machine/server/session hierarchy and shared
+  connection controls. Default native chrome uses neutral backgrounds and
+  selection fills; shared tabs no longer use colored underline/divider styling.
+  Terminal cell colors and custom preset values remain canonical. Source and
+  package checks do not substitute for native visual qualification.

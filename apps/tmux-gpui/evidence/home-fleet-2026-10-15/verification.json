@@ -1,0 +1,31 @@
+{
+  "scope": "Home fleet hierarchy, neutral built-in chrome and Heroicons; partial NP07 increment",
+  "binarySha256": "287eb252f38bc163df4270b2883be177146f2589d4149d1160f560bb35142672",
+  "nativeCaptures": [
+    "heroicons-light.png",
+    "heroicons-dark.png"
+  ],
+  "nativeHarness": "Isolated private HOME, stdio fleet fixture; presence acknowledgements only; both verification apps exited 0",
+  "checks": {
+    "defaultGpui": {
+      "passed": 2773,
+      "ignored": 7
+    },
+    "allFeaturesGpui": {
+      "passed": 2804,
+      "ignored": 8
+    },
+    "client": 217,
+    "appearance": 5,
+    "bundleMetadata": 4,
+    "rustFmtClippyFileSizeBuild": "passed",
+    "independentReview": "No blockers; native captures and attribution reviewed"
+  },
+  "limitations": [
+    "Not full Glass v2 visual parity",
+    "No narrow native capture",
+    "No full custom-theme native matrix",
+    "No Liquid Glass physical acceptance in these Home captures",
+    "No release or full packaged-app qualification for this increment"
+  ]
+}

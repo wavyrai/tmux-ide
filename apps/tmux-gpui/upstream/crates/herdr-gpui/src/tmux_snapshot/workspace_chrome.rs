@@ -267,7 +267,6 @@ impl SnapshotView {
                     controls::Icon::Terminal,
                     choice.selected,
                     &theme,
-                    self.accent(),
                 )
                 .debug_selector(move || format!("workspace-window-{index}"))
                 .max_w(px(200.))

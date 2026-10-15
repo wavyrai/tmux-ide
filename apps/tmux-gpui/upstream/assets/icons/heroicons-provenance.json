@@ -1,0 +1,83 @@
+{
+  "repository": "https://github.com/tailwindlabs/heroicons",
+  "commit": "616b7a4dbbf3d011760af8066262cd5c6b3868f3",
+  "license": "MIT",
+  "icons": {
+    "tmux-home.svg": {
+      "source": "optimized/24/outline/home.svg",
+      "sha256": "bf22818e3638f217e824ff26c8ffaf2ef014803982ca7c430e6c3c20915b185a"
+    },
+    "terminal.svg": {
+      "source": "optimized/24/outline/command-line.svg",
+      "sha256": "c7e67e51e62986aa267fda4607fa1f2f701dbe1a8aaa1042582aff9c8dce10d1"
+    },
+    "sessions.svg": {
+      "source": "optimized/24/outline/square-2-stack.svg",
+      "sha256": "a1489116fddd28f9d7a7fe2904e1dcc2858c5dc474af534ed7db88ac9692beb4"
+    },
+    "theme.svg": {
+      "source": "optimized/24/outline/swatch.svg",
+      "sha256": "1a913cfbe4c5e51ea30705a55108b8267699236266facef9479b7b586018e819"
+    },
+    "refresh.svg": {
+      "source": "optimized/24/outline/arrow-path.svg",
+      "sha256": "b191971e5cd0347fb23ea91c87e7468b2a3759613d3dd928fdd326004a5542ae"
+    },
+    "plus.svg": {
+      "source": "optimized/24/outline/plus.svg",
+      "sha256": "f3bd7870b4ac4bcb2153705981bdd9663f185c4563af496998803e245aca0d54"
+    },
+    "trash.svg": {
+      "source": "optimized/24/outline/trash.svg",
+      "sha256": "54ec722a29978d7f64a81d6222e071f88b42d80179216b3b5beccfa9e1ec2135"
+    },
+    "close.svg": {
+      "source": "optimized/24/outline/x-mark.svg",
+      "sha256": "f44f8d4070a779c324f07a199122b4cc8686b5a8d9705727dc38d0cfd3bb27ec"
+    },
+    "panel-left.svg": {
+      "source": "optimized/24/outline/view-columns.svg",
+      "sha256": "010ac4106175f2feb31952ff68a5492fcff4828165947c393369adcd04067206"
+    },
+    "devices.svg": {
+      "source": "optimized/24/outline/computer-desktop.svg",
+      "sha256": "7ad63664fce9f795e1771e9b805e2614837b7710ed533ae11592fab95bdc9c63"
+    },
+    "chevron-down.svg": {
+      "source": "optimized/24/outline/chevron-down.svg",
+      "sha256": "2eacb6cecd8f1ab845a2a8417074b0dab9fd9612cdf56d76be45b82adb2933f5"
+    },
+    "chevron-right.svg": {
+      "source": "optimized/24/outline/chevron-right.svg",
+      "sha256": "db9cc118ca95a91b0ffe68dbf1052d5c5820bf5cc46b4f9f9109ac5bfc3a5fe6"
+    },
+    "chevron-up.svg": {
+      "source": "optimized/24/outline/chevron-up.svg",
+      "sha256": "1f096f15fd5f56e1061fb79fd2a3243bd8b0546de6265f657f3df449261db348"
+    },
+    "arrow-left.svg": {
+      "source": "optimized/24/outline/arrow-left.svg",
+      "sha256": "2b41e74fb69b4e6f36762808b3370b9a156d5baefcc36e3868a57a526c6e8016"
+    },
+    "arrow-right.svg": {
+      "source": "optimized/24/outline/arrow-right.svg",
+      "sha256": "2602a360312e14dc92da066780fed8e0b5eaf65e196b7d82b0e7cb5aed817015"
+    },
+    "external.svg": {
+      "source": "optimized/24/outline/arrow-top-right-on-square.svg",
+      "sha256": "433ec41b9b6df56a78670e639e5d9b7d7261fb2701b8b1bc6dd7a0b83e723f79"
+    },
+    "check.svg": {
+      "source": "optimized/24/outline/check.svg",
+      "sha256": "a38b003121485ad864240dd3145324deae133485f3ed28a8a9d99747912c5f18"
+    },
+    "fleet-star.svg": {
+      "source": "optimized/24/outline/star.svg",
+      "sha256": "d7f53fcaf090cc5af38ff938003ec3edf1b2ec02417da563406e76ed310a53c2"
+    },
+    "fleet-star-filled.svg": {
+      "source": "optimized/24/solid/star.svg",
+      "sha256": "04fb4fae1cfa9a8a5f301118a13af44e2e016113b3591bba340cee3511fb42b4"
+    }
+  }
+}

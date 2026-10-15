@@ -1,0 +1,72 @@
+{
+  "groups": [
+    {
+      "id": "qa-local",
+      "label": "Local development \u2014 long machine name for layout verification",
+      "state": "ready",
+      "conflict": false,
+      "omittedSessions": 0,
+      "servers": [
+        {
+          "id": "server-0",
+          "label": "Default server with a deliberately long name",
+          "state": "online",
+          "generation": "b20c3dc7-19b5-4686-bb97-63e643dd0823",
+          "selection": "89a6b594-3500-492f-b9ba-42e742d6d25b"
+        },
+        {
+          "id": "server-1",
+          "label": "Default server with a deliberately long name",
+          "state": "online",
+          "generation": "5c8c802f-a4ba-4c73-9da7-e6128cd2e4ef",
+          "selection": "097c7f4e-83fb-4e7a-9715-817a95a9c125"
+        }
+      ],
+      "sessions": [
+        {
+          "id": "session-0",
+          "serverId": "server-0",
+          "name": "Workspace \u2014 duplicate long session label used for layout verification",
+          "paneCount": 1,
+          "sessionId": "$0",
+          "selection": "330cd721-2e43-401e-bac8-b96220113944"
+        },
+        {
+          "id": "session-1",
+          "serverId": "server-1",
+          "name": "Workspace \u2014 duplicate long session label used for layout verification",
+          "paneCount": 2,
+          "sessionId": "$1",
+          "selection": "2917683e-1456-4e52-a852-38e2eed8d1b3"
+        }
+      ],
+      "disconnect": "e4b63593-b31d-4d24-b09e-cc4a48c7b844"
+    },
+    {
+      "id": "qa-offline",
+      "label": "Remote build machine",
+      "state": "disconnected",
+      "conflict": false,
+      "retry": "d2d4ced0-08e8-45f0-8aea-686ad4854f04",
+      "omittedSessions": 0,
+      "sessions": []
+    },
+    {
+      "id": "qa-connecting",
+      "label": "Remote staging machine",
+      "state": "connecting",
+      "conflict": false,
+      "omittedSessions": 0,
+      "sessions": []
+    },
+    {
+      "id": "qa-conflict",
+      "label": "Conflicting machine identity",
+      "state": "disconnected",
+      "conflict": true,
+      "omittedSessions": 0,
+      "sessions": []
+    }
+  ],
+  "omittedGroups": 0
+}

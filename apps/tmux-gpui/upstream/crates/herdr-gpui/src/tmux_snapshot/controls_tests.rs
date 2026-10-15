@@ -21,11 +21,11 @@ impl Render for Controls {
                 &theme,
             ))
             .child(
-                tab("inactive", "Home", Icon::Home, false, &theme, theme.cursor)
+                tab("inactive", "Home", Icon::Home, false, &theme)
                     .debug_selector(|| "inactive".into()),
             )
             .child(
-                tab("selected", "Home", Icon::Home, true, &theme, theme.cursor)
+                tab("selected", "Home", Icon::Home, true, &theme)
                     .debug_selector(|| "selected".into()),
             )
     }

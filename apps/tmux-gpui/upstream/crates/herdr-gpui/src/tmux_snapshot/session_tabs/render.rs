@@ -55,7 +55,6 @@ impl SnapshotView {
                 controls::Icon::Sessions,
                 p.active.as_ref() == Some(&row.id),
                 &theme,
-                self.accent(),
             )
             .debug_selector(move || format!("retained-session-{index}"))
             .max_w(px(260.))

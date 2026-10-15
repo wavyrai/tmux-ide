@@ -177,3 +177,6 @@ mod fleet_admission;
 
 #[path = "tests/action_admission.rs"]
 mod action_admission;
+
+#[path = "tests/fleet_layout.rs"]
+mod fleet_layout;

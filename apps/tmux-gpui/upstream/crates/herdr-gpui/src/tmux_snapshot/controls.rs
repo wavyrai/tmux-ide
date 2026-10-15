@@ -2,6 +2,16 @@
 use crate::config::Theme;
 use gpui::{prelude::*, *};
 
+/// Quiet structural boundaries are independent of selection and focus accents.
+pub(super) fn separator(theme: &Theme) -> Rgba {
+    let alpha = if theme.contrast == crate::contrast::Contrast::High {
+        0x59
+    } else {
+        0x14
+    };
+    rgba((theme.foreground << 8) | alpha)
+}
+
 pub(super) const CONTROL_HEIGHT: f32 = 32.;
 const ICON_SIZE: f32 = 16.;
 const LABEL_SIZE: f32 = 12.;
@@ -111,7 +121,7 @@ pub(super) fn action_button(
         .text_color(rgb(foreground))
         .map(|control| match style {
             ButtonStyle::Primary => control.bg(rgb(active)).font_weight(FontWeight::MEDIUM),
-            ButtonStyle::Secondary => control.border_1().border_color(rgb(active)),
+            ButtonStyle::Secondary => control.border_1().border_color(separator(theme)),
             ButtonStyle::Destructive => control.border_1().border_color(rgb(icon_foreground)),
             ButtonStyle::Quiet | ButtonStyle::Unavailable => control,
         })
@@ -151,7 +161,6 @@ pub(super) fn tab(
     icon: Icon,
     selected: bool,
     theme: &Theme,
-    accent: u32,
 ) -> Stateful<Div> {
     let foreground = if selected {
         theme.foreground
@@ -170,16 +179,11 @@ pub(super) fn tab(
         .text_size(px(LABEL_SIZE))
         .font_weight(FontWeight::MEDIUM)
         .bg(if selected {
-            rgb(theme.surface).into()
+            rgb(theme.active).into()
         } else {
             transparent_black()
         })
-        .border_b_2()
-        .border_color(if selected {
-            rgb(accent).into()
-        } else {
-            transparent_black()
-        })
+        .rounded(px(crate::config::corners::CONTROL))
         .text_color(rgb(foreground))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
@@ -188,7 +192,7 @@ pub(super) fn tab(
 }
 
 /// Adapt Herdr window/tab_strip.rs: contiguous full-height cells, a single
-/// divider and primary wash for selection. These destinations are not closable.
+/// neutral selected fill. These destinations are not closable.
 pub(super) fn titlebar_tab(
     id: &'static str,
     label: &'static str,
@@ -197,12 +201,12 @@ pub(super) fn titlebar_tab(
     theme: &Theme,
 ) -> Stateful<Div> {
     let background = if selected {
-        theme.primary_wash()
+        theme.active
     } else {
         theme.surface
     };
     let foreground = if selected {
-        theme.text_on(background)
+        theme.foreground
     } else {
         theme.muted
     };
@@ -217,8 +221,6 @@ pub(super) fn titlebar_tab(
         .items_center()
         .gap(px(CONTENT_GAP))
         .px(px(14.))
-        .border_r_1()
-        .border_color(rgb(theme.active))
         .text_size(px(LABEL_SIZE))
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(foreground))

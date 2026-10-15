@@ -4,7 +4,12 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VISUAL_THEME_PRESETS, resolveVisualTheme, XTERM_PALETTE } from "@tmux-ide/contracts";
+import {
+  VISUAL_THEME_PRESETS,
+  resolveVisualTheme,
+  createVisualTerminalPalette,
+  XTERM_PALETTE,
+} from "@tmux-ide/contracts";
 import { parseAppConfig } from "../../../packages/daemon/src/lib/app-config.ts";
 import { appearanceOptions, createAppearanceOwner, resolveNativeAppearance } from "./appearance.ts";
 
@@ -112,4 +117,46 @@ test("theme save uses shared patch, restart restores selection, and failed write
   assert.equal(failing.publication().error, "Could not save theme — try again");
   failing.select("unknown");
   assert.equal(failing.publication().selected, "light");
+});
+
+test("native default chrome stays neutral without changing canonical terminal colors", () => {
+  const pack = (c: { red: number; green: number; blue: number }) =>
+    (c.red << 16) | (c.green << 8) | c.blue;
+  for (const selected of ["system", "light", "dark"]) {
+    for (const system of ["light", "dark"] as const) {
+      const light = selected === "light" || (selected === "system" && system === "light");
+      const a = resolveNativeAppearance(selected, system).theme;
+      const t = resolveVisualTheme({ appearance: light ? "light" : "dark" }).tokens;
+      assert.equal(a.canvas, light ? 0xffffff : 0x181818);
+      assert.equal(a.surface, light ? 0xf9f9f9 : 0x212121);
+      assert.equal(a.active, light ? 0xe8e8e8 : 0x303030);
+      assert.equal(a.background, pack(t.surfaces.terminal));
+      assert.equal(a.foreground, pack(t.text.primary));
+      assert.equal(a.cursor, pack(t.selection.hover));
+      assert.equal(a.muted, pack(t.text.muted));
+      assert.deepEqual(
+        a.palette,
+        createVisualTerminalPalette({
+          foreground: pack(t.text.primary),
+          background: pack(t.surfaces.terminal),
+          danger: pack(t.statusTone.danger),
+          success: pack(t.statusTone.success),
+          warning: pack(t.statusTone.warning),
+          link: pack(t.text.link),
+          accent: pack(t.borders.focused),
+          info: pack(t.statusTone.info),
+          secondary: pack(t.text.secondary),
+          muted: pack(t.text.muted),
+          bright: pack(t.text.bright),
+        }),
+      );
+    }
+  }
+  for (const preset of VISUAL_THEME_PRESETS) {
+    const a = resolveNativeAppearance(preset.id, "dark").theme;
+    const t = resolveVisualTheme({ userTheme: preset }).tokens;
+    assert.equal(a.canvas, pack(t.surfaces.canvas));
+    assert.equal(a.surface, pack(t.surfaces.panel));
+    assert.equal(a.active, pack(t.selection.selection));
+  }
 });
