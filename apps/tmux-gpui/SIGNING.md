@@ -1,8 +1,11 @@
 # Native preview signing and qualification
 
-The preview is not yet a signed public release. The local app, source build receipts,
-and passing bridge tests do not establish Developer ID, notarization or clean-machine
-installation acceptance.
+The [published native alpha](../../docs/content/docs/native-alpha.mdx), version 0.1.1
+build 2026101410 ([release](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026101410)),
+is Developer ID signed and notarized. A fresh second-Mac test remains outstanding.
+The current branch's local app, source build receipts and passing bridge tests do
+not inherit that release's acceptance. Every new candidate needs its own signing,
+notarization and installation evidence.
 
 ## Prerequisites
 
@@ -41,8 +44,9 @@ its historical native build receipt and assembly manifest intact. Success produc
 not publish, install, launch, or prove clean-machine behavior. The command uploads
 the staged ZIP to Apple's notarization service using the existing profile.
 
-The producer has not yet completed a positive Developer ID run. Its deterministic
-tests inject tools, and must not be cited as notarization or Gatekeeper acceptance.
+The published alpha was signed, notarized and installed locally on the release Mac.
+The producer's deterministic tests inject tools and do not establish notarization
+or Gatekeeper acceptance for a new candidate.
 
 ## Entitlements and signature boundaries
 
@@ -80,19 +84,24 @@ The signing producer requires the staged app to pass the real macOS verifier,
 then requires the strict update archive to survive the installer’s production
 extractor, match the signed file inventory and pass that verifier again. An
 ephemeral in-memory key authenticates this local extraction check only; it is never
-persisted or offered as publisher trust. The public update manifest still needs
-the independently provisioned release key. On failure, the producer removes its creation-owned attempt and leaves a redacted
+persisted or offered as publisher trust. The experimental authenticated update
+manifest flow still needs an independently provisioned release key. The published
+alpha instead pins download checksums in `docs/public/install-native-alpha.sh` and
+verifies the app against its independent Apple identity policy.
+
+On failure, the producer removes its creation-owned attempt and leaves a redacted
 `failure.json` stage record; the original input app remains intact. If cleanup
 cannot establish ownership, it reports cleanup failure rather than deleting an
 unverified path. Failed attempts are not publishable artifacts.
 
-## Release acceptance still required
+## Acceptance required for each new release
 
 - Developer ID signing and notarization Accepted, stapler validation and Gatekeeper.
 - Explicit bundle/version/team/architecture/deployment checks on the final app.
 - Actual signed launcher, bundled Node and terminal operations on the supported Mac.
 - Final archive extraction with unchanged signatures and byte-bound provenance.
-- Trusted update manifest, public endpoint, checksums and release notes.
+- Public endpoint, pinned checksums and release notes; an independently trusted
+  manifest/key if adopting the experimental authenticated update flow.
 - Clean-machine install, repeat install, upgrade, interruption/recovery, rollback
   and removal preserving existing CLI/TUI configuration and tmux sessions.
 

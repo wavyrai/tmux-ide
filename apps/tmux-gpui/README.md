@@ -1,7 +1,12 @@
 # tmux-gpui — experimental native client
 
 This work lives in the **tmux-ide monorepo**. It is not a separate repository,
-submodule, npm package, or released application.
+submodule or npm package. A separate [public native alpha](../../docs/content/docs/native-alpha.mdx)
+is available: version 0.1.1, build 2026101410, published as
+[`native-alpha-2026101410`](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026101410).
+That Developer ID signed, notarized build is distinct from the current branch's
+unsigned development candidate. Its release acceptance does not transfer to later
+source changes; fresh second-Mac qualification remains outstanding.
 
 ## Current state
 
@@ -26,9 +31,9 @@ modified upstream files when adapting them.
 
 ## Development boundary
 
-The production CLI, daemon and OpenTUI client remain the release surface. This
-Cargo workspace is outside pnpm and npm publication. Native validation will be
-separate until the first adapter is qualified. No Rust rewrite of the daemon is
+The production CLI, daemon and OpenTUI client remain the npm release surface. This
+Cargo workspace is outside pnpm and npm publication; native alpha distribution
+and validation are separate. No Rust rewrite of the daemon is
 required.
 
 Use the dedicated `tmux-ide-gpui` binary. Do not launch the retained `herdr-gpui`
@@ -463,10 +468,10 @@ The launcher discovers an already running local canonical daemon; it
 does not install or start one. Its optional argument is a private host JSON file.
 It clears inherited `NODE_OPTIONS` and `NODE_PATH` and uses bundled runtime paths.
 
-This is a development app, not a distributable release. Signing, notarization,
-complete dependency notices, source provenance, clean-machine qualification and
-installation/update remain outstanding. The manifest explicitly records that
-qualification is incomplete; its hashes are not signatures.
+The app produced by the command above is an unsigned development candidate, not
+the published alpha. Each new release candidate still requires signing, notarization,
+notice/provenance review, clean-machine qualification and installation/update checks.
+The manifest explicitly records that qualification is incomplete; its hashes are not signatures.
 
 If initial host discovery/configuration is unavailable, the browser helper stays
 open with input disabled. Start the supported daemon (or correct the explicit
@@ -543,8 +548,9 @@ verification. Supply trusted `teamId`, `bundleId`, `architecture` and
 `minimumMacOS` policy from the release configuration, never from the candidate.
 It checks Developer ID signatures on the app and both bundled binaries, enabled
 Gatekeeper, architecture and macOS deployment requirements without running them.
-The current unsigned development app deliberately fails this verifier. Signed
-acceptance and the public installer entry are not yet qualified; see VALIDATION.md.
+The unsigned development app deliberately fails this verifier. The published alpha
+has a separate signed install path; see the [native alpha guide](../../docs/content/docs/native-alpha.mdx).
+Current-branch acceptance must be recorded separately in VALIDATION.md.
 
 ### Local staged-app install/update command
 
@@ -580,9 +586,10 @@ An interrupted first install with no selected app can be recovered with
 `keep-current` after verifying and quarantining its candidate, then retried.
 Recovery retains orphan bytes under `.recovered-*` for inspection.
 This is the local staged-app flow, not the public download/bootstrap
-installer. A signed positive install and clean-machine qualification remain open.
+installer. The published alpha uses this staged-app interface after pinned download
+verification; a fresh second-Mac qualification remains open.
 
-### Release-download components (not a public installer)
+### Experimental authenticated release-download components
 
 `preview-release-manifest.mjs` authenticates exact manifest bytes using an
 independently supplied Ed25519 public key. `preview-release-download.mjs` uses
@@ -599,8 +606,10 @@ this format. Callers own successful staging cleanup. These staging modules do no
 macOS verifier, including authenticated CFBundleShortVersionString binding on
 the copied candidate. Cancellation during verification prevents activation;
 cleanup errors explicitly distinguish a confirmed activation from an uncertain
-transaction outcome. The same installer CLI now exposes explicit-version release mode; publisher trust and a live endpoint are not configured yet.
-Signed positive installation remains unqualified; see VALIDATION.md.
+transaction outcome. The same installer CLI exposes an experimental explicit-version
+release mode. Its Ed25519 manifest endpoint and publisher trust are not the public
+alpha's delivery mechanism: `docs/public/install-native-alpha.sh` pins the published
+archive and installer checksums and uses the staged-app interface instead.
 
 ### Standalone installer payload (local preparation)
 
@@ -614,10 +623,16 @@ node /absolute/new-output-directory/tmux-ide-install.mjs --help
 The payload includes the MIT license and a SHA-256 inventory. It needs an existing
 Node24 runtime and independently trusted policy, but no checkout or node_modules.
 It preserves the same install/update/rollback commands and mandatory macOS
-verification. This is not a published bootstrap installer; the inventory is not
-a signature or a trust root. Signed installation and public delivery remain open.
+verification. This build command alone does not create a bootstrap installer, and
+its inventory is not a signature or a trust root. The published alpha bootstrap
+uses `install.sh --native-alpha` and verifies the pinned native installer. The
+current branch updates fresh CLI bootstrap to 2.9.6; the live installer still
+bootstraps 2.9.5 and preserves an existing 2.9.5 or 2.9.6 installation. That native
+installer manages the
+`~/Applications/Tmux IDE Alpha.app` entry and explicit update/rollback/uninstall
+flow documented in the [native alpha guide](../../docs/content/docs/native-alpha.mdx).
 
-### Explicit-version release install/update (not published yet)
+### Experimental explicit-version manifest install/update
 
 With Node24, the same installer accepts release mode by omitting `--app`:
 
@@ -643,12 +658,14 @@ confirmed activation is not rolled back by subsequent cancellation/cleanup failu
 SIGKILL/power loss remain separate interruption cases. Rollback accepts either
 trusted policy form; detach preserves stored versions/configuration.
 
-No native release endpoint or publisher policy is available yet, and successful
-Apple-signed installation remains unqualified. Install/update/rollback return
+No public endpoint or publisher key is configured for this experimental manifest
+flow. Use the public alpha guide for the published pinned-download flow.
+Install/update/rollback return
 `launchPath`, the stable `<prefix>/TmuxIDE.app` alias. New stored versions retain
 a named `.app` bundle; detach removes the alias and current link but keeps versions.
-Foundation metadata inspection passes; physical Finder/LaunchServices launch is
-still pending. Do not treat these commands as a released user flow.
+Foundation metadata inspection passes; physical Finder/LaunchServices acceptance
+must be verified for each candidate. These manifest-mode examples are not the
+published alpha user flow.
 
 ### Prepare an archive (packaging only)
 
