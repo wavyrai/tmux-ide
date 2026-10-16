@@ -109,7 +109,11 @@ pub(super) fn render_row(
     _accent: u32,
     _glass: bool,
 ) -> Stateful<Div> {
-    let active = theme.active;
+    let hover = if row.selected {
+        rgb(theme.active)
+    } else {
+        rgba((theme.foreground << 8) | 0x0c)
+    };
     let mut element = div()
         .id(("sidebar-row", index))
         .debug_selector(move || format!("tmux-sidebar-row-{index}"))
@@ -135,21 +139,16 @@ pub(super) fn render_row(
         } else {
             FontWeight::NORMAL
         })
-        .child(
-            div()
-                .debug_selector(move || format!("tmux-sidebar-mark-{index}"))
-                .w(px(2.))
-                .h(px(12.))
-                .flex_none()
-                .rounded(px(1.))
-                .when(row.selected, |mark| mark.bg(rgb(theme.foreground))),
-        )
         .children(row.icon.map(|path| {
             svg()
                 .path(path)
                 .size(px(14.))
                 .flex_none()
-                .text_color(rgb(theme.muted))
+                .text_color(rgb(if row.selected {
+                    theme.foreground
+                } else {
+                    theme.muted
+                }))
         }))
         .child(
             div()
@@ -178,9 +177,7 @@ pub(super) fn render_row(
         );
     // The unselected row stays transparent: the sidebar owns its glass tint.
     if row.target.is_some() {
-        element = element
-            .cursor_pointer()
-            .hover(move |style| style.bg(rgb(active)));
+        element = element.cursor_pointer().hover(move |style| style.bg(hover));
     }
     element
 }

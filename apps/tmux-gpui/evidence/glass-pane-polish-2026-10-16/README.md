@@ -32,3 +32,11 @@ Pending native checks on the built candidate:
 - Actual panel corner/shadow rendering and contrast; screenshots of the candidate, with fresh content markers where needed.
 
 Fullscreen click/input misrouting is a separate investigated issue. This visual slice does not claim to fix it or qualify the candidate for signing/release. No new native UI interaction was performed for this receipt.
+
+## Cohesive surface refinement
+
+User feedback requested fewer competing fills, no vertical selection marker and consistent dividers. Pane headers, their controls, window-strip base and status footer now use the terminal background; selected pane titles retain foreground/semibold contrast. Sidebar rows use a rounded selected fill and stronger icon/text, with the vertical rail removed. The footer uses the shared neutral separator token. Safe unused split-boundary cells are drawn as neutral 1px lines for every pane, deduplicated by position and orientation; terminal content and input geometry remain untouched.
+
+Independent source review found no correctness blocker. All-pane boundary collection adds bounded paint work (valid layouts cap at 24 panes); no performance-equivalence claim is made. The first surface-only slice passed 376 tmux_snapshot tests; the final divider addition is undergoing full-gate validation. Native light/dark, custom-theme contrast, narrow layouts and actual split dragging remain acceptance checks. Candidate build 2026101601 predates these changes and must not be published as the refined design. Next candidate identity is 2026101602.
+
+Final cohesive-source gate exited 0: formatting, file size, Clippy all-features and no-default-features, default workspace and all-features workspace tests. GPUI suites: 2,791 passed / 7 ignored and 2,822 passed / 8 ignored. Native candidate acceptance remains pending. See cohesive-full-check.log.

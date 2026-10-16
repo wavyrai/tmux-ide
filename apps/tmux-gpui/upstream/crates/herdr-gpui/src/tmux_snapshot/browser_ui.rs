@@ -828,9 +828,9 @@ impl SnapshotView {
             .flex_none()
             .min_w_0()
             .w_full()
-            .bg(rgb(theme.surface))
+            .bg(rgb(theme.background))
             .border_t_1()
-            .border_color(rgb(theme.active))
+            .border_color(super::controls::separator(&theme))
             .children(
                 super::pane_chrome::selected_title(&self.browser_state).map(|title| {
                     div()

@@ -229,11 +229,7 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
-        let fill = if self.browser_state.selected_pane.as_deref() == Some(&header.id) {
-            theme.active
-        } else {
-            theme.surface
-        };
+        let fill = theme.background;
         Some(
             div()
                 .id(SharedString::from(format!("pane-mode:{id}")))
@@ -305,11 +301,7 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
-        let fill = if self.browser_state.selected_pane.as_deref() == Some(&header.id) {
-            theme.active
-        } else {
-            theme.surface
-        };
+        let fill = theme.background;
         Some(
             div()
                 .id(SharedString::from(format!("pane-overflow:{id}")))
@@ -397,7 +389,7 @@ impl SnapshotView {
             .h(px(self.terminal_height()))
             .flex_shrink_0()
             .overflow_hidden()
-            .bg(rgb(theme.surface));
+            .bg(rgb(theme.background));
         if !hit_regions::is_painted(self.frame.as_ref(), self.browser_state.frame.as_ref())
             || self.selection.is_some()
         {
@@ -488,11 +480,7 @@ impl SnapshotView {
                         2.
                     }))
             })
-            .bg(rgb(if selected {
-                theme.active
-            } else {
-                theme.surface
-            }))
+            .bg(rgb(theme.background))
             .text_color(rgb(if selected {
                 theme.foreground
             } else {

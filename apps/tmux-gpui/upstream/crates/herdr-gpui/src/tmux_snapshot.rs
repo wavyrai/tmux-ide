@@ -348,7 +348,7 @@ impl SnapshotView {
         let font_revision = self.terminal_font.revision;
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
-        let accent = self.accent();
+        let separator = controls::separator(&theme);
         let highlights = self
             .selection
             .as_ref()
@@ -443,17 +443,23 @@ impl SnapshotView {
                             ) {
                                 return Vec::new();
                             }
-                            view.browser_state.selected_pane.as_deref().map_or_else(
-                                Vec::new,
-                                |selected| {
+                            let mut cells: Vec<_> = view
+                                .browser_state
+                                .regions
+                                .iter()
+                                .flat_map(|pane| {
                                     hit_regions::separator_cells(
-                                        selected,
+                                        &pane.id,
                                         &view.browser_state.regions,
                                         &frame,
                                         &view.browser_state.panes,
                                     )
-                                },
-                            )
+                                })
+                                .collect();
+                            // Shared edges paint once, independent of which pane is selected.
+                            cells.sort_unstable_by_key(|cell| (cell.col, cell.row, cell.vertical));
+                            cells.dedup();
+                            cells
                         });
                         painter.borrow_mut().paint_frame(
                             &frame,
@@ -472,17 +478,17 @@ impl SnapshotView {
                             for cell in &rails {
                                 let (x, y, w, h) = if cell.vertical {
                                     (
-                                        (f32::from(cell.col) + 0.5) * width - width.min(2.) / 2.,
+                                        (f32::from(cell.col) + 0.5) * width - width.min(1.) / 2.,
                                         f32::from(cell.row) * height,
-                                        width.min(2.),
+                                        width.min(1.),
                                         height,
                                     )
                                 } else {
                                     (
                                         f32::from(cell.col) * width,
-                                        (f32::from(cell.row) + 0.5) * height - height.min(2.) / 2.,
+                                        (f32::from(cell.row) + 0.5) * height - height.min(1.) / 2.,
                                         width,
-                                        height.min(2.),
+                                        height.min(1.),
                                     )
                                 };
                                 window.paint_quad(fill(
@@ -490,7 +496,7 @@ impl SnapshotView {
                                         bounds.origin + point(px(x), px(y)),
                                         size(px(w), px(h)),
                                     ),
-                                    rgb(accent),
+                                    separator,
                                 ));
                             }
                         });

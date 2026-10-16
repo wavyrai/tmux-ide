@@ -264,7 +264,7 @@ impl SnapshotView {
             .overflow_x_scroll()
             .track_scroll(&self.window_reveal.scroll)
             .px_2()
-            .bg(rgb(theme.surface));
+            .bg(rgb(theme.background));
         if self.browser_state.surface != browser::Surface::Workspace {
             return strip.into_any_element();
         }
@@ -319,7 +319,7 @@ impl SnapshotView {
             .w_full()
             .flex()
             .flex_shrink_0()
-            .bg(rgb(theme.surface))
+            .bg(rgb(theme.background))
             .child(strip)
             .child(add)
             .into_any_element()
