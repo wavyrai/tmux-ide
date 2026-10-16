@@ -1,0 +1,7 @@
+{
+  "app": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/Tmux IDE Unified Tabs QA.app",
+  "nativeSha256": "5c8f9d30620ddac9731e6c08aeb126aec042747b3537d6f62509f5a5c5b40fbe",
+  "distributionSigned": false,
+  "baseCandidate": "0.1.2 build2026101501",
+  "nativeChanged": true
+}

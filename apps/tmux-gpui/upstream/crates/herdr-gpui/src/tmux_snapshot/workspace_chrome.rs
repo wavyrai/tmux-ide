@@ -102,41 +102,54 @@ impl SnapshotView {
             .items_center()
             .gap_1()
             .pr_2();
-        for (id, label, tab, selected) in [
-            (
-                "application-home",
-                "Home",
-                ApplicationTab::Home,
-                self.browser_state.surface == browser::Surface::Home,
-            ),
-            (
-                "application-terminals",
-                "Terminals",
-                ApplicationTab::Terminals,
-                self.browser_state.surface == browser::Surface::Workspace,
-            ),
-        ] {
-            tabs = tabs.child(
+        tabs = tabs
+            .child(
                 controls::titlebar_tab(
-                    id,
-                    label,
-                    match tab {
-                        ApplicationTab::Home => controls::Icon::Home,
-                        ApplicationTab::Terminals => controls::Icon::Terminal,
-                    },
-                    selected,
+                    "application-home",
+                    "Home",
+                    controls::Icon::Home,
+                    self.browser_state.surface == browser::Surface::Home,
                     &theme,
                 )
-                .debug_selector(move || id.to_owned())
+                .debug_selector(|| "application-home".into())
                 .on_click(cx.listener(move |view, _, window, cx| {
-                    view.dispatch_application_tab(request, tab, window, cx);
+                    view.dispatch_application_tab(request, ApplicationTab::Home, window, cx);
+                })),
+            )
+            .children(self.retained_session_strip(cx))
+            .child(
+                controls::button(
+                    "application-browse",
+                    None,
+                    "Browse sessions",
+                    controls::Icon::Plus,
+                    &theme,
+                )
+                .debug_selector(|| "application-browse".into())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    if view.browser_request == request
+                        && view.picker.is_none()
+                        && view.new_session.is_none()
+                        && view.pane_actions.is_none()
+                        && view.marked.is_empty()
+                    {
+                        view.open_picker(window, cx);
+                    }
                 })),
             );
-        }
         tabs = tabs
             .child(
                 div()
-                    .flex_1()
+                    .w(px(32.))
+                    .flex_shrink_0()
+                    .when(
+                        self.browser_state
+                            .session_tabs
+                            .as_ref()
+                            .is_none_or(|p| p.rows.is_empty()),
+                        |region| region.flex_1(),
+                    )
                     .h_full()
                     .debug_selector(|| "application-drag-region".into()),
             )

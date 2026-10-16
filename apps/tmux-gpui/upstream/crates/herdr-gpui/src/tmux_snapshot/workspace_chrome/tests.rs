@@ -99,22 +99,15 @@ fn make_view(
 }
 
 #[gpui::test]
-fn application_clicks_return_to_verified_session_without_terminal_input(cx: &mut TestAppContext) {
+fn home_and_browse_clicks_do_not_send_terminal_input(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.simulate_resize(size(px(640.), px(400.)));
-    cx.update(|window, cx| {
-        window.draw(cx).clear(cx);
-    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
-    let terminals = cx.debug_bounds("application-terminals").unwrap();
-    // Rounded tabs leave draggable space above and below the control.
-    assert_eq!(terminals.size.height, px(26.));
-    assert!(terminals.size.height < px(APPLICATION_TABS_HEIGHT));
-    cx.simulate_click(terminals.center(), Modifiers::default());
-    assert!(receiver.try_recv().is_err());
-    assert!(view.read_with(cx, |view, _| view.picker.is_none()));
     let home = cx.debug_bounds("application-home").unwrap();
+    assert_eq!(home.size.height, px(26.));
+    assert!(home.size.height < px(APPLICATION_TABS_HEIGHT));
     cx.simulate_click(home.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),
@@ -124,20 +117,19 @@ fn application_clicks_return_to_verified_session_without_terminal_input(cx: &mut
     assert!(view.read_with(cx, |view, _| view.frame.is_none()
         && !view.browser_state.input_ready));
     cx.update(|window, cx| {
-        // Current Home catalog acknowledgement, after the transition's Loading state.
         view.update(cx, |view, _| {
+            view.browser_state.request = view.browser_request;
             view.browser_state.home_phase = browser::HomePhase::Live;
         });
         window.draw(cx).clear(cx);
     });
-    let terminals = cx.debug_bounds("application-terminals").unwrap();
-    cx.simulate_click(terminals.center(), Modifiers::default());
-    assert!(view.read_with(cx, |view, _| view.picker.is_none()
-        && view.last_workspace_session.as_deref() == Some("session-a")));
+    let browse = cx.debug_bounds("application-browse").unwrap();
+    cx.simulate_click(browse.center(), Modifiers::default());
+    assert!(view.read_with(cx, |view, _| view.picker.is_some()));
     assert!(
-        matches!(receiver.try_recv().unwrap(), browser::Command::Session { request:9,id } if id == "session-a")
+        receiver.try_recv().is_err(),
+        "browse must open local picker without terminal input"
     );
-    assert!(receiver.try_recv().is_err());
 }
 
 #[gpui::test]
@@ -311,7 +303,7 @@ fn metadata_only_window_tab_actual_click_selects_pane_despite_interrupted_input(
     }));
     let tab = cx.debug_bounds("workspace-window-0").unwrap();
     let header = cx.debug_bounds("titlebar").unwrap();
-    let application_tab = cx.debug_bounds("application-terminals").unwrap();
+    let application_tab = cx.debug_bounds("application-home").unwrap();
     let status = cx.debug_bounds("tmux-status-viewport").unwrap();
     assert!(tab.size.width > px(0.) && tab.size.height > px(0.));
     assert!(tab.top() >= application_tab.bottom());

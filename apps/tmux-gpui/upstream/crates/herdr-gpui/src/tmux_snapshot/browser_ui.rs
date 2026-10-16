@@ -794,7 +794,6 @@ impl SnapshotView {
             .child(sidebar)
             .child(self.sidebar_footer(cx));
         let application_tabs = self.application_tabs(window, cx);
-        let session_tabs = self.retained_session_strip(cx);
         let window_strip = self.workspace_window_strip(window, cx);
         let status = if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
@@ -903,7 +902,6 @@ impl SnapshotView {
             .flex_col()
             .text_color(rgb(theme.foreground))
             .on_key_down(cx.listener(Self::picker_key))
-            .children(session_tabs)
             .child(main)
             .children(
                 self.picker_popover(window, cx)

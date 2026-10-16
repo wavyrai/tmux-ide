@@ -112,7 +112,7 @@ the remaining divider drag area. The footer continues to show connection status.
 See [INTEGRATION.md](INTEGRATION.md). Native session/pane selection, multi-pane
 rendering, keyboard/paste, bounded history navigation, whole-pane copy and initial
 text composition are implemented. Read-only local daemon discovery is available.
-Primary Home/Terminals tabs are separate from tmux window tabs. The workspace
+Home and retained session tabs share one titlebar row, separate from tmux window tabs. The workspace
 sidebar lists sessions; each selected session has one window strip above its panes.
 Home uses a full-width layout with the current session catalog and loading, empty
 and unavailable states. It hides the workspace sidebar unless a picker is open.
@@ -363,8 +363,8 @@ The sidebar highlights the selected session. Window tabs appear only above the
 terminal canvas; selected-pane context and connection status appear below it.
 The titlebar follows Home or the selected session. Switch, Theme and Refresh live
 in the workspace sidebar footer, with Browse/Theme/Refresh actions on Home.
-Terminals returns to the last selected session only after a live catalog confirms
-its exact identity; otherwise it opens the picker. Broader TUI Home agent-roster
+The titlebar + opens the session picker. Retained session tabs use verified
+activation capabilities; closing a tab leaves its tmux session running. Broader TUI Home agent-roster
 parity remains part of INTEGRATION.md.
 
 Cmd-V pastes up to 64 KiB of UTF-8 text into the focused terminal. Empty,
@@ -725,15 +725,17 @@ It is not full Herdr palette or integration parity.
 
 ### Application and tmux navigation (source preview)
 
-Home and Terminals are separate application tabs. Home uses the full window;
+Home and open sessions share one titlebar row. Home uses the full window;
 the workspace sidebar lists sessions, while a single strip above the terminal
 canvas lists tmux windows. The selected pane and connection status sit below
 the canvas. Cmd+K can select individual panes. Exact daemon identities, rather
 than labels, determine the target; stale catalog callbacks are rejected.
 
-Returning to Terminals reuses the previous session only after a live catalog
-verifies it. The earlier nested sidebar prototype is superseded. See
-`evidence/native-structure-2026-10-09/` for native layout and packaged checks.
+The titlebar keeps Home, session browsing (+), and the sidebar toggle accessible
+while retained tabs scroll horizontally. Tmux window tabs stay inside the session.
+The earlier two-row application/session navigation is superseded. See
+`evidence/unified-titlebar-2026-10-16/` for current native checks and the
+remaining full-screen input limitation.
 
 The source window strip now reveals the selected tmux window after semantic
 selection, tab order/label or width changes. Ordinary redraws preserve manual

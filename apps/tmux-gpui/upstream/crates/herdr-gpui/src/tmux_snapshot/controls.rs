@@ -193,11 +193,10 @@ pub(super) fn tab(
         .child(div().min_w_0().truncate().child(label.into()))
 }
 
-/// Adapt Herdr window/tab_strip.rs: contiguous full-height cells, a single
-/// neutral selected fill. These destinations are not closable.
+/// Shared compact titlebar tabs with a neutral selected fill and ghost idle state.
 pub(super) fn titlebar_tab(
-    id: &'static str,
-    label: &'static str,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
     icon: Icon,
     selected: bool,
     theme: &Theme,
@@ -228,5 +227,5 @@ pub(super) fn titlebar_tab(
         .hover(move |tab| tab.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(glyph(icon, foreground))
-        .child(label)
+        .child(div().min_w_0().truncate().child(label.into()))
 }

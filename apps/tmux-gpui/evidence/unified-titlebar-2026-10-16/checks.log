@@ -1,0 +1,73 @@
+All source files are within 1000 lines.
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.37s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 24.61s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.42s
+     Running unittests src/lib.rs (target/debug/deps/herdr_client-eaf358d5075bade4)
+test result: ok. 217 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.70s
+     Running tests/live.rs (target/debug/deps/live-ee4dc1cb86c1d501)
+test result: ok. 2 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-98b04e9ce7606de7)
+test result: ok. 2788 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 31.41s
+     Running unittests src/main.rs (target/debug/deps/herdr_gpui-d2bd98b5fd2f8d17)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/tmux_main.rs (target/debug/deps/tmux_ide_gpui-c787f38ba83a935e)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/build_identity.rs (target/debug/deps/build_identity-ff8731cfc480311a)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+     Running tests/cli.rs (target/debug/deps/cli-c5b07d033e9e9593)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+     Running tests/tmux_cli.rs (target/debug/deps/tmux_cli-70742ee23918c503)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+     Running unittests src/lib.rs (target/debug/deps/herdr_protocol-3b732d65ad864076)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/clipboard.rs (target/debug/deps/clipboard-534fa3aff7c39068)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
+     Running tests/compatibility.rs (target/debug/deps/compatibility-a6cf2eff523aae4c)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/host_theme.rs (target/debug/deps/host_theme-c561987ccdfe2aa8)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/surface_encodings.rs (target/debug/deps/surface_encodings-70c95e239c102676)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+   Doc-tests herdr_client
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests herdr_gpui
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests herdr_protocol
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 28s
+     Running unittests src/lib.rs (target/debug/deps/herdr_client-eaf358d5075bade4)
+test result: ok. 217 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.66s
+     Running tests/live.rs (target/debug/deps/live-ee4dc1cb86c1d501)
+test result: ok. 2 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-050124aad4c0dbe9)
+test result: ok. 2819 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 31.04s
+     Running unittests src/main.rs (target/debug/deps/herdr_gpui-7c52c2ffa7e61030)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/tmux_main.rs (target/debug/deps/tmux_ide_gpui-5a9cf8357b88525e)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/build_identity.rs (target/debug/deps/build_identity-2fe6a4b2c5c804fe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.24s
+     Running tests/cli.rs (target/debug/deps/cli-cf5812482dc9065d)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+     Running tests/live_gui.rs (target/debug/deps/live_gui-e939a45e5c11303a)
+test result: ok. 3 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/performance_gui.rs (target/debug/deps/performance_gui-bc11218fbd0049e2)
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tmux_cli.rs (target/debug/deps/tmux_cli-138793bff7801195)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+     Running unittests src/lib.rs (target/debug/deps/herdr_protocol-3b732d65ad864076)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/clipboard.rs (target/debug/deps/clipboard-534fa3aff7c39068)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+     Running tests/compatibility.rs (target/debug/deps/compatibility-a6cf2eff523aae4c)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/host_theme.rs (target/debug/deps/host_theme-c561987ccdfe2aa8)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/surface_encodings.rs (target/debug/deps/surface_encodings-70c95e239c102676)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+   Doc-tests herdr_client
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests herdr_gpui
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests herdr_protocol
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

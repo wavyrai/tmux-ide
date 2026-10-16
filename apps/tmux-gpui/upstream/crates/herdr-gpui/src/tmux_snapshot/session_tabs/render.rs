@@ -1,7 +1,6 @@
 use super::*;
 use crate::tmux_snapshot::controls;
 use gpui::{prelude::*, *};
-pub(in crate::tmux_snapshot) const HEIGHT: f32 = 36.;
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn retained_session_strip(
         &self,
@@ -18,15 +17,14 @@ impl SnapshotView {
         let mut strip = div()
             .id("retained-session-tabs")
             .debug_selector(|| "retained-session-tabs".into())
-            .w_full()
-            .h(px(HEIGHT))
-            .flex_shrink_0()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .flex()
             .items_center()
             .overflow_x_scroll()
             .track_scroll(&self.session_tabs.scroll)
-            .border_b_1()
-            .border_color(rgb(theme.muted).opacity(0.25));
+            .gap_1();
         for (index, row) in p.rows.iter().enumerate() {
             let action = row.activate.clone();
             let close = row.close.clone();
@@ -48,16 +46,19 @@ impl SnapshotView {
             };
             let foreground = theme.foreground;
             let surface = theme.surface;
-            let tab = controls::tab(
+            let active = self.browser_state.surface == browser::Surface::Workspace
+                && p.active.as_ref() == Some(&row.id);
+            let tab = controls::titlebar_tab(
                 ("retained-session", index),
                 context.clone(),
                 controls::Icon::Sessions,
-                p.active.as_ref() == Some(&row.id),
+                active,
                 &theme,
             )
             .debug_selector(move || format!("retained-session-{index}"))
             .max_w(px(260.))
             .min_w(px(80.))
+            .px_2()
             .when(!row.available, |t| t.text_color(rgb(theme.muted)))
             .children(status.map(|s| {
                 div()
@@ -94,7 +95,8 @@ impl SnapshotView {
                 .justify_center()
                 .cursor_pointer()
                 .rounded(px(crate::config::corners::CONTROL))
-                .hover(move |s| s.bg(rgb(theme.active)))
+                .hover(move |s| s.text_color(rgb(theme.foreground)))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     svg()
                         .path("icons/close.svg")
@@ -113,14 +115,7 @@ impl SnapshotView {
                     cx.stop_propagation();
                     v.choose_session_tab(request, revision, &close, w, cx)
                 }));
-            strip = strip.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .child(tab)
-                    .child(close_button),
-            );
+            strip = strip.child(tab.child(close_button));
         }
         Some(strip.into_any_element())
     }
