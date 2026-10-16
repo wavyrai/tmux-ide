@@ -634,6 +634,17 @@ fn valid_choices(choices: &[Choice]) -> bool {
                 && ids.insert(&c.id)
         })
 }
+// Never include the untrusted publication or serde error text in logs.
+fn rejection_reason(error: &Error) -> &'static str {
+    match error {
+        Error::Invalid(reason) => reason,
+        Error::Json(_) => "invalid JSON or schema",
+        Error::TooLarge => "snapshot exceeds size limit",
+        Error::Io(_) => "snapshot read failed",
+        Error::Arguments => "invalid snapshot arguments",
+    }
+}
+
 pub(super) fn start() -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
@@ -648,9 +659,38 @@ pub(super) fn start() -> Bridge {
                 .read_until(b'\n', &mut line);
             let state = match count {
                 Ok(n) if n > 0 && n <= 8 * 1024 * 1024 && line.last() == Some(&b'\n') => {
-                    reader.accept(&line).ok()
+                    match reader.accept(&line) {
+                        Ok(state) => Some(state),
+                        Err(error) => {
+                            // JSON errors can contain terminal content or identifiers.
+                            // Only static validation reasons are safe to report.
+                            eprintln!(
+                                "tmux-preview: browser publication rejected: {}",
+                                rejection_reason(&error)
+                            );
+                            None
+                        }
+                    }
                 }
-                _ => None,
+                Ok(0) => {
+                    eprintln!("tmux-preview: browser publication stream ended");
+                    None
+                }
+                Ok(n) if n > 8 * 1024 * 1024 => {
+                    eprintln!("tmux-preview: browser publication exceeds size limit");
+                    None
+                }
+                Ok(_) => {
+                    eprintln!("tmux-preview: browser publication missing newline");
+                    None
+                }
+                Err(error) => {
+                    eprintln!(
+                        "tmux-preview: browser publication read failed: {:?}",
+                        error.kind()
+                    );
+                    None
+                }
             };
             let done = state.is_none();
             if let Ok(mut slot) = incoming.lock() {

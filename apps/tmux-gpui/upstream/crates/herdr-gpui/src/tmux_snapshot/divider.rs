@@ -2,6 +2,7 @@
 //! Non-origin unequal spans are deliberately unsupported: rectangles do not identify
 //! the nearest same-axis tmux ancestor that an absolute pane resize will change.
 use super::{SnapshotView, browser, hit_regions};
+use bezel_ui::widgets::{Layout, SplitStyle};
 use gpui::{prelude::*, *};
 use serde::{Deserialize, Serialize};
 pub(super) mod canonical;
@@ -14,6 +15,22 @@ pub(super) enum Axis {
     Cols,
     Rows,
 }
+// Canonical rectangles below override Bezel's default grab-strip size. The
+// terminal already paints idle separators, so only an active drag adds a line.
+fn handle(palette: &bezel_theme::Theme, axis: Axis, dragging: bool) -> Div {
+    palette.split_handle(
+        match axis {
+            Axis::Cols => gpui::Axis::Horizontal,
+            Axis::Rows => gpui::Axis::Vertical,
+        },
+        if dragging {
+            SplitStyle::Line { dragging: true }
+        } else {
+            SplitStyle::Ghost
+        },
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Split {
     canonical: Option<canonical::Target>,
@@ -358,7 +375,7 @@ impl SnapshotView {
                 width,
                 self.terminal_height(),
                 self.divider.as_ref().map(|d| d.split.id.as_str()),
-                self.accent(),
+                &super::design::palette(&self.theme()),
             );
         }
         splits(&self.browser_state)
@@ -396,25 +413,20 @@ impl SnapshotView {
                     (split.start, split.edge, split.span, 1)
                 };
                 Some(
-                    div()
-                        .id(("pane-divider", index))
-                        .absolute()
-                        .left(px(f32::from(left) * width))
-                        .top(px(f32::from(top) * self.terminal_height()))
-                        .w(px(f32::from(cols) * width))
-                        .h(px(f32::from(rows) * self.terminal_height()))
-                        .cursor(if split.axis == Axis::Cols {
-                            CursorStyle::ResizeLeftRight
-                        } else {
-                            CursorStyle::ResizeUpDown
-                        })
-                        .when(
-                            self.divider
-                                .as_ref()
-                                .is_some_and(|drag| drag.split == split),
-                            |handle| handle.bg(rgb(self.accent())),
-                        )
-                        .into_any_element(),
+                    handle(
+                        &super::design::palette(&self.theme()),
+                        split.axis,
+                        self.divider
+                            .as_ref()
+                            .is_some_and(|drag| drag.split == split),
+                    )
+                    .id(("pane-divider", index))
+                    .absolute()
+                    .left(px(f32::from(left) * width))
+                    .top(px(f32::from(top) * self.terminal_height()))
+                    .w(px(f32::from(cols) * width))
+                    .h(px(f32::from(rows) * self.terminal_height()))
+                    .into_any_element(),
                 )
             })
             .collect()

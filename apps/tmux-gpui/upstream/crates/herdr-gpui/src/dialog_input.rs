@@ -257,52 +257,58 @@ impl HerdrWindow {
                                 .max(caret - bounds.size.width + px(2.))
                                 .max(px(0.));
                             let origin = bounds.origin - point(input.scroll, px(0.));
-                            window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                                let left = origin.x + line.x_for_index(input.selection.start);
-                                let right = origin.x + line.x_for_index(input.selection.end);
-                                if focused && !input.selection.is_empty() {
-                                    window.paint_quad(fill(
-                                        Bounds::from_corners(
-                                            point(left, bounds.top()),
-                                            point(right, bounds.bottom()),
-                                        ),
-                                        rgb(this.theme.muted),
-                                    ));
-                                }
-                                let _ = line.paint(
-                                    origin,
-                                    bounds.size.height,
-                                    TextAlign::Left,
-                                    None,
-                                    window,
-                                    cx,
-                                );
-                                if focused {
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            point(origin.x + caret, bounds.top()),
-                                            size(px(1.), bounds.size.height),
-                                        ),
-                                        rgb(this.theme.foreground),
-                                    ));
-                                }
-                                if let Some(marked) = &input.marked {
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            point(
-                                                origin.x + line.x_for_index(marked.start),
-                                                bounds.bottom() - px(1.),
+                            window.with_content_mask(
+                                Some(ContentMask {
+                                    bounds,
+                                    ..Default::default()
+                                }),
+                                |window| {
+                                    let left = origin.x + line.x_for_index(input.selection.start);
+                                    let right = origin.x + line.x_for_index(input.selection.end);
+                                    if focused && !input.selection.is_empty() {
+                                        window.paint_quad(fill(
+                                            Bounds::from_corners(
+                                                point(left, bounds.top()),
+                                                point(right, bounds.bottom()),
                                             ),
-                                            size(
-                                                line.x_for_index(marked.end)
-                                                    - line.x_for_index(marked.start),
-                                                px(1.),
+                                            rgb(this.theme.muted),
+                                        ));
+                                    }
+                                    let _ = line.paint(
+                                        origin,
+                                        bounds.size.height,
+                                        TextAlign::Left,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                    if focused {
+                                        window.paint_quad(fill(
+                                            Bounds::new(
+                                                point(origin.x + caret, bounds.top()),
+                                                size(px(1.), bounds.size.height),
                                             ),
-                                        ),
-                                        rgb(this.theme.foreground),
-                                    ));
-                                }
-                            });
+                                            rgb(this.theme.foreground),
+                                        ));
+                                    }
+                                    if let Some(marked) = &input.marked {
+                                        window.paint_quad(fill(
+                                            Bounds::new(
+                                                point(
+                                                    origin.x + line.x_for_index(marked.start),
+                                                    bounds.bottom() - px(1.),
+                                                ),
+                                                size(
+                                                    line.x_for_index(marked.end)
+                                                        - line.x_for_index(marked.start),
+                                                    px(1.),
+                                                ),
+                                            ),
+                                            rgb(this.theme.foreground),
+                                        ));
+                                    }
+                                },
+                            );
                             input.bounds = bounds;
                             input.line = Some(line);
                         });

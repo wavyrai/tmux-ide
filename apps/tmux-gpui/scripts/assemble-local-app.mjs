@@ -62,6 +62,7 @@ try {
   await chmod(join(macos, "tmux-ide-gpui"), 0o755);
   await chmod(join(resources, "node"), 0o755);
   await copyFile(nodeLicense, join(resources, "NODE-LICENSE"));
+  await copyFile(join(project, "BEZEL-NOTICE.md"), join(resources, "BEZEL-NOTICE.md"));
   await copyFile(join(project, "upstream/LICENSE"), join(resources, "HERDR-LICENSE"));
   await copyFile(join(project, "upstream/NOTICE"), join(resources, "HERDR-NOTICE"));
   await copyFile(resolve(project, "../../LICENSE"), join(resources, "TMUX-IDE-LICENSE"));

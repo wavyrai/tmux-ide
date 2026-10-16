@@ -76,20 +76,13 @@ impl SnapshotView {
         let Some(handles) = &self.sidebar_keyboard.controls else {
             return control;
         };
-        let color = theme.ink(theme.primary());
-        let background = theme.surface;
+        let ring = crate::tmux_snapshot::design::palette(theme).ring;
         control
+            .border_1()
+            .border_color(transparent_black())
             .track_focus(&handles[index])
             .tab_index(index as isize)
-            .focus_visible(move |style| {
-                style.bg(rgb(background)).shadow(vec![BoxShadow {
-                    color: rgb(color).into(),
-                    offset: point(px(0.), px(0.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(2.),
-                    inset: false,
-                }])
-            })
+            .focus_visible(move |style| style.border_color(ring))
     }
 
     pub(super) fn sidebar_control_key(

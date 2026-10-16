@@ -71,7 +71,18 @@ export async function refreshSplitInventory(options: {
     await options.retire();
     if (!options.current()) return;
     stage = "inventory";
-    const choices = await options.read();
+    let choices = await options.read();
+    // A successful mutation can precede the mirror's window-identity stamp.
+    // The canonical inventory then conservatively exposes no attachable panes.
+    // Wait only for that empty transition; never infer identities from a receipt
+    // or retry mutations, transport failures, or a contradictory partial catalog.
+    for (const delay of [50, 100, 200, 400, 800]) {
+      if (!options.current()) return;
+      if (choices.length !== 0) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      if (!options.current()) return;
+      choices = await options.read();
+    }
     if (!options.current()) return;
     stage = "created-pane";
     if (

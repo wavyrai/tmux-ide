@@ -4,6 +4,7 @@ pub(super) use sidebar::Keyboard as SidebarKeyboard;
 #[path = "workspace_agents.rs"]
 mod workspace_agents;
 use super::{SnapshotView, browser};
+use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 pub(super) enum Selection {
     WorkspaceAgent {
@@ -701,6 +702,7 @@ impl SnapshotView {
             Bounds::new(point(px(0.), px(0.)), viewport),
             theme.surface,
         );
+        super::design::prepare(&theme, glass, cx);
         let mut sidebar = div()
             .id("session-list")
             .debug_selector(|| "session-list".into())
@@ -821,16 +823,18 @@ impl SnapshotView {
                 .child(self.terminal_render(window, cx))
         });
         let home = is_home.then(|| self.home_render(window, cx));
-        let context = div()
+        // Connection messages can wrap; retain the scroll owner instead of
+        // imposing the upstream status bar's fixed single-line height.
+        let context = super::design::palette(&theme)
+            .status_bar()
+            .h_auto()
+            .px_0()
+            .gap_0()
             .id("workspace-context")
-            .flex()
             .items_start()
-            .flex_none()
             .min_w_0()
             .w_full()
             .bg(rgb(theme.background))
-            .border_t_1()
-            .border_color(super::controls::separator(&theme))
             .children(
                 super::pane_chrome::selected_title(&self.browser_state).map(|title| {
                     div()
@@ -865,6 +869,9 @@ impl SnapshotView {
             theme.background
         };
         let content = super::shell::content_panel(content_background)
+            .when(is_home && glass, |panel| {
+                panel.bg(rgba((content_background << 8) | 0x99))
+            })
             .children(home)
             .when(!is_home, |panel| {
                 panel
@@ -884,7 +891,7 @@ impl SnapshotView {
                             .w_full()
                             .child(context)
                             .children(
-                                self.pane_actions_panel(cx)
+                                self.pane_actions_panel(window, cx)
                                     .map(|panel| deferred(panel).with_priority(1)),
                             ),
                     )

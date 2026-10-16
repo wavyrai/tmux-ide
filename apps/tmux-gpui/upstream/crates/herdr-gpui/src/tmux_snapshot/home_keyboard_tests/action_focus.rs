@@ -30,6 +30,7 @@ fn home_actions_tab_enter_space_and_escape_keep_input_owned(cx: &mut TestAppCont
     });
     cx.simulate_keystrokes("enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     view.read_with(cx, |v, _| assert!(v.picker.is_some()));
@@ -44,6 +45,7 @@ fn home_actions_tab_enter_space_and_escape_keep_input_owned(cx: &mut TestAppCont
     });
     cx.simulate_keystrokes("space");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("space").unwrap(),
     });
     view.read_with(cx, |v, _| assert!(v.picker.is_some()));
@@ -82,6 +84,7 @@ fn home_focused_refresh_activates_once_without_opening_selected_agent(cx: &mut T
     });
     cx.simulate_keystrokes("shift-tab enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(matches!(

@@ -429,6 +429,7 @@ fn held_keys_release_what_was_pressed_only_under_report_all() {
                 keystroke: Keystroke::parse(s).unwrap(),
                 is_held: true,
                 prefer_character_input: false,
+                layout: None,
             },
             false,
         )
@@ -498,6 +499,7 @@ fn a_pane_key_sends_its_target_held_as_typed() {
         keystroke: Keystroke::parse("cmd-left").unwrap(),
         is_held: true,
         prefer_character_input: false,
+        layout: None,
     };
     assert_eq!(key_input(&typed, true), None);
     let Some(ClientPaneInputEvent::Key {
@@ -531,6 +533,7 @@ fn alt_characters_reach_the_pane_as_shortcuts() {
                 keystroke: Keystroke::parse(s).unwrap(),
                 is_held: false,
                 prefer_character_input: false,
+                layout: None,
             },
             true,
         )

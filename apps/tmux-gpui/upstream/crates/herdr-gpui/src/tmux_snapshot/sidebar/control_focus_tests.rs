@@ -31,6 +31,7 @@ fn chrome_tab_is_opt_in_skips_unavailable_controls_and_refreshes_once(cx: &mut T
     });
     cx.simulate_keystrokes("tab enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     let commands: Vec<_> = receiver.try_iter().collect();
@@ -75,6 +76,7 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
     let width_before = view.read_with(cx, |view, _| view.input_geometry.unwrap().0.size.width);
     cx.simulate_keystrokes("shift-tab space");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("space").unwrap(),
     });
     cx.update(|window, cx| {
@@ -112,6 +114,7 @@ fn stale_control_keyup_does_not_refresh_or_select_a_session(cx: &mut TestAppCont
     cx.simulate_keystrokes("ctrl-g tab tab enter");
     cx.update(|_, cx| view.update(cx, |view, _| view.browser_request += 1));
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(receiver.try_recv().is_err());
@@ -142,6 +145,7 @@ fn available_plus_activates_once_and_lost_capability_returns_to_rows(cx: &mut Te
     receiver.try_iter().for_each(drop);
     cx.simulate_keystrokes("ctrl-g shift-tab enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(matches!(
@@ -198,6 +202,7 @@ fn modal_between_control_keydown_and_keyup_preserves_picker_and_blocks_refresh(
     cx.simulate_keystrokes("ctrl-g tab tab enter");
     cx.update(|window, cx| view.update(cx, |view, cx| view.open_picker(window, cx)));
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(receiver.try_recv().is_err());

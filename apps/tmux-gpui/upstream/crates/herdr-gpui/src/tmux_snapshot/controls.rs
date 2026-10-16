@@ -1,5 +1,7 @@
 //! Native chrome primitives. Terminal geometry and routing stay with their owners.
 use crate::config::Theme;
+use bezel_theme::{ControlSize, Sizing};
+use bezel_ui::widgets::Buttons;
 use gpui::{prelude::*, *};
 
 /// Quiet structural boundaries are independent of selection and focus accents.
@@ -13,8 +15,6 @@ pub(super) fn separator(theme: &Theme) -> Rgba {
 }
 
 pub(super) const CONTROL_HEIGHT: f32 = 32.;
-const ICON_SIZE: f32 = 16.;
-const LABEL_SIZE: f32 = 12.;
 const CONTENT_GAP: f32 = 6.;
 
 #[cfg(test)]
@@ -51,15 +51,6 @@ impl Icon {
     }
 }
 
-fn glyph(icon: Icon, foreground: u32) -> Svg {
-    svg()
-        .path(icon.path())
-        .size(px(ICON_SIZE))
-        .flex_shrink_0()
-        // GPUI SVG paint requires its own color; parent text is insufficient.
-        .text_color(rgb(foreground))
-}
-
 /// Visual presentation is independent of command admission, which stays with callers.
 #[derive(Clone, Copy)]
 pub(super) enum ButtonStyle {
@@ -88,18 +79,26 @@ pub(super) fn action_button(
     style: ButtonStyle,
     theme: &Theme,
 ) -> Stateful<Div> {
-    // Reuse Herdr's palette-derived danger ink (menu/devices/host_menu.rs).
-    // This helper guarantees mark contrast, not small-text contrast. Keep labels
-    // and tooltips in the normal foreground; tint only the icon and border.
-    // GPUI packs Rgba as RRGGBBAA; glyph consumes RGB only.
-    let icon_foreground = match style {
-        ButtonStyle::Destructive => u32::from(crate::menu::danger(theme)) >> 8,
-        _ => theme.foreground,
+    use bezel_ui::widgets::ButtonStyle as BezelStyle;
+    let bezel = super::design::palette(theme);
+    let asset = bezel_ui::icons::Icon::asset(icon.path());
+    let base = match style {
+        ButtonStyle::Primary => bezel.icon_button(asset, BezelStyle::Prominent, None).id(id),
+        ButtonStyle::Destructive => bezel
+            .icon_button(asset, BezelStyle::Destructive, None)
+            .id(id),
+        ButtonStyle::Unavailable => bezel.icon_button(asset, BezelStyle::Ghost, None).id(id),
+        ButtonStyle::Secondary | ButtonStyle::Quiet => bezel.ghost(id).child(
+            bezel_ui::icons::icon(asset)
+                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                .flex_shrink_0()
+                .text_color(bezel.text_muted),
+        ),
     };
-    let (foreground, surface, active) = (theme.foreground, theme.surface, theme.active);
-    div()
-        .id(id)
+    base.control_size(ControlSize::Regular)
         .role(Role::Button)
+        .border_1()
+        .border_color(transparent_black())
         .accessibility_id(id)
         .aria_label(label.unwrap_or(hint))
         .debug_selector(move || id.to_owned())
@@ -112,49 +111,16 @@ pub(super) fn action_button(
         .gap(px(CONTENT_GAP))
         .map(|control| {
             if label.is_some() {
-                control.px(px(10.))
+                control.w_auto().px(px(10.))
             } else {
-                control.w(px(CONTROL_HEIGHT))
+                control.w(px(CONTROL_HEIGHT)).px_0()
             }
         })
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::NORMAL)
-        .rounded(px(crate::config::corners::CONTROL))
-        .text_color(rgb(foreground))
-        .map(|control| match style {
-            ButtonStyle::Primary => control.bg(rgb(active)).font_weight(FontWeight::MEDIUM),
-            ButtonStyle::Secondary => control.border_1().border_color(separator(theme)),
-            ButtonStyle::Destructive => control.border_1().border_color(rgb(icon_foreground)),
-            ButtonStyle::Quiet | ButtonStyle::Unavailable => control,
-        })
-        // Adapt Herdr titlebar/navigation.rs: unavailable controls never paint
-        // hover/pressed affordances. Owners still decide whether to attach a callback.
         .when(matches!(style, ButtonStyle::Unavailable), |control| {
             control.opacity(0.5).cursor_default()
         })
-        .when(!matches!(style, ButtonStyle::Unavailable), |control| {
-            control
-                .cursor_pointer()
-                .hover(move |hover| {
-                    hover.bg(match style {
-                        ButtonStyle::Primary => rgb(active).blend(rgba((foreground << 8) | 0x14)),
-                        _ => rgb(active),
-                    })
-                })
-                .active(move |pressed| {
-                    pressed.bg(rgb(active).blend(rgba((foreground << 8) | 0x24)))
-                })
-        })
-        .child(glyph(icon, icon_foreground))
         .children(label.map(|label| div().min_w_0().truncate().child(label)))
-        .tooltip(move |_, cx| {
-            cx.new(|_| crate::usage::Hint {
-                text: hint.into(),
-                foreground,
-                surface,
-            })
-            .into()
-        })
+        .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
 }
 
 pub(super) fn tab(
@@ -164,36 +130,21 @@ pub(super) fn tab(
     selected: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let foreground = if selected {
-        theme.foreground
-    } else {
-        theme.muted
-    };
-    let hover = theme.active;
-    div()
-        .id(id)
-        .h(px(CONTROL_HEIGHT))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(px(CONTENT_GAP))
-        .px(px(12.))
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::MEDIUM)
-        .bg(if selected {
-            rgb(theme.active).into()
+    let key = format!("{:?}", id.into());
+    bezel_ui::tabs::tab(
+        &super::design::palette(theme),
+        key,
+        bezel_ui::tabs::Label::new(label).with_icon(bezel_ui::icons::Icon::asset(icon.path())),
+        if selected {
+            bezel_ui::tabs::State::Focused
         } else {
-            transparent_black()
-        })
-        .rounded(px(crate::config::corners::CONTROL))
-        .text_color(rgb(foreground))
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
-        .child(glyph(icon, foreground))
-        .child(div().min_w_0().truncate().child(label.into()))
+            bezel_ui::tabs::State::Resting
+        },
+    )
+    .h(px(CONTROL_HEIGHT))
 }
 
-/// Shared compact titlebar tabs with a neutral selected fill and ghost idle state.
+/// The same Bezel tab component in the compact native titlebar.
 pub(super) fn titlebar_tab(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -201,31 +152,8 @@ pub(super) fn titlebar_tab(
     selected: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let background = if selected { rgb(theme.active) } else { rgba(0) };
-    let foreground = if selected {
-        theme.foreground
-    } else {
-        theme.muted
-    };
-    // Inactive destinations remain ghost controls, including while hovered.
-    let hover = background;
-    div()
-        .id(id)
+    tab(id, label, icon, selected, theme)
         .h(px(26.))
-        .rounded(px(crate::config::corners::CONTROL))
         .min_w(px(108.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(CONTENT_GAP))
-        .px(px(14.))
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(foreground))
-        .bg(background)
-        .cursor_pointer()
-        .hover(move |tab| tab.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(glyph(icon, foreground))
-        .child(div().min_w_0().truncate().child(label.into()))
 }

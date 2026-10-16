@@ -46,6 +46,7 @@ fn removal_footer_cycles_both_directions_and_cancel_restores_focus(cx: &mut Test
     cx.simulate_keystrokes("space");
     assert!(view.read_with(cx, |v, _| v.picker.is_some()));
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("space").unwrap(),
     });
     cx.update(|w, cx| {
@@ -95,9 +96,11 @@ fn removal_footer_waits_for_keyup_submits_once_and_pending_keeps_cancel(cx: &mut
         keystroke: Keystroke::parse("enter").unwrap(),
         is_held: true,
         prefer_character_input: false,
+        layout: None,
     });
     assert!(receiver.try_recv().is_err());
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     let command = serde_json::to_value(receiver.try_recv().unwrap()).unwrap();
@@ -130,6 +133,7 @@ fn removal_footer_waits_for_keyup_submits_once_and_pending_keeps_cancel(cx: &mut
     }
     cx.simulate_keystrokes("enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(view.read_with(cx, |v, _| v.picker.is_none()));
@@ -149,6 +153,7 @@ fn removal_stale_request_keyup_and_pointer_cannot_confirm_or_cancel(cx: &mut Tes
         cx.simulate_keystrokes(keys);
         cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
         cx.simulate_event(KeyUpEvent {
+            layout: None,
             keystroke: Keystroke::parse("enter").unwrap(),
         });
         assert!(view.read_with(cx, |v, _| v.picker.as_ref().unwrap().removal.is_some()));

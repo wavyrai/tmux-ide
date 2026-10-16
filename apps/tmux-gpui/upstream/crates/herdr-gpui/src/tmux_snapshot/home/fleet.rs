@@ -1,4 +1,5 @@
 use super::*;
+use bezel_ui::widgets::Content;
 
 // Follow Herdr sidebar/row.rs and row/configured.rs's visual hierarchy:
 // labels flex and truncate; marks and trailing state keep their width.
@@ -10,13 +11,8 @@ fn fleet_mark(path: &'static str, color: u32) -> Svg {
         .flex_shrink_0()
         .text_color(rgb(color))
 }
-fn fleet_status(text: impl Into<SharedString>, color: u32) -> Div {
-    let text: SharedString = text.into();
-    div()
-        .flex_shrink_0()
-        .text_size(px(12.))
-        .text_color(rgb(color))
-        .child(text)
+fn fleet_status(text: impl Into<SharedString>, theme: &crate::config::Theme) -> Div {
+    super::super::design::palette(theme).badge(text)
 }
 
 impl SnapshotView {
@@ -142,7 +138,7 @@ impl SnapshotView {
                         },
                         if enabled { "Open" } else { "Unavailable" }
                     ),
-                    theme.muted,
+                    &theme,
                 )
                 .debug_selector(move || format!("fleet-session-status-{index}-{row}")),
             )
@@ -166,11 +162,10 @@ impl SnapshotView {
             let mut card = div()
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
-                .p_3()
+                .p_2()
                 .rounded(px(crate::config::corners::PANEL))
                 .border_1()
                 .border_color(native_controls::separator(&theme))
-                .bg(rgb(theme.surface))
                 .child(
                     div()
                         .debug_selector(move || format!("fleet-machine-header-{index}"))
@@ -212,7 +207,7 @@ impl SnapshotView {
                                 } else {
                                     group.state.label()
                                 },
-                                theme.muted,
+                                &theme,
                             )
                             .debug_selector(move || format!("fleet-machine-status-{index}")),
                         ),
@@ -344,7 +339,7 @@ impl SnapshotView {
                                     } else {
                                         "Unavailable"
                                     },
-                                    theme.muted,
+                                    &theme,
                                 )
                                 .debug_selector(move || {
                                     format!("fleet-server-status-{index}-{server_index}")

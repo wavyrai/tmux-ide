@@ -14,6 +14,17 @@ pub(super) struct Glass {
     active: bool,
 }
 impl Glass {
+    pub(super) fn is_active(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.active
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
     /// Bounds cover the shell in GPUI logical points from the content view's top-left.
     /// Callers paint workspace content opaquely. False requires opaque chrome.
     pub(super) fn sync(&mut self, window: &Window, bounds: Bounds<Pixels>, surface: u32) -> bool {

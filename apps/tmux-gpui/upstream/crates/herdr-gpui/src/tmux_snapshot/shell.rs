@@ -70,7 +70,13 @@ mod tests;
 // Tint only the navigation chrome; terminal surfaces retain opaque theme colors.
 pub(super) fn chrome_fill(color: u32, glass: bool) -> Rgba {
     if glass {
-        rgba((color << 8) | 0x55)
+        // Dark ink needs a stronger frost over bright desktop content.
+        let alpha = if crate::contrast::luminance(color) < 0.5 {
+            0xcc
+        } else {
+            0x18
+        };
+        rgba((color << 8) | alpha)
     } else {
         rgb(color)
     }

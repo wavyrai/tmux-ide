@@ -86,6 +86,7 @@ fn key(value: &str) -> KeyDownEvent {
         keystroke: Keystroke::parse(value).unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     }
 }
 #[gpui::test]

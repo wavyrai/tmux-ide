@@ -236,3 +236,85 @@ for (const failure of [
     );
     assert.equal(attached, failure === "attach");
   });
+
+test("created-window refresh waits for exact canonical inventory after identity stamping", async () => {
+  let reads = 0;
+  let retired = 0;
+  let attached = 0;
+  await refreshSplitInventory({
+    current: () => true,
+    originalPane: "source",
+    createdPane: "created",
+    selectedSession: "session",
+    retire: async () => {
+      retired++;
+    },
+    read: async () => (++reads === 1 ? [] : [connection("source"), connection("created")]),
+    readSessions: async () => [{ id: "session", label: "Session" }],
+    attach: async (original, choices) => {
+      assert.equal(original.semanticPaneId, "source");
+      assert.deepEqual(
+        choices.map((pane) => pane.semanticPaneId),
+        ["source", "created"],
+      );
+      attached++;
+    },
+  });
+  assert.equal(reads, 2);
+  assert.equal(retired, 1);
+  assert.equal(attached, 1);
+});
+
+test("empty inventory settling cannot attach or reread a retired selection", async () => {
+  let current = true;
+  let reads = 0;
+  let attached = false;
+  const pending = refreshSplitInventory({
+    current: () => current,
+    originalPane: "source",
+    createdPane: "created",
+    selectedSession: "session",
+    retire: async () => {},
+    read: async () => {
+      reads++;
+      setTimeout(() => {
+        current = false;
+      }, 0);
+      return [];
+    },
+    readSessions: async () => {
+      throw new Error("Retired selection read sessions");
+    },
+    attach: async () => {
+      attached = true;
+    },
+  });
+  await pending;
+  assert.equal(reads, 1);
+  assert.equal(attached, false);
+});
+
+test("persistently empty inventory fails without inventing attachment authority", async () => {
+  let reads = 0;
+  await assert.rejects(
+    refreshSplitInventory({
+      current: () => true,
+      originalPane: "source",
+      createdPane: "created",
+      selectedSession: "session",
+      retire: async () => {},
+      read: async () => {
+        reads++;
+        return [];
+      },
+      readSessions: async () => {
+        throw new Error("Unqualified inventory read sessions");
+      },
+      attach: async () => {
+        throw new Error("Unqualified inventory attached");
+      },
+    }),
+    (error: unknown) => error instanceof SplitRefreshError && error.stage === "created-pane",
+  );
+  assert.equal(reads, 6);
+});

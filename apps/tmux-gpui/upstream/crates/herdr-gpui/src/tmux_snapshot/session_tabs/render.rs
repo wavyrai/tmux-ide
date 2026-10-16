@@ -44,8 +44,6 @@ impl SnapshotView {
                     _ => None,
                 }
             };
-            let foreground = theme.foreground;
-            let surface = theme.surface;
             let active = self.browser_state.surface == browser::Surface::Workspace
                 && p.active.as_ref() == Some(&row.id);
             let tab = controls::titlebar_tab(
@@ -74,47 +72,28 @@ impl SnapshotView {
                         .child("New"),
                 )
             })
-            .tooltip(move |_, cx| {
-                cx.new(|_| crate::usage::Hint {
-                    text: context.clone().into(),
-                    foreground,
-                    surface,
-                })
-                .into()
+            .tooltip(move |window, cx| {
+                bezel_ui::tooltip::Tooltip::text(context.clone(), window, cx)
             })
             .on_click(cx.listener(move |v, _, w, cx| {
                 v.choose_session_tab(request, revision, &action, w, cx)
             }));
-            let close_button = div()
-                .id(("close-retained-session", index))
-                .debug_selector(move || format!("close-retained-session-{index}"))
-                .size(px(24.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .rounded(px(crate::config::corners::CONTROL))
-                .hover(move |s| s.text_color(rgb(theme.foreground)))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    svg()
-                        .path("icons/close.svg")
-                        .size(px(12.))
-                        .text_color(rgb(theme.muted)),
-                )
-                .tooltip(move |_, cx| {
-                    cx.new(|_| crate::usage::Hint {
-                        text: "Close tab — session keeps running".into(),
-                        foreground,
-                        surface,
-                    })
-                    .into()
-                })
-                .on_click(cx.listener(move |v, _, w, cx| {
-                    cx.stop_propagation();
-                    v.choose_session_tab(request, revision, &close, w, cx)
-                }));
+            let close_button = bezel_ui::tabs::close(
+                &super::super::design::palette(&theme),
+                format!("{:?}", ElementId::from(("retained-session", index))),
+                bezel_ui::tabs::Close::Always,
+            )
+            .debug_selector(move || format!("close-retained-session-{index}"))
+            .size(px(24.))
+            .role(Role::Button)
+            .aria_label("Close tab — session keeps running")
+            .tooltip(move |window, cx| {
+                bezel_ui::tooltip::Tooltip::text("Close tab — session keeps running", window, cx)
+            })
+            .on_click(cx.listener(move |v, _, w, cx| {
+                cx.stop_propagation();
+                v.choose_session_tab(request, revision, &close, w, cx)
+            }));
             strip = strip.child(tab.child(close_button));
         }
         Some(strip.into_any_element())

@@ -65,6 +65,7 @@ fn home_filter_keys_preserve_modifiers_modal_input_and_workspace_ownership(
                     keystroke: Keystroke::parse(key).unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 };
                 assert!(!v.home_filter_key(&event, window, cx));
             }
@@ -72,6 +73,7 @@ fn home_filter_keys_preserve_modifiers_modal_input_and_workspace_ownership(
                 keystroke: Keystroke::parse("w").unwrap(),
                 is_held: false,
                 prefer_character_input: false,
+                layout: None,
             };
             v.open_commands(window, cx);
             assert!(!v.home_filter_key(&event, window, cx));
@@ -103,6 +105,7 @@ fn home_filter_keys_preserve_marked_search_and_do_not_retoggle_held_attention(
                 keystroke: Keystroke::parse("a").unwrap(),
                 is_held: false,
                 prefer_character_input: false,
+                layout: None,
             };
             assert!(v.home_filter_key(&event, window, cx));
             event.is_held = true;

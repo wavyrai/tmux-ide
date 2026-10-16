@@ -40,6 +40,7 @@ fn add_machine_footer_follows_visible_order_and_cancel_restores_focus(cx: &mut T
     cx.simulate_keystrokes("space");
     assert!(view.read_with(cx, |v, _| v.picker.is_some()));
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("space").unwrap(),
     });
     cx.update(|w, cx| {
@@ -65,6 +66,7 @@ fn add_machine_footer_validates_then_submits_once_on_keyup(cx: &mut TestAppConte
     cx.simulate_keystrokes("shift-tab enter");
     assert!(receiver.try_recv().is_err());
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(view.read_with(cx, |v, _| v.picker.as_ref().unwrap().error.is_some()));
@@ -83,9 +85,11 @@ fn add_machine_footer_validates_then_submits_once_on_keyup(cx: &mut TestAppConte
         keystroke: Keystroke::parse("enter").unwrap(),
         is_held: true,
         prefer_character_input: false,
+        layout: None,
     });
     assert!(receiver.try_recv().is_err());
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(
@@ -109,6 +113,7 @@ fn add_machine_stale_keyup_and_pointer_cannot_submit_or_cancel(cx: &mut TestAppC
         cx.simulate_keystrokes(keys);
         cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
         cx.simulate_event(KeyUpEvent {
+            layout: None,
             keystroke: Keystroke::parse("enter").unwrap(),
         });
         assert!(view.read_with(cx, |v, _| v.picker.is_some()));
@@ -161,6 +166,7 @@ fn add_machine_reopened_form_and_composition_reject_captured_actions(cx: &mut Te
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     w,
                     cx,

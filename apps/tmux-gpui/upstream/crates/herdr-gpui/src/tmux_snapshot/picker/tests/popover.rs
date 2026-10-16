@@ -123,6 +123,7 @@ fn command_popover_marked_composition_owns_escape_and_return(cx: &mut TestAppCon
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

@@ -77,6 +77,7 @@ fn help_reference_composition_and_replaced_picker_reject_activation(cx: &mut Tes
                             keystroke: Keystroke::parse(key).unwrap(),
                             is_held: false,
                             prefer_character_input: false,
+                            layout: None,
                         },
                         window,
                         cx,

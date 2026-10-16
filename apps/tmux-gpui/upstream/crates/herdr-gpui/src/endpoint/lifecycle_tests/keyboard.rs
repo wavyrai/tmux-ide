@@ -14,8 +14,10 @@ fn keyboard_report_all_releases_sent_keys(cx: &mut gpui::TestAppContext) {
         keystroke: gpui::Keystroke::parse(keystroke).unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     let up = |keystroke: &str| gpui::KeyUpEvent {
+        layout: None,
         keystroke: gpui::Keystroke::parse(keystroke).unwrap(),
     };
     let key = |code, modifiers, kind, tracks_release| ClientMessage::ClientShellPaneInput {

@@ -59,6 +59,7 @@ fn footer_reverse_traversal_cancel_and_escape_preserve_terminal(cx: &mut TestApp
     });
     cx.simulate_keystrokes("tab enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     view.read_with(cx, |v, _| {
@@ -91,9 +92,11 @@ fn save_footer_activates_once_and_pending_skips_save_but_keeps_cancel(cx: &mut T
         keystroke: Keystroke::parse("enter").unwrap(),
         is_held: true,
         prefer_character_input: false,
+        layout: None,
     });
     assert!(receiver.try_recv().is_err(), "footer must wait for key-up");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     let command = serde_json::to_value(receiver.try_recv().unwrap()).unwrap();
@@ -137,6 +140,7 @@ fn save_footer_activates_once_and_pending_skips_save_but_keeps_cancel(cx: &mut T
     });
     cx.simulate_keystrokes("tab enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     view.read_with(cx, |v, _| assert!(v.picker.is_none()));
@@ -156,6 +160,7 @@ fn stale_request_footer_keyup_and_pointer_cannot_close_or_save(cx: &mut TestAppC
     cx.simulate_keystrokes("shift-tab enter");
     cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     view.read_with(cx, |v, _| {

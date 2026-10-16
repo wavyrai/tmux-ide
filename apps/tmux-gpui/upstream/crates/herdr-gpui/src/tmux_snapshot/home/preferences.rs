@@ -1,5 +1,6 @@
 //! Explicit, acknowledged local-owner preferences; never terminal input.
 use super::*;
+use bezel_ui::widgets::{Buttons, Layout};
 use browser::fleet::PreferencePhase;
 impl SnapshotView {
     fn preference_ready(
@@ -84,37 +85,33 @@ impl SnapshotView {
         let enabled = action
             .as_ref()
             .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value, cx));
-        let (foreground, surface) = (theme.foreground, theme.surface);
-        div()
-            .id(id)
+        let palette = super::super::design::palette(&theme);
+        let glyph = match icon {
+            "icons/chevron-right.svg" => palette.disclosure(false),
+            "icons/chevron-down.svg" => palette.disclosure(true),
+            _ => bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(icon))
+                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                .text_color(palette.text_muted),
+        };
+        let control = if enabled {
+            palette.ghost(id)
+        } else {
+            div().id(id).opacity(0.5)
+        };
+        control
+            .role(Role::Button)
+            .aria_label(label)
+            .accessibility_id(format!("{}-{}", id.0, id.1))
             .debug_selector(move || format!("{}-{}", id.0, id.1))
             .size(px(28.))
+            .p_0()
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(crate::config::corners::CONTROL))
-            .text_color(rgb(if enabled {
-                theme.foreground
-            } else {
-                theme.muted
-            }))
-            .when(enabled, |d| {
-                d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
-            })
-            .child(svg().path(icon).size(px(16.)).text_color(rgb(if enabled {
-                theme.foreground
-            } else {
-                theme.muted
-            })))
-            .tooltip(move |_, cx| {
-                cx.new(|_| crate::usage::Hint {
-                    text: label.into(),
-                    foreground,
-                    surface,
-                })
-                .into()
-            })
+            .when(!enabled, |d| d.cursor_default())
+            .child(glyph)
+            .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(label, window, cx))
             .on_click(cx.listener(move |view, _, _, cx| {
                 cx.stop_propagation();
                 if let Some(action) = &action {

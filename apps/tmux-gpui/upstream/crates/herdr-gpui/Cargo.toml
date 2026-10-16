@@ -11,6 +11,8 @@ version.workspace      = true
 workspace = true
 
 [dependencies]
+bezel_theme.workspace = true
+bezel_ui.workspace = true
 url.workspace = true
 aes.workspace                  = true
 anyhow.workspace               = true

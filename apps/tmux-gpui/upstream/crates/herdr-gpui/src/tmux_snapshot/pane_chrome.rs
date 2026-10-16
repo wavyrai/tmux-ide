@@ -1,5 +1,8 @@
 //! Display labels never become routing identities.
 use super::browser::State;
+#[path = "agent_icon.rs"]
+mod agent_icon;
+pub(super) use agent_icon::path as agent_icon_path;
 pub(super) fn selected_title(state: &State) -> Option<String> {
     let selected = state.selected_pane.as_deref()?;
     let pane = state.panes.iter().find(|pane| pane.id == selected)?;
@@ -429,14 +432,12 @@ impl SnapshotView {
         row.into_any_element()
     }
     fn pane_header_label(&self, header: &Header, width: f32) -> Div {
-        let indicator = self
+        let agent = self
             .browser_state
             .workspace_agents
             .as_ref()
             .and_then(|workspace| {
-                if header.width < 20
-                    || self.browser_state.selected_session.as_ref() != Some(&workspace.session_id)
-                {
+                if self.browser_state.selected_session.as_ref() != Some(&workspace.session_id) {
                     return None;
                 }
                 let mut rows = workspace.roster.rows.iter().filter(|row| {
@@ -447,7 +448,7 @@ impl SnapshotView {
                 if rows.next().is_some() {
                     return None;
                 }
-                Some(self.agent_indicator(
+                Some((
                     row,
                     !row.available
                         || !matches!(
@@ -457,6 +458,14 @@ impl SnapshotView {
                         ),
                 ))
             });
+        let indicator = agent
+            .filter(|_| header.width >= 20)
+            .map(|(row, unavailable)| self.agent_indicator(row, unavailable));
+        let icon = agent_icon_path(
+            agent
+                .filter(|(_, unavailable)| !unavailable)
+                .and_then(|(row, _)| row.harness.as_deref()),
+        );
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
@@ -495,6 +504,17 @@ impl SnapshotView {
             .flex()
             .items_center()
             .gap(px(4.))
+            .child(
+                svg()
+                    .path(icon)
+                    .size(px((self.terminal_height() - 2.).clamp(8., 14.)))
+                    .flex_none()
+                    .text_color(rgb(if selected {
+                        theme.foreground
+                    } else {
+                        theme.muted
+                    })),
+            )
             .children(indicator)
             .child(
                 div()

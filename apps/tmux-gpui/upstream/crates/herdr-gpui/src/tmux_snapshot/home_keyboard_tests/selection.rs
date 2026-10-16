@@ -129,6 +129,7 @@ fn home_roster_navigation_preserves_search_composition_and_overlay_ownership(
                     keystroke: Keystroke::parse(key).unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 };
                 assert!(!v.home_filter_key(&event, window, cx));
             }
@@ -139,6 +140,7 @@ fn home_roster_navigation_preserves_search_composition_and_overlay_ownership(
                 keystroke: Keystroke::parse("enter").unwrap(),
                 is_held: false,
                 prefer_character_input: false,
+                layout: None,
             };
             assert!(!v.home_filter_key(&event, window, cx));
         });
@@ -168,6 +170,7 @@ fn home_enter_does_not_open_replacement_before_redraw(cx: &mut TestAppContext) {
                 keystroke: Keystroke::parse("enter").unwrap(),
                 is_held: false,
                 prefer_character_input: false,
+                layout: None,
             };
             assert!(v.home_filter_key(&event, window, cx));
             assert!(receiver.try_recv().is_err());

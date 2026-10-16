@@ -106,7 +106,9 @@ impl SnapshotView {
                 depth: 0,
                 machine: None,
                 agent: None,
-                icon: None,
+                icon: Some(crate::tmux_snapshot::pane_chrome::agent_icon_path(
+                    agent.harness.as_deref(),
+                )),
                 favorite: None,
             };
             let mut element = sidebar::render_row(512 + index, &row, &theme, self.accent(), false)

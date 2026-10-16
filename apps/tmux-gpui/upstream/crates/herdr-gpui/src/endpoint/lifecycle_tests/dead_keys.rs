@@ -15,6 +15,7 @@ fn a_dead_key_reaches_the_pane_only_as_the_composed_character(cx: &mut gpui::Tes
         keystroke: gpui::Keystroke::parse(keystroke).unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

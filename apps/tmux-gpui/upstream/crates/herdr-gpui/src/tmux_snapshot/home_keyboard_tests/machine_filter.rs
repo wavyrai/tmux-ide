@@ -128,7 +128,8 @@ fn machine_filter_preserves_composition_and_refuses_background_modal(cx: &mut Te
                 &KeyDownEvent {
                     keystroke: Keystroke::parse("f").unwrap(),
                     is_held: false,
-                    prefer_character_input: false
+                    prefer_character_input: false,
+                    layout: None,
                 },
                 window,
                 cx

@@ -6,22 +6,14 @@ pub(super) fn focus_control(
     focus: &FocusHandle,
     index: isize,
     color: u32,
-    background: u32,
+    _background: u32,
 ) -> Stateful<Div> {
     control
+        .border_1()
+        .border_color(transparent_black())
         .track_focus(focus)
         .tab_index(index)
-        .focus_visible(move |style| {
-            // An outer shadow paints beneath the full box. Cover its interior
-            // on otherwise transparent controls so focus remains a ring.
-            style.bg(rgb(background)).shadow(vec![BoxShadow {
-                color: rgb(color).into(),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(2.),
-                inset: false,
-            }])
-        })
+        .focus_visible(move |style| style.border_color(rgb(color)))
 }
 
 impl SnapshotView {
@@ -60,15 +52,17 @@ impl SnapshotView {
                 if let Some(controls) = &self.home_filter {
                     let mut next = match (selected, event.keystroke.modifiers.shift) {
                         (None, false) => 0,
-                        (None, true) => 2,
-                        (Some(index), false) => (index + 1) % 3,
-                        (Some(index), true) => (index + 2) % 3,
+                        (None, true) => 3,
+                        (Some(index), false) => (index + 1) % 4,
+                        (Some(index), true) => (index + 3) % 4,
                     };
-                    if next == 1 && self.browser_state.appearance.is_none() {
+                    while (next == 1 && self.browser_state.appearance.is_none())
+                        || (next == 3 && !self.local_session_available())
+                    {
                         next = if event.keystroke.modifiers.shift {
-                            0
+                            (next + 3) % 4
                         } else {
-                            2
+                            (next + 1) % 4
                         };
                     }
                     controls.actions[next].focus(window, cx);

@@ -69,25 +69,26 @@ pub(super) fn row(
     let applied = matches!(&target, Target::Theme(id)
         if view.browser_state.appearance.as_ref().is_some_and(|a| &a.selected == id));
     let focused = view.picker.as_ref().is_some_and(|p| p.selected == index);
-    let fill = if focused { theme.active } else { theme.surface };
-    div()
+    let bezel = super::super::design::palette(&theme);
+    bezel_ui::popover::menu_row(&bezel, focused, None)
         .id(("picker-row", index))
+        .role(if enabled { Role::Button } else { Role::Label })
+        .when(!enabled, |row| row.aria_description("Unavailable"))
+        .aria_label(row.label.clone())
         .debug_selector(move || format!("picker-row-{index}"))
         .h(px(32.))
         .px_2()
         .flex()
         .items_center()
         .gap_2()
-        .rounded(px(4.))
-        .bg(rgb(fill))
-        .text_color(rgb(if enabled {
-            theme.text_on(fill)
+        .text_color(if enabled {
+            bezel.text
         } else {
-            theme.muted
-        }))
+            bezel.text_muted
+        })
         .when(enabled, |item| {
             item.cursor_pointer()
-                .hover(|style| style.bg(rgb(theme.active)))
+                .hover(move |style| style.bg(bezel.element_hover))
         })
         .child(div().size(px(16.)).flex_shrink_0().when(applied, |slot| {
             slot.child(

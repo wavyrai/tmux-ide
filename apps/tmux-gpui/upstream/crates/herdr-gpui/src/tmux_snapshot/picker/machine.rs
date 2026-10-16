@@ -1,6 +1,7 @@
 //! Machine connection form shares picker focus, IME and terminal-input exclusion.
 use super::super::controls::{self, ButtonStyle, Icon};
 use super::{Mode, Selection, SnapshotView};
+use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 
 pub(super) struct Form {
@@ -146,13 +147,12 @@ impl SnapshotView {
         Some(div().id("machine-dialog-overlay").absolute().inset_0().size_full()
             .flex().items_center().justify_center().bg(rgba(0x00000088))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().id("machine-dialog").w(px(440.)).max_w_full().p_4().rounded(px(8.))
-                .bg(rgb(theme.surface)).border_1().border_color(controls::separator(&theme))
+            .child(bezel_ui::popover::dialog_card(&super::super::design::palette(&theme)).id("machine-dialog").w(px(440.)).max_w_full()
                 .flex().flex_col().gap_3()
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Add machine"))
-                .child(div().text_color(rgb(theme.muted)).child("Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary."))
+                .child(bezel_ui::popover::dialog_title(&super::super::design::palette(&theme), "Add machine"))
+                .child(bezel_ui::popover::dialog_body(&super::super::design::palette(&theme), "Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary."))
                 .child(picker.search.clone())
-                .children(picker.error.map(|error| div().child(error)))
+                .children(picker.error.map(|error| super::super::design::palette(&theme).error_strip(error).mt_0().px_2().py_1().min_w_0().w_full()))
                 .child(div().flex().justify_end().gap_2()
                     .child(controls::action_button("machine-cancel", Some("Cancel"), "Cancel", Icon::Close, ButtonStyle::Quiet, &theme)
 
@@ -161,13 +161,7 @@ impl SnapshotView {
                         .focus_visible({
                             let theme = theme.clone();
                             move |style| {
-                                style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
-                                    color: rgb(theme.ink(theme.primary())).into(),
-                                    offset: point(px(0.), px(0.)),
-                                    blur_radius: px(0.),
-                                    spread_radius: px(2.),
-                                    inset: false,
-                                }])
+                                style.border_color(super::super::design::palette(&theme).ring)
                             }
                         })
                         .on_click(cx.listener(move |view, _, window, cx| {
@@ -182,13 +176,7 @@ impl SnapshotView {
                         .focus_visible({
                             let theme = theme.clone();
                             move |style| {
-                                style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
-                                    color: rgb(theme.ink(theme.primary())).into(),
-                                    offset: point(px(0.), px(0.)),
-                                    blur_radius: px(0.),
-                                    spread_radius: px(2.),
-                                    inset: false,
-                                }])
+                                style.border_color(super::super::design::palette(&theme).ring)
                             }
                         })
                         .on_click(cx.listener(move |view, _, window, cx| {

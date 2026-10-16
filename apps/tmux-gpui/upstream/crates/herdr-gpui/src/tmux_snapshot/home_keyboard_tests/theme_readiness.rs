@@ -41,6 +41,7 @@ fn unavailable_theme_is_inert_and_skipped_until_appearance_arrives(cx: &mut Test
     });
     cx.simulate_keystrokes("enter");
     cx.simulate_event(KeyUpEvent {
+        layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     cx.update(|window, cx| {

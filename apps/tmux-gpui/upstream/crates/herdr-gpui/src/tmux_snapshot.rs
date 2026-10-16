@@ -9,6 +9,7 @@ mod composition;
 mod controls;
 mod copy;
 mod decode;
+pub(crate) mod design;
 mod divider;
 mod geometry;
 mod glass;
@@ -474,32 +475,40 @@ impl SnapshotView {
                             window,
                             cx,
                         );
-                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                            for cell in &rails {
-                                let (x, y, w, h) = if cell.vertical {
-                                    (
-                                        (f32::from(cell.col) + 0.5) * width - width.min(1.) / 2.,
-                                        f32::from(cell.row) * height,
-                                        width.min(1.),
-                                        height,
-                                    )
-                                } else {
-                                    (
-                                        f32::from(cell.col) * width,
-                                        (f32::from(cell.row) + 0.5) * height - height.min(1.) / 2.,
-                                        width,
-                                        height.min(1.),
-                                    )
-                                };
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        bounds.origin + point(px(x), px(y)),
-                                        size(px(w), px(h)),
-                                    ),
-                                    separator,
-                                ));
-                            }
-                        });
+                        window.with_content_mask(
+                            Some(ContentMask {
+                                bounds,
+                                ..Default::default()
+                            }),
+                            |window| {
+                                for cell in &rails {
+                                    let (x, y, w, h) = if cell.vertical {
+                                        (
+                                            (f32::from(cell.col) + 0.5) * width
+                                                - width.min(1.) / 2.,
+                                            f32::from(cell.row) * height,
+                                            width.min(1.),
+                                            height,
+                                        )
+                                    } else {
+                                        (
+                                            f32::from(cell.col) * width,
+                                            (f32::from(cell.row) + 0.5) * height
+                                                - height.min(1.) / 2.,
+                                            width,
+                                            height.min(1.),
+                                        )
+                                    };
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            bounds.origin + point(px(x), px(y)),
+                                            size(px(w), px(h)),
+                                        ),
+                                        separator,
+                                    ));
+                                }
+                            },
+                        );
                         entity.update(cx, |view, _| {
                             if let Some((grid, cursor)) = view.input_geometry {
                                 painter.borrow().paint_composition(

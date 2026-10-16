@@ -600,50 +600,56 @@ impl HerdrWindow {
                             return;
                         };
                         // A frame wider than the group stays inside it.
-                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                            painter.borrow_mut().paint_frame(
-                                &surface.frame,
-                                bounds.origin,
-                                Some(bounds.size),
-                                cell_width,
-                                &font,
-                                &[],
-                                &surface.panes,
-                                None,
-                                Some(PlacedImages {
-                                    placements: &surface.graphics.placements,
-                                    images,
-                                    target: ImageTarget::Main,
-                                }),
-                                window,
-                                cx,
-                            );
-                            if let Some(popup) = &surface.popup {
-                                let offset = popup_origin(
-                                    &surface.frame,
-                                    &popup.frame,
-                                    cell_width,
-                                    cell_height,
-                                );
+                        window.with_content_mask(
+                            Some(ContentMask {
+                                bounds,
+                                ..Default::default()
+                            }),
+                            |window| {
                                 painter.borrow_mut().paint_frame(
-                                    &popup.frame,
-                                    bounds.origin + offset,
-                                    None,
+                                    &surface.frame,
+                                    bounds.origin,
+                                    Some(bounds.size),
                                     cell_width,
                                     &font,
                                     &[],
-                                    &[],
+                                    &surface.panes,
                                     None,
                                     Some(PlacedImages {
                                         placements: &surface.graphics.placements,
                                         images,
-                                        target: ImageTarget::Popup(&popup.terminal_id),
+                                        target: ImageTarget::Main,
                                     }),
                                     window,
                                     cx,
                                 );
-                            }
-                        });
+                                if let Some(popup) = &surface.popup {
+                                    let offset = popup_origin(
+                                        &surface.frame,
+                                        &popup.frame,
+                                        cell_width,
+                                        cell_height,
+                                    );
+                                    painter.borrow_mut().paint_frame(
+                                        &popup.frame,
+                                        bounds.origin + offset,
+                                        None,
+                                        cell_width,
+                                        &font,
+                                        &[],
+                                        &[],
+                                        None,
+                                        Some(PlacedImages {
+                                            placements: &surface.graphics.placements,
+                                            images,
+                                            target: ImageTarget::Popup(&popup.terminal_id),
+                                        }),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            },
+                        );
                     },
                 )
                 .size_full(),

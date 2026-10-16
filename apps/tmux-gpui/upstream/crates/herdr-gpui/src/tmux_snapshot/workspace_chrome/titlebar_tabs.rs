@@ -129,3 +129,34 @@ fn retained_titlebar_activation_uses_current_token_from_home(cx: &mut TestAppCon
     );
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn fullscreen_home_tab_matches_outer_content_inset(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (_, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    for width in [640., 1000.] {
+        cx.simulate_resize(size(px(width), px(500.)));
+        cx.update(|window, cx| {
+            if !window.is_fullscreen() {
+                window.toggle_fullscreen();
+            }
+            window.draw(cx).clear(cx);
+        });
+        let home = cx.debug_bounds("application-home").unwrap();
+        let body = cx.debug_bounds("tmux-shell-body").unwrap();
+        assert_eq!(
+            home.left(),
+            body.left() + px(crate::tmux_snapshot::shell::CONTENT_INSET)
+        );
+        let sidebar = cx.debug_bounds("sidebar-toggle").unwrap();
+        assert!(sidebar.right() <= body.right());
+    }
+    assert!(receiver.try_iter().all(|command| matches!(
+        command,
+        browser::Command::Input {
+            input: crate::tmux_snapshot::keys::Input::Resize { .. },
+            ..
+        }
+    )));
+}

@@ -923,21 +923,27 @@ impl TerminalPainter {
         // A layer of its own, painted after the frame, keeps it above the
         // cells and the cursor it covers. It clips to the input area, so text
         // wider than a popup never paints over the pane beneath it.
-        window.with_content_mask(Some(ContentMask { bounds: grid }), |window| {
-            window.paint_layer(bounds, |window| {
-                window.paint_quad(fill(bounds, rgb(self.theme.background)));
-                window.paint_quad(fill(
-                    Bounds::new(
-                        origin + point(px(0.), px(self.cell_height - 2.)),
-                        size(line.width, px(1.)),
-                    ),
-                    color,
-                ));
-                if paint_glyphs(&line, origin, px(self.cell_height), color, window).is_err() {
-                    tracing::warn!(category = "glyph_paint", "IME composition paint failed");
-                }
-            });
-        });
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds: grid,
+                ..Default::default()
+            }),
+            |window| {
+                window.paint_layer(bounds, |window| {
+                    window.paint_quad(fill(bounds, rgb(self.theme.background)));
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            origin + point(px(0.), px(self.cell_height - 2.)),
+                            size(line.width, px(1.)),
+                        ),
+                        color,
+                    ));
+                    if paint_glyphs(&line, origin, px(self.cell_height), color, window).is_err() {
+                        tracing::warn!(category = "glyph_paint", "IME composition paint failed");
+                    }
+                });
+            },
+        );
     }
 
     /// The bounds of `range` (UTF-16) within a composition painted by

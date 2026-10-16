@@ -1,6 +1,7 @@
 //! Native rows reuse Herdr sidebar label clipping and themed hover surfaces.
 use super::*;
 use crate::tmux_snapshot::browser::home_agents::Phase;
+use bezel_ui::widgets::Content;
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn home_agent_select(
         &mut self,
@@ -62,19 +63,30 @@ impl SnapshotView {
             Phase::Live | Phase::Partial => "Agents",
         };
         let mut body = div()
-            .mt_4()
+            .pt(px(6.))
             .w_full()
             .min_w_0()
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(heading))
+            .child(
+                div()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(heading),
+            )
             .child(div().text_sm().text_color(rgb(theme.muted)).child(format!(
-                "{} of {} sessions observed · {} sessions and {} rows omitted",
+                "{} of {} sessions observed{}",
                 roster.observed_sessions,
                 roster.total_sessions,
-                roster.truncated_sessions,
-                roster.truncated_rows
+                if roster.truncated_sessions > 0 || roster.truncated_rows > 0 {
+                    format!(
+                        " · {} sessions and {} rows omitted",
+                        roster.truncated_sessions, roster.truncated_rows
+                    )
+                } else {
+                    String::new()
+                }
             )));
         body = body.child(self.home_filter_controls(cx));
         body = body.child(self.home_recovery_controls(cx));
@@ -82,16 +94,24 @@ impl SnapshotView {
             body = body.child(div().min_w_0().child(note.clone()));
         }
         if roster.rows.is_empty() && roster.phase == Phase::Live {
-            body = body.child("No observed agents");
+            body = body.child(super::super::design::palette(&theme).empty_state(
+                bezel_ui::icons::Icon::asset("icons/terminal.svg"),
+                "No observed agents",
+                "Start a coding agent in a terminal to see its activity here.",
+            ));
         }
         if !roster.rows.is_empty()
             && matches == 0
             && matches!(roster.phase, Phase::Live | Phase::Partial)
         {
             body = body.child(
-                div()
-                    .id("home-agents-no-matches")
-                    .child("No matching loaded agents"),
+                super::super::design::palette(&theme)
+                    .empty_state(
+                        bezel_ui::icons::Icon::asset("icons/terminal.svg"),
+                        "No matching loaded agents",
+                        "Clear the search or change the filters to see more agents.",
+                    )
+                    .id("home-agents-no-matches"),
             );
         }
         let mut rows = div()
@@ -137,6 +157,15 @@ impl SnapshotView {
                         theme.surface
                     },
                 ))
+                .child(
+                    svg()
+                        .path(super::super::pane_chrome::agent_icon_path(
+                            row.harness.as_deref(),
+                        ))
+                        .size(px(18.))
+                        .flex_shrink_0()
+                        .text_color(rgb(theme.foreground)),
+                )
                 .child(
                     div()
                         .flex_1()

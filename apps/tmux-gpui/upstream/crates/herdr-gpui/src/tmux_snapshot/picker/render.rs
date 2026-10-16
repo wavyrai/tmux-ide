@@ -22,6 +22,7 @@ impl SnapshotView {
             )
         })?;
         let theme = self.theme();
+        super::super::design::prepare(&theme, self.glass.is_active(), cx);
         let viewport = window.viewport_size();
         let pane_scope = self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some());
         // Pane rows are single-line. Budget heading/search/padding separately,
@@ -69,16 +70,13 @@ impl SnapshotView {
                         )
                         .p_3()
                         .overflow_hidden()
-                        .rounded(px(crate::config::corners::PANEL))
-                        .border_1()
-                        .border_color(super::super::controls::separator(&theme))
-                        .bg(rgb(theme.surface))
-                        .shadow_lg()
+                        .map(|panel| super::super::design::floating(panel, &theme))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(self.picker_render(cx)),
+                        .child(self.picker_render(cx))
+                        .map(|panel| super::super::design::popover(panel, cx)),
                 )
                 .into_any_element(),
         )
@@ -110,11 +108,13 @@ impl SnapshotView {
                         self.terminal_font.config.family, self.terminal_font.config.size
                     )))
                     .child(
-                        div().text_color(rgb(theme.muted)).child(
-                            self.terminal_font
-                                .note
-                                .unwrap_or("Automatic installed symbol fallbacks"),
-                        ),
+                        div()
+                            .text_color(super::super::design::Palette::for_theme(&theme).muted)
+                            .child(
+                                self.terminal_font
+                                    .note
+                                    .unwrap_or("Automatic installed symbol fallbacks"),
+                            ),
                     )
             })
             .when(picker.mode.is_reference(), |panel| {
@@ -168,9 +168,13 @@ impl SnapshotView {
                 list = list.child(theme_style::row(self, index, row, enabled, cx));
                 continue;
             }
+            let bezel = super::super::design::palette(&theme);
             list = list.child(
-                div()
+                bezel_ui::popover::menu_row(&bezel, index == picker.selected, None)
                     .id(("picker-row", index))
+        .role(if enabled && !picker.mode.is_reference() { Role::Button } else { Role::Label })
+                    .when(!enabled && !picker.mode.is_reference(), |row| row.aria_description("Unavailable"))
+        .aria_label(row.label.clone())
                     .debug_selector(move || format!("picker-row-{index}"))
                     .px_2()
                     .py_1()
@@ -181,13 +185,13 @@ impl SnapshotView {
                     })
                     .when(enabled, |row| row.cursor_pointer())
                     .when(!enabled && !picker.mode.is_reference(), |row| {
-                        row.text_color(rgb(theme.muted))
+                        row.text_color(super::super::design::Palette::for_theme(&theme).muted)
                     })
-                    .bg(rgb(if index == picker.selected {
-                        theme.active
+                    .bg(if index == picker.selected {
+                        super::super::design::Palette::for_theme(&theme).selected
                     } else {
-                        theme.surface
-                    }))
+                        rgba(0)
+                    })
                     .when(picker.mode == Mode::Font, |row| {
                         row.min_h(px(super::super::controls::CONTROL_HEIGHT))
                             .flex().items_center().gap_2()
@@ -209,7 +213,7 @@ impl SnapshotView {
                 div()
                     .pt_2()
                     .text_sm()
-                    .text_color(rgb(theme.muted))
+                    .text_color(super::super::design::Palette::for_theme(&theme).muted)
                     .child("↑ ↓ Browse   ·   Enter Apply   ·   Esc Close"),
             )
         });

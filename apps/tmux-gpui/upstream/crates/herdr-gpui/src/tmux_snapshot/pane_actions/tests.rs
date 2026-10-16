@@ -188,7 +188,7 @@ fn rename_uses_real_search_input_and_ime_never_submits_or_leaks(cx: &mut TestApp
         let input=view.pane_actions.as_ref().unwrap().input.clone().unwrap();
         input.update(cx,|input,cx|input.replace_and_mark_text_in_range(None,"界",None,window,cx));
         for key in ["enter","escape"] {
-            view.pane_actions_key(&KeyDownEvent{keystroke:Keystroke::parse(key).unwrap(),is_held:false,prefer_character_input:false},window,cx);
+            view.pane_actions_key(&KeyDownEvent{keystroke:Keystroke::parse(key).unwrap(),is_held:false,prefer_character_input:false,layout:None},window,cx);
             assert!(view.pane_actions.is_some());assert!(receiver.try_recv().is_err());
         }
         view.replace_text_in_range(None,"must not enter terminal",window,cx);
@@ -267,3 +267,56 @@ fn editor_uses_captured_target_once_and_rejects_changed_selection(cx: &mut TestA
 }
 
 mod header_controls;
+
+#[gpui::test]
+fn bezel_menu_arrows_select_without_terminal_input_and_enter_consumes_capability(
+    cx: &mut TestAppContext,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_pane_actions(window, cx);
+            for key in ["down", "down"] {
+                view.pane_actions_key(
+                    &KeyDownEvent {
+                        keystroke: Keystroke::parse(key).unwrap(),
+                        is_held: false,
+                        prefer_character_input: false,
+                        layout: None,
+                    },
+                    window,
+                    cx,
+                );
+            }
+            assert_eq!(
+                view.pane_actions.as_ref().unwrap().cursor.path(),
+                Some(vec![1])
+            );
+            assert!(receiver.try_recv().is_err());
+            view.pane_actions_key(
+                &KeyDownEvent {
+                    keystroke: Keystroke::parse("enter").unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                    layout: None,
+                },
+                window,
+                cx,
+            );
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                browser::Command::PaneAction {
+                    action: Action::Zoom {
+                        desired: Zoom::Zoomed
+                    },
+                    ..
+                }
+            ));
+            assert!(view.pane_actions.is_none());
+            assert!(view.browser_state.pane_actions.is_none());
+            assert!(receiver.try_recv().is_err());
+        })
+    });
+}

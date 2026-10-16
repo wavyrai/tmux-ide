@@ -132,7 +132,7 @@ pub(super) fn sync(
                     channel(16),
                     channel(8),
                     channel(0),
-                    1.,
+                    0.12,
                 )));
             native.surface = Some(surface);
         }

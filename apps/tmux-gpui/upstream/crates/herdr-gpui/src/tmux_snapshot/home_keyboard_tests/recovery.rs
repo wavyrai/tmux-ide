@@ -223,6 +223,7 @@ fn recovery_shortcuts_preserve_marked_text_and_modal_isolation(cx: &mut TestAppC
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx

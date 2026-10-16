@@ -1,6 +1,7 @@
 //! Local-registry form. Identity and environment pin are never editable fields.
 use super::super::controls::{self, ButtonStyle, Icon};
 use super::*;
+use bezel_ui::widgets::Status;
 pub(super) struct Form {
     pub(super) identity: std::rc::Rc<()>,
     request: u64,
@@ -266,22 +267,20 @@ impl SnapshotView {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .child(
-                div()
+                bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-edit-dialog")
                     .w(px(520.))
                     .max_w_full()
                     .max_h_full()
                     .overflow_y_scroll()
                     .debug_selector(|| "machine-edit-dialog".into())
-                    .p_4()
-                    .rounded(px(crate::config::corners::PANEL))
-                    .bg(rgb(theme.surface))
-                    .border_1()
-                    .border_color(controls::separator(&theme))
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child("Edit saved machine")
+                    .child(bezel_ui::popover::dialog_title(
+                        &super::super::design::palette(&theme),
+                        "Edit saved machine",
+                    ))
                     .child("Label")
                     .child(form.label.clone())
                     .child("SSH target")
@@ -297,12 +296,33 @@ impl SnapshotView {
                             })
                             .child(status),
                     )
-                    .children(picker.error.map(|error| div().child(error)))
-                    .children(
-                        registry
-                            .and_then(|r| r.message.as_ref().or(r.error.as_ref()))
-                            .map(|error| div().child(error.clone())),
-                    )
+                    .children(picker.error.map(|error| {
+                        super::super::design::palette(&theme)
+                            .error_strip(error)
+                            .mt_0()
+                            .px_2()
+                            .py_1()
+                            .min_w_0()
+                            .w_full()
+                    }))
+                    .children(registry.and_then(|r| {
+                        // Preserve message precedence; informational registry messages
+                        // are not failures just because they share this feedback slot.
+                        r.message
+                            .as_ref()
+                            .map(|message| div().child(message.clone()))
+                            .or_else(|| {
+                                r.error.as_ref().map(|error| {
+                                    super::super::design::palette(&theme)
+                                        .error_strip(error.clone())
+                                        .mt_0()
+                                        .px_2()
+                                        .py_1()
+                                        .min_w_0()
+                                        .w_full()
+                                })
+                            })
+                    }))
                     .when(form.submitted.is_none(), |d| {
                         d.child(
                             controls::action_button(
@@ -318,13 +338,7 @@ impl SnapshotView {
                             .focus_visible({
                                 let theme = theme.clone();
                                 move |style| {
-                                    style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
-                                        color: rgb(theme.ink(theme.primary())).into(),
-                                        offset: point(px(0.), px(0.)),
-                                        blur_radius: px(0.),
-                                        spread_radius: px(2.),
-                                        inset: false,
-                                    }])
+                                    style.border_color(super::super::design::palette(&theme).ring)
                                 }
                             })
                             .on_click(cx.listener(
@@ -355,13 +369,7 @@ impl SnapshotView {
                         .focus_visible({
                             let theme = theme.clone();
                             move |style| {
-                                style.bg(rgb(theme.active)).shadow(vec![BoxShadow {
-                                    color: rgb(theme.ink(theme.primary())).into(),
-                                    offset: point(px(0.), px(0.)),
-                                    blur_radius: px(0.),
-                                    spread_radius: px(2.),
-                                    inset: false,
-                                }])
+                                style.border_color(super::super::design::palette(&theme).ring)
                             }
                         })
                         .on_click(cx.listener(

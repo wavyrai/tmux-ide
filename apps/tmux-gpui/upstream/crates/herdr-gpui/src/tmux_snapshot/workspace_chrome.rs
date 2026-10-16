@@ -84,13 +84,16 @@ impl SnapshotView {
 
     pub(super) fn application_tabs(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme();
         let request = self.browser_request;
         let mut tabs = div()
             .id("application-tabs")
+            .when(window.is_fullscreen(), |tabs| {
+                tabs.pl(px(super::shell::CONTENT_INSET))
+            })
             // The titlebar is a sibling of the browser body. Its focused
             // chrome controls need the same navigation owner on this path.
             .on_key_down(cx.listener(Self::picker_key))
@@ -263,6 +266,10 @@ impl SnapshotView {
             .flex_shrink_0()
             .overflow_x_scroll()
             .track_scroll(&self.window_reveal.scroll)
+            .on_scroll_wheel({
+                let scroll = self.window_reveal.scroll.clone();
+                move |event, window, cx| crate::tab_scroll::wheel(&scroll, event, window, cx)
+            })
             .px_2()
             .bg(rgb(theme.background));
         if self.browser_state.surface != browser::Surface::Workspace {

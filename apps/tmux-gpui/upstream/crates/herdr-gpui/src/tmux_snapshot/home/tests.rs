@@ -180,3 +180,6 @@ mod action_admission;
 
 #[path = "tests/fleet_layout.rs"]
 mod fleet_layout;
+
+#[path = "tests/columns.rs"]
+mod columns;

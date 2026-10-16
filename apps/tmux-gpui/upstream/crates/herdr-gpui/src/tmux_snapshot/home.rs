@@ -113,13 +113,14 @@ impl SnapshotView {
             .id("tmux-home-content")
             .min_w_0()
             .w_full()
-            .max_w(px(880.))
-            .bg(rgb(self.canvas()))
+            .max_w(px(1280.))
+            .when(!self.glass.is_active(), |body| body.bg(rgb(self.canvas())))
             .text_color(rgb(theme.foreground))
-            .p(px(32.))
+            .text_size(px(13.))
+            .p(px(24.))
             .child(
                 div()
-                    .text_xl()
+                    .text_size(px(22.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("tmux-ide"),
             )
@@ -129,13 +130,6 @@ impl SnapshotView {
                     .text_color(rgb(theme.muted))
                     .child(summary(&self.browser_state, connected)),
             );
-        body = body.child(div().mt_2().text_color(rgb(theme.muted)).child(
-            if self.browser_state.fleet.is_some() {
-                "Your fleet"
-            } else {
-                "Your sessions on this machine"
-            },
-        ));
         if !self.browser_state.status.is_empty() && !is_live {
             body = body.child(div().mt_2().text_color(rgb(theme.muted)).child(
                 crate::notifications::safe_text(&self.browser_state.status, 240),
@@ -219,7 +213,7 @@ impl SnapshotView {
                             Some("Refresh sessions"),
                             "Refresh sessions",
                             native_controls::Icon::Refresh,
-                            native_controls::ButtonStyle::Secondary,
+                            native_controls::ButtonStyle::Quiet,
                             &theme,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
@@ -240,8 +234,23 @@ impl SnapshotView {
                     ),
             );
         }
+        let mut fleet_column = div()
+            .debug_selector(|| "home-fleet-column".into())
+            .min_w_0()
+            .flex_1()
+            .child(div().flex().items_center().justify_between().gap_2()
+                .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Your fleet"))
+                .child(self.local_session_action(cx).when(self.local_session_available(), |control| {
+                control.when_some(self.home_filter.as_ref(), |control, filters| {
+                    action_focus::focus_control(control, &filters.actions[3], 3, theme.foreground, self.canvas())
+                })
+            })))
+            .when(!self.local_session_available() && self.new_session.is_none(), |column| column.child(
+                div().mt_2().text_sm().text_color(rgb(theme.muted))
+                    .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
+            .child(self.new_session_controls(cx));
         if let Some(cards) = self.fleet_cards(cx) {
-            body = body.child(cards);
+            fleet_column = fleet_column.child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
             let cards = self
                 .browser_state
@@ -296,7 +305,8 @@ impl SnapshotView {
                             this.home_select(request, &id, window, cx);
                         }))
                 });
-            body = body.child(div().mt_4().flex().flex_col().gap_2().children(cards));
+            fleet_column =
+                fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
         } else {
             let guidance = if !connected {
                 "Restart the native preview to reconnect."
@@ -305,9 +315,9 @@ impl SnapshotView {
             } else if self.browser_state.home_phase == browser::HomePhase::Loading {
                 "Waiting for the daemon’s session catalog."
             } else {
-                "Create a session in your terminal with tmux new-session, then refresh here."
+                "Start a new local session, or select a fleet server to create a session there."
             };
-            body = body.child(
+            fleet_column = fleet_column.child(
                 div()
                     .mt_4()
                     .max_w(px(640.))
@@ -319,7 +329,24 @@ impl SnapshotView {
                     .child(guidance),
             );
         }
-        body = body.children(self.home_agent_rows(cx));
+        let wide = window.viewport_size().width >= px(1060.);
+        body = body.child(
+            div()
+                .mt_4()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap_6()
+                .when(!wide, |columns| columns.flex_col())
+                .child(fleet_column)
+                .child(
+                    div()
+                        .debug_selector(|| "home-agents-column".into())
+                        .min_w_0()
+                        .flex_1()
+                        .children(self.home_agent_rows(cx)),
+                ),
+        );
         div()
             .id("tmux-home")
             .debug_selector(|| "tmux-home".into())
@@ -334,8 +361,8 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .items_center()
-            .bg(rgb(self.canvas()))
-            .child(body.child(self.new_session_controls(cx)))
+            .when(!self.glass.is_active(), |body| body.bg(rgb(self.canvas())))
+            .child(body)
             .into_any_element()
     }
 }

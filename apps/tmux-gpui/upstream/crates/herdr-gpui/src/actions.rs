@@ -50,6 +50,7 @@ pub(crate) fn edit_key(key: &str) -> KeyDownEvent {
         },
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     }
 }
 

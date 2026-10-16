@@ -102,6 +102,7 @@ mod state_file;
 mod storage_warning;
 mod system_load;
 mod tab_menu;
+mod tab_scroll;
 mod teleport;
 mod terminal;
 mod terminal_painter;
