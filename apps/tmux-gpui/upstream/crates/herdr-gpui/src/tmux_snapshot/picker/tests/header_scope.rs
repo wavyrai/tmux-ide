@@ -49,7 +49,8 @@ fn old_global_callbacks_cannot_escape_replacement_pane_context(cx: &mut TestAppC
     cx.simulate_resize(size(px(900.), px(650.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let bounds = cx.debug_bounds("commands-popover").unwrap();
-    assert_eq!(bounds.size, size(px(360.), px(240.)));
+    assert_eq!(bounds.size.width, px(360.));
+    assert!(bounds.size.height > px(0.) && bounds.size.height <= px(240.));
     cx.simulate_resize(size(px(300.), px(260.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let bounds = cx.debug_bounds("commands-popover").unwrap();

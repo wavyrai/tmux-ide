@@ -229,6 +229,11 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
+        let fill = if self.browser_state.selected_pane.as_deref() == Some(&header.id) {
+            theme.active
+        } else {
+            theme.surface
+        };
         Some(
             div()
                 .id(SharedString::from(format!("pane-mode:{id}")))
@@ -250,9 +255,9 @@ impl SnapshotView {
                 .items_center()
                 .justify_center()
                 .text_size(px(10.))
-                .bg(rgb(theme.surface))
+                .bg(rgb(fill))
                 .text_color(rgb(theme.foreground))
-                .hover(move |s| s.bg(rgb(theme.active)))
+                .rounded(px(crate::config::corners::CONTROL))
                 .occlude()
                 .cursor_pointer()
                 .child(if history > 0 {
@@ -300,6 +305,11 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
+        let fill = if self.browser_state.selected_pane.as_deref() == Some(&header.id) {
+            theme.active
+        } else {
+            theme.surface
+        };
         Some(
             div()
                 .id(SharedString::from(format!("pane-overflow:{id}")))
@@ -321,12 +331,17 @@ impl SnapshotView {
                 .items_center()
                 .justify_center()
                 .text_size(px(12.))
-                .bg(rgb(theme.surface))
+                .bg(rgb(fill))
                 .text_color(rgb(theme.muted))
-                .hover(move |s| s.bg(rgb(theme.active)))
+                .rounded(px(crate::config::corners::CONTROL))
                 .cursor_pointer()
                 .occlude()
-                .child("⋯")
+                .child(
+                    svg()
+                        .path("icons/more.svg")
+                        .size(px(14.).min(px(self.terminal_height())))
+                        .text_color(rgb(theme.muted)),
+                )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
                     cx.stop_propagation();

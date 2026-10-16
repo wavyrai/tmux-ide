@@ -1,0 +1,18 @@
+{"event":"fixture-owned","root":"/tmp/tmi-e2e-unified-titlebar-jrzv0o","socketPath":"/tmp/tmi-e2e-unified-titlebar-jrzv0o/t.sock","session":"e2e-unified-titlebar-1918-0","left":"%0","right":"%2","daemonPid":1963}
+{"event":"app-owned","pid":1989,"appPath":"/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/fullscreen-input-20261016/Tmux IDE Glass Pane QA.app"}
+Packaged panes ready: open session/window, click LEFT terminal when ready, verify selected title/rail and type echo GPUI_LEFT_OK then Return.
+tmux-preview: native chrome glass true
+file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/run.mjs:200
+if (failures.length) throw new AggregateError(failures, "Two-pane proof or cleanup failed");
+                           ^
+
+AggregateError: Two-pane proof or cleanup failed
+    at file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/run.mjs:200:28 {
+  [errors]: [
+    Error: Packaged app proof deadline
+        at wait (file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/run.mjs:92:38)
+        at async file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/run.mjs:145:3
+  ]
+}
+
+Node.js v24.21.0

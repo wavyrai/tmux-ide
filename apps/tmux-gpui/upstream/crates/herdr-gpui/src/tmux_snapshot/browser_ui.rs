@@ -65,9 +65,12 @@ impl SnapshotView {
             }
         }
         if !super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()) {
+            // An unresolved target change must not leave the old pane armed for typing.
+            self.interrupt_input(cx);
             return;
         }
         let (Some((bounds, _)), Some(width)) = (self.input_geometry, self.input_cell_width) else {
+            self.interrupt_input(cx);
             return;
         };
         if !bounds.contains(&event.position) {

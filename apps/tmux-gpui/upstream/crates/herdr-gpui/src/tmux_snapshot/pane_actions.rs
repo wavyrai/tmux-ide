@@ -298,6 +298,7 @@ impl SnapshotView {
         let active = self.theme().active;
         let mut panel = div()
             .id("pane-actions-panel")
+            .debug_selector(|| "pane-actions-panel".into())
             .absolute()
             .bottom(relative(1.))
             .left_0()
@@ -306,12 +307,15 @@ impl SnapshotView {
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .flex_none()
             .w_full()
+            .max_w(px(320.))
             .max_h(px(180.))
             .overflow_y_scroll()
-            .p_2()
+            .p_1()
             .bg(rgb(self.theme().surface))
-            .border_t_1()
-            .border_color(rgb(active));
+            .rounded(px(crate::config::corners::PANEL))
+            .border_1()
+            .border_color(super::controls::separator(&self.theme()))
+            .shadow_lg();
         if let Some(input) = &menu.input {
             panel = panel
                 .child(div().child("Rename pane"))
@@ -350,6 +354,7 @@ impl SnapshotView {
                         .flex()
                         .items_center()
                         .cursor_pointer()
+                        .rounded(px(crate::config::corners::CONTROL))
                         .hover(move |row| row.bg(rgb(active)))
                         .child(label)
                         .on_click(cx.listener(move |view, _, window, cx| {
@@ -370,6 +375,7 @@ impl SnapshotView {
                     .flex()
                     .items_center()
                     .cursor_pointer()
+                    .rounded(px(crate::config::corners::CONTROL))
                     .hover(move |row| row.bg(rgb(active)))
                     .child("Open folder in VS Code")
                     .on_click(cx.listener(|view, _, window, cx| view.open_pane_editor(window, cx))),
@@ -395,6 +401,7 @@ impl SnapshotView {
                         .flex()
                         .items_center()
                         .cursor_pointer()
+                        .rounded(px(crate::config::corners::CONTROL))
                         .hover(move |row| row.bg(rgb(active)))
                         .child(label)
                         .on_click(cx.listener(move |view, _, window, cx| {

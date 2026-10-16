@@ -306,3 +306,6 @@ mod historical_selection_tests;
 
 #[path = "terminal_links/pointer_tests.rs"]
 mod terminal_link_pointer_tests;
+
+#[path = "input_interruption_tests/uncertain_pointer.rs"]
+mod uncertain_pointer;

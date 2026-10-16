@@ -23,6 +23,18 @@ impl SnapshotView {
         })?;
         let theme = self.theme();
         let viewport = window.viewport_size();
+        let pane_scope = self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some());
+        // Pane rows are single-line. Budget heading/search/padding separately,
+        // then cap the list so filtering removes empty space without growing past the viewport.
+        let content_height = self
+            .picker
+            .as_ref()
+            .filter(|_| pane_scope)
+            .map_or(400., |p| {
+                let line = crate::config::Config::default().ui.line_height();
+                let feedback = if p.error.is_some() { line + 8. } else { 0. };
+                (112. + feedback + p.rows.len() as f32 * (line + 8.)).min(240.)
+            });
         Some(
             div()
                 .id("commands-overlay")
@@ -47,24 +59,13 @@ impl SnapshotView {
                     div()
                         .id("commands-popover")
                         .debug_selector(|| "commands-popover".into())
-                        .w((viewport.width - px(24.)).max(px(0.)).min(px(
-                            if self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some()) {
-                                360.
-                            } else {
-                                560.
-                            },
-                        )))
+                        .w((viewport.width - px(24.))
+                            .max(px(0.))
+                            .min(px(if pane_scope { 360. } else { 560. })))
                         .h(
                             (viewport.height - (viewport.height / 6.).min(px(80.)) - px(48.))
                                 .max(px(0.))
-                                .min(px(
-                                    if self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some())
-                                    {
-                                        240.
-                                    } else {
-                                        400.
-                                    },
-                                )),
+                                .min(px(content_height)),
                         )
                         .p_3()
                         .overflow_hidden()
