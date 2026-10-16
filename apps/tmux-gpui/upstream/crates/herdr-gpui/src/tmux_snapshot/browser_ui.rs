@@ -857,7 +857,14 @@ impl SnapshotView {
                     .text_color(rgb(theme.muted))
                     .child(div().w_full().child(status)),
             );
-        let content = super::shell::content_panel(self.canvas())
+        // The rounded padding belongs to the terminal surface, so it must
+        // use the same default background as the terminal and its headers.
+        let content_background = if is_home {
+            self.canvas()
+        } else {
+            theme.background
+        };
+        let content = super::shell::content_panel(content_background)
             .children(home)
             .when(!is_home, |panel| {
                 panel
