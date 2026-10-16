@@ -61,7 +61,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --max-time 300 --max-filesize 536870912 "$1" -o "$2"; }
 verify() { actual=$(shasum -a 256 "$1" | awk '{print $1}'); [ "$actual" = "$2" ] || fail 'Downloaded asset checksum mismatch'; }
-fetch "$base/tmux-ide-install-v2.mjs" "$scratch/installer.mjs"
+fetch "$base/tmux-ide-install.mjs" "$scratch/installer.mjs"
 verify "$scratch/installer.mjs" "$installer_sha"
 printf '%s\n' '{"teamId":"7HWMF997US","bundleId":"com.tmux-ide.gpui.alpha","architecture":"arm64","minimumMacOS":"14.2"}' > "$scratch/policy.json"
 mkdir -p "$(dirname "$prefix")"
