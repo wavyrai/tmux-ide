@@ -1,0 +1,15 @@
+{
+  "harnessExit": 0,
+  "passed": true,
+  "ownedRootAbsent": true,
+  "productFix": false,
+  "traceCap": 128,
+  "findings": [
+    "Selection sequence43 clears readiness with latch false.",
+    "First input47 arrives before readiness;49 rejects and latches.",
+    "Ready publication102 retains latch.",
+    "Ready click123 rearms;125 accepts.",
+    "Right pane input succeeds after separate selection roundtrip without second click; trace cap prevents readiness timestamp proof."
+  ],
+  "remaining": "Fresh-process wait-for-matching-readiness contrast if needed; no latency claim from instrumented trace."
+}

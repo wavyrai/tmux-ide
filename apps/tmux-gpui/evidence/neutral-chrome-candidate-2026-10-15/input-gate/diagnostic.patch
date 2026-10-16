@@ -1,0 +1,160 @@
+--- a/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs
++++ b/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs
+@@ -15,6 +15,7 @@
+ mod hit_regions;
+ mod home;
+ mod input_gate;
++mod input_gate_trace;
+ mod keys;
+ mod navigation;
+ mod new_session;
+@@ -209,6 +210,7 @@
+                         view.divider = None;
+                         view.pane_actions = None;
+                         view.presence.set_active(window.is_window_active());
++                        view.trace_input_gate("activation", None, None);
+                         view.clear_selection(cx);
+                         view.last_resize = None;
+                         view.wheel = Default::default();
+--- a/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs
++++ b/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs
+@@ -39,6 +39,7 @@
+         window: &mut Window,
+         cx: &mut Context<Self>,
+     ) {
++        self.trace_input_gate("terminal_click_entry", None, None);
+         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
+             return;
+         }
+@@ -82,6 +83,7 @@
+             self.terminal_height(),
+         )
+         .map(str::to_owned);
++        self.trace_input_gate("terminal_click_target", id.as_deref(), None);
+         if let Some(id) = id {
+             if self.browser_state.selected_pane.as_ref() != Some(&id) {
+                 if input_ready {
+@@ -91,6 +93,7 @@
+                 // Copying history is local; it cannot re-arm terminal input.
+                 if input_ready {
+                     self.input_interrupted = false;
++                    self.trace_input_gate("terminal_click_rearmed", Some(&id), None);
+                 }
+                 self.discard_composition(cx);
+                 self.selection = super::selection::Capture::begin(
+@@ -545,6 +548,7 @@
+             self.frame = None;
+             self.browser_state.input_ready = false;
+             self.browser_state.status = "Loading selection".into();
++            self.trace_input_gate("select_queued", None, None);
+             self.browser_state.surface = if going_home {
+                 browser::Surface::Home
+             } else {
+--- a/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_state.rs
++++ b/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_state.rs
+@@ -41,6 +41,7 @@
+                     .map(|selection| selection.frame.clone())
+                     .or_else(|| state.frame.clone());
+                 self.browser_state = state;
++                self.trace_input_gate("apply_state_accepted", None, None);
+             }
+             None => {
+                 self.workspace_fleet_agents.pending = None;
+@@ -57,6 +58,7 @@
+                 self.frame = None;
+                 self.browser_state.status = "Connection unavailable — restart the preview".into();
+                 self.browser_commands = None;
++                self.trace_input_gate("apply_state_disconnected", None, None);
+             }
+             _ => {}
+         }
+--- a/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/input_gate.rs
++++ b/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/input_gate.rs
+@@ -29,16 +29,20 @@
+             && self.browser_state.selected_pane.is_some()
+     }
+     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
++        self.trace_input_gate("interrupt_input_before", None, None);
+         self.input_interrupted = true;
+         self.discard_composition(cx);
+         cx.notify();
+     }
+     pub(super) fn offer_terminal_input(&mut self, cx: &mut Context<Self>) -> bool {
++        self.trace_input_gate("offer_input_entry", None, None);
+         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
++            self.trace_input_gate("offer_input_decision", None, Some("modal"));
+             return false;
+         }
+         if self.divider.is_some() {
+             self.interrupt_input(cx);
++            self.trace_input_gate("offer_input_decision", None, Some("divider"));
+             return false;
+         }
+         if !self.terminal_input_ready() {
+@@ -46,6 +50,11 @@
+         }
+         // Only a current, ready terminal click clears this local latch. Publications,
+         // target changes and activation never turn an interrupted command into input.
++        self.trace_input_gate(
++            "offer_input_decision",
++            None,
++            Some(if self.input_interrupted { "reject_latched" } else { "accept" }),
++        );
+         !self.input_interrupted
+     }
+ }
+--- /dev/null
++++ b/apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/input_gate_trace.rs
+@@ -0,0 +1,52 @@
++//! Temporary opt-in diagnostic. No input bytes or terminal contents are recorded.
++use super::SnapshotView;
++use std::{
++    io::Write,
++    sync::{OnceLock, atomic::{AtomicUsize, Ordering}},
++    time::Instant,
++};
++
++static ENABLED: OnceLock<bool> = OnceLock::new();
++static START: OnceLock<Instant> = OnceLock::new();
++static EVENTS: AtomicUsize = AtomicUsize::new(0);
++
++impl SnapshotView {
++    pub(super) fn trace_input_gate(
++        &self,
++        event: &'static str,
++        target: Option<&str>,
++        decision: Option<&'static str>,
++    ) {
++        if !*ENABLED.get_or_init(|| std::env::var("TMUX_GPUI_QA_INPUT_GATE").as_deref() == Ok("1")) {
++            return;
++        }
++        let started = START.get_or_init(Instant::now);
++        let Ok(index) = EVENTS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
++            (n < 128).then_some(n + 1)
++        }) else {
++            return;
++        };
++        let record = serde_json::json!({
++            "event": event,
++            "sequence": index + 1,
++            "elapsed_us": started.elapsed().as_micros(),
++            "request": self.browser_request,
++            "state_request": self.browser_state.request,
++            "presence_active": self.presence.active(),
++            "presence_ready": self.presence.ready(),
++            "input_ready": self.browser_state.input_ready,
++            "terminal_ready": self.terminal_input_ready(),
++            "frame": self.frame.is_some(),
++            "painted": super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()),
++            "latch": self.input_interrupted,
++            "selected_pane": self.browser_state.selected_pane.as_deref(),
++            "target_pane": target,
++            "decision": decision,
++            "modal": self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some(),
++            "divider": self.divider.is_some(),
++            "selection": self.selection.is_some(),
++        });
++        // Best-effort diagnostic output only; write errors must not change input handling.
++        let _ = writeln!(std::io::stderr(), "TMUX_GPUI_INPUT_GATE {record}");
++    }
++}
