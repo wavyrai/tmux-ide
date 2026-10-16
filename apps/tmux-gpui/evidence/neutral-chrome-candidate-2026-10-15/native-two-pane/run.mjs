@@ -119,7 +119,17 @@ try {
   }
   daemon = await startFixtureDaemon(fleet);
   if (fatal) throw fatal;
-  console.log(JSON.stringify({ event: "fixture-owned", root: fleet.root, socketPath: fleet.socketPath, session: fleet.sessionNames[0], left, right, daemonPid: daemon.record.pid }));
+  console.log(
+    JSON.stringify({
+      event: "fixture-owned",
+      root: fleet.root,
+      socketPath: fleet.socketPath,
+      session: fleet.sessionNames[0],
+      left,
+      right,
+      daemonPid: daemon.record.pid,
+    }),
+  );
   app = spawn(launcher, [], {
     cwd: fleet.root,
     env: {
@@ -133,7 +143,9 @@ try {
   });
   console.log(JSON.stringify({ event: "app-owned", pid: app.pid, appPath }));
   closed = new Promise((done) => app.once("close", (code, signal) => done({ code, signal })));
-  app.once("error", (error) => { fatal = error; });
+  app.once("error", (error) => {
+    fatal = error;
+  });
   const capture = (pane) => tmux("capture-pane", "-p", "-t", pane);
   const has = (pane, marker) =>
     capture(pane)
@@ -183,7 +195,11 @@ try {
     () => daemon?.stop(),
     () => fleet.dispose(),
   ]) {
-    try { await cleanup(); } catch (error) { failures.push(error); }
+    try {
+      await cleanup();
+    } catch (error) {
+      failures.push(error);
+    }
   }
   process.removeListener("SIGINT", cancel);
   process.removeListener("SIGTERM", cancel);
