@@ -22,3 +22,9 @@ Harness session 47060 exited 0 after Cmd-Q. Both target markers remained separat
 Independent reviewer np01_review confirmed the mechanism and limited conclusions. The interruption guard prevents a dropped command prefix from leaving an executable suffix. This run does not establish a product fix, seamless switching, general latency, or a reason to weaken that guard. Synchronous instrumentation may perturb timing. No product code changed.
 
 The diagnostic binary remaining in target/debug must not be packaged as a release. Original raw run artifacts remain in .tasks/native-input-gate-trace-20261016.
+
+## Fresh-process readiness contrast
+
+A second isolated run (session 19899, exit 0) clicked the left pane once (sequence 40), queued selection (41), then waited until a matching request-3 ready publication was observed (53/54) before typing. Input decisions from 59 accepted with latch false, without another click or rearm. Both marker targets passed and survived app close; the owned root was absent afterward. This confirms that the reproduced early-input interruption is avoidable by waiting for readiness in this run, not that switching is seamless or has bounded latency. The trace still caps at 128 records.
+
+The requested screenshot returned old pane labels from an earlier run, so it is excluded from this contrast's visual evidence. Runtime trace and harness output are the acceptance evidence here. No product code was changed.
