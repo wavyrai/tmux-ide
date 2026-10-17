@@ -3303,6 +3303,24 @@ describe("native bootstrap capability fallback", () => {
     }
   });
 
+  it("seeds through stock capture when tmux 3.8 accepts -R with its text grid format", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(["G 100x50 (0/2000)", "\tL 0 (0) flags=NONE[0] 0/0"]);
+      expect(rig.armedAtomicCollectors.length).toBeGreaterThan(0);
+      completeSeed(rig, ["stock 3.8 content"], "0 0 100 50");
+      expect(bytesOf(first.events)).toEqual(["stock 3.8 content"]);
+      expect(first.events.some((event) => event.type === "fault")).toBe(false);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(1);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("bounds persistent malformed native probes without publishing portable content", async () => {
     const rig = await startedRig();
     const first = collect();

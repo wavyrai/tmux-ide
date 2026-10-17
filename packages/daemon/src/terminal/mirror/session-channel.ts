@@ -10,6 +10,7 @@ import {
 import { boundedTmuxInteractionAppendCommand } from "../../lib/tmux-interaction-retention.ts";
 import {
   decodeNativeGridCapture,
+  isStockRawGridCapture,
   isNativeBootstrapCapture,
   type NativeGridCapture,
 } from "./native-grid-capture.ts";
@@ -212,7 +213,10 @@ function nativeBootstrapUnsupported(
   native: NativeGridCapture | null,
 ): boolean {
   if (ok)
-    return native !== null && (native.version !== 2 || native.currentAttributes === undefined);
+    return (
+      isStockRawGridCapture(lines) ||
+      (native !== null && (native.version !== 2 || native.currentAttributes === undefined))
+    );
   return lines.some((line) =>
     /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim()),
   );

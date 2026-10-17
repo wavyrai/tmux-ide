@@ -1,3 +1,14 @@
+/** Upstream tmux 3.8 reuses -R for a textual grid dump, not our JSON extension.
+ * Require the generated grid and first-row headers; arbitrary malformed native
+ * replies must remain errors rather than silently downgrading capture fidelity.
+ */
+export function isStockRawGridCapture(lines: readonly string[]): boolean {
+  return (
+    /^G [1-9][0-9]*x[1-9][0-9]* \([0-9]+\/[0-9]+\)$/.test(lines[0] ?? "") &&
+    /^\tL 0 \((?:-|0)\) flags=/.test(lines[1] ?? "")
+  );
+}
+
 /** Private native capture experiment; this is not the canonical renderer schema. */
 export interface NativeGridCaptureCell {
   readonly flags: number;

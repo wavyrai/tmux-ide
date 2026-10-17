@@ -103,6 +103,18 @@ describe("native grid connection ownership", () => {
     expect(await reader.read("%3", () => true)).toEqual({ status: "unsupported" });
     expect(command).toHaveBeenCalledTimes(2);
   });
+  it("recognizes upstream 3.8 raw-grid output without caching malformed native replies", async () => {
+    const { reader, replies, command } = rig();
+    const malformed = reader.read("%1", () => true);
+    replies[0]!({ ok: true, lines: ['{"version":2,'] });
+    expect(await malformed).toEqual({ status: "invalid" });
+    const stock = reader.read("%1", () => true);
+    replies[1]!({ ok: true, lines: ["G 80x24 (0/2000)", "\tL 0 (0) flags=NONE[0] 0/0"] });
+    expect(await stock).toEqual({ status: "unsupported" });
+    expect(await reader.read("%2", () => true)).toEqual({ status: "unsupported" });
+    expect(command).toHaveBeenCalledTimes(2);
+    reader.dispose();
+  });
   it("discards replacement-pane and retired-connection replies", async () => {
     const { reader, replies } = rig();
     let owns = true;

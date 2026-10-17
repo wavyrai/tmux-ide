@@ -498,8 +498,8 @@ try {
       onAuthoritySnapshot: () => {
         if (interactive && latest.snapshot) output(latest.snapshot);
       },
-      onFault: () => {
-        if (!stopped) diagnostics.report("runtime-failure");
+      onFault: (error) => {
+        if (!stopped) diagnostics.runtimeFault(error);
         stop();
       },
     },

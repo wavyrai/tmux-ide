@@ -1,3 +1,4 @@
+import { PaneStreamOperationError } from "../../../packages/daemon-client/src/pane-stream-client.ts";
 const PREFIX = "TMUX_GPUI_DIAGNOSTIC ";
 const MAX_DIAGNOSTIC_BYTES = 256;
 const STATUSES = {
@@ -7,6 +8,7 @@ const STATUSES = {
   "source-closed": "Terminal source closed",
   "source-protocol": "Terminal source reported a protocol failure",
   "transport-closed": "Terminal connection closed",
+  "topology-changed": "Terminal layout changed — reconnecting",
   "transport-error": "Terminal transport failed",
   startup: "Terminal connection could not start",
   "runtime-failure": "Terminal connection validation or operation failed",
@@ -73,6 +75,13 @@ export function createLiveDiagnostics(write: (line: string) => void) {
   };
   return {
     report,
+    runtimeFault(error: unknown) {
+      report(
+        error instanceof PaneStreamOperationError && error.code === "topology-changed"
+          ? "topology-changed"
+          : "runtime-failure",
+      );
+    },
     sourceFault(reason: unknown) {
       report(
         reason === "state-too-large"

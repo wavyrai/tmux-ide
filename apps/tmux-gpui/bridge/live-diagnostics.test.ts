@@ -139,3 +139,19 @@ test("source faults preserve a safe specific cause through replica retirement", 
     assert.ok(!lines[0].includes("PRIVATE_TOKEN"));
   }
 });
+
+test("only authenticated topology retirement is classified for recovery", async () => {
+  const { PaneStreamOperationError } =
+    await import("../../../packages/daemon-client/src/pane-stream-client.ts");
+  for (const [error, expected] of [
+    [new PaneStreamOperationError("topology-changed", "private payload"), "topology-changed"],
+    [new PaneStreamOperationError("invalid-pane", "private payload"), "runtime-failure"],
+    [new Error("topology-changed"), "runtime-failure"],
+    [{ code: "topology-changed" }, "runtime-failure"],
+  ] as const) {
+    const lines: string[] = [];
+    const diagnostic = createLiveDiagnostics((line) => lines.push(line));
+    diagnostic.runtimeFault(error);
+    assert.deepEqual(lines.map(parseDiagnosticLine), [{ code: expected }]);
+  }
+});

@@ -1009,7 +1009,11 @@ async function openPane(
       if (stopped || request !== token || active?.child !== child) return;
       process.stderr.write(`TMUX_GPUI_DIAGNOSTIC ${JSON.stringify(fault)}\n`);
       unavailable();
-      if (fault.code === "transport-closed" || fault.code === "transport-error")
+      if (
+        fault.code === "transport-closed" ||
+        fault.code === "transport-error" ||
+        fault.code === "topology-changed"
+      )
         recoverTerminal(fault.code);
     });
     const unavailable = () => {
