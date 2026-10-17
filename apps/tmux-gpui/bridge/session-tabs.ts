@@ -195,6 +195,27 @@ export function createSessionTabs() {
       signature = "";
     },
     cancel,
+    /** Caller must prove the same machine/server/live session on a fresh route. */
+    recover(request: number, previousKey: string, target: TabTarget) {
+      if (request !== acceptedRequest || request <= floor || active !== previousKey || pending)
+        return false;
+      const old = tabs.get(previousKey);
+      if (!old || (target.key !== previousKey && tabs.has(target.key))) return false;
+      const rows = [...tabs.entries()].map(([key, row]) =>
+        key === previousKey
+          ? ([
+              target.key,
+              { ...row, target: Object.freeze({ ...target }), observed: null },
+            ] as const)
+          : ([key, row] as const),
+      );
+      tabs.clear();
+      for (const [key, row] of rows) tabs.set(key, row);
+      active = target.key;
+      actions.clear();
+      signature = "";
+      return true;
+    },
     accept(request: number, target: TabTarget) {
       if (request <= floor || request === acceptedRequest) return false;
       if (

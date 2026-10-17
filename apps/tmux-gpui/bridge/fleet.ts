@@ -448,6 +448,38 @@ export function createNativeFleet(
         attention: row.attention,
       }));
     },
+    // Retain identity, never a selection token or credentials. A new generation
+    // is admitted only through the fresh, conflict-free catalog of this handle.
+    recoveryRoute(key: string) {
+      const original = canonicalRoute(key);
+      if (!original) return null;
+      const machine = original.handle;
+      const environment = machine.read()?.environmentId;
+      const serverId = original.session.server!.serverId;
+      const liveSessionId = original.session.liveSessionId;
+      return () => {
+        if (
+          stopped ||
+          manager.getMachine(machine.id) !== machine ||
+          machine.read()?.environmentId !== environment
+        )
+          return null;
+        const matches = catalog
+          .getSnapshot()
+          .groups.filter(
+            (group) =>
+              group.id === machine.id && group.state === "ready" && !group.identityConflict,
+          )
+          .flatMap((group) => group.sessions)
+          .filter(
+            (session) =>
+              !session.disabled &&
+              session.server?.serverId === serverId &&
+              session.liveSessionId === liveSessionId,
+          );
+        return matches.length === 1 && canonicalRoute(matches[0]!.id) ? matches[0]!.id : null;
+      };
+    },
     resolveCanonical(key: string) {
       return canonicalRoute(key) !== null;
     },

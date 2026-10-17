@@ -338,3 +338,28 @@ test("remote scope is captured before awaits and malformed scope does not access
   );
   assert.equal(f.calls.length, before);
 });
+
+test("remote retirement reports a fixed reason without disclosing endpoint data", async () => {
+  const f = fixture();
+  const reasons: string[] = [];
+  const route = await createRemotePreviewRoute(f.owner, {
+    request: f.request,
+    diagnostic: (reason) => reasons.push(reason),
+  });
+  f.change({ state: "connecting" });
+  assert.equal(route.signal.aborted, true);
+  assert.deepEqual(reasons, ["transport-state"]);
+  assert.equal(JSON.stringify(reasons).includes("test-private-token"), false);
+});
+
+test("throwing diagnostics cannot prevent remote route retirement", async () => {
+  const f = fixture();
+  const route = await createRemotePreviewRoute(f.owner, {
+    request: f.request,
+    diagnostic: () => {
+      throw new Error("observer");
+    },
+  });
+  f.change({ epoch: 3 });
+  assert.equal(route.signal.aborted, true);
+});

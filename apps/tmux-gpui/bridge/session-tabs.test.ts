@@ -161,3 +161,23 @@ test("captured close remains valid across presentation-only observation and avai
   assert.equal(refreshed.rows[0]!.available, false);
   assert.equal(f.owner.admit(close, 2, true, f.resolve)?.home, true);
 });
+
+test("verified recovery replaces stale route without duplicate tab or stale activation", () => {
+  const owner = createSessionTabs();
+  owner.accept(1, target("a"));
+  const before = owner.publication(1, true, target)!;
+  owner.cancel();
+  assert.equal(owner.recover(1, "a", target("fresh")), true);
+  const after = owner.publication(1, true, (key) => (key === "fresh" ? target(key) : null))!;
+  assert.equal(after.rows.length, 1);
+  assert.equal(after.rows[0]!.id, before.rows[0]!.id);
+  assert.equal(after.rows[0]!.available, true);
+  assert.equal(after.active, before.active);
+  assert.equal(
+    owner.admit(command(2, 1, before.revision, before.rows[0]!.activate), 1, true, target),
+    null,
+  );
+  owner.navigation(2);
+  assert.equal(owner.recover(1, "fresh", target("stale")), false);
+  assert.deepEqual(owner.keys(), ["fresh"]);
+});

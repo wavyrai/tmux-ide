@@ -803,3 +803,37 @@ test("retained tab metadata reads uncapped exact scoped source and resets incomp
   f.fleet.dispose();
   f.manager.dispose();
 });
+
+test("recovery resolves fresh generations only for the same machine server and live session", async () => {
+  const f = await fixture();
+  try {
+    const id = f.profiles[0]!.id;
+    const key = f.fleet.publication().groups.find((g) => g.id === id)!.sessions[0]!.id;
+    const resolve = f.fleet.recoveryRoute(key);
+    assert.ok(resolve);
+    assert.equal(resolve(), key);
+    f.emitters.get(id)!({ phase: "unavailable", daemonInstanceId: null, sessions: [], note: null });
+    assert.equal(resolve(), null);
+    const fresh = structuredClone(f.snapshot);
+    fresh.sessions[0]!.server!.generation = randomUUID();
+    f.emitters.get(id)!(fresh);
+    const nextKey = resolve();
+    assert.ok(nextKey);
+    assert.equal(
+      f.fleet.selectCanonical(nextKey).session.server!.generation,
+      fresh.sessions[0]!.server!.generation,
+    );
+    const replacement = {
+      ...fresh,
+      sessions: fresh.sessions.map((session) => ({ ...session, liveSessionId: "$99" })),
+    };
+    f.emitters.get(id)!(replacement);
+    assert.equal(resolve(), null, "same display name must not retarget recovery");
+    f.emitters.get(id)!(fresh);
+    assert.ok(resolve());
+    f.close();
+    assert.equal(resolve(), null);
+  } finally {
+    f.close();
+  }
+});

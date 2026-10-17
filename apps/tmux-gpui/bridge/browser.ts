@@ -1,3 +1,4 @@
+import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
 import {
   createWorkspaceFleetAgents,
@@ -243,6 +244,7 @@ function machinesChanged() {
     machines &&
     !savedMachineRouteMatches(selectedMachineProfile, machines.publication())
   ) {
+    cancelTerminalRecovery();
     selectedMachineProfile = null;
     savedMachineRetired = true;
     hostSource?.dispose();
@@ -373,9 +375,93 @@ let sessionHistoryRejected: {
 } | null = null;
 let historySaveFailed = false;
 let acceptSessionVisit: (() => void) | null = null;
+let recoveryTarget: {
+  resolve: () => string | null;
+  key: string;
+  pane: string;
+  request: number;
+} | null = null;
+const terminalRecovery = createTerminalRecovery({
+  async attempt(current) {
+    const target = recoveryTarget;
+    const owner = fleet;
+    if (!target || !owner || stopped || request !== target.request || surface !== "workspace")
+      return true;
+    const key = target.resolve();
+    if (!key) return false;
+    const valid = () =>
+      current() &&
+      !stopped &&
+      recoveryTarget === target &&
+      request === target.request &&
+      fleet === owner &&
+      surface === "workspace";
+    await retire();
+    if (!valid()) return true;
+    const { host, sessionId } = await owner.selectCanonical(key);
+    if (!valid()) return true;
+    const fresh = createPreviewCatalog(host);
+    catalog?.dispose();
+    catalog = fresh;
+    const live = () => valid() && catalog === fresh;
+    const list = await fresh.sessions();
+    if (!live()) return false;
+    if (list.length > 512 || !list.some((session) => session.liveSessionId === sessionId))
+      return false;
+    sessions = list.map(sessionChoice);
+    const choices = await fresh.panes(sessionId);
+    if (!live()) return false;
+    if (choices.length > 512) throw new Error("Recovery catalog limit");
+    // Never substitute another pane or replay input from the retired lifetime.
+    const pane = choices.find(
+      (choice) => choice.semanticPaneId === target.pane && choice.liveSessionId === sessionId,
+    );
+    if (!pane) return false;
+    panes = choices;
+    selectedSession = sessionId;
+    selectedPane = target.pane;
+    snapshot = null;
+    inputReady = false;
+    status = "Reconnecting terminal";
+    publish();
+    await openPane(pane, target.request, false, undefined, live);
+    const deadline = Date.now() + 5000;
+    while (live() && Date.now() < deadline) {
+      if (snapshot && selectedPane === target.pane && (!foreground || inputReady)) {
+        const retained = owner.retainedTarget(key);
+        if (retained && sessionTabs.recover(target.request, target.key, retained)) target.key = key;
+        startAgents();
+        publish();
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
+  },
+  exhausted() {
+    status = "Connection recovery paused — refresh or select the session again";
+    publish();
+  },
+});
+function cancelTerminalRecovery() {
+  terminalRecovery.cancel();
+  recoveryTarget = null;
+}
+function recoverTerminal(reason: string) {
+  if (!recoveryTarget || recoveryTarget.request !== request || stopped || surface !== "workspace")
+    return;
+  // Fixed stage only, no host identifiers, credentials or terminal content.
+  process.stderr.write(`TMUX_GPUI_RECOVERY ${reason}\n`);
+  inputReady = false;
+  snapshot = null;
+  status = "Reconnecting terminal";
+  terminalRecovery.start();
+  publish();
+}
 let highestNavigationAttempt = 0;
 const admitNavigationAttempt = (attempt: number) => {
   if (attempt <= request || attempt <= highestNavigationAttempt) return false;
+  cancelTerminalRecovery();
   highestNavigationAttempt = attempt;
   return true;
 };
@@ -777,6 +863,7 @@ async function retire() {
 }
 function retireMachineRoute() {
   if (stopped) return;
+  recoverTerminal("machine-route-retired");
   sessionHistory.cancel();
   sessionTabs.cancel();
   machineRouteRevision++;
@@ -794,12 +881,15 @@ function retireMachineRoute() {
   snapshot = null;
   paneActions = null;
   homePhase = "unavailable";
-  status = "Machine connection changed — refresh sessions to reconnect";
+  status = recoveryTarget
+    ? "Reconnecting terminal"
+    : "Machine connection changed — refresh sessions to reconnect";
   void retire();
   publish();
 }
 async function stop() {
   if (stopped) return;
+  cancelTerminalRecovery();
   sessionHistory.cancel();
   sessionTabs.cancel();
   acceptSessionVisit = null;
@@ -919,6 +1009,8 @@ async function openPane(
       if (stopped || request !== token || active?.child !== child) return;
       process.stderr.write(`TMUX_GPUI_DIAGNOSTIC ${JSON.stringify(fault)}\n`);
       unavailable();
+      if (fault.code === "transport-closed" || fault.code === "transport-error")
+        recoverTerminal(fault.code);
     });
     const unavailable = () => {
       if (stopped || request !== token || active?.child !== child) return;
@@ -1504,6 +1596,15 @@ async function openPane(
                 return;
               const key = fleet?.attachmentKey(config);
               if (!key) return;
+              if (
+                !recoveryTarget ||
+                recoveryTarget.request !== token ||
+                recoveryTarget.pane !== config.semanticPaneId
+              ) {
+                const resolve = fleet?.recoveryRoute(key);
+                if (resolve)
+                  recoveryTarget = { resolve, key, pane: config.semanticPaneId, request: token };
+              }
               const tabTarget = fleet?.retainedTarget(key);
               if (tabTarget) sessionTabs.accept(token, tabTarget);
               const visit = sessionHistory.accept(token, key),
@@ -1565,7 +1666,10 @@ async function command(value: unknown) {
     if (stopped || !foreground || cmd.request !== request || !fleet) return;
     try {
       if (cmd.type === "fleet-retry") fleet.retry(cmd.retry);
-      else fleet.disconnect(cmd.disconnect);
+      else {
+        cancelTerminalRecovery();
+        fleet.disconnect(cmd.disconnect);
+      }
     } catch {
       /* Stale displayed connections cannot operate on replacement routes. */
     }
@@ -2400,6 +2504,7 @@ async function command(value: unknown) {
     fleet?.clearSelection();
   }
   if (cmd.type === "machine" && cmd.sshTarget !== null) {
+    cancelTerminalRecovery();
     selectedMachineProfile = null;
     savedMachineRetired = true;
     machineMessage = null;
