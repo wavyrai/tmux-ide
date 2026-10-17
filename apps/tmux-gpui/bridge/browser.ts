@@ -952,13 +952,17 @@ async function openPane(
       // Fatal helper diagnostics retire this presentation lifetime. Buffered
       // stdout must not restore a frame or input authority after that fault.
       if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
+      let publicationStage = "framing";
       try {
         buffer = Buffer.concat([buffer, chunk]);
         let end;
         while ((end = buffer.indexOf(10)) >= 0) {
+          publicationStage = "framing";
           if (end > MAX_FRAME) throw new Error("Oversized child publication");
+          publicationStage = "decode";
           const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
           buffer = buffer.subarray(end + 1);
+          publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
             !Number.isSafeInteger(event.sequence) ||
@@ -966,6 +970,7 @@ async function openPane(
             (childConnection && event.connection !== childConnection)
           )
             throw new Error("Invalid child publication");
+          publicationStage = "topology";
           childConnection = event.connection;
           childSequence = event.sequence;
           layouts = topologySchema.parse(event.layouts ?? []);
@@ -1366,10 +1371,12 @@ async function openPane(
             });
             return;
           }
+          publicationStage = "epoch";
           const epoch = z.number().int().nonnegative().safe().parse(event.presentationEpoch);
           if (childPresentationEpoch !== epoch) presentation.update(undefined, [], false);
           childPresentationEpoch = epoch;
           const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
+          publicationStage = "surfaces";
           const surfaces = surfacesSchema.parse(event.surfaces ?? []);
           const scrollOffset = z
             .number()
@@ -1384,6 +1391,7 @@ async function openPane(
             appliedPresenceRevision === presenceRevision &&
             event.inputReady === true &&
             scrollOffset === 0;
+          publicationStage = "presentation";
           const coherent = presentation.update(
             event.snapshot ? layout : undefined,
             surfaces,
@@ -1394,6 +1402,7 @@ async function openPane(
           copyRegion = coherent?.copyRegion ?? null;
           regions = coherent?.regions ?? [];
           inputReady = hasAuthority && !!snapshot;
+          publicationStage = "resize-token";
           resizeToken = resizePresentationMatches(layout, coherent?.regions ?? [])
             ? z
                 .string()
@@ -1401,6 +1410,7 @@ async function openPane(
                 .nullable()
                 .parse(event.resizeToken ?? null)
             : null;
+          publicationStage = "split-layout";
           const offeredSplit = WindowSplitLayoutResourceSchemaZ.nullable().parse(
             event.splitLayout ?? null,
           );
@@ -1412,12 +1422,14 @@ async function openPane(
             resizePresentationMatches(layout, coherent?.regions ?? [])
               ? offeredSplit
               : null;
+          publicationStage = "split-gesture";
           const offeredSplitGesture = splitGesturePublicationSchema
             .nullable()
             .parse(event.splitGesture ?? null);
           splitGesture =
             offeredSplitGesture?.gesture === activeSplitGesture ? offeredSplitGesture : null;
           resizeGestureSupported = event.resizeGestureSupported === true;
+          publicationStage = "resize-gesture";
           const offeredGesture = resizeGesturePublicationSchema
             .nullable()
             .parse(event.resizeGesture ?? null);
@@ -1434,6 +1446,7 @@ async function openPane(
                       : null,
                 }
               : null;
+          publicationStage = "pane-actions";
           const offeredActions = paneActionsSchema.nullable().parse(event.paneActions ?? null);
           const geometryMatches =
             !!layout &&
@@ -1502,10 +1515,16 @@ async function openPane(
                   publish();
                 });
             };
+          publicationStage = "publish";
           publish();
         }
+        publicationStage = "framing";
         if (buffer.length > MAX_FRAME) throw new Error("Oversized child publication");
       } catch {
+        // Fixed stage metadata only: never log terminal contents or connection credentials.
+        console.error(
+          JSON.stringify({ diagnostic: "child-publication-rejected", stage: publicationStage }),
+        );
         unavailable();
         void retire();
       }
