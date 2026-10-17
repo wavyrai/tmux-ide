@@ -335,7 +335,13 @@ pub(super) fn render(surface: u32, leading: Option<AnyElement>, window: &Window)
         .w_full()
         .h(px(HEIGHT))
         .bg(rgb(surface).blend(rgba(0xffffff1a)))
-        .child(div().flex_none().w(px(LEADING)).h_full())
+        .child(
+            div()
+                .debug_selector(|| "titlebar-leading-space".into())
+                .flex_none()
+                .w(px(if window.is_fullscreen() { 0. } else { LEADING }))
+                .h_full(),
+        )
         .children(leading);
     movable(bar, window)
 }
@@ -392,9 +398,11 @@ pub(crate) fn navigation_header(
     theme: &crate::config::Theme,
     window: &Window,
     navigation: AnyElement,
+    fill: Rgba,
 ) -> AnyElement {
     if cfg!(target_os = "macos") || decorations::client(window) {
         render(theme.surface, Some(navigation), window)
+            .bg(fill)
             .children(controls(window, theme, |window, _| window.remove_window()))
             .into_any_element()
     } else {
@@ -403,7 +411,7 @@ pub(crate) fn navigation_header(
             .flex_none()
             .w_full()
             .h(px(HEIGHT))
-            .bg(rgb(theme.surface))
+            .bg(fill)
             .child(navigation)
             .into_any_element()
     }
@@ -411,6 +419,7 @@ pub(crate) fn navigation_header(
 
 /// Room before the first control: macOS keeps it clear for the traffic
 /// lights, which every other platform draws elsewhere or not at all.
+/// Full-screen chrome omits this space because the native controls are hidden.
 const LEADING: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
 
 pub(super) fn options(title: &str) -> TitlebarOptions {
@@ -620,6 +629,13 @@ mod native_chrome_tests {
                     Bounds::new(point(px(0.), px(0.)), size(px(width), px(34.)))
                 );
                 assert_eq!(
+                    cx.debug_bounds("titlebar-leading-space")
+                        .unwrap()
+                        .size
+                        .width,
+                    px(if fullscreen { 0. } else { super::LEADING })
+                );
+                assert_eq!(
                     cx.debug_bounds("titlebar-account-slot").unwrap(),
                     Bounds::new(point(px(width - 40.), px(0.)), size(px(40.), px(34.)))
                 );
@@ -668,7 +684,10 @@ mod native_chrome_tests {
                 });
                 assert_eq!(
                     cx.debug_bounds("titlebar-center").unwrap(),
-                    Bounds::new(point(px(112.), px(0.)), size(px(width - 152.), px(34.)))
+                    Bounds::new(
+                        point(px(if fullscreen { 32. } else { 112. }), px(0.)),
+                        size(px(width - if fullscreen { 72. } else { 152. }), px(34.)),
+                    )
                 );
                 let body = cx.debug_bounds("window-body").unwrap();
                 let banner_height = if env!("HERDR_BUILD_WORKTREE") == "1" {

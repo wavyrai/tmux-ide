@@ -1,3 +1,4 @@
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::{Action, Mode, Row, SnapshotView, Target, browser};
 use gpui::{prelude::*, *};
 
@@ -150,17 +151,12 @@ impl SnapshotView {
             .bg(rgba(0x00000088))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                div()
+                bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("saved-machines-dialog")
                     .w(px(520.))
                     .max_w_full()
                     .h(px(420.))
                     .max_h_full()
-                    .p_4()
-                    .rounded(px(8.))
-                    .bg(rgb(theme.surface))
-                    .border_1()
-                    .border_color(rgb(theme.active))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -179,17 +175,17 @@ impl SnapshotView {
                     .child(self.picker_render(cx))
                     .child(
                         div().flex().justify_end().child(
-                            div()
-                                .id("saved-machines-cancel")
-                                .px_3()
-                                .py_2()
-                                .cursor_pointer()
-                                .child("Cancel")
-                                .on_click(
-                                    cx.listener(|view, _, window, cx| {
-                                        view.close_picker(window, cx)
-                                    }),
-                                ),
+                            controls::action_button(
+                                "saved-machines-cancel",
+                                Some("Cancel"),
+                                "Close dialog",
+                                Icon::Close,
+                                ButtonStyle::Quiet,
+                                &theme,
+                            )
+                            .on_click(
+                                cx.listener(|view, _, window, cx| view.close_picker(window, cx)),
+                            ),
                         ),
                     ),
             )

@@ -626,6 +626,17 @@ if (workloadMode) {
   };
   process.stdout.write(
     `${JSON.stringify({
+      // Report only bounded, nonsecret provenance after measurement completes.
+      // Presence flags diagnose inherited instrumentation without exposing paths/options.
+      runtime: {
+        node: process.versions.node,
+        v8: process.versions.v8,
+        platform: process.platform,
+        arch: process.arch,
+        coverageLane: process.env.TMUX_IDE_TEST_COVERAGE === "1",
+        nodeOptionsPresent: !!process.env.NODE_OPTIONS,
+        nodeV8CoveragePresent: !!process.env.NODE_V8_COVERAGE,
+      },
       workloadMinBytes,
       workloadMaxBytes,
       workloadCycles: 24,

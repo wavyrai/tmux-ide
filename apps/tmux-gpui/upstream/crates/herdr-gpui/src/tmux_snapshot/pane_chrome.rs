@@ -1,5 +1,8 @@
 //! Display labels never become routing identities.
 use super::browser::State;
+#[path = "agent_icon.rs"]
+mod agent_icon;
+pub(super) use agent_icon::path as agent_icon_path;
 pub(super) fn selected_title(state: &State) -> Option<String> {
     let selected = state.selected_pane.as_deref()?;
     let pane = state.panes.iter().find(|pane| pane.id == selected)?;
@@ -229,6 +232,7 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
+        let fill = theme.background;
         Some(
             div()
                 .id(SharedString::from(format!("pane-mode:{id}")))
@@ -250,9 +254,9 @@ impl SnapshotView {
                 .items_center()
                 .justify_center()
                 .text_size(px(10.))
-                .bg(rgb(theme.surface))
+                .bg(rgb(fill))
                 .text_color(rgb(theme.foreground))
-                .hover(move |s| s.bg(rgb(theme.active)))
+                .rounded(px(crate::config::corners::CONTROL))
                 .occlude()
                 .cursor_pointer()
                 .child(if history > 0 {
@@ -300,6 +304,7 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
+        let fill = theme.background;
         Some(
             div()
                 .id(SharedString::from(format!("pane-overflow:{id}")))
@@ -321,12 +326,17 @@ impl SnapshotView {
                 .items_center()
                 .justify_center()
                 .text_size(px(12.))
-                .bg(rgb(theme.surface))
+                .bg(rgb(fill))
                 .text_color(rgb(theme.muted))
-                .hover(move |s| s.bg(rgb(theme.active)))
+                .rounded(px(crate::config::corners::CONTROL))
                 .cursor_pointer()
                 .occlude()
-                .child("⋯")
+                .child(
+                    svg()
+                        .path("icons/more.svg")
+                        .size(px(14.).min(px(self.terminal_height())))
+                        .text_color(rgb(theme.muted)),
+                )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
                     cx.stop_propagation();
@@ -382,7 +392,7 @@ impl SnapshotView {
             .h(px(self.terminal_height()))
             .flex_shrink_0()
             .overflow_hidden()
-            .bg(rgb(theme.surface));
+            .bg(rgb(theme.background));
         if !hit_regions::is_painted(self.frame.as_ref(), self.browser_state.frame.as_ref())
             || self.selection.is_some()
         {
@@ -422,14 +432,12 @@ impl SnapshotView {
         row.into_any_element()
     }
     fn pane_header_label(&self, header: &Header, width: f32) -> Div {
-        let indicator = self
+        let agent = self
             .browser_state
             .workspace_agents
             .as_ref()
             .and_then(|workspace| {
-                if header.width < 20
-                    || self.browser_state.selected_session.as_ref() != Some(&workspace.session_id)
-                {
+                if self.browser_state.selected_session.as_ref() != Some(&workspace.session_id) {
                     return None;
                 }
                 let mut rows = workspace.roster.rows.iter().filter(|row| {
@@ -440,7 +448,7 @@ impl SnapshotView {
                 if rows.next().is_some() {
                     return None;
                 }
-                Some(self.agent_indicator(
+                Some((
                     row,
                     !row.available
                         || !matches!(
@@ -450,6 +458,14 @@ impl SnapshotView {
                         ),
                 ))
             });
+        let indicator = agent
+            .filter(|_| header.width >= 20)
+            .map(|(row, unavailable)| self.agent_indicator(row, unavailable));
+        let icon = agent_icon_path(
+            agent
+                .filter(|(_, unavailable)| !unavailable)
+                .and_then(|(row, _)| row.harness.as_deref()),
+        );
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
@@ -473,11 +489,7 @@ impl SnapshotView {
                         2.
                     }))
             })
-            .bg(rgb(if selected {
-                theme.active
-            } else {
-                theme.surface
-            }))
+            .bg(rgb(theme.background))
             .text_color(rgb(if selected {
                 theme.foreground
             } else {
@@ -492,6 +504,17 @@ impl SnapshotView {
             .flex()
             .items_center()
             .gap(px(4.))
+            .child(
+                svg()
+                    .path(icon)
+                    .size(px((self.terminal_height() - 2.).clamp(8., 14.)))
+                    .flex_none()
+                    .text_color(rgb(if selected {
+                        theme.foreground
+                    } else {
+                        theme.muted
+                    })),
+            )
             .children(indicator)
             .child(
                 div()

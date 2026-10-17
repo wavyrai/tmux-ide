@@ -1,0 +1,91 @@
+{
+  "scope": "Remove saved-machine dialog keyboard navigation",
+  "baseCommit": "f037e0a4",
+  "behavior": [
+    "Tab and Shift-Tab cycle Remove and Cancel/Done.",
+    "Focused buttons use native GPUI key-up activation.",
+    "Successful submission omits Remove and moves its focus to Cancel.",
+    "Pointer/key-up callbacks retain captured form and request identity.",
+    "Daemon mutation, registry revision and profile guards remain unchanged."
+  ],
+  "verification": {
+    "focusedRemoveTests": {
+      "passed": 7,
+      "newKeyboardTests": 3,
+      "existingTests": 4
+    },
+    "workspaceDefault": {
+      "gpuiPassed": 2780,
+      "gpuiIgnored": 7,
+      "clientPassed": 217
+    },
+    "workspaceAllFeatures": {
+      "gpuiPassed": 2811,
+      "gpuiIgnored": 8,
+      "clientPassed": 217
+    },
+    "clippyBoth": "passed",
+    "format": "passed",
+    "fileSize": "passed",
+    "independentSourceReview": "np01_review: no blocking findings",
+    "nativeBuild": "passed; gate exit 0",
+    "log": ".tasks/native-polish-np07/machine-remove-full-gates.log",
+    "nativeBinarySha256": "c42a2a4fa81e0afb13034190931d1f3274419c0adc1ba9e2c53ece5e48c0e8b2"
+  },
+  "limits": [
+    "Short-height and error/refusal native checks remain open.",
+    "Synthetic registry proves GUI dispatch and acknowledgement display, not real daemon persistence.",
+    "Earlier baseline attempts remain inconclusive; user subsequently confirmed Mac had been locked.",
+    "Branch implementation only; not merged or released."
+  ],
+  "nativeDark": {
+    "sourceCommit": "dcb9f573",
+    "packagedAdhocBinarySha256": "d0a77cf27b3562b5bbf52a36373ca1086904c9b45dde8cbe84e6f35034f7fdd5",
+    "fixture": "private HOME and stdio synthetic machine registry; no actual SSH/daemon mutation",
+    "passed": [
+      "F5 search opens saved-machine management",
+      "Tab and Shift-Tab move visible focus between Remove/Cancel",
+      "Space cancels without mutation",
+      "Reopen and Enter on focused Remove sends exactly one mutation",
+      "Acknowledged fixture removal shows focused Done; Enter closes",
+      "No terminal keystrokes in fixture command trace"
+    ],
+    "images": [
+      "remove-focus-dark.png",
+      "remove-done-dark.png"
+    ],
+    "mutation": {
+      "type": "machines",
+      "request": 0,
+      "operation": "mutate",
+      "revision": 12,
+      "change": {
+        "operation": "remove",
+        "id": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  },
+  "nativeLight": {
+    "sourceCommit": "dcb9f573",
+    "passed": [
+      "Visible focus ring on Remove at normal width",
+      "Narrow 1282px screenshot (approximately 641 logical points) contains dialog and both controls",
+      "Tab reaches Cancel and Space dismisses without mutation or terminal keys"
+    ],
+    "images": [
+      "remove-focus-light.png",
+      "remove-narrow-light.png"
+    ],
+    "notVerified": "Bottom-edge drag did not change height; no short-window claim."
+  },
+  "nativePending": {
+    "passed": [
+      "Pending status wraps visibly; Remove is absent",
+      "Tab and Shift-Tab retain Cancel focus",
+      "Enter cancels pending dialog",
+      "Exactly one mutation and no terminal keys in private fixture trace"
+    ],
+    "image": "remove-pending-dark.png",
+    "scope": "Synthetic pending registry, not real backend latency"
+  }
+}

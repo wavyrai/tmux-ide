@@ -4,6 +4,8 @@ use crate::search_input::SearchInput;
 use gpui::{prelude::*, *};
 use serde::Serialize;
 
+mod menu_render;
+
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum Harness {
@@ -83,9 +85,29 @@ impl std::fmt::Debug for Target {
 }
 pub(super) struct Menu {
     target: Target,
+    cursor: bezel_ui::menu::Cursor,
     input: Option<Entity<SearchInput>>,
     error: Option<&'static str>,
 }
+impl Menu {
+    fn items(&self) -> Vec<bezel_ui::menu::Item> {
+        use bezel_ui::menu::Item;
+        vec![
+            Item::action("Rename"),
+            Item::action(if self.target.actions.zoomed {
+                "Restore"
+            } else {
+                "Zoom"
+            }),
+            Item::Separator,
+            Item::action("Open folder in VS Code"),
+            Item::Separator,
+            Item::action("Split pane right"),
+            Item::action("Split pane down"),
+        ]
+    }
+}
+
 fn name(text: &str) -> Option<String> {
     let text = text.trim();
     (!text.is_empty() && text.encode_utf16().count() <= 80 && !text.chars().any(char::is_control))
@@ -110,6 +132,7 @@ impl SnapshotView {
         self.discard_composition(cx);
         self.pane_actions = Some(Menu {
             target,
+            cursor: Default::default(),
             input: None,
             error: None,
         });
@@ -285,6 +308,28 @@ impl SnapshotView {
         {
             return;
         }
+        if menu.input.is_none() {
+            match event.keystroke.key.as_str() {
+                "up" | "down" => {
+                    if let Some(menu) = self.pane_actions.as_mut() {
+                        let items = menu.items();
+                        menu.cursor
+                            .step(&items, if event.keystroke.key == "up" { -1 } else { 1 });
+                        cx.notify();
+                    }
+                }
+                "enter" => {
+                    if let Some(path) = menu.cursor.path() {
+                        self.pane_menu_hit(bezel_ui::menu::Hit::Choose(path), window, cx);
+                    }
+                }
+                "escape" => self.close_pane_actions(window, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+            window.prevent_default();
+            return;
+        }
         match event.keystroke.key.as_str() {
             "escape" => self.close_pane_actions(window, cx),
             "enter" if menu.input.is_some() => self.send_pane_action(true, window, cx),
@@ -293,127 +338,120 @@ impl SnapshotView {
         cx.stop_propagation();
         window.prevent_default();
     }
-    pub(super) fn pane_actions_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let menu = self.pane_actions.as_ref()?;
-        let active = self.theme().active;
-        let mut panel = div()
-            .id("pane-actions-panel")
-            .absolute()
-            .bottom(relative(1.))
-            .left_0()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .flex_none()
-            .w_full()
-            .max_h(px(180.))
-            .overflow_y_scroll()
-            .p_2()
-            .bg(rgb(self.theme().surface))
-            .border_t_1()
-            .border_color(rgb(active));
-        if let Some(input) = &menu.input {
-            panel = panel
-                .child(div().child("Rename pane"))
-                .child(input.clone())
-                .child(
-                    div()
-                        .id("pane-name-submit")
-                        .cursor_pointer()
-                        .p_1()
-                        .child("Rename")
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.send_pane_action(true, window, cx)
-                        })),
-                );
-        } else {
-            for (rename, label) in [
-                (true, "Rename"),
-                (
-                    false,
-                    if menu.target.actions.zoomed {
-                        "Restore"
-                    } else {
-                        "Zoom"
-                    },
-                ),
-            ] {
-                panel = panel.child(
-                    div()
-                        .id(if rename {
-                            "pane-action-rename"
-                        } else {
-                            "pane-action-zoom"
-                        })
-                        .min_h(px(crate::config::Config::default().ui.line_height() + 12.))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .cursor_pointer()
-                        .hover(move |row| row.bg(rgb(active)))
-                        .child(label)
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            if rename {
-                                view.edit_pane_name(window, cx)
-                            } else {
-                                view.send_pane_action(false, window, cx)
-                            }
-                        })),
-                );
+    fn pane_menu_hit(
+        &mut self,
+        hit: bezel_ui::menu::Hit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_pane_actions(cx);
+        let Some(menu) = self.pane_actions.as_mut() else {
+            return;
+        };
+        match hit {
+            bezel_ui::menu::Hit::Point(path) => {
+                menu.cursor.point_at(&menu.items(), &path);
+                cx.notify();
             }
-            panel = panel.child(
-                div()
-                    .id("pane-action-open-editor")
-                    .debug_selector(|| "pane-action-open-editor".into())
-                    .min_h(px(crate::config::Config::default().ui.line_height() + 12.))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .cursor_pointer()
-                    .hover(move |row| row.bg(rgb(active)))
-                    .child("Open folder in VS Code")
-                    .on_click(cx.listener(|view, _, window, cx| view.open_pane_editor(window, cx))),
-            );
-            for (direction, id, label) in [
-                (
-                    SplitDirection::Right,
-                    "pane-action-split-right",
-                    "Split pane right",
-                ),
-                (
-                    SplitDirection::Down,
-                    "pane-action-split-down",
-                    "Split pane down",
-                ),
-            ] {
-                panel = panel.child(
-                    div()
-                        .id(id)
-                        .debug_selector(move || id.into())
-                        .min_h(px(crate::config::Config::default().ui.line_height() + 12.))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .cursor_pointer()
-                        .hover(move |row| row.bg(rgb(active)))
-                        .child(label)
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.split_pane(direction, window, cx)
-                        })),
-                );
-            }
+            bezel_ui::menu::Hit::Dismiss => self.close_pane_actions(window, cx),
+            bezel_ui::menu::Hit::Choose(path) => match path.as_slice() {
+                [0] => self.edit_pane_name(window, cx),
+                [1] => self.send_pane_action(false, window, cx),
+                [3] => self.open_pane_editor(window, cx),
+                [5] => self.split_pane(SplitDirection::Right, window, cx),
+                [6] => self.split_pane(SplitDirection::Down, window, cx),
+                _ => {}
+            },
         }
+    }
+    pub(super) fn pane_actions_panel(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let menu = self.pane_actions.as_ref()?;
+        let theme = self.theme();
+        super::design::prepare(&theme, self.glass.is_active(), cx);
+        if menu.input.is_none() {
+            let items = menu.items();
+            let bezel = bezel_theme::Theme::of(cx).clone();
+            let card = menu_render::card(&bezel, &items, &menu.cursor, window, cx);
+            return Some(
+                div()
+                    .id("pane-actions-panel")
+                    .role(Role::Menu)
+                    .aria_label("Pane actions")
+                    .debug_selector(|| "pane-actions-panel".into())
+                    .absolute()
+                    .bottom(relative(1.))
+                    .left_0()
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .child(bezel_ui::surface::popover(
+                        bezel_theme::Theme::surface_radius(),
+                        card,
+                    ))
+                    .into_any_element(),
+            );
+        }
+        let bezel = super::design::palette(&theme);
+        let input = menu.input.as_ref()?;
         Some(
-            panel
+            bezel_ui::popover::dialog_card(&bezel)
+                .id("pane-actions-panel")
+                .debug_selector(|| "pane-actions-panel".into())
+                .role(Role::Dialog)
+                .aria_label("Rename pane")
+                .absolute()
+                .bottom(relative(1.))
+                .left_0()
+                .occlude()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .flex_none()
+                .w_full()
+                .max_w(px(320.))
+                .max_h(px(180.))
+                .overflow_y_scroll()
+                .p_2()
+                .gap_2()
+                .text_size(px(12.))
+                .child(bezel_ui::popover::dialog_title(&bezel, "Rename pane"))
+                .child(input.clone())
                 .children(menu.error.map(|error| div().child(error)))
                 .child(
                     div()
-                        .id("pane-actions-cancel")
-                        .cursor_pointer()
-                        .p_1()
-                        .child("Cancel")
-                        .on_click(
-                            cx.listener(|view, _, window, cx| view.close_pane_actions(window, cx)),
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            super::controls::action_button(
+                                "pane-name-submit",
+                                Some("Rename"),
+                                "Rename pane",
+                                super::controls::Icon::Check,
+                                super::controls::ButtonStyle::Primary,
+                                &theme,
+                            )
+                            .aria_label("Rename pane")
+                            .on_click(cx.listener(
+                                |view, _, window, cx| view.send_pane_action(true, window, cx),
+                            )),
+                        )
+                        .child(
+                            super::controls::button(
+                                "pane-actions-cancel",
+                                Some("Cancel"),
+                                "Cancel rename",
+                                super::controls::Icon::Close,
+                                &theme,
+                            )
+                            .aria_label("Cancel rename")
+                            .on_click(cx.listener(
+                                |view, _, window, cx| view.close_pane_actions(window, cx),
+                            )),
                         ),
                 )
                 .into_any_element(),

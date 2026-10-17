@@ -1,0 +1,7 @@
+{"event":"fixture-owned","root":"/tmp/tmi-e2e-gpui-pane-selection-EQwyI3","socketPath":"/tmp/tmi-e2e-gpui-pane-selection-EQwyI3/t.sock","session":"e2e-gpui-pane-selection-31482-0","left":"%0","right":"%1","daemonPid":31518}
+{"event":"app-owned","pid":31538,"appPath":"/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-two-pane-overnight-20261016/Native Two Pane Overnight QA.app"}
+Packaged panes ready: open session/window, click LEFT terminal when ready, verify selected title/rail and type echo GPUI_LEFT_OK then Return.
+tmux-preview: native chrome glass true
+Left verified: click RIGHT terminal when ready, verify selected title changes and separator stays clear of content, type echo GPUI_RIGHT_OK then Return.
+Both pane targets verified. Capture visual evidence, then Cmd-Q.
+{"passed":true,"distinctPaneTargets":true,"visualAppearance":"requires separate screenshots","packagedRuntime":true,"isolatedCwd":true,"privateCli":true,"minimalPath":true,"sourceSurvivesClose":true}

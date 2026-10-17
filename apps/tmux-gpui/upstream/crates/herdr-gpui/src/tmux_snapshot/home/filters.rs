@@ -1,6 +1,7 @@
 //! Presentation-only filters over the bounded published agent roster.
 use super::*;
 use crate::search_input::{Changed, SearchInput};
+use bezel_ui::widgets::Controls as BezelControls;
 use browser::home_agents::{Phase, Roster, Row, Status};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -35,6 +36,7 @@ impl Filter {
 }
 pub(in crate::tmux_snapshot) struct Controls {
     pub(super) search: Entity<SearchInput>,
+    pub(super) actions: [FocusHandle; 4],
     pub(super) filter: Filter,
     pub(super) selected: Option<String>,
     pub(super) recovery_queued: Option<(u64, u64)>,
@@ -63,6 +65,7 @@ impl SnapshotView {
             let changed = cx.subscribe(&search, |_, _, _: &Changed, cx| cx.notify());
             self.home_filter = Some(Controls {
                 search,
+                actions: std::array::from_fn(|_| cx.focus_handle()),
                 filter: Filter::All,
                 selected: None,
                 recovery_queued: None,
@@ -105,6 +108,14 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.home_action_key(event, window, cx) {
+            return true;
+        }
+        // Enter/Space belong to GPUI's focused-button key-up activation. Other
+        // Home agent shortcuts must not navigate behind a focused action either.
+        if self.home_action_index(window).is_some() {
+            return false;
+        }
         let key = &event.keystroke;
         if self.browser_state.surface != browser::Surface::Home
             || self.browser_state.home_agents.is_none()
@@ -195,26 +206,14 @@ impl SnapshotView {
             return div().into_any_element();
         };
         let theme = self.theme();
-        let mut tabs = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(self.home_machine_control(cx));
+        let bezel = super::super::design::palette(&theme);
+        let mut tabs = bezel.toggle_group().flex_wrap();
         for filter in [Filter::All, Filter::Working, Filter::Attention] {
             tabs = tabs.child(
-                div()
+                bezel
+                    .toggle_group_item(filter.label(), controls.filter == filter)
                     .id(filter.label())
                     .debug_selector(move || format!("home-filter-{}", filter.label()))
-                    .px_3()
-                    .py_1()
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .bg(rgb(if controls.filter == filter {
-                        theme.active
-                    } else {
-                        theme.surface
-                    }))
-                    .child(filter.label())
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if view.browser_state.surface == browser::Surface::Home
                             && let Some(controls) = &mut view.home_filter
@@ -232,7 +231,8 @@ impl SnapshotView {
             .flex_col()
             .gap_2()
             .child(controls.search.clone())
-            .child(tabs)
+            .child(div().flex().flex_wrap().items_center().gap_2()
+                .child(self.home_machine_control(cx)).child(tabs))
             .child(
                 div()
                     .text_sm()

@@ -177,6 +177,7 @@ fn every_focus_changing_command_fences_immediate_input_until_ack_and_surface(
                     keystroke: gpui::Keystroke::parse(key).unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 };
                 match command {
                     // Herdr asks for a tab name by default; its proposal creates.

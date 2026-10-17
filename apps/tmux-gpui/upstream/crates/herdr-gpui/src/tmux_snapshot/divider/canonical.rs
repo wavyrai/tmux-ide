@@ -215,7 +215,7 @@ pub(super) fn guides(
     width: f32,
     height: f32,
     selected: Option<&str>,
-    accent: u32,
+    palette: &bezel_theme::Theme,
 ) -> Vec<AnyElement> {
     let mut result = Vec::new();
     for (index, split) in splits(state).into_iter().enumerate() {
@@ -254,19 +254,13 @@ pub(super) fn guides(
                     (start, split.edge, cross - start, 1)
                 };
                 result.push(
-                    div()
+                    handle(palette, split.axis, selected == Some(split.id.as_str()))
                         .id(("canonical-divider", index * 4096 + usize::from(start)))
                         .absolute()
                         .left(px(f32::from(left) * width))
                         .top(px(f32::from(top) * height))
                         .w(px(f32::from(cols) * width))
                         .h(px(f32::from(rows) * height))
-                        .cursor(if split.axis == Axis::Cols {
-                            CursorStyle::ResizeLeftRight
-                        } else {
-                            CursorStyle::ResizeUpDown
-                        })
-                        .when(selected == Some(split.id.as_str()), |el| el.bg(rgb(accent)))
                         .into_any_element(),
                 );
             }

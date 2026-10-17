@@ -1,0 +1,22 @@
+{"stage":"new-window-failure-evidence","errorClass":"AssertionError","errorCode":"ERR_ASSERTION","browser":{"request":2,"sequence":32,"presenceRevision":1,"inputReady":false,"hasSnapshot":false,"selectedSession":"live-session.a1e7fc941ed16dc32ee4","selectedPane":"pane.promoted.83a575a4b48d55481e97","originalPane":"pane.promoted.83a575a4b48d55481e97","observedCreatedPane":null,"status":"New window created; pane unavailable — refresh","retainedPaneIds":["pane.promoted.83a575a4b48d55481e97"]},"receiptCreatedPaneAvailable":false,"observedCreatedPanePresent":null,"native":[{"session":"$0","window":"@0","pane":"%0","pid":"27629","semanticPane":"pane.promoted.83a575a4b48d55481e97","existedBeforeAction":true},{"session":"$0","window":"@1","pane":"%1","pid":"27948","semanticPane":"pane.75ac3231676e45e2bbf57542a0d974ce","existedBeforeAction":false}],"nativeReadFailed":false}
+file:///Users/runner/work/tmux-ide/tmux-ide/apps/tmux-gpui/bridge/new-window-smoke.mjs:401
+if (failures.length) throw new AggregateError(failures, "New-window fixture failed");
+                           ^
+
+AggregateError: New-window fixture failed
+    at file:///Users/runner/work/tmux-ide/tmux-ide/apps/tmux-gpui/bridge/new-window-smoke.mjs:401:28 {
+  [errors]: [
+    AssertionError [ERR_ASSERTION]: New-window deadline: {"status":"New window created; pane unavailable — refresh","selectedPane":"pane.promoted.83a575a4b48d55481e97","panes":[{"id":"pane.promoted.83a575a4b48d55481e97","label":"tidy-sparrow","windowId":"window.promoted.1a134d90d1b575ffdf80","windowLabel":"one"}],"presence":1,"hasSnapshot":false,"inputReady":false}
+        at until (file:///Users/runner/work/tmux-ide/tmux-ide/apps/tmux-gpui/bridge/new-window-smoke.mjs:162:12)
+        at async file:///Users/runner/work/tmux-ide/tmux-ide/apps/tmux-gpui/bridge/new-window-smoke.mjs:305:3 {
+      generatedMessage: false,
+      code: 'ERR_ASSERTION',
+      actual: false,
+      expected: true,
+      operator: '==',
+      diff: 'simple'
+    }
+  ]
+}
+
+Node.js v24.21.0

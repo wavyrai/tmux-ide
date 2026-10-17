@@ -174,3 +174,12 @@ mod preferences;
 
 #[path = "tests/fleet_admission.rs"]
 mod fleet_admission;
+
+#[path = "tests/action_admission.rs"]
+mod action_admission;
+
+#[path = "tests/fleet_layout.rs"]
+mod fleet_layout;
+
+#[path = "tests/columns.rs"]
+mod columns;

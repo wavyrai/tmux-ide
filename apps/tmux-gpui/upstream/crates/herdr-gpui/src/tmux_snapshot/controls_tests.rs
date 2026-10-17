@@ -2,6 +2,9 @@
 use super::*;
 use core::prelude::v1::test;
 
+#[path = "controls_tests/accessibility.rs"]
+mod accessibility;
+
 struct Controls;
 impl Render for Controls {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -18,11 +21,11 @@ impl Render for Controls {
                 &theme,
             ))
             .child(
-                tab("inactive", "Home", Icon::Home, false, &theme, theme.cursor)
+                tab("inactive", "Home", Icon::Home, false, &theme)
                     .debug_selector(|| "inactive".into()),
             )
             .child(
-                tab("selected", "Home", Icon::Home, true, &theme, theme.cursor)
+                tab("selected", "Home", Icon::Home, true, &theme)
                     .debug_selector(|| "selected".into()),
             )
     }
@@ -49,3 +52,6 @@ fn compact_controls_share_height_and_selection_does_not_reflow_tabs(cx: &mut Tes
     assert_eq!(inactive.left(), labelled.right());
     assert_eq!(selected.left(), inactive.right());
 }
+
+#[path = "controls_tests/unavailable.rs"]
+mod unavailable;

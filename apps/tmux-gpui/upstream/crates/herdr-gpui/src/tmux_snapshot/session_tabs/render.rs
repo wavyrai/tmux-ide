@@ -1,7 +1,6 @@
 use super::*;
 use crate::tmux_snapshot::controls;
 use gpui::{prelude::*, *};
-pub(in crate::tmux_snapshot) const HEIGHT: f32 = 36.;
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn retained_session_strip(
         &self,
@@ -18,16 +17,14 @@ impl SnapshotView {
         let mut strip = div()
             .id("retained-session-tabs")
             .debug_selector(|| "retained-session-tabs".into())
-            .w_full()
-            .h(px(HEIGHT))
-            .flex_shrink_0()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .flex()
             .items_center()
             .overflow_x_scroll()
             .track_scroll(&self.session_tabs.scroll)
-            .bg(rgb(theme.surface))
-            .border_b_1()
-            .border_color(rgb(theme.muted).opacity(0.25));
+            .gap_1();
         for (index, row) in p.rows.iter().enumerate() {
             let action = row.activate.clone();
             let close = row.close.clone();
@@ -47,19 +44,19 @@ impl SnapshotView {
                     _ => None,
                 }
             };
-            let foreground = theme.foreground;
-            let surface = theme.surface;
-            let tab = controls::tab(
+            let active = self.browser_state.surface == browser::Surface::Workspace
+                && p.active.as_ref() == Some(&row.id);
+            let tab = controls::titlebar_tab(
                 ("retained-session", index),
                 context.clone(),
                 controls::Icon::Sessions,
-                p.active.as_ref() == Some(&row.id),
+                active,
                 &theme,
-                self.accent(),
             )
             .debug_selector(move || format!("retained-session-{index}"))
             .max_w(px(260.))
             .min_w(px(80.))
+            .px_2()
             .when(!row.available, |t| t.text_color(rgb(theme.muted)))
             .children(status.map(|s| {
                 div()
@@ -75,67 +72,30 @@ impl SnapshotView {
                         .child("New"),
                 )
             })
-            .tooltip(move |_, cx| {
-                cx.new(|_| crate::usage::Hint {
-                    text: context.clone().into(),
-                    foreground,
-                    surface,
-                })
-                .into()
+            .tooltip(move |window, cx| {
+                bezel_ui::tooltip::Tooltip::text(context.clone(), window, cx)
             })
             .on_click(cx.listener(move |v, _, w, cx| {
                 v.choose_session_tab(request, revision, &action, w, cx)
             }));
-            let close_button = div()
-                .id(("close-retained-session", index))
-                .debug_selector(move || format!("close-retained-session-{index}"))
-                .size(px(24.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .rounded(px(crate::config::corners::CONTROL))
-                .hover(move |s| s.bg(rgb(theme.active)))
-                .child(
-                    svg()
-                        .path("icons/close.svg")
-                        .size(px(12.))
-                        .text_color(rgb(theme.muted)),
-                )
-                .tooltip(move |_, cx| {
-                    cx.new(|_| crate::usage::Hint {
-                        text: "Close tab — session keeps running".into(),
-                        foreground,
-                        surface,
-                    })
-                    .into()
-                })
-                .on_click(cx.listener(move |v, _, w, cx| {
-                    cx.stop_propagation();
-                    v.choose_session_tab(request, revision, &close, w, cx)
-                }));
-            strip = strip.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .child(tab)
-                    .child(close_button),
-            );
+            let close_button = bezel_ui::tabs::close(
+                &super::super::design::palette(&theme),
+                format!("{:?}", ElementId::from(("retained-session", index))),
+                bezel_ui::tabs::Close::Always,
+            )
+            .debug_selector(move || format!("close-retained-session-{index}"))
+            .size(px(24.))
+            .role(Role::Button)
+            .aria_label("Close tab — session keeps running")
+            .tooltip(move |window, cx| {
+                bezel_ui::tooltip::Tooltip::text("Close tab — session keeps running", window, cx)
+            })
+            .on_click(cx.listener(move |v, _, w, cx| {
+                cx.stop_propagation();
+                v.choose_session_tab(request, revision, &close, w, cx)
+            }));
+            strip = strip.child(tab.child(close_button));
         }
         Some(strip.into_any_element())
-    }
-    pub(in crate::tmux_snapshot) fn retained_session_height(&self) -> f32 {
-        if self
-            .browser_state
-            .session_tabs
-            .as_ref()
-            .is_some_and(|p| !p.rows.is_empty())
-        {
-            HEIGHT
-        } else {
-            0.
-        }
     }
 }

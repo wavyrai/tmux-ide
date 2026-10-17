@@ -90,6 +90,7 @@ fn agent_form_identity_composition_stale_and_queue_fences(cx: &mut TestAppContex
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

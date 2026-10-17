@@ -102,7 +102,7 @@ The tmux-only `glass.rs` / `glass/macos.rs` boundary adds Apple's public
 `NSGlassEffectView` behind the GPUI Metal view using the raw-handle borrowing
 pattern from `browser/native.rs`. It owns only its inserted sibling and its
 accessibility observer. The member Cargo manifest enables existing objc2 AppKit
-and Foundation features; dependency versions and lockfile are unchanged. Sidebar
+and Foundation features; dependency versions and lockfile are unchanged. Navigation
 chrome exposes the material only when the native boundary reports success;
 unsupported/accessibility modes and terminal content remain opaque. This is a
 new tmux adaptation, not a Liquid Glass implementation copied from Herdr.
@@ -132,7 +132,65 @@ as an additional reference for layering.
 - Native fleet preference controls add optional strict metadata and explicit
   favorite/collapse commands in the tmux-only browser boundary. Home cards reuse
   existing GPUI hover, tooltip, theme and chevron assets; new
-  `assets/icons/fleet-star.svg` and `fleet-star-filled.svg` are original tmux-ide
-  vector artwork. `icons.rs` embeds these assets. Preference state and persistence
+  `assets/icons/fleet-star.svg` and `fleet-star-filled.svg` were initially original
+  tmux-ide vector artwork and are now Heroicons assets (see below). `icons.rs` embeds these assets. Preference state and persistence
   remain owned by the existing local tmux-ide daemon resource. No Herdr protocol,
   dependency versions, upstream source hashes or terminal painter are changed.
+
+- Native polish replaces 19 shared interface SVG filenames with unchanged
+  Heroicons assets from tailwindlabs/heroicons commit
+  `616b7a4dbbf3d011760af8066262cd5c6b3868f3`. Exact mappings and SHA-256 values
+  are retained in `upstream/assets/icons/heroicons-provenance.json`; the MIT
+  license is in `LICENSE-heroicons` beside it. Shared filenames also affect
+  imported menu/settings/review glyphs. Agent brand artwork is unchanged.
+  The app assembler includes the license and provenance in Resources.
+- Home fleet layout uses explicit machine/server/session hierarchy and shared
+  connection controls. Default native chrome uses neutral backgrounds and
+  selection fills; shared tabs no longer use colored underline/divider styling.
+  Terminal cell colors and custom preset values remain canonical. Source and
+  package checks do not substitute for native visual qualification.
+- Shared titlebar spacing now follows native full-screen state: the leading
+  traffic-light reservation is removed in full screen and restored on exit.
+  Native-picker decoration uses the shared subtle separator and neutral active
+  fill; the applied theme icon has an explicit tint required by GPUI SVG paint.
+
+- The tmux-ide saved-machine editor uses dialog-local focus handles to include
+  Save and Cancel/Done in forward and reverse Tab navigation. Footer activation
+  reuses GPUI key-up clicks with captured form/request identity; submitted Save
+  leaves focus on Cancel. Terminal key routing and daemon mutation guards remain
+  at their existing owners.
+
+- The native tmux shell binds Control-Command-F to Herdr’s existing window-only
+  fullscreen action, including when terminal or picker inputs have focus. It does
+  not import the Herdr terminal/session keymap or change daemon authority.
+
+- The tmux shell uses one rectangular native AppKit glass view beneath the full
+  viewport and one root tint for continuous header/sidebar chrome. Navigation
+  bands inherit that material; the former rounded sidebar outline and corner
+  cutouts are removed. The rounded opaque workspace sits inside an 8px gutter,
+  with window/pane headers and a rectangular terminal canvas inset far enough
+  to avoid its corner silhouette. Home uses the same content treatment. The
+  shared navigation-header wrapper accepts a fill override; other Herdr
+  titlebar renderers keep their existing backgrounds. Accessibility and
+  unsupported-platform fallback remains opaque, using the same chrome color.
+
+- Saved-machine removal reuses the editor's dialog-local focus pattern for
+  Remove and Cancel/Done. Forward/reverse Tab and GPUI key-up activation retain
+  captured form/request identity; a submitted removal keeps Cancel reachable.
+  Registry revision/profile checks and the daemon mutation path are unchanged.
+
+- The Add-machine form reuses the saved-machine editor/removal dialog focus
+  pattern for its SSH target, Cancel and Save footer. GPUI key-up callbacks
+  retain form/request identity and composition guards. SSH validation and the
+  existing daemon connection path are unchanged.
+
+- Saved-machine removal feedback distinguishes an actually pending registry
+  operation from an unconfirmed result. The latter directs users to Cancel and
+  refresh; an uncorrelated registry error is not presented as proof that this
+  removal failed. Confirmed absence and existing mutation/admission guards are
+  unchanged.
+
+- Home/Terminals titlebar tabs use the shared control corner radius and a compact
+  height within the existing titlebar. Inactive tabs inherit the continuous
+  chrome instead of painting a separate surface, including on hover. Only the
+  selected tab receives a theme-derived highlight. Navigation and drag-region ownership are unchanged.

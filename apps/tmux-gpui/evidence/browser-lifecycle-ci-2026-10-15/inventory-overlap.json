@@ -1,0 +1,13 @@
+{
+  "test": "packages/daemon/src/terminal/mirror/inventory-creation-overlap.test.ts",
+  "mechanism": "Hold the real SessionChannel pane descriptor reply, add a stamped pane/window, then let window topology observe the new state.",
+  "observed": "Trusted discovery rejects incomplete linked pane membership; WorkspaceTerminalInventoryRuntime cold fallback projects all four semantic panes including pane.created.",
+  "conclusion": "This read overlap alone does not reproduce the packaged new-window failure.",
+  "limits": [
+    "Simulated control transport and cold command replies; not a live tmux creation test.",
+    "Does not model runtime retirement, replacement epochs or packaged macOS timing."
+  ],
+  "validation": "Focused Vitest test passed on Node 22.23.1; formatting and ESLint passed.",
+  "review": "Parent reviewed barriers, parser fields, fallback assertion and cleanup independently. No production code changed.",
+  "releaseStatus": "Branch evidence only; qualification remains incomplete."
+}

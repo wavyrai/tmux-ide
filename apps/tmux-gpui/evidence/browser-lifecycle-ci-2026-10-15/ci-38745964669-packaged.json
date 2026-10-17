@@ -1,0 +1,98 @@
+{
+  "run": 38745964669,
+  "head": "82a2740a12aa37a7545d8a8527e5c6e29f6c0112",
+  "macOSJob": "success",
+  "linuxJob": "failure",
+  "packagedJourneys": {
+    "fleet-server": [
+      {
+        "passed": true,
+        "packaged": true,
+        "genuinelyEmptyServers": 2,
+        "duplicateLabels": true,
+        "selectedSecondByIdentity": true,
+        "firstStillEmpty": true,
+        "sourceIdentityGeometryStampsUnchanged": true,
+        "exactCreationCount": 1,
+        "nativeUi": false,
+        "ownedCleanup": true
+      }
+    ],
+    "home-machine-filter": [
+      {
+        "passed": true,
+        "packaged": true,
+        "sessions": 2,
+        "machineSelectedAndCleared": true,
+        "staleRevisionRefused": true,
+        "sameConnection": true,
+        "attentionScopeRetained": true,
+        "homeAndAttentionContext": true,
+        "sourceIdentityGeometryAndStampsUnchanged": true,
+        "noPromotion": true,
+        "multipleMachinesAndRemovalTested": false,
+        "ownedCleanup": true,
+        "nativeUi": false
+      }
+    ],
+    "new-window": [
+      {
+        "passed": true,
+        "harness": null,
+        "structuredAgentMetadata": false,
+        "distinctCreatedWindowSelected": true,
+        "exactNewPaneInput": true,
+        "exactOneCreation": true,
+        "duplicateAndStaleRefused": true,
+        "sourceIdentityPreserved": true,
+        "cleanup": true
+      }
+    ],
+    "browser-history": [
+      {
+        "passed": true,
+        "scrolledHistoryOffset": true,
+        "backToLiveInput": true,
+        "navigationClearsOffset": true,
+        "sourceIdentityPreserved": true,
+        "packaged": true,
+        "cleanup": true
+      }
+    ],
+    "close-pane": [
+      {
+        "passed": true,
+        "layout": "panes",
+        "closedWindow": false,
+        "exactPaneRemoved": true,
+        "canonicalSurvivorSelected": true,
+        "survivorInput": true,
+        "siblingIdentityPreserved": true,
+        "lastPaneRefused": true,
+        "refusedPaneInput": true,
+        "duplicateStaleBackgroundRefused": true,
+        "cleanup": true
+      }
+    ],
+    "close-window": [
+      {
+        "passed": true,
+        "layout": "windows",
+        "closedWindow": true,
+        "exactPaneRemoved": true,
+        "canonicalSurvivorSelected": true,
+        "survivorInput": true,
+        "siblingIdentityPreserved": true,
+        "lastPaneRefused": true,
+        "refusedPaneInput": true,
+        "duplicateStaleBackgroundRefused": true,
+        "cleanup": true
+      }
+    ]
+  },
+  "limits": [
+    "No physical GUI claim",
+    "Earlier new-window failure remains unexplained; this passing run does not establish a fix",
+    "Linux lifecycle resize timed out; new diagnostics pushed separately in a337fe1f"
+  ]
+}

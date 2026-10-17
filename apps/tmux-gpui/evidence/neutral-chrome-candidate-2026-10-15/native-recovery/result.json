@@ -1,0 +1,33 @@
+{
+  "candidate": "0.1.2 build2026101501",
+  "head": "b97e1f0f",
+  "exitCode": 0,
+  "nativeGui": true,
+  "hashesMatchCandidate": {
+    "Contents/MacOS/tmux-ide-gpui": "39caead96ecae652fa3684fce3fd4f0734cab4e4191b3687a6233de596d3776c",
+    "Contents/MacOS/tmux-ide-launcher": "ec3415ee7ce4c382176e5a27a7d97cf55ad8aa41567a181b76a382d55bafcb7e",
+    "Contents/Resources/bridge/browser.bundle.mjs": "27282e6dcbc313efe60b6ad9b68f088cf66ea44b0ae70be5a050c2432187663a",
+    "Contents/Resources/node": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b"
+  },
+  "result": {
+    "passed": true,
+    "daemonReplaced": true,
+    "sameAppRecovered": true,
+    "packagedRuntime": true,
+    "isolatedCwd": true,
+    "minimalPath": true,
+    "sourceSurvivesClose": true
+  },
+  "evidence": {
+    "run.log": "87258d396fc76587928d8096d2b2cf57e66cd5bb9c219cc291e9e5213f6a90ba",
+    "unavailable.png": "43670d8713d12dc1066238446692f43f6c6daf4e1423240cf72dfd9af68a739c",
+    "recovered.png": "6def872b72c559b1e9ed0f3bb5d492f54dbbc1a856588b4d1b888d12732dc802"
+  },
+  "limitations": [
+    "Local private daemon only; no SSH or second Mac.",
+    "Explicit Refresh and session reselection required; not automatic reconnect.",
+    "QA bundle identity changed for isolation; executable and bridge bytes unchanged.",
+    "Does not qualify split dividers, rounded clipping or glass focus appearance."
+  ],
+  "independentReview": "np01_review: no blockers; only Info.plist differs; screenshots and harness support local native recovery scope."
+}

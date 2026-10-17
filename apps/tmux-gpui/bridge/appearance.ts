@@ -45,16 +45,28 @@ export function resolveNativeAppearance(selected: string, system: SystemAppearan
     muted: packed(t.text.muted),
     bright: packed(t.text.bright),
   };
+  // Neutral native chrome for built-in modes; terminal colors and user presets
+  // remain canonical. Reference palette is recorded in native polish evidence.
+  const light = selected === "light" || (selected === "system" && system === "light");
+  const chrome = preset
+    ? {
+        canvas: packed(t.surfaces.canvas),
+        surface: packed(t.surfaces.panel),
+        active: packed(t.selection.selection),
+      }
+    : light
+      ? { canvas: 0xffffff, surface: 0xf9f9f9, active: 0xe8e8e8 }
+      : { canvas: 0x181818, surface: 0x212121, active: 0x303030 };
   return {
     selected,
     system,
     theme: {
-      canvas: packed(t.surfaces.canvas),
+      canvas: chrome.canvas,
       background: colors.background,
       foreground: colors.foreground,
       cursor: packed(t.selection.hover),
-      surface: packed(t.surfaces.panel),
-      active: packed(t.selection.selection),
+      surface: chrome.surface,
+      active: chrome.active,
       muted: colors.muted,
       accent: colors.accent,
       palette: createVisualTerminalPalette(colors),

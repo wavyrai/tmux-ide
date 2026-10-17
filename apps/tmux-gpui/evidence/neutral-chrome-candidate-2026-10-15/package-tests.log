@@ -1,0 +1,26 @@
+(node:1201) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ source unsupported daemon stays credential-free and refresh rechecks compatibility (575.525083ms)
+✔ packaged unsupported daemon stays credential-free and refresh rechecks compatibility (610.617958ms)
+(node:1202) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ Refresh of a retired selected fleet route reports route guidance without fallback (6208.588333ms)
+✔ Refresh of a inflight selected fleet route reports route guidance without fallback (2726.801709ms)
+✔ Active fleet verification failures remain errors rather than retired-route guidance (180.67325ms)
+(node:1203) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ local app retains binary identity and refuses replacement (1283.226708ms)
+✔ local launcher never resolves dirname through caller PATH (10.641167ms)
+✔ assembler rejects a mismatched executable before running supplied tools (278.117416ms)
+(node:1204) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ browser remove rejects stale/background commands, consumes one pending write, and preserves sibling profile (1207.789917ms)
+✔ browser edit rejects stale/background commands, consumes one pending write, and preserves sibling profile (269.797041ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9564.5475

@@ -1,5 +1,7 @@
 //! Local-registry form. Identity and environment pin are never editable fields.
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::*;
+use bezel_ui::widgets::Status;
 pub(super) struct Form {
     pub(super) identity: std::rc::Rc<()>,
     request: u64,
@@ -8,6 +10,8 @@ pub(super) struct Form {
     pub(super) label: Entity<SearchInput>,
     pub(super) target: Entity<SearchInput>,
     submitted: Option<(String, String)>,
+    save_focus: FocusHandle,
+    cancel_focus: FocusHandle,
 }
 fn same_profile(a: &browser::machines::Profile, b: &browser::machines::Profile) -> bool {
     a.id == b.id
@@ -68,6 +72,8 @@ impl SnapshotView {
                 label,
                 target,
                 submitted: None,
+                save_focus: cx.focus_handle(),
+                cancel_focus: cx.focus_handle(),
             });
             picker.error = None;
         }
@@ -80,10 +86,13 @@ impl SnapshotView {
             .is_some_and(|f| f.label.read(cx).is_composing() || f.target.read(cx).is_composing())
     }
     pub(super) fn machine_edit_identity_current(&self, identity: &std::rc::Rc<()>) -> bool {
-        self.picker
-            .as_ref()
-            .and_then(|p| p.edit.as_ref())
-            .is_some_and(|f| std::rc::Rc::ptr_eq(&f.identity, identity))
+        self.picker.as_ref().is_some_and(|p| {
+            p.mode == Mode::ManageMachines
+                && p.request == self.browser_request
+                && p.edit.as_ref().is_some_and(|f| {
+                    f.request == self.browser_request && std::rc::Rc::ptr_eq(&f.identity, identity)
+                })
+        })
     }
     pub(super) fn save_machine_edit_identity(
         &mut self,
@@ -179,16 +188,31 @@ impl SnapshotView {
         if self.machine_edit_composing(cx) {
             return true;
         }
+        let footer_focused =
+            form.save_focus.is_focused(window) || form.cancel_focus.is_focused(window);
         match event.keystroke.key.as_str() {
             "escape" => self.close_picker(window, cx),
+            // Focused buttons activate on key-up through their captured identity.
+            // The picker owner returns before any terminal/row key handler runs.
+            "enter" | "space" if footer_focused => return false,
             "enter" => self.save_machine_edit(cx),
             "tab" => {
-                let focus = if form.label.read(cx).focus.is_focused(window) {
-                    form.target.read(cx).focus.clone()
-                } else {
-                    form.label.read(cx).focus.clone()
+                let mut order = vec![
+                    form.label.read(cx).focus.clone(),
+                    form.target.read(cx).focus.clone(),
+                ];
+                if form.submitted.is_none() {
+                    order.push(form.save_focus.clone());
+                }
+                order.push(form.cancel_focus.clone());
+                let current = order.iter().position(|focus| focus.is_focused(window));
+                let next = match (current, event.keystroke.modifiers.shift) {
+                    (Some(index), true) => (index + order.len() - 1) % order.len(),
+                    (Some(index), false) => (index + 1) % order.len(),
+                    (None, true) => order.len() - 1,
+                    (None, false) => 0,
                 };
-                focus.focus(window, cx);
+                order[next].focus(window, cx);
             }
             _ => return false,
         }
@@ -243,22 +267,20 @@ impl SnapshotView {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .child(
-                div()
+                bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-edit-dialog")
                     .w(px(520.))
                     .max_w_full()
                     .max_h_full()
                     .overflow_y_scroll()
                     .debug_selector(|| "machine-edit-dialog".into())
-                    .p_4()
-                    .rounded(px(crate::config::corners::PANEL))
-                    .bg(rgb(theme.surface))
-                    .border_1()
-                    .border_color(rgb(theme.active))
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child("Edit saved machine")
+                    .child(bezel_ui::popover::dialog_title(
+                        &super::super::design::palette(&theme),
+                        "Edit saved machine",
+                    ))
                     .child("Label")
                     .child(form.label.clone())
                     .child("SSH target")
@@ -274,44 +296,95 @@ impl SnapshotView {
                             })
                             .child(status),
                     )
-                    .children(picker.error.map(|error| div().child(error)))
-                    .children(
-                        registry
-                            .and_then(|r| r.message.as_ref().or(r.error.as_ref()))
-                            .map(|error| div().child(error.clone())),
-                    )
+                    .children(picker.error.map(|error| {
+                        super::super::design::palette(&theme)
+                            .error_strip(error)
+                            .mt_0()
+                            .px_2()
+                            .py_1()
+                            .min_w_0()
+                            .w_full()
+                    }))
+                    .children(registry.and_then(|r| {
+                        // Preserve message precedence; informational registry messages
+                        // are not failures just because they share this feedback slot.
+                        r.message
+                            .as_ref()
+                            .map(|message| div().child(message.clone()))
+                            .or_else(|| {
+                                r.error.as_ref().map(|error| {
+                                    super::super::design::palette(&theme)
+                                        .error_strip(error.clone())
+                                        .mt_0()
+                                        .px_2()
+                                        .py_1()
+                                        .min_w_0()
+                                        .w_full()
+                                })
+                            })
+                    }))
                     .when(form.submitted.is_none(), |d| {
                         d.child(
-                            div()
-                                .id("machine-edit-save")
-                                .debug_selector(|| "machine-edit-save".into())
-                                .px_3()
-                                .py_2()
-                                .rounded(px(crate::config::corners::CONTROL))
-                                .bg(rgb(theme.active))
-                                .cursor_pointer()
-                                .child("Save changes")
-                                .on_click(cx.listener(move |view, _, _, cx| {
-                                    view.save_machine_edit_identity(&save_identity, cx)
-                                })),
+                            controls::action_button(
+                                "machine-edit-save",
+                                Some("Save changes"),
+                                "Save changes",
+                                Icon::Check,
+                                ButtonStyle::Primary,
+                                &theme,
+                            )
+                            .track_focus(&form.save_focus)
+                            .tab_index(0)
+                            .focus_visible({
+                                let theme = theme.clone();
+                                move |style| {
+                                    style.border_color(super::super::design::palette(&theme).ring)
+                                }
+                            })
+                            .on_click(cx.listener(
+                                move |view, _, window, cx| {
+                                    view.save_machine_edit_identity(&save_identity, cx);
+                                    if let Some(form) =
+                                        view.picker.as_ref().and_then(|p| p.edit.as_ref())
+                                        && form.submitted.is_some()
+                                        && form.save_focus.is_focused(window)
+                                    {
+                                        form.cancel_focus.focus(window, cx);
+                                    }
+                                },
+                            )),
                         )
                     })
                     .child(
-                        div()
-                            .id("machine-edit-cancel")
-                            .debug_selector(|| "machine-edit-cancel".into())
-                            .px_3()
-                            .py_2()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .cursor_pointer()
-                            .child(if saved { "Done" } else { "Cancel" })
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                        controls::action_button(
+                            "machine-edit-cancel",
+                            Some(if saved { "Done" } else { "Cancel" }),
+                            "Close dialog",
+                            Icon::Close,
+                            ButtonStyle::Quiet,
+                            &theme,
+                        )
+                        .track_focus(&form.cancel_focus)
+                        .tab_index(0)
+                        .focus_visible({
+                            let theme = theme.clone();
+                            move |style| {
+                                style.border_color(super::super::design::palette(&theme).ring)
+                            }
+                        })
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
                                 if view.machine_edit_identity_current(&cancel_identity) {
                                     view.close_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     ),
             )
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/machine_edit_focus.rs"]
+mod focus_tests;

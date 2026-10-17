@@ -62,6 +62,7 @@ fn reference_marked_composition_and_stale_action_remain_isolated(cx: &mut TestAp
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

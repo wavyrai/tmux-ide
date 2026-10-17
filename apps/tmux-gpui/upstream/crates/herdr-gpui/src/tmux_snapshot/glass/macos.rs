@@ -101,6 +101,7 @@ pub(super) fn sync(
     if slot.is_none() {
         let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
         glass.setStyle(NSGlassEffectViewStyle::Regular);
+        // A single continuous chrome material; GPUI paints the inset content opaquely.
         glass.setCornerRadius(0.);
         parent.addSubview_positioned_relativeTo(&glass, NSWindowOrderingMode::Below, Some(&view));
         *slot = Some(Native {
@@ -131,7 +132,7 @@ pub(super) fn sync(
                     channel(16),
                     channel(8),
                     channel(0),
-                    1.,
+                    0.12,
                 )));
             native.surface = Some(surface);
         }

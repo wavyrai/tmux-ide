@@ -3,7 +3,8 @@ pub(super) mod sidebar;
 pub(super) use sidebar::Keyboard as SidebarKeyboard;
 #[path = "workspace_agents.rs"]
 mod workspace_agents;
-use super::{SnapshotView, browser, controls};
+use super::{SnapshotView, browser};
+use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 pub(super) enum Selection {
     WorkspaceAgent {
@@ -65,9 +66,12 @@ impl SnapshotView {
             }
         }
         if !super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()) {
+            // An unresolved target change must not leave the old pane armed for typing.
+            self.interrupt_input(cx);
             return;
         }
         let (Some((bounds, _)), Some(width)) = (self.input_geometry, self.input_cell_width) else {
+            self.interrupt_input(cx);
             return;
         };
         if !bounds.contains(&event.position) {
@@ -692,23 +696,13 @@ impl SnapshotView {
         let is_home = self.browser_state.surface == browser::Surface::Home;
         let show_sidebar = !is_home && !self.sidebar_hidden;
         let viewport = window.viewport_size();
-        let chrome_height =
-            super::workspace_chrome::APPLICATION_TABS_HEIGHT + self.retained_session_height();
+        // One material backs the header, sidebar and the gutter around opaque content.
         let glass = self.glass.sync(
             window,
-            Bounds::new(
-                point(px(0.), px(chrome_height)),
-                size(
-                    if show_sidebar {
-                        px(224.).min(viewport.width)
-                    } else {
-                        px(0.)
-                    },
-                    (viewport.height - px(chrome_height)).max(px(0.)),
-                ),
-            ),
+            Bounds::new(point(px(0.), px(0.)), viewport),
             theme.surface,
         );
+        super::design::prepare(&theme, glass, cx);
         let mut sidebar = div()
             .id("session-list")
             .debug_selector(|| "session-list".into())
@@ -721,7 +715,6 @@ impl SnapshotView {
             .min_h_0()
             .overflow_y_scroll()
             .p_2()
-            .bg(super::shell::sidebar_fill(theme.surface, glass))
             .flex()
             .flex_col()
             .gap_1()
@@ -795,60 +788,17 @@ impl SnapshotView {
         sidebar = div()
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())
+            .relative()
             .w(px(224.))
             .h_full()
             .min_h_0()
             .flex_shrink_0()
             .overflow_hidden()
-            .bg(super::shell::sidebar_fill(theme.surface, glass))
             .flex()
             .flex_col()
             .child(sidebar)
-            .child(
-                div()
-                    .debug_selector(|| "tmux-sidebar-footer".into())
-                    .flex_none()
-                    .flex()
-                    .gap_2()
-                    .px_2()
-                    .py_2()
-                    .child(
-                        controls::button(
-                            "open-picker",
-                            Some("Switch"),
-                            "Switch session",
-                            controls::Icon::Sessions,
-                            &theme,
-                        )
-                        .on_click(cx.listener(|view, _, window, cx| view.open_picker(window, cx))),
-                    )
-                    .child(
-                        controls::button(
-                            "open-theme-picker",
-                            None,
-                            "Choose theme",
-                            controls::Icon::Theme,
-                            &theme,
-                        )
-                        .on_click(
-                            cx.listener(|view, _, window, cx| view.open_theme_picker(window, cx)),
-                        ),
-                    )
-                    .child(
-                        controls::button(
-                            "refresh-sessions",
-                            None,
-                            "Refresh sessions",
-                            controls::Icon::Refresh,
-                            &theme,
-                        )
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.select(Selection::Refresh, window, cx)
-                        })),
-                    ),
-            );
+            .child(self.sidebar_footer(cx));
         let application_tabs = self.application_tabs(window, cx);
-        let session_tabs = self.retained_session_strip(cx);
         let window_strip = self.workspace_window_strip(window, cx);
         let status = if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
@@ -873,16 +823,18 @@ impl SnapshotView {
                 .child(self.terminal_render(window, cx))
         });
         let home = is_home.then(|| self.home_render(window, cx));
-        let context = div()
+        // Connection messages can wrap; retain the scroll owner instead of
+        // imposing the upstream status bar's fixed single-line height.
+        let context = super::design::palette(&theme)
+            .status_bar()
+            .h_auto()
+            .px_0()
+            .gap_0()
             .id("workspace-context")
-            .flex()
             .items_start()
-            .flex_none()
             .min_w_0()
             .w_full()
-            .bg(rgb(theme.surface))
-            .border_t_1()
-            .border_color(rgb(theme.active))
+            .bg(rgb(theme.background))
             .children(
                 super::pane_chrome::selected_title(&self.browser_state).map(|title| {
                     div()
@@ -909,53 +861,64 @@ impl SnapshotView {
                     .text_color(rgb(theme.muted))
                     .child(div().w_full().child(status)),
             );
+        // The rounded padding belongs to the terminal surface, so it must
+        // use the same default background as the terminal and its headers.
+        let content_background = if is_home {
+            self.canvas()
+        } else {
+            theme.background
+        };
+        let content = super::shell::content_panel(content_background)
+            .when(is_home && glass, |panel| {
+                panel.bg(rgba((content_background << 8) | 0x99))
+            })
+            .children(home)
+            .when(!is_home, |panel| {
+                panel
+                    .child(window_strip)
+                    .child(self.pane_header_row(window, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .children(terminal),
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .w_full()
+                            .child(context)
+                            .children(
+                                self.pane_actions_panel(window, cx)
+                                    .map(|panel| deferred(panel).with_priority(1)),
+                            ),
+                    )
+            });
         let main = div()
             .flex_1()
             .min_h_0()
             .w_full()
             .flex()
             .when(show_sidebar, |main| main.child(sidebar))
-            .children(home)
-            .when(!is_home, |main| {
-                main.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .bg(rgb(self.canvas()))
-                        .flex()
-                        .flex_col()
-                        .child(window_strip)
-                        .child(self.pane_header_row(window, cx))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .overflow_hidden()
-                                .children(terminal),
-                        )
-                        .child(
-                            div()
-                                .relative()
-                                .flex_none()
-                                .w_full()
-                                .child(context)
-                                .children(
-                                    self.pane_actions_panel(cx)
-                                        .map(|panel| deferred(panel).with_priority(1)),
-                                ),
-                        ),
-                )
-            });
+            .child(
+                div()
+                    .id("workspace-inset")
+                    .debug_selector(|| "tmux-workspace-inset".into())
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .p(px(super::shell::CONTENT_INSET))
+                    .child(content),
+            );
         let body = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .when(!glass, |body| body.bg(rgb(self.canvas())))
             .text_color(rgb(theme.foreground))
             .on_key_down(cx.listener(Self::picker_key))
-            .children(session_tabs)
             .child(main)
             .children(
                 self.picker_popover(window, cx)
@@ -966,7 +929,7 @@ impl SnapshotView {
                     .map(|dialog| deferred(dialog).with_priority(2)),
             )
             .into_any_element();
-        super::shell::themed_frame(body, window, &theme, self.canvas(), glass, application_tabs)
+        super::shell::themed_frame(body, window, &theme, glass, application_tabs)
     }
 }
 

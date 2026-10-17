@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+#[path = "control_focus_tests.rs"]
+mod control_focus_tests;
 #[path = "keyboard_tests.rs"]
 mod keyboard_tests;
 use crate::tmux_snapshot::{SnapshotView, decode, presence::Presence};
@@ -159,25 +161,15 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
         });
         window.draw(cx).clear(cx);
     });
-    for (row, mark, label) in [
-        (
-            "tmux-sidebar-row-0",
-            "tmux-sidebar-mark-0",
-            "tmux-sidebar-label-0",
-        ),
-        (
-            "tmux-sidebar-row-1",
-            "tmux-sidebar-mark-1",
-            "tmux-sidebar-label-1",
-        ),
+    for (row, label) in [
+        ("tmux-sidebar-row-0", "tmux-sidebar-label-0"),
+        ("tmux-sidebar-row-1", "tmux-sidebar-label-1"),
     ] {
         let row = cx.debug_bounds(row).unwrap();
-        let mark = cx.debug_bounds(mark).unwrap();
         let label = cx.debug_bounds(label).unwrap();
         assert!(row.left() >= px(0.) && row.right() <= px(224.));
         assert!(row.size.height > px(0.));
-        assert_eq!(mark.size.width, px(2.));
-        assert!(mark.right() <= label.left());
+        assert!(row.left() <= label.left());
         assert!(label.right() <= row.right());
         assert!(label.size.width > px(0.));
     }

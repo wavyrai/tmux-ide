@@ -211,6 +211,10 @@ impl HerdrWindow {
             .text_size(px(self.config.tabs.size))
             .overflow_x_scroll()
             .track_scroll(&scroll)
+            .on_scroll_wheel({
+                let scroll = scroll.clone();
+                move |event, window, cx| crate::tab_scroll::wheel(&scroll, event, window, cx)
+            })
             .bg(rgb(self.theme.surface))
             .text_color(rgb(self.theme.foreground));
         if let Some(snapshot) = &self.live.snapshot {

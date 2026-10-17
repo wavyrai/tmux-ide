@@ -14,6 +14,7 @@ fn connected_image_paste_key_down_ctrl_v_and_cmd_v(cx: &mut gpui::TestAppContext
                     keystroke: gpui::Keystroke::parse(key).unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 };
                 cx.update(|window, cx| {
                     view.update(cx, |view, cx| {

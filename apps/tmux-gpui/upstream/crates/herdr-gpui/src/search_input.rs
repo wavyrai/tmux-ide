@@ -4,8 +4,8 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, Point, ShapedLine,
-    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div, fill, point,
-    prelude::*, px, rgb, size,
+    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, fill, point, prelude::*,
+    px, rgb, size,
 };
 
 use crate::config::{Config, FontConfig, Theme};
@@ -470,15 +470,145 @@ impl Render for SearchInput {
         let input = cx.entity();
         let painter = input.clone();
         let height = px(self.font.line_height());
-        div()
-            .debug_selector(|| "theme-search".into())
-            .w_full()
+        let palette = crate::tmux_snapshot::design::palette(&self.theme);
+        let content = canvas(
+            move |_, window, cx| {
+                let input = input.read(cx);
+                let placeholder = input.text().is_empty();
+                let text: gpui::SharedString = if placeholder {
+                    input.placeholder.clone().into()
+                } else if input.masked {
+                    "*".repeat(input.text().chars().count()).into()
+                } else {
+                    input.text().to_owned().into()
+                };
+                let run = TextRun {
+                    len: text.len(),
+                    font: window.text_style().font(),
+                    color: rgb(if placeholder {
+                        input.theme.muted
+                    } else {
+                        input.theme.foreground
+                    })
+                    .into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let marked = input
+                    .edit
+                    .marked
+                    .clone()
+                    .map(|marked| input.shown(marked.start)..input.shown(marked.end));
+                let runs = if let Some(marked) = &marked {
+                    vec![
+                        TextRun {
+                            len: marked.start,
+                            ..run.clone()
+                        },
+                        TextRun {
+                            len: marked.len(),
+                            underline: Some(UnderlineStyle {
+                                color: Some(run.color),
+                                thickness: px(1.),
+                                wavy: false,
+                            }),
+                            ..run.clone()
+                        },
+                        TextRun {
+                            len: text.len() - marked.end,
+                            ..run
+                        },
+                    ]
+                    .into_iter()
+                    .filter(|run| run.len > 0)
+                    .collect()
+                } else {
+                    vec![run]
+                };
+                window
+                    .text_system()
+                    .shape_line(text, px(input.font.size), &runs, None)
+            },
+            move |bounds, line, window, cx| {
+                painter.update(cx, |input, cx| {
+                    let visible_width = (bounds.size.width - px(1.)).max(px(0.));
+                    let caret = line.x_for_index(input.shown(input.edit.cursor));
+                    input.scroll = input
+                        .scroll
+                        .min((line.width - visible_width).max(px(0.)))
+                        .min(caret)
+                        .max(caret - visible_width)
+                        .max(px(0.));
+                    if input.text().is_empty() {
+                        input.scroll = px(0.);
+                    }
+                    let origin = point(bounds.left() - input.scroll, bounds.top());
+                    window.handle_input(
+                        &input.focus,
+                        ViewInputHandler::new(bounds, cx.entity()),
+                        cx,
+                    );
+                    window.with_content_mask(
+                        Some(ContentMask {
+                            bounds,
+                            ..Default::default()
+                        }),
+                        |window| {
+                            let selection = input.edit.selection();
+                            let selection =
+                                input.shown(selection.start)..input.shown(selection.end);
+                            if input.focus.is_focused(window) && !selection.is_empty() {
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(
+                                        point(
+                                            origin.x + line.x_for_index(selection.start),
+                                            bounds.top(),
+                                        ),
+                                        point(
+                                            origin.x + line.x_for_index(selection.end),
+                                            bounds.bottom(),
+                                        ),
+                                    ),
+                                    rgb(input.theme.active),
+                                ));
+                            }
+                            let _ = line.paint(origin, height, TextAlign::Left, None, window, cx);
+                            if input.focus.is_focused(window) {
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(origin.x + caret, bounds.top()),
+                                        size(px(1.), height),
+                                    ),
+                                    rgb(input.theme.cursor),
+                                ));
+                            }
+                        },
+                    );
+                    input.bounds = Some(bounds);
+                    input.layout = Some(line);
+                });
+            },
+        )
+        .w_full()
+        .h(height);
+        // Keep the compact single-line metrics used by pickers and sidebars.
+        bezel_ui::popover::dialog_field(&palette, content.into_any_element())
+            .id(("search-input", cx.entity_id().as_u64()))
+            .role(if self.masked {
+                gpui::Role::PasswordInput
+            } else {
+                gpui::Role::TextInput
+            })
+            .aria_label(self.placeholder.clone())
+            .aria_placeholder(self.placeholder.clone())
+            .when(!self.masked, |field| {
+                field.aria_value(self.edit.text.clone())
+            })
             .px_2()
             .py_1()
-            .rounded(px(crate::config::corners::CONTROL))
-            .border_1()
-            .border_color(rgb(self.theme.active))
-            .bg(rgb(self.theme.background))
+            .debug_selector(|| "theme-search".into())
+            .w_full()
             .text_color(rgb(self.theme.foreground))
             .text_font(&self.font)
             .text_size(px(self.font.size))
@@ -534,124 +664,6 @@ impl Render for SearchInput {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| this.selecting = false),
-            )
-            .child(
-                canvas(
-                    move |_, window, cx| {
-                        let input = input.read(cx);
-                        let placeholder = input.text().is_empty();
-                        let text: gpui::SharedString = if placeholder {
-                            input.placeholder.clone().into()
-                        } else if input.masked {
-                            "*".repeat(input.text().chars().count()).into()
-                        } else {
-                            input.text().to_owned().into()
-                        };
-                        let run = TextRun {
-                            len: text.len(),
-                            font: window.text_style().font(),
-                            color: rgb(if placeholder {
-                                input.theme.muted
-                            } else {
-                                input.theme.foreground
-                            })
-                            .into(),
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        };
-                        let marked = input
-                            .edit
-                            .marked
-                            .clone()
-                            .map(|marked| input.shown(marked.start)..input.shown(marked.end));
-                        let runs = if let Some(marked) = &marked {
-                            vec![
-                                TextRun {
-                                    len: marked.start,
-                                    ..run.clone()
-                                },
-                                TextRun {
-                                    len: marked.len(),
-                                    underline: Some(UnderlineStyle {
-                                        color: Some(run.color),
-                                        thickness: px(1.),
-                                        wavy: false,
-                                    }),
-                                    ..run.clone()
-                                },
-                                TextRun {
-                                    len: text.len() - marked.end,
-                                    ..run
-                                },
-                            ]
-                            .into_iter()
-                            .filter(|run| run.len > 0)
-                            .collect()
-                        } else {
-                            vec![run]
-                        };
-                        window
-                            .text_system()
-                            .shape_line(text, px(input.font.size), &runs, None)
-                    },
-                    move |bounds, line, window, cx| {
-                        painter.update(cx, |input, cx| {
-                            let visible_width = (bounds.size.width - px(1.)).max(px(0.));
-                            let caret = line.x_for_index(input.shown(input.edit.cursor));
-                            input.scroll = input
-                                .scroll
-                                .min((line.width - visible_width).max(px(0.)))
-                                .min(caret)
-                                .max(caret - visible_width)
-                                .max(px(0.));
-                            if input.text().is_empty() {
-                                input.scroll = px(0.);
-                            }
-                            let origin = point(bounds.left() - input.scroll, bounds.top());
-                            window.handle_input(
-                                &input.focus,
-                                ViewInputHandler::new(bounds, cx.entity()),
-                                cx,
-                            );
-                            window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                                let selection = input.edit.selection();
-                                let selection =
-                                    input.shown(selection.start)..input.shown(selection.end);
-                                if input.focus.is_focused(window) && !selection.is_empty() {
-                                    window.paint_quad(fill(
-                                        Bounds::from_corners(
-                                            point(
-                                                origin.x + line.x_for_index(selection.start),
-                                                bounds.top(),
-                                            ),
-                                            point(
-                                                origin.x + line.x_for_index(selection.end),
-                                                bounds.bottom(),
-                                            ),
-                                        ),
-                                        rgb(input.theme.active),
-                                    ));
-                                }
-                                let _ =
-                                    line.paint(origin, height, TextAlign::Left, None, window, cx);
-                                if input.focus.is_focused(window) {
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            point(origin.x + caret, bounds.top()),
-                                            size(px(1.), height),
-                                        ),
-                                        rgb(input.theme.cursor),
-                                    ));
-                                }
-                            });
-                            input.bounds = Some(bounds);
-                            input.layout = Some(line);
-                        });
-                    },
-                )
-                .w_full()
-                .h(height),
             )
     }
 }

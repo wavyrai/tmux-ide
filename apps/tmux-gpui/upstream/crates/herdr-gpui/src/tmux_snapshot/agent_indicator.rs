@@ -3,6 +3,7 @@ use super::{
     SnapshotView,
     browser::home_agents::{Row, Status},
 };
+use bezel_ui::widgets::Content;
 use gpui::{prelude::*, *};
 use std::{
     cell::Cell,
@@ -118,12 +119,11 @@ impl SnapshotView {
         let running = animated(row, unavailable) && motion;
         let visible = self.agent_animation.visible.clone();
         let theme = self.theme();
-        div()
-            .flex_none()
+        super::design::palette(&theme)
+            .badge("")
             .flex()
             .items_center()
             .gap_1()
-            .text_sm()
             .text_color(rgb(color(row, unavailable, &theme)))
             .child(
                 div()

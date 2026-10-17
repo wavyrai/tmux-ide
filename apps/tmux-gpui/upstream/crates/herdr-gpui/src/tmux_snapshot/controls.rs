@@ -1,10 +1,20 @@
 //! Native chrome primitives. Terminal geometry and routing stay with their owners.
 use crate::config::Theme;
+use bezel_theme::{ControlSize, Sizing};
+use bezel_ui::widgets::Buttons;
 use gpui::{prelude::*, *};
 
+/// Quiet structural boundaries are independent of selection and focus accents.
+pub(super) fn separator(theme: &Theme) -> Rgba {
+    let alpha = if theme.contrast == crate::contrast::Contrast::High {
+        0x59
+    } else {
+        0x14
+    };
+    rgba((theme.foreground << 8) | alpha)
+}
+
 pub(super) const CONTROL_HEIGHT: f32 = 32.;
-const ICON_SIZE: f32 = 16.;
-const LABEL_SIZE: f32 = 12.;
 const CONTENT_GAP: f32 = 6.;
 
 #[cfg(test)]
@@ -22,6 +32,7 @@ pub(super) enum Icon {
     Sessions,
     Theme,
     Refresh,
+    Check,
 }
 impl Icon {
     fn path(self) -> &'static str {
@@ -35,17 +46,19 @@ impl Icon {
             Self::Sessions => "icons/sessions.svg",
             Self::Theme => "icons/theme.svg",
             Self::Refresh => "icons/refresh.svg",
+            Self::Check => "icons/check.svg",
         }
     }
 }
 
-fn glyph(icon: Icon, foreground: u32) -> Svg {
-    svg()
-        .path(icon.path())
-        .size(px(ICON_SIZE))
-        .flex_shrink_0()
-        // GPUI SVG paint requires its own color; parent text is insufficient.
-        .text_color(rgb(foreground))
+/// Visual presentation is independent of command admission, which stays with callers.
+#[derive(Clone, Copy)]
+pub(super) enum ButtonStyle {
+    Primary,
+    Secondary,
+    Destructive,
+    Unavailable,
+    Quiet,
 }
 
 pub(super) fn button(
@@ -55,9 +68,39 @@ pub(super) fn button(
     icon: Icon,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let (foreground, surface, active) = (theme.foreground, theme.surface, theme.active);
-    div()
-        .id(id)
+    action_button(id, label, hint, icon, ButtonStyle::Quiet, theme)
+}
+
+pub(super) fn action_button(
+    id: &'static str,
+    label: Option<&'static str>,
+    hint: &'static str,
+    icon: Icon,
+    style: ButtonStyle,
+    theme: &Theme,
+) -> Stateful<Div> {
+    use bezel_ui::widgets::ButtonStyle as BezelStyle;
+    let bezel = super::design::palette(theme);
+    let asset = bezel_ui::icons::Icon::asset(icon.path());
+    let base = match style {
+        ButtonStyle::Primary => bezel.icon_button(asset, BezelStyle::Prominent, None).id(id),
+        ButtonStyle::Destructive => bezel
+            .icon_button(asset, BezelStyle::Destructive, None)
+            .id(id),
+        ButtonStyle::Unavailable => bezel.icon_button(asset, BezelStyle::Ghost, None).id(id),
+        ButtonStyle::Secondary | ButtonStyle::Quiet => bezel.ghost(id).child(
+            bezel_ui::icons::icon(asset)
+                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                .flex_shrink_0()
+                .text_color(bezel.text_muted),
+        ),
+    };
+    base.control_size(ControlSize::Regular)
+        .role(Role::Button)
+        .border_1()
+        .border_color(transparent_black())
+        .accessibility_id(id)
+        .aria_label(label.unwrap_or(hint))
         .debug_selector(move || id.to_owned())
         .h(px(CONTROL_HEIGHT))
         .min_w(px(CONTROL_HEIGHT))
@@ -68,27 +111,16 @@ pub(super) fn button(
         .gap(px(CONTENT_GAP))
         .map(|control| {
             if label.is_some() {
-                control.px(px(10.))
+                control.w_auto().px(px(10.))
             } else {
-                control.w(px(CONTROL_HEIGHT))
+                control.w(px(CONTROL_HEIGHT)).px_0()
             }
         })
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::NORMAL)
-        .rounded(px(crate::config::corners::CONTROL))
-        .text_color(rgb(foreground))
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(active)))
-        .child(glyph(icon, foreground))
-        .children(label.map(|label| div().min_w_0().truncate().child(label)))
-        .tooltip(move |_, cx| {
-            cx.new(|_| crate::usage::Hint {
-                text: hint.into(),
-                foreground,
-                surface,
-            })
-            .into()
+        .when(matches!(style, ButtonStyle::Unavailable), |control| {
+            control.opacity(0.5).cursor_default()
         })
+        .children(label.map(|label| div().min_w_0().truncate().child(label)))
+        .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
 }
 
 pub(super) fn tab(
@@ -97,81 +129,31 @@ pub(super) fn tab(
     icon: Icon,
     selected: bool,
     theme: &Theme,
-    accent: u32,
 ) -> Stateful<Div> {
-    let foreground = if selected {
-        theme.foreground
-    } else {
-        theme.muted
-    };
-    let hover = theme.active;
-    div()
-        .id(id)
-        .h(px(CONTROL_HEIGHT))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(px(CONTENT_GAP))
-        .px(px(12.))
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::MEDIUM)
-        .bg(if selected {
-            rgb(theme.surface).into()
+    let key = format!("{:?}", id.into());
+    bezel_ui::tabs::tab(
+        &super::design::palette(theme),
+        key,
+        bezel_ui::tabs::Label::new(label).with_icon(bezel_ui::icons::Icon::asset(icon.path())),
+        if selected {
+            bezel_ui::tabs::State::Focused
         } else {
-            transparent_black()
-        })
-        .border_b_2()
-        .border_color(if selected {
-            rgb(accent).into()
-        } else {
-            transparent_black()
-        })
-        .text_color(rgb(foreground))
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
-        .child(glyph(icon, foreground))
-        .child(div().min_w_0().truncate().child(label.into()))
+            bezel_ui::tabs::State::Resting
+        },
+    )
+    .h(px(CONTROL_HEIGHT))
 }
 
-/// Adapt Herdr window/tab_strip.rs: contiguous full-height cells, a single
-/// divider and primary wash for selection. These destinations are not closable.
+/// The same Bezel tab component in the compact native titlebar.
 pub(super) fn titlebar_tab(
-    id: &'static str,
-    label: &'static str,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
     icon: Icon,
     selected: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let background = if selected {
-        theme.primary_wash()
-    } else {
-        theme.surface
-    };
-    let foreground = if selected {
-        theme.text_on(background)
-    } else {
-        theme.muted
-    };
-    // Keep selection unmistakable while hovering the current destination.
-    let hover = if selected { background } else { theme.active };
-    div()
-        .id(id)
-        .h_full()
+    tab(id, label, icon, selected, theme)
+        .h(px(26.))
         .min_w(px(108.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(CONTENT_GAP))
-        .px(px(14.))
-        .border_r_1()
-        .border_color(rgb(theme.active))
-        .text_size(px(LABEL_SIZE))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(rgb(foreground))
-        .bg(rgb(background))
-        .cursor_pointer()
-        .hover(move |tab| tab.bg(rgb(hover)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(glyph(icon, foreground))
-        .child(label)
 }

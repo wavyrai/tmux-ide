@@ -171,6 +171,7 @@ fn f7_cancel_survives_full_queue_and_composition_cannot_activate(cx: &mut TestAp
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

@@ -85,31 +85,33 @@ export function createPreviewCatalog(hostInput: PreviewHost) {
       return (await catalogStage("list-sessions", () => client.sessions())).sessions;
     },
     async workspacePanes(liveSessionId: string, workspaceName: string) {
-      const list = await client.sessions();
+      const list = await catalogStage("list-sessions", () => client.sessions());
       if (
         !list.sessions.some(
           (session) =>
             session.liveSessionId === liveSessionId && session.workspaceName === workspaceName,
         )
       )
-        throw new Error("Workspace session changed");
-      const inventory = await client.inventory(workspaceName);
-      const current = await client.sessions();
+        throw new CatalogStageError("list-sessions", undefined, true);
+      const inventory = await catalogStage("inventory", () => client.inventory(workspaceName));
+      const current = await catalogStage("revalidate-sessions", () => client.sessions());
       if (
         !current.sessions.some(
           (session) =>
             session.liveSessionId === liveSessionId && session.workspaceName === workspaceName,
         )
       )
-        throw new Error("Workspace session changed");
-      return inventory.resource.semanticPaneIds.map((semanticPaneId) =>
-        connectionSchema.parse({
-          ...host,
-          workspaceName,
-          liveSessionId,
-          semanticPaneId,
-          visiblePaneIds: inventory.resource.semanticPaneIds,
-        }),
+        throw new CatalogStageError("revalidate-sessions", undefined, true);
+      return catalogStage("connection-validation", () =>
+        inventory.resource.semanticPaneIds.map((semanticPaneId) =>
+          connectionSchema.parse({
+            ...host,
+            workspaceName,
+            liveSessionId,
+            semanticPaneId,
+            visiblePaneIds: inventory.resource.semanticPaneIds,
+          }),
+        ),
       );
     },
     async panes(liveSessionId: string) {

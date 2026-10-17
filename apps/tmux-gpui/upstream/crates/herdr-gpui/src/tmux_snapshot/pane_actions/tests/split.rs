@@ -13,8 +13,8 @@ fn rendered_split_choices_queue_exact_target_once_without_input_or_navigation(
     });
     receiver.try_iter().for_each(drop);
     for (selector, direction) in [
-        ("pane-action-split-right", "right"),
-        ("pane-action-split-down", "down"),
+        ("pane-actions/Split pane right", "right"),
+        ("pane-actions/Split pane down", "down"),
     ] {
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {

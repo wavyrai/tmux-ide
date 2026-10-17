@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/Glass-HQ/gpui",
+  "commit": "650aab59d54f4f6f85d42c965831935568ac1162",
+  "localReadOnlyCheckout": "/private/tmp/glass-hq-gpui-research-20261015",
+  "findings": [
+    "Current main contains NSVisualEffectView macOS blur implementation, not NSGlassEffectView Liquid Glass",
+    "Search of current crates/hosts found no Liquid Glass API implementation",
+    "gpui crate declares Apache-2.0",
+    "Potentially useful Apple platform/native control architecture reference; no dependency replacement made"
+  ],
+  "existingTmuxIde": "glass/macos.rs already uses NSGlassEffectView Regular gated on macOS26; sidebar bounds only; glass.rs requires opaque fallback",
+  "remaining": "Qualify real material appearance and fallback; consider titlebar material integration separately from terminal surface; no glass acceptance claim from source inspection",
+  "userSelectedVisualReference": "Current Glass v2 app, not archived Glass-v1",
+  "officialProductPage": "https://glassapp.dev/",
+  "observedProductScreenshot": "https://glassapp.dev/assets/desktop-chat-files-1920-CCSflSUs.webp",
+  "visualObservations": [
+    "Light neutral workspace with sidebar differentiated by a small surface shift",
+    "Compact monochrome outline icons and subdued row selection",
+    "Navigation uses whitespace and alignment more than prominent rectangular borders",
+    "Main content is visually quiet; no saturated primary-color tab blocks"
+  ],
+  "scope": "Translate visual language to tmux Home/fleet/F5/terminal structure; do not add Glass projects/pages/browser features"
+}

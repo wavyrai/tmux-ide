@@ -156,11 +156,12 @@ impl SnapshotView {
                     .flex()
                     .gap_2()
                     .child(
-                        crate::tmux_snapshot::controls::button(
+                        crate::tmux_snapshot::controls::action_button(
                             "pane-close-confirm",
                             Some("Close pane"),
                             "Close this captured pane",
                             crate::tmux_snapshot::controls::Icon::Trash,
+                            crate::tmux_snapshot::controls::ButtonStyle::Destructive,
                             &theme,
                         )
                         .on_click(cx.listener(

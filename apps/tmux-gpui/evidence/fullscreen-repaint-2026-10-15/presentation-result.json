@@ -1,0 +1,35 @@
+{
+  "sourceHead": "114471633e5791d1821424d79e2096ab75ec744d",
+  "nativeSha256": "caf584a89aad8b6d1655191905a7b68593e3d2c5244e77f9f551d9cfaa4d369d",
+  "instrumentation": "Temporary env-gated layer/fullscreen observer and optional one-shot refresh; removed from source after successful build. Not a release binary.",
+  "observerCaptureUtc": [
+    "2026-10-15T16:51:52.774Z",
+    "2026-10-15T16:51:52.867Z"
+  ],
+  "refreshCaptureUtc": [
+    "2026-10-15T16:52:22.064Z",
+    "2026-10-15T16:52:22.146Z"
+  ],
+  "results": [
+    "Observer baseline still captures white top/right margins.",
+    "Native model and presentation layer settle at1180x820, drawable2360x1640, scale2.",
+    "Refresh mode logs exactly one refresh after did-enter and subsequent render; captured margins persist. This experiment does not support shipping a did-enter refresh workaround.",
+    "640x500 initial-size QA: Home tabs/actions fit, long session labels ellipsize, fleet status labels remain visible. Native scroll reaches disconnected/connecting/conflict cards and New session."
+  ],
+  "limitations": [
+    "Same CUA capture path; independent physical observation pending.",
+    "Diagnostic build used for narrow inspection; final signed candidate still needs acceptance.",
+    "Observer and refresh screenshots are byte-identical to earlier trace-before-interaction.png. Capture freshness is not independently established; this cannot prove the refresh was ineffective on the physical display."
+  ],
+  "files": {
+    "presentation-observer.log": "286d4e95e10b79d89e31c48be4960d4cfb4beea4111fa7c2436f53f8b9982dc0",
+    "narrow-home-scrolled.png": "80d50a3a34e9dbf4ae9de91a88468566faf17b9cc39c23db80348e8215fb9fbf",
+    "refresh-fullscreen.png": "9df74639815c7cab87abd12c6c2399375c50ff18d25c9a8eb18a6dfbc39e715e",
+    "narrow-home.png": "3bb218918b89d517003cf3babee6a4e5f9187fcf8494f396c2ae0669677fdd3f",
+    "presentation-narrow.log": "5795d613bf7b0e1e806734d91deba1ac04dcb134bdae25fad5fbcd863d30b56f",
+    "observer-fullscreen.png": "9df74639815c7cab87abd12c6c2399375c50ff18d25c9a8eb18a6dfbc39e715e",
+    "presentation-refresh.log": "9c9ad7616c3e4f3676ebab65398a07f451110658ef6a005b3c29837c20771149"
+  },
+  "independentReview": "Hashes, screenshots and trace reviewed; capture-freshness caveat recorded.",
+  "cleanup": "All three exact QA processes exited0 after Cmd-Q; production sessions and user preview untouched."
+}

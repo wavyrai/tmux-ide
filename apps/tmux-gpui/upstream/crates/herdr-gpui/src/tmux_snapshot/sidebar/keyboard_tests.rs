@@ -194,6 +194,7 @@ fn sidebar_empty_selection_starts_first_and_repeated_movement_stays_local(cx: &m
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: true,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

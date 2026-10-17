@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { MirrorControlChannel } from "./control-channel.ts";
@@ -130,9 +130,12 @@ it
     }).trim();
     const wrapper = join(root, "replace-before-exec");
     const marker = join(root, "replace-once");
+    const trace = join(root, "replacement-trace");
+    let actionError: string | null = null;
+    let actionOutcome: string | null = null;
     writeFileSync(
       wrapper,
-      `#!/bin/sh\nset -eu\nif [ -f '${marker}' ]; then\nrm '${marker}'\n'${executable}' -S '${socketPath}' kill-server\n'${executable}' -S '${socketPath}' -f /dev/null new-session -d -s zz-replace 'sleep 300'\n'${executable}' -S '${socketPath}' link-window -s zz-replace:0 -t zz-replace:1\nfi\nexec '${executable}' "$@"\n`,
+      `#!/bin/sh\nset -eu\necho wrapper-start >>'${trace}' || :\nif [ -f '${marker}' ]; then\nrm '${marker}'\necho replacement-kill >>'${trace}' || :\n'${executable}' -S '${socketPath}' kill-server\necho replacement-start >>'${trace}' || :\n'${executable}' -S '${socketPath}' -f /dev/null new-session -d -s zz-replace 'sleep 300'\necho replacement-link >>'${trace}' || :\n'${executable}' -S '${socketPath}' link-window -s zz-replace:0 -t zz-replace:1\necho replacement-ready >>'${trace}' || :\nfi\necho wrapper-exec >>'${trace}' || :\nexec '${executable}' "$@"\n`,
       { mode: 0o700 },
     );
     const mirror = new MirrorService({
@@ -186,18 +189,45 @@ it
           action: "unlink",
           target,
         });
-        expect(result.outcome).not.toBe("applied");
+        actionOutcome = result.outcome;
       } catch (error) {
+        actionError = (error instanceof Error ? error.message : String(error)).slice(0, 2048);
         expect(error).toBeInstanceOf(Error);
       }
+      // Do not catch our own assertion as an acceptable mutation error.
+      expect(actionOutcome).not.toBe("applied");
       expect(tmux(...guard)).toBe("link-guard.stale");
       expect(tmux("list-windows", "-t", "zz-replace", "-F", "#{window_index}")).toBe("0\n1");
       await sub.close();
       await retention.close();
+    } catch (error) {
+      let evidence = "diagnostic collection unavailable";
+      try {
+        evidence = JSON.stringify({
+          phase,
+          node: process.version,
+          platform: process.platform,
+          actionError,
+          actionOutcome,
+          markerRemaining: existsSync(marker),
+          wrapperTrace: existsSync(trace)
+            ? readFileSync(trace, "utf8").slice(-4096)
+            : "not invoked",
+        });
+      } catch {
+        // Diagnostic I/O must not replace the original failure or prevent cleanup.
+      }
+      throw new Error(`Window-link replacement evidence: ${evidence}`, { cause: error });
     } finally {
-      await mirror.dispose();
-      spawnSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
-      rmSync(root, { recursive: true, force: true });
+      try {
+        await mirror.dispose();
+      } finally {
+        try {
+          spawnSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      }
     }
   },
   20000,

@@ -1,0 +1,138 @@
+{
+  "baseCommit": "8b2ad616",
+  "scope": "Sidebar opt-in keyboard controls; private stdio fixtures, no production daemon",
+  "nativeBinarySha256": "82ec658cdf2aca08a37fbda2cbbfc3a58d7c4ae1cf84511694c1524361bc2796",
+  "screenshots": {
+    "sidebar-focus-before.png": "f6ce4d0484c3eb0e5dadde647627c2194ecfe9f4c15c99cbedc2bf4528a7b796",
+    "sidebar-focus-light.png": "fce26eacbbcadaf1a704ea28d694d9749e1603ed89bac4f5d8f2d8e67c3f1d82",
+    "sidebar-switch-picker.png": "c8b1c9e6d6b481854b8d6e3136516be930eb2792ca3a384b8a72fe758dabe8b9",
+    "sidebar-toggle-focus-light.png": "d8671d109faaafe33910c72e1bf148856a1361efddc5e4b3964dc5b067a9f756",
+    "sidebar-focus-dark.png": "1dabf680dd862726c61e04a8bd5a41811d80f235cf3771e4627bcc167c1d2595"
+  },
+  "nativeChecks": [
+    "Baseline Ctrl+G then Tab did not reach footer",
+    "Light: Ctrl+G Tab visibly focuses Switch; Return opens session picker",
+    "Light: reverse traversal reaches titlebar sidebar toggle; Space hides sidebar; F10 restores",
+    "Dark: Ctrl+G Tab visibly focuses Switch; two further Tabs and Return emit exactly one refresh",
+    "Both fixture processes exited 0 after closing their exact app"
+  ],
+  "receipts": {
+    "Light": [
+      {
+        "type": "appearance",
+        "system": "light"
+      },
+      {
+        "type": "presence",
+        "active": false,
+        "revision": 1
+      },
+      {
+        "type": "presence",
+        "active": true,
+        "revision": 2
+      },
+      {
+        "type": "input",
+        "request": 0,
+        "id": "qa-pane",
+        "input": {
+          "kind": "resize",
+          "data": {
+            "cols": 92,
+            "rows": 26
+          }
+        }
+      },
+      {
+        "type": "input",
+        "request": 0,
+        "id": "qa-pane",
+        "input": {
+          "kind": "resize",
+          "data": {
+            "cols": 118,
+            "rows": 26
+          }
+        }
+      },
+      {
+        "type": "input",
+        "request": 0,
+        "id": "qa-pane",
+        "input": {
+          "kind": "resize",
+          "data": {
+            "cols": 92,
+            "rows": 26
+          }
+        }
+      }
+    ],
+    "Dark": [
+      {
+        "type": "appearance",
+        "system": "light"
+      },
+      {
+        "type": "presence",
+        "active": false,
+        "revision": 1
+      },
+      {
+        "type": "presence",
+        "active": true,
+        "revision": 2
+      },
+      {
+        "type": "input",
+        "request": 0,
+        "id": "qa-pane",
+        "input": {
+          "kind": "resize",
+          "data": {
+            "cols": 92,
+            "rows": 26
+          }
+        }
+      },
+      {
+        "type": "refresh",
+        "request": 1
+      }
+    ]
+  },
+  "checks": {
+    "focusedTests": 8,
+    "fullGateExit": 0,
+    "gpuiDefault": {
+      "passed": 2772,
+      "ignored": 7
+    },
+    "gpuiAllFeatures": {
+      "passed": 2803,
+      "ignored": 8
+    },
+    "clientPassedEachConfiguration": 217,
+    "formatFileSizeClippyNativeBuild": "passed"
+  },
+  "limitations": [
+    "Narrow-window drag attempts did not change geometry; no narrow verification claimed",
+    "VoiceOver and real-daemon qualification not covered by these fixtures",
+    "Full gate includes explicitly ignored tests; ignored does not mean passed"
+  ],
+  "failedEvidence": [
+    "sidebar-focused.log",
+    "sidebar-focused-fixed.log",
+    "sidebar-focused-receipts.log",
+    "sidebar-gates.log",
+    "sidebar-focused-extracted.log",
+    "sidebar-gates-extracted.log"
+  ],
+  "passingEvidence": [
+    "sidebar-focused-final.log",
+    "sidebar-focused-extracted-fixed.log",
+    "sidebar-gates-final.log"
+  ],
+  "status": "branch-only; not merged or released"
+}

@@ -1,0 +1,18 @@
+{
+  "run": 38753165706,
+  "head": "a337fe1f52eca04a51fbc05334b524d3b2f26f9e",
+  "linuxLifecycle": "passed",
+  "macos": "failed in workspace client tests; packaging not reached",
+  "test": "sustained_inbound_progress_survives_a_backpressured_outgoing_image",
+  "firstValue": 11,
+  "sendElapsedSeconds": 4.190809833,
+  "totalElapsedSeconds": 7.325222792,
+  "workerFinished": false,
+  "uploadFinished": false,
+  "failure": "recv_timeout(3 seconds) returned Timeout",
+  "results": {
+    "passed": 216,
+    "failed": 1
+  },
+  "interpretation": "Cause unproved. Need distinguish decoding delay from transport stall; no timeout/workload change."
+}

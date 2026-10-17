@@ -20,8 +20,56 @@ fn sustained_inbound_progress_survives_a_backpressured_outgoing_image() {
                 bytes: vec![value; 24 * 1024 * 1024],
             },
         );
+        let send_elapsed = started.elapsed();
+        let received = client
+            .events
+            .recv_timeout(Duration::from_secs(3))
+            .inspect_err(|error| {
+                let failed_at = started.elapsed();
+                let worker_finished = worker.is_finished();
+                let upload_finished = cancel.is_finished();
+                // Observe only after failure, within the original overall budget.
+                // A late frame is diagnostic evidence, never a passing result.
+                let (late_event, late_bytes) =
+                    if *error == crossbeam_channel::RecvTimeoutError::Timeout {
+                        match client
+                            .events
+                            .recv_timeout(TIMEOUT.saturating_sub(failed_at))
+                        {
+                            Ok(ClientEvent::Message(ServerMessage::Graphics { bytes })) => {
+                                ("graphics", Some(bytes.len()))
+                            }
+                            Ok(ClientEvent::Message(_)) => ("message", None),
+                            Ok(ClientEvent::Disconnected { .. }) => ("disconnected", None),
+                            Ok(ClientEvent::Connected(_)) => ("connected", None),
+                            Ok(ClientEvent::Snapshot(_)) => ("snapshot", None),
+                            Ok(ClientEvent::Surface(_)) => ("surface", None),
+                            Ok(ClientEvent::SurfaceImages(_)) => ("surface-images", None),
+                            Ok(ClientEvent::Response { .. }) => ("response", None),
+                            Ok(ClientEvent::CommandRejected { .. }) => ("command-rejected", None),
+                            Ok(ClientEvent::VersionMismatch(_)) => ("version-mismatch", None),
+                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ("timeout", None),
+                            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                ("channel-closed", None)
+                            }
+                        }
+                    } else {
+                        ("not-observed", None)
+                    };
+                eprintln!(
+                    "graphics receive failed: value={value}, send_elapsed={send_elapsed:?}, \
+                     total_elapsed={failed_at:?}, worker_finished={worker_finished}, \
+                     upload_finished={upload_finished}, late_event={late_event}, \
+                     late_bytes={late_bytes:?}, observation_elapsed={:?}, \
+                     worker_finished_after={}, upload_finished_after={}",
+                    started.elapsed(),
+                    worker.is_finished(),
+                    cancel.is_finished(),
+                );
+            })
+            .unwrap();
         assert!(
-            matches!(event(&client), ClientEvent::Message(ServerMessage::Graphics { bytes })
+            matches!(received, ClientEvent::Message(ServerMessage::Graphics { bytes })
             if bytes.len() == 24 * 1024 * 1024 && bytes.iter().all(|byte| *byte == value))
         );
         assert!(started.elapsed() < TIMEOUT);

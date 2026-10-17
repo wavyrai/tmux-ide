@@ -1,10 +1,32 @@
+use super::super::controls::{self, ButtonStyle, Icon};
 use super::*;
+use bezel_ui::widgets::Status;
 pub(super) struct Confirmation {
     pub(super) identity: std::rc::Rc<()>,
     request: u64,
     revision: u64,
     profile: browser::machines::Profile,
     submitted: bool,
+    confirm_focus: FocusHandle,
+    cancel_focus: FocusHandle,
+}
+impl Confirmation {
+    fn feedback(&self, registry: Option<&browser::machines::Registry>) -> (bool, &'static str) {
+        let removed = self.submitted
+            && registry.is_some_and(|r| {
+                r.available && !r.pending && !r.machines.iter().any(|p| p.id == self.profile.id)
+            });
+        let status = if removed {
+            "Saved connection removed."
+        } else if self.submitted && registry.is_some_and(|r| r.pending) {
+            "Removal submitted — waiting for saved machines. Cancel and refresh if unconfirmed."
+        } else if self.submitted {
+            "Removal not confirmed. Cancel and refresh saved machines before trying again."
+        } else {
+            "Remove this saved connection? Remote sessions keep running."
+        };
+        (removed, status)
+    }
 }
 impl SnapshotView {
     pub(super) fn begin_machine_removal(
@@ -40,6 +62,8 @@ impl SnapshotView {
                 revision,
                 profile,
                 submitted: false,
+                confirm_focus: cx.focus_handle(),
+                cancel_focus: cx.focus_handle(),
             });
             picker.error = None;
         }
@@ -52,16 +76,56 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .picker
-            .as_ref()
-            .and_then(|p| p.removal.as_ref())
-            .is_some_and(|c| std::rc::Rc::ptr_eq(&c.identity, identity))
-        {
+        if self.machine_removal_identity_current(identity) {
             self.confirm_machine_removal(window, cx);
         }
     }
-    pub(super) fn confirm_machine_removal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn machine_removal_identity_current(&self, identity: &std::rc::Rc<()>) -> bool {
+        self.picker.as_ref().is_some_and(|p| {
+            p.mode == Mode::ManageMachines
+                && p.request == self.browser_request
+                && p.removal.as_ref().is_some_and(|c| {
+                    c.request == self.browser_request && std::rc::Rc::ptr_eq(&c.identity, identity)
+                })
+        })
+    }
+    pub(super) fn machine_removal_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(captured) = self.picker.as_ref().and_then(|p| p.removal.as_ref()) else {
+            return;
+        };
+        let footer_focused =
+            captured.confirm_focus.is_focused(window) || captured.cancel_focus.is_focused(window);
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_picker(window, cx),
+            // GPUI activates focused buttons on key-up through their captured identity.
+            "enter" | "space" if footer_focused => return,
+            "enter" => self.confirm_machine_removal(window, cx),
+            "tab" => {
+                let mut order = Vec::with_capacity(2);
+                if !captured.submitted {
+                    order.push(captured.confirm_focus.clone());
+                }
+                order.push(captured.cancel_focus.clone());
+                let current = order.iter().position(|focus| focus.is_focused(window));
+                let next = match (current, event.keystroke.modifiers.shift) {
+                    (Some(index), true) => (index + order.len() - 1) % order.len(),
+                    (Some(index), false) => (index + 1) % order.len(),
+                    (None, true) => order.len() - 1,
+                    (None, false) => 0,
+                };
+                order[next].focus(window, cx);
+            }
+            _ => {}
+        }
+        cx.stop_propagation();
+        window.prevent_default();
+    }
+    pub(super) fn confirm_machine_removal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(picker) = &mut self.picker else {
             return;
         };
@@ -112,6 +176,9 @@ impl SnapshotView {
             .is_some_and(|sender| sender.try_send(command).is_ok())
         {
             captured.submitted = true;
+            if captured.confirm_focus.is_focused(window) {
+                captured.cancel_focus.focus(window, cx);
+            }
             picker.error = None;
         } else {
             picker.error = Some("Machine change queue unavailable — try again");
@@ -129,17 +196,7 @@ impl SnapshotView {
         let cancel_identity = captured.identity.clone();
         let theme = self.theme();
         let registry = self.browser_state.machines.as_ref();
-        let removed = captured.submitted
-            && registry.is_some_and(|r| {
-                r.available && !r.pending && !r.machines.iter().any(|p| p.id == captured.profile.id)
-            });
-        let status = if removed {
-            "Saved connection removed."
-        } else if captured.submitted {
-            "Removal submitted — waiting for saved machines. Cancel and refresh if unconfirmed."
-        } else {
-            "Remove this saved connection? Remote sessions keep running."
-        };
+        let (removed, status) = captured.feedback(registry);
         div()
             .id("machine-remove-overlay")
             .absolute()
@@ -153,19 +210,17 @@ impl SnapshotView {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .child(
-                div()
+                bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-remove-dialog")
                     .w(px(480.))
                     .max_w_full()
-                    .p_4()
-                    .rounded(px(8.))
-                    .bg(rgb(theme.surface))
-                    .border_1()
-                    .border_color(rgb(theme.active))
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child("Remove saved machine")
+                    .child(bezel_ui::popover::dialog_title(
+                        &super::super::design::palette(&theme),
+                        "Remove saved machine",
+                    ))
                     .child(
                         div()
                             .min_w_0()
@@ -178,57 +233,105 @@ impl SnapshotView {
                             .truncate()
                             .child(captured.profile.ssh_target.clone()),
                     )
-                    .child(status)
-                    .children(picker.error.map(|error| div().child(error)))
-                    .children(
-                        registry
-                            .and_then(|r| r.message.as_ref().or(r.error.as_ref()))
-                            .map(|error| div().child(error.clone())),
+                    .child(
+                        if captured.submitted && !removed && registry.is_none_or(|r| !r.pending) {
+                            super::super::design::palette(&theme)
+                                .warning_strip(status)
+                                .mt_0()
+                                .px_2()
+                                .py_1()
+                                .min_w_0()
+                                .w_full()
+                        } else {
+                            div().child(status)
+                        },
                     )
+                    .children(picker.error.map(|error| {
+                        super::super::design::palette(&theme)
+                            .error_strip(error)
+                            .mt_0()
+                            .px_2()
+                            .py_1()
+                            .min_w_0()
+                            .w_full()
+                    }))
+                    .children(registry.and_then(|r| {
+                        // Preserve message precedence; informational registry messages
+                        // are not failures just because they share this feedback slot.
+                        r.message
+                            .as_ref()
+                            .map(|message| div().child(message.clone()))
+                            .or_else(|| {
+                                r.error.as_ref().map(|error| {
+                                    super::super::design::palette(&theme)
+                                        .error_strip(error.clone())
+                                        .mt_0()
+                                        .px_2()
+                                        .py_1()
+                                        .min_w_0()
+                                        .w_full()
+                                })
+                            })
+                    }))
                     .when(!captured.submitted, |d| {
                         d.child(
-                            div()
-                                .id("machine-remove-confirm")
-                                .debug_selector(|| "machine-remove-confirm".into())
-                                .px_3()
-                                .py_2()
-                                .rounded(px(crate::config::corners::CONTROL))
-                                .bg(rgb(theme.active))
-                                .cursor_pointer()
-                                .child("Remove saved connection")
-                                .on_click(cx.listener(move |view, _, window, cx| {
+                            controls::action_button(
+                                "machine-remove-confirm",
+                                Some("Remove saved connection"),
+                                "Remove saved connection",
+                                Icon::Trash,
+                                ButtonStyle::Destructive,
+                                &theme,
+                            )
+                            .track_focus(&captured.confirm_focus)
+                            .tab_index(0)
+                            .focus_visible({
+                                let theme = theme.clone();
+                                move |style| {
+                                    style.border_color(super::super::design::palette(&theme).ring)
+                                }
+                            })
+                            .on_click(cx.listener(
+                                move |view, _, window, cx| {
                                     view.confirm_machine_removal_identity(
                                         &confirm_identity,
                                         window,
                                         cx,
                                     );
-                                })),
+                                },
+                            )),
                         )
                     })
                     .child(
-                        div()
-                            .id("machine-remove-cancel")
-                            .debug_selector(|| "machine-remove-cancel".into())
-                            .px_3()
-                            .py_2()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .hover(move |style| style.bg(rgb(theme.active)))
-                            .cursor_pointer()
-                            .child(if removed { "Done" } else { "Cancel" })
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                if view
-                                    .picker
-                                    .as_ref()
-                                    .and_then(|p| p.removal.as_ref())
-                                    .is_some_and(|c| {
-                                        std::rc::Rc::ptr_eq(&c.identity, &cancel_identity)
-                                    })
-                                {
+                        controls::action_button(
+                            "machine-remove-cancel",
+                            Some(if removed { "Done" } else { "Cancel" }),
+                            "Close dialog",
+                            Icon::Close,
+                            ButtonStyle::Quiet,
+                            &theme,
+                        )
+                        .track_focus(&captured.cancel_focus)
+                        .tab_index(0)
+                        .focus_visible({
+                            let theme = theme.clone();
+                            move |style| {
+                                style.border_color(super::super::design::palette(&theme).ring)
+                            }
+                        })
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
+                                if view.machine_removal_identity_current(&cancel_identity) {
                                     view.close_picker(window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     ),
             )
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/machine_remove_focus.rs"]
+mod focus_tests;

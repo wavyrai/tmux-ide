@@ -164,6 +164,7 @@ fn tab_shortcuts_held_modal_and_unsupported_combination_never_reach_terminal(
                     keystroke: Keystroke::parse("f9").unwrap(),
                     is_held: true,
                     prefer_character_input: false,
+                    layout: None,
                 },
                 w,
                 cx,
@@ -175,6 +176,7 @@ fn tab_shortcuts_held_modal_and_unsupported_combination_never_reach_terminal(
                     keystroke: Keystroke::parse("f9").unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 },
                 w,
                 cx,
@@ -213,6 +215,7 @@ fn tab_pending_blocks_other_navigation_owners_then_new_navigation_supersedes(
                     keystroke: Keystroke::parse("f8").unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 },
                 w,
                 cx,
@@ -241,12 +244,42 @@ fn retained_tab_pointer_narrow_strip_and_cross_owner_guard(cx: &mut TestAppConte
     });
     receiver.try_iter().for_each(drop);
     let strip = cx.debug_bounds("retained-session-tabs").unwrap();
-    let close = cx.debug_bounds("close-retained-session-1").unwrap();
-    assert_eq!(strip.size.height, px(36.));
-    assert!(close.size.width >= px(24.));
-    assert!(close.right() <= strip.right());
+    let header = cx.debug_bounds("titlebar").unwrap();
+    let home = cx.debug_bounds("application-home").unwrap();
+    let body = cx.debug_bounds("tmux-shell-body").unwrap();
+    assert_eq!(strip.top(), header.top());
+    assert_eq!(strip.bottom(), header.bottom());
+    assert_eq!(
+        body.top(),
+        header.bottom(),
+        "retained tabs add no second strip"
+    );
+    assert!(home.right() <= strip.left());
     let tab = cx.debug_bounds("retained-session-1").unwrap();
-    cx.simulate_click(tab.center(), Modifiers::default());
+    // The unified titlebar reserves Home and fixed controls. Reveal the second
+    // long tab through the retained scroll owner before targeting its pixels.
+    if tab.right() > strip.right() {
+        cx.simulate_event(ScrollWheelEvent {
+            position: strip.center(),
+            delta: ScrollDelta::Pixels(point(strip.right() - tab.right(), px(0.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        cx.update(|w, cx| w.draw(cx).clear(cx));
+    }
+    let strip = cx.debug_bounds("retained-session-tabs").unwrap();
+    let tab = cx.debug_bounds("retained-session-1").unwrap();
+    let close = cx.debug_bounds("close-retained-session-1").unwrap();
+    assert!(close.size.width >= px(24.));
+    assert!(close.left() >= strip.left() && close.right() <= strip.right());
+    let label_left = tab.left().max(strip.left());
+    let label_right = close.left().min(strip.right());
+    assert!(
+        label_right > label_left,
+        "visible label target must exclude nested close"
+    );
+    let hit = point(label_left + (label_right - label_left) / 2., tab.center().y);
+    cx.simulate_click(hit, Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::SessionTab { action, .. } if action == B)
     );

@@ -567,6 +567,7 @@ fn numeric_invalid_and_composition_do_not_enqueue_writes(cx: &mut TestAppContext
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

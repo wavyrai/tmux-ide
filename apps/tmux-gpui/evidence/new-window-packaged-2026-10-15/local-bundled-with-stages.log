@@ -1,0 +1,3 @@
+(node:44059) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"passed":true,"harness":null,"structuredAgentMetadata":false,"distinctCreatedWindowSelected":true,"exactNewPaneInput":true,"exactOneCreation":true,"duplicateAndStaleRefused":true,"sourceIdentityPreserved":true,"cleanup":true}

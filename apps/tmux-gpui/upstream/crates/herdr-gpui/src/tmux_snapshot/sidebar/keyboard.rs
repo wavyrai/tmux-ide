@@ -9,8 +9,9 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     pub(in crate::tmux_snapshot::browser_ui) selected: Option<Target>,
     pub(in crate::tmux_snapshot::browser_ui) scroll: ScrollHandle,
     pub(in crate::tmux_snapshot::browser_ui) machine_focus: Option<String>,
+    pub(super) controls: Option<[FocusHandle; 5]>,
     reveal: reveal::Reveal,
-    request: u64,
+    pub(super) request: u64,
     displayed: Vec<Option<Target>>,
 }
 pub(in crate::tmux_snapshot::browser_ui) fn focus_shortcut(key: &Keystroke) -> bool {
@@ -21,7 +22,7 @@ pub(in crate::tmux_snapshot::browser_ui) fn focus_shortcut(key: &Keystroke) -> b
         && !key.modifiers.shift
 }
 impl SnapshotView {
-    fn sidebar_keyboard_allowed(&self) -> bool {
+    pub(super) fn sidebar_keyboard_allowed(&self) -> bool {
         self.browser_state.surface == browser::Surface::Workspace
             && !self.sidebar_hidden
             && self.browser_commands.is_some()
@@ -55,6 +56,7 @@ impl SnapshotView {
             self.sidebar_keyboard.active = false;
             self.interrupt_input(cx);
         }
+        self.reconcile_sidebar_controls(window, cx);
         let state = &mut self.sidebar_keyboard;
         if !state.active {
             if state.focus.as_ref().is_some_and(|f| f.is_focused(window)) {
@@ -164,6 +166,9 @@ impl SnapshotView {
             }
             cx.stop_propagation();
             window.prevent_default();
+            return true;
+        }
+        if self.sidebar_control_key(event, window, cx) {
             return true;
         }
         if !self.sidebar_keyboard.active

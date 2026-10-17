@@ -29,6 +29,7 @@ fn type_across_gap(
         keystroke: gpui::Keystroke::parse("enter").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -91,6 +92,7 @@ fn input_typed_during_snapshot_surface_gap_reaches_pane_once_in_order(
             keystroke: gpui::Keystroke::parse("enter").unwrap(),
             is_held: false,
             prefer_character_input: false,
+            layout: None,
         },
         false,
     )

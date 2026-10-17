@@ -39,3 +39,47 @@ fn rejects_duplicate_choices_and_unselected_frames() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Opt-in replay of a private browser publication trace; never prints payloads.
+#[test]
+#[ignore = "requires TMUX_GPUI_PUBLICATION_TRACE from an isolated fixture"]
+fn replay_isolated_publication_trace() -> anyhow::Result<()> {
+    use std::io::BufRead;
+    let path = std::env::var("TMUX_GPUI_PUBLICATION_TRACE")?;
+    let file = std::fs::File::open(path)?;
+    let mut reader = Reader::default();
+    let mut count = 0;
+    for (index, line) in BufReader::new(file).split(b'\n').enumerate() {
+        let line = line?;
+        if line.is_empty() {
+            continue;
+        }
+        reader.accept(&line).map_err(|error| {
+            anyhow::anyhow!(
+                "Publication {} rejected: {}",
+                index + 1,
+                rejection_reason(&error)
+            )
+        })?;
+        count += 1;
+    }
+    anyhow::ensure!(count > 0, "Trace must contain publications");
+    eprintln!("Accepted {count} isolated publications");
+    Ok(())
+}
+
+#[test]
+fn rejection_diagnostic_does_not_echo_untrusted_json() -> anyhow::Result<()> {
+    let error = serde_json::from_str::<u64>("\"private-terminal-content\"")
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("a string must not decode as a sequence number"))?;
+    assert_eq!(
+        rejection_reason(&Error::Json(error)),
+        "invalid JSON or schema"
+    );
+    assert_eq!(
+        rejection_reason(&Error::Invalid("Invalid pane actions")),
+        "Invalid pane actions"
+    );
+    Ok(())
+}

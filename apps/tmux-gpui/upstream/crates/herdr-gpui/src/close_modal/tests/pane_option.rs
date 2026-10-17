@@ -43,6 +43,7 @@ fn do_not_ask_again_is_a_pane_only_checkbox_and_a_refused_close_saves_nothing(
         keystroke: Keystroke::parse("space").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -87,6 +88,7 @@ fn refused_immediate_pane_close_does_not_offer_do_not_ask_again(cx: &mut TestApp
         keystroke: Keystroke::parse("space").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

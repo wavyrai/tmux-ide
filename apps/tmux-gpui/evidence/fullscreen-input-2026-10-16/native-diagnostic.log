@@ -1,0 +1,13 @@
+{"event":"fixture-owned","root":"/tmp/tmi-e2e-unified-titlebar-pm1aXL","socketPath":"/tmp/tmi-e2e-unified-titlebar-pm1aXL/t.sock","session":"e2e-unified-titlebar-85934-0","left":"%0","right":"%2","daemonPid":85972}
+{"event":"app-owned","pid":85990,"appPath":"/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/fullscreen-input-20261016/Tmux IDE Fullscreen Input QA.app"}
+Packaged panes ready: open session/window, click LEFT terminal when ready, verify selected title/rail and type echo GPUI_LEFT_OK then Return.
+tmux-preview: native chrome glass true
+QA_CLICK pos=Point { x: 375px, y: 220px } geometry=Some((Bounds { origin: Point { x: 236px, y: 98px }, size: Size { 932px × 681.5px } }, Bounds { origin: Point { x: 775.43756px, y: 138px }, size: Size { 8.428712px × 20px } })) width=Some(8.428712) painted=true ready=true selected=Some("pane.promoted.219d91e7aed3bfcd6066") fullscreen=true
+QA_CLICK hit=Some("pane.promoted.b08bdc09293a194e58ba") relative=Point { x: 139px, y: 122px }
+Left verified: click RIGHT terminal when ready, verify selected title changes and separator stays clear of content, type echo GPUI_RIGHT_OK then Return.
+QA_CLICK pos=Point { x: 875px, y: 220px } geometry=Some((Bounds { origin: Point { x: 236px, y: 98px }, size: Size { 932px × 681.5px } }, Bounds { origin: Point { x: 286.57227px, y: 198px }, size: Size { 8.428712px × 20px } })) width=Some(8.428712) painted=true ready=true selected=Some("pane.promoted.b08bdc09293a194e58ba") fullscreen=true
+QA_CLICK hit=Some("pane.promoted.219d91e7aed3bfcd6066") relative=Point { x: 639px, y: 122px }
+Both pane targets verified. Open second session using titlebar +, type echo UNIFIED_SECOND_OK, test Home and retained tabs, close a session tab, then Cmd-Q.
+QA_CLICK pos=Point { x: 420px, y: 220px } geometry=Some((Bounds { origin: Point { x: 236px, y: 98px }, size: Size { 932px × 681.5px } }, Bounds { origin: Point { x: 303.4297px, y: 118px }, size: Size { 8.428712px × 20px } })) width=Some(8.428712) painted=true ready=true selected=Some("pane.promoted.9a2a69adcf20ef7e4b19") fullscreen=true
+QA_CLICK hit=Some("pane.promoted.9a2a69adcf20ef7e4b19") relative=Point { x: 184px, y: 122px }
+{"passed":true,"distinctPaneTargets":true,"secondSessionInput":true,"visualAppearance":"requires separate screenshots","packagedRuntime":true,"isolatedCwd":true,"privateCli":true,"minimalPath":true,"sourceSurvivesClose":true}

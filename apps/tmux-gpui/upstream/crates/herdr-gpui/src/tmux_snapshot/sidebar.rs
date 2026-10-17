@@ -1,4 +1,8 @@
 //! Session navigation, matching the TUI shell. Windows belong to the workspace strip.
+#[path = "sidebar/control_focus.rs"]
+mod control_focus;
+#[path = "sidebar/footer.rs"]
+mod footer;
 #[path = "sidebar/hierarchy.rs"]
 mod hierarchy;
 #[path = "sidebar/keyboard.rs"]
@@ -69,7 +73,7 @@ pub(super) fn rows(state: &browser::State) -> Vec<Row> {
             depth: 0,
             machine: None,
             agent: None,
-            icon: None,
+            icon: Some("icons/terminal.svg"),
             favorite: None,
         })
         .collect()
@@ -102,10 +106,14 @@ pub(super) fn render_row(
     index: usize,
     row: &Row,
     theme: &Theme,
-    accent: u32,
+    _accent: u32,
     _glass: bool,
 ) -> Stateful<Div> {
-    let active = theme.active;
+    let hover = if row.selected {
+        rgb(theme.active)
+    } else {
+        rgba((theme.foreground << 8) | 0x0c)
+    };
     let mut element = div()
         .id(("sidebar-row", index))
         .debug_selector(move || format!("tmux-sidebar-row-{index}"))
@@ -116,7 +124,7 @@ pub(super) fn render_row(
         .pl(px(8. + f32::from(row.depth) * 10.))
         .pr_2()
         .py_1()
-        .rounded(px(4.))
+        .rounded(px(crate::config::corners::CONTROL))
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
@@ -126,26 +134,21 @@ pub(super) fn render_row(
             rgba(0)
         })
         .text_color(rgb(theme.foreground))
-        .font_weight(if row.selected {
+        .font_weight(if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
         })
-        .child(
-            div()
-                .debug_selector(move || format!("tmux-sidebar-mark-{index}"))
-                .w(px(2.))
-                .h(px(12.))
-                .flex_none()
-                .rounded(px(1.))
-                .when(row.selected, |mark| mark.bg(rgb(accent))),
-        )
         .children(row.icon.map(|path| {
             svg()
                 .path(path)
                 .size(px(14.))
                 .flex_none()
-                .text_color(rgb(theme.muted))
+                .text_color(rgb(if row.selected {
+                    theme.foreground
+                } else {
+                    theme.muted
+                }))
         }))
         .child(
             div()
@@ -174,9 +177,7 @@ pub(super) fn render_row(
         );
     // The unselected row stays transparent: the sidebar owns its glass tint.
     if row.target.is_some() {
-        element = element
-            .cursor_pointer()
-            .hover(move |style| style.bg(rgb(active)));
+        element = element.cursor_pointer().hover(move |style| style.bg(hover));
     }
     element
 }

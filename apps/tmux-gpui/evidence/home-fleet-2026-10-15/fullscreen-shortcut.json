@@ -1,0 +1,31 @@
+{
+  "mechanism": "tmux_snapshot::show registered cmd-q only, omitting upstream ctrl-cmd-f; native QA entered fullscreen via green control but key could not exit before fix.",
+  "change": "Bind only upstream ToggleFullScreen RunCommand and delegate to existing window command at tmux shell.",
+  "focusedTest": "1 passed: keystroke entry/exit from terminal and picker; picker retained; no text command leakage.",
+  "nativeQA": "Control-Command-F entered and exited native fullscreen twice, once on Home and once with Appearance open. Exit restored leading traffic-light spacing and preserved picker.",
+  "binarySha256": "7a3e1fece746049415f40e30ab153c9d14944498736182538e16fd44d9bc3c0b",
+  "isolation": "Static private fleet, privateHOME; no production daemon. Exact owned child terminated.",
+  "screenshots": [
+    "shortcut-fullscreen-entered.png",
+    "shortcut-fullscreen-exited.png",
+    "shortcut-picker-fullscreen.png",
+    "shortcut-picker-exited.png"
+  ],
+  "fullRust": {
+    "format": "pass",
+    "fileSize": "pass",
+    "clippyBoth": "pass",
+    "gpuiDefault": "2777 passed,7 ignored",
+    "gpuiAllFeatures": "2808 passed,8 ignored",
+    "clientEach": "217 passed",
+    "nativeBuild": "pass",
+    "exitCode": 0,
+    "log": ".tasks/native-polish-np04/fullscreen-full-gates.log"
+  },
+  "limits": [
+    "Fullscreen auto-revealed traffic lights not verified.",
+    "Headless terminal shortcut test is not physical terminal interaction qualification."
+  ],
+  "status": "Validated branch fix; not merged or released.",
+  "review": "Parent independently reviewed source and regression; native GUI path verified by parent."
+}

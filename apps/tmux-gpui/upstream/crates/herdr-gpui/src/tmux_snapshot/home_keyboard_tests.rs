@@ -155,3 +155,9 @@ mod recovery;
 
 #[path = "home_keyboard_tests/machine_filter.rs"]
 mod machine_filter;
+
+#[path = "home_keyboard_tests/action_focus.rs"]
+mod action_focus;
+
+#[path = "home_keyboard_tests/theme_readiness.rs"]
+mod theme_readiness;

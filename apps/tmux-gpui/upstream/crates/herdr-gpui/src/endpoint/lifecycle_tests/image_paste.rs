@@ -13,6 +13,7 @@ fn text_paste_survives_a_settled_navigation(cx: &mut gpui::TestAppContext) {
         keystroke: gpui::Keystroke::parse("cmd-v").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     let settled = |view: &HerdrWindow| crate::state::SurfaceActivation {
         request: "activate-1".into(),
@@ -84,6 +85,7 @@ fn connected_image_paste_captures_pane_before_immediate_text_and_enter(
         keystroke: gpui::Keystroke::parse("enter").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

@@ -86,6 +86,7 @@ fn key(value: &str) -> KeyDownEvent {
         keystroke: Keystroke::parse(value).unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     }
 }
 #[gpui::test]
@@ -306,3 +307,6 @@ mod historical_selection_tests;
 
 #[path = "terminal_links/pointer_tests.rs"]
 mod terminal_link_pointer_tests;
+
+#[path = "input_interruption_tests/uncertain_pointer.rs"]
+mod uncertain_pointer;

@@ -25,6 +25,7 @@ fn exercise(
             keystroke: Keystroke::parse(if tabs { "f9" } else { "f8" }).unwrap(),
             is_held: false,
             prefer_character_input: false,
+            layout: None,
         },
         window,
         cx,

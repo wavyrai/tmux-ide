@@ -1,0 +1,627 @@
+{
+  "lifecycleFailure": true,
+  "browserExitCode": null,
+  "trace": [
+    {
+      "ms": 2247,
+      "event": "send",
+      "type": "input",
+      "request": 2
+    },
+    {
+      "ms": 2247,
+      "event": "send",
+      "type": "input",
+      "request": 2
+    },
+    {
+      "ms": 2268,
+      "event": "send",
+      "type": "session",
+      "request": 3
+    },
+    {
+      "ms": 2268,
+      "event": "send",
+      "type": "session",
+      "request": 4
+    },
+    {
+      "ms": 2268,
+      "event": "send",
+      "type": "session",
+      "request": 5
+    },
+    {
+      "ms": 2269,
+      "event": "publication",
+      "request": 3,
+      "selectedPaneMatches": false,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 2394,
+      "event": "publication",
+      "request": 4,
+      "selectedPaneMatches": false,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 2435,
+      "event": "publication",
+      "request": 5,
+      "selectedPaneMatches": false,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 2485,
+      "event": "send",
+      "type": "pane",
+      "request": 6
+    },
+    {
+      "ms": 2485,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": false,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 2486,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 2945,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": true,
+      "presenceRevision": 0,
+      "snapshot": true,
+      "cols": 80,
+      "rows": 24
+    },
+    {
+      "ms": 2962,
+      "event": "send",
+      "type": "input",
+      "request": 2
+    },
+    {
+      "ms": 2962,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 2962,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 2984,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 2,
+      "resize": {
+        "cols": 52,
+        "rows": 19
+      }
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 91,
+        "rows": 27
+      }
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3100,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3104,
+      "event": "grid",
+      "cols": 80,
+      "rows": 24
+    },
+    {
+      "ms": 3131,
+      "event": "grid",
+      "cols": 91,
+      "rows": 27
+    },
+    {
+      "ms": 3133,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": true,
+      "presenceRevision": 0,
+      "snapshot": true,
+      "cols": 91,
+      "rows": 27
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 92,
+        "rows": 28
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 93,
+        "rows": 29
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 94,
+        "rows": 30
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 95,
+        "rows": 31
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 96,
+        "rows": 32
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 97,
+        "rows": 33
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 98,
+        "rows": 34
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 99,
+        "rows": 35
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 100,
+        "rows": 36
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 101,
+        "rows": 37
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 102,
+        "rows": 38
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 103,
+        "rows": 39
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 104,
+        "rows": 40
+      }
+    },
+    {
+      "ms": 3190,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 105,
+        "rows": 41
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 106,
+        "rows": 42
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 107,
+        "rows": 43
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 108,
+        "rows": 44
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 109,
+        "rows": 45
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 110,
+        "rows": 46
+      }
+    },
+    {
+      "ms": 3191,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 111,
+        "rows": 47
+      }
+    },
+    {
+      "ms": 3196,
+      "event": "grid",
+      "cols": 93,
+      "rows": 29
+    },
+    {
+      "ms": 3222,
+      "event": "grid",
+      "cols": 96,
+      "rows": 32
+    },
+    {
+      "ms": 3247,
+      "event": "grid",
+      "cols": 100,
+      "rows": 36
+    },
+    {
+      "ms": 3272,
+      "event": "grid",
+      "cols": 106,
+      "rows": 42
+    },
+    {
+      "ms": 3297,
+      "event": "grid",
+      "cols": 108,
+      "rows": 44
+    },
+    {
+      "ms": 3324,
+      "event": "grid",
+      "cols": 111,
+      "rows": 47
+    },
+    {
+      "ms": 3324,
+      "event": "send",
+      "type": "presence",
+      "active": false,
+      "revision": 0
+    },
+    {
+      "ms": 3327,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": true,
+      "cols": 91,
+      "rows": 27
+    },
+    {
+      "ms": 3346,
+      "event": "send",
+      "type": "input",
+      "request": 6
+    },
+    {
+      "ms": 3346,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 60,
+        "rows": 20
+      }
+    },
+    {
+      "ms": 3346,
+      "event": "send",
+      "type": "presence",
+      "active": true,
+      "revision": 0
+    },
+    {
+      "ms": 3354,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": false
+    },
+    {
+      "ms": 3365,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": false,
+      "presenceRevision": 0,
+      "snapshot": true,
+      "cols": 80,
+      "rows": 24
+    },
+    {
+      "ms": 3369,
+      "event": "publication",
+      "request": 6,
+      "selectedPaneMatches": true,
+      "inputReady": true,
+      "presenceRevision": 0,
+      "snapshot": true,
+      "cols": 80,
+      "rows": 24
+    },
+    {
+      "ms": 3392,
+      "event": "send",
+      "type": "input",
+      "request": 6,
+      "resize": {
+        "cols": 95,
+        "rows": 30
+      }
+    },
+    {
+      "ms": 3396,
+      "event": "grid",
+      "cols": 95,
+      "rows": 30
+    }
+  ]
+}

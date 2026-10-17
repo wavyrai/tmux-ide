@@ -1,0 +1,74 @@
+[
+  {
+    "mode": "retired",
+    "request": 1,
+    "status": "Loading",
+    "phase": "loading",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 1,
+    "status": "Loading",
+    "phase": "live",
+    "selected": true,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 1,
+    "status": "No live sessions",
+    "phase": "live",
+    "selected": true,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 1,
+    "status": "Selected server is not available in this fleet view \u2014 select a server again.",
+    "phase": "unavailable",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 1,
+    "status": "Machine connection changed \u2014 refresh sessions to reconnect",
+    "phase": "unavailable",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 3,
+    "status": "Loading",
+    "phase": "loading",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 3,
+    "status": "Machine or session changed. Refresh the fleet and select the session again.",
+    "phase": "unavailable",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 4,
+    "status": "Loading",
+    "phase": "loading",
+    "selected": false,
+    "inputReady": false
+  },
+  {
+    "mode": "retired",
+    "request": 4,
+    "status": "Machine or session changed. Refresh the fleet and select the session again.",
+    "phase": "unavailable",
+    "selected": false,
+    "inputReady": false
+  }
+]

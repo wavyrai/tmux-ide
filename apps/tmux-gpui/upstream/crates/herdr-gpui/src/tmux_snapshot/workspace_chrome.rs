@@ -84,65 +84,88 @@ impl SnapshotView {
 
     pub(super) fn application_tabs(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme();
         let request = self.browser_request;
         let mut tabs = div()
             .id("application-tabs")
+            .when(window.is_fullscreen(), |tabs| {
+                tabs.pl(px(super::shell::CONTENT_INSET))
+            })
+            // The titlebar is a sibling of the browser body. Its focused
+            // chrome controls need the same navigation owner on this path.
+            .on_key_down(cx.listener(Self::picker_key))
             .flex_1()
             .min_w_0()
             .h(px(APPLICATION_TABS_HEIGHT))
             .flex_shrink_0()
             .flex()
             .items_center()
-            .bg(rgb(theme.surface))
+            .gap_1()
             .pr_2();
-        for (id, label, tab, selected) in [
-            (
-                "application-home",
-                "Home",
-                ApplicationTab::Home,
-                self.browser_state.surface == browser::Surface::Home,
-            ),
-            (
-                "application-terminals",
-                "Terminals",
-                ApplicationTab::Terminals,
-                self.browser_state.surface == browser::Surface::Workspace,
-            ),
-        ] {
-            tabs = tabs.child(
+        tabs = tabs
+            .child(
                 controls::titlebar_tab(
-                    id,
-                    label,
-                    match tab {
-                        ApplicationTab::Home => controls::Icon::Home,
-                        ApplicationTab::Terminals => controls::Icon::Terminal,
-                    },
-                    selected,
+                    "application-home",
+                    "Home",
+                    controls::Icon::Home,
+                    self.browser_state.surface == browser::Surface::Home,
                     &theme,
                 )
-                .debug_selector(move || id.to_owned())
+                .debug_selector(|| "application-home".into())
                 .on_click(cx.listener(move |view, _, window, cx| {
-                    view.dispatch_application_tab(request, tab, window, cx);
+                    view.dispatch_application_tab(request, ApplicationTab::Home, window, cx);
+                })),
+            )
+            .children(self.retained_session_strip(cx))
+            .child(
+                controls::button(
+                    "application-browse",
+                    None,
+                    "Browse sessions",
+                    controls::Icon::Plus,
+                    &theme,
+                )
+                .debug_selector(|| "application-browse".into())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    if view.browser_request == request
+                        && view.picker.is_none()
+                        && view.new_session.is_none()
+                        && view.pane_actions.is_none()
+                        && view.marked.is_empty()
+                    {
+                        view.open_picker(window, cx);
+                    }
                 })),
             );
-        }
         tabs = tabs
             .child(
                 div()
-                    .flex_1()
+                    .w(px(32.))
+                    .flex_shrink_0()
+                    .when(
+                        self.browser_state
+                            .session_tabs
+                            .as_ref()
+                            .is_none_or(|p| p.rows.is_empty()),
+                        |region| region.flex_1(),
+                    )
                     .h_full()
                     .debug_selector(|| "application-drag-region".into()),
             )
             .child(
-                controls::button(
-                    "sidebar-toggle",
-                    None,
-                    "Show / hide sidebar · F10",
-                    controls::Icon::Sidebar,
+                self.sidebar_focus_control(
+                    controls::button(
+                        "sidebar-toggle",
+                        None,
+                        "Show / hide sidebar · F10",
+                        controls::Icon::Sidebar,
+                        &theme,
+                    ),
+                    3,
                     &theme,
                 )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -243,8 +266,12 @@ impl SnapshotView {
             .flex_shrink_0()
             .overflow_x_scroll()
             .track_scroll(&self.window_reveal.scroll)
+            .on_scroll_wheel({
+                let scroll = self.window_reveal.scroll.clone();
+                move |event, window, cx| crate::tab_scroll::wheel(&scroll, event, window, cx)
+            })
             .px_2()
-            .bg(rgb(theme.surface));
+            .bg(rgb(theme.background));
         if self.browser_state.surface != browser::Surface::Workspace {
             return strip.into_any_element();
         }
@@ -260,7 +287,6 @@ impl SnapshotView {
                     controls::Icon::Terminal,
                     choice.selected,
                     &theme,
-                    self.accent(),
                 )
                 .debug_selector(move || format!("workspace-window-{index}"))
                 .max_w(px(200.))
@@ -274,11 +300,16 @@ impl SnapshotView {
         let enabled = captured.is_some()
             && self.presence.ready()
             && self.browser_state.request == self.browser_request;
-        let mut add = controls::button(
+        let mut add = controls::action_button(
             "workspace-new-window",
             None,
             "New terminal window",
             controls::Icon::Plus,
+            if enabled {
+                controls::ButtonStyle::Quiet
+            } else {
+                controls::ButtonStyle::Unavailable
+            },
             &theme,
         );
         if enabled {
@@ -288,13 +319,14 @@ impl SnapshotView {
                 }));
             }
         } else {
-            add = add.opacity(0.5).cursor_default();
+            add = add.aria_description("Unavailable until the selected terminal is ready");
         }
+        let add = self.sidebar_focus_control(add, 4, &theme);
         div()
             .w_full()
             .flex()
             .flex_shrink_0()
-            .bg(rgb(theme.surface))
+            .bg(rgb(theme.background))
             .child(strip)
             .child(add)
             .into_any_element()

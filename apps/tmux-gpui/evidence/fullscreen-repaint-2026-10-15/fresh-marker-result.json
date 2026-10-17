@@ -1,0 +1,11 @@
+{
+  "nativeSha256": "caf584a89aad8b6d1655191905a7b68593e3d2c5244e77f9f551d9cfaa4d369d",
+  "captureUtc": [
+    "2026-10-15T16:54:59.959Z",
+    "2026-10-15T16:55:00.036Z"
+  ],
+  "marker": "FRESH CAPTURE CHECK \u2014 October 15 16:55",
+  "observed": "Unique current marker appears in fullscreen capture alongside white top/right margins. This rules out simply reusing the earlier unchanged-fixture screenshot.",
+  "limit": "Does not distinguish compositor/capture transformation from physical app presentation. Native GUI interaction stopped when Mac locked. No runtime fix justified.",
+  "screenshotSha256": "0d06a58b77e43e31d6e9fc2568daefeaa17e51a96a5ac6966fcaece910417cd8"
+}

@@ -1,0 +1,50 @@
+{
+  "checkout": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-journey-checkout",
+  "head": "e0c6f26036bc0987329247aed3a24c8581bb8f86",
+  "session": 85338,
+  "exitCode": 0,
+  "script": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/run-home-fleet.sh",
+  "cliSha256": "830b17d7eb6468192cf83fd538952b425c6f9f23767fb8cc97e46d5bd6e1286a",
+  "inputHashesUnchanged": {
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/bin/cli.js": true,
+    "/Volumes/Samsung_T5/Developer/tmux-ide/bin/cli.js": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon/dist/native/tmux/darwin-arm64/tmux": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/MacOS/tmux-ide-gpui": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/Resources/node": true,
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/continuous-chrome-package-20261015-02/Tmux IDE CI.app/Contents/Resources/bridge/browser.bundle.mjs": true
+  },
+  "results": {
+    "fleet-server": {
+      "passed": true,
+      "packaged": true,
+      "genuinelyEmptyServers": 2,
+      "duplicateLabels": true,
+      "selectedSecondByIdentity": true,
+      "firstStillEmpty": true,
+      "sourceIdentityGeometryStampsUnchanged": true,
+      "exactCreationCount": 1,
+      "nativeUi": false,
+      "ownedCleanup": true
+    },
+    "home-machine-filter": {
+      "passed": true,
+      "packaged": true,
+      "sessions": 2,
+      "machineSelectedAndCleared": true,
+      "staleRevisionRefused": true,
+      "sameConnection": true,
+      "attentionScopeRetained": true,
+      "homeAndAttentionContext": true,
+      "sourceIdentityGeometryAndStampsUnchanged": true,
+      "noPromotion": true,
+      "multipleMachinesAndRemovalTested": false,
+      "ownedCleanup": true,
+      "nativeUi": false
+    }
+  },
+  "limits": [
+    "Exact packaged Node/browser bridge with real disposable daemon and tmux servers; native GUI not launched.",
+    "Source/dependency checkout reuses existing installed node_modules; not clean-install qualification.",
+    "Only fleet-server and Home machine-filter journeys run; remaining workflow journeys not claimed."
+  ]
+}

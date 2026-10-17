@@ -11,6 +11,7 @@ fn do_not_ask_again_persists_only_with_a_sent_pane_close(cx: &mut gpui::TestAppC
         keystroke: gpui::Keystroke::parse("space").unwrap(),
         is_held: false,
         prefer_character_input: false,
+        layout: None,
     };
     for (ticks, expected) in [
         (1, Some(Preference::ConfirmClosePane(false))),

@@ -150,6 +150,7 @@ fn search_input_owns_typing_composition_and_selection_revalidates(cx: &mut TestA
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,
@@ -327,6 +328,7 @@ fn theme_picker_isolated_and_selection_waits_for_publication(cx: &mut TestAppCon
                     keystroke: Keystroke::parse("enter").unwrap(),
                     is_held: false,
                     prefer_character_input: false,
+                    layout: None,
                 },
                 window,
                 cx,
@@ -426,3 +428,7 @@ mod reference;
 
 #[path = "tests/font_controls.rs"]
 mod font_controls;
+
+mod unavailable_window_control;
+
+mod scoped_surface;

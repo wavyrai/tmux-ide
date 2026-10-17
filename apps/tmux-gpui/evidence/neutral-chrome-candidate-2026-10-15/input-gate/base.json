@@ -1,0 +1,11 @@
+{
+  "head": "2b61496bb249874dcea7bb5f34925bb9249649e6",
+  "sha256": {
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs": "2422f9b6bfafd8c0dd73c0f9f74da7c440909a6ada1433db1b56837a4c98c053",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs": "ab037aea2842f90eb943fe40728a183074a1cd615a0530a5325db1dcd5980c7c",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_state.rs": "fd42cba7c5e0d0eaaf36f0f5aeb4a889743d68b8b9833b0fdaabddfb17671405",
+    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/input_gate.rs": "ef1dd120c3f817d5746dd22d6f4c52b86d8a2f54b62e0465bf077c02ade0184e"
+  },
+  "patchSha256": "5f5ba81bfc4e673c660672931b9e2d2c57743c518d7345a57d791d42bd83e91b",
+  "compiled": false
+}

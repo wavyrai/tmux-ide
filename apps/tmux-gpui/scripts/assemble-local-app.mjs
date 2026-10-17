@@ -62,6 +62,7 @@ try {
   await chmod(join(macos, "tmux-ide-gpui"), 0o755);
   await chmod(join(resources, "node"), 0o755);
   await copyFile(nodeLicense, join(resources, "NODE-LICENSE"));
+  await copyFile(join(project, "BEZEL-NOTICE.md"), join(resources, "BEZEL-NOTICE.md"));
   await copyFile(join(project, "upstream/LICENSE"), join(resources, "HERDR-LICENSE"));
   await copyFile(join(project, "upstream/NOTICE"), join(resources, "HERDR-NOTICE"));
   await copyFile(resolve(project, "../../LICENSE"), join(resources, "TMUX-IDE-LICENSE"));
@@ -72,6 +73,8 @@ try {
     "HERDR-SOUND-NOTICE": "crates/herdr-gpui/SOUND-NOTICE.md",
     "HERDR-GITHUB-NOTICE": "crates/herdr-gpui/GITHUB-NOTICE.md",
     "OCTICONS-LICENSE": "assets/icons/LICENSE-octicons",
+    "HEROICONS-LICENSE": "assets/icons/LICENSE-heroicons",
+    "HEROICONS-PROVENANCE.json": "assets/icons/heroicons-provenance.json",
   };
   for (const [name, source] of Object.entries(supplementalNotices)) {
     await copyFile(join(project, "upstream", source), join(resources, name));

@@ -9,6 +9,7 @@ mod composition;
 mod controls;
 mod copy;
 mod decode;
+pub(crate) mod design;
 mod divider;
 mod geometry;
 mod glass;
@@ -104,6 +105,7 @@ fn show(
         })
         .detach();
         cx.bind_keys([KeyBinding::new("cmd-q", crate::Quit, None)]);
+        shell::bind_keys(cx);
         cx.on_action(|_: &crate::Quit, cx| cx.quit());
         let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
         let result = cx.open_window(
@@ -347,7 +349,7 @@ impl SnapshotView {
         let font_revision = self.terminal_font.revision;
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
-        let accent = self.accent();
+        let separator = controls::separator(&theme);
         let highlights = self
             .selection
             .as_ref()
@@ -442,17 +444,23 @@ impl SnapshotView {
                             ) {
                                 return Vec::new();
                             }
-                            view.browser_state.selected_pane.as_deref().map_or_else(
-                                Vec::new,
-                                |selected| {
+                            let mut cells: Vec<_> = view
+                                .browser_state
+                                .regions
+                                .iter()
+                                .flat_map(|pane| {
                                     hit_regions::separator_cells(
-                                        selected,
+                                        &pane.id,
                                         &view.browser_state.regions,
                                         &frame,
                                         &view.browser_state.panes,
                                     )
-                                },
-                            )
+                                })
+                                .collect();
+                            // Shared edges paint once, independent of which pane is selected.
+                            cells.sort_unstable_by_key(|cell| (cell.col, cell.row, cell.vertical));
+                            cells.dedup();
+                            cells
                         });
                         painter.borrow_mut().paint_frame(
                             &frame,
@@ -467,32 +475,40 @@ impl SnapshotView {
                             window,
                             cx,
                         );
-                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                            for cell in &rails {
-                                let (x, y, w, h) = if cell.vertical {
-                                    (
-                                        (f32::from(cell.col) + 0.5) * width - width.min(2.) / 2.,
-                                        f32::from(cell.row) * height,
-                                        width.min(2.),
-                                        height,
-                                    )
-                                } else {
-                                    (
-                                        f32::from(cell.col) * width,
-                                        (f32::from(cell.row) + 0.5) * height - height.min(2.) / 2.,
-                                        width,
-                                        height.min(2.),
-                                    )
-                                };
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        bounds.origin + point(px(x), px(y)),
-                                        size(px(w), px(h)),
-                                    ),
-                                    rgb(accent),
-                                ));
-                            }
-                        });
+                        window.with_content_mask(
+                            Some(ContentMask {
+                                bounds,
+                                ..Default::default()
+                            }),
+                            |window| {
+                                for cell in &rails {
+                                    let (x, y, w, h) = if cell.vertical {
+                                        (
+                                            (f32::from(cell.col) + 0.5) * width
+                                                - width.min(1.) / 2.,
+                                            f32::from(cell.row) * height,
+                                            width.min(1.),
+                                            height,
+                                        )
+                                    } else {
+                                        (
+                                            f32::from(cell.col) * width,
+                                            (f32::from(cell.row) + 0.5) * height
+                                                - height.min(1.) / 2.,
+                                            width,
+                                            height.min(1.),
+                                        )
+                                    };
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            bounds.origin + point(px(x), px(y)),
+                                            size(px(w), px(h)),
+                                        ),
+                                        separator,
+                                    ));
+                                }
+                            },
+                        );
                         entity.update(cx, |view, _| {
                             if let Some((grid, cursor)) = view.input_geometry {
                                 painter.borrow().paint_composition(

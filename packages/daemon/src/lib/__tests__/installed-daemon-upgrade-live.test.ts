@@ -18,6 +18,8 @@ import type { CanonicalDaemonInfo } from "../canonical-daemon.ts";
 
 const root = fileURLToPath(new URL("../../../../../", import.meta.url));
 const available = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
+const currentCli = process.env.TMUX_IDE_UPGRADE_CURRENT_CLI ?? join(root, "bin/cli.js");
+if (!isAbsolute(currentCli)) throw new Error("TMUX_IDE_UPGRADE_CURRENT_CLI must be absolute");
 const priorCli = process.env.TMUX_IDE_UPGRADE_PRIOR_CLI;
 if (priorCli && !isAbsolute(priorCli))
   throw new Error("TMUX_IDE_UPGRADE_PRIOR_CLI must be absolute");
@@ -46,9 +48,7 @@ it
       sourceSha256: createHash("sha256")
         .update(readFileSync(fileURLToPath(import.meta.url)))
         .digest("hex"),
-      currentCliSha256: createHash("sha256")
-        .update(readFileSync(join(root, "bin/cli.js")))
-        .digest("hex"),
+      currentCliSha256: createHash("sha256").update(readFileSync(currentCli)).digest("hex"),
       ...(priorCli
         ? { priorCliSha256: createHash("sha256").update(readFileSync(priorCli)).digest("hex") }
         : {}),
@@ -160,13 +160,7 @@ it
       throw new Error(`Timed out: ${label}`);
     };
     try {
-      const idle = start([
-        join(root, "bin/cli.js"),
-        "update",
-        "--daemon",
-        "--if-running",
-        "--json",
-      ]);
+      const idle = start([currentCli, "update", "--daemon", "--if-running", "--json"]);
       const idleResult = await bounded(exits.get(idle)!, "idle update");
       expect(idleResult.code, idleResult.stderr).toBe(0);
       expect(JSON.parse(idleResult.stdout)).toMatchObject({ ok: true, status: "not-running" });
@@ -258,7 +252,7 @@ it
       if (priorCli) {
         // status probes the running daemon's public health endpoint; daemon info
         // alone would only prove record-format readability.
-        const observer = start([join(root, "bin/cli.js"), "status", "--json"]);
+        const observer = start([currentCli, "status", "--json"]);
         const observed = await bounded(exits.get(observer)!, "new CLI observing prior daemon");
         expect(observed.code, observed.stderr).toBe(0);
         const status = JSON.parse(observed.stdout);
@@ -268,7 +262,7 @@ it
         report.preUpdateStatus = status.daemon;
       }
       const commands = Array.from({ length: 2 }, () =>
-        start([join(root, "bin/cli.js"), "update", "--daemon", "--if-running", "--json"]),
+        start([currentCli, "update", "--daemon", "--if-running", "--json"]),
       );
       const results = await bounded(
         Promise.all(commands.map((child) => exits.get(child)!)),

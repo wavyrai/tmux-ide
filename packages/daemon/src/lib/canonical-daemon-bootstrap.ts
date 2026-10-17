@@ -100,6 +100,12 @@ function spawnOwner(entryPath: string, cwd: string): Promise<void> {
   });
 }
 
+class ShutdownTransportError extends Error {
+  constructor(readonly original: unknown) {
+    super("Canonical daemon shutdown transport failed.", { cause: original });
+  }
+}
+
 async function shutdownOlderOwner(info: CanonicalDaemonInfo): Promise<void> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (info.authToken) headers.authorization = `Bearer ${info.authToken}`;
@@ -115,7 +121,9 @@ async function shutdownOlderOwner(info: CanonicalDaemonInfo): Promise<void> {
       }),
       signal: AbortSignal.timeout(2_000),
     },
-  );
+  ).catch((error: unknown) => {
+    throw new ShutdownTransportError(error);
+  });
   const envelope = (await response.json().catch(() => null)) as {
     ok?: unknown;
     result?: { stopping?: unknown };
@@ -248,7 +256,16 @@ async function replaceOlderCanonicalDaemon(
       { reason: "canonical-record-invalid" },
     );
   }
-  await deps.shutdownOlderOwner(info);
+  let transportFailure: ShutdownTransportError | undefined;
+  try {
+    await deps.shutdownOlderOwner(info);
+  } catch (error) {
+    if (!(error instanceof ShutdownTransportError)) throw error;
+    transportFailure = error;
+  }
+  // A competing upgrader may close the authenticated owner's listener before
+  // removing its record. Observe retirement, without repeating the mutation.
+  // A transport failure alone never authorizes starting a replacement.
   const deadline = deps.now() + timeoutMs;
   while (deps.now() < deadline) {
     const state = deps.inspect();
@@ -257,6 +274,7 @@ async function replaceOlderCanonicalDaemon(
     if (!(await deps.alive(info))) return;
     await deps.sleep(25);
   }
+  if (transportFailure) throw transportFailure.original;
   throw new DaemonBootstrapError(
     "control-timeout",
     "The older canonical daemon did not retire after accepting the version upgrade.",

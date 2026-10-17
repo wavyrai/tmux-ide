@@ -136,6 +136,7 @@ fn edit_machine_reopen_stale_queue_and_composition_fences(cx: &mut TestAppContex
                         keystroke: Keystroke::parse(key).unwrap(),
                         is_held: false,
                         prefer_character_input: false,
+                        layout: None,
                     },
                     window,
                     cx,

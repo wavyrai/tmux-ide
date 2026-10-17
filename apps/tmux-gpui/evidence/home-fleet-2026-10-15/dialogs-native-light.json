@@ -1,0 +1,64 @@
+{
+  "source_commit": "798af629",
+  "source_binary_sha256": "972f8a8b0dded0f4c1b00b3de16516a75ca37fbacea6ecf803da3eb95efe3bfa",
+  "scope": "private HOME, synthetic stdio registry; no SSH/daemon",
+  "checks": [
+    "Add via F5; Tab to Cancel then Save visibly focused; Shift-Tab/Space Cancel closes",
+    "Edit via Manage machines; replace selected label; Tab SSH then Save focus",
+    "Enter Save emits one edit; synthetic acknowledgement shows Saved machine updated and focused Done",
+    "Enter Done closes; no terminal keys"
+  ],
+  "wire_commands": [
+    {
+      "type": "appearance",
+      "system": "light"
+    },
+    {
+      "type": "presence",
+      "active": false,
+      "revision": 1
+    },
+    {
+      "type": "presence",
+      "active": true,
+      "revision": 2
+    },
+    {
+      "type": "input",
+      "request": 0,
+      "id": "qa-pane",
+      "input": {
+        "kind": "resize",
+        "data": {
+          "cols": 92,
+          "rows": 26
+        }
+      }
+    },
+    {
+      "type": "machines",
+      "request": 0,
+      "operation": "read"
+    },
+    {
+      "type": "machines",
+      "request": 0,
+      "operation": "mutate",
+      "revision": 12,
+      "change": {
+        "operation": "edit",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "patch": {
+          "label": "Renamed disposable connection",
+          "sshTarget": "qa-host.invalid"
+        }
+      }
+    }
+  ],
+  "limits": [
+    "Resize drag did not resize window: no narrow/short acceptance",
+    "No real registry persistence or remote connection verification",
+    "Earlier stale Edit images remain inconclusive; this is a separate verified run",
+    "Shell correction absent from this binary"
+  ]
+}

@@ -198,8 +198,8 @@ fn real_browser_keeps_long_status_and_terminal_usable_at_minimum_width(cx: &mut 
 #[test]
 fn glass_tint_is_confined_to_chrome_and_fallback_is_opaque() {
     for color in [0x111111, 0xffffff, 0x2e3440] {
-        let solid = super::sidebar_fill(color, false);
-        let glass = super::sidebar_fill(color, true);
+        let solid = super::chrome_fill(color, false);
+        let glass = super::chrome_fill(color, true);
         assert_eq!(solid, rgb(color));
         assert_eq!(glass.r, solid.r);
         assert_eq!(glass.g, solid.g);
@@ -207,3 +207,9 @@ fn glass_tint_is_confined_to_chrome_and_fallback_is_opaque() {
         assert!(glass.a > 0. && glass.a < solid.a);
     }
 }
+
+#[path = "shell_tests/fullscreen.rs"]
+mod fullscreen;
+
+#[path = "shell_tests/content_geometry.rs"]
+mod content_geometry;

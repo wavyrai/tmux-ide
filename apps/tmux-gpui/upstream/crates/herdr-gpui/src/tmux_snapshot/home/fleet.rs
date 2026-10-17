@@ -1,4 +1,19 @@
 use super::*;
+use bezel_ui::widgets::Content;
+
+// Follow Herdr sidebar/row.rs and row/configured.rs's visual hierarchy:
+// labels flex and truncate; marks and trailing state keep their width.
+// This is local composition using existing assets, not imported row ownership.
+fn fleet_mark(path: &'static str, color: u32) -> Svg {
+    svg()
+        .path(path)
+        .size(px(16.))
+        .flex_shrink_0()
+        .text_color(rgb(color))
+}
+fn fleet_status(text: impl Into<SharedString>, theme: &crate::config::Theme) -> Div {
+    super::super::design::palette(theme).badge(text)
+}
 
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn open_fleet_server(
@@ -74,10 +89,14 @@ impl SnapshotView {
         div()
             .id(("fleet-session", index * 128 + row))
             .debug_selector(move || format!("fleet-session-{index}-{row}"))
-            .mt_2()
-            .p_2()
+            .mt_1()
+            .px_2()
+            .py_1()
+            .min_h(px(36.))
             .min_w_0()
+            .rounded(px(crate::config::corners::CONTROL))
             .flex()
+            .items_center()
             .gap_2()
             .when(enabled, |d| {
                 d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
@@ -98,17 +117,31 @@ impl SnapshotView {
                 },
                 cx,
             ))
+            .child(fleet_mark("icons/terminal.svg", theme.muted))
             .child(
                 div()
+                    .debug_selector(move || format!("fleet-session-label-{index}-{row}"))
                     .flex_1()
+                    .min_w_0()
                     .truncate()
                     .child(crate::sidebar::label_text(&session.name)),
             )
-            .child(div().text_color(rgb(theme.muted)).child(format!(
-                "{} panes · {}",
-                session.pane_count,
-                if enabled { "Open" } else { "Unavailable" }
-            )))
+            .child(
+                fleet_status(
+                    format!(
+                        "{} {} · {}",
+                        session.pane_count,
+                        if session.pane_count == 1 {
+                            "pane"
+                        } else {
+                            "panes"
+                        },
+                        if enabled { "Open" } else { "Unavailable" }
+                    ),
+                    &theme,
+                )
+                .debug_selector(move || format!("fleet-session-status-{index}-{row}")),
+            )
             .on_click(cx.listener(move |view, _, window, cx| {
                 cx.stop_propagation();
                 if let Some(token) = &token {
@@ -127,15 +160,19 @@ impl SnapshotView {
         }
         for (index, group) in fleet.groups.iter().enumerate() {
             let mut card = div()
+                .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
-                .p_3()
+                .p_2()
                 .rounded(px(crate::config::corners::PANEL))
                 .border_1()
-                .border_color(rgb(theme.active))
-                .bg(rgb(theme.surface))
+                .border_color(native_controls::separator(&theme))
                 .child(
                     div()
+                        .debug_selector(move || format!("fleet-machine-header-{index}"))
+                        .min_w_0()
+                        .min_h(px(32.))
                         .flex()
+                        .items_center()
                         .gap_2()
                         .child(self.fleet_preference_button(
                             ("fleet-collapse", index),
@@ -153,57 +190,82 @@ impl SnapshotView {
                             },
                             cx,
                         ))
+                        .child(fleet_mark("icons/devices.svg", theme.foreground))
                         .child(
                             div()
+                                .debug_selector(move || format!("fleet-machine-label-{index}"))
                                 .flex_1()
+                                .min_w_0()
                                 .truncate()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(crate::sidebar::label_text(&group.label)),
                         )
-                        .child(div().text_color(rgb(theme.muted)).child(if group.conflict {
-                            "Identity conflict"
-                        } else {
-                            group.state.label()
-                        })),
+                        .child(
+                            fleet_status(
+                                if group.conflict {
+                                    "Identity conflict"
+                                } else {
+                                    group.state.label()
+                                },
+                                &theme,
+                            )
+                            .debug_selector(move || format!("fleet-machine-status-{index}")),
+                        ),
                 );
+            let mut actions = div().mt_2().ml(px(36.)).flex().flex_wrap().gap_2();
             if let Some(token) = group.retry.clone() {
-                card = card.child(
-                    div()
-                        .id(("fleet-retry", index))
-                        .mt_2()
-                        .px_3()
-                        .py_1()
-                        .rounded(px(4.))
-                        .bg(rgb(theme.active))
-                        .cursor_pointer()
-                        .child("Retry connection")
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            view.retry_fleet_machine(request, &token, window, cx);
-                        })),
+                actions = actions.child(
+                    div().id(("fleet-retry", index)).child(
+                        native_controls::action_button(
+                            "fleet-retry-action",
+                            Some("Retry connection"),
+                            "Retry connection",
+                            native_controls::Icon::Refresh,
+                            native_controls::ButtonStyle::Secondary,
+                            &theme,
+                        )
+                        .accessibility_id(format!("fleet-retry-{index}"))
+                        .debug_selector(move || format!("fleet-retry-{index}"))
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
+                                cx.stop_propagation();
+                                view.retry_fleet_machine(request, &token, window, cx);
+                            },
+                        )),
+                    ),
                 );
             }
             if let Some(token) = group.disconnect.clone() {
-                card = card.child(
-                    div()
-                        .id(("fleet-disconnect", index))
-                        .mt_2()
-                        .px_3()
-                        .py_1()
-                        .rounded(px(4.))
-                        .bg(rgb(theme.active))
-                        .cursor_pointer()
-                        .child("Disconnect")
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            view.disconnect_fleet_machine(request, &token, window, cx);
-                        })),
+                actions = actions.child(
+                    div().id(("fleet-disconnect", index)).child(
+                        native_controls::action_button(
+                            "fleet-disconnect-action",
+                            Some("Disconnect"),
+                            "Disconnect",
+                            native_controls::Icon::Close,
+                            native_controls::ButtonStyle::Quiet,
+                            &theme,
+                        )
+                        .accessibility_id(format!("fleet-disconnect-{index}"))
+                        .debug_selector(move || format!("fleet-disconnect-{index}"))
+                        .on_click(cx.listener(
+                            move |view, _, window, cx| {
+                                cx.stop_propagation();
+                                view.disconnect_fleet_machine(request, &token, window, cx);
+                            },
+                        )),
+                    ),
                 );
+            }
+            if group.retry.is_some() || group.disconnect.is_some() {
+                card = card.child(actions);
             }
             if group.sessions.is_empty() && group.servers.is_empty() {
                 card = card.child(
                     div()
                         .mt_2()
+                        .ml(px(36.))
+                        .text_size(px(12.))
                         .text_color(rgb(theme.muted))
                         .child("No sessions available"),
                 );
@@ -231,37 +293,65 @@ impl SnapshotView {
                                 && selected.server_id == server.id
                                 && server.generation.as_ref() == Some(&selected.generation)
                         });
-                let mut section = div().ml_3().mt_2().min_w_0().flex().flex_col().child(
-                    div()
-                        .id(("fleet-server", index * 32 + server_index))
-                        .debug_selector(move || format!("fleet-server-{index}-{server_index}"))
-                        .p_2()
-                        .min_w_0()
-                        .flex()
-                        .gap_2()
-                        .when(enabled, |d| {
-                            d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
-                        })
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .child(crate::sidebar::label_text(&server.label)),
-                        )
-                        .child(div().text_color(rgb(theme.muted)).child(if selected {
-                            "Selected"
-                        } else if enabled {
-                            "Select server"
-                        } else {
-                            "Unavailable"
-                        }))
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            if let Some(token) = &token {
-                                view.open_fleet_server(request, token, window, cx);
-                            }
-                        })),
-                );
+                let mut section = div()
+                    .ml(px(36.))
+                    .mt_3()
+                    .pl_2()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .border_l_1()
+                    .border_color(native_controls::separator(&theme))
+                    .child(
+                        div()
+                            .id(("fleet-server", index * 32 + server_index))
+                            .debug_selector(move || format!("fleet-server-{index}-{server_index}"))
+                            .px_2()
+                            .py_1()
+                            .min_h(px(32.))
+                            .min_w_0()
+                            .rounded(px(crate::config::corners::CONTROL))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(enabled, |d| {
+                                d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
+                            })
+                            .child(fleet_mark("icons/sessions.svg", theme.muted))
+                            .child(
+                                div()
+                                    .debug_selector(move || {
+                                        format!("fleet-server-label-{index}-{server_index}")
+                                    })
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(crate::sidebar::label_text(&server.label)),
+                            )
+                            .child(
+                                fleet_status(
+                                    if selected {
+                                        "Selected"
+                                    } else if enabled {
+                                        "Select server"
+                                    } else {
+                                        "Unavailable"
+                                    },
+                                    &theme,
+                                )
+                                .debug_selector(move || {
+                                    format!("fleet-server-status-{index}-{server_index}")
+                                }),
+                            )
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(token) = &token {
+                                    view.open_fleet_server(request, token, window, cx);
+                                }
+                            })),
+                    );
                 let mut count = 0;
                 for (row, session) in group
                     .sessions
@@ -276,6 +366,8 @@ impl SnapshotView {
                     section = section.child(
                         div()
                             .ml_3()
+                            .py_1()
+                            .text_size(px(12.))
                             .text_color(rgb(theme.muted))
                             .child("No sessions"),
                     );
@@ -288,7 +380,12 @@ impl SnapshotView {
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
             }) {
-                card = card.child(self.fleet_session_row(index, row, session, cx));
+                card = card.child(
+                    div()
+                        .ml(px(36.))
+                        .min_w_0()
+                        .child(self.fleet_session_row(index, row, session, cx)),
+                );
             }
             if group.omitted_servers > 0 {
                 card = card.child(

@@ -99,6 +99,7 @@ pub(super) struct Picker {
     error: Option<&'static str>,
     removal: Option<machine_remove::Confirmation>,
     edit: Option<machine_edit::Form>,
+    machine: Option<machine::Form>,
     closing: Option<pane_close::Confirmation>,
     agent: Option<new_agent::Form>,
     search: Entity<SearchInput>,
@@ -432,6 +433,7 @@ impl SnapshotView {
             error: None,
             removal: None,
             edit: None,
+            machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
             closing: None,
             agent: None,
             search,
@@ -876,13 +878,15 @@ impl SnapshotView {
             return;
         }
         if self.picker.as_ref().is_some_and(|p| p.removal.is_some()) {
-            match key.key.as_str() {
-                "escape" => self.close_picker(window, cx),
-                "enter" => self.confirm_machine_removal(window, cx),
-                _ => {}
-            }
-            cx.stop_propagation();
-            window.prevent_default();
+            self.machine_removal_key(event, window, cx);
+            return;
+        }
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.mode == Mode::Machine)
+        {
+            self.machine_key(event, window, cx);
             return;
         }
         let Some(picker) = &mut self.picker else {
@@ -898,7 +902,6 @@ impl SnapshotView {
             "down" => {
                 picker.selected = (picker.selected + 1).min(picker.rows.len().saturating_sub(1))
             }
-            "enter" if picker.mode == Mode::Machine => self.submit_machine(window, cx),
             "enter" => {
                 let target = picker
                     .rows
