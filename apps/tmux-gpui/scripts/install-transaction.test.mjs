@@ -69,6 +69,21 @@ test("initial activation and exact repeat verify private copies; upgrade retains
   assert.equal(rollbackVerified, true);
   assert.equal(rolled.version, "1.0");
   assert.equal(await content(next.app), "version two");
+  let reverified = 0;
+  const restored = await installApp({
+    ...f,
+    version: "2.0",
+    verify: async (copy) => {
+      reverified++;
+      return (await content(copy)) === "version two";
+    },
+  });
+  assert.equal(reverified, 2, "Reverify both incoming and retained copies");
+  assert.equal(restored.previous, "1.0");
+  assert.equal(await readlink(join(f.installRoot, "current")), "versions/2.0/TmuxIDE.app");
+  await writeFile(join(f.stagedApp, "Contents", "binary"), "version one");
+  await assert.rejects(installApp({ ...f, verify: async () => true }), /already used/);
+  assert.equal(await readlink(join(f.installRoot, "current")), "versions/2.0/TmuxIDE.app");
 });
 test("interruption before activation leaves previous pointer and no owned partial version", async (t) => {
   const f = await fixture(t);

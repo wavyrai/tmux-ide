@@ -92,7 +92,7 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
 test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
   assert.match(
     source,
-    /installer_sha=a3819360478f4231cdb68cfb7ce0802659ac94e3bc9b8722c06d260050759ccc/,
+    /installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4/,
   );
   assert.match(
     source,
