@@ -92,11 +92,11 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
 test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
   assert.match(
     source,
-    /installer_sha=a3819360478f4231cdb68cfb7ce0802659ac94e3bc9b8722c06d260050759ccc/,
+    /installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4/,
   );
   assert.match(
     source,
-    /archive_sha=11937dd09c04fe80e3004159670fb5cc18a56e1171ff95b4a056a795aa141a24/,
+    /archive_sha=4633e227a5ecff7cbb867185ccbb248f91fc197e96596c959cb4fa6664547324/,
   );
   assert.match(source, /--proto '=https' --proto-redir '=https'/);
 });
@@ -119,7 +119,7 @@ for (const action of [[], ["--update"], ["--rollback"], ["--uninstall"]]) {
     const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
     assert.equal(receipt.args[0], action[0]?.slice(2) || "install");
     if (!action.length || action[0] === "--update")
-      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], "0.1.2-2026101616");
+      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], "0.1.2-2026101702");
     assert.equal(
       receipt.args[2],
       join(f.home, "Library/Application Support/tmux-ide/native-alpha"),

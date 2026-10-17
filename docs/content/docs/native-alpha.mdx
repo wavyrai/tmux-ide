@@ -8,10 +8,15 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.2, build 2026101616.** The app is Developer ID
-signed and Apple notarized. Private signed installation, two-pane input and
-second-session input checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
+**Public alpha — version 0.1.2, build 2026101702.** The app is Developer ID
+signed and Apple notarized. Private real-SSH recovery, native two-pane reconnection/input and packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
+
+This build automatically reconnects an already-open terminal after a transient
+connection loss when the same machine, tmux server, session and pane can be
+verified again. Input entered while disconnected is discarded, and leaving for
+Home cancels recovery. The original cause of reported Spark connection drops
+remains under investigation.
 
 ## Requirements
 
@@ -30,8 +35,8 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026101616)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101616/tmux-ide-gpui-0.1.2-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026101702)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101702/tmux-ide-gpui-0.1.2-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
 Install the native alpha with one command. This also installs CLI 2.9.6 at

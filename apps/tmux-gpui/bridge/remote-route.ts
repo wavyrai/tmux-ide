@@ -51,12 +51,31 @@ export interface RemotePreviewRoute {
  */
 export async function createRemotePreviewRoute(
   owner: Owner,
-  options: { request?: typeof fetch; signal?: AbortSignal; scope?: TmuxServerScope } = {},
+  options: {
+    request?: typeof fetch;
+    signal?: AbortSignal;
+    scope?: TmuxServerScope;
+    diagnostic?: (
+      reason:
+        | "transport-state"
+        | "connection-epoch"
+        | "remote-identity"
+        | "forward-address"
+        | "identity-probe",
+    ) => void;
+  } = {},
 ): Promise<RemotePreviewRoute> {
   const parsedScope =
     options.scope === undefined ? null : TmuxServerScopeSchemaZ.safeParse(options.scope);
   if (parsedScope && !parsedScope.success) throw new RemoteRouteError("server-changed");
   const scope = parsedScope?.data;
+  const diagnostic = (reason: Parameters<NonNullable<typeof options.diagnostic>>[0]) => {
+    try {
+      options.diagnostic?.(reason);
+    } catch {
+      /* Diagnostics cannot change retirement. */
+    }
+  };
   const parentSignal = options.signal;
   const fetchRequest = options.request ?? fetch;
   const captured = owner.endpoint();
@@ -80,6 +99,17 @@ export async function createRemotePreviewRoute(
       next.remote !== captured.remote ||
       next.localBaseUrl !== captured.localBaseUrl
     ) {
+      if (!controller.signal.aborted && !parentSignal?.aborted) {
+        const reason =
+          next.state !== "ready"
+            ? "transport-state"
+            : next.epoch !== captured.epoch
+              ? "connection-epoch"
+              : next.remote !== captured.remote
+                ? "remote-identity"
+                : "forward-address";
+        diagnostic(reason);
+      }
       dispose();
       throw new RemoteRouteError("retired");
     }
@@ -129,6 +159,7 @@ export async function createRemotePreviewRoute(
           throw new RemoteRouteError("identity");
         assertCurrent();
       } catch (error) {
+        if (!controller.signal.aborted && !parentSignal?.aborted) diagnostic("identity-probe");
         dispose();
         if (error instanceof RemoteRouteError) throw error;
         throw new RemoteRouteError("unavailable");

@@ -16,7 +16,7 @@ notices. `upstream-provenance.json` records the source commit and SHA-256 digest
 of every imported file. Upstream crate names are retained for comparison.
 The adapter renders snapshots and the selected live window’s pane arrangement
 through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. A local TypeScript helper reuses the existing daemon delivery validator;
-Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry restoration on background/close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Automatic reconnect is not implemented. Native text composition is
+Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry restoration on background/close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
 implemented with further IME qualification pending. If you click or type before
 keyboard input is ready, the preview keeps input interrupted until you click the
 ready terminal again and retype. It never replays discarded input. This also
@@ -336,7 +336,7 @@ Physical editor-launch qualification is still pending.
 Project presentation remains future work. Other catalog updates are explicit through Refresh. After a daemon replacement, select Refresh sessions,
 then choose a session and pane again. For explicit files, update connection details
 first. The browser process stays open. Recovery is explicit through Refresh and
-reselection; it does not automatically reconnect. Switching clears the displayed
+reselection for private host-file connections; verified fleet terminals use the bounded recovery described below. Switching clears the displayed
 frame immediately, retires the previous pane connection, and only admits responses
 for the new selection. Each pane uses the canonical delivery helper with an interactive capability and
 explicit daemon input authority. The GUI receives display state, never the daemon owner token.
@@ -477,7 +477,19 @@ If initial host discovery/configuration is unavailable, the browser helper stays
 open with input disabled. Start the supported daemon (or correct the explicit
 private host file), then use Refresh sessions and select the fresh session/pane.
 A failed refresh clears the old frame and input authority. This is explicit
-recovery; automatic reconnect is not implemented.
+recovery for initial discovery and private host-file previews. Once a fleet terminal has
+accepted a live frame, transport or machine-route retirement triggers bounded automatic
+recovery of that exact machine/server/live-session/pane. A fresh catalog and input grant
+are required; input is never replayed, and a same-name replacement is never selected.
+Navigation or explicit disconnect cancels pending recovery. Protocol/replica validation
+faults remain explicit failures. Exhaustion asks for refresh/reselection.
+
+`TMUX_GPUI_TEST_CLI=/absolute/path/to/isolated-cli.js node --import tsx apps/tmux-gpui/bridge/terminal-recovery-smoke.mjs`
+
+Set `TMUX_GPUI_TEST_SSH=1` on macOS to run the same recovery through a private real OpenSSH server. Set `TMUX_GPUI_TEST_BROWSER` to an absolute packaged `browser.bundle.mjs` path to qualify that helper. The fixture verifies the restored pane, retained tab and executed input; it does not connect to production SSH hosts.
+checks private daemon replacement with the same browser and pane, then verifies input.
+The fixture pins its private socket and selects only its exact generated session name.
+This headless proof does not replace native GUI or real remote SSH qualification.
 
 To repeat the physical daemon-replacement check, set `TMUX_GPUI_TEST_APP` to an
 explicit freshly assembled app and `TMUX_GPUI_RECOVERY_SIGNAL` to a new absolute

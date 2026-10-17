@@ -354,13 +354,19 @@ export async function installApp({
         ]);
         if (await exists(destination)) {
           const existing = await versionRecord(versions, version, token);
-          if ((prior && prior.version !== version) || existing.digest !== digest)
+          // A rollback may be undone only to its exact retained successor. Do not
+          // rewrite history or admit a different existing version chain.
+          if (
+            (prior && prior.version !== version && existing.previous !== prior.version) ||
+            existing.digest !== digest
+          )
             throw new Error("Version ID is already used");
           // Detach deliberately retains versions. Re-admit the exact owned bytes,
           // including a fresh signature check of the retained app, before relinking.
           const retainedIdentity = await lstat(destination);
           const retainedAppIdentity = await lstat(existing.app);
-          if (!prior) await verified(existing.app, verify, existing.digest);
+          if (!prior || prior.version !== version)
+            await verified(existing.app, verify, existing.digest);
           if (beforeActivate) await beforeActivate();
           await assertDirectories([
             [root, rootIdentity],

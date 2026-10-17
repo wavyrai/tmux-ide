@@ -14,6 +14,10 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 const source = readFileSync(resolve("docs/public/install.sh"), "utf8");
+const nativeBootstrapDigest = source.match(
+  /\[ "\$\(digest "\$native_stage\/install\.sh"\)" = ([a-f0-9]{64}) \]/,
+)?.[1];
+assert.ok(nativeBootstrapDigest, "Native bootstrap checksum pin must exist");
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "native-dispatch-"));
@@ -44,7 +48,7 @@ function fixture(t) {
     entry,
     source
       .replace("# Native alpha is explicit;", override + "# Native alpha is explicit;")
-      .replace("586cdd1b094169bbc07373bc36974a234893f3221fa85e3cc1584591857b20f4", digest),
+      .replace(nativeBootstrapDigest, digest),
   );
   const paths = {
     TEST_NATIVE_ARGS: join(root, "native-args"),

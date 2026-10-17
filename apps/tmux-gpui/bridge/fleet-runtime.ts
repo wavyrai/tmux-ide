@@ -127,7 +127,11 @@ export function createNativeFleetRuntime(changed: () => void, retired: () => voi
             observe: selection.handle.observe,
             observeConnection: manager.subscribe,
           },
-          { signal, scope },
+          {
+            signal,
+            scope,
+            diagnostic: (reason) => process.stderr.write(`TMUX_GPUI_ROUTE ${reason}\n`),
+          },
         );
         try {
           check();
@@ -207,6 +211,7 @@ export function createNativeFleetRuntime(changed: () => void, retired: () => voi
     preferenceSnapshot: preferences.preferences.snapshot,
     recordVisit: preferences.preferences.recordVisit,
     resolveCanonical: fleet.resolveCanonical,
+    recoveryRoute: fleet.recoveryRoute,
     retainedTarget: fleet.retainedTarget,
     tabObservation: fleet.tabObservation,
     attachmentKey,
