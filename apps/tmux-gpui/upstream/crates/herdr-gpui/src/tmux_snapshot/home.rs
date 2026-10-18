@@ -21,6 +21,12 @@ pub(super) fn initial_state() -> browser::State {
 fn live(state: &browser::State, connected: bool) -> bool {
     connected && state.home_phase == browser::HomePhase::Live
 }
+fn status_message(state: &browser::State, connected: bool) -> String {
+    if connected && let Some(setup) = &state.local_setup {
+        return setup.phase.guidance().into();
+    }
+    crate::notifications::safe_text(&state.status, 240)
+}
 fn summary(state: &browser::State, connected: bool) -> String {
     if connected && let Some(fleet) = &state.fleet {
         let sessions = fleet
@@ -97,6 +103,9 @@ impl SnapshotView {
                         phase: browser::local_setup::Phase::Running,
                     });
                 } else {
+                    self.browser_state.local_setup = Some(browser::local_setup::Setup {
+                        phase: browser::local_setup::Phase::Failed,
+                    });
                     self.browser_state.status =
                         "Local setup request could not be sent. Try again.".into();
                 }
@@ -165,10 +174,15 @@ impl SnapshotView {
                     .text_color(rgb(theme.muted))
                     .child(summary(&self.browser_state, connected)),
             );
-        if !self.browser_state.status.is_empty() && !is_live {
-            body = body.child(div().mt_2().text_color(rgb(theme.muted)).child(
-                crate::notifications::safe_text(&self.browser_state.status, 240),
-            ));
+        if (connected && setup_phase.is_some())
+            || (!is_live && !self.browser_state.status.is_empty())
+        {
+            body = body.child(
+                div()
+                    .mt_2()
+                    .text_color(rgb(theme.muted))
+                    .child(status_message(&self.browser_state, connected)),
+            );
         }
         if connected {
             let action_focus = self
@@ -284,7 +298,7 @@ impl SnapshotView {
                     action_focus::focus_control(control, &filters.actions[3], 3, theme.foreground, self.canvas())
                 })
             })))
-            .when(!self.local_session_available() && self.new_session.is_none(), |column| column.child(
+            .when(setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none(), |column| column.child(
                 div().mt_2().text_sm().text_color(rgb(theme.muted))
                     .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
             .child(self.new_session_controls(cx));
@@ -346,10 +360,8 @@ impl SnapshotView {
                 });
             fleet_column =
                 fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
-        } else {
-            let guidance = if let Some(phase) = setup_phase {
-                phase.guidance()
-            } else if !connected {
+        } else if !connected || setup_phase.is_none() {
+            let guidance = if !connected {
                 "Restart the native preview to reconnect."
             } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
                 "The daemon could not list sessions. Refresh to try again."

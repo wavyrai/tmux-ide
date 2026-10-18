@@ -1,0 +1,50 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+error[E0603]: struct `Reader` is private
+   --> crates/herdr-gpui/src/tmux_snapshot/home/tests/local_setup.rs:67:30
+    |
+ 67 |         let state = browser::Reader::default().accept(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    |                              ^^^^^^ private struct
+    |
+note: the struct `Reader` is defined here
+   --> crates/herdr-gpui/src/tmux_snapshot/browser.rs:407:1
+    |
+407 | struct Reader {
+    | ^^^^^^^^^^^^^
+
+error[E0603]: struct `Reader` is private
+   --> crates/herdr-gpui/src/tmux_snapshot/home/tests/local_setup.rs:73:26
+    |
+ 73 |     let state = browser::Reader::default().accept(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    |                          ^^^^^^ private struct
+    |
+note: the struct `Reader` is defined here
+   --> crates/herdr-gpui/src/tmux_snapshot/browser.rs:407:1
+    |
+407 | struct Reader {
+    | ^^^^^^^^^^^^^
+
+error[E0624]: method `accept` is private
+   --> crates/herdr-gpui/src/tmux_snapshot/home/tests/local_setup.rs:67:48
+    |
+ 67 |         let state = browser::Reader::default().accept(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    |                                                ^^^^^^ private method
+    |
+   ::: crates/herdr-gpui/src/tmux_snapshot/browser.rs:413:5
+    |
+413 |     fn accept(&mut self, line: &[u8]) -> Result<State, Error> {
+    |     --------------------------------------------------------- private method defined here
+
+error[E0624]: method `accept` is private
+   --> crates/herdr-gpui/src/tmux_snapshot/home/tests/local_setup.rs:73:44
+    |
+ 73 |     let state = browser::Reader::default().accept(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    |                                            ^^^^^^ private method
+    |
+   ::: crates/herdr-gpui/src/tmux_snapshot/browser.rs:413:5
+    |
+413 |     fn accept(&mut self, line: &[u8]) -> Result<State, Error> {
+    |     --------------------------------------------------------- private method defined here
+
+Some errors have detailed explanations: E0603, E0624.
+For more information about an error, try `rustc --explain E0603`.
+error: could not compile `herdr-gpui` (lib test) due to 4 previous errors
