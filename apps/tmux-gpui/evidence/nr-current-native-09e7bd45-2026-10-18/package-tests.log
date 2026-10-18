@@ -1,0 +1,18 @@
+✔ source unsupported daemon stays credential-free and refresh rechecks compatibility (577.291042ms)
+✔ packaged unsupported daemon stays credential-free and refresh rechecks compatibility (631.08375ms)
+✔ Refresh of a retired selected fleet route reports route guidance without fallback (6216.791542ms)
+✔ Refresh of a inflight selected fleet route reports route guidance without fallback (2750.319167ms)
+✔ Active fleet verification failures remain errors rather than retired-route guidance (202.798166ms)
+✔ local app retains binary identity and refuses replacement (1272.304208ms)
+✔ local launcher never resolves dirname through caller PATH (17.437334ms)
+✔ assembler rejects a mismatched executable before running supplied tools (302.680958ms)
+✔ browser remove rejects stale/background commands, consumes one pending write, and preserves sibling profile (1223.102042ms)
+✔ browser edit rejects stale/background commands, consumes one pending write, and preserves sibling profile (277.432541ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9534.868167
