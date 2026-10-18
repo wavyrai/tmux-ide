@@ -12,6 +12,7 @@ import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratc
 import { stopFixtureChild } from "./fixture-child.mjs";
 import { discoverPreviewHost } from "./discovery.ts";
 import { createPreviewCatalog } from "./catalog.ts";
+import { TerminalAttachmentSemanticPaneIdSchemaZ } from "../../../packages/contracts/src/semantic-identity.ts";
 
 import { tmpdir } from "node:os";
 import { randomUUID, createHash } from "node:crypto";
@@ -25,17 +26,21 @@ process.umask(0o077);
 const useSsh = true;
 const failureKind = process.env.TMUX_GPUI_TEST_SSH_FAILURE ?? "authentication";
 assert.ok(
-  ["authentication", "host-key", "missing-cli", "unreachable"].includes(failureKind),
+  ["authentication", "host-key", "missing-cli", "unreachable", "incompatible"].includes(
+    failureKind,
+  ),
   "Unknown SSH failure fixture",
 );
 const expectedFailure =
-  failureKind === "unreachable"
-    ? "unavailable"
-    : failureKind === "missing-cli"
-      ? "remote-cli-missing"
-      : failureKind === "host-key"
-        ? "ssh-host-key"
-        : "ssh-authentication";
+  failureKind === "incompatible"
+    ? "incompatible"
+    : failureKind === "unreachable"
+      ? "unavailable"
+      : failureKind === "missing-cli"
+        ? "remote-cli-missing"
+        : failureKind === "host-key"
+          ? "ssh-host-key"
+          : "ssh-authentication";
 let trustedKnownHosts;
 let ownedCliBytes;
 let ownedConfigBytes;
@@ -70,7 +75,7 @@ async function assertRefused(port) {
 const ownedCliRepair = { removed: false, originalSha256: null, restoredSha256: null };
 const publicDiscovery = process.env.TMUX_GPUI_TEST_PUBLIC_DISCOVERY === "1";
 assert.ok(
-  !["missing-cli", "unreachable"].includes(failureKind) || publicDiscovery,
+  !["missing-cli", "unreachable", "incompatible"].includes(failureKind) || publicDiscovery,
   "Runtime and reachability cases require actual public discovery",
 );
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
@@ -104,6 +109,18 @@ const tracker = ownedProcesses({
 let machineId;
 const cli = process.env.TMUX_GPUI_TEST_CLI;
 assert.ok(cli && isAbsolute(cli) && (await stat(cli)).isFile(), "Supply an isolated built CLI");
+const historicalCli = process.env.TMUX_GPUI_TEST_HISTORICAL_CLI;
+if (failureKind === "incompatible") {
+  assert.ok(historicalCli && isAbsolute(historicalCli) && (await stat(historicalCli)).isFile());
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(historicalCli))
+      .digest("hex"),
+    "928005012711bcbf1430ae9d29ac1dca08c8468aed07e558eb9fd8fa1277c39e",
+  );
+}
+const protocolRepair = {};
+const intentionallyStopped = new WeakSet();
 const cliArtifact = { kind: "explicit-cli", packageVersion: null };
 if (process.env.TMUX_GPUI_TEST_INSTALLED_CLI === "1") {
   const canonicalCli = await realpath(cli);
@@ -143,7 +160,8 @@ const own = (child) => {
     fatal ??= new Error("Owned child spawn failed");
   });
   child.on("exit", () => {
-    if (!closing) fatal ??= new Error("Owned child exited early");
+    if (!closing && !intentionallyStopped.has(child))
+      fatal ??= new Error("Owned child exited early");
   });
   return child;
 };
@@ -159,9 +177,9 @@ const until = async (predicate) => {
     await delay(25);
   }
 };
-const start = async () => {
+const start = async (executable = cli) => {
   daemon = own(
-    spawn(process.execPath, [cli, "--headless"], {
+    spawn(process.execPath, [executable, "--headless"], {
       env,
       cwd: scratch.root,
       stdio: "ignore",
@@ -180,6 +198,37 @@ const start = async () => {
   });
   currentInfo = JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8"));
 };
+async function mirrorVerifiedRecord(replace = false) {
+  // Mirror only an independently identity-verified owned daemon record. No synthetic response.
+  assert.equal(currentInfo.pid, daemon.pid);
+  assert.ok(["127.0.0.1", "localhost", "::1"].includes(currentInfo.bindHostname));
+  const host = currentInfo.bindHostname === "::1" ? "[::1]" : currentInfo.bindHostname;
+  const response = await globalThis.fetch(`http://${host}:${currentInfo.port}/identity`, {
+    redirect: "error",
+    signal: globalThis.AbortSignal.timeout(2500),
+  });
+  assert.equal(response.status, 200);
+  const identity = await response.json();
+  for (const field of ["pid", "instanceId", "startedAt", "protocolVersion", "environmentId"])
+    assert.equal(identity[field], currentInfo[field]);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8")),
+    currentInfo,
+  );
+  const state = join(ssh.root, "state");
+  if (!replace) {
+    await mkdir(state, { mode: 0o700 });
+    ssh.files.capture("state");
+  } else {
+    ssh.files.verify("state");
+    ssh.files.verify("state/daemon.json");
+  }
+  await writeFile(join(state, "daemon.json"), JSON.stringify(currentInfo), {
+    mode: 0o600,
+    flag: replace ? "w" : "wx",
+  });
+  ssh.files.capture("state/daemon.json");
+}
 const deniedMarker = "NR08_DENIED_" + randomUUID().replaceAll("-", "").slice(0, 12);
 let deniedPane;
 const ownedPane = () =>
@@ -198,9 +247,27 @@ const ownedPane = () =>
   )
     .trim()
     .split("\t");
+const physicalIdentity = () =>
+  execFileSync(
+    env.TMUX_IDE_TMUX_BIN,
+    [
+      "-S",
+      scratch.socketPath,
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}",
+    ],
+    { env, encoding: "utf8", timeout: 5000 },
+  )
+    .trim()
+    .split("\n")
+    .sort();
+const originalPhysicalIdentity = physicalIdentity();
 const send = (value) => browser.stdin.write(JSON.stringify(value) + "\n");
 try {
-  await start();
+  await start(failureKind === "incompatible" ? historicalCli : cli);
+  if (failureKind === "incompatible") assert.equal(currentInfo.protocolVersion, 3);
   localScratch = await createScratchFleet({
     sessions: 1,
     windowsPerSession: 1,
@@ -246,32 +313,7 @@ try {
           : { version: 1, error: { code: "daemon-missing" } },
       onAllocated: (a) => allocations.push(a),
     });
-    if (publicDiscovery) {
-      // Mirror only an independently identity-verified owned daemon record. No synthetic response.
-      assert.equal(currentInfo.pid, daemon.pid);
-      assert.ok(["127.0.0.1", "localhost", "::1"].includes(currentInfo.bindHostname));
-      const host = currentInfo.bindHostname === "::1" ? "[::1]" : currentInfo.bindHostname;
-      const response = await globalThis.fetch(`http://${host}:${currentInfo.port}/identity`, {
-        redirect: "error",
-        signal: globalThis.AbortSignal.timeout(2500),
-      });
-      assert.equal(response.status, 200);
-      const identity = await response.json();
-      for (const field of ["pid", "instanceId", "startedAt", "protocolVersion", "environmentId"])
-        assert.equal(identity[field], currentInfo[field]);
-      assert.deepEqual(
-        JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8")),
-        currentInfo,
-      );
-      const state = join(ssh.root, "state");
-      await mkdir(state, { mode: 0o700 });
-      ssh.files.capture("state");
-      await writeFile(join(state, "daemon.json"), JSON.stringify(currentInfo), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      ssh.files.capture("state/daemon.json");
-    }
+    if (publicDiscovery) await mirrorVerifiedRecord();
     const client = join(scratch.root, "client");
     const bin = join(client, "bin");
     await mkdir(bin, { recursive: true, mode: 0o700 });
@@ -315,7 +357,7 @@ try {
       const wrongKey = await readFile(join(ssh.root, "client.pub"), "utf8");
       await writeFile(join(ssh.root, "known_hosts"), endpoint + " " + wrongKey, { mode: 0o600 });
       ssh.files.capture("known_hosts");
-    } else {
+    } else if (failureKind === "authentication") {
       ssh.files.verify("authorized_keys");
       await writeFile(join(ssh.root, "authorized_keys"), "", { mode: 0o600 });
       ssh.files.capture("authorized_keys");
@@ -387,17 +429,98 @@ try {
   facts.denial = true;
   // Establish the exact semantic target using supported metadata promotion on the owned daemon.
   // The remote route remains denied in the browser; no terminal input is sent by this setup.
-  const setupCatalog = createPreviewCatalog(
-    await discoverPreviewHost(join(scratch.daemonInfoDir, "daemon.json")),
-  );
-  try {
-    const sessions = await setupCatalog.sessions();
-    const target = sessions.find((session) => session.sessionName === scratch.sessionNames[0]);
-    assert.ok(target);
-    const panes = await setupCatalog.panes(target.liveSessionId);
-    assert.equal(panes.length, 1);
-  } finally {
-    setupCatalog.dispose();
+  if (failureKind === "incompatible") {
+    protocolRepair.metadataRequests = [];
+    const request = async (suffix, body) => {
+      const response = await globalThis.fetch(
+        `http://127.0.0.1:${currentInfo.port}/api/v1/tmux-servers${suffix}`,
+        {
+          method: body === undefined ? "GET" : "POST",
+          redirect: "error",
+          signal: globalThis.AbortSignal.timeout(5000),
+          headers: {
+            Authorization: `Bearer ${currentInfo.authToken}`,
+            "Content-Type": "application/json",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+      );
+      let text = "";
+      for await (const chunk of response.body) {
+        text += Buffer.from(chunk).toString("utf8");
+        assert.ok(Buffer.byteLength(text) <= 1024 * 1024);
+      }
+      const stage =
+        suffix === ""
+          ? "server-catalog"
+          : suffix.endsWith("/sessions")
+            ? "session-catalog"
+            : suffix.endsWith("/open")
+              ? "session-open"
+              : "inventory";
+      const observation = { stage, status: response.status, code: null };
+      protocolRepair.metadataRequests.push(observation);
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("Historical metadata response invalid");
+      }
+      const knownCodes = new Set([
+        "invalid-request",
+        "server-unavailable",
+        "owner-required",
+        "not-found",
+        "offline",
+        "stale-generation",
+        "capacity",
+        "disposed",
+      ]);
+      const code = knownCodes.has(data?.error?.code) ? data.error.code : null;
+      observation.code = code;
+      assert.equal(response.status, 200, `Historical metadata ${stage}: ${code}`);
+      return data;
+    };
+    const catalog = await request("");
+    assert.equal(catalog.version, 1);
+    assert.equal(catalog.servers.length, 1);
+    const server = catalog.servers[0];
+    assert.equal(server.state, "online");
+    assert.equal(server.generation, currentInfo.instanceId);
+    const scope = { serverId: server.serverId, generation: server.generation };
+    const base = `/${encodeURIComponent(server.serverId)}/${encodeURIComponent(server.generation)}`;
+    const sessions = await request(`${base}/sessions`);
+    assert.deepEqual(sessions.server, scope);
+    const matches = sessions.sessions.filter((row) => row.sessionName === scratch.sessionNames[0]);
+    assert.equal(matches.length, 1);
+    const opened = await request(
+      `${base}/sessions/${encodeURIComponent(matches[0].liveSessionId)}/open`,
+      {},
+    );
+    assert.deepEqual(opened.server, scope);
+    assert.equal(opened.liveSessionId, matches[0].liveSessionId);
+    // Prior retained run reached this successful promotion, then historical inventory
+    // returned400/invalid-request. This lane uses the actual owner-stamped source ID;
+    // it does not qualify historical inventory or terminal readiness.
+    assert.deepEqual(physicalIdentity(), originalPhysicalIdentity);
+    const [originalPane, stampedPane] = ownedPane();
+    assert.equal(originalPane, scratch.initialPanes[0].paneId);
+    protocolRepair.deniedSemanticPane = TerminalAttachmentSemanticPaneIdSchemaZ.parse(stampedPane);
+    protocolRepair.deniedIdentitySource =
+      "owned physical pane stamp after authenticated historical session-open";
+  } else {
+    const setupCatalog = createPreviewCatalog(
+      await discoverPreviewHost(join(scratch.daemonInfoDir, "daemon.json")),
+    );
+    try {
+      const sessions = await setupCatalog.sessions();
+      const target = sessions.find((session) => session.sessionName === scratch.sessionNames[0]);
+      assert.ok(target);
+      const panes = await setupCatalog.panes(target.liveSessionId);
+      assert.equal(panes.length, 1);
+    } finally {
+      setupCatalog.dispose();
+    }
   }
   const [physical, semantic] = ownedPane();
   assert.equal(physical, scratch.initialPanes[0].paneId);
@@ -418,7 +541,47 @@ try {
 
   trace.push({ phase, diagnostic: denied.diagnostic, frame: false, input: false });
   // Restore only owned fixture trust, credentials or executable; never weaken SSH verification.
-  if (failureKind === "unreachable") {
+  if (failureKind === "incompatible") {
+    const before = JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8"));
+    assert.deepEqual(before, currentInfo);
+    assert.equal(before.pid, daemon.pid);
+    assert.equal(daemon.exitCode, null);
+    protocolRepair.before = {
+      pid: before.pid,
+      instanceId: before.instanceId,
+      environmentId: before.environmentId,
+      protocolVersion: before.protocolVersion,
+      productVersion: before.productVersion,
+    };
+    protocolRepair.sourceBefore = physicalIdentity();
+    assert.deepEqual(protocolRepair.sourceBefore, originalPhysicalIdentity);
+    intentionallyStopped.add(daemon);
+    await stopFixtureChild(daemon);
+    assert.ok(daemon.exitCode !== null || daemon.signalCode !== null);
+    protocolRepair.oldExit = { code: daemon.exitCode, signal: daemon.signalCode };
+    await start();
+    assert.notEqual(currentInfo.instanceId, before.instanceId);
+    assert.equal(currentInfo.environmentId, before.environmentId);
+    assert.equal(currentInfo.protocolVersion, 4);
+    protocolRepair.after = {
+      pid: currentInfo.pid,
+      instanceId: currentInfo.instanceId,
+      environmentId: currentInfo.environmentId,
+      protocolVersion: currentInfo.protocolVersion,
+      productVersion: currentInfo.productVersion,
+    };
+    await ssh.refreshTargetPort(currentInfo.port);
+    await until(() => {
+      try {
+        return ssh.confirmRefreshedPid().pid === ssh.sshdPid;
+      } catch {
+        return false;
+      }
+    });
+    await mirrorVerifiedRecord(true);
+    protocolRepair.sourceAfter = physicalIdentity();
+    assert.deepEqual(protocolRepair.sourceAfter, originalPhysicalIdentity);
+  } else if (failureKind === "unreachable") {
     ssh.files.verify("client_config");
     assert.ok(ownedConfigBytes);
     await assertRefused(endpointRepair.port);
@@ -501,6 +664,10 @@ try {
     "Denied input must not replay after recovery",
   );
   facts.deniedInputAbsent = true;
+  if (failureKind === "incompatible") {
+    protocolRepair.sourceAfterInput = physicalIdentity();
+    assert.deepEqual(protocolRepair.sourceAfterInput, originalPhysicalIdentity);
+  }
   if (publicDiscovery)
     assert.equal(ssh.metrics().requests, 0, "Real CLI must not use synthetic handshake");
   trace.push({ phase, freshInputExecuted: true });
@@ -529,6 +696,15 @@ try {
       .update(await readFile(cli))
       .digest("hex"),
     ...facts,
+    ...(failureKind === "incompatible"
+      ? {
+          protocolRepair,
+          historicalCliSha256: createHash("sha256")
+            .update(await readFile(historicalCli))
+            .digest("hex"),
+          historicalArtifactScope: "source-built non-hermetic; not an exact published release",
+        }
+      : {}),
     ...(failureKind === "missing-cli" ? { ownedCliRepair } : {}),
     ...(failureKind === "unreachable" ? { endpointRepair } : {}),
     discoveryDescriptor: publicDiscovery
