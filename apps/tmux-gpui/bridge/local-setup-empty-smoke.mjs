@@ -22,6 +22,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { stopFixtureChild } from "./fixture-child.mjs";
 const { fetch, AbortSignal } = globalThis;
+const bundle = process.env.TMUX_GPUI_TEST_BUNDLE;
+if (bundle) assert.ok(isAbsolute(bundle), "Explicit absolute bundle directory required");
+const createFirst = process.env.TMUX_GPUI_TEST_CREATE === "1";
+const externalServer = process.env.TMUX_GPUI_TEST_EXTERNAL_SERVER === "1";
 const cli = process.env.TMUX_GPUI_TEST_CLI;
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(cli && isAbsolute(cli) && (await stat(cli)).isFile(), "Explicit private CLI required");
@@ -41,6 +45,12 @@ const privateHome = join(privateRoot, "home");
 const privateProject = join(privateRoot, "project");
 await mkdir(privateHome);
 await mkdir(privateProject);
+// Source-only interactive children resolve tsx from their inherited private cwd.
+if (!bundle)
+  await symlink(
+    fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+    join(privateProject, "node_modules"),
+  );
 const tmuxBinary = execFileSync("which", ["tmux"], { encoding: "utf8" }).trim();
 function absentServer(error) {
   assert.equal(error.status, 1, "Unexpected tmux process failure");
@@ -164,7 +174,9 @@ try {
   socketInitiallyAbsent = true;
 }
 assert.ok(socketInitiallyAbsent);
-let noServerGuidance = false,
+let firstSessionReady = false,
+  inputVerified = false,
+  noServerGuidance = false,
   noCreateAuthority = false,
   localTargetUnavailable = false;
 try {
@@ -200,12 +212,14 @@ try {
   initialAbsent = true;
   browser = spawn(
     process.execPath,
-    [
-      "--import",
-      import.meta.resolve("tsx"),
-      fileURLToPath(new URL("../../../apps/tmux-gpui/bridge/browser.ts", import.meta.url)),
-      "--local",
-    ],
+    bundle
+      ? [join(bundle, "browser.bundle.mjs"), "--local"]
+      : [
+          "--import",
+          import.meta.resolve("tsx"),
+          fileURLToPath(new URL("../../../apps/tmux-gpui/bridge/browser.ts", import.meta.url)),
+          "--local",
+        ],
     { env, cwd: fleet.projectDir, stdio: ["pipe", "pipe", "pipe"] },
   );
   browser.on("error", () => {
@@ -237,6 +251,8 @@ try {
           sessions: latest.sessions.length,
           frame: !!latest.snapshot,
           input: latest.inputReady,
+          status: latest.status,
+          catalogComplete: latest.sessionCatalogComplete,
         };
         if (JSON.stringify(trace.at(-1)) !== JSON.stringify(entry) && trace.length < 128)
           trace.push(entry);
@@ -252,37 +268,109 @@ try {
   const request = latest.request;
   send({ type: "local-setup", request });
   send({ type: "local-setup", request });
-  await until(
-    () =>
-      runningObserved &&
-      latest?.home?.phase === "unavailable" &&
-      /no online tmux server/.test(latest.status),
-  );
-  assert.ok(await readRecord());
-  await verify(record);
-  noServerGuidance = /Open an ordinary tmux session/.test(latest.status);
-  noCreateAuthority = latest.home?.phase !== "live" && latest.selectedServer === null;
-  const local = latest.fleet?.groups.find((group) => group.id === "local");
-  localTargetUnavailable =
-    !local ||
-    !local.servers.some(
-      (server) => server.state === "online" && server.selection && server.generation,
+  if (createFirst) {
+    await until(
+      () => runningObserved && latest?.home?.phase === "live" && latest.localSessionCreate,
     );
-  assert.ok(noServerGuidance && noCreateAuthority && localTargetUnavailable);
-  // Idle operation status is not creation authority. A stale/unsupported raw
-  // request must not bootstrap a session behind the unavailable Home state.
-  send({ type: "create-session", request: latest.request, name: "must-not-create" });
-  await delay(250);
-  let sessionsCreated = false;
-  try {
-    sessionsCreated = tmux("list-sessions", "-F", "#{session_name}").trim().length > 0;
-  } catch (error) {
-    absentServer(error);
+    assert.ok(await readRecord());
+    await verify(record);
+    const action = latest.localSessionCreate.action;
+    // Presence loss retires the offered action. Foreground must independently rediscover.
+    send({ type: "presence", active: false, revision: 2 });
+    await until(() => latest.localSessionCreate === null);
+    send({ type: "presence", active: true, revision: 3 });
+    await until(() => latest.localSessionCreate && latest.localSessionCreate.action !== action);
+    const currentAction = latest.localSessionCreate.action;
+    send({
+      type: "create-local-session",
+      request: latest.request,
+      action,
+      name: "stale-must-not-create",
+    });
+    const create = {
+      type: "create-local-session",
+      request: latest.request,
+      action: currentAction,
+      name: "First shell",
+    };
+    if (externalServer) {
+      tmux("new-session", "-d", "-s", "external-owned", "sh");
+      await until(() => latest.localSessionCreate === null && latest.home?.phase === "unavailable");
+      send(create); // The formerly valid action must not mutate after passive revocation.
+      send({ type: "refresh", request: latest.request + 1 });
+    } else {
+      send(create);
+      send(create);
+    }
+    await until(
+      () =>
+        latest.home?.phase === "live" &&
+        latest.sessions.length === 1 &&
+        latest.createSession?.phase === "idle",
+    );
+    const actualSessions = tmux("list-sessions", "-F", "#{session_name}").trim().split("\n");
+    const userSessions = actualSessions.filter((name) => name !== "_tmux-ide-chrome");
+    assert.equal(userSessions.length, 1, JSON.stringify(actualSessions));
+    if (externalServer) assert.deepEqual(userSessions, ["external-owned"]);
+    const nativePane = tmux("list-panes", "-t", `=${userSessions[0]}`, "-F", "#{pane_id}").trim();
+    const session = latest.sessions[0];
+    send({ type: "session", request: latest.request + 1, id: session.id });
+    await until(() => latest.panes.length > 0 && latest.sessionCatalogComplete);
+    send({ type: "pane", request: latest.request + 1, id: latest.panes[0].id });
+    await until(() => latest.snapshot && latest.inputReady && latest.selectedPane);
+    firstSessionReady = true;
+    const marker = "NR07_FIRST_SHELL_OK";
+    send({
+      type: "input",
+      request: latest.request,
+      id: latest.selectedPane,
+      input: { kind: "paste", data: `printf '${marker}\\n'` },
+    });
+    send({
+      type: "input",
+      request: latest.request,
+      id: latest.selectedPane,
+      input: { kind: "key", data: "Enter" },
+    });
+    await until(() =>
+      tmux("capture-pane", "-p", "-t", nativePane)
+        .split("\n")
+        .some((line) => line.trim() === marker),
+    );
+    inputVerified = true;
+  } else {
+    await until(
+      () =>
+        runningObserved &&
+        latest?.home?.phase === "unavailable" &&
+        /no online tmux server/.test(latest.status),
+    );
+    assert.ok(await readRecord());
+    await verify(record);
+    noServerGuidance = /Open an ordinary tmux session/.test(latest.status);
+    noCreateAuthority = latest.home?.phase !== "live" && latest.selectedServer === null;
+    const local = latest.fleet?.groups.find((group) => group.id === "local");
+    localTargetUnavailable =
+      !local ||
+      !local.servers.some(
+        (server) => server.state === "online" && server.selection && server.generation,
+      );
+    assert.ok(noServerGuidance && noCreateAuthority && localTargetUnavailable);
+    // Idle operation status is not creation authority. A stale/unsupported raw
+    // request must not bootstrap a session behind the unavailable Home state.
+    send({ type: "create-session", request: latest.request, name: "must-not-create" });
+    await delay(250);
+    let sessionsCreated = false;
+    try {
+      sessionsCreated = tmux("list-sessions", "-F", "#{session_name}").trim().length > 0;
+    } catch (error) {
+      absentServer(error);
+    }
+    assert.equal(sessionsCreated, false, "Unavailable Home must reject session creation");
+    assert.equal(latest.snapshot, null);
+    assert.equal(latest.inputReady, false);
+    assert.equal(latest.sessions.length, 0);
   }
-  assert.equal(sessionsCreated, false, "Unavailable Home must reject session creation");
-  assert.equal(latest.snapshot, null);
-  assert.equal(latest.inputReady, false);
-  assert.equal(latest.sessions.length, 0);
   await delay(500);
   await readRecord();
   assert.equal(identities.size, 1);
@@ -338,12 +426,16 @@ try {
       .update(await readFile(cli))
       .digest("hex"),
     sourceDependencies: true,
+    bundledBridge: !!bundle,
     socketName,
     initialAbsent,
     duplicateClicks: 2,
     runningObserved,
     observedDaemonIdentities: identities.size,
-    zeroSessionGapReproduced: preserved,
+    zeroSessionGapReproduced: !createFirst && preserved,
+    externalServer,
+    firstSessionReady,
+    inputVerified,
     socketInitiallyAbsent,
     noServerGuidance,
     noCreateAuthority,

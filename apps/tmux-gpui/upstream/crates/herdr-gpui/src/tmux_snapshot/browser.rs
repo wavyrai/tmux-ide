@@ -4,6 +4,8 @@ use super::{Error, decode};
 pub(super) mod fleet;
 #[path = "home_agents.rs"]
 pub(super) mod home_agents;
+#[path = "browser_local_session.rs"]
+pub(super) mod local_session;
 #[path = "browser_local_setup.rs"]
 pub(super) mod local_setup;
 #[path = "browser_machines.rs"]
@@ -74,6 +76,7 @@ pub(super) struct CreateSession {
 #[derive(Clone, Default)]
 pub(super) struct State {
     pub local_setup: Option<local_setup::Setup>,
+    pub local_session_create: Option<local_session::Capability>,
     pub machines: Option<machines::Registry>,
     pub fleet: Option<fleet::Fleet>,
     pub selected_server: Option<fleet::SelectedServer>,
@@ -123,6 +126,7 @@ pub(super) struct State {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Publication {
     local_setup: Option<local_setup::Setup>,
+    local_session_create: Option<local_session::Capability>,
     fleet: Option<fleet::Fleet>,
     selected_server: Option<fleet::SelectedServer>,
     machines: Option<machines::Registry>,
@@ -298,6 +302,12 @@ pub(super) enum Command {
         roster_revision: u64,
         key: String,
     },
+    #[serde(rename = "create-local-session")]
+    CreateLocalSession {
+        request: u64,
+        action: String,
+        name: String,
+    },
     #[serde(rename = "create-session")]
     CreateSession {
         request: u64,
@@ -409,6 +419,7 @@ impl Reader {
         if p.local_setup.is_some() && surface != Surface::Home {
             return Err(Error::Invalid("Local setup requires Home"));
         }
+        local_session::validate(&p, surface)?;
         let retained_preview = p.retained_preview.is_some();
         if retained_preview
             && (surface != Surface::Workspace
@@ -608,6 +619,7 @@ impl Reader {
         self.request = p.request;
         Ok(State {
             local_setup: p.local_setup,
+            local_session_create: p.local_session_create,
             machines: p.machines,
             fleet: p.fleet,
             selected_server: p.selected_server,

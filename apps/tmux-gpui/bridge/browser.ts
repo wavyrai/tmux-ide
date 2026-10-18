@@ -79,6 +79,12 @@ import {
   type ResizeGesturePublication,
 } from "./resize-gesture.ts";
 import { createSessionOwner, sessionCreateSchema } from "./session-create.ts";
+import {
+  proveLocalSessionCreate,
+  createLocalSession,
+  verifyLocalSessionCreateOwner,
+  type LocalSessionCreateProof,
+} from "./local-session-create.ts";
 import { paneActionSchema, paneActionsSchema } from "./pane-actions.ts";
 import { openEditorSchema, openSelectedPaneEditor } from "./local-editor.ts";
 import { paneResizeSchema, resizePresentationMatches } from "./pane-resize.ts";
@@ -197,6 +203,9 @@ const commandSchema = z.union([
   homeAgentFilterSchema,
   openAgentSchema,
   sessionCreateSchema,
+  sessionCreateSchema
+    .extend({ type: z.literal("create-local-session"), action: z.uuid() })
+    .strict(),
   paneActionSchema,
   paneResizeSchema,
   resizeGestureSchema,
@@ -519,7 +528,140 @@ type LocalSetupPhase =
 let localSetup: { phase: LocalSetupPhase } | null = null;
 let setupOperation: AbortController | null = null;
 let setupRevision = 0;
+let localCreateProof: LocalSessionCreateProof | null = null;
+let localCreateProbe: AbortController | null = null;
+let localCreateOperation: AbortController | null = null;
+function revokeLocalCreateOffer() {
+  localCreateProbe?.abort();
+  localCreateProbe = null;
+  localCreateProof = null;
+}
+function cancelLocalCreate() {
+  if (localCreateProof && !catalog) homePhase = "unavailable";
+  revokeLocalCreateOffer();
+  localCreateOperation?.abort();
+  localCreateOperation = null;
+}
+async function offerLocalCreation(token: number) {
+  if (!localSetupContext() || request !== token || localCreateOperation || active) return;
+  revokeLocalCreateOffer();
+  const controller = new AbortController();
+  localCreateProbe = controller;
+  const route = machineRouteRevision,
+    presence = presenceRevision;
+  const current = () =>
+    localCreateProbe === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    machineRouteRevision === route &&
+    presenceRevision === presence &&
+    !active &&
+    !localCreateOperation;
+  const result = await proveLocalSessionCreate({ current, signal: controller.signal });
+  if (!current()) return;
+  localCreateProbe = null;
+  if (result.kind !== "available") return;
+  localCreateProof = result.proof;
+  localSetup = null;
+  sessions = [];
+  selectedSession = null;
+  selectedPane = null;
+  snapshot = null;
+  inputReady = false;
+  homePhase = "live";
+  sessionCreate.reset();
+  status = "No local sessions yet — create a session to get started";
+  publish();
+}
+function startLocalSessionCreation(cmd: { request: number; action: string; name: string }) {
+  const proof = localCreateProof;
+  if (
+    !proof ||
+    cmd.action !== proof.action ||
+    cmd.request !== request ||
+    !localSetupContext() ||
+    active ||
+    homePhase !== "live" ||
+    localCreateOperation ||
+    sessionCreate.publication().phase !== "idle"
+  )
+    return;
+  const controller = new AbortController();
+  localCreateOperation = controller;
+  const token = request,
+    route = machineRouteRevision,
+    presence = presenceRevision;
+  const current = () =>
+    localCreateOperation === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    machineRouteRevision === route &&
+    presenceRevision === presence &&
+    !active;
+  let receipt:
+    | Extract<Awaited<ReturnType<typeof createLocalSession>>, { kind: "created" }>["receipt"]
+    | undefined;
+  const operation = sessionCreate.start({
+    name: cmd.name,
+    current,
+    create: async (_operationId, name) => {
+      // Consume only the displayed capability; the in-flight proof has its own lifetime.
+      revokeLocalCreateOffer();
+      publish();
+      const result = await createLocalSession(
+        proof,
+        { displayName: name },
+        { current, signal: controller.signal },
+      );
+      if (result.kind !== "created") throw new Error("Local creation unconfirmed");
+      receipt = result.receipt;
+    },
+    refresh: async () => {
+      if (!receipt || !current()) return;
+      const ownerCurrent = () =>
+        verifyLocalSessionCreateOwner(proof, { current, signal: controller.signal });
+      if (!(await ownerCurrent())) throw new Error("Creation owner changed");
+      const discovered = await readHost();
+      if (!current()) return;
+      const fresh = createPreviewCatalog(discovered);
+      let admitted = false;
+      try {
+        const list = await fresh.sessions();
+        if (!(await ownerCurrent())) throw new Error("Creation owner changed");
+        if (!current()) return;
+        if (list.length > 512) throw new Error("Too many sessions for preview");
+        const matches = list.filter(
+          (session) =>
+            session.workspaceName === receipt!.workspaceName &&
+            (!receipt!.liveSessionId || session.liveSessionId === receipt!.liveSessionId),
+        );
+        if (matches.length !== 1) throw new Error("Created session is not yet discoverable");
+        catalog?.dispose();
+        catalog = fresh;
+        admitted = true;
+        sessions = list.map(sessionChoice);
+        homePhase = "live";
+        status = "Session created — choose it to open";
+        startAgents();
+      } finally {
+        if (!admitted) fresh.dispose();
+      }
+    },
+    changed: publish,
+  });
+  if (!operation) localCreateOperation = null;
+  else
+    void operation.finally(() => {
+      if (localCreateOperation === controller) {
+        localCreateOperation = null;
+        publish();
+      }
+    });
+}
 function cancelLocalSetup() {
+  cancelLocalCreate();
   setupRevision++;
   setupOperation?.abort();
   setupOperation = null;
@@ -884,6 +1026,19 @@ function publish() {
     request,
     !!fleet && !!preferenceState?.state,
   );
+  if (
+    localCreateProof &&
+    fleet
+      ?.publication()
+      .groups.some(
+        (group) =>
+          group.id === "local" && group.servers.some((server) => server.state === "online"),
+      )
+  ) {
+    revokeLocalCreateOffer();
+    homePhase = "unavailable";
+    status = "Local sessions changed — refresh sessions to continue";
+  }
   // A session may remain selectable beyond the server display cap, but Home
   // must not offer creation without a visible exact destination.
   if (surface === "home" && homePhase === "live" && selectedFleet && !fleet?.selectedServer()) {
@@ -928,6 +1083,8 @@ function publish() {
       surface,
       home: { phase: homePhase },
       localSetup: localSetupContext() ? localSetup : null,
+      localSessionCreate:
+        localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
       createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
       selectedServer:
         surface === "home" && homePhase === "live" && selectedFleet
@@ -1090,6 +1247,7 @@ process.on("SIGINT", requestShutdown);
 process.on("SIGTERM", requestShutdown);
 process.stdout.on("error", () => void stop());
 async function refresh(token: number, requiredCurrent: () => boolean = () => true) {
+  revokeLocalCreateOffer();
   const routeRevision = machineRouteRevision;
   catalog?.dispose();
   catalog = undefined;
@@ -1817,6 +1975,10 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "create-local-session") {
+    startLocalSessionCreation(cmd);
+    return;
+  }
   if (cmd.type === "local-setup") {
     if (cmd.request === request) startLocalSetup();
     return;
@@ -2810,6 +2972,8 @@ function launchRefresh(token: number) {
         ["no-daemon", "unavailable"].includes(error.category))
     )
       void offerLocalSetup(token);
+    if (error instanceof DaemonDiscoveryError && error.category === "no-server")
+      void offerLocalCreation(token);
     // Observation can publish synchronously; install the failure guidance first.
     if (fleet && surface === "home") startAgents();
     publish();
