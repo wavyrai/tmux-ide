@@ -1,3 +1,4 @@
+import { projectFleetDiagnostic, type NativeFleetDiagnostic } from "./fleet-diagnostic.ts";
 import {
   createFleetPreferencePublication,
   type FleetPreferenceOwner,
@@ -25,6 +26,7 @@ export interface NativeFleetPublication {
     id: string;
     label: string;
     state: "ready" | "connecting" | "disconnected";
+    diagnostic?: NativeFleetDiagnostic;
     conflict: boolean;
     retry: string | null;
     disconnect: string | null;
@@ -196,6 +198,7 @@ export function createNativeFleet(
           retry,
           label: group.label.slice(0, 256),
           state: group.state,
+          diagnostic: projectFleetDiagnostic(group.diagnostic),
           conflict: !!group.identityConflict,
           omittedSessions: Math.max(0, group.sessions.length - visible.length),
           sessions: visible.map((session) => {

@@ -1,4 +1,6 @@
 //! Display-only fleet metadata. Opaque selection authority belongs to the bridge.
+#[path = "browser_fleet/diagnostic.rs"]
+mod diagnostic;
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -18,6 +20,7 @@ pub(in crate::tmux_snapshot) struct Group {
     pub id: String,
     pub label: String,
     pub state: Phase,
+    pub diagnostic: Option<diagnostic::Diagnostic>,
     pub conflict: bool,
     #[serde(default)]
     pub retry: Option<String>,

@@ -311,6 +311,10 @@ test("retry uses the captured disconnected handle, leaves siblings and selection
     assert.equal(sibling.endpoint().epoch, siblingEpoch);
     assert.equal(f.manager.snapshot().selectedMachineId, selected);
     assert.equal(f.manager.getMachine(id)!.endpoint().state, "ready");
+    assert.deepEqual(f.fleet.publication().groups.find((g) => g.id === id)!.diagnostic, {
+      phase: "ready",
+      failure: null,
+    });
   } finally {
     f.close();
   }
@@ -409,6 +413,8 @@ test("catalog failure does not hide disconnect for a still-connected SSH transpo
     });
     const group = f.fleet.publication().groups.find((g) => g.id === id)!;
     assert.equal(group.state, "disconnected");
+    assert.deepEqual(group.diagnostic, { phase: "ready", failure: null });
+    assert.equal(group.retry, null, "a catalog failure does not authorize transport retry");
     assert.ok(group.disconnect);
     f.fleet.disconnect(group.disconnect);
     assert.equal(f.manager.getMachine(id)!.endpoint().state, "disconnected");
