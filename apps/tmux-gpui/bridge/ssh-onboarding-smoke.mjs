@@ -19,6 +19,7 @@ import {
 } from "../../../scripts/lib/owned-ssh-fixture.mjs";
 process.umask(0o077);
 const useSsh = true;
+const publicDiscovery = process.env.TMUX_GPUI_TEST_PUBLIC_DISCOVERY === "1";
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(output && isAbsolute(output), "Explicit private receipt prefix required");
 assert.match(process.version, /^v24\./);
@@ -151,6 +152,7 @@ try {
       parent: sshRoot,
       node: process.execPath,
       targetPort: currentInfo.port,
+      ...(publicDiscovery ? { publicDiscoveryCli: cli } : {}),
       processes: tracker,
       handshake: async () =>
         currentInfo
@@ -158,6 +160,32 @@ try {
           : { version: 1, error: { code: "daemon-missing" } },
       onAllocated: (a) => allocations.push(a),
     });
+    if (publicDiscovery) {
+      // Mirror only an independently identity-verified owned daemon record. No synthetic response.
+      assert.equal(currentInfo.pid, daemon.pid);
+      assert.ok(["127.0.0.1", "localhost", "::1"].includes(currentInfo.bindHostname));
+      const host = currentInfo.bindHostname === "::1" ? "[::1]" : currentInfo.bindHostname;
+      const response = await globalThis.fetch(`http://${host}:${currentInfo.port}/identity`, {
+        redirect: "error",
+        signal: globalThis.AbortSignal.timeout(2500),
+      });
+      assert.equal(response.status, 200);
+      const identity = await response.json();
+      for (const field of ["pid", "instanceId", "startedAt", "protocolVersion", "environmentId"])
+        assert.equal(identity[field], currentInfo[field]);
+      assert.deepEqual(
+        JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8")),
+        currentInfo,
+      );
+      const state = join(ssh.root, "state");
+      await mkdir(state, { mode: 0o700 });
+      ssh.files.capture("state");
+      await writeFile(join(state, "daemon.json"), JSON.stringify(currentInfo), {
+        mode: 0o600,
+        flag: "wx",
+      });
+      ssh.files.capture("state/daemon.json");
+    }
     const client = join(scratch.root, "client");
     const bin = join(client, "bin");
     await mkdir(bin, { recursive: true, mode: 0o700 });
@@ -274,6 +302,8 @@ try {
       .some((line) => line.trim() === marker),
   );
   facts.input = true;
+  if (publicDiscovery)
+    assert.equal(ssh.metrics().requests, 0, "Real CLI must not use synthetic handshake");
   trace.push({ phase, freshInputExecuted: true });
 } catch (error) {
   failures.push({
@@ -300,8 +330,12 @@ try {
       .update(await readFile(cli))
       .digest("hex"),
     ...facts,
-    discoveryDescriptor: "synthetic descriptor for actual private daemon",
-    remoteCliPreflightQualified: false,
+    discoveryDescriptor: publicDiscovery
+      ? "actual source CLI remote-daemon-info using mirrored verified private record"
+      : "synthetic descriptor for actual private daemon",
+    remoteCliPreflightQualified: publicDiscovery && facts.input && ssh?.metrics().requests === 0,
+    installedPackageQualified: false,
+    syntheticHandshakeRequests: ssh?.metrics().requests ?? null,
     lastRemote: latest?.fleet?.groups
       .filter((group) => group.id === machineId)
       .map((group) => ({
@@ -313,7 +347,9 @@ try {
       })),
     trace,
     failures,
-    ...(!facts.cleanup ? { privateRoots: [scratch.root, localScratch?.root, sshRoot].filter(Boolean) } : {}),
+    ...(!facts.cleanup
+      ? { privateRoots: [scratch.root, localScratch?.root, sshRoot].filter(Boolean) }
+      : {}),
   };
   await writeFile(output + ".json", JSON.stringify(result, null, 2) + "\n", { mode: 0o600 });
   await writeFile(output + ".stderr", stderr, { mode: 0o600 });
