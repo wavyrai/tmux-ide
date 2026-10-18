@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                          Local · e2e-nr04-paste-tui-6198-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● node                                                                                                                          ⋯
+▾ Local                     NR04_RECEIVER_READY
+   e2e-nr04-paste-tui-6… 1p
+                            UNICODE_ECHO 界🌍 é é
+                            NR04_UNICODE_DONE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

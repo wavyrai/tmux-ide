@@ -1,0 +1,63 @@
+{
+  "scope": "installer lifecycle policy only; not full installer/network journey",
+  "root": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/installer-lifecycle/private-w5f4o2hz",
+  "tarballSha256": "fa8cf7edaa79aeb0425204556da662d162d66c7d93149a2945a7a0b02448b756",
+  "commands": [
+    {
+      "name": "install",
+      "argv": [
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node",
+        "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+        "install",
+        "--global",
+        "--prefix",
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/installer-lifecycle/private-w5f4o2hz/installed",
+        "--ignore-scripts",
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/artifacts/tmux-ide-2.9.7.tgz"
+      ],
+      "exitCode": 0,
+      "extraEnvironment": {}
+    },
+    {
+      "name": "own-postinstall",
+      "argv": [
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node",
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/installer-lifecycle/private-w5f4o2hz/installed/lib/node_modules/tmux-ide/scripts/postinstall.js"
+      ],
+      "exitCode": 0,
+      "extraEnvironment": {
+        "npm_config_global": "false"
+      }
+    },
+    {
+      "name": "dependency-load",
+      "argv": [
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node",
+        "-e",
+        "require('node-pty'); require('@parcel/watcher'); console.log('native dependencies load')"
+      ],
+      "exitCode": 0,
+      "extraEnvironment": {}
+    },
+    {
+      "name": "version",
+      "argv": [
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node",
+        "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/installer-lifecycle/private-w5f4o2hz/installed/lib/node_modules/tmux-ide/bin/cli.js",
+        "--version"
+      ],
+      "exitCode": 0,
+      "extraEnvironment": {}
+    }
+  ],
+  "installedPackage": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/installer-lifecycle/private-w5f4o2hz/installed/lib/node_modules/tmux-ide",
+  "cliSha256": "9f6c49a1155558be0689f8cea2bb433bbfc7c3eccf090827c3a3c0f0515c0366",
+  "manifestSha256": "2171dadc16ffbf011f1c8ac4244a233eed484a77cfc8ab0287a2372b6846560f",
+  "postinstallSha256": "e0c42820359f24536314959c962efa221f636b519591c6ad7b5158529ffe10af",
+  "pass": true,
+  "canonicalRecordAbsent": true,
+  "stateRecordAbsent": true,
+  "defaultHomeRecordAbsent": true,
+  "protectedCliUnchanged": true,
+  "cliAndManifestUnchangedAfterPostinstall": true
+}

@@ -1,0 +1,6 @@
+{
+  "baselineHarnessSha256": "3963b17b868c955211522c788a0e964e42b84ec50cb5399eacded2ca81112949",
+  "preparedHarnessSha256": "4037855dee529b308dfa286b5800b387a76dfa03e1e014ea4e64d55beab8b36c",
+  "change": "Only exclusive output root changed",
+  "runtimeStarted": false
+}
