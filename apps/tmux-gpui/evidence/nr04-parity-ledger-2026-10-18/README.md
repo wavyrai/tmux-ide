@@ -53,3 +53,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Later finite active-output divider check
 
 `../nr04-busy-divider-2026-10-18/README.md` extends the three stock3.8 divider lanes with the same finite left-pane row-repaint producer. All lanes preserve matched geometry and identities while source ticks advance around each action; final200/DONE, fresh input and observed-process cleanup pass. This qualifies one active-output case only, not throughput, every intermediate frame, two busy panes, native GUI or performance.
+
+## Later matched pane lifecycle
+
+`../nr04-pane-actions-2026-10-18/README.md` records matched stock3.8 split-right→zoom original→restore→close new→fresh input across direct tmux, actual source TUI and GPUI bridge. Five geometry stages, survivor IDs/PIDs and closed-new-PID exit match. Actual TUI two-step confirmation is exercised; native GPUI confirmation is not. Earlier disabled-action and harness assumptions are retained with proven owner explanations. Transient “Open a live session first” wording during reconciliation remains an NR05 follow-up. Wider layouts/races/native/SSH/version and performance acceptance remain open.

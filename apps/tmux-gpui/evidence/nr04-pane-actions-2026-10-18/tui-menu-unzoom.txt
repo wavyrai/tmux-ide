@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr04-actions-88749-0
+ Machines            ? Help ● one   …                                                                      zoomed pane                                      ×
+                              ● clever-meteor
+▾ Local                     RIG_NR04_LEFT_CONTENT
+   e2e-nr04-actions-887… 2p sh-3.2$
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                               Command palette                                                esc
+                                               ┃ Zoom pane▏
+                                                 Zoom / unzoom pane
+
+
+
+                                               SEARCH · ^Space navigation · ^H local/all hosts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               zoomed pane                                                                                                            F5 Commands
