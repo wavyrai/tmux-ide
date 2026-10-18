@@ -1,6 +1,6 @@
 # NR04 evidence and parity gap ledger — 2026-10-18
 
-## Current bounded results through `652b7b99`
+## Current bounded results through application mouse verification
 
 NR04 remains open. Matched local stock tmux 3.8 comparisons now exist for the workflows below. These compare canonical outcomes through plain tmux, actual TUI and the GPUI bridge; they do not qualify current native GPUI rendering, all supported platforms, owned SSH, or performance.
 
@@ -12,6 +12,7 @@ NR04 remains open. Matched local stock tmux 3.8 comparisons now exist for the wo
 | Split-right, zoom, restore, close-new | Matching lifecycle outcomes; survivor process remains alive | `aa7c0d4f` |
 | Unicode paste with bracketed mode on/off | Original TUI failure retained; corrected source and compiled TUI pass exact bytes | `c513c772`, `e0f813bd`, `bb1216ff` |
 | DEC1049 alternate-screen round trip | Main screen and source cursor restored; fresh input survives | `652b7b99` |
+| Application mouse | Exact click/release reference plus GPUI semantic implementation; matched SGR drag/hover and disabled negatives | `1c635596`, `58845aa8`; mouse-motion evidence below |
 
 The detailed additions below retain artifact identities, adapter differences and limitations. Mouse reporting, history/copy-mode, links, broader switching/recovery, vertical/nested resizing and source-mutation cases still need matched qualification. Historical evidence is useful only within its recorded scope.
 
@@ -98,3 +99,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Semantic GPUI application mouse implementation
 
 `../nr04-native-mouse-2026-10-18/README.md` adds strict semantic press/drag/move/release/cancel routing at the native view and bridge. The bridge independently checks canonical modes, content dimensions and input authority, uses the shared encoder, and rejects stale or cancelled gestures. Final stock3.8 installed-daemon bridge runs match exact reference bytes and preserve disabled no-leak, fresh input and complete cleanup. Native content coordinates use validated copyRegion rather than the header-inclusive pane rectangle. Independent source review covers repaint continuity and divider-button isolation. This updates the earlier missing-route inventory; it does not establish physical GPUI mouse parity. Follow-up #620 stays open for current native pointer, protocol/workload, SSH/bundled and platform acceptance.
+
+## Matched application drag and hover
+
+`../nr04-mouse-motion-2026-10-18/README.md` adds a matched local stock3.8 DEC1002 left drag→DEC1003 buttonless hover→reporting-off workload. Plain attached tmux, compiled TUI and current GPUI semantic bridge deliver identical45bytes, suppress unsupported/disabled hover, preserve original identities/geometry, accept fresh input and clean owned processes. Independent review verifies raw bytes and synchronized mode transitions. This does not qualify native pointer events, all encodings/buttons/modifiers, SSH/bundled/platform behavior or performance.
