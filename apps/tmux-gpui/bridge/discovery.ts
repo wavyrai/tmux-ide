@@ -1,3 +1,4 @@
+import { registerVerifiedVersion } from "./diagnostic-versions.ts";
 import { randomUUID } from "node:crypto";
 import {
   getCanonicalDaemonInfoPath,
@@ -19,6 +20,7 @@ export interface LocalPreviewHostProof {
   verify(signal?: AbortSignal): Promise<void>;
 }
 // Provenance is process-private. Parsing a host file or copying its fields cannot mint it.
+const identityVersions = new WeakMap<object, string>();
 const localHosts = new WeakMap<PreviewHost, LocalPreviewHostProof>();
 export function localPreviewHostProof(host: PreviewHost): LocalPreviewHostProof | null {
   return localHosts.get(host) ?? null;
@@ -95,6 +97,7 @@ export async function discoverPreviewDaemon(
   const current = inspectCanonicalDaemonInfoPath(path);
   if (current.status !== "valid" || JSON.stringify(current.info) !== JSON.stringify(info))
     throw new DaemonDiscoveryError("record-changed");
+  identityVersions.set(info, identity.productVersion);
   return info;
 }
 
@@ -174,5 +177,6 @@ export async function discoverPreviewHost(
       assertCurrent();
     },
   });
+  registerVerifiedVersion(host, identityVersions.get(info), assertCurrent);
   return host;
 }

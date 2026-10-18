@@ -1,0 +1,39 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 20s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 2`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-63d2b88de9e91254)
+
+running 30 tests
+test diagnostics::tests::public_api_is_available_without_installing_a_global_subscriber ... ok
+test diagnostics::tests::log_files_rotate_before_overflowing_and_reopen_after_failure ... ok
+test diagnostics::tests::timestamp_and_left_aligned_levels_have_exact_columns ... ok
+test diagnostics::tests::json_escaping_and_many_fields_share_one_record_budget ... ok
+test diagnostics::tests::bounded_utf8_controls_and_debug_stream ... ok
+test diagnostics::tests::filtered_and_reentrant_events_never_format_fields ... ok
+test diagnostics::tests::levels_targets_and_span_context ... ok
+test diagnostics::tests::a_full_queue_or_missing_writer_drops_without_blocking ... ok
+test diagnostics::tests::json_schema_preserves_typed_fields_and_roundtrips ... ok
+test terminal_painter::tests::diagnostics::paint_timing_threshold_interval_and_reset ... ok
+test github::tests::responses::diagnostics_keep_public_details_and_drop_the_sso_request_id ... ok
+test error::tests::github_failures_keep_typed_sources_and_redact_parser_diagnostics ... ok
+test diagnostics::tests::tails_read_appended_complete_lines_and_skip_foreign_ones ... ok
+test terminal_painter::tests::diagnostics::paint_errors_report_immediately_then_coalesce ... ok
+test herdr_settings::tests::reading::diagnostics_do_not_dump_unrelated_shared_config ... ok
+test tmux_snapshot::home::tests::local_setup::recovery_publication_prefers_supported_setup_guidance_without_rewriting_diagnostics ... ok
+test tmux_snapshot::picker::tests::diagnostics::diagnostics_do_not_replace_clipboard_during_composition ... ok
+test tmux_snapshot::picker::tests::diagnostics::failed_diagnostics_preparation_preserves_clipboard_and_connection ... ok
+test updater::error::tests::sources_remain_typed_without_displaying_remote_diagnostics ... ok
+test window::image_source::tests::file_errors_keep_io_sources_without_displaying_paths_or_diagnostics ... ok
+test window::transfers::tests::completion::backend_cleanup_failure_survives_host_switch_without_disclosing_diagnostics ... ok
+test tmux_snapshot::diagnostics::tests::offline_and_developer_off_export_is_available_without_guessed_versions ... ok
+test tmux_snapshot::diagnostics::tests::export_deduplicates_and_never_copies_machine_or_terminal_details ... ok
+test tmux_snapshot::diagnostics::tests::validated_daemon_version_is_bounded_and_tmux_stays_unknown ... ok
+test tmux_snapshot::diagnostics::tests::every_enum_pair_is_bounded_and_order_independent ... ok
+test tmux_snapshot::picker::tests::diagnostics::offline_f5_search_can_copy_diagnostics ... ok
+test tmux_snapshot::picker::tests::diagnostics::diagnostics_work_offline_with_developer_mode_off_without_navigation ... ok
+test diagnostics::tests::concurrent_writers_reach_disk_or_count_as_dropped ... ok
+test sidebar::layout_tests::status_bar::healthy_connection_status_is_quiet_but_diagnostics_remain ... ok
+test diagnostics::tests::tails_start_near_the_end_and_keep_a_bounded_history ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 2819 filtered out; finished in 0.22s

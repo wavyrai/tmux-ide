@@ -23,6 +23,7 @@ mod tests;
 
 #[derive(Clone, Copy)]
 pub(super) enum Icon {
+    Copy,
     Sidebar,
     Plus,
     Trash,
@@ -37,6 +38,7 @@ pub(super) enum Icon {
 impl Icon {
     fn path(self) -> &'static str {
         match self {
+            Self::Copy => "icons/copy.svg",
             Self::Trash => "icons/trash.svg",
             Self::Close => "icons/close.svg",
             Self::Sidebar => "icons/panel-left.svg",

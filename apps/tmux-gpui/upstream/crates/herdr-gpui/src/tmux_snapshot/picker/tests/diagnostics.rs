@@ -84,3 +84,62 @@ fn offline_f5_search_can_copy_diagnostics(cx: &mut TestAppContext) {
     });
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn failed_diagnostics_preparation_preserves_clipboard_and_connection(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let request = view.browser_request;
+            view.browser_state.request = request;
+            view.browser_state.surface = browser::Surface::Workspace;
+            view.browser_state.diagnostics = Some(crate::tmux_snapshot::diagnostics::Versions {
+                daemon_version: Some("secret/path".into()),
+            });
+            cx.write_to_clipboard(ClipboardItem::new_string("previous".into()));
+            view.open_picker_mode(Mode::Commands, window, cx);
+            view.choose_picker(Target::Command(Action::CopyDiagnostics), window, cx);
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("previous")
+            );
+            assert_eq!(view.browser_request, request);
+            assert_eq!(
+                view.picker.as_ref().unwrap().error,
+                Some("Could not prepare diagnostics. Clipboard unchanged.")
+            );
+            assert!(!view.developer_mode.enabled);
+        })
+    });
+    assert!(receiver.try_recv().is_err());
+}
+
+#[gpui::test]
+fn diagnostics_do_not_reuse_version_after_local_request_retirement(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.diagnostics = Some(crate::tmux_snapshot::diagnostics::Versions {
+                daemon_version: Some("2.9.7".into()),
+            });
+            view.browser_state.request = view.browser_request;
+            view.browser_state.surface = browser::Surface::Workspace;
+            view.copy_diagnostics(window, cx);
+            let before = cx.read_from_clipboard().unwrap().text().unwrap();
+            let before: serde_json::Value = serde_json::from_str(&before).unwrap();
+            assert_eq!(before["daemonVersion"], "2.9.7");
+            view.browser_request += 1;
+            let request = view.browser_request;
+            view.copy_diagnostics(window, cx);
+            let text = cx.read_from_clipboard().unwrap().text().unwrap();
+            let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(report["daemonVersion"].is_null());
+            assert_eq!(view.browser_request, request);
+        })
+    });
+    assert!(receiver.try_recv().is_err());
+}

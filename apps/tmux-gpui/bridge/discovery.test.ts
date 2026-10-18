@@ -1,3 +1,4 @@
+import { verifiedVersion } from "./diagnostic-versions.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -303,5 +304,28 @@ test("local selected scope is captured before identity request", async () => {
       scope,
     );
     assert.deepEqual(host.scope, expected);
+  });
+});
+
+test("diagnostics use verified endpoint version rather than stale record version", async () => {
+  await fixture(async (path, info) => {
+    const host = await discoverPreviewHost(path, async (url) =>
+      String(url).endsWith("/identity")
+        ? reply({ ...info, ok: true, productVersion: "2.9.7" })
+        : reply({
+            version: 1,
+            servers: [
+              {
+                serverId: "tmux-server." + "a".repeat(32),
+                generation: randomUUID(),
+                label: "local",
+                state: "online",
+              },
+            ],
+          }),
+    );
+    assert.equal(verifiedVersion(host), "2.9.7");
+    await writeFile(path, JSON.stringify({ ...info, instanceId: randomUUID() }), { mode: 0o600 });
+    assert.equal(verifiedVersion(host), null);
   });
 });

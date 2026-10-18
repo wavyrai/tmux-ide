@@ -1083,6 +1083,10 @@ function publish() {
       sessions,
       surface,
       home: { phase: homePhase },
+      diagnostics:
+        foreground && surface === "workspace" && inputReady && active && snapshot
+          ? { daemonVersion: catalog?.diagnosticVersion() ?? null }
+          : null,
       localSetup: localSetupContext() ? localSetup : null,
       localSessionCreate:
         localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,

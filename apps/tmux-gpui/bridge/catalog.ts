@@ -1,3 +1,4 @@
+import { verifiedVersion } from "./diagnostic-versions.ts";
 import type { TmuxAgentOpenRequest } from "../../../packages/contracts/src/tmux-agent-open.ts";
 import { TmuxServerSessionsResourceSchemaZ } from "../../../packages/contracts/src/tmux-server-scope.ts";
 import { catalogStage, CatalogStageError } from "./catalog-errors.ts";
@@ -8,6 +9,7 @@ import type { HomeAgentCatalogSession } from "../../../packages/presentation/src
 import { localPreviewHostProof } from "./discovery.ts";
 
 export function createPreviewCatalog(hostInput: PreviewHost) {
+  let disposed = false;
   const localProof = localPreviewHostProof(hostInput);
   const host = hostSchema.parse(hostInput);
   const client = createTmuxServerClient(
@@ -16,6 +18,7 @@ export function createPreviewCatalog(hostInput: PreviewHost) {
   );
   return {
     localProof,
+    diagnosticVersion: () => (disposed ? null : verifiedVersion(hostInput)),
     openAgent(liveSessionId: string, target: TmuxAgentOpenRequest) {
       return client.openAgent(liveSessionId, target);
     },
@@ -30,7 +33,10 @@ export function createPreviewCatalog(hostInput: PreviewHost) {
         signal,
       );
     },
-    dispose: () => client.dispose(),
+    dispose: () => {
+      disposed = true;
+      client.dispose();
+    },
     async homeSessions(): Promise<HomeAgentCatalogSession[]> {
       const list = await catalogStage("list-sessions", () => client.sessions());
       return list.sessions.map((session) => ({

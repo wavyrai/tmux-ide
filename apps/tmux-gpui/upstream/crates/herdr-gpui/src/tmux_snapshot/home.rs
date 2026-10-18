@@ -184,6 +184,30 @@ impl SnapshotView {
                     .child(status_message(&self.browser_state, connected)),
             );
         }
+        if self.home_diagnostics_available() {
+            body = body.child(
+                native_controls::button(
+                    "home-copy-diagnostics",
+                    Some("Copy diagnostics"),
+                    "Copy safe error details",
+                    native_controls::Icon::Copy,
+                    &theme,
+                )
+                .when_some(self.home_filter.as_ref(), |control, filter| {
+                    action_focus::focus_control(
+                        control,
+                        &filter.actions[4],
+                        4,
+                        theme.foreground,
+                        self.canvas(),
+                    )
+                })
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    cx.stop_propagation();
+                    view.home_copy_diagnostics(request, window, cx);
+                })),
+            );
+        }
         if connected {
             let action_focus = self
                 .home_filter

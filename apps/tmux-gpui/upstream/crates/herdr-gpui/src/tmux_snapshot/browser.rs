@@ -75,6 +75,7 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub diagnostics: Option<super::diagnostics::Versions>,
     pub pointer_modes: Option<decode::PointerModes>,
     pub local_setup: Option<local_setup::Setup>,
     pub local_session_create: Option<local_session::Capability>,
@@ -126,6 +127,7 @@ pub(super) struct State {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Publication {
+    diagnostics: Option<super::diagnostics::Versions>,
     local_setup: Option<local_setup::Setup>,
     local_session_create: Option<local_session::Capability>,
     fleet: Option<fleet::Fleet>,
@@ -422,6 +424,16 @@ impl Reader {
         }
         local_session::validate(&p, surface)?;
         let retained_preview = p.retained_preview.is_some();
+        if p.diagnostics.is_some()
+            && (surface != Surface::Workspace
+                || !p.input_ready
+                || retained_preview
+                || p.snapshot.is_none())
+        {
+            return Err(Error::Invalid(
+                "Diagnostic versions require current live workspace",
+            ));
+        }
         if retained_preview
             && (surface != Surface::Workspace
                 || p.snapshot.is_some()
@@ -625,6 +637,7 @@ impl Reader {
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
+            diagnostics: p.diagnostics,
             pointer_modes,
             local_setup: p.local_setup,
             local_session_create: p.local_session_create,

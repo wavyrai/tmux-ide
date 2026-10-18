@@ -3,12 +3,16 @@ use super::browser::{self, fleet::Phase};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod versions;
+pub(super) use versions::Versions;
+
 const MAX_BYTES: usize = 4096;
 
 #[derive(Debug)]
 pub(super) enum Error {
     Encoding,
     TooLarge,
+    InvalidVersion,
 }
 
 #[derive(Serialize)]
@@ -16,10 +20,10 @@ pub(super) enum Error {
 struct Summary {
     schema_version: u8,
     product: &'static str,
-    native_version: Option<&'static str>,
-    native_build: Option<&'static str>,
-    daemon_version: Option<&'static str>,
-    tmux_version: Option<&'static str>,
+    native_version: Option<String>,
+    native_build: Option<String>,
+    daemon_version: Option<String>,
+    tmux_version: Option<String>,
     platform: &'static str,
     architecture: &'static str,
     developer_mode: bool,
@@ -34,6 +38,14 @@ struct FleetSummary {
 }
 
 pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<String, Error> {
+    if state
+        .diagnostics
+        .as_ref()
+        .and_then(|value| value.daemon_version.as_deref())
+        .is_some_and(|value| !versions::safe_version(value))
+    {
+        return Err(Error::InvalidVersion);
+    }
     let mut states = BTreeSet::new();
     let mut diagnostics = BTreeMap::new();
     if let Some(fleet) = &state.fleet {
@@ -52,13 +64,17 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
             }
         }
     }
+    let (native_version, native_build) = versions::native_bundle();
     let summary = Summary {
         schema_version: 1,
         product: "tmux-ide-gpui",
         // Upstream crate metadata is not the installed tmux-ide release identity.
-        native_version: None,
-        native_build: None,
-        daemon_version: None,
+        native_version,
+        native_build,
+        daemon_version: state
+            .diagnostics
+            .as_ref()
+            .and_then(|value| value.daemon_version.clone()),
         tmux_version: None,
         platform: std::env::consts::OS,
         architecture: std::env::consts::ARCH,

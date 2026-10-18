@@ -128,3 +128,65 @@ fn setup_queue_failure_shows_retry_without_automatic_submission(cx: &mut TestApp
         })
     });
 }
+
+#[gpui::test]
+fn offline_error_details_copy_is_keyboard_accessible_without_commands(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| {
+            view.browser_commands = None;
+            view.browser_state.home_phase = browser::HomePhase::Unavailable;
+            view.browser_state.input_ready = false;
+        });
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(cx.debug_bounds("home-copy-diagnostics").is_some());
+    cx.simulate_keystrokes("tab");
+    cx.update(|window, cx| {
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.home_action_index(window), Some(4))
+        })
+    });
+    cx.simulate_keystrokes("enter");
+    cx.simulate_event(KeyUpEvent {
+        layout: None,
+        keystroke: Keystroke::parse("enter").unwrap(),
+    });
+    cx.update(|_, cx| {
+        let text = cx.read_from_clipboard().unwrap().text().unwrap();
+        let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(report["developerMode"], false);
+        view.read_with(cx, |view, _| assert_eq!(view.browser_request, 7));
+    });
+    assert!(receiver.try_recv().is_err());
+}
+
+#[gpui::test]
+fn stale_home_error_action_cannot_replace_picker_or_clipboard(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.home_phase = browser::HomePhase::Unavailable;
+            cx.write_to_clipboard(ClipboardItem::new_string("previous".into()));
+            view.home_copy_diagnostics(6, window, cx);
+            assert!(view.picker.is_none());
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("previous")
+            );
+            view.open_picker(window, cx);
+            view.home_copy_diagnostics(7, window, cx);
+            assert!(view.picker.is_some());
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("previous")
+            );
+            assert_eq!(view.browser_request, 7);
+        })
+    });
+    assert!(receiver.try_recv().is_err());
+}

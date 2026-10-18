@@ -17,6 +17,29 @@ pub(super) fn focus_control(
 }
 
 impl SnapshotView {
+    pub(super) fn home_copy_diagnostics(
+        &mut self,
+        request: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.home_diagnostics_available()
+            || self.browser_request != request
+            || self.browser_state.request != request
+            || self.picker.is_some()
+        {
+            return;
+        }
+        self.copy_diagnostics(window, cx);
+    }
+
+    pub(in crate::tmux_snapshot) fn home_diagnostics_available(&self) -> bool {
+        self.browser_state.surface == browser::Surface::Home
+            && (self.browser_commands.is_none()
+                || self.browser_state.home_phase == browser::HomePhase::Unavailable
+                || self.browser_state.local_setup.is_some())
+    }
+
     pub(in crate::tmux_snapshot) fn home_action_index(&self, window: &Window) -> Option<usize> {
         if self.browser_state.surface != browser::Surface::Home {
             return None;
@@ -35,7 +58,6 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.browser_state.surface != browser::Surface::Home
-            || self.browser_commands.is_none()
             || self.picker.is_some()
             || self.new_session.is_some()
             || self.pane_actions.is_some()
@@ -52,17 +74,19 @@ impl SnapshotView {
                 if let Some(controls) = &self.home_filter {
                     let mut next = match (selected, event.keystroke.modifiers.shift) {
                         (None, false) => 0,
-                        (None, true) => 3,
-                        (Some(index), false) => (index + 1) % 4,
-                        (Some(index), true) => (index + 3) % 4,
+                        (None, true) => 4,
+                        (Some(index), false) => (index + 1) % 5,
+                        (Some(index), true) => (index + 4) % 5,
                     };
-                    while (next == 1 && self.browser_state.appearance.is_none())
+                    while (next < 4 && self.browser_commands.is_none())
+                        || (next == 4 && !self.home_diagnostics_available())
+                        || (next == 1 && self.browser_state.appearance.is_none())
                         || (next == 3 && !self.local_session_available())
                     {
                         next = if event.keystroke.modifiers.shift {
-                            (next + 3) % 4
+                            (next + 4) % 5
                         } else {
-                            (next + 1) % 4
+                            (next + 1) % 5
                         };
                     }
                     controls.actions[next].focus(window, cx);

@@ -84,3 +84,24 @@ fn every_enum_pair_is_bounded_and_order_independent() {
     groups.extend(groups.clone());
     assert_eq!(text, build(&state(groups), true).unwrap());
 }
+
+#[test]
+fn validated_daemon_version_is_bounded_and_tmux_stays_unknown() {
+    for value in ["2.9.7", "2.9.7-beta.1+build.2"] {
+        let metadata: Versions = serde_json::from_value(json!({"daemonVersion":value})).unwrap();
+        let state = browser::State {
+            diagnostics: Some(metadata),
+            ..Default::default()
+        };
+        let report: Value = serde_json::from_str(&build(&state, false).unwrap()).unwrap();
+        assert_eq!(report["daemonVersion"], value);
+        assert!(report["tmuxVersion"].is_null());
+    }
+    for value in ["secret/path", "2.9.7\nsecret", "", "2.9", &"1".repeat(65)] {
+        assert!(serde_json::from_value::<Versions>(json!({"daemonVersion":value})).is_err());
+    }
+    assert!(
+        serde_json::from_value::<Versions>(json!({"daemonVersion":"2.9.7","token":"secret"}))
+            .is_err()
+    );
+}

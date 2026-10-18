@@ -1,3 +1,4 @@
+import { registerVerifiedVersion } from "./diagnostic-versions.ts";
 import { canonicalDaemonUrl } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
 import { randomUUID } from "node:crypto";
 import type { createDaemonConnectionOwner } from "../../../packages/daemon/src/lib/daemon-connection-owner.ts";
@@ -192,6 +193,7 @@ export async function createRemotePreviewRoute(
       ownerToken: daemon.authToken,
       scope: { serverId: matches[0]!.serverId, generation: matches[0]!.generation },
     });
+    registerVerifiedVersion(host, daemon.productVersion, assertCurrent);
     Object.freeze(host.scope);
     Object.freeze(host);
     return { host, signal: controller.signal, assertCurrent, verify, dispose };
