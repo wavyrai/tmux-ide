@@ -34,3 +34,13 @@ The optional `TMUX_GPUI_TEST_PACKAGE` harness input copies a complete retained m
 `first-session-packed296.json`: actual CLI 2.9.6 package, current standalone bridge, Node 24.21, stock tmux 3.8. Setup and creation succeeded, then terminal transport closed with 1011 and input readiness timed out. Cleanup passed. The receipt does not establish the underlying capture failure by itself.
 
 `first-session-packed296-tmux37.json`: same CLI package and bridge, Homebrew tmux 3.7c instead; setup/create/open/input and cleanup passed. This qualifies the retained 2.9.6 compatibility lane only. It does not replace genuine current 2.9.7 package, native GUI, installer or second-Mac qualification. `sourceDependencies:false` refers to the copied CLI; `bundledBridge:true` separately identifies bridge execution.
+
+## Genuine current CLI package — stock tmux 3.8
+
+`first-session-packed297.json` passes setup/create/open/input and exact owned cleanup with genuine installed CLI 2.9.7, current standalone bridge, Node24.21.0 and stock tmux3.8. stderr is empty. This repeats the path that failed with retained2.9.6; the package is not a modified2.9.6 installation.
+
+`package297-build-receipt.json` identifies exact archived source commit6ad84931817b0ee01ca209b6341dc33dacc1cb0f, normal npm pack/prepack and private npm install, original metadata, tarball/CLI hashes, and copied native artifact manifest. Node24.21.0/npm11.19.1/pnpm10.21.0; all2904 native manifest files were checked. Build-only workspace links point inside archived source; installed runtime dependencies are private. npm logs show root and dependency lifecycle scripts executed despite future allow-scripts warnings. Protected main-worktree bin/cli.js is unchanged.
+
+Ignored retained artifacts: .tasks/nr07/package-297-f7rol0nn contains source archive, tarball, installed prefix and logs. Earlier staging q_9y_u2s and yjzdjrdw failed to resolve build-only workspace/daemon-scoped dependencies and are retained; no product source or build externalization changed to resolve them.
+
+This is current packed CLI plus bundled bridge qualification. The harness constructs managed layout/markers itself; it does not execute the public installer or native UI. Native GUI, bundled-tmux selection, signed installer, other platform and second-Mac acceptance remain open.
