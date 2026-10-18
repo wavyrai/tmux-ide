@@ -1,0 +1,11 @@
+{
+  "lane": "plain-tmux",
+  "tmuxVersion": "tmux 3.8",
+  "tmuxSha256": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96",
+  "node": "v24.21.0",
+  "pass": false,
+  "error": "Error: Command failed: /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-compat/tmux-3.8/tmux -S /tmp/nr04-plain-0G5bkG/tmux.sock set-option -t =nr04 status off\nno such session: =nr04\n",
+  "cleanup": true,
+  "protectedCliUnchanged": true,
+  "privateRootRemoved": true
+}

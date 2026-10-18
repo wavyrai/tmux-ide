@@ -1,0 +1,15 @@
+{
+  "lane": "actual-source-OpenTUI",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Calibration only; no GPUI or performance parity claim",
+  "before": [
+    "%0|68324||0|0|40|24|80|24|0",
+    "%1|68330||41|0|39|24|80|24|0"
+  ],
+  "pass": false,
+  "error": "Error: Command failed: /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/scripts/tui-testdrive.mjs start --source --target e2e-nr04-68302-0 --cols 160 --rows 44\nTarget session \"e2e-nr04-68302-0\" is not live (available: tmux-ide-local-bc4922493e905b27ddee)\n",
+  "protectedCliUnchanged": true,
+  "cleanup": true
+}

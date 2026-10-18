@@ -41,3 +41,7 @@ Pin separate lanes: bundled patched tmux3.7c (`native/tmux/provenance.json`, com
 All proposed follow-ups map to existing NR01/02/03/04/08 cards in `.tasks/native-reliability-mission/index.md`; no cards posted or status changed. Release, signing, merge and installer completion remain separate from this ledger. Historical signed1702 and later unsigned1801 evidence are distinct artifacts; current dirty source is neither.
 
 Independent evidence review checked selected cited receipts and required the above stock-tmux clarification and application/input coverage. This ledger is a test plan and scoped evidence inventory, not a completed parity matrix.
+
+## Later bounded resize calibration
+
+`../nr04-resize-calibration-2026-10-18/README.md` records a matched local stock3.8 quiet two-pane window round-trip across plain tmux, actual source OpenTUI, and source GPUI bridge. Final receipts independently match pane geometry at132×41→152×45→132×41, preserve original per-lane identities/processes and fresh input, and verify observed owned processes exit. Plain explicitly matches the daemon clients’ top-header policy. This updates the window-resize row only; full matched workflows, native GPUI rendering, divider drag, busy workloads, bundled/SSH comparisons and performance remain unqualified.
