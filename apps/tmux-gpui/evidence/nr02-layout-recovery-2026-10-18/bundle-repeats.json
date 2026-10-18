@@ -1,0 +1,95 @@
+[
+  {
+    "command": [
+      "docker",
+      "run",
+      "--name",
+      "tmux-ide-nr02-bundle-2",
+      "--network",
+      "none",
+      "--cpus=2",
+      "--memory=768m",
+      "--pids-limit=256",
+      "tmux-ide-nr02-bundle:4c45fa9f",
+      "sh",
+      "-c",
+      "env -u TMUX_IDE_RUNTIME_MODE timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; cat /sys/fs/cgroup/memory.events; exit \"$result\""
+    ],
+    "exitCode": 0,
+    "state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-18T08:41:33.553296549Z",
+      "FinishedAt": "2026-10-18T08:41:51.972151918Z"
+    }
+  },
+  {
+    "command": [
+      "docker",
+      "run",
+      "--name",
+      "tmux-ide-nr02-bundle-3",
+      "--network",
+      "none",
+      "--cpus=2",
+      "--memory=768m",
+      "--pids-limit=256",
+      "tmux-ide-nr02-bundle:4c45fa9f",
+      "sh",
+      "-c",
+      "env -u TMUX_IDE_RUNTIME_MODE timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; cat /sys/fs/cgroup/memory.events; exit \"$result\""
+    ],
+    "exitCode": 0,
+    "state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-18T08:41:52.254718085Z",
+      "FinishedAt": "2026-10-18T08:42:03.024362882Z"
+    }
+  },
+  {
+    "command": [
+      "docker",
+      "run",
+      "--name",
+      "tmux-ide-nr02-bundle-4",
+      "--network",
+      "none",
+      "--cpus=2",
+      "--memory=768m",
+      "--pids-limit=256",
+      "tmux-ide-nr02-bundle:4c45fa9f",
+      "sh",
+      "-c",
+      "env -u TMUX_IDE_RUNTIME_MODE timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; cat /sys/fs/cgroup/memory.events; exit \"$result\""
+    ],
+    "exitCode": 0,
+    "state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-18T08:42:03.355438507Z",
+      "FinishedAt": "2026-10-18T08:42:14.540451054Z"
+    }
+  }
+]
