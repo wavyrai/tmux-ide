@@ -1,3 +1,4 @@
+import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { z } from "zod";
 import { createSourceFaultFence } from "./offscreen-source-fault.ts";
 import { createLiveDiagnostics } from "./live-diagnostics.ts";
@@ -89,6 +90,7 @@ let newWindowReceipt: {
 } | null = null;
 let actionBusy = false;
 let actionFailed = false;
+let actionFailureMessage = GENERIC_PANE_ACTION_ERROR;
 let paneSplitReceipt: {
   token: string;
   result: import("../../../packages/contracts/src/workspace-multiplexer.ts").WorkspaceWindowSplitResult;
@@ -173,9 +175,7 @@ function output(snapshot: typeof latest.snapshot) {
                 )?.token
                 ? closePaneReady
                 : null,
-            paneActionError: actionFailed
-              ? "Pane action unavailable — reselect pane to retry"
-              : null,
+            paneActionError: actionFailed ? actionFailureMessage : null,
             resizeToken: currentResizeToken,
             scrollOffset: viewport.offset,
             historyReady:
@@ -736,6 +736,7 @@ try {
             const revision = admittedPresenceRevision;
             actionBusy = true;
             newWindowReceipt = null;
+            actionFailureMessage = GENERIC_PANE_ACTION_ERROR;
             output(latest.snapshot);
             void executeNewWindow(
               client,
@@ -754,8 +755,12 @@ try {
                 actionFailed = !result;
                 if (result) newWindowReceipt = { token: paneAction.data.token, result };
               })
-              .catch(() => {
+              .catch((error: unknown) => {
                 actionFailed = true;
+                actionFailureMessage = agentLaunchGuidance(
+                  error,
+                  paneAction.data.action === "new-agent",
+                );
               })
               .finally(() => {
                 actionBusy = false;

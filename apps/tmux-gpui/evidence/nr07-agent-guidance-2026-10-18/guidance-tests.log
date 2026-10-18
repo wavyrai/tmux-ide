@@ -1,0 +1,30 @@
+(node:76338) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ only a typed agent readiness refusal gets actionable readiness guidance (0.305333ms)
+✔ unknown transport mutation and raw messages remain generic (0.053833ms)
+(node:76339) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ accepts only the exact drain intent, ignores display and foreign results (6.252208ms)
+✔ cancellation settles once and ignores late completion (0.216625ms)
+✔ deadline and early child close settle unavailable (6.006666ms)
+✔ stdin failure settles without waiting for deadline (0.211334ms)
+✔ framing handles split UTF8 obsolete display before exact result (0.414875ms)
+(node:76340) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+✔ capture uses exact canonical index and proof, never bounded viewport offset (4.468042ms)
+✔ busy output restore matches later delivered proof and carries exact row forward (1.797333ms)
+✔ replacement identical text cannot resurrect missing row (0.318917ms)
+✔ return live cancels pending restore and late reply cannot change viewport (0.26525ms)
+✔ unsupported old daemon is distinct from lost anchor (0.424334ms)
+✔ capture pending is explicitly unresolved and return live cancels late token (0.223459ms)
+✔ bounded history slice keeps canonical indices and refuses omitted rows (9.374166ms)
+✔ handoff waits for the newest capture rather than superseded completion (0.288208ms)
+✔ return-live handoff does not wait for an obsolete capture (0.208625ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 414.850292

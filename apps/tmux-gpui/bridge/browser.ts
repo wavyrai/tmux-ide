@@ -1,3 +1,4 @@
+import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache } from "./retained-frame-cache.ts";
@@ -2067,7 +2068,8 @@ async function openPane(
           status =
             recoveryNotice && inputReady
               ? recoveryNotice
-              : event.paneActionError === "Pane action unavailable — reselect pane to retry"
+              : event.paneActionError === GENERIC_PANE_ACTION_ERROR ||
+                  event.paneActionError === AGENT_NOT_READY_ERROR
                 ? event.paneActionError
                 : snapshot && scrollOffset > 0
                   ? `History: ${scrollOffset} lines above live — Shift-End returns to live`
