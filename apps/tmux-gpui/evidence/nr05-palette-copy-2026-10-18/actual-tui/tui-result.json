@@ -1,0 +1,26 @@
+{
+  "outcome": "unobserved",
+  "pass": false,
+  "sourceHead": "aa7c0d4f8ab325ba323c6e018cb699d8b0e7df47",
+  "sourceDiffSha256": "c29c77fda814a14e00ac84123e7330652ee5c28f28ef373657452574c56879de",
+  "sourceDiffStableAcrossRuns": true,
+  "attempts": [
+    {
+      "attempt": 1,
+      "session": 53510,
+      "result": "harness failure: F5 palette not admitted before filter; no Enter after assertion failure"
+    },
+    {
+      "attempt": 2,
+      "session": 51869,
+      "result": "unobserved: Zoom palette already enabled"
+    },
+    {
+      "attempt": 3,
+      "session": 88209,
+      "result": "unobserved: Zoom palette already enabled"
+    }
+  ],
+  "cleanup": "Each receipt verifies all6ownedPIDs gone/no errors/protected CLI unchanged",
+  "limits": "No observed new rebinding copy, no disabled Enter/no-effect proof, and no postblocked enabledzoom/freshinput proof. Do not treat as acceptance pass."
+}

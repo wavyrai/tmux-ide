@@ -1,0 +1,7 @@
+{
+  "files": {
+    "tui-first-failure.json": "aa3c0e5245145b976415e536bd425a105092f92eab24456ffe7fb98f64969c64",
+    "tui-first-failure-zoom-menu.txt": "af25419f8157a5bb9fd7a19c1132334365d8c0c84b96ff5de8a2ea40b6ee6168"
+  },
+  "observation": "Retained menu includes Zoom / unzoom pane plus Open a live session first while split pane right completion and live pane chrome remain visible. Prior receipt records split then timeout waiting for zoom, cleanup true. No new pre-fix run performed; source revision not independently reconstructed from that receipt."
+}
