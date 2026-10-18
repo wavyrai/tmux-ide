@@ -1,0 +1,10 @@
+{
+  "calls": 1,
+  "status": 503,
+  "body": {
+    "error": {
+      "code": "server-unavailable"
+    }
+  },
+  "scope": "Actual authenticated route with injected owner harness_unavailable; no actual executable probe or GUI"
+}

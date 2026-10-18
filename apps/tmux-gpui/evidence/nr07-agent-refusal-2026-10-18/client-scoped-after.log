@@ -1,0 +1,23 @@
+bun test v1.4.2 (744846f84)
+
+packages/daemon-client/src/pane-creation-refusal.test.ts:
+(pass) creation preserves only an exact known refusal and never retries [11.91ms]
+(pass) unknown malformed oversized and context-bearing failures stay generic [1.00ms]
+
+packages/daemon-client/src/tmux-server-client.test.ts:
+(pass) explicit tmux server SDK client > validates versioned server listing without fallback [4.67ms]
+(pass) explicit tmux server SDK client > binds copied inputs and cache keys to an immutable exact scope [0.74ms]
+(pass) explicit tmux server SDK client > rejects scope mismatches and stale HTTP refusal without retries [0.10ms]
+(pass) explicit tmux server SDK client > drops an old selection's late response after disposal [0.09ms]
+(pass) explicit tmux server SDK client > uses explicit owner authority for passive fleet close without a controller principal [1.08ms]
+(pass) explicit tmux server SDK client > sends owner-scoped mutations and verifies generation and operation echoes [0.26ms]
+(pass) explicit tmux server SDK client > sends exact issue headers and validates scoped redemption [2.09ms]
+(pass) explicit tmux server SDK client > rejects inventories from the wrong workspace [0.23ms]
+(pass) server registration and adopted default > passes remote selector intent unchanged and removes by opaque registration [0.30ms]
+(pass) server registration and adopted default > accepts default redemption only with an exact generation and request echo [0.11ms]
+(pass) server registration and adopted default > preserves authoritative workspace aliases and unavailable collisions [0.08ms]
+
+ 13 pass
+ 0 fail
+ 60 expect() calls
+Ran 13 tests across 2 files. [177.00ms]

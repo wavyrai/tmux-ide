@@ -32,6 +32,7 @@ import {
 } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
 import { WorkspaceMultiplexerError } from "../lib/workspace-multiplexer-verbs.ts";
+import { WorkspacePaneCreationError } from "../lib/workspace-pane-creation.ts";
 import { ownerBearerMatches } from "./owner-authority.ts";
 import { mountPaneStreamIssueRoute } from "./pane-stream-issue.ts";
 import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-inventory.ts";
@@ -81,6 +82,8 @@ function failure(c: Context, error: unknown): Response {
       { error: { code: error.code } },
       error.code === "not-found" ? 404 : error.code === "capacity" ? 429 : 409,
     );
+  if (error instanceof WorkspacePaneCreationError && error.code === "harness_unavailable")
+    return c.json({ error: { code: "harness_unavailable" } }, 409);
   if (error instanceof WorkspaceMultiplexerError)
     return c.json({ error: { code: error.code } }, 409);
   if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof TypeError)

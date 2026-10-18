@@ -1,3 +1,4 @@
+import { readPaneCreationRefusal } from "./pane-creation-refusal.ts";
 import {
   HistoryAnchorRequestSchemaZ,
   HistoryAnchorResponseSchemaZ,
@@ -53,6 +54,7 @@ export class TmuxServerClientError extends Error {
   constructor(
     readonly code: "disposed" | "scope-mismatch" | "request-failed",
     readonly status?: number,
+    readonly refusalCode?: "harness_unavailable",
   ) {
     super(`tmux server client ${code}`);
     this.name = "TmuxServerClientError";
@@ -66,6 +68,7 @@ async function request(
   method?: "DELETE",
   signal?: AbortSignal,
   responseLimit?: number,
+  paneCreationRefusal = false,
 ) {
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
@@ -82,7 +85,12 @@ async function request(
     cache: "no-store",
     signal: requestSignal,
   });
-  if (!response.ok) throw new TmuxServerClientError("request-failed", response.status);
+  if (!response.ok)
+    throw new TmuxServerClientError(
+      "request-failed",
+      response.status,
+      paneCreationRefusal ? await readPaneCreationRefusal(response, requestSignal) : undefined,
+    );
   let result: unknown;
   if (responseLimit === undefined) result = await response.json();
   else {
@@ -175,6 +183,7 @@ export function createTmuxServerClient(
     headers?: Record<string, string>,
     signal?: AbortSignal,
     defaultTimeoutMs?: number,
+    paneCreationRefusal = false,
   ) {
     assertCurrent();
     const result = await request(
@@ -186,6 +195,8 @@ export function createTmuxServerClient(
       headers,
       undefined,
       signal,
+      undefined,
+      paneCreationRefusal,
     );
     assertCurrent();
     return result;
@@ -387,6 +398,10 @@ export function createTmuxServerClient(
         await scopedRequest(
           `panes/create?liveSessionId=${encodeURIComponent(liveSessionId)}`,
           body,
+          undefined,
+          undefined,
+          undefined,
+          true,
         ),
       );
       if (

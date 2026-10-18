@@ -1,0 +1,9 @@
+bun test v1.4.2 (744846f84)
+The following filters did not match any test files:
+ packages/daemon-client/src/pane-creation-refusal.test.ts packages/daemon-client/src/tmux-server-client.test.ts
+2 files were searched [37.00ms]
+
+note: Tests need ".test", "_test_", ".spec" or "_spec_" in the filename (ex: "MyApp.test.ts")
+note: To treat the "packages/daemon-client/src/pane-creation-refusal.test.ts" filter as a path, run "bun test ./packages/daemon-client/src/pane-creation-refusal.test.ts"
+
+Learn more about bun test: https://bun.com/docs/cli/test
