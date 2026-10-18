@@ -65,3 +65,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Paste mode correction
 
 `../nr04-paste-mode-fix-2026-10-18/README.md` preserves the same six-lane workload after the canonical TUI paste-mode correction. All six pass: the TUI now matches plain tmux/GPUI with mode off (2,138 raw bytes) and on (2,150 framed bytes). Tests cover queued admission, missing mode and ownership cancellation; input guards remain intact. Original failing evidence remains in the preceding directory. This updates bounded source-TUI paste parity only; installed-package, native clipboard, SSH and wider platform acceptance remain separate.
+
+## Compiled TUI paste qualification
+
+`../nr04-compiled-paste-2026-10-18/README.md` extends paste-mode verification to a standalone baseline TUI compiled from archived e0f813bd and the genuinely npm-installed current CLI/daemon. Both mode-on/off exact-byte and rendered-marker checks pass with source identities, geometry and cleanup intact. npm excludes the TUI binary, so this is an explicit separate runtime + installed daemon fixture, not public-install qualification. Initial package-recipe assumption failure and npm11 blocked lifecycle scripts are retained; private allowlisted lifecycle rebuild and dependency-load checks are recorded. Native GPUI, qualified release renderer, signing, platform and customer journey gates remain open.
