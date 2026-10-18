@@ -1,0 +1,19 @@
+{"passed":true,"sessions":2,"switched":true,"requestOrder":true,"unavailable":true}
+{"diagnostic":"browser-resume-resize","node":"v24.21.0","platform":"linux","arch":"arm64","dropped":0,"completed":true,"timeline":[{"ms":2,"kind":"publication","request":6,"presenceRevision":0,"inputReady":true,"hasSnapshot":true,"cols":91,"rows":27,"status":"Keyboard ready — click terminal to type"},{"ms":5,"kind":"presence","active":false,"revision":0},{"ms":228,"kind":"publication","request":6,"presenceRevision":0,"inputReady":true,"hasSnapshot":true,"cols":91,"rows":27,"status":"Keyboard ready — click terminal to type"},{"ms":611,"kind":"publication","request":6,"presenceRevision":0,"inputReady":false,"hasSnapshot":true,"cols":91,"rows":27,"status":"Keyboard ready — click terminal to type"},{"ms":611,"kind":"publication","request":6,"presenceRevision":0,"inputReady":false,"hasSnapshot":false,"cols":null,"rows":null,"status":"other"},{"ms":620,"kind":"input","request":6,"inputKind":"text"},{"ms":621,"kind":"input","request":6,"inputKind":"resize","cols":60,"rows":20},{"ms":621,"kind":"presence","active":true,"revision":0},{"ms":635,"kind":"publication","request":6,"presenceRevision":0,"inputReady":false,"hasSnapshot":false,"cols":null,"rows":null,"status":"other"},{"ms":732,"kind":"publication","request":6,"presenceRevision":0,"inputReady":true,"hasSnapshot":true,"cols":80,"rows":24,"status":"Keyboard ready — click terminal to type"},{"ms":789,"kind":"restored-grid","cols":80,"rows":24},{"ms":789,"kind":"input","request":6,"inputKind":"resize","cols":95,"rows":30},{"ms":791,"kind":"post-resume-grid","cols":80,"rows":24},{"ms":795,"kind":"publication","request":6,"presenceRevision":0,"inputReady":true,"hasSnapshot":true,"cols":80,"rows":24,"status":"Keyboard ready — click terminal to type"},{"ms":813,"kind":"post-resume-grid","cols":95,"rows":30}]}
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+sock_throttled 463
+{"pid":11,"entry":"/work/apps/tmux-gpui/bridge/browser-smoke.mjs","heapLimit":184549376}
+{"pid":11,"heapLimit":184549376}
+{"pid":49,"entry":"/work/.tasks/current-cli.mjs","heapLimit":184549376}
+{"pid":80,"entry":"/work/.tasks/current-bridge/browser.bundle.mjs","heapLimit":184549376}
+{"pid":150,"entry":"/work/.tasks/current-bridge/live.bundle.mjs","heapLimit":184549376}
+{"pid":195,"entry":"/work/.tasks/current-bridge/live.bundle.mjs","heapLimit":184549376}
+{"pid":294,"entry":"/work/.tasks/current-bridge/live.bundle.mjs","heapLimit":184549376}
+{"pid":518,"entry":"/work/.tasks/current-bridge/live.bundle.mjs","heapLimit":184549376}
+{"pid":547,"entry":"/work/.tasks/current-cli.mjs","heapLimit":184549376}
+{"pid":643,"entry":"/work/.tasks/current-bridge/live.bundle.mjs","heapLimit":184549376}
