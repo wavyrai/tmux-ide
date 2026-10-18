@@ -2088,6 +2088,62 @@ describe("layout push", () => {
     }
   });
 
+  it("survives twenty layout supersessions before committing a current snapshot", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    const events = collect();
+    try {
+      const pending = await beginPendingLayout(rig, events);
+      let old = pending.old;
+      for (let i = 0; i < 20; i++) {
+        expect(events.events.filter((e) => e.type === "fault")).toEqual([]);
+        rig.sim.reply(["off"]);
+        drainRetiredAtomicCollector(rig, old.nonce);
+        rig.pendingSyncs.shift()!();
+        await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+        if (i === 19) break;
+        completeStockPause(rig, "%1");
+        old = rig.armedAtomicCollectors.at(-1)!;
+        rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+        completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+        expect(events.events.some((e) => e.type === "seed")).toBe(false);
+      }
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(events.events.filter((e) => e.type === "seed")).toHaveLength(1);
+      expect(events.events.filter((e) => e.type === "fault")).toEqual([]);
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("preserves genuine failures across repeated notifications for one superseded capture", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    const events = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
+      rig.sim.reply(nativeBootstrapLines());
+      for (let i = 0; i < 3; i++) {
+        completeSeed(rig, nativeBootstrapLines(), "not-a-cursor");
+      }
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
+      for (let i = 0; i < 5; i++) {
+        rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+      }
+      completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(events.events.filter((e) => e.type === "fault")).toEqual([]);
+      for (let i = 0; i < 5; i++) rig.sim.reply(["off"]);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+      completeSeed(rig, nativeBootstrapLines(), "not-a-cursor");
+      expect(events.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(events.events.some((e) => e.type === "seed")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("does not extend the deadline across another layout crossing during replacement capture", async () => {
     const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
