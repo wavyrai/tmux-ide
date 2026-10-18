@@ -1,3 +1,4 @@
+import { HistoryAnchorOwner, type HistoryAnchorProof } from "./history-anchor-owner.ts";
 import { layoutContentRows } from "../mirror/layout-content-rows.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type {
@@ -96,6 +97,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
+  readonly #historyAnchors = new HistoryAnchorOwner();
   #cols = 80;
   #rows = 24;
   #layoutEpoch = 0;
@@ -144,6 +146,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       onNativeReseedRequired: () => {
         if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture) return;
         this.#waitingForGeometryCapture = true;
+        this.#historyAnchors.invalidate();
         this.#supervise(
           this.#start.then(() => {
             if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
@@ -151,6 +154,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         );
       },
       onUpdate: (update, trace) => {
+        this.#historyAnchors.observe(update);
         this.#publishedIncarnation = update.incarnation;
         if (update.type === "terminal.seed") {
           this.#bootstrapped = true;
@@ -230,6 +234,18 @@ export class SessionRuntimeTerminalReplicaOwner {
 
   failCausalCell(reason: CausalCellFailureReasonV1, traceId?: string): void {
     this.#interpreter.failCausalCell(reason, traceId);
+  }
+
+  captureHistoryAnchor(proof: HistoryAnchorProof, historyIndex: number) {
+    if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture)
+      return { status: "unavailable" as const };
+    return this.#historyAnchors.capture(proof, historyIndex);
+  }
+
+  resolveHistoryAnchor(proof: HistoryAnchorProof, token: string) {
+    if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture)
+      return { status: "unavailable" as const };
+    return this.#historyAnchors.resolve(proof, token);
   }
 
   /** Scalar diagnostic only: no seed construction, hashing, or owner creation. */
@@ -377,6 +393,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     if (this.#disposed) return;
     this.#noteLifecycle(`dispose-${reason}`);
     this.#disposed = true;
+    this.#historyAnchors.invalidate();
     this.#historyTimer?.cancel();
     this.#historyTimer = null;
     this.#subscriptionEpoch += 1;
@@ -437,6 +454,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       // Deterministic capture point: reset opens the atomic capture. A probe
       // armed after reset belongs to the next post-capture delta, never to this
       // already-started reseed.
+      this.#historyAnchors.invalidate();
       this.#reseed = {
         nativeCols: event.cols,
         nativeRows: event.rows,
@@ -561,6 +579,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#reseedRetryCount = 0;
     if (!this.#bootstrapped || this.#reseed || this.#waitingForGeometryCapture) return;
     this.#waitingForGeometryCapture = true;
+    this.#historyAnchors.invalidate();
     void this.#start.then(() => {
       if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
     });
@@ -690,6 +709,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#noteLifecycle("reseed-retry", diagnostic);
     this.#reseedRetryCount += 1;
     this.#waitingForGeometryCapture = true;
+    this.#historyAnchors.invalidate();
     void this.#start.then(() => {
       if (!this.#disposed) this.#upstream?.reseed();
     });
@@ -697,6 +717,7 @@ export class SessionRuntimeTerminalReplicaOwner {
 
   #supervise(operation: Promise<void>): void {
     void operation.catch((error) => {
+      this.#historyAnchors.invalidate();
       this.#noteLifecycle("interpreter-fault");
       this.#interpreter.abort(error);
       this.#onFault?.(error);

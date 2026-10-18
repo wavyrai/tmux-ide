@@ -1257,3 +1257,57 @@ it.each(["seed", "delta"] as const)(
     }
   },
 );
+
+it("captures real committed history and restores it after subscriber disposal without wire changes", async () => {
+  let source!: MirrorSubscribeRequest;
+  const updates: CanonicalTerminalReplicaUpdate[] = [];
+  const mirror = {
+    subscribe: async (candidate: MirrorSubscribeRequest) => {
+      source = candidate;
+      queueMicrotask(() => {
+        candidate.onLayout?.(layout(4, 2));
+        candidate.onEvent({ type: "reset", cols: 4, rows: 2 });
+        candidate.onEvent({
+          type: "seed",
+          data: new TextEncoder().encode("SAME\r\nSAME\r\nSAME\r\nSAME\r\n"),
+        });
+        candidate.onEvent({ type: "cursor", x: 0, y: 1 });
+      });
+      return subscription(candidate);
+    },
+  };
+  const owner = new SessionRuntimeTerminalReplicaOwner(
+    generation,
+    "workspace",
+    "pane-a",
+    mirror as never,
+    { incarnation: `${generation}:0`, initialRevision: 0 },
+  );
+  try {
+    const first = await owner.subscribe((u) => updates.push(u));
+    const initial = updates.at(-1)!;
+    const captured = owner.captureHistoryAnchor(initial, 1);
+    expect(captured.status).toBe("captured");
+    if (captured.status !== "captured") throw Error("capture");
+    await first.close();
+    source.onEvent({ type: "delta", data: new TextEncoder().encode("NEXT\r\n") });
+    await vi.waitFor(() =>
+      expect(owner.qualificationSnapshot().revision).toBeGreaterThan(initial.revision),
+    );
+    const second = await owner.subscribe((u) => updates.push(u));
+    const current = updates.at(-1)!;
+    expect(owner.resolveHistoryAnchor(current, captured.token)).toMatchObject({
+      status: "resolved",
+      historyIndex: 1,
+    });
+    expect(owner.captureHistoryAnchor(initial, 1)).toEqual({ status: "stale" });
+    expect(JSON.stringify(current)).not.toContain(captured.token);
+    source.onEvent({ type: "reset", cols: 4, rows: 2 });
+    expect(owner.resolveHistoryAnchor(current, captured.token)).toEqual({ status: "unavailable" });
+    await second.close();
+    await owner.dispose();
+    expect(owner.resolveHistoryAnchor(current, captured.token)).toEqual({ status: "unavailable" });
+  } finally {
+    await owner.dispose();
+  }
+});
