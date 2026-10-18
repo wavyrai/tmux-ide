@@ -637,10 +637,12 @@ Node24 runtime and independently trusted policy, but no checkout or node_modules
 It preserves the same install/update/rollback commands and mandatory macOS
 verification. This build command alone does not create a bootstrap installer, and
 its inventory is not a signature or a trust root. The published alpha bootstrap
-uses `install.sh --native-alpha` and verifies the pinned native installer. The
-current branch updates fresh CLI bootstrap to 2.9.6; the live installer still
-bootstraps 2.9.5 and preserves an existing 2.9.5 or 2.9.6 installation. That native
-installer manages the
+uses `install.sh --native-alpha` and verifies the pinned native installer. Exact
+CLI prerequisites, release URLs and checksums are defined in
+[`docs/public/install.sh`](../../docs/public/install.sh). Building or qualifying a
+new CLI/native candidate does not update those pins or publish a release. Activate
+new pins only after the corresponding artifacts are available and the isolated
+install/update journey passes. The native installer manages the
 `~/Applications/Tmux IDE Alpha.app` entry and explicit update/rollback/uninstall
 flow documented in the [native alpha guide](../../docs/content/docs/native-alpha.mdx).
 
