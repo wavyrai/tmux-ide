@@ -81,7 +81,12 @@ const until = async (predicate) => {
   }
 };
 try {
-  daemon = await startDaemon(fleet);
+  daemon = await startDaemon(
+    fleet,
+    process.env.TMUX_GPUI_TEST_CLI !== undefined
+      ? { cliPath: process.env.TMUX_GPUI_TEST_CLI }
+      : undefined,
+  );
   const options = {
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
