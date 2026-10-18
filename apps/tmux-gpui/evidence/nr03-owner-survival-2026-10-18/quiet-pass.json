@@ -1,0 +1,44 @@
+{
+  "pass": true,
+  "before": {
+    "incarnation": "3fee6947-9537-410b-8066-b151adca0582:0",
+    "revision": 0,
+    "stateHash": "cccd4f9d403eeff9",
+    "stats": {
+      "fullWalks": 1,
+      "gridRowsRead": 24,
+      "historyRowsRead": 0,
+      "placementRowsRead": 0,
+      "cellsRead": 1920,
+      "parseBatches": 0,
+      "historyKeyVisits": 0
+    },
+    "listeners": {
+      "canonical": 1,
+      "raw": 0,
+      "upstream": 1
+    }
+  },
+  "idle": {
+    "incarnation": "3fee6947-9537-410b-8066-b151adca0582:0",
+    "revision": 0,
+    "stateHash": "cccd4f9d403eeff9",
+    "stats": {
+      "fullWalks": 1,
+      "gridRowsRead": 24,
+      "historyRowsRead": 0,
+      "placementRowsRead": 0,
+      "cellsRead": 1920,
+      "parseBatches": 0,
+      "historyKeyVisits": 0
+    },
+    "listeners": {
+      "canonical": 0,
+      "raw": 0,
+      "upstream": 1
+    }
+  },
+  "sameIncarnation": true,
+  "sameStateHash": true,
+  "socketClosed": true
+}
