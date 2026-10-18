@@ -1,0 +1,365 @@
+{
+  "aggregatedExclusiveTop": [
+    {
+      "function": "(idle)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 2442419,
+      "fractionOfSampleWeight": 0.7334591591591592
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 235626,
+      "fractionOfSampleWeight": 0.07075855855855856
+    },
+    {
+      "function": "",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 59958,
+      "fractionOfSampleWeight": 0.018005405405405406
+    },
+    {
+      "function": "(garbage collector)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 43916,
+      "fractionOfSampleWeight": 0.013187987987987988
+    },
+    {
+      "function": "",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38782,
+      "sampleWeightUs": 41957,
+      "fractionOfSampleWeight": 0.0125996996996997
+    },
+    {
+      "function": "(program)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 33789,
+      "fractionOfSampleWeight": 0.010146846846846847
+    },
+    {
+      "function": "handleWriteReq",
+      "url": "node:internal/stream_base_commons",
+      "line": 46,
+      "sampleWeightUs": 31250,
+      "fractionOfSampleWeight": 0.009384384384384385
+    },
+    {
+      "function": "open",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 30792,
+      "fractionOfSampleWeight": 0.009246846846846847
+    },
+    {
+      "function": "",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 15937,
+      "sampleWeightUs": 22209,
+      "fractionOfSampleWeight": 0.006669369369369369
+    },
+    {
+      "function": "readFileUtf8",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 20459,
+      "fractionOfSampleWeight": 0.006143843843843844
+    },
+    {
+      "function": "lstat",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 15209,
+      "fractionOfSampleWeight": 0.004567267267267267
+    },
+    {
+      "function": "",
+      "url": "",
+      "line": 1,
+      "sampleWeightUs": 15083,
+      "fractionOfSampleWeight": 0.004529429429429429
+    },
+    {
+      "function": "compileSourceTextModule",
+      "url": "node:internal/modules/esm/utils",
+      "line": 317,
+      "sampleWeightUs": 14709,
+      "fractionOfSampleWeight": 0.004417117117117117
+    },
+    {
+      "function": "compileForInternalLoader",
+      "url": "node:internal/bootstrap/realm",
+      "line": 383,
+      "sampleWeightUs": 9041,
+      "fractionOfSampleWeight": 0.002715015015015015
+    },
+    {
+      "function": "nonEmpty",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 29249,
+      "sampleWeightUs": 8834,
+      "fractionOfSampleWeight": 0.002652852852852853
+    },
+    {
+      "function": "compile",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 6004,
+      "sampleWeightUs": 8749,
+      "fractionOfSampleWeight": 0.002627327327327327
+    },
+    {
+      "function": "inst._zod.parse",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 7045,
+      "sampleWeightUs": 7584,
+      "fractionOfSampleWeight": 0.0022774774774774777
+    },
+    {
+      "function": "concat",
+      "url": "node:buffer",
+      "line": 628,
+      "sampleWeightUs": 7417,
+      "fractionOfSampleWeight": 0.0022273273273273274
+    },
+    {
+      "function": "writeUtf8String",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 7376,
+      "fractionOfSampleWeight": 0.002215015015015015
+    },
+    {
+      "function": "spawn",
+      "url": "node:internal/child_process",
+      "line": 356,
+      "sampleWeightUs": 7334,
+      "fractionOfSampleWeight": 0.002202402402402402
+    },
+    {
+      "function": "runChecks",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 6042,
+      "sampleWeightUs": 7209,
+      "fractionOfSampleWeight": 0.002164864864864865
+    },
+    {
+      "function": "",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 1,
+      "sampleWeightUs": 7167,
+      "fractionOfSampleWeight": 0.0021522522522522524
+    },
+    {
+      "function": "init",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 4300,
+      "sampleWeightUs": 7167,
+      "fractionOfSampleWeight": 0.0021522522522522524
+    },
+    {
+      "function": "getuid",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 6040,
+      "fractionOfSampleWeight": 0.001813813813813814
+    },
+    {
+      "function": "",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 6857,
+      "sampleWeightUs": 6000,
+      "fractionOfSampleWeight": 0.0018018018018018018
+    }
+  ],
+  "scope": "whole owned browser lifecycle only; profile and harness monotonic clocks did not align; no switch filtering",
+  "instrumented": true,
+  "osCpuUtilization": null,
+  "nativeRendering": false,
+  "profileDurationUs": 3330000,
+  "sampleWeightUs": 3330000,
+  "samples": 2283,
+  "clockValidated": false,
+  "cumulativeSamplesWithinProfile": true,
+  "exclusiveTop": [
+    {
+      "function": "(idle)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 2442419,
+      "fractionOfSampleWeight": 0.7334591591591592
+    },
+    {
+      "function": "(garbage collector)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 43916,
+      "fractionOfSampleWeight": 0.013187987987987988
+    },
+    {
+      "function": "",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38782,
+      "sampleWeightUs": 41957,
+      "fractionOfSampleWeight": 0.0125996996996997
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 35291,
+      "fractionOfSampleWeight": 0.010597897897897899
+    },
+    {
+      "function": "(program)",
+      "url": "",
+      "line": 0,
+      "sampleWeightUs": 33789,
+      "fractionOfSampleWeight": 0.010146846846846847
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 17583,
+      "fractionOfSampleWeight": 0.0052801801801801804
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 16208,
+      "fractionOfSampleWeight": 0.004867267267267267
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 15001,
+      "fractionOfSampleWeight": 0.004504804804804805
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 14916,
+      "fractionOfSampleWeight": 0.0044792792792792795
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 14834,
+      "fractionOfSampleWeight": 0.004454654654654655
+    },
+    {
+      "function": "compileSourceTextModule",
+      "url": "node:internal/modules/esm/utils",
+      "line": 317,
+      "sampleWeightUs": 14709,
+      "fractionOfSampleWeight": 0.004417117117117117
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 13375,
+      "fractionOfSampleWeight": 0.0040165165165165165
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 11375,
+      "fractionOfSampleWeight": 0.003415915915915916
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 9000,
+      "fractionOfSampleWeight": 0.002702702702702703
+    },
+    {
+      "function": "handleWriteReq",
+      "url": "node:internal/stream_base_commons",
+      "line": 46,
+      "sampleWeightUs": 8833,
+      "fractionOfSampleWeight": 0.0026525525525525526
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 8667,
+      "fractionOfSampleWeight": 0.0026027027027027026
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 8458,
+      "fractionOfSampleWeight": 0.00253993993993994
+    },
+    {
+      "function": "inst._zod.parse",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 7045,
+      "sampleWeightUs": 7584,
+      "fractionOfSampleWeight": 0.0022774774774774777
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 7584,
+      "fractionOfSampleWeight": 0.0022774774774774777
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 7541,
+      "fractionOfSampleWeight": 0.0022645645645645645
+    },
+    {
+      "function": "handleWriteReq",
+      "url": "node:internal/stream_base_commons",
+      "line": 46,
+      "sampleWeightUs": 7500,
+      "fractionOfSampleWeight": 0.0022522522522522522
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 7499,
+      "fractionOfSampleWeight": 0.002251951951951952
+    },
+    {
+      "function": "concat",
+      "url": "node:buffer",
+      "line": 628,
+      "sampleWeightUs": 7417,
+      "fractionOfSampleWeight": 0.0022273273273273274
+    },
+    {
+      "function": "publish",
+      "url": "file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
+      "line": 38373,
+      "sampleWeightUs": 7417,
+      "fractionOfSampleWeight": 0.0022273273273273274
+    },
+    {
+      "function": "spawn",
+      "url": "node:internal/child_process",
+      "line": 356,
+      "sampleWeightUs": 7334,
+      "fractionOfSampleWeight": 0.002202402402402402
+    }
+  ]
+}
