@@ -46,6 +46,14 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
     {
         return Err(Error::InvalidVersion);
     }
+    if state
+        .diagnostics
+        .as_ref()
+        .and_then(|value| value.tmux_version.as_deref())
+        .is_some_and(|value| !versions::safe_tmux_version(value))
+    {
+        return Err(Error::InvalidVersion);
+    }
     let mut states = BTreeSet::new();
     let mut diagnostics = BTreeMap::new();
     if let Some(fleet) = &state.fleet {
@@ -75,7 +83,10 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
             .diagnostics
             .as_ref()
             .and_then(|value| value.daemon_version.clone()),
-        tmux_version: None,
+        tmux_version: state
+            .diagnostics
+            .as_ref()
+            .and_then(|value| value.tmux_version.clone()),
         platform: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
         developer_mode,

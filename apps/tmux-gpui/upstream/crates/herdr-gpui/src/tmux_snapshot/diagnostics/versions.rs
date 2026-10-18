@@ -27,11 +27,39 @@ fn deserialize_version<'de, D: serde::Deserializer<'de>>(
     }
     Ok(value)
 }
+pub(super) fn safe_tmux_version(value: &str) -> bool {
+    if value.is_empty() || value.len() > 32 || !value.is_ascii() {
+        return false;
+    }
+    let numeric = value
+        .strip_suffix(|c: char| c.is_ascii_lowercase())
+        .unwrap_or(value);
+    let mut parts = numeric.split('.');
+    (0..2).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit()))
+    }) && parts.next().is_none()
+}
+fn deserialize_tmux_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let value = Option::<String>::deserialize(deserializer)?;
+    if value
+        .as_deref()
+        .is_some_and(|value| !safe_tmux_version(value))
+    {
+        return Err(serde::de::Error::custom("Invalid tmux diagnostic version"));
+    }
+    Ok(value)
+}
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(in crate::tmux_snapshot) struct Versions {
     #[serde(deserialize_with = "deserialize_version")]
     pub daemon_version: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_tmux_version")]
+    pub tmux_version: Option<String>,
 }
 
 #[cfg(target_os = "macos")]

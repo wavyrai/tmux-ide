@@ -105,3 +105,42 @@ fn validated_daemon_version_is_bounded_and_tmux_stays_unknown() {
             .is_err()
     );
 }
+
+#[test]
+fn selected_tmux_version_is_strict_and_exports_no_scope() {
+    for version in ["3.8", "3.7c"] {
+        let metadata: Versions =
+            serde_json::from_value(json!({"daemonVersion":null,"tmuxVersion":version})).unwrap();
+        let state = browser::State {
+            diagnostics: Some(metadata),
+            ..Default::default()
+        };
+        let report = build(&state, false).unwrap();
+        let value: Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(value["tmuxVersion"], version);
+        assert!(!report.contains("serverId"));
+        assert!(!report.contains("generation"));
+    }
+    for version in [
+        "3.8\nsecret",
+        "/private",
+        "3.8-dev",
+        "3.8C",
+        "3.8cc",
+        "3.8.0",
+        &"1".repeat(33),
+    ] {
+        assert!(
+            serde_json::from_value::<Versions>(json!({"daemonVersion":null,"tmuxVersion":version}))
+                .is_err()
+        );
+    }
+    let state = browser::State {
+        diagnostics: Some(Versions {
+            daemon_version: None,
+            tmux_version: Some("secret".into()),
+        }),
+        ..Default::default()
+    };
+    assert!(matches!(build(&state, false), Err(Error::InvalidVersion)));
+}

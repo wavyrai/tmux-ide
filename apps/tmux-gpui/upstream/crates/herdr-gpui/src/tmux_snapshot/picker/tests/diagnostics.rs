@@ -96,6 +96,7 @@ fn failed_diagnostics_preparation_preserves_clipboard_and_connection(cx: &mut Te
             view.browser_state.request = request;
             view.browser_state.surface = browser::Surface::Workspace;
             view.browser_state.diagnostics = Some(crate::tmux_snapshot::diagnostics::Versions {
+                tmux_version: None,
                 daemon_version: Some("secret/path".into()),
             });
             cx.write_to_clipboard(ClipboardItem::new_string("previous".into()));
@@ -124,6 +125,7 @@ fn diagnostics_do_not_reuse_version_after_local_request_retirement(cx: &mut Test
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             view.browser_state.diagnostics = Some(crate::tmux_snapshot::diagnostics::Versions {
+                tmux_version: None,
                 daemon_version: Some("2.9.7".into()),
             });
             view.browser_state.request = view.browser_request;

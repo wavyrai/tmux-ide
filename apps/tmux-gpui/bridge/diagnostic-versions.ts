@@ -10,18 +10,22 @@ export function safeProductVersion(value: unknown): string | null {
     : null;
 }
 // Only discovery/probe owners register exact host objects, never parsed host files.
-const versions = new WeakMap<PreviewHost, () => string | null>();
+const versions = new WeakMap<PreviewHost, { value: string | null; current: () => void }>();
 export function registerVerifiedVersion(host: PreviewHost, value: unknown, current: () => void) {
   const version = safeProductVersion(value);
-  versions.set(host, () => {
-    try {
-      current();
-      return version;
-    } catch {
-      return null;
-    }
-  });
+  versions.set(host, { value: version, current });
 }
+export function verifiedHostCurrent(host: PreviewHost): boolean {
+  const proof = versions.get(host);
+  if (!proof) return false;
+  try {
+    proof.current();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function verifiedVersion(host: PreviewHost): string | null {
-  return versions.get(host)?.() ?? null;
+  return verifiedHostCurrent(host) ? (versions.get(host)?.value ?? null) : null;
 }

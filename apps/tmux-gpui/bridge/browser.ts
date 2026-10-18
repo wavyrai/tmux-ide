@@ -985,6 +985,15 @@ function launchFleetSelection(
     });
 }
 
+function diagnosticTmuxVersion() {
+  const owner = catalog,
+    token = request;
+  return (
+    owner?.diagnosticTmuxVersion(() => {
+      if (owner === catalog && request === token) publish();
+    }) ?? null
+  );
+}
 function publish() {
   workspaceFleetAgents.sync(
     request,
@@ -1085,7 +1094,10 @@ function publish() {
       home: { phase: homePhase },
       diagnostics:
         foreground && surface === "workspace" && inputReady && active && snapshot
-          ? { daemonVersion: catalog?.diagnosticVersion() ?? null }
+          ? {
+              daemonVersion: catalog?.diagnosticVersion() ?? null,
+              tmuxVersion: diagnosticTmuxVersion(),
+            }
           : null,
       localSetup: localSetupContext() ? localSetup : null,
       localSessionCreate:
