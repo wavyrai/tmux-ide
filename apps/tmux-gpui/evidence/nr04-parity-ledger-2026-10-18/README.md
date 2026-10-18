@@ -90,3 +90,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Matched alternate-screen round trip
 
 `../nr04-alternate-screen-2026-10-18/README.md` verifies local stock3.8 DEC1049 enter/exit across plain tmux, compiled TUI and GPUI bridge. Exact receiver input, source flag/cursor, saved/main captured text, history size and identity/geometry restore; TUI rendered markers and GPUI published mode/cursor pass separately. All processes cleaned up. Initial resize-before-initialization fixture failure is retained and explained. This does not qualify trailing whitespace/styles, physical GUI cursor rendering, mouse/copy-mode, SSH or all alternate-screen variants.
+
+## Application mouse reporting gap
+
+`../nr04-mouse-reporting-2026-10-18/README.md` verifies exact DEC1000/1006 left press/release bytes through a real attached stock3.8 client and the compiled TUI, followed by reporting-disabled no-leak and fresh-input checks. Both preserve identity/geometry and clean up all owned processes. Current GPUI native handlers and bridge schema lack semantic application press/drag/release routing; this is source-audited missing support, not a physical GUI failure. Sending raw SGR bytes would bypass the missing owner and is not counted as parity. Follow-up Sfora card `kn7fmhcev6tp9mstepy7hb9m1n8gh9tt` requires canonical mode encoding, gesture ownership/cancellation and native verification.
