@@ -75,6 +75,7 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub pointer_modes: Option<decode::PointerModes>,
     pub local_setup: Option<local_setup::Setup>,
     pub local_session_create: Option<local_session::Capability>,
     pub machines: Option<machines::Registry>,
@@ -578,6 +579,12 @@ impl Reader {
         {
             return Err(Error::Invalid("invalid browser state"));
         }
+        let pointer_modes = p
+            .snapshot
+            .as_ref()
+            .map(decode::pointer_modes)
+            .transpose()?
+            .flatten();
         let frame = p
             .snapshot
             .or_else(|| p.retained_preview.map(|preview| preview.snapshot))
@@ -618,6 +625,7 @@ impl Reader {
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
+            pointer_modes,
             local_setup: p.local_setup,
             local_session_create: p.local_session_create,
             machines: p.machines,

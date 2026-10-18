@@ -59,6 +59,7 @@ fn make_view(
         )),
         input_cell_width: Some(10.),
         painted_frame: Some(frame.clone()),
+        pointer: Default::default(),
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
@@ -312,5 +313,7 @@ mod terminal_link_pointer_tests;
 #[path = "input_interruption_tests/uncertain_pointer.rs"]
 mod uncertain_pointer;
 
+#[path = "pointer_event_tests.rs"]
+mod pointer_event_tests;
 #[path = "input_interruption_tests/retained_preview.rs"]
 mod retained_preview;

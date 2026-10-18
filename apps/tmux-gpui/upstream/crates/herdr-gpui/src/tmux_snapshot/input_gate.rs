@@ -32,6 +32,7 @@ impl SnapshotView {
             && self.browser_state.selected_pane.is_some()
     }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
+        self.cancel_pointer();
         self.input_interrupted = true;
         self.discard_composition(cx);
         cx.notify();

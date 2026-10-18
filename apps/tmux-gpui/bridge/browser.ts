@@ -96,6 +96,7 @@ import {
   DaemonDiscoveryError,
 } from "./discovery.ts";
 import { scrollSchema } from "./history.ts";
+import { mouseSchema } from "./mouse.ts";
 import { wheelSchema } from "./wheel.ts";
 import { surfacesSchema } from "./window-canvas.ts";
 import { createWindowPresentation } from "./window-presentation.ts";
@@ -224,7 +225,7 @@ const commandSchema = z.union([
       type: z.literal("input"),
       request: z.number().int().positive().safe(),
       id: z.string().min(1).max(512),
-      input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema]),
+      input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema, mouseSchema]),
     })
     .strict(),
   z.object({ type: z.literal("home"), request: z.number().int().positive().safe() }).strict(),

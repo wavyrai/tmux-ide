@@ -55,6 +55,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             input_geometry: None,
             input_cell_width: None,
             painted_frame: None,
+            pointer: Default::default(),
             selection: None,
             divider: None,
             wheel: crate::terminal::WheelRemainder::default(),

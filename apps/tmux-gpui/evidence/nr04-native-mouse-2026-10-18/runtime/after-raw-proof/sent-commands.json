@@ -1,0 +1,120 @@
+[
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "resize",
+      "data": {
+        "cols": 132,
+        "rows": 41
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 1,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 1,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "text",
+      "data": "d"
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 2,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 2,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.6b76a9a706cae3251315",
+    "input": {
+      "kind": "text",
+      "data": "f"
+    }
+  }
+]

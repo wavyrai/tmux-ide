@@ -72,6 +72,7 @@ fn make_view(
         )),
         input_cell_width: Some(10.),
         painted_frame: Some(frame.clone()),
+        pointer: Default::default(),
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),

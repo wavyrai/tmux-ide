@@ -15,6 +15,7 @@ import {
 import { contentRect } from "./window-canvas.ts";
 import { createPaneResizeFence, paneResizeSchema, resizePane } from "./pane-resize.ts";
 import { createHistoryViewport, scrollSchema } from "./history.ts";
+import { createMouseOwner, mouseSchema } from "./mouse.ts";
 import { routeWheel, wheelSchema } from "./wheel.ts";
 import type { Layout } from "./topology.ts";
 import { applyPresence, presenceSchema } from "./presence.ts";
@@ -37,6 +38,14 @@ let runtime: PaneStreamRuntimeClient | undefined;
 let disposeClient: (() => void) | undefined;
 let splitGesture: ReturnType<typeof createSplitGestureOwner> | undefined;
 const viewport = createHistoryViewport();
+const mouseOwner = createMouseOwner();
+const mouseIdentity = () =>
+  JSON.stringify([
+    connection,
+    presentationEpoch,
+    selectedActionPane ? lifetimes.get(selectedActionPane) : null,
+    currentResizeToken,
+  ]);
 const replicas = new Map<string, ReturnType<typeof createReplica>>();
 const surfaces = new Map<
   string,
@@ -112,6 +121,7 @@ function output(snapshot: typeof latest.snapshot) {
     presentationEpoch,
   );
   currentResizeToken = resizeFence(resizeLayout, presentationEpoch);
+  mouseOwner.observe(inputReady ? snapshot : null, mouseIdentity());
   resizeGesture?.observe();
   splitGesture?.observe();
   const line =
@@ -525,6 +535,7 @@ try {
           admittedPresenceRevision = presence.data.revision;
           closePaneReady = null;
           actionFence.invalidate();
+          mouseOwner.retire();
           foreground = presence.data.active;
           if (!foreground) splitGesture.retire();
           if (!foreground && latest.snapshot) output(latest.snapshot);
@@ -706,8 +717,30 @@ try {
           output(latest.snapshot);
           continue;
         }
+        const mouse = mouseSchema.safeParse(value);
+        if (mouse.success) {
+          if (
+            !latest.snapshot ||
+            viewport.offset > 0 ||
+            !runtime.ownsConnectionAuthority("input")
+          ) {
+            mouseOwner.retire();
+            continue;
+          }
+          const input = mouseOwner.route(latest.snapshot, mouseIdentity(), mouse.data);
+          if (input) {
+            try {
+              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+            } catch (error) {
+              mouseOwner.retire();
+              throw error;
+            }
+          }
+          continue;
+        }
         const wheel = wheelSchema.safeParse(value);
         if (wheel.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           if (!latest.snapshot) continue;
           const route = routeWheel(latest.snapshot, viewport.offset, wheel.data);
@@ -725,6 +758,7 @@ try {
         }
         const scroll = scrollSchema.safeParse(value);
         if (scroll.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           const view = viewport.scroll(scroll.data.data);
           if (view) surfaces.set(config.semanticPaneId, view);
@@ -733,6 +767,7 @@ try {
         }
         const resize = resizeSchema.safeParse(value);
         if (resize.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           if (!resizeBlocked && latest.snapshot) {
             try {

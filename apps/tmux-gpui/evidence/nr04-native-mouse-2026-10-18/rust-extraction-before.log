@@ -1,0 +1,51 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+error: unnecessary qualification
+   --> crates/herdr-gpui/src/tmux_snapshot/pointer.rs:250:13
+    |
+250 |             super::pointer::Action::Down,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: requested on the command line with `-D unused-qualifications`
+help: remove the unnecessary path segments
+    |
+250 -             super::pointer::Action::Down,
+250 +             Action::Down,
+    |
+
+error: unnecessary qualification
+   --> crates/herdr-gpui/src/tmux_snapshot/pointer.rs:339:17
+    |
+339 |                 super::pointer::Action::Drag
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+339 -                 super::pointer::Action::Drag
+339 +                 Action::Drag
+    |
+
+error: unnecessary qualification
+   --> crates/herdr-gpui/src/tmux_snapshot/pointer.rs:341:17
+    |
+341 |                 super::pointer::Action::Move
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+341 -                 super::pointer::Action::Move
+341 +                 Action::Move
+    |
+
+error: unnecessary qualification
+   --> crates/herdr-gpui/src/tmux_snapshot/pointer.rs:396:13
+    |
+396 |             super::pointer::Action::Up,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the unnecessary path segments
+    |
+396 -             super::pointer::Action::Up,
+396 +             Action::Up,
+    |
+
+error: could not compile `herdr-gpui` (lib test) due to 4 previous errors

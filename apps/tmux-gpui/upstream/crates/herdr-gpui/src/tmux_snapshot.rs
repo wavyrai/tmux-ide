@@ -24,6 +24,7 @@ mod new_session;
 mod pane_actions;
 mod pane_chrome;
 mod picker;
+mod pointer;
 mod presence;
 mod selection;
 mod session_history;
@@ -264,6 +265,7 @@ fn show(
                         input_geometry: None,
                         input_cell_width: None,
                         painted_frame: None,
+                        pointer: Default::default(),
                         selection: None,
                         divider: None,
                         wheel: crate::terminal::WheelRemainder::default(),
@@ -327,6 +329,7 @@ struct SnapshotView {
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
     painted_frame: Option<Arc<FrameData>>,
+    pointer: pointer::Owner,
     selection: Option<selection::Capture>,
     divider: Option<divider::Drag>,
     wheel: crate::terminal::WheelRemainder,

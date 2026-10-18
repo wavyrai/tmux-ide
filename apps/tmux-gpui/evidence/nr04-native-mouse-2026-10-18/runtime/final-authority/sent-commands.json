@@ -1,0 +1,286 @@
+[
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "resize",
+      "data": {
+        "cols": 132,
+        "rows": 41
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 1,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 1,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 2,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 1,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 2,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e-stale",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 3,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e-stale",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 3,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 4,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 4,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 5,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "cancel",
+        "gesture": 5
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 5,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "text",
+      "data": "d"
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "down",
+        "gesture": 6,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "mouse",
+      "data": {
+        "action": "up",
+        "gesture": 6,
+        "row": 6,
+        "col": 10,
+        "button": 0,
+        "shift": false,
+        "alt": false,
+        "control": false,
+        "protocol": "vt200",
+        "encoding": "sgr",
+        "cols": 132,
+        "rows": 40
+      }
+    }
+  },
+  {
+    "type": "input",
+    "request": 2,
+    "id": "pane.promoted.ae5cac5e09ce959afb5e",
+    "input": {
+      "kind": "text",
+      "data": "f"
+    }
+  }
+]

@@ -4,6 +4,7 @@ use serde::Serialize;
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "lowercase")]
 pub(super) enum Input {
+    Mouse(super::pointer::Command),
     Text(String),
     Paste(String),
     Key(String),

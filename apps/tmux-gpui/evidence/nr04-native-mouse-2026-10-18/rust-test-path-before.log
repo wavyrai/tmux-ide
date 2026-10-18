@@ -1,0 +1,35 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+error[E0433]: cannot find `copy` in `super`
+  --> crates/herdr-gpui/src/tmux_snapshot/pointer_event_tests.rs:11:61
+   |
+11 |         view.browser_state.copy_region = Some(super::super::copy::Region {
+   |                                                             ^^^^ could not find `copy` in `super`
+   |
+help: consider importing this module
+   |
+ 1 + use crate::tmux_snapshot::copy;
+   |
+help: if you import `copy`, refer to it directly
+   |
+11 -         view.browser_state.copy_region = Some(super::super::copy::Region {
+11 +         view.browser_state.copy_region = Some(copy::Region {
+   |
+
+error[E0433]: cannot find `copy` in `super`
+  --> crates/herdr-gpui/src/tmux_snapshot/pointer_event_tests.rs:96:61
+   |
+96 |         view.browser_state.copy_region = Some(super::super::copy::Region {
+   |                                                             ^^^^ could not find `copy` in `super`
+   |
+help: consider importing this module
+   |
+ 1 + use crate::tmux_snapshot::copy;
+   |
+help: if you import `copy`, refer to it directly
+   |
+96 -         view.browser_state.copy_region = Some(super::super::copy::Region {
+96 +         view.browser_state.copy_region = Some(copy::Region {
+   |
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `herdr-gpui` (lib test) due to 2 previous errors

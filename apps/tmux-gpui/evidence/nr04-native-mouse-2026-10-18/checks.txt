@@ -1,0 +1,8 @@
+Related TypeScript tests: 32 passed
+Focused native tmux_snapshot: 420 passed, 0 failed, 1 ignored (requires publication trace)
+Package clippy --all-targets --all-features -- -D warnings: passed
+cargo fmt --all -- --check: passed
+Product-source git diff --check: passed
+Full evidence diff check flags intentional trailing spaces/blank lines in raw captured terminal frames; bytes retained unchanged
+Independent review: np01_review approved final source contingent on these passing gates
+Native GUI: not performed, Mac locked

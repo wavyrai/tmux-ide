@@ -34,162 +34,6 @@ pub(super) enum Selection {
     Pane(String),
 }
 impl SnapshotView {
-    fn terminal_click(
-        &mut self,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.browser_state.retained_preview {
-            self.interrupt_input(cx);
-            return;
-        }
-        if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
-            return;
-        }
-        if super::terminal_links::gesture(event) {
-            if let Some(url) = self.terminal_web_link(event.position) {
-                cx.open_url(&url);
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if self.begin_divider(event.position, cx) {
-            return;
-        }
-        if self.selection.is_some() {
-            self.clear_selection(cx);
-        }
-        let input_ready = self.terminal_input_ready();
-        if !input_ready {
-            self.interrupt_input(cx);
-            // Keep keydown observable even before AppKit text input is installed.
-            self.terminal_focus.focus(window, cx);
-            if !self.historical_selection_ready() {
-                return;
-            }
-        }
-        if !super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()) {
-            // An unresolved target change must not leave the old pane armed for typing.
-            self.interrupt_input(cx);
-            return;
-        }
-        let (Some((bounds, _)), Some(width)) = (self.input_geometry, self.input_cell_width) else {
-            self.interrupt_input(cx);
-            return;
-        };
-        if !bounds.contains(&event.position) {
-            return;
-        }
-        let point = event.position - bounds.origin;
-        let id = super::hit_regions::hit(
-            &self.browser_state.regions,
-            f32::from(point.x),
-            f32::from(point.y),
-            width,
-            self.terminal_height(),
-        )
-        .map(str::to_owned);
-        if let Some(id) = id {
-            if self.browser_state.selected_pane.as_ref() != Some(&id) {
-                if input_ready {
-                    self.select(Selection::Pane(id), window, cx);
-                }
-            } else {
-                // Copying history is local; it cannot re-arm terminal input.
-                if input_ready {
-                    self.input_interrupted = false;
-                }
-                self.discard_composition(cx);
-                self.selection = super::selection::Capture::begin(
-                    &self.browser_state,
-                    f32::from(point.x) / width,
-                    f32::from(point.y) / self.terminal_height(),
-                );
-                cx.notify();
-            }
-            self.terminal_focus.focus(window, cx);
-        }
-    }
-    pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if self.selection.take().is_some() {
-            self.frame = self.browser_state.frame.clone();
-            cx.notify();
-        }
-    }
-    fn terminal_drag(
-        &mut self,
-        event: &MouseMoveEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.divider.is_some() {
-            if event.pressed_button != Some(MouseButton::Left) {
-                self.divider = None;
-            } else {
-                self.move_divider(event.position, false, cx);
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if event.pressed_button != Some(MouseButton::Left) {
-            if let Some(selection) = &mut self.selection {
-                selection.dragging = false;
-            }
-            return;
-        }
-        self.update_drag(event.position, cx);
-    }
-    fn update_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        if self.browser_state.retained_preview {
-            self.clear_selection(cx);
-            return;
-        }
-        let height = self.terminal_height();
-        let (Some(selection), Some((bounds, _)), Some(width)) = (
-            &mut self.selection,
-            self.input_geometry,
-            self.input_cell_width,
-        ) else {
-            return;
-        };
-        if !selection.dragging {
-            return;
-        }
-        let point = position - bounds.origin;
-        if selection
-            .update(f32::from(point.x) / width, f32::from(point.y) / height)
-            .is_err()
-        {
-            self.clear_selection(cx);
-        }
-        cx.notify();
-        cx.stop_propagation();
-    }
-    fn terminal_release(
-        &mut self,
-        event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.divider.is_some() {
-            self.move_divider(event.position, true, cx);
-            cx.stop_propagation();
-            return;
-        }
-        self.update_drag(event.position, cx);
-        if let Some(selection) = &mut self.selection {
-            selection.dragging = false;
-        }
-        if self
-            .selection
-            .as_ref()
-            .is_some_and(|selection| selection.empty())
-        {
-            self.clear_selection(cx);
-        }
-        cx.notify();
-    }
     fn terminal_wheel(
         &mut self,
         event: &ScrollWheelEvent,
@@ -705,6 +549,7 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.observe_pointer();
         self.prepare_home_filter(cx);
         self.reconcile_sidebar_keyboard(window, cx);
         self.agent_animation.begin_render();
@@ -852,8 +697,14 @@ impl SnapshotView {
                 .size_full()
                 .track_focus(&self.terminal_focus)
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::terminal_click))
+                .on_mouse_down(MouseButton::Middle, cx.listener(Self::terminal_click))
+                .on_mouse_down(MouseButton::Right, cx.listener(Self::terminal_click))
                 .on_mouse_move(cx.listener(Self::terminal_drag))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::terminal_release))
+                .on_mouse_up(MouseButton::Middle, cx.listener(Self::terminal_release))
+                .on_mouse_up(MouseButton::Right, cx.listener(Self::terminal_release))
+                .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::terminal_release))
+                .on_mouse_up_out(MouseButton::Right, cx.listener(Self::terminal_release))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::terminal_release))
                 .on_key_down(cx.listener(Self::terminal_key))
                 .on_scroll_wheel(cx.listener(Self::terminal_wheel))

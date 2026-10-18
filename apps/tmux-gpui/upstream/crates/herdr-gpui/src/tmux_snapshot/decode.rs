@@ -69,18 +69,18 @@ struct Modes {
     mouse_encoding: Option<MouseEncoding>,
     synchronized_output: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-enum MouseProtocol {
+pub(super) enum MouseProtocol {
     None,
     X10,
     Vt200,
     Drag,
     Any,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
-enum MouseEncoding {
+pub(super) enum MouseEncoding {
     Default,
     Utf8,
     Sgr,
@@ -233,5 +233,27 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         }),
         hyperlinks: vec![],
         graphics: vec![],
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PointerModes {
+    pub protocol: MouseProtocol,
+    pub encoding: MouseEncoding,
+    pub alternate: bool,
+}
+pub(super) fn pointer_modes(value: &serde_json::Value) -> Result<Option<PointerModes>, Error> {
+    let modes: Modes = serde_json::from_value(value["modes"].clone())?;
+    Ok(match (modes.mouse_protocol, modes.mouse_encoding) {
+        (Some(protocol), Some(encoding))
+            if protocol != MouseProtocol::None && encoding != MouseEncoding::SgrPixels =>
+        {
+            Some(PointerModes {
+                protocol,
+                encoding,
+                alternate: modes.alternate_screen,
+            })
+        }
+        _ => None,
     })
 }

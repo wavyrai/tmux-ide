@@ -41,6 +41,7 @@ impl SnapshotView {
                     .map(|selection| selection.frame.clone())
                     .or_else(|| state.frame.clone());
                 self.browser_state = state;
+                self.observe_pointer();
             }
             None => {
                 self.workspace_fleet_agents.pending = None;

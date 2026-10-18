@@ -112,6 +112,7 @@ fn browser_fixture(
         input_geometry: None,
         input_cell_width: None,
         painted_frame: None,
+        pointer: Default::default(),
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
