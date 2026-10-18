@@ -1,0 +1,4 @@
+
+> @tmux-ide/daemon@2.9.7 typecheck:workbench-dock-opentui /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon
+> tsc --noEmit -p tsconfig.workbench-dock-opentui.json
+

@@ -61,3 +61,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Matched Unicode and bracketed-paste check
 
 `../nr04-unicode-paste-2026-10-18/README.md` records the same 2,138-byte Unicode payload across stock3.8 plain tmux, actual source TUI and GPUI bridge with DEC2004 on/off. Mode-on passes all three paths, including a supplementary-code-point chunk boundary. Mode-off plain tmux and GPUI deliver exact raw bytes; TUI incorrectly adds 12 framing bytes. This is a reproduced failure, tracked by follow-up card kn71bd5tenv59w3mshy8g6j0m58ggdec, not complete parity. All private processes cleaned up. Exact byte fidelity and final text markers do not establish native clipboard, font/cell-width, SSH or platform acceptance.
+
+## Paste mode correction
+
+`../nr04-paste-mode-fix-2026-10-18/README.md` preserves the same six-lane workload after the canonical TUI paste-mode correction. All six pass: the TUI now matches plain tmux/GPUI with mode off (2,138 raw bytes) and on (2,150 framed bytes). Tests cover queued admission, missing mode and ownership cancellation; input guards remain intact. Original failing evidence remains in the preceding directory. This updates bounded source-TUI paste parity only; installed-package, native clipboard, SSH and wider platform acceptance remain separate.

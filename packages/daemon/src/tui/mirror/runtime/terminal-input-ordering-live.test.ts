@@ -150,7 +150,7 @@ it.skipIf(!binary)(
       expected[1] = binaryB;
       await check();
       const paste = "a".repeat(1017) + "😀界e\u0301" + "z".repeat(1100);
-      const frames = terminalInputsForPaste(paste);
+      const frames = terminalInputsForPaste(paste, true);
       navigate(0);
       for (const frame of frames) {
         mirror.sendText("input", semantic[0]!, frame.data);
