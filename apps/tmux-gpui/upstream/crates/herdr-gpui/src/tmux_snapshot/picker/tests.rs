@@ -435,3 +435,5 @@ mod unavailable_window_control;
 mod scoped_surface;
 
 mod developer_mode;
+
+mod diagnostics;

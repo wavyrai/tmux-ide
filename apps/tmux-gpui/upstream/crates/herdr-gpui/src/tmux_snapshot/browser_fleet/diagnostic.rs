@@ -1,14 +1,14 @@
 //! Allowlisted owner diagnostics. Catalog availability and action tokens stay authoritative.
 use super::{Group, Phase};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::tmux_snapshot) struct Diagnostic {
     phase: ConnectionPhase,
     failure: Option<Failure>,
 }
-#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum ConnectionPhase {
     Connecting,
@@ -17,7 +17,7 @@ enum ConnectionPhase {
     NeedsAttention,
     Disconnected,
 }
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Failure {
     Unavailable,

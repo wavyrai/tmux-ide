@@ -4,6 +4,7 @@ use super::{Row, Target, browser};
 pub(in crate::tmux_snapshot) enum Action {
     Fonts,
     DeveloperMode(bool),
+    CopyDiagnostics,
     Shortcuts,
     Help,
     WhatsNew,
@@ -60,6 +61,7 @@ pub(super) fn command_rows_with_settings(
                 "Enable Developer mode"
             },
         ),
+        (Action::CopyDiagnostics, "Copy diagnostics"),
         (Action::Shortcuts, "Keyboard shortcuts…"),
         (Action::Help, "Using tmux-ide…"),
         (Action::WhatsNew, "What’s new…"),

@@ -97,6 +97,7 @@ pub(super) struct Picker {
     mode: Mode,
     pane_scope: Option<super::pane_actions::Target>,
     error: Option<&'static str>,
+    note: Option<&'static str>,
     removal: Option<machine_remove::Confirmation>,
     edit: Option<machine_edit::Form>,
     machine: Option<machine::Form>,
@@ -388,7 +389,7 @@ impl SnapshotView {
         }
     }
     fn open_picker_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_commands.is_none() {
+        if self.browser_commands.is_none() && mode != Mode::Commands {
             return;
         }
         self.sidebar_keyboard.active = false;
@@ -431,6 +432,7 @@ impl SnapshotView {
             mode,
             pane_scope: None,
             error: None,
+            note: None,
             removal: None,
             edit: None,
             machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
@@ -487,7 +489,7 @@ impl SnapshotView {
         picker.search.update(cx, |input, cx| {
             input.set_appearance(crate::config::Config::default().ui, theme, cx)
         });
-        if self.browser_commands.is_none()
+        if (self.browser_commands.is_none() && picker.mode != Mode::Commands)
             || picker.pane_scope.as_ref().is_some_and(|target| {
                 !self.presence.ready() || !target.current(&self.browser_state)
             })
@@ -572,7 +574,8 @@ impl SnapshotView {
             .picker
             .as_ref()
             .is_none_or(|p| p.mode != Mode::Theme && p.request != self.browser_request)
-            || self.browser_commands.is_none()
+            || (self.browser_commands.is_none()
+                && !matches!(&target, Target::Command(Action::CopyDiagnostics)))
             || !current(&self.browser_state, &target)
         {
             return;
@@ -654,6 +657,7 @@ impl SnapshotView {
             Target::Command(
                 Action::ToggleSidebar
                     | Action::DeveloperMode(_)
+                    | Action::CopyDiagnostics
                     | Action::Shortcuts
                     | Action::Help
                     | Action::WhatsNew
@@ -679,6 +683,28 @@ impl SnapshotView {
         if let Target::Command(action) = target {
             self.close_picker(window, cx);
             match action {
+                Action::CopyDiagnostics => {
+                    let report =
+                        super::diagnostics::build(&self.browser_state, self.developer_mode.enabled);
+                    self.open_picker_mode(Mode::Commands, window, cx);
+                    match report {
+                        Ok(text) => {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            if let Some(picker) = self.picker.as_mut() {
+                                picker.note = Some(
+                                    "Diagnostics copied. Terminal content and private connection details are excluded.",
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            if let Some(picker) = self.picker.as_mut() {
+                                picker.error =
+                                    Some("Could not prepare diagnostics. Clipboard unchanged.");
+                            }
+                        }
+                    }
+                    cx.notify();
+                }
                 Action::DeveloperMode(enabled) => {
                     self.set_developer_mode(enabled, cx);
                     self.open_picker_mode(Mode::Commands, window, cx);

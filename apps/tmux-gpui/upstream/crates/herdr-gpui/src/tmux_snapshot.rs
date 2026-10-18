@@ -11,6 +11,7 @@ mod copy;
 mod decode;
 pub(crate) mod design;
 mod developer_mode;
+mod diagnostics;
 mod divider;
 mod geometry;
 mod glass;
