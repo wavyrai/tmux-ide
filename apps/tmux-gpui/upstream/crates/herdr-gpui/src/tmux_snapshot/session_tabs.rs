@@ -3,6 +3,7 @@ use super::{SnapshotView, browser};
 use gpui::{Context, KeyDownEvent, Keystroke, ScrollHandle, Window};
 use serde::Deserialize;
 use std::collections::HashSet;
+mod focus;
 mod render;
 #[cfg(test)]
 mod tests;
@@ -121,6 +122,7 @@ pub(super) struct Pending {
 pub(super) struct Owner {
     pub pending: Option<Pending>,
     pub last_request: u64,
+    pub(super) focus: focus::Focus,
     scroll: ScrollHandle,
 }
 pub(super) fn shortcut(key: &Keystroke) -> bool {
@@ -202,6 +204,7 @@ impl SnapshotView {
             })
             .is_ok()
         }) {
+            self.remember_tab_focus(window);
             let closing = self
                 .browser_state
                 .session_tabs
@@ -239,6 +242,7 @@ impl SnapshotView {
                 }))
         {
             self.session_tabs.pending = None;
+            self.cancel_tab_focus_restore();
         } else if state.request == pending.request {
             self.browser_request = pending.request;
             self.pending_session_open = (!pending.closing

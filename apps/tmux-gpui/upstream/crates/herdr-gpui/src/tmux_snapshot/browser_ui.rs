@@ -125,6 +125,7 @@ impl SnapshotView {
         {
             return;
         }
+        self.cancel_tab_focus_restore();
         if self.browser_state.retained_preview {
             self.interrupt_input(cx);
             cx.stop_propagation();
@@ -319,6 +320,7 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_tab_focus_restore();
         self.sidebar_keyboard.active = false;
         self.attention.pending = None;
         self.cancel_attention();
@@ -552,6 +554,7 @@ impl SnapshotView {
         self.observe_pointer();
         self.prepare_home_filter(cx);
         self.reconcile_sidebar_keyboard(window, cx);
+        self.restore_tab_focus(window, cx);
         self.agent_animation.begin_render();
         // GPUI dispatches shortcuts along the focused element path. Initial catalog
         // and selection transitions have no focused control; retain navigation without

@@ -69,7 +69,9 @@ impl SnapshotView {
             });
         self.pending_session_open = None;
         if let Some(pane) = pane {
+            let restore_focus = self.session_tabs.focus.restore;
             self.select(Selection::Pane(pane), window, cx);
+            self.session_tabs.focus.restore = restore_focus;
         }
     }
 }

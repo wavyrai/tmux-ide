@@ -302,3 +302,5 @@ fn retained_tab_pointer_narrow_strip_and_cross_owner_guard(cx: &mut TestAppConte
 }
 
 mod pending_input;
+
+mod selection_baseline;

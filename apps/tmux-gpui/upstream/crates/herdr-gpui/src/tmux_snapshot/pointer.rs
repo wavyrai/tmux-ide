@@ -239,6 +239,7 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_tab_focus_restore();
         if self.browser_state.retained_preview {
             self.cancel_pointer();
             self.interrupt_input(cx);
