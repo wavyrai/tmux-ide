@@ -74,9 +74,37 @@ impl SnapshotView {
             && self.pane_actions.is_none()
     }
     fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.home_action_current(request) {
-            self.select(Selection::Refresh, window, cx);
+        if !self.home_action_current(request) {
+            return;
         }
+        if let Some(setup) = &self.browser_state.local_setup {
+            if setup.phase == browser::local_setup::Phase::Running {
+                return;
+            }
+            if setup.phase.actionable() {
+                if !self.marked.is_empty()
+                    || !self.presence.ready()
+                    || self.browser_state.request != request
+                {
+                    return;
+                }
+                if self.browser_commands.as_ref().is_some_and(|sender| {
+                    sender
+                        .try_send(browser::Command::LocalSetup { request })
+                        .is_ok()
+                }) {
+                    self.browser_state.local_setup = Some(browser::local_setup::Setup {
+                        phase: browser::local_setup::Phase::Running,
+                    });
+                } else {
+                    self.browser_state.status =
+                        "Local setup request could not be sent. Try again.".into();
+                }
+                cx.notify();
+                return;
+            }
+        }
+        self.select(Selection::Refresh, window, cx);
     }
     pub(super) fn home_render(
         &mut self,
@@ -99,6 +127,13 @@ impl SnapshotView {
         let theme = self.theme();
         let request = self.browser_request;
         let connected = self.browser_commands.is_some();
+        let setup_phase = self
+            .browser_state
+            .local_setup
+            .as_ref()
+            .map(|setup| setup.phase);
+        let refresh_label = setup_phase.map_or("Refresh sessions", |phase| phase.label());
+        let setup_running = setup_phase == Some(browser::local_setup::Phase::Running);
         let theme_ready = self.browser_state.appearance.is_some();
         let is_live = live(&self.browser_state, connected)
             || (connected
@@ -210,10 +245,14 @@ impl SnapshotView {
                     .child(
                         native_controls::action_button(
                             "tmux-home-refresh",
-                            Some("Refresh sessions"),
-                            "Refresh sessions",
+                            Some(refresh_label),
+                            refresh_label,
                             native_controls::Icon::Refresh,
-                            native_controls::ButtonStyle::Quiet,
+                            if setup_running {
+                                native_controls::ButtonStyle::Unavailable
+                            } else {
+                                native_controls::ButtonStyle::Quiet
+                            },
                             &theme,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
@@ -308,7 +347,9 @@ impl SnapshotView {
             fleet_column =
                 fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
         } else {
-            let guidance = if !connected {
+            let guidance = if let Some(phase) = setup_phase {
+                phase.guidance()
+            } else if !connected {
                 "Restart the native preview to reconnect."
             } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
                 "The daemon could not list sessions. Refresh to try again."

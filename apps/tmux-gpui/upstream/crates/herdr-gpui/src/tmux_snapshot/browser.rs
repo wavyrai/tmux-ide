@@ -4,6 +4,8 @@ use super::{Error, decode};
 pub(super) mod fleet;
 #[path = "home_agents.rs"]
 pub(super) mod home_agents;
+#[path = "browser_local_setup.rs"]
+pub(super) mod local_setup;
 #[path = "browser_machines.rs"]
 pub(super) mod machines;
 use herdr_client::protocol::FrameData;
@@ -71,6 +73,7 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub local_setup: Option<local_setup::Setup>,
     pub machines: Option<machines::Registry>,
     pub fleet: Option<fleet::Fleet>,
     pub selected_server: Option<fleet::SelectedServer>,
@@ -119,6 +122,7 @@ pub(super) struct State {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Publication {
+    local_setup: Option<local_setup::Setup>,
     fleet: Option<fleet::Fleet>,
     selected_server: Option<fleet::SelectedServer>,
     machines: Option<machines::Registry>,
@@ -370,6 +374,10 @@ pub(super) enum Command {
     Refresh {
         request: u64,
     },
+    #[serde(rename = "local-setup")]
+    LocalSetup {
+        request: u64,
+    },
     Session {
         request: u64,
         id: String,
@@ -398,6 +406,9 @@ impl Reader {
         } else {
             Surface::Home
         });
+        if p.local_setup.is_some() && surface != Surface::Home {
+            return Err(Error::Invalid("Local setup requires Home"));
+        }
         let retained_preview = p.retained_preview.is_some();
         if retained_preview
             && (surface != Surface::Workspace
@@ -596,6 +607,7 @@ impl Reader {
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
+            local_setup: p.local_setup,
             machines: p.machines,
             fleet: p.fleet,
             selected_server: p.selected_server,
@@ -803,3 +815,7 @@ mod session_tabs_tests;
 #[cfg(test)]
 #[path = "browser_retained_preview_tests.rs"]
 mod retained_preview_tests;
+
+#[cfg(test)]
+#[path = "browser_local_setup_tests.rs"]
+mod local_setup_tests;

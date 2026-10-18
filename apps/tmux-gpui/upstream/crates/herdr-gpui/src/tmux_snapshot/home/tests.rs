@@ -184,3 +184,6 @@ mod fleet_layout;
 
 #[path = "tests/columns.rs"]
 mod columns;
+
+#[path = "tests/local_setup.rs"]
+mod local_setup;

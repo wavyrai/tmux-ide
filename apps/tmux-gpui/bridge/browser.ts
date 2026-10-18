@@ -1,3 +1,4 @@
+import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache } from "./retained-frame-cache.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
@@ -83,7 +84,11 @@ import { openEditorSchema, openSelectedPaneEditor } from "./local-editor.ts";
 import { paneResizeSchema, resizePresentationMatches } from "./pane-resize.ts";
 import { CatalogStageError } from "./catalog-errors.ts";
 import { createAppearanceOwner } from "./appearance.ts";
-import { DaemonCompatibilityError, DaemonDiscoveryError } from "./discovery.ts";
+import {
+  discoverPreviewDaemon,
+  DaemonCompatibilityError,
+  DaemonDiscoveryError,
+} from "./discovery.ts";
 import { scrollSchema } from "./history.ts";
 import { wheelSchema } from "./wheel.ts";
 import { surfacesSchema } from "./window-canvas.ts";
@@ -131,6 +136,9 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
+  z
+    .object({ type: z.literal("local-setup"), request: z.number().int().nonnegative().safe() })
+    .strict(),
   fleetPreferenceCommand,
   sessionHistoryCommandSchema,
   sessionTabCommandSchema,
@@ -501,10 +509,106 @@ function beginRetainedPreview(key: string) {
     if (!stopped) publish();
   }, 5000);
 }
+type LocalSetupPhase =
+  | "available"
+  | "running"
+  | "missing"
+  | "unsupported"
+  | "failed"
+  | "stopped-waiting";
+let localSetup: { phase: LocalSetupPhase } | null = null;
+let setupOperation: AbortController | null = null;
+let setupRevision = 0;
+function cancelLocalSetup() {
+  setupRevision++;
+  setupOperation?.abort();
+  setupOperation = null;
+  localSetup = null;
+}
+function localSetupContext() {
+  return (
+    !stopped && foreground && surface === "home" && !selectedFleet && hostSource?.isLocal() === true
+  );
+}
+async function offerLocalSetup(token: number) {
+  if (!localSetupContext() || request !== token || setupOperation) return;
+  const route = machineRouteRevision,
+    revision = setupRevision;
+  const resolution = await resolveLocalSetup();
+  if (
+    !localSetupContext() ||
+    request !== token ||
+    route !== machineRouteRevision ||
+    revision !== setupRevision ||
+    setupOperation
+  )
+    return;
+  localSetup = {
+    phase:
+      resolution.kind === "available"
+        ? "available"
+        : resolution.kind === "missing"
+          ? "missing"
+          : "unsupported",
+  };
+  publish();
+}
+function startLocalSetup() {
+  if (
+    !localSetupContext() ||
+    setupOperation ||
+    !localSetup ||
+    !["available", "failed", "stopped-waiting"].includes(localSetup.phase)
+  )
+    return;
+  const controller = new AbortController();
+  setupRevision++;
+  setupOperation = controller;
+  localSetup = { phase: "running" };
+  const token = request,
+    route = machineRouteRevision;
+  const current = () =>
+    setupOperation === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    route === machineRouteRevision;
+  publish();
+  void (async () => {
+    const resolution = await resolveLocalSetup();
+    if (!current()) return;
+    if (resolution.kind !== "available") {
+      localSetup = { phase: resolution.kind === "missing" ? "missing" : "unsupported" };
+      return;
+    }
+    const result = await runLocalSetup(resolution.installation, { signal: controller.signal });
+    if (!current()) return;
+    if (result.kind !== "ready") {
+      localSetup = { phase: result.kind === "stopped-waiting" ? "stopped-waiting" : "failed" };
+      return;
+    }
+    await discoverPreviewDaemon();
+    if (!current()) return;
+    localSetup = null;
+    homePhase = "loading";
+    status = "Finding local sessions";
+    launchRefresh(token);
+  })()
+    .catch(() => {
+      if (current()) localSetup = { phase: "failed" };
+    })
+    .finally(() => {
+      if (setupOperation === controller) {
+        setupOperation = null;
+        publish();
+      }
+    });
+}
 let highestNavigationAttempt = 0;
 const admitNavigationAttempt = (attempt: number) => {
   if (attempt <= request || attempt <= highestNavigationAttempt) return false;
   rememberRetainedFrame();
+  cancelLocalSetup();
   cancelTerminalRecovery();
   highestNavigationAttempt = attempt;
   return true;
@@ -823,6 +927,7 @@ function publish() {
       sessions,
       surface,
       home: { phase: homePhase },
+      localSetup: localSetupContext() ? localSetup : null,
       createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
       selectedServer:
         surface === "home" && homePhase === "live" && selectedFleet
@@ -924,6 +1029,7 @@ async function retire() {
 }
 function retireMachineRoute() {
   if (stopped) return;
+  cancelLocalSetup();
   clearRetainedPreview();
   retainedFrames.clear();
   lastCoherentFrame = null;
@@ -953,6 +1059,7 @@ function retireMachineRoute() {
 }
 async function stop() {
   if (stopped) return;
+  cancelLocalSetup();
   cancelTerminalRecovery();
   sessionHistory.cancel();
   sessionTabs.cancel();
@@ -1710,6 +1817,10 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "local-setup") {
+    if (cmd.request === request) startLocalSetup();
+    return;
+  }
   if (cmd.type === "home-agent-filter") {
     if (stopped || !fleet) return;
     applyHomeAgentFilter(
@@ -1835,6 +1946,7 @@ async function command(value: unknown) {
     active?.presentation.update(undefined, [], false);
     foreground = cmd.active;
     if (!foreground) {
+      cancelLocalSetup();
       clearRetainedPreview();
       retainedFrames.clear();
       lastCoherentFrame = null;
@@ -1848,8 +1960,10 @@ async function command(value: unknown) {
       pendingNewWindow = null;
       pendingClose = null;
     }
-    if (foreground) startAgents();
-    else retireAgents();
+    if (foreground) {
+      startAgents();
+      if (localSetupContext() && homePhase === "unavailable") launchRefresh(request);
+    } else retireAgents();
     presenceRevision = cmd.revision;
     inputReady = false;
     paneActions = null;
@@ -2690,6 +2804,12 @@ function launchRefresh(token: number) {
       error instanceof MachineRegistryError
         ? error.message
         : "Connection unavailable — start the daemon and refresh";
+    if (
+      error instanceof DaemonCompatibilityError ||
+      (error instanceof DaemonDiscoveryError &&
+        ["no-daemon", "unavailable"].includes(error.category))
+    )
+      void offerLocalSetup(token);
     // Observation can publish synchronously; install the failure guidance first.
     if (fleet && surface === "home") startAgents();
     publish();

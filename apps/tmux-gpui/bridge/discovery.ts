@@ -25,8 +25,7 @@ export function localPreviewHostProof(host: PreviewHost): LocalPreviewHostProof 
 }
 
 const discoveryMessages = Object.freeze({
-  "no-daemon":
-    "No usable local daemon was found. If tmux-ide is installed, run tmux-ide --headless in a terminal and keep it running, then Refresh sessions.",
+  "no-daemon": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
   unavailable:
     "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
   "no-server":

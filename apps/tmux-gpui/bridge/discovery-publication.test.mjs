@@ -74,8 +74,8 @@ test("every unavailable discovery publication already includes safe recovery gui
             const publication = JSON.parse(buffer.slice(0, end));
             buffer = buffer.slice(end + 1);
             if (publication.home.phase !== "unavailable") continue;
-            assert.match(publication.status, /No usable local daemon/);
-            assert.match(publication.status, /tmux-ide --headless/);
+            assert.match(publication.status, /Local sessions are not connected/);
+            assert.doesNotMatch(publication.status, /--headless/);
             assert.equal(publication.snapshot, null);
             assert.equal(publication.inputReady, false);
             clearTimeout(timer);
