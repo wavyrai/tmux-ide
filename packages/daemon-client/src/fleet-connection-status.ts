@@ -25,7 +25,7 @@ export function fleetConnectionMessage(status: FleetConnectionStatus): string {
     case "invalid-target":
       return "Check the SSH alias in this machine's settings.";
     case "incompatible":
-      return "Incompatible daemon protocol. Update the remote daemon, then retry.";
+      return "App and remote daemon protocols are incompatible. Check that this app and tmux-ide on the remote machine are up to date, then retry.";
     case "invalid-descriptor":
       return "Remote daemon discovery returned an invalid response. Check the installation.";
     case "daemon-missing":
