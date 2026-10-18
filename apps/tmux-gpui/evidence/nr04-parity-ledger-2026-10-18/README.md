@@ -49,3 +49,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Later quiet divider calibration
 
 `../nr04-divider-calibration-2026-10-18/README.md` adds matched stock3.8 horizontal two-pane divider geometry66→69→75→66 across direct plain-tmux commands, actual source TUI mouse drags and the GPUI bridge’s advertised token-based resize gesture. GPUI movement reaches width69 before release; all lanes retain identities, marker content, fresh input and observed-process cleanup. Canonical split handles are absent on stock3.8 but continuous token gestures remain supported. Native pointer/paint, busy output, vertical/nested geometry, bundled/SSH and performance are still unqualified.
+
+## Later finite active-output divider check
+
+`../nr04-busy-divider-2026-10-18/README.md` extends the three stock3.8 divider lanes with the same finite left-pane row-repaint producer. All lanes preserve matched geometry and identities while source ticks advance around each action; final200/DONE, fresh input and observed-process cleanup pass. This qualifies one active-output case only, not throughput, every intermediate frame, two busy panes, native GUI or performance.

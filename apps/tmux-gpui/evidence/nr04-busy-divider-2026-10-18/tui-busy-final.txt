@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                              Local · e2e-nr04-busy-78911-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● happy-firefly                                               ⋯    ○ stellar-jaguar                                             ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT                                              RIG_NR04_RIGHT_CONTENT
+   e2e-nr04-busy-78911-0 2p sh-3.2$ sh /tmp/tmi-e2e-nr04-busy-g9vZHQ/busy.sh                   sh-3.2$
+
+
+
+
+
+                            NR04_TICK_200
+                            NR04_BUSY_DONE
+                            sh-3.2$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands
