@@ -213,7 +213,7 @@ try {
           const diagnostic = parseDiagnosticLine(line);
           return (
             diagnostic &&
-            ["source-closed", "runtime-failure"].includes(diagnostic.code) &&
+            ["source-closed", "runtime-failure", "topology-changed"].includes(diagnostic.code) &&
             latest.status === diagnosticStatus(diagnostic)
           );
         })) &&
