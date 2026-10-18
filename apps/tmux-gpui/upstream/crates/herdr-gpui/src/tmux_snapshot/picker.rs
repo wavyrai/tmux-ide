@@ -451,7 +451,12 @@ impl SnapshotView {
             } else if mode == Mode::Machine {
                 Vec::new()
             } else if mode == Mode::Commands {
-                commands::command_rows_with_sidebar(&self.browser_state, "", self.sidebar_hidden)
+                commands::command_rows_with_settings(
+                    &self.browser_state,
+                    "",
+                    self.sidebar_hidden,
+                    self.developer_mode.enabled,
+                )
             } else if mode == Mode::Theme {
                 theme_rows(&self.browser_state, "")
             } else {
@@ -511,10 +516,11 @@ impl SnapshotView {
         } else if picker.mode == Mode::Machine {
             Vec::new()
         } else if picker.mode == Mode::Commands {
-            commands::command_rows_with_sidebar(
+            commands::command_rows_with_settings(
                 &self.browser_state,
                 picker.search.read(cx).text(),
                 self.sidebar_hidden,
+                self.developer_mode.enabled,
             )
         } else if picker.mode == Mode::Theme {
             theme_rows(&self.browser_state, picker.search.read(cx).text())
@@ -647,6 +653,7 @@ impl SnapshotView {
             &target,
             Target::Command(
                 Action::ToggleSidebar
+                    | Action::DeveloperMode(_)
                     | Action::Shortcuts
                     | Action::Help
                     | Action::WhatsNew
@@ -664,9 +671,18 @@ impl SnapshotView {
         {
             return;
         }
+        if matches!(&target, Target::Command(Action::DeveloperMode(_)))
+            && (!self.developer_mode.ready || self.developer_mode.saving)
+        {
+            return;
+        }
         if let Target::Command(action) = target {
             self.close_picker(window, cx);
             match action {
+                Action::DeveloperMode(enabled) => {
+                    self.set_developer_mode(enabled, cx);
+                    self.open_picker_mode(Mode::Commands, window, cx);
+                }
                 Action::Fonts => self.open_picker_mode(Mode::Font, window, cx),
                 Action::Shortcuts => self.open_picker_mode(Mode::Reference, window, cx),
                 Action::Help => self.open_picker_mode(Mode::Help, window, cx),

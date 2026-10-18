@@ -3,6 +3,7 @@ use super::{Row, Target, browser};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tmux_snapshot) enum Action {
     Fonts,
+    DeveloperMode(bool),
     Shortcuts,
     Help,
     WhatsNew,
@@ -26,10 +27,19 @@ impl Action {
 pub(super) fn command_rows(state: &browser::State, query: &str) -> Vec<Row> {
     command_rows_with_sidebar(state, query, false)
 }
+#[cfg(test)]
 pub(super) fn command_rows_with_sidebar(
     state: &browser::State,
     query: &str,
     hidden: bool,
+) -> Vec<Row> {
+    command_rows_with_settings(state, query, hidden, false)
+}
+pub(super) fn command_rows_with_settings(
+    state: &browser::State,
+    query: &str,
+    hidden: bool,
+    developer_mode: bool,
 ) -> Vec<Row> {
     let query: String = query.chars().take(256).collect::<String>().to_lowercase();
     let mut rows: Vec<Row> = [
@@ -42,6 +52,14 @@ pub(super) fn command_rows_with_sidebar(
             },
         ),
         (Action::Fonts, "Terminal font…"),
+        (
+            Action::DeveloperMode(!developer_mode),
+            if developer_mode {
+                "Disable Developer mode"
+            } else {
+                "Enable Developer mode"
+            },
+        ),
         (Action::Shortcuts, "Keyboard shortcuts…"),
         (Action::Help, "Using tmux-ide…"),
         (Action::WhatsNew, "What’s new…"),

@@ -10,6 +10,7 @@ mod controls;
 mod copy;
 mod decode;
 pub(crate) mod design;
+mod developer_mode;
 mod divider;
 mod geometry;
 mod glass;
@@ -28,6 +29,7 @@ mod session_history;
 mod session_open;
 mod session_tabs;
 mod shell;
+mod status_presentation;
 mod stream;
 mod terminal_font;
 mod terminal_links;
@@ -251,6 +253,7 @@ fn show(
                         agent_animation: Default::default(),
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
+                        developer_mode: Default::default(),
                         terminal_font: Default::default(),
                         window_reveal: Default::default(),
                         resize_gesture: Default::default(),
@@ -268,6 +271,7 @@ fn show(
                         browser_commands: browser.map(|b| b.commands),
                     };
                     view.discover_terminal_fonts(cx);
+                    view.load_developer_mode(cx);
                     view.follow_system(cx);
                     view
                 })
@@ -313,6 +317,7 @@ struct SnapshotView {
     agent_animation: agent_indicator::Clock,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
+    developer_mode: developer_mode::Settings,
     terminal_font: terminal_font::Settings,
     window_reveal: workspace_chrome::WindowReveal,
     resize_gesture: divider::Owner,

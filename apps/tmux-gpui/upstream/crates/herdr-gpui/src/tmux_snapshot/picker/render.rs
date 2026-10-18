@@ -98,6 +98,13 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .gap_1()
+            .when(picker.mode == Mode::Commands, |panel| {
+                panel.children(
+                    self.developer_mode
+                        .note
+                        .map(|note| div().id("developer-mode-note").px_2().py_1().child(note)),
+                )
+            })
             .when(picker.mode == Mode::Theme, |panel| {
                 panel.child(theme_style::heading(self))
             })
@@ -161,6 +168,9 @@ impl SnapshotView {
             let enabled = !picker.mode.is_reference()
                 && match &target {
                     Target::Font(choice) => self.terminal_font.can_choose(choice),
+                    Target::Command(Action::DeveloperMode(_)) => {
+                        self.developer_mode.ready && !self.developer_mode.saving
+                    }
                     _ => true,
                 }
                 && current(&self.browser_state, &target);

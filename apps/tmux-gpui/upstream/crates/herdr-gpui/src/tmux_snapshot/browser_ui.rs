@@ -810,6 +810,11 @@ impl SnapshotView {
         } else {
             self.browser_state.status.clone()
         };
+        let show_status = super::status_presentation::visible(
+            &status,
+            self.developer_mode.enabled,
+            self.browser_state.input_ready,
+        );
         let terminal = (self.browser_state.surface != browser::Surface::Home).then(|| {
             div()
                 .size_full()
@@ -836,17 +841,19 @@ impl SnapshotView {
             .w_full()
             .bg(rgb(theme.background))
             .children(
-                super::pane_chrome::selected_title(&self.browser_state).map(|title| {
-                    div()
-                        .debug_selector(|| "tmux-selected-title".into())
-                        .flex_none()
-                        .max_w(px(160.))
-                        .px_2()
-                        .py_1()
-                        .truncate()
-                        .text_color(rgb(theme.muted))
-                        .child(title)
-                }),
+                super::pane_chrome::selected_title(&self.browser_state)
+                    .filter(|_| self.developer_mode.enabled)
+                    .map(|title| {
+                        div()
+                            .debug_selector(|| "tmux-selected-title".into())
+                            .flex_none()
+                            .max_w(px(160.))
+                            .px_2()
+                            .py_1()
+                            .truncate()
+                            .text_color(rgb(theme.muted))
+                            .child(title)
+                    }),
             )
             .child(
                 div()
@@ -889,7 +896,7 @@ impl SnapshotView {
                             .relative()
                             .flex_none()
                             .w_full()
-                            .child(context)
+                            .when(show_status, |footer| footer.child(context))
                             .children(
                                 self.pane_actions_panel(window, cx)
                                     .map(|panel| deferred(panel).with_priority(1)),
