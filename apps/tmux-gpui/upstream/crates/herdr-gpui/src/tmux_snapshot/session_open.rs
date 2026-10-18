@@ -56,7 +56,7 @@ impl SnapshotView {
                     Target::Admitted => true,
                 })
             && state.selected_pane.is_none()
-            && state.frame.is_none()
+            && (state.frame.is_none() || state.retained_preview)
             && !state.input_ready;
         let pane = valid_session
             .then(|| state.preferred_pane.clone())

@@ -15,6 +15,9 @@ pub(super) struct Capture {
 }
 impl Capture {
     pub fn begin(state: &browser::State, x: f32, y: f32) -> Option<Self> {
+        if state.retained_preview {
+            return None;
+        }
         let frame = state.frame.clone()?;
         let region = state.copy_region.clone()?;
         if !region.valid(&frame, state.selected_pane.as_deref())
@@ -65,6 +68,9 @@ impl Capture {
             .text_between(&self.frame, self.anchor, self.head)
     }
     pub fn compatible(&self, state: &browser::State) -> bool {
+        if state.retained_preview {
+            return false;
+        }
         let (Some(frame), Some(region)) = (&state.frame, &state.copy_region) else {
             return false;
         };

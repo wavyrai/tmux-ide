@@ -55,6 +55,7 @@ impl SnapshotView {
                 self.selection = None;
                 self.divider = None;
                 self.frame = None;
+                self.browser_state.retained_preview = false;
                 self.browser_state.status = "Connection unavailable — restart the preview".into();
                 self.browser_commands = None;
             }

@@ -392,6 +392,11 @@ export function createNativeFleet(
         },
       };
     },
+    /** Private cache incarnation proof; never expose endpoint identity in publications. */
+    retainedFrameProof(key: string): string | null {
+      const route = canonicalRoute(key);
+      return route ? JSON.stringify([route.key, route.instance, route.epoch]) : null;
+    },
     retainedTarget(key: string) {
       const route = canonicalRoute(key);
       if (!route) return null;

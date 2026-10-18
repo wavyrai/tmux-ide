@@ -391,6 +391,7 @@ impl SnapshotView {
                             if view.browsing
                                 && view.presence.ready()
                                 && view.browser_state.input_ready
+                                && !view.browser_state.retained_preview
                                 && view.selection.is_none()
                                 && view.divider.is_none()
                                 && view.picker.is_none()
@@ -423,6 +424,7 @@ impl SnapshotView {
                                 if view.browsing
                                     && view.presence.ready()
                                     && view.browser_state.input_ready
+                                    && !view.browser_state.retained_preview
                                     && view.selection.is_none()
                                     && view.divider.is_none()
                                     && view.picker.is_none()

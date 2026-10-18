@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import process from "node:process";
 import console from "node:console";
 import { performance } from "node:perf_hooks";
+import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { spawn, execFileSync } from "node:child_process";
 import { access, stat, readFile, rm, mkdir } from "node:fs/promises";
@@ -14,6 +15,7 @@ import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratc
 import { stopFixtureChild } from "./fixture-child.mjs";
 // Validate an explicit package before CLI checks or any scratch allocation. Never fall back.
 const app = process.env.TMUX_GPUI_TEST_APP;
+const qualifyRetention = process.env.TMUX_GPUI_TEST_RETAINED === "1";
 if (app !== undefined) {
   assert.ok(isAbsolute(app), "TMUX_GPUI_TEST_APP must be a nonempty absolute path");
   assert.ok((await stat(app)).isDirectory(), "TMUX_GPUI_TEST_APP must be a directory");
@@ -80,6 +82,16 @@ let daemon,
 const failures = [];
 const switches = [];
 let measurement = null;
+let firstRetainedRequest = null;
+let expectedPreviewSession = null;
+const coherentFingerprints = new Map();
+const fingerprint = (snapshot) =>
+  createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+let fingerprintChecks = 0;
+let appearanceInvalidationPassed = false;
+let homeCancellationRequest = null;
+let expiryPassed = false,
+  homeCancellationPassed = false;
 // Bounded metadata only: no frame contents, canonical keys, capability UUIDs or credentials.
 const trace = [];
 let phase = "startup",
@@ -92,6 +104,7 @@ const traceState = (event) => {
     sequence: latest?.sequence,
     catalog: latest?.sessionCatalogComplete,
     frame: !!latest?.snapshot,
+    retainedPreview: !!latest?.retainedPreview,
     input: latest?.inputReady === true,
     tabs: latest?.sessionTabs?.rows.length ?? 0,
     pendingTab: !!latest?.sessionTabs?.pending,
@@ -118,8 +131,8 @@ const own = (child) => {
   });
   return child;
 };
-async function until(predicate) {
-  const phaseDeadline = Date.now() + 45000;
+async function until(predicate, timeout = 45000) {
+  const phaseDeadline = Date.now() + timeout;
   for (;;) {
     if (fatal) throw fatal;
     if (await predicate()) return;
@@ -210,9 +223,46 @@ try {
         assert.ok(++publications <= 20000, "Publication count overflow");
         latest = JSON.parse(buffer.slice(0, end));
         traceState("publication");
+        if (firstRetainedRequest === latest.request) {
+          assert.ok(latest.retainedPreview, "First activation publication must retain pixels");
+          firstRetainedRequest = null;
+        }
+        if (homeCancellationRequest !== null && latest.request >= homeCancellationRequest) {
+          assert.equal(
+            latest.retainedPreview,
+            null,
+            "Home cancellation must not resurrect preview",
+          );
+          assert.equal(latest.inputReady, false);
+        }
+        if (latest.snapshot && latest.inputReady && latest.selectedSession)
+          coherentFingerprints.set(latest.selectedSession, fingerprint(latest.snapshot));
+        if (latest.retainedPreview) {
+          assert.ok(latest.retainedPreview.snapshot);
+          assert.ok(expectedPreviewSession && coherentFingerprints.has(expectedPreviewSession));
+          assert.equal(
+            fingerprint(latest.retainedPreview.snapshot),
+            coherentFingerprints.get(expectedPreviewSession),
+            "Retained pixels must match the target's last coherent frame",
+          );
+          fingerprintChecks++;
+          assert.equal(latest.snapshot, null, "Retained preview is not a live frame");
+          assert.equal(latest.inputReady, false);
+          assert.equal(latest.selectedPane, null);
+          assert.equal(latest.copyRegion, null);
+          assert.deepEqual(latest.regions, []);
+          assert.equal(latest.resizeToken, null);
+          assert.equal(latest.splitLayout, null);
+          assert.equal(latest.splitGesture, null);
+          assert.equal(latest.resizeGesture, null);
+          assert.equal(latest.resizeGestureSupported, false);
+          assert.equal(latest.paneActions, null);
+        }
         if (measurement && latest.request >= measurement.request) {
           measurement.publications++;
-          if (!latest.snapshot) measurement.emptyFramePublications++;
+          if (latest.retainedPreview) measurement.retainedPreviewPublications++;
+          else if (latest.snapshot) measurement.liveFramePublications++;
+          else measurement.emptyFramePublications++;
           if (latest.snapshot && !latest.inputReady) measurement.nonReadyFramePublications++;
         }
         buffer = buffer.slice(end + 1);
@@ -266,8 +316,11 @@ try {
       request: ++request,
       publications: 0,
       emptyFramePublications: 0,
+      liveFramePublications: 0,
+      retainedPreviewPublications: 0,
       nonReadyFramePublications: 0,
     };
+    expectedPreviewSession = target.sessionId;
     const started = performance.now();
     send({
       type: "session-tab",
@@ -278,12 +331,71 @@ try {
     });
     await completeCatalog(target);
     assert.equal(latest.sessionTabs.active, tab);
+    if (qualifyRetention) assert.ok(measurement.retainedPreviewPublications > 0);
     switches.push({
       ...measurement,
       freshReady: true,
       elapsedMs: Math.round(performance.now() - started),
     });
     measurement = null;
+  }
+  if (qualifyRetention) {
+    const activateWithoutPane = async (tab, target) => {
+      const tabs = latest.sessionTabs;
+      const row = tabs.rows.find((row) => row.id === tab);
+      assert.ok(row?.available && row.activate);
+      const fromRequest = latest.request;
+      expectedPreviewSession = target.sessionId;
+      firstRetainedRequest = ++request;
+      send({
+        type: "session-tab",
+        request,
+        fromRequest,
+        revision: tabs.revision,
+        action: row.activate,
+      });
+      await until(
+        () =>
+          latest?.request === request &&
+          latest.sessionCatalogComplete &&
+          latest.selectedSession === target.sessionId &&
+          latest.preferredPane,
+      );
+      assert.equal(firstRetainedRequest, null);
+      assert.ok(latest.retainedPreview, "Metadata completion must retain pending preview");
+      assert.equal(latest.inputReady, false);
+    };
+    phase = "retained-expiry";
+    await activateWithoutPane(bTab, b);
+    await until(() => latest.request === request && !latest.retainedPreview, 6000);
+    assert.equal(latest.inputReady, false);
+    assert.equal(latest.snapshot, null);
+    expiryPassed = true;
+    // Finish the normal continuation to regain an active tab before a separate cancellation.
+    await completeCatalog(b);
+    phase = "retained-home-cancel";
+    await activateWithoutPane(aTab, a);
+    homeCancellationRequest = ++request;
+    send({ type: "home", request });
+    await until(() => latest?.request === request && latest.surface === "home");
+    const holdUntil = Date.now() + 5500;
+    await until(() => Date.now() >= holdUntil, 6000);
+    assert.equal(latest.retainedPreview, null);
+    assert.equal(latest.inputReady, false);
+    homeCancellationPassed = true;
+    homeCancellationRequest = null;
+    phase = "appearance-warm-b";
+    await activateWithoutPane(bTab, b);
+    await completeCatalog(b);
+    phase = "retained-appearance-invalidation";
+    await activateWithoutPane(aTab, a);
+    send({ type: "theme", id: "dracula" });
+    await until(() => latest?.appearance?.selected === "dracula");
+    assert.equal(latest.retainedPreview, null);
+    assert.equal(latest.inputReady, false);
+    assert.equal(latest.snapshot, null);
+    appearanceInvalidationPassed = true;
+    assert.ok(fingerprintChecks > 0);
   }
   assert.deepEqual(source(), before, "Source pane births and processes survive tab navigation");
 } catch (error) {
@@ -318,6 +430,11 @@ const result = {
   packagedBrowser: app !== undefined,
   canonicalDaemon: true,
   tabRoundTrip: "A/B/A",
+  retentionQualification: qualifyRetention,
+  retainedExpiry: expiryPassed,
+  retainedHomeCancellation: homeCancellationPassed,
+  retainedAppearanceInvalidation: appearanceInvalidationPassed,
+  targetFingerprintChecks: fingerprintChecks,
   switches,
   sourceBirthsPreserved: failures.length === 0,
   inputSent: false,

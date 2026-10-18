@@ -172,6 +172,8 @@ test("unavailable catalog revokes a displayed token and reconnect never replays 
     const id = f.profiles[0]!.id;
     const token = f.fleet.publication().groups.find((g) => g.id === id)!.sessions[0]!.selection!;
     const selection = f.fleet.select(token);
+    const key = f.fleet.publication().groups.find((g) => g.id === id)!.sessions[0]!.id;
+    assert.ok(f.fleet.retainedFrameProof(key));
     f.emitters.get(id)!({
       phase: "unavailable",
       daemonInstanceId: null,
@@ -180,6 +182,7 @@ test("unavailable catalog revokes a displayed token and reconnect never replays 
     });
     const failed = f.fleet.publication().groups.find((g) => g.id === id)!;
     assert.equal(failed.sessions[0]!.selection, null);
+    assert.equal(f.fleet.retainedFrameProof(key), null);
     assert.throws(selection.assertCurrent, /changed/);
     assert.throws(() => f.fleet.select(token), /changed/);
     f.emitters.get(id)!(f.snapshot);
@@ -287,7 +290,11 @@ test("retry uses the captured disconnected handle, leaves siblings and selection
     const sibling = f.manager.getMachine(f.profiles[1]!.id)!;
     const siblingEpoch = sibling.endpoint().epoch;
     const selected = f.manager.snapshot().selectedMachineId;
+    const key = f.fleet.publication().groups.find((g) => g.id === id)!.sessions[0]!.id;
+    const proof = f.fleet.retainedFrameProof(key);
+    assert.ok(proof);
     f.manager.disconnect(id);
+    assert.equal(f.fleet.retainedFrameProof(key), null);
     const token = f.fleet.publication().groups.find((g) => g.id === id)!.retry;
     assert.ok(token);
     assert.equal(f.fleet.publication().groups.find((g) => g.id === "local")!.retry, null);
@@ -307,6 +314,8 @@ test("retry uses the captured disconnected handle, leaves siblings and selection
     f.fleet.retry(token);
     assert.throws(() => f.fleet.retry(token), /changed/);
     await recovered;
+    assert.ok(f.fleet.retainedFrameProof(key));
+    assert.notEqual(f.fleet.retainedFrameProof(key), proof);
     assert.equal(f.manager.getMachine(f.profiles[1]!.id), sibling);
     assert.equal(sibling.endpoint().epoch, siblingEpoch);
     assert.equal(f.manager.snapshot().selectedMachineId, selected);

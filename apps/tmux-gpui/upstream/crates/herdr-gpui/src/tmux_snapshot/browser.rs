@@ -104,6 +104,7 @@ pub(super) struct State {
     pub regions: Vec<super::hit_regions::Region>,
     pub request: u64,
     pub input_ready: bool,
+    pub retained_preview: bool,
     pub history_offset: u32,
     pub presence_revision: u64,
     pub sessions: Vec<Choice>,
@@ -173,6 +174,12 @@ struct Publication {
     selected_pane: Option<String>,
     status: String,
     snapshot: Option<serde_json::Value>,
+    retained_preview: Option<RetainedPreview>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedPreview {
+    snapshot: serde_json::Value,
 }
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -391,6 +398,25 @@ impl Reader {
         } else {
             Surface::Home
         });
+        let retained_preview = p.retained_preview.is_some();
+        if retained_preview
+            && (surface != Surface::Workspace
+                || p.snapshot.is_some()
+                || p.input_ready
+                || p.selected_pane.is_some()
+                || p.history_offset != 0
+                || p.copy_region.is_some()
+                || !p.regions.is_empty()
+                || p.resize_token.is_some()
+                || p.split_layout.is_some()
+                || p.split_gesture.is_some()
+                || p.resize_gesture.is_some()
+                || p.pane_actions.is_some())
+        {
+            return Err(Error::Invalid(
+                "Retained preview contains terminal authority",
+            ));
+        }
         if p.selected_server.as_ref().is_some_and(|selected| {
             surface != Surface::Home || p.fleet.as_ref().is_none_or(|fleet| !selected.valid(fleet))
         }) {
@@ -532,6 +558,7 @@ impl Reader {
         }
         let frame = p
             .snapshot
+            .or_else(|| p.retained_preview.map(|preview| preview.snapshot))
             .map(|s| decode::frame(&serde_json::to_vec(&s)?).map(Arc::new))
             .transpose()?;
         if !super::hit_regions::valid(&p.regions, frame.as_deref(), &p.panes) {
@@ -602,6 +629,7 @@ impl Reader {
             regions: p.regions,
             request: p.request,
             input_ready: p.input_ready,
+            retained_preview,
             history_offset: p.history_offset,
             presence_revision: p.presence_revision,
             sessions: p.sessions,
@@ -771,3 +799,7 @@ mod workspace_fleet_tests;
 #[cfg(test)]
 #[path = "browser_session_tabs_tests.rs"]
 mod session_tabs_tests;
+
+#[cfg(test)]
+#[path = "browser_retained_preview_tests.rs"]
+mod retained_preview_tests;

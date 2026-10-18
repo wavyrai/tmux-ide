@@ -1,3 +1,5 @@
+import { createRetainedFrameCache } from "./retained-frame-cache.ts";
+import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
 import {
@@ -458,9 +460,51 @@ function recoverTerminal(reason: string) {
   terminalRecovery.start();
   publish();
 }
+const retainedFrames = createRetainedFrameCache();
+let lastCoherentFrame: {
+  request: number;
+  key: string;
+  proof: string;
+  snapshot: TerminalReplicaSnapshot;
+} | null = null;
+let retainedPreview: {
+  request: number;
+  key: string;
+  proof: string;
+  snapshot: TerminalReplicaSnapshot;
+  expires: number;
+} | null = null;
+let retainedPreviewTimer: ReturnType<typeof setTimeout> | undefined;
+function frameProof(key: string): string | null {
+  const route = fleet?.retainedFrameProof(key);
+  return route ? JSON.stringify([route, appearance.publication()?.theme]) : null;
+}
+function clearRetainedPreview() {
+  retainedPreview = null;
+  if (retainedPreviewTimer) clearTimeout(retainedPreviewTimer);
+  retainedPreviewTimer = undefined;
+}
+function rememberRetainedFrame() {
+  const frame = lastCoherentFrame;
+  if (frame && frame.request === request && frame.proof === frameProof(frame.key))
+    retainedFrames.remember(frame.key, frame.proof, frame.snapshot);
+  lastCoherentFrame = null;
+}
+function beginRetainedPreview(key: string) {
+  clearRetainedPreview();
+  const proof = frameProof(key);
+  const captured = proof ? retainedFrames.preview(key, proof) : null;
+  if (!proof || !captured) return;
+  retainedPreview = { request, key, proof, snapshot: captured, expires: Date.now() + 5000 };
+  retainedPreviewTimer = setTimeout(() => {
+    clearRetainedPreview();
+    if (!stopped) publish();
+  }, 5000);
+}
 let highestNavigationAttempt = 0;
 const admitNavigationAttempt = (attempt: number) => {
   if (attempt <= request || attempt <= highestNavigationAttempt) return false;
+  rememberRetainedFrame();
   cancelTerminalRecovery();
   highestNavigationAttempt = attempt;
   return true;
@@ -757,6 +801,19 @@ function publish() {
   )
     appliedPresenceRevision = presenceRevision;
   if (stopped) return;
+  retainedFrames.retain(sessionTabs.keys());
+  if (
+    retainedPreview &&
+    (retainedPreview.request !== request ||
+      surface !== "workspace" ||
+      !foreground ||
+      snapshot !== null ||
+      inputReady ||
+      Date.now() >= retainedPreview.expires ||
+      frameProof(retainedPreview.key) !== retainedPreview.proof)
+  )
+    clearRetainedPreview();
+  const preview = retainedPreview;
   const line =
     JSON.stringify({
       version: 1,
@@ -798,14 +855,17 @@ function publish() {
       sessionCatalogComplete,
       preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
       selectedSession,
-      selectedPane,
-      status: historySaveFailed
-        ? `${status} — Session visit could not be saved; refresh local preferences.`
-        : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
-          ? editorMessage.text
-          : surface === "home" && machineMessage
-            ? `${status} · ${machineMessage}`
-            : status,
+      selectedPane: preview ? null : selectedPane,
+      retainedPreview: preview ? { snapshot: preview.snapshot } : null,
+      status: preview
+        ? `Restoring terminal… — ${status}`
+        : historySaveFailed
+          ? `${status} — Session visit could not be saved; refresh local preferences.`
+          : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
+            ? editorMessage.text
+            : surface === "home" && machineMessage
+              ? `${status} · ${machineMessage}`
+              : status,
       snapshot,
       historyOffset: snapshot && selectedPane ? historyOffset : 0,
       copyRegion: snapshot ? copyRegion : null,
@@ -813,11 +873,12 @@ function publish() {
       inputReady,
       resizeToken: inputReady && snapshot ? resizeToken : null,
       splitLayout: inputReady && snapshot ? splitLayout : null,
-      splitGesture,
-      resizeGestureSupported: !!active && resizeGestureSupported,
-      resizeGesture: resizeGesture
-        ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
-        : null,
+      splitGesture: preview ? null : splitGesture,
+      resizeGestureSupported: !preview && !!active && resizeGestureSupported,
+      resizeGesture:
+        !preview && resizeGesture
+          ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
+          : null,
       paneActions: inputReady && snapshot ? paneActions : null,
       presenceRevision: appliedPresenceRevision,
       appearance: appearance.publication(),
@@ -863,6 +924,9 @@ async function retire() {
 }
 function retireMachineRoute() {
   if (stopped) return;
+  clearRetainedPreview();
+  retainedFrames.clear();
+  lastCoherentFrame = null;
   recoverTerminal("machine-route-retired");
   sessionHistory.cancel();
   sessionTabs.cancel();
@@ -898,6 +962,9 @@ async function stop() {
   stopTabObservation = undefined;
   observingTabs = false;
   sessionTabs.dispose();
+  clearRetainedPreview();
+  retainedFrames.clear();
+  lastCoherentFrame = null;
   workspaceFleetAgents.cancel();
   hostSource?.dispose();
   machines?.dispose();
@@ -1609,6 +1676,9 @@ async function openPane(
                 if (resolve)
                   recoveryTarget = { resolve, key, pane: config.semanticPaneId, request: token };
               }
+              const proof = frameProof(key);
+              if (proof && coherent)
+                lastCoherentFrame = { request: token, key, proof, snapshot: coherent.snapshot };
               const tabTarget = fleet?.retainedTarget(key);
               if (tabTarget) sessionTabs.accept(token, tabTarget);
               const visit = sessionHistory.accept(token, key),
@@ -1753,6 +1823,9 @@ async function command(value: unknown) {
     return;
   }
   if (cmd.type === "theme" || cmd.type === "appearance") {
+    clearRetainedPreview();
+    retainedFrames.clear();
+    lastCoherentFrame = null;
     if (cmd.type === "theme") appearance.select(cmd.id);
     else appearance.setSystem(cmd.system);
     publish();
@@ -1762,6 +1835,9 @@ async function command(value: unknown) {
     active?.presentation.update(undefined, [], false);
     foreground = cmd.active;
     if (!foreground) {
+      clearRetainedPreview();
+      retainedFrames.clear();
+      lastCoherentFrame = null;
       workspaceFleetAgents.cancel();
       sessionHistory.cancel();
       sessionTabs.cancel();
@@ -2106,6 +2182,8 @@ async function command(value: unknown) {
       fleet?.clearSelection();
     }
     status = admitted.kind === "close" ? "Loading sessions" : "Loading retained session";
+    if (admitted.kind !== "close") beginRetainedPreview(admitted.key);
+    else clearRetainedPreview();
     publish();
     await retire();
     if (!current()) return;
@@ -2420,6 +2498,8 @@ async function command(value: unknown) {
       : undefined;
   const continuationKey =
     continuationPane && foreground ? fleet?.attachmentKey(continuationPane) : null;
+  if (retainedPreview && continuationKey === retainedPreview.key)
+    retainedPreview.request = cmd.request;
   const historyContinuation = continuationKey
     ? { fromRequest: request, key: continuationKey, catalog: catalog!, presence: presenceRevision }
     : undefined;

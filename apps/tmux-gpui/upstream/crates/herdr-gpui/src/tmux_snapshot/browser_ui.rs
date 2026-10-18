@@ -40,6 +40,10 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.browser_state.retained_preview {
+            self.interrupt_input(cx);
+            return;
+        }
         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
             return;
         }
@@ -137,6 +141,10 @@ impl SnapshotView {
         self.update_drag(event.position, cx);
     }
     fn update_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if self.browser_state.retained_preview {
+            self.clear_selection(cx);
+            return;
+        }
         let height = self.terminal_height();
         let (Some(selection), Some((bounds, _)), Some(width)) = (
             &mut self.selection,
@@ -188,6 +196,10 @@ impl SnapshotView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.browser_state.retained_preview {
+            self.wheel = Default::default();
+            return;
+        }
         if self.pane_actions.is_some() || self.new_session.is_some() {
             return;
         }
@@ -267,6 +279,11 @@ impl SnapshotView {
             || super::session_tabs::shortcut(&event.keystroke)
             || sidebar::focus_shortcut(&event.keystroke)
         {
+            return;
+        }
+        if self.browser_state.retained_preview {
+            self.interrupt_input(cx);
+            cx.stop_propagation();
             return;
         }
         if self.divider.is_some() && !event.keystroke.modifiers.platform {
@@ -421,6 +438,12 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
+        if self.browser_state.retained_preview {
+            if terminal {
+                self.interrupt_input(cx);
+            }
+            return;
+        }
         if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
             return;
         }
@@ -546,7 +569,10 @@ impl SnapshotView {
             self.browser_request = request;
             self.pending_session_open =
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
-            self.frame = None;
+            if !selecting_pane || !self.browser_state.retained_preview {
+                self.frame = None;
+                self.browser_state.retained_preview = false;
+            }
             self.browser_state.input_ready = false;
             self.browser_state.status = "Loading selection".into();
             self.browser_state.surface = if going_home {
@@ -800,7 +826,13 @@ impl SnapshotView {
             .child(self.sidebar_footer(cx));
         let application_tabs = self.application_tabs(window, cx);
         let window_strip = self.workspace_window_strip(window, cx);
-        let status = if self.selection.is_some() {
+        let status = if self.browser_state.retained_preview {
+            if self.browser_state.status.starts_with("Restoring terminal…") {
+                self.browser_state.status.clone()
+            } else {
+                format!("Restoring terminal… — {}", self.browser_state.status)
+            }
+        } else if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
         } else if self.input_interrupted {
             format!(
