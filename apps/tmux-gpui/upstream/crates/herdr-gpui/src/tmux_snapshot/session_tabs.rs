@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::collections::HashSet;
 mod focus;
 mod render;
+mod selection;
 #[cfg(test)]
 mod tests;
 const MAX: u64 = 9_007_199_254_740_991;
@@ -123,6 +124,7 @@ pub(super) struct Owner {
     pub pending: Option<Pending>,
     pub last_request: u64,
     pub(super) focus: focus::Focus,
+    pub(super) selections: selection::Selections,
     scroll: ScrollHandle,
 }
 pub(super) fn shortcut(key: &Keystroke) -> bool {
@@ -205,6 +207,7 @@ impl SnapshotView {
             .is_ok()
         }) {
             self.remember_tab_focus(window);
+            self.remember_tab_selection();
             let closing = self
                 .browser_state
                 .session_tabs
@@ -243,6 +246,7 @@ impl SnapshotView {
         {
             self.session_tabs.pending = None;
             self.cancel_tab_focus_restore();
+            self.cancel_tab_selection_restore();
         } else if state.request == pending.request {
             self.browser_request = pending.request;
             self.pending_session_open = (!pending.closing
@@ -260,7 +264,9 @@ impl SnapshotView {
             self.new_session = None;
             self.pane_actions = None;
             self.divider = None;
+            let restore_selection = self.session_tabs.selections.restore;
             self.clear_selection(cx);
+            self.session_tabs.selections.restore = restore_selection;
             self.discard_composition(cx);
             self.wheel = Default::default();
             self.last_resize = None;

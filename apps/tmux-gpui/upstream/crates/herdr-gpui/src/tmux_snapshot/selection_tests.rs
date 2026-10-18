@@ -58,3 +58,29 @@ fn selection_rejects_new_target_or_geometry_and_clamps_drag() -> anyhow::Result<
     assert!(!selection.compatible(&state));
     Ok(())
 }
+
+#[test]
+fn retained_coordinates_require_original_exact_viewport_identity() -> anyhow::Result<()> {
+    let mut state = state()?;
+    state.selection_identity = Some("a".repeat(64));
+    let mut capture = Capture::begin(&state, 0., 0.).unwrap();
+    capture.update(2., 0.)?;
+    assert!(capture.save().is_none(), "never retain an unfinished drag");
+    capture.dragging = false;
+    let restored = capture.save().unwrap().restore(&state).unwrap();
+    assert_eq!(restored.text()?, "AB");
+    assert!(!restored.dragging);
+    state.selection_identity = Some("b".repeat(64));
+    assert!(capture.save().unwrap().restore(&state).is_none());
+    // Output after capture must not relabel the captured span with a newer proof.
+    assert_eq!(capture.identity, Some("a".repeat(64)));
+    state.selection_identity = Some("a".repeat(64));
+    state.retained_preview = true;
+    assert!(capture.save().unwrap().restore(&state).is_none());
+    state.retained_preview = false;
+    state.copy_region.as_mut().unwrap().width -= 1;
+    assert!(capture.save().unwrap().restore(&state).is_none());
+    state.selection_identity = None;
+    assert!(capture.save().unwrap().restore(&state).is_none());
+    Ok(())
+}

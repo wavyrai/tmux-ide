@@ -5,6 +5,7 @@ use herdr_client::protocol::FrameData;
 use std::sync::Arc;
 
 pub(super) struct Capture {
+    identity: Option<String>,
     pub frame: Arc<FrameData>,
     region: copy::Region,
     regions: Vec<hit_regions::Region>,
@@ -32,6 +33,7 @@ impl Capture {
         }
         let anchor = boundary(&region, x, y)?;
         Some(Self {
+            identity: state.selection_identity.clone(),
             frame,
             region,
             regions: state.regions.clone(),
@@ -106,3 +108,6 @@ fn boundary(region: &copy::Region, x: f32, y: f32) -> Option<(u16, u16)> {
 #[cfg(test)]
 #[path = "selection_tests.rs"]
 mod tests;
+
+mod retained;
+pub(super) use retained::Saved;

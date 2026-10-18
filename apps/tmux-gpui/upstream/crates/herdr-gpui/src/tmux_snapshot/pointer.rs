@@ -240,6 +240,7 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) {
         self.cancel_tab_focus_restore();
+        self.cancel_tab_selection_restore();
         if self.browser_state.retained_preview {
             self.cancel_pointer();
             self.interrupt_input(cx);
@@ -329,6 +330,7 @@ impl SnapshotView {
         }
     }
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.cancel_tab_selection_restore();
         if self.selection.take().is_some() {
             self.frame = self.browser_state.frame.clone();
             cx.notify();

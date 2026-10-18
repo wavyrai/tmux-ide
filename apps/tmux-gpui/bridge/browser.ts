@@ -1,3 +1,4 @@
+import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
@@ -351,6 +352,7 @@ let sessionCatalogComplete = false;
 let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
+let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | null = null;
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
@@ -1155,6 +1157,15 @@ function publish() {
       selectedSession,
       selectedPane: preview ? null : selectedPane,
       retainedPreview: preview ? { snapshot: preview.snapshot } : null,
+      selectionIdentity:
+        !preview &&
+        foreground &&
+        active &&
+        surface === "workspace" &&
+        selectionIdentity !== null &&
+        snapshot === selectionIdentity.snapshot
+          ? selectionIdentity.value
+          : null,
       status: preview
         ? `Restoring terminal… — ${status}`
         : historySaveFailed
@@ -1995,6 +2006,42 @@ async function openPane(
             hasAuthority,
           );
           snapshot = coherent?.snapshot ?? null;
+          const childSelectionIdentity = z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .nullable()
+            .parse(event.selectionIdentity ?? null);
+          const selectedSurface = surfaces.find(
+            (surface) => surface.paneId === config.semanticPaneId,
+          )?.snapshot;
+          const selectionValue =
+            coherent &&
+            selectedSurface &&
+            selectedSurface.cols === coherent.copyRegion.width &&
+            selectedSurface.rows === coherent.copyRegion.height &&
+            selectedSurface.grid.every(
+              (row, y) =>
+                row.wrapped === coherent.copyRegion.wrapped[y] &&
+                row.cells.every(
+                  (cell, x) =>
+                    cell ===
+                    coherent.snapshot.grid[coherent.copyRegion.top + y]?.cells[
+                      coherent.copyRegion.left + x
+                    ],
+                ),
+            )
+              ? scopeSelectionIdentity(
+                  childSelectionIdentity,
+                  anchorProof ?? null,
+                  layout?.semanticWindowId ?? undefined,
+                  coherent.copyRegion,
+                  coherent.snapshot,
+                )
+              : null;
+          selectionIdentity =
+            coherent && selectionValue
+              ? { snapshot: coherent.snapshot, value: selectionValue }
+              : null;
           historyOffset = snapshot ? scrollOffset : 0;
           copyRegion = coherent?.copyRegion ?? null;
           regions = coherent?.regions ?? [];

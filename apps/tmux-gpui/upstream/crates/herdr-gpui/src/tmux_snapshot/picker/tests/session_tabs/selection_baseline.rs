@@ -3,6 +3,17 @@ use crate::tmux_snapshot::{copy, selection};
 
 #[gpui::test]
 fn nr03_completed_selection_focus_and_composition_baseline(cx: &mut TestAppContext) {
+    selection_round_trip(cx, false, false);
+}
+#[gpui::test]
+fn nr03_completed_selection_returns_only_with_proven_viewport(cx: &mut TestAppContext) {
+    selection_round_trip(cx, true, false);
+}
+#[gpui::test]
+fn nr03_explicit_clear_supersedes_pending_selection_restore(cx: &mut TestAppContext) {
+    selection_round_trip(cx, true, true);
+}
+fn selection_round_trip(cx: &mut TestAppContext, proven: bool, cancel: bool) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     receiver.try_iter().for_each(drop);
@@ -10,6 +21,7 @@ fn nr03_completed_selection_focus_and_composition_baseline(cx: &mut TestAppConte
         view.update(cx, |v, cx| {
             prepare(v);
             v.browser_state.presence_revision = 1;
+            v.browser_state.selection_identity = proven.then(|| "a".repeat(64));
             let frame = v.browser_state.frame.as_ref().unwrap();
             v.browser_state.copy_region = Some(copy::Region {
                 id: "pane-a".into(),
@@ -38,6 +50,7 @@ fn nr03_completed_selection_focus_and_composition_baseline(cx: &mut TestAppConte
             let mut next = original.clone();
             next.request = 8;
             next.selected_pane = Some("pane-b".into());
+            next.selection_identity = proven.then(|| "b".repeat(64));
             next.copy_region.as_mut().unwrap().id = "pane-b".into();
             next.regions[0].id = "pane-b".into();
             let tabs = next.session_tabs.as_mut().unwrap();
@@ -69,8 +82,23 @@ fn nr03_completed_selection_focus_and_composition_baseline(cx: &mut TestAppConte
                 "returning must not replay input"
             );
             assert!(v.terminal_focus.is_focused(window));
-            // Observed baseline: navigation clears even a completed selection.
-            assert!(v.selection.is_none());
+            if cancel {
+                v.clear_selection(cx);
+            }
+        });
+        window.draw(cx).clear(cx);
+        view.update(cx, |v, _| {
+            assert_eq!(
+                v.selection
+                    .as_ref()
+                    .map(|selection| selection.text().unwrap()),
+                (proven && !cancel).then(|| "tmu".into())
+            );
+            assert!(
+                v.selection
+                    .as_ref()
+                    .is_none_or(|selection| !selection.dragging)
+            );
         });
     });
 }

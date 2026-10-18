@@ -44,6 +44,7 @@ impl SnapshotView {
                 self.observe_pointer();
             }
             None => {
+                self.session_tabs.selections = Default::default();
                 self.workspace_fleet_agents.pending = None;
                 self.session_history.pending = None;
                 self.session_tabs.pending = None;

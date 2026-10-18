@@ -1,3 +1,4 @@
+import { createSelectionIdentity } from "./selection-identity.ts";
 import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { z } from "zod";
 import { createSourceFaultFence } from "./offscreen-source-fault.ts";
@@ -106,6 +107,7 @@ let catalogReceived = false;
 const latest: {
   snapshot: import("../../../packages/contracts/src/index.ts").TerminalReplicaSnapshot | null;
 } = { snapshot: null };
+const selectionIdentity = createSelectionIdentity();
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
@@ -177,6 +179,18 @@ function output(snapshot: typeof latest.snapshot) {
                 : null,
             paneActionError: actionFailed ? actionFailureMessage : null,
             resizeToken: currentResizeToken,
+            selectionIdentity: selectionIdentity(
+              stopped || catalogOnly
+                ? null
+                : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ??
+                    null),
+              snapshot,
+              viewport.offset,
+              viewport.captureIndex(),
+              restorePending
+                ? { state: "restoring", token: null }
+                : (historyRestoration?.publication() ?? null),
+            ),
             scrollOffset: viewport.offset,
             historyReady:
               foreground &&
@@ -310,7 +324,8 @@ try {
   const client = createTmuxServerClient({ ...config, origin, hostClientId }, config.scope);
   restorePending = !!config.historyAnchor;
   historyRestoration = createHistoryRestoration({
-    current: () => replicas.get(config.semanticPaneId)?.current() ?? null,
+    current: () =>
+      (selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ?? null,
     read: async (proof, operation, signal) => {
       const identity = {
         workspaceName: proof.workspaceName,

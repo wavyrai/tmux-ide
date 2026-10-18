@@ -108,6 +108,7 @@ pub(super) struct State {
     pub surface: Surface,
     pub home_phase: HomePhase,
     pub appearance: Option<super::appearance::Appearance>,
+    pub selection_identity: Option<String>,
     pub copy_region: Option<super::copy::Region>,
     pub regions: Vec<super::hit_regions::Region>,
     pub request: u64,
@@ -165,6 +166,8 @@ struct Publication {
     appearance: Option<super::appearance::Appearance>,
     #[serde(default)]
     copy_region: Option<super::copy::Region>,
+    #[serde(default)]
+    selection_identity: Option<String>,
     #[serde(default)]
     regions: Vec<super::hit_regions::Region>,
     version: u8,
@@ -424,6 +427,19 @@ impl Reader {
         }
         local_session::validate(&p, surface)?;
         let retained_preview = p.retained_preview.is_some();
+        if p.selection_identity.as_ref().is_some_and(|identity| {
+            identity.len() != 64
+                || !identity
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || surface != Surface::Workspace
+                || retained_preview
+                || p.snapshot.is_none()
+                || p.selected_pane.is_none()
+                || p.copy_region.is_none()
+        }) {
+            return Err(Error::Invalid("Invalid selection identity"));
+        }
         if p.diagnostics.is_some()
             && (surface != Surface::Workspace
                 || !p.input_ready
@@ -670,6 +686,7 @@ impl Reader {
             surface,
             home_phase: p.home.map_or(HomePhase::Live, |home| home.phase),
             appearance: p.appearance,
+            selection_identity: p.selection_identity,
             copy_region: p.copy_region,
             regions: p.regions,
             request: p.request,
@@ -852,3 +869,7 @@ mod retained_preview_tests;
 #[cfg(test)]
 #[path = "browser_local_setup_tests.rs"]
 mod local_setup_tests;
+
+#[cfg(test)]
+#[path = "browser_selection_identity_tests.rs"]
+mod selection_identity_tests;
