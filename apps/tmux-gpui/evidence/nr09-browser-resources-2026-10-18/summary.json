@@ -1,0 +1,359 @@
+{
+  "scope": "Five fresh-process pairs; browser only; pilots excluded",
+  "runs": [
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "samples": 138,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.78,
+      "wholeObservedCpuSeconds": 6.5,
+      "wholeObservedSampledRssMaxKiB": 430400,
+      "busyWindowSampledRssMaxKiB": 430400,
+      "switchBoundaryCpuSeconds": [
+        0.11,
+        0.14,
+        0.11
+      ],
+      "maxPsCallMs": 8.799250000000029,
+      "maxSampleGapMs": 107.54208299999846,
+      "valid": true
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "samples": 148,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.97,
+      "wholeObservedCpuSeconds": 6.98,
+      "wholeObservedSampledRssMaxKiB": 410656,
+      "busyWindowSampledRssMaxKiB": 410656,
+      "switchBoundaryCpuSeconds": [
+        0.11,
+        0.08,
+        0.16
+      ],
+      "maxPsCallMs": 36.99841700000002,
+      "maxSampleGapMs": 116.76341699999989,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.72,
+      "wholeObservedCpuSeconds": 6.44,
+      "wholeObservedSampledRssMaxKiB": 452928,
+      "busyWindowSampledRssMaxKiB": 452928,
+      "switchBoundaryCpuSeconds": [
+        0.12,
+        0.15,
+        0.11
+      ],
+      "maxPsCallMs": 12.621499999999287,
+      "maxSampleGapMs": 109.79812499999935,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "samples": 138,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.68,
+      "wholeObservedCpuSeconds": 6.37,
+      "wholeObservedSampledRssMaxKiB": 434384,
+      "busyWindowSampledRssMaxKiB": 434384,
+      "switchBoundaryCpuSeconds": [
+        0.24,
+        0.11,
+        0.07
+      ],
+      "maxPsCallMs": 11.69116700000086,
+      "maxSampleGapMs": 111.01033300000017,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.98,
+      "wholeObservedCpuSeconds": 6.71,
+      "wholeObservedSampledRssMaxKiB": 434256,
+      "busyWindowSampledRssMaxKiB": 434256,
+      "switchBoundaryCpuSeconds": [
+        0.11,
+        0.16,
+        0.11
+      ],
+      "maxPsCallMs": 15.145332999998573,
+      "maxSampleGapMs": 107.94750000000022,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "samples": 140,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.79,
+      "wholeObservedCpuSeconds": 6.52,
+      "wholeObservedSampledRssMaxKiB": 432912,
+      "busyWindowSampledRssMaxKiB": 432912,
+      "switchBoundaryCpuSeconds": [
+        0.09,
+        0.12,
+        0.08
+      ],
+      "maxPsCallMs": 8.42449999999917,
+      "maxSampleGapMs": 110.4125839999997,
+      "valid": true
+    },
+    {
+      "pair": 4,
+      "variant": "baseline",
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.85,
+      "wholeObservedCpuSeconds": 6.58,
+      "wholeObservedSampledRssMaxKiB": 438736,
+      "busyWindowSampledRssMaxKiB": 438736,
+      "switchBoundaryCpuSeconds": [
+        0.11,
+        0.15,
+        0.11
+      ],
+      "maxPsCallMs": 9.878374999999778,
+      "maxSampleGapMs": 107.67291600000135,
+      "valid": true
+    },
+    {
+      "pair": 4,
+      "variant": "candidate",
+      "samples": 137,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.95,
+      "wholeObservedCpuSeconds": 6.63,
+      "wholeObservedSampledRssMaxKiB": 451568,
+      "busyWindowSampledRssMaxKiB": 451568,
+      "switchBoundaryCpuSeconds": [
+        0.15,
+        0.16,
+        0.08
+      ],
+      "maxPsCallMs": 12.965916999999536,
+      "maxSampleGapMs": 108.82595899999978,
+      "valid": true
+    },
+    {
+      "pair": 5,
+      "variant": "baseline",
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 6.07,
+      "wholeObservedCpuSeconds": 6.78,
+      "wholeObservedSampledRssMaxKiB": 441936,
+      "busyWindowSampledRssMaxKiB": 441936,
+      "switchBoundaryCpuSeconds": [
+        0.12,
+        0.15,
+        0.11
+      ],
+      "maxPsCallMs": 9.067917000000307,
+      "maxSampleGapMs": 108.92950000000019,
+      "valid": true
+    },
+    {
+      "pair": 5,
+      "variant": "candidate",
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "busyCpuSeconds": 5.74,
+      "wholeObservedCpuSeconds": 6.42,
+      "wholeObservedSampledRssMaxKiB": 437648,
+      "busyWindowSampledRssMaxKiB": 437648,
+      "switchBoundaryCpuSeconds": [
+        0.16,
+        0.18,
+        0.08
+      ],
+      "maxPsCallMs": 16.1284169999999,
+      "maxSampleGapMs": 109.10779199999888,
+      "valid": true
+    }
+  ],
+  "summary": {
+    "busyCpuSeconds": {
+      "baseline": {
+        "values": [
+          5.78,
+          5.72,
+          5.98,
+          5.85,
+          6.07
+        ],
+        "median": 5.85,
+        "min": 5.72,
+        "max": 6.07
+      },
+      "candidate": {
+        "values": [
+          5.97,
+          5.68,
+          5.79,
+          5.95,
+          5.74
+        ],
+        "median": 5.79,
+        "min": 5.68,
+        "max": 5.97
+      },
+      "pairedCandidateMinusBaseline": {
+        "values": [
+          0.19,
+          -0.04,
+          -0.19,
+          0.1,
+          -0.33
+        ],
+        "median": -0.04,
+        "min": -0.33,
+        "max": 0.19
+      }
+    },
+    "wholeObservedCpuSeconds": {
+      "baseline": {
+        "values": [
+          6.5,
+          6.44,
+          6.71,
+          6.58,
+          6.78
+        ],
+        "median": 6.58,
+        "min": 6.44,
+        "max": 6.78
+      },
+      "candidate": {
+        "values": [
+          6.98,
+          6.37,
+          6.52,
+          6.63,
+          6.42
+        ],
+        "median": 6.52,
+        "min": 6.37,
+        "max": 6.98
+      },
+      "pairedCandidateMinusBaseline": {
+        "values": [
+          0.48,
+          -0.07,
+          -0.19,
+          0.05,
+          -0.36
+        ],
+        "median": -0.07,
+        "min": -0.36,
+        "max": 0.48
+      }
+    },
+    "wholeObservedSampledRssMaxKiB": {
+      "baseline": {
+        "values": [
+          430400,
+          452928,
+          434256,
+          438736,
+          441936
+        ],
+        "median": 438736,
+        "min": 430400,
+        "max": 452928
+      },
+      "candidate": {
+        "values": [
+          410656,
+          434384,
+          432912,
+          451568,
+          437648
+        ],
+        "median": 434384,
+        "min": 410656,
+        "max": 451568
+      },
+      "pairedCandidateMinusBaseline": {
+        "values": [
+          -19744,
+          -18544,
+          -1344,
+          12832,
+          -4288
+        ],
+        "median": -4288,
+        "min": -19744,
+        "max": 12832
+      }
+    },
+    "busyWindowSampledRssMaxKiB": {
+      "baseline": {
+        "values": [
+          430400,
+          452928,
+          434256,
+          438736,
+          441936
+        ],
+        "median": 438736,
+        "min": 430400,
+        "max": 452928
+      },
+      "candidate": {
+        "values": [
+          410656,
+          434384,
+          432912,
+          451568,
+          437648
+        ],
+        "median": 434384,
+        "min": 410656,
+        "max": 451568
+      },
+      "pairedCandidateMinusBaseline": {
+        "values": [
+          -19744,
+          -18544,
+          -1344,
+          12832,
+          -4288
+        ],
+        "median": -4288,
+        "min": -19744,
+        "max": 12832
+      }
+    }
+  }
+}
