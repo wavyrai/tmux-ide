@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.7
+
+- Support stock tmux 3.8 capture output without requiring users to replace or restart their tmux server. Detect its textual raw grid format and use the existing stock capture path instead of repeatedly closing terminal streams.
+- Observe daemon retirement after concurrent shutdown transport failure.
+
+The separate native alpha also recovers terminal streams after pane splits. Existing tmux sessions are preserved; update the daemon explicitly after installing.
+
 ## 2.9.6
 
 - Drop Intel macOS (darwin-x64) support: no bundled tmux or compiled app runtime is published for Intel Macs, and the installer refuses them. Apple Silicon macOS and glibc Linux x64/ARM64 remain supported.
