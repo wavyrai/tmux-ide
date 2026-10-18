@@ -5,10 +5,12 @@ import console from "node:console";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { readFile, stat, mkdir, writeFile, mkdtemp, realpath, rm } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { stopFixtureChild } from "./fixture-child.mjs";
+import { discoverPreviewHost } from "./discovery.ts";
+import { createPreviewCatalog } from "./catalog.ts";
 
 import { tmpdir } from "node:os";
 import { randomUUID, createHash } from "node:crypto";
@@ -30,6 +32,7 @@ const facts = {
   denial: false,
   repaired: false,
   input: false,
+  deniedInputAbsent: false,
   cleanup: false,
 };
 const failures = [];
@@ -49,6 +52,19 @@ const tracker = ownedProcesses({
 let machineId;
 const cli = process.env.TMUX_GPUI_TEST_CLI;
 assert.ok(cli && isAbsolute(cli) && (await stat(cli)).isFile(), "Supply an isolated built CLI");
+const cliArtifact = { kind: "explicit-cli", packageVersion: null };
+if (process.env.TMUX_GPUI_TEST_INSTALLED_CLI === "1") {
+  const canonicalCli = await realpath(cli);
+  const packageRoot = dirname(dirname(canonicalCli));
+  const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  assert.equal(metadata.name, "tmux-ide");
+  assert.equal(metadata.version, "2.9.7");
+  assert.equal(metadata.bin?.["tmux-ide"], "bin/cli.js");
+  assert.equal(await realpath(join(packageRoot, metadata.bin["tmux-ide"])), canonicalCli);
+  cliArtifact.kind = "installed-package-input";
+  cliArtifact.packageVersion = metadata.version;
+}
+
 const scratch = await createScratchFleet({
   sessions: 1,
   windowsPerSession: 1,
@@ -112,6 +128,24 @@ const start = async () => {
   });
   currentInfo = JSON.parse(await readFile(join(scratch.daemonInfoDir, "daemon.json"), "utf8"));
 };
+const deniedMarker = "NR08_DENIED_" + randomUUID().replaceAll("-", "").slice(0, 12);
+let deniedPane;
+const ownedPane = () =>
+  execFileSync(
+    env.TMUX_IDE_TMUX_BIN,
+    [
+      "-S",
+      scratch.socketPath,
+      "display-message",
+      "-p",
+      "-t",
+      scratch.initialPanes[0].paneId,
+      "#{pane_id}\t#{@tmux_ide_pane_id}",
+    ],
+    { env, encoding: "utf8", timeout: 5000 },
+  )
+    .trim()
+    .split("\t");
 const send = (value) => browser.stdin.write(JSON.stringify(value) + "\n");
 try {
   await start();
@@ -259,6 +293,37 @@ try {
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
   facts.denial = true;
+  // Establish the exact semantic target using supported metadata promotion on the owned daemon.
+  // Authentication remains denied in the browser; no terminal input is sent by this setup.
+  const setupCatalog = createPreviewCatalog(
+    await discoverPreviewHost(join(scratch.daemonInfoDir, "daemon.json")),
+  );
+  try {
+    const sessions = await setupCatalog.sessions();
+    const target = sessions.find((session) => session.sessionName === scratch.sessionNames[0]);
+    assert.ok(target);
+    const panes = await setupCatalog.panes(target.liveSessionId);
+    assert.equal(panes.length, 1);
+  } finally {
+    setupCatalog.dispose();
+  }
+  const [physical, semantic] = ownedPane();
+  assert.equal(physical, scratch.initialPanes[0].paneId);
+  assert.ok(semantic, "Owned pane must have a real semantic identity before denied input");
+  deniedPane = semantic;
+  send({
+    type: "input",
+    request: latest.request,
+    id: deniedPane,
+    input: { kind: "text", data: "echo " + deniedMarker },
+  });
+  send({
+    type: "input",
+    request: latest.request,
+    id: deniedPane,
+    input: { kind: "key", data: "Enter" },
+  });
+
   trace.push({ phase, diagnostic: denied.diagnostic, frame: false, input: false });
   // Repair only the credential file created and identity-tracked by this fixture.
   ssh.files.verify("authorized_keys");
@@ -286,6 +351,7 @@ try {
   send({ type: "fleet-session", request: 2, selection: session.selection });
   await until(() => latest?.request === 2 && latest.sessionCatalogComplete && latest.preferredPane);
   const pane = latest.preferredPane;
+  assert.equal(pane, deniedPane, "Recovered pane must match the denied-input target");
   send({ type: "pane", request: 3, id: pane });
   phase = "input-ready";
   await until(
@@ -302,6 +368,11 @@ try {
       .some((line) => line.trim() === marker),
   );
   facts.input = true;
+  assert.ok(
+    !scratch.capturePane(scratch.sessionNames[0]).includes(deniedMarker),
+    "Denied input must not replay after recovery",
+  );
+  facts.deniedInputAbsent = true;
   if (publicDiscovery)
     assert.equal(ssh.metrics().requests, 0, "Real CLI must not use synthetic handshake");
   trace.push({ phase, freshInputExecuted: true });
@@ -331,10 +402,11 @@ try {
       .digest("hex"),
     ...facts,
     discoveryDescriptor: publicDiscovery
-      ? "actual source CLI remote-daemon-info using mirrored verified private record"
+      ? "actual explicit CLI remote-daemon-info using mirrored verified private record"
       : "synthetic descriptor for actual private daemon",
     remoteCliPreflightQualified: publicDiscovery && facts.input && ssh?.metrics().requests === 0,
     installedPackageQualified: false,
+    cliArtifact,
     syntheticHandshakeRequests: ssh?.metrics().requests ?? null,
     lastRemote: latest?.fleet?.groups
       .filter((group) => group.id === machineId)
