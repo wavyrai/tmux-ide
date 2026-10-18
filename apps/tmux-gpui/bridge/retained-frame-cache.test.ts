@@ -13,10 +13,11 @@ test("cached frames isolate both producer and consumer mutations and reject chan
     value = frame();
   assert.equal(cache.remember("a", "incarnation1", value), true);
   Object.assign(value.grid[0]!.cells[0]!, { grapheme: "changed" });
-  const preview = cache.preview("a", "incarnation1")!;
+  const cached = cache.preview("a", "incarnation1")!;
+  const preview = JSON.parse(cached);
   assert.equal(preview.grid[0]!.cells[0]!.grapheme, " ");
   Object.assign(preview.grid[0]!.cells[0]!, { grapheme: "consumer" });
-  assert.equal(cache.preview("a", "incarnation1")!.grid[0]!.cells[0]!.grapheme, " ");
+  assert.equal(JSON.parse(cache.preview("a", "incarnation1")!).grid[0].cells[0].grapheme, " ");
   assert.equal(cache.preview("a", "incarnation2"), null);
   assert.equal(cache.preview("a", "incarnation1"), null);
 });

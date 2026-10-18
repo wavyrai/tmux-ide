@@ -2,7 +2,8 @@ import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
-import { createRetainedFrameCache } from "./retained-frame-cache.ts";
+import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
+import { serializeBrowserPublication } from "./browser-publication.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
@@ -503,7 +504,7 @@ let retainedPreview: {
   request: number;
   key: string;
   proof: string;
-  snapshot: TerminalReplicaSnapshot;
+  snapshotJson: RetainedSnapshotJson;
   expires: number;
 } | null = null;
 let retainedPreviewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -527,7 +528,7 @@ function beginRetainedPreview(key: string) {
   const proof = frameProof(key);
   const captured = proof ? retainedFrames.preview(key, proof) : null;
   if (!proof || !captured) return;
-  retainedPreview = { request, key, proof, snapshot: captured, expires: Date.now() + 5000 };
+  retainedPreview = { request, key, proof, snapshotJson: captured, expires: Date.now() + 5000 };
   retainedPreviewTimer = setTimeout(() => {
     clearRetainedPreview();
     if (!stopped) publish();
@@ -1104,96 +1105,97 @@ function publish() {
   )
     clearRetainedPreview();
   const preview = retainedPreview;
-  const line =
-    JSON.stringify({
-      version: 1,
-      connection,
-      sequence: ++sequence,
-      request,
-      sessions,
-      surface,
-      home: { phase: homePhase },
-      diagnostics:
-        foreground && surface === "workspace" && inputReady && active && snapshot
-          ? {
-              daemonVersion: catalog?.diagnosticVersion() ?? null,
-              tmuxVersion: diagnosticTmuxVersion(),
-            }
-          : null,
-      localSetup: localSetupContext() ? localSetup : null,
-      localSessionCreate:
-        localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
-      createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
-      selectedServer:
-        surface === "home" && homePhase === "live" && selectedFleet
-          ? (fleet?.selectedServer() ?? null)
-          : null,
-      homeAgents: surface === "home" ? agentPublication : null,
-      homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
-      homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
-      // Protocol support; private hosts publish an explicit unavailable roster.
-      sessionHistory: historyPublication,
-      sessionHistoryRejected,
-      paletteSupported: !!fleet,
-      paletteAgents: palette.publication(),
-      paletteSelectionRejected,
-      attentionSupported: true,
-      attentionAgents: attention.publication(),
-      attentionSelectionRejected,
-      sessionTabs: tabPublication,
-      sessionTabResult,
-      workspaceFleetAgents: workspaceFleetAgents.publication(),
-      workspaceFleetAgentRejected,
-      workspaceAgents:
-        surface === "workspace" && selectedSession && agentPublication
-          ? { ...agentPublication, sessionId: selectedSession }
-          : null,
-      panes: paneChoices(
-        panes.map((p) => p.semanticPaneId),
-        layouts,
-      ),
-      sessionCatalogComplete,
-      preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
-      selectedSession,
-      selectedPane: preview ? null : selectedPane,
-      retainedPreview: preview ? { snapshot: preview.snapshot } : null,
-      selectionIdentity:
-        !preview &&
-        foreground &&
-        active &&
-        surface === "workspace" &&
-        selectionIdentity !== null &&
-        snapshot === selectionIdentity.snapshot
-          ? selectionIdentity.value
-          : null,
-      status: preview
-        ? `Restoring terminal… — ${status}`
-        : historySaveFailed
-          ? `${status} — Session visit could not be saved; refresh local preferences.`
-          : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
-            ? editorMessage.text
-            : surface === "home" && machineMessage
-              ? `${status} · ${machineMessage}`
-              : status,
-      snapshot,
-      historyOffset: snapshot && selectedPane ? historyOffset : 0,
-      copyRegion: snapshot ? copyRegion : null,
-      regions: snapshot ? regions : [],
-      inputReady,
-      resizeToken: inputReady && snapshot ? resizeToken : null,
-      splitLayout: inputReady && snapshot ? splitLayout : null,
-      splitGesture: preview ? null : splitGesture,
-      resizeGestureSupported: !preview && !!active && resizeGestureSupported,
-      resizeGesture:
-        !preview && resizeGesture
-          ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
-          : null,
-      paneActions: inputReady && snapshot ? paneActions : null,
-      presenceRevision: appliedPresenceRevision,
-      appearance: appearance.publication(),
-      fleet: fleet?.publication() ?? null,
-      machines: machines ? { ...machines.publication(), message: machineMessage } : null,
-    }) + "\n";
+  const prefix = {
+    version: 1,
+    connection,
+    sequence: ++sequence,
+    request,
+    sessions,
+    surface,
+    home: { phase: homePhase },
+    diagnostics:
+      foreground && surface === "workspace" && inputReady && active && snapshot
+        ? {
+            daemonVersion: catalog?.diagnosticVersion() ?? null,
+            tmuxVersion: diagnosticTmuxVersion(),
+          }
+        : null,
+    localSetup: localSetupContext() ? localSetup : null,
+    localSessionCreate:
+      localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
+    createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
+    selectedServer:
+      surface === "home" && homePhase === "live" && selectedFleet
+        ? (fleet?.selectedServer() ?? null)
+        : null,
+    homeAgents: surface === "home" ? agentPublication : null,
+    homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
+    homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
+    // Protocol support; private hosts publish an explicit unavailable roster.
+    sessionHistory: historyPublication,
+    sessionHistoryRejected,
+    paletteSupported: !!fleet,
+    paletteAgents: palette.publication(),
+    paletteSelectionRejected,
+    attentionSupported: true,
+    attentionAgents: attention.publication(),
+    attentionSelectionRejected,
+    sessionTabs: tabPublication,
+    sessionTabResult,
+    workspaceFleetAgents: workspaceFleetAgents.publication(),
+    workspaceFleetAgentRejected,
+    workspaceAgents:
+      surface === "workspace" && selectedSession && agentPublication
+        ? { ...agentPublication, sessionId: selectedSession }
+        : null,
+    panes: paneChoices(
+      panes.map((p) => p.semanticPaneId),
+      layouts,
+    ),
+    sessionCatalogComplete,
+    preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
+    selectedSession,
+    selectedPane: preview ? null : selectedPane,
+  };
+  const suffix = {
+    selectionIdentity:
+      !preview &&
+      foreground &&
+      active &&
+      surface === "workspace" &&
+      selectionIdentity !== null &&
+      snapshot === selectionIdentity.snapshot
+        ? selectionIdentity.value
+        : null,
+    status: preview
+      ? `Restoring terminal… — ${status}`
+      : historySaveFailed
+        ? `${status} — Session visit could not be saved; refresh local preferences.`
+        : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
+          ? editorMessage.text
+          : surface === "home" && machineMessage
+            ? `${status} · ${machineMessage}`
+            : status,
+    snapshot,
+    historyOffset: snapshot && selectedPane ? historyOffset : 0,
+    copyRegion: snapshot ? copyRegion : null,
+    regions: snapshot ? regions : [],
+    inputReady,
+    resizeToken: inputReady && snapshot ? resizeToken : null,
+    splitLayout: inputReady && snapshot ? splitLayout : null,
+    splitGesture: preview ? null : splitGesture,
+    resizeGestureSupported: !preview && !!active && resizeGestureSupported,
+    resizeGesture:
+      !preview && resizeGesture
+        ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
+        : null,
+    paneActions: inputReady && snapshot ? paneActions : null,
+    presenceRevision: appliedPresenceRevision,
+    appearance: appearance.publication(),
+    fleet: fleet?.publication() ?? null,
+    machines: machines ? { ...machines.publication(), message: machineMessage } : null,
+  };
+  const line = serializeBrowserPublication(prefix, suffix, preview?.snapshotJson ?? null);
   if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
   if (blocked) pending = line;
   else blocked = !process.stdout.write(line);

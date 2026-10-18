@@ -1,0 +1,30 @@
+✔ capture uses exact canonical index and proof, never bounded viewport offset (3.318125ms)
+✔ busy output restore matches later delivered proof and carries exact row forward (0.68025ms)
+✔ replacement identical text cannot resurrect missing row (0.4095ms)
+✔ return live cancels pending restore and late reply cannot change viewport (0.346667ms)
+✔ unsupported old daemon is distinct from lost anchor (0.351708ms)
+✔ capture pending is explicitly unresolved and return live cancels late token (0.209583ms)
+✔ bounded history slice keeps canonical indices and refuses omitted rows (12.589584ms)
+✔ handoff waits for the newest capture rather than superseded completion (0.3645ms)
+✔ return-live handoff does not wait for an obsolete capture (0.178125ms)
+✔ fully historical interval survives append/trim-before and fresh helper resolved-token publication (2.339708ms)
+✔ trim-through, equal-text replacement and duplicate references reject entire interval (0.253083ms)
+✔ dimensions, alternate, reincarnation and missing source invalidate sticky lineage (0.396542ms)
+✔ mixed/live view binds exact committed proof and changed cells (0.181666ms)
+✔ browser scope binds verified route/window/copy and canvas geometry (0.137208ms)
+✔ eight identities retain order, active eviction protection and exact TUI cycle arithmetic (1.357041ms)
+✔ unavailable and replaced admission preserves active; inactive close settles without navigation (0.163709ms)
+✔ catalog helper retirement continuation commits only exact successful live target (0.110417ms)
+✔ close pending cancels admission and late frames cannot resurrect closed target (0.101667ms)
+✔ replay, background and wrong catalog presence refuse without activating replacement (0.128875ms)
+✔ unread uses complete observed incarnation transition; gaps reset and failed activation retains unread (0.25475ms)
+✔ captured close remains valid across presentation-only observation and availability refresh (0.112584ms)
+✔ verified recovery replaces stale route without duplicate tab or stale activation (0.132334ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 284.914042

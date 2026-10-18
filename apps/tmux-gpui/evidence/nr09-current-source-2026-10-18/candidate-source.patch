@@ -1,0 +1,425 @@
+diff --git a/apps/tmux-gpui/bridge/browser.ts b/apps/tmux-gpui/bridge/browser.ts
+index 537068b0..8d0c27bb 100644
+--- a/apps/tmux-gpui/bridge/browser.ts
++++ b/apps/tmux-gpui/bridge/browser.ts
+@@ -2,7 +2,8 @@ import { scopeSelectionIdentity } from "./selection-identity.ts";
+ import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
+ import { drainHistoryCapture } from "./history-handoff.ts";
+ import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
+-import { createRetainedFrameCache } from "./retained-frame-cache.ts";
++import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
++import { serializeBrowserPublication } from "./browser-publication.ts";
+ import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
+ import { createTerminalRecovery } from "./terminal-recovery.ts";
+ import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
+@@ -503,7 +504,7 @@ let retainedPreview: {
+   request: number;
+   key: string;
+   proof: string;
+-  snapshot: TerminalReplicaSnapshot;
++  snapshotJson: RetainedSnapshotJson;
+   expires: number;
+ } | null = null;
+ let retainedPreviewTimer: ReturnType<typeof setTimeout> | undefined;
+@@ -527,7 +528,7 @@ function beginRetainedPreview(key: string) {
+   const proof = frameProof(key);
+   const captured = proof ? retainedFrames.preview(key, proof) : null;
+   if (!proof || !captured) return;
+-  retainedPreview = { request, key, proof, snapshot: captured, expires: Date.now() + 5000 };
++  retainedPreview = { request, key, proof, snapshotJson: captured, expires: Date.now() + 5000 };
+   retainedPreviewTimer = setTimeout(() => {
+     clearRetainedPreview();
+     if (!stopped) publish();
+@@ -1104,96 +1105,97 @@ function publish() {
+   )
+     clearRetainedPreview();
+   const preview = retainedPreview;
+-  const line =
+-    JSON.stringify({
+-      version: 1,
+-      connection,
+-      sequence: ++sequence,
+-      request,
+-      sessions,
+-      surface,
+-      home: { phase: homePhase },
+-      diagnostics:
+-        foreground && surface === "workspace" && inputReady && active && snapshot
+-          ? {
+-              daemonVersion: catalog?.diagnosticVersion() ?? null,
+-              tmuxVersion: diagnosticTmuxVersion(),
+-            }
+-          : null,
+-      localSetup: localSetupContext() ? localSetup : null,
+-      localSessionCreate:
+-        localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
+-      createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
+-      selectedServer:
+-        surface === "home" && homePhase === "live" && selectedFleet
+-          ? (fleet?.selectedServer() ?? null)
+-          : null,
+-      homeAgents: surface === "home" ? agentPublication : null,
+-      homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
+-      homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
+-      // Protocol support; private hosts publish an explicit unavailable roster.
+-      sessionHistory: historyPublication,
+-      sessionHistoryRejected,
+-      paletteSupported: !!fleet,
+-      paletteAgents: palette.publication(),
+-      paletteSelectionRejected,
+-      attentionSupported: true,
+-      attentionAgents: attention.publication(),
+-      attentionSelectionRejected,
+-      sessionTabs: tabPublication,
+-      sessionTabResult,
+-      workspaceFleetAgents: workspaceFleetAgents.publication(),
+-      workspaceFleetAgentRejected,
+-      workspaceAgents:
+-        surface === "workspace" && selectedSession && agentPublication
+-          ? { ...agentPublication, sessionId: selectedSession }
+-          : null,
+-      panes: paneChoices(
+-        panes.map((p) => p.semanticPaneId),
+-        layouts,
+-      ),
+-      sessionCatalogComplete,
+-      preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
+-      selectedSession,
+-      selectedPane: preview ? null : selectedPane,
+-      retainedPreview: preview ? { snapshot: preview.snapshot } : null,
+-      selectionIdentity:
+-        !preview &&
+-        foreground &&
+-        active &&
+-        surface === "workspace" &&
+-        selectionIdentity !== null &&
+-        snapshot === selectionIdentity.snapshot
+-          ? selectionIdentity.value
+-          : null,
+-      status: preview
+-        ? `Restoring terminal… — ${status}`
+-        : historySaveFailed
+-          ? `${status} — Session visit could not be saved; refresh local preferences.`
+-          : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
+-            ? editorMessage.text
+-            : surface === "home" && machineMessage
+-              ? `${status} · ${machineMessage}`
+-              : status,
+-      snapshot,
+-      historyOffset: snapshot && selectedPane ? historyOffset : 0,
+-      copyRegion: snapshot ? copyRegion : null,
+-      regions: snapshot ? regions : [],
+-      inputReady,
+-      resizeToken: inputReady && snapshot ? resizeToken : null,
+-      splitLayout: inputReady && snapshot ? splitLayout : null,
+-      splitGesture: preview ? null : splitGesture,
+-      resizeGestureSupported: !preview && !!active && resizeGestureSupported,
+-      resizeGesture:
+-        !preview && resizeGesture
+-          ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
+-          : null,
+-      paneActions: inputReady && snapshot ? paneActions : null,
+-      presenceRevision: appliedPresenceRevision,
+-      appearance: appearance.publication(),
+-      fleet: fleet?.publication() ?? null,
+-      machines: machines ? { ...machines.publication(), message: machineMessage } : null,
+-    }) + "\n";
++  const prefix = {
++    version: 1,
++    connection,
++    sequence: ++sequence,
++    request,
++    sessions,
++    surface,
++    home: { phase: homePhase },
++    diagnostics:
++      foreground && surface === "workspace" && inputReady && active && snapshot
++        ? {
++            daemonVersion: catalog?.diagnosticVersion() ?? null,
++            tmuxVersion: diagnosticTmuxVersion(),
++          }
++        : null,
++    localSetup: localSetupContext() ? localSetup : null,
++    localSessionCreate:
++      localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
++    createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
++    selectedServer:
++      surface === "home" && homePhase === "live" && selectedFleet
++        ? (fleet?.selectedServer() ?? null)
++        : null,
++    homeAgents: surface === "home" ? agentPublication : null,
++    homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
++    homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
++    // Protocol support; private hosts publish an explicit unavailable roster.
++    sessionHistory: historyPublication,
++    sessionHistoryRejected,
++    paletteSupported: !!fleet,
++    paletteAgents: palette.publication(),
++    paletteSelectionRejected,
++    attentionSupported: true,
++    attentionAgents: attention.publication(),
++    attentionSelectionRejected,
++    sessionTabs: tabPublication,
++    sessionTabResult,
++    workspaceFleetAgents: workspaceFleetAgents.publication(),
++    workspaceFleetAgentRejected,
++    workspaceAgents:
++      surface === "workspace" && selectedSession && agentPublication
++        ? { ...agentPublication, sessionId: selectedSession }
++        : null,
++    panes: paneChoices(
++      panes.map((p) => p.semanticPaneId),
++      layouts,
++    ),
++    sessionCatalogComplete,
++    preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
++    selectedSession,
++    selectedPane: preview ? null : selectedPane,
++  };
++  const suffix = {
++    selectionIdentity:
++      !preview &&
++      foreground &&
++      active &&
++      surface === "workspace" &&
++      selectionIdentity !== null &&
++      snapshot === selectionIdentity.snapshot
++        ? selectionIdentity.value
++        : null,
++    status: preview
++      ? `Restoring terminal… — ${status}`
++      : historySaveFailed
++        ? `${status} — Session visit could not be saved; refresh local preferences.`
++        : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
++          ? editorMessage.text
++          : surface === "home" && machineMessage
++            ? `${status} · ${machineMessage}`
++            : status,
++    snapshot,
++    historyOffset: snapshot && selectedPane ? historyOffset : 0,
++    copyRegion: snapshot ? copyRegion : null,
++    regions: snapshot ? regions : [],
++    inputReady,
++    resizeToken: inputReady && snapshot ? resizeToken : null,
++    splitLayout: inputReady && snapshot ? splitLayout : null,
++    splitGesture: preview ? null : splitGesture,
++    resizeGestureSupported: !preview && !!active && resizeGestureSupported,
++    resizeGesture:
++      !preview && resizeGesture
++        ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
++        : null,
++    paneActions: inputReady && snapshot ? paneActions : null,
++    presenceRevision: appliedPresenceRevision,
++    appearance: appearance.publication(),
++    fleet: fleet?.publication() ?? null,
++    machines: machines ? { ...machines.publication(), message: machineMessage } : null,
++  };
++  const line = serializeBrowserPublication(prefix, suffix, preview?.snapshotJson ?? null);
+   if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
+   if (blocked) pending = line;
+   else blocked = !process.stdout.write(line);
+diff --git a/apps/tmux-gpui/bridge/retained-frame-cache.test.ts b/apps/tmux-gpui/bridge/retained-frame-cache.test.ts
+index f9bcd3f2..4f2807bd 100644
+--- a/apps/tmux-gpui/bridge/retained-frame-cache.test.ts
++++ b/apps/tmux-gpui/bridge/retained-frame-cache.test.ts
+@@ -13,10 +13,11 @@ test("cached frames isolate both producer and consumer mutations and reject chan
+     value = frame();
+   assert.equal(cache.remember("a", "incarnation1", value), true);
+   Object.assign(value.grid[0]!.cells[0]!, { grapheme: "changed" });
+-  const preview = cache.preview("a", "incarnation1")!;
++  const cached = cache.preview("a", "incarnation1")!;
++  const preview = JSON.parse(cached);
+   assert.equal(preview.grid[0]!.cells[0]!.grapheme, " ");
+   Object.assign(preview.grid[0]!.cells[0]!, { grapheme: "consumer" });
+-  assert.equal(cache.preview("a", "incarnation1")!.grid[0]!.cells[0]!.grapheme, " ");
++  assert.equal(JSON.parse(cache.preview("a", "incarnation1")!).grid[0].cells[0].grapheme, " ");
+   assert.equal(cache.preview("a", "incarnation2"), null);
+   assert.equal(cache.preview("a", "incarnation1"), null);
+ });
+diff --git a/apps/tmux-gpui/bridge/retained-frame-cache.ts b/apps/tmux-gpui/bridge/retained-frame-cache.ts
+index e6a4f177..3c847db7 100644
+--- a/apps/tmux-gpui/bridge/retained-frame-cache.ts
++++ b/apps/tmux-gpui/bridge/retained-frame-cache.ts
+@@ -1,13 +1,17 @@
+ import { Buffer } from "node:buffer";
+ import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
+ 
++declare const retainedSnapshotJson: unique symbol;
++/** Immutable JSON produced by this bounded cache, never caller-provided JSON. */
++export type RetainedSnapshotJson = string & { readonly [retainedSnapshotJson]: true };
++
+ const MAX_ENTRIES = 8;
+ const MAX_ENTRY_BYTES = 4 * 1024 * 1024;
+ const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+ 
+ /** Pixels only. Caller must prove route incarnation and keep all input authority fresh. */
+ export function createRetainedFrameCache() {
+-  const entries = new Map<string, { proof: string; json: string; bytes: number }>();
++  const entries = new Map<string, { proof: string; json: RetainedSnapshotJson; bytes: number }>();
+   let total = 0;
+   const remove = (key: string) => {
+     const entry = entries.get(key);
+@@ -33,11 +37,11 @@ export function createRetainedFrameCache() {
+         if (oldest === undefined) return false;
+         remove(oldest);
+       }
+-      entries.set(key, { proof, json, bytes });
++      entries.set(key, { proof, json: json as RetainedSnapshotJson, bytes });
+       total += bytes;
+       return true;
+     },
+-    preview(key: string, proof: string): TerminalReplicaSnapshot | null {
++    preview(key: string, proof: string): RetainedSnapshotJson | null {
+       const entry = entries.get(key);
+       if (!entry) return null;
+       if (entry.proof !== proof) {
+@@ -46,7 +50,7 @@ export function createRetainedFrameCache() {
+       }
+       entries.delete(key);
+       entries.set(key, entry);
+-      return JSON.parse(entry.json) as TerminalReplicaSnapshot;
++      return entry.json;
+     },
+     retain(keys: Iterable<string>): void {
+       const allowed = new Set(keys);
+diff --git a/apps/tmux-gpui/bridge/browser-publication.ts b/apps/tmux-gpui/bridge/browser-publication.ts
+new file mode 100644
+index 00000000..2dc7fcbd
+--- /dev/null
++++ b/apps/tmux-gpui/bridge/browser-publication.ts
+@@ -0,0 +1,24 @@
++import type { RetainedSnapshotJson } from "./retained-frame-cache.ts";
++
++/**
++ * Fixed browser wire split: prefix ends at selectedPane, suffix begins at
++ * selectionIdentity. Both objects are evaluated before serialization. Only the
++ * retained cache can supply snapshot bytes; live snapshots remain ordinary JSON.
++ */
++export function serializeBrowserPublication(
++  prefix: { version: number; selectedPane: unknown } & Record<string, unknown>,
++  suffix: { selectionIdentity: unknown; machines: unknown } & Record<string, unknown>,
++  retainedSnapshot: RetainedSnapshotJson | null,
++): string {
++  if (retainedSnapshot === null)
++    return JSON.stringify({ ...prefix, retainedPreview: null, ...suffix }) + "\n";
++  // These fixed-schema objects are nonempty; strip only their outer braces.
++  return (
++    JSON.stringify(prefix).slice(0, -1) +
++    ',"retainedPreview":{"snapshot":' +
++    retainedSnapshot +
++    "}," +
++    JSON.stringify(suffix).slice(1) +
++    "\n"
++  );
++}
+diff --git a/apps/tmux-gpui/bridge/browser-publication.test.ts b/apps/tmux-gpui/bridge/browser-publication.test.ts
+new file mode 100644
+index 00000000..9c11a71f
+--- /dev/null
++++ b/apps/tmux-gpui/bridge/browser-publication.test.ts
+@@ -0,0 +1,105 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { serializeBrowserPublication as nrSerialize } from "./browser-publication.ts";
++import { createRetainedFrameCache } from "./retained-frame-cache.ts";
++import { blankTerminalReplicaSnapshot } from "../../../packages/core/src/terminal-replica.ts";
++const prefixKeys = [
++  "version",
++  "connection",
++  "sequence",
++  "request",
++  "sessions",
++  "surface",
++  "home",
++  "diagnostics",
++  "localSetup",
++  "localSessionCreate",
++  "createSession",
++  "selectedServer",
++  "homeAgents",
++  "homeAgentRecovery",
++  "homeAgentFilter",
++  "sessionHistory",
++  "sessionHistoryRejected",
++  "paletteSupported",
++  "paletteAgents",
++  "paletteSelectionRejected",
++  "attentionSupported",
++  "attentionAgents",
++  "attentionSelectionRejected",
++  "sessionTabs",
++  "sessionTabResult",
++  "workspaceFleetAgents",
++  "workspaceFleetAgentRejected",
++  "workspaceAgents",
++  "panes",
++  "sessionCatalogComplete",
++  "preferredPane",
++  "selectedSession",
++  "selectedPane",
++];
++const suffixKeys = [
++  "selectionIdentity",
++  "status",
++  "snapshot",
++  "historyOffset",
++  "copyRegion",
++  "regions",
++  "inputReady",
++  "resizeToken",
++  "splitLayout",
++  "splitGesture",
++  "resizeGestureSupported",
++  "resizeGesture",
++  "paneActions",
++  "presenceRevision",
++  "appearance",
++  "fleet",
++  "machines",
++];
++const shape = (keys: string[]): Record<string, unknown> =>
++  Object.fromEntries(
++    keys.map((k, i) => [
++      k,
++      {
++        index: i,
++        nested: [null, true, false, 42, 'quote" slash\\ newline\n tab\t \u0000 é 😀 \u2028 \ud800'],
++      },
++    ]),
++  );
++const frame = structuredClone(blankTerminalReplicaSnapshot(2, 1));
++Object.assign(frame.grid[0]!.cells[0]!, { grapheme: '\u0000"\\😀\ud800' });
++const baseline = (
++  prefix: Record<string, unknown>,
++  suffix: Record<string, unknown>,
++  snapshot: unknown,
++) =>
++  JSON.stringify({
++    ...prefix,
++    retainedPreview: snapshot === null ? null : { snapshot },
++    ...suffix,
++  }) + "\n";
++test("full fixed envelope bytes match through escaping, omitted fields and metadata/authority changes", () => {
++  const c = createRetainedFrameCache();
++  assert.ok(c.remember("a", "proof", frame));
++  const json = c.preview("a", "proof");
++  for (let variant = 0; variant < 6; variant++) {
++    const p = shape(prefixKeys) as Parameters<typeof nrSerialize>[0],
++      s = shape(suffixKeys) as Parameters<typeof nrSerialize>[1];
++    p.sequence = variant + 1;
++    p.request = variant;
++    s.presenceRevision = variant;
++    for (const [i, key] of prefixKeys.entries()) if (i % 6 === variant) p[key] = undefined;
++    for (const [i, key] of suffixKeys.entries()) if (i % 6 === variant) s[key] = null;
++    s.inputReady = false;
++    s.paneActions = null;
++    s.copyRegion = null;
++    s.regions = [];
++    s.resizeToken = null;
++    s.snapshot = null;
++    p.selectedPane = null;
++    assert.equal(nrSerialize(p, s, json), baseline(p, s, frame));
++    assert.deepEqual(JSON.parse(nrSerialize(p, s, json)), JSON.parse(baseline(p, s, frame)));
++    assert.equal(nrSerialize(p, s, null), baseline(p, s, null));
++  }
++});
