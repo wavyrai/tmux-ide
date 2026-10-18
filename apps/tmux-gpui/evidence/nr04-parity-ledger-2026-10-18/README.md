@@ -1,6 +1,6 @@
 # NR04 evidence and parity gap ledger — 2026-10-18
 
-## Current bounded results through application mouse verification
+## Current bounded results through link adapter verification
 
 NR04 remains open. Matched local stock tmux 3.8 comparisons now exist for the workflows below. These compare canonical outcomes through plain tmux, actual TUI and the GPUI bridge; they do not qualify current native GPUI rendering, all supported platforms, owned SSH, or performance.
 
@@ -13,8 +13,9 @@ NR04 remains open. Matched local stock tmux 3.8 comparisons now exist for the wo
 | Unicode paste with bracketed mode on/off | Original TUI failure retained; corrected source and compiled TUI pass exact bytes | `c513c772`, `e0f813bd`, `bb1216ff` |
 | DEC1049 alternate-screen round trip | Main screen and source cursor restored; fresh input survives | `652b7b99` |
 | Application mouse | Exact click/release reference plus GPUI semantic implementation; matched SGR drag/hover and disabled negatives | `1c635596`, `58845aa8`; mouse-motion evidence below |
+| HTTP(S) links | Historical compiled TUI exact opener arguments and refusals; real canonical publication decoded by native headless adapter, including stale/admission negatives | `bbf64fdd`, `cda11e40` |
 
-The detailed additions below retain artifact identities, adapter differences and limitations. Mouse reporting, history/copy-mode, links, broader switching/recovery, vertical/nested resizing and source-mutation cases still need matched qualification. Historical evidence is useful only within its recorded scope.
+The detailed additions below retain artifact identities, adapter differences and limitations. Application mouse now has bounded matched byte-level evidence; links have distinct TUI and native headless adapter evidence, not one matched physical run. History/copy-mode, broader switching/recovery, vertical/nested resizing and source-mutation cases still need broader qualification. Physical native mouse/link checks, OSC8 metadata transport, bundled/SSH/platform lanes and complete parity remain open. Historical evidence is useful only within its recorded scope.
 
 ## Initial inventory (historical)
 
@@ -103,3 +104,11 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Matched application drag and hover
 
 `../nr04-mouse-motion-2026-10-18/README.md` adds a matched local stock3.8 DEC1002 left drag→DEC1003 buttonless hover→reporting-off workload. Plain attached tmux, compiled TUI and current GPUI semantic bridge deliver identical45bytes, suppress unsupported/disabled hover, preserve original identities/geometry, accept fresh input and clean owned processes. Independent review verifies raw bytes and synchronized mode transitions. This does not qualify native pointer events, all encodings/buttons/modifiers, SSH/bundled/platform behavior or performance.
+
+## Link activation and native admission additions
+
+`../nr04-links-2026-10-18/README.md` (commit `bbf64fdd`) records plain stock tmux 3.8 content and historical compiled TUI e0f813bd with installed CLI 2.9.7. Three exact HTTP(S) opener arguments, including soft wrapping, and a final positive barrier pass through an owned recorder; unsafe schemes, OSC8 friendly label and an adjacent incomplete URL produce no additional opens. No external URL is opened. Original identities/PIDs and attached geometry survive, with zero application input and verified cleanup. The initial post-detach geometry assertion failure is retained; final geometry is checked while attached. This is not current-source TUI, physical OS opening or OSC8 metadata fidelity.
+
+`../nr04-links-native-2026-10-18/README.md` (commit `cda11e40`) adds an actual bridge publication, decoded through native Reader/apply-state and terminal-click handlers in TestAppContext. Three exact targets and unsafe/adjacent/stale/inactive/unpainted/overlay/composition refusals pass. Each negative begins with a positive ready-target proof. Three focused tests and 439 tmux_snapshot tests passed (one ignored). Pixel geometry and paint completion are simulated; native pointer delivery and OS browser opening remain unverified. Capture and compile failures are retained with their limits.
+
+These additions supersede the initial inventory's missing-link and missing-mouse statements only for the explicitly described source/adapter scopes. They do not establish one current installed build's full plain-tmux/TUI/GPUI parity. The current unsigned native candidate remains a separate artifact; no release or card completion follows from this ledger update.
