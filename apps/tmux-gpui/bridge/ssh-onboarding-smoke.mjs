@@ -1,5 +1,6 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
+import { connect } from "node:net";
 import console from "node:console";
 // Real owned OpenSSH failure, saved Add, private repair and explicit Retry.
 import assert from "node:assert/strict";
@@ -18,27 +19,59 @@ import {
   createOwnedSshFixture,
   createMacProcessIdentity,
   ownedProcesses,
+  unusedLoopbackPort,
 } from "../../../scripts/lib/owned-ssh-fixture.mjs";
 process.umask(0o077);
 const useSsh = true;
 const failureKind = process.env.TMUX_GPUI_TEST_SSH_FAILURE ?? "authentication";
 assert.ok(
-  ["authentication", "host-key", "missing-cli"].includes(failureKind),
+  ["authentication", "host-key", "missing-cli", "unreachable"].includes(failureKind),
   "Unknown SSH failure fixture",
 );
 const expectedFailure =
-  failureKind === "missing-cli"
-    ? "remote-cli-missing"
-    : failureKind === "host-key"
-      ? "ssh-host-key"
-      : "ssh-authentication";
+  failureKind === "unreachable"
+    ? "unavailable"
+    : failureKind === "missing-cli"
+      ? "remote-cli-missing"
+      : failureKind === "host-key"
+        ? "ssh-host-key"
+        : "ssh-authentication";
 let trustedKnownHosts;
 let ownedCliBytes;
+let ownedConfigBytes;
+const endpointRepair = {
+  port: null,
+  refusedBefore: false,
+  refusedAfter: false,
+  sshdAlive: false,
+  originalSha256: null,
+  restoredSha256: null,
+};
+async function assertRefused(port) {
+  await new Promise((resolve, reject) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    socket.setTimeout(1000);
+    socket.once("connect", () => {
+      socket.destroy();
+      reject(new Error("Released loopback endpoint unexpectedly accepts connections"));
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      reject(new Error("Released loopback endpoint refusal timed out"));
+    });
+    socket.once("error", (error) => {
+      socket.destroy();
+      error.code === "ECONNREFUSED"
+        ? resolve()
+        : reject(new Error("Released loopback endpoint did not refuse connection"));
+    });
+  });
+}
 const ownedCliRepair = { removed: false, originalSha256: null, restoredSha256: null };
 const publicDiscovery = process.env.TMUX_GPUI_TEST_PUBLIC_DISCOVERY === "1";
 assert.ok(
-  failureKind !== "missing-cli" || publicDiscovery,
-  "Missing CLI requires actual public discovery",
+  !["missing-cli", "unreachable"].includes(failureKind) || publicDiscovery,
+  "Runtime and reachability cases require actual public discovery",
 );
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(output && isAbsolute(output), "Explicit private receipt prefix required");
@@ -247,7 +280,26 @@ try {
     });
     // Shared private local registry permits the actual owner-mediated Add path.
     Object.assign(browserEnv, { PATH: bin + ":" + env.PATH });
-    if (failureKind === "missing-cli") {
+    if (failureKind === "unreachable") {
+      ssh.files.verify("client_config");
+      ownedConfigBytes = await readFile(ssh.config);
+      endpointRepair.originalSha256 = createHash("sha256").update(ownedConfigBytes).digest("hex");
+      endpointRepair.port = await unusedLoopbackPort();
+      assert.notEqual(endpointRepair.port, ssh.port);
+      await assertRefused(endpointRepair.port);
+      endpointRepair.refusedBefore = true;
+      const config = ownedConfigBytes.toString("utf8");
+      assert.equal(config.match(/^ Port /gm)?.length, 1);
+      assert.ok(config.startsWith("Host target\n HostName 127.0.0.1\n"));
+      assert.ok(config.includes(`\n Port ${ssh.port}\n`));
+      await writeFile(
+        ssh.config,
+        config.replace(`\n Port ${ssh.port}\n`, `\n Port ${endpointRepair.port}\n`),
+        { mode: 0o600 },
+      );
+      ssh.files.capture("client_config");
+      assert.equal(ssh.confirmRefreshedPid().pid, ssh.sshdPid);
+    } else if (failureKind === "missing-cli") {
       ssh.files.verify("bin");
       ssh.files.verify("bin/tmux-ide");
       ownedCliBytes = await readFile(join(ssh.root, "bin/tmux-ide"));
@@ -326,7 +378,10 @@ try {
     ),
   );
   const denied = latest.fleet.groups.find((group) => group.id === machineId);
-  assert.equal(denied.diagnostic.phase, "needs-attention");
+  assert.equal(
+    denied.diagnostic.phase,
+    failureKind === "unreachable" ? "reconnecting" : "needs-attention",
+  );
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
   facts.denial = true;
@@ -363,7 +418,21 @@ try {
 
   trace.push({ phase, diagnostic: denied.diagnostic, frame: false, input: false });
   // Restore only owned fixture trust, credentials or executable; never weaken SSH verification.
-  if (failureKind === "missing-cli") {
+  if (failureKind === "unreachable") {
+    ssh.files.verify("client_config");
+    assert.ok(ownedConfigBytes);
+    await assertRefused(endpointRepair.port);
+    endpointRepair.refusedAfter = true;
+    assert.equal(ssh.confirmRefreshedPid().pid, ssh.sshdPid);
+    endpointRepair.sshdAlive = true;
+    await writeFile(ssh.config, ownedConfigBytes, { mode: 0o600 });
+    ssh.files.capture("client_config");
+    ssh.files.verify("client_config");
+    endpointRepair.restoredSha256 = createHash("sha256")
+      .update(await readFile(ssh.config))
+      .digest("hex");
+    assert.equal(endpointRepair.restoredSha256, endpointRepair.originalSha256);
+  } else if (failureKind === "missing-cli") {
     ssh.files.verify("bin");
     assert.ok(ownedCliBytes && ownedCliRepair.removed);
     await writeFile(join(ssh.root, "bin/tmux-ide"), ownedCliBytes, { mode: 0o700, flag: "wx" });
@@ -461,6 +530,7 @@ try {
       .digest("hex"),
     ...facts,
     ...(failureKind === "missing-cli" ? { ownedCliRepair } : {}),
+    ...(failureKind === "unreachable" ? { endpointRepair } : {}),
     discoveryDescriptor: publicDiscovery
       ? "actual explicit CLI remote-daemon-info using mirrored verified private record"
       : "synthetic descriptor for actual private daemon",
