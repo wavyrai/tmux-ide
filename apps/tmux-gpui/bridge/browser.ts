@@ -479,6 +479,7 @@ function recoverTerminal(reason: string) {
   publish();
 }
 const retainedFrames = createRetainedFrameCache();
+const retainedHistory = new Map<string, { proof: string; pane: string; token: string | null }>();
 let lastCoherentFrame: {
   request: number;
   key: string;
@@ -1071,6 +1072,8 @@ function publish() {
     appliedPresenceRevision = presenceRevision;
   if (stopped) return;
   retainedFrames.retain(sessionTabs.keys());
+  for (const key of retainedHistory.keys())
+    if (!sessionTabs.keys().includes(key)) retainedHistory.delete(key);
   if (
     retainedPreview &&
     (retainedPreview.request !== request ||
@@ -1206,6 +1209,7 @@ function retireMachineRoute() {
   cancelLocalSetup();
   clearRetainedPreview();
   retainedFrames.clear();
+  retainedHistory.clear();
   lastCoherentFrame = null;
   recoverTerminal("machine-route-retired");
   sessionHistory.cancel();
@@ -1245,6 +1249,7 @@ async function stop() {
   sessionTabs.dispose();
   clearRetainedPreview();
   retainedFrames.clear();
+  retainedHistory.clear();
   lastCoherentFrame = null;
   workspaceFleetAgents.cancel();
   hostSource?.dispose();
@@ -1305,7 +1310,23 @@ async function openPane(
   const presentation = createWindowPresentation(config.semanticPaneId);
   try {
     const path = join(directory, "connection.json");
-    await writeFile(path, JSON.stringify(config), { mode: 0o600 });
+    const historyKey = fleet?.attachmentKey(config);
+    const savedHistory = historyKey ? retainedHistory.get(historyKey) : undefined;
+    const restoreToken =
+      !catalogOnly &&
+      savedHistory?.pane === config.semanticPaneId &&
+      savedHistory.proof === fleet?.retainedFrameProof(historyKey!)
+        ? savedHistory.token
+        : undefined;
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...config,
+        ...(restoreToken ? { historyAnchor: restoreToken } : {}),
+        ...(!catalogOnly && savedHistory && !restoreToken ? { historyUnavailable: true } : {}),
+      }),
+      { mode: 0o600 },
+    );
     if (
       stopped ||
       token !== request ||
@@ -1829,6 +1850,35 @@ async function openPane(
             .min(0)
             .max(1000)
             .parse(event.scrollOffset ?? 0);
+          const historyAnchor = z
+            .object({
+              state: z.enum([
+                "live",
+                "historical",
+                "restoring",
+                "lost",
+                "unavailable",
+                "unsupported",
+              ]),
+              token: z.uuid().nullable(),
+            })
+            .strict()
+            .nullable()
+            .parse(event.historyAnchor ?? null);
+          const anchorKey = fleet?.attachmentKey(config);
+          const anchorProof = anchorKey ? fleet?.retainedFrameProof(anchorKey) : null;
+          if (anchorKey && anchorProof && historyAnchor) {
+            if (!["live", "lost", "unavailable", "unsupported"].includes(historyAnchor.state)) {
+              retainedHistory.delete(anchorKey);
+              retainedHistory.set(anchorKey, {
+                proof: anchorProof,
+                pane: config.semanticPaneId,
+                token: historyAnchor.token,
+              });
+              while (retainedHistory.size > 8)
+                retainedHistory.delete(retainedHistory.keys().next().value!);
+            } else if (historyAnchor.state !== "restoring") retainedHistory.delete(anchorKey);
+          }
           appliedPresenceRevision = event.presenceRevision;
           const hasAuthority =
             !pendingClose &&
@@ -1931,12 +1981,33 @@ async function openPane(
                     : diagnostics.fault
                       ? diagnosticStatus(diagnostics.fault)
                       : "Pane unavailable — select again or refresh";
+          if (historyAnchor?.state === "restoring") status = "Restoring saved history";
+          else if (historyAnchor?.state === "lost")
+            status =
+              scrollOffset > 0
+                ? "History shown but its saved anchor was lost — Shift-End returns to live"
+                : "Saved history is no longer available — live terminal shown";
+          else if (historyAnchor?.state === "unavailable")
+            status =
+              scrollOffset > 0
+                ? "History shown but could not be saved — Shift-End returns to live"
+                : "Saved history could not be restored — live terminal shown";
+          else if (historyAnchor?.state === "unsupported")
+            status =
+              scrollOffset > 0
+                ? "History shown — this daemon cannot retain it across tabs; Shift-End returns to live"
+                : "This daemon cannot restore saved history — live terminal shown";
           if (!catalogOnly)
             acceptSessionVisit = () => {
               if (
-                !inputReady ||
+                (!inputReady &&
+                  !(
+                    historyAnchor?.state === "historical" &&
+                    scrollOffset > 0 &&
+                    event.historyReady === true &&
+                    appliedPresenceRevision === presenceRevision
+                  )) ||
                 !snapshot ||
-                scrollOffset !== 0 ||
                 !foreground ||
                 stopped ||
                 active?.child !== child ||
@@ -1959,7 +2030,7 @@ async function openPane(
                   recoveryTarget = { resolve, key, pane: config.semanticPaneId, request: token };
               }
               const proof = frameProof(key);
-              if (proof && coherent)
+              if (inputReady && proof && coherent)
                 lastCoherentFrame = { request: token, key, proof, snapshot: coherent.snapshot };
               const tabTarget = fleet?.retainedTarget(key);
               if (tabTarget) sessionTabs.accept(token, tabTarget);
@@ -2115,6 +2186,7 @@ async function command(value: unknown) {
   if (cmd.type === "theme" || cmd.type === "appearance") {
     clearRetainedPreview();
     retainedFrames.clear();
+    retainedHistory.clear();
     lastCoherentFrame = null;
     if (cmd.type === "theme") appearance.select(cmd.id);
     else appearance.setSystem(cmd.system);
@@ -2128,6 +2200,7 @@ async function command(value: unknown) {
       cancelLocalSetup();
       clearRetainedPreview();
       retainedFrames.clear();
+      retainedHistory.clear();
       lastCoherentFrame = null;
       workspaceFleetAgents.cancel();
       sessionHistory.cancel();

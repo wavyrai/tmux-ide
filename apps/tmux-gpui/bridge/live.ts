@@ -14,6 +14,7 @@ import {
 } from "./pane-actions.ts";
 import { contentRect } from "./window-canvas.ts";
 import { createPaneResizeFence, paneResizeSchema, resizePane } from "./pane-resize.ts";
+import { createHistoryRestoration } from "./history-restoration.ts";
 import { createHistoryViewport, scrollSchema } from "./history.ts";
 import { createMouseOwner, mouseSchema } from "./mouse.ts";
 import { routeWheel, wheelSchema } from "./wheel.ts";
@@ -24,7 +25,10 @@ import { deliverInput, deliverPreviewInput, MAX_INPUT_LINE } from "./input.ts";
 import { connectionSchema, readPrivateConfig, paneStreamSocketUrl } from "./config.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
-import { createTmuxServerClient } from "../../../packages/daemon-client/src/tmux-server-client.ts";
+import {
+  requestHistoryAnchor,
+  createTmuxServerClient,
+} from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import {
   connectIssuedPaneStreamRuntimeClient,
   type PaneStreamRuntimeClient,
@@ -38,6 +42,8 @@ let runtime: PaneStreamRuntimeClient | undefined;
 let disposeClient: (() => void) | undefined;
 let splitGesture: ReturnType<typeof createSplitGestureOwner> | undefined;
 const viewport = createHistoryViewport();
+let historyRestoration: ReturnType<typeof createHistoryRestoration> | undefined;
+let restorePending = false;
 const mouseOwner = createMouseOwner();
 const mouseIdentity = () =>
   JSON.stringify([
@@ -101,7 +107,12 @@ function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
   const inputReady =
-    foreground && !stopped && viewport.offset === 0 && !!runtime?.ownsConnectionAuthority("input");
+    foreground &&
+    !stopped &&
+    !restorePending &&
+    historyRestoration?.publication().state !== "restoring" &&
+    viewport.offset === 0 &&
+    !!runtime?.ownsConnectionAuthority("input");
   const resizeLayout = layouts.find((l) => l.semanticWindowId === semanticWindow);
   const matchingLinks =
     windowLinks?.links.filter((link) => link.semanticWindowId === semanticWindow) ?? [];
@@ -166,6 +177,16 @@ function output(snapshot: typeof latest.snapshot) {
               : null,
             resizeToken: currentResizeToken,
             scrollOffset: viewport.offset,
+            historyReady:
+              foreground &&
+              !stopped &&
+              !restorePending &&
+              historyRestoration?.publication().state !== "restoring" &&
+              viewport.offset > 0 &&
+              !!runtime?.ownsConnectionAuthority("input"),
+            historyAnchor: restorePending
+              ? { state: "restoring", token: null }
+              : (historyRestoration?.publication() ?? null),
             presenceRevision,
             layouts,
             surfaces: catalogOnly
@@ -195,6 +216,7 @@ function stop() {
   resizeGesture?.retire();
   splitReader?.dispose();
   splitGesture?.retire();
+  historyRestoration?.dispose();
   disposeClient?.();
   runtime?.close();
   if (interactive) process.stdin.destroy();
@@ -285,6 +307,49 @@ try {
   const origin = "tmux-ide://app";
   const hostClientId = `gpui:${randomUUID()}`;
   const client = createTmuxServerClient({ ...config, origin, hostClientId }, config.scope);
+  restorePending = !!config.historyAnchor;
+  historyRestoration = createHistoryRestoration({
+    current: () => replicas.get(config.semanticPaneId)?.current() ?? null,
+    read: async (proof, operation, signal) => {
+      const identity = {
+        workspaceName: proof.workspaceName,
+        semanticPaneId: proof.semanticPaneId,
+        generation: proof.generation,
+        incarnation: proof.incarnation,
+      };
+      const input =
+        operation.kind === "capture"
+          ? { version: 1 as const, liveSessionId: config.liveSessionId, proof, operation }
+          : {
+              version: 1 as const,
+              liveSessionId: config.liveSessionId,
+              proof: identity,
+              operation,
+            };
+      return (
+        (
+          await requestHistoryAnchor(
+            { ...config, origin, hostClientId, timeoutMs: 2000 },
+            config.scope,
+            input,
+            signal,
+          )
+        )?.result ?? null
+      );
+    },
+    restore: (row) => {
+      const view = viewport.restoreRow(row);
+      if (!view) return false;
+      surfaces.set(config.semanticPaneId, view);
+      latest.snapshot = view;
+      return true;
+    },
+    changed: () => {
+      if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+    },
+  });
+
+  if (config.historyUnavailable) historyRestoration.unavailable();
   disposeClient = () => client.dispose();
   splitReader = createSplitLayoutReader({
     read: async (target, signal) =>
@@ -453,6 +518,7 @@ try {
             config.workspaceName,
             pane,
             (snapshot, lifetime) => {
+              const wasHistorical = pane === config.semanticPaneId && viewport.offset > 0;
               if (!lifetimes.has(pane) || lifetimes.get(pane) !== lifetime) {
                 // Saturation terminates the live stream; final retirement may still
                 // clear all surfaces without emitting an unsafe/reused epoch.
@@ -472,6 +538,14 @@ try {
               else {
                 surfaces.delete(pane);
                 if (pane === config.semanticPaneId) viewport.update(null);
+              }
+              if (wasHistorical && viewport.offset === 0) historyRestoration?.lost();
+              if (pane === config.semanticPaneId) {
+                historyRestoration?.observe(replicas.get(pane)?.current() ?? null);
+                if (restorePending && snapshot) {
+                  restorePending = false;
+                  historyRestoration?.restore(config.historyAnchor!);
+                }
               }
               if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
             },
@@ -544,6 +618,10 @@ try {
           if (foreground) resizeBlocked = false;
           if (latest.snapshot) output(latest.snapshot);
           continue;
+        }
+        if (restorePending || historyRestoration?.publication().state === "restoring") {
+          const returnLive = scrollSchema.safeParse(value);
+          if (!returnLive.success || returnLive.data.data !== 0) continue;
         }
         const splitCommand = splitGestureSchema.safeParse(value);
         if (splitCommand.success) {
@@ -752,6 +830,7 @@ try {
           } else {
             const view = viewport.scroll(route.lines);
             if (view) surfaces.set(config.semanticPaneId, view);
+            historyRestoration?.capture(viewport.captureIndex());
             output(view);
           }
           continue;
@@ -761,7 +840,9 @@ try {
           mouseOwner.retire();
           resizeGesture.retire();
           const view = viewport.scroll(scroll.data.data);
+          restorePending = false;
           if (view) surfaces.set(config.semanticPaneId, view);
+          historyRestoration?.capture(viewport.captureIndex());
           output(view);
           continue;
         }
@@ -779,7 +860,12 @@ try {
           }
           continue;
         }
-        if (viewport.offset > 0) continue; // Never type into a historical view.
+        if (
+          restorePending ||
+          historyRestoration?.publication().state === "restoring" ||
+          viewport.offset > 0
+        )
+          continue; // Never type into a historical view.
         if (!latest.snapshot) throw new Error("No verified input target");
         await deliverPreviewInput(
           runtime,

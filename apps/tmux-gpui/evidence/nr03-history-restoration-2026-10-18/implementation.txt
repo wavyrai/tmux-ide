@@ -1,0 +1,8 @@
+Bridge-only integration; no Rust changes or physical GUI qualification.
+Canonical committed replica proof (generation/incarnation/revision/stateHash), bounded row-reference history slices, opaque owner capture token retained by exact tab/route/pane.
+Restore waits for matching proven receiver revision and follows only identical unique row references through patches. No text matching or numerical offset inference.
+Input disabled during pending restoration and historical viewport; helper also blocks queued commands except presence and scroll0 during pending restore.
+Fresh verified historical display can complete pending tab without granting terminal input.
+Unsupported old daemon, lost anchor, and unavailable restoration use distinct status messages. Immediate switch before capture completes records unresolved marker and reports unavailable rather than claiming restore.
+Bounds: browser8tabs; receiver4proof slices/4MiB total, each1000rows/2MiB; restoration3second deadline and2second POST timeout. Owner token TTL5minutes remains product limitation for long-paused tabs.
+Checks:33 Node tests(history/restoration/replica/sessiontabs/wheel), bridge TypeScript, changed-file ESLint, Prettier and git diffcheck passed. Logs sibling files. Runtime proof owned separately by remaining_parity_audit.
