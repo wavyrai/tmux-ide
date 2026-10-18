@@ -7,6 +7,7 @@ impl SnapshotView {
             && self.pane_actions.is_none()
             && self.new_session.is_none()
             && self.presence.ready()
+            && self.session_tabs.pending.is_none()
             && self.browser_state.input_ready
             && self.frame.is_some()
             && self.browser_state.selected_pane.is_some()
