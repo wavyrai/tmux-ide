@@ -1,7 +1,7 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
 import console from "node:console";
-// Real owned OpenSSH authentication denial, saved Add, credential repair and explicit Retry.
+// Real owned OpenSSH failure, saved Add, private repair and explicit Retry.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { readFile, stat, mkdir, writeFile, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -22,10 +22,24 @@ import {
 process.umask(0o077);
 const useSsh = true;
 const failureKind = process.env.TMUX_GPUI_TEST_SSH_FAILURE ?? "authentication";
-assert.ok(["authentication", "host-key"].includes(failureKind), "Unknown SSH failure fixture");
-const expectedFailure = failureKind === "host-key" ? "ssh-host-key" : "ssh-authentication";
+assert.ok(
+  ["authentication", "host-key", "missing-cli"].includes(failureKind),
+  "Unknown SSH failure fixture",
+);
+const expectedFailure =
+  failureKind === "missing-cli"
+    ? "remote-cli-missing"
+    : failureKind === "host-key"
+      ? "ssh-host-key"
+      : "ssh-authentication";
 let trustedKnownHosts;
+let ownedCliBytes;
+const ownedCliRepair = { removed: false, originalSha256: null, restoredSha256: null };
 const publicDiscovery = process.env.TMUX_GPUI_TEST_PUBLIC_DISCOVERY === "1";
+assert.ok(
+  failureKind !== "missing-cli" || publicDiscovery,
+  "Missing CLI requires actual public discovery",
+);
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(output && isAbsolute(output), "Explicit private receipt prefix required");
 assert.match(process.version, /^v24\./);
@@ -233,7 +247,15 @@ try {
     });
     // Shared private local registry permits the actual owner-mediated Add path.
     Object.assign(browserEnv, { PATH: bin + ":" + env.PATH });
-    if (failureKind === "host-key") {
+    if (failureKind === "missing-cli") {
+      ssh.files.verify("bin");
+      ssh.files.verify("bin/tmux-ide");
+      ownedCliBytes = await readFile(join(ssh.root, "bin/tmux-ide"));
+      ownedCliRepair.originalSha256 = createHash("sha256").update(ownedCliBytes).digest("hex");
+      await rm(join(ssh.root, "bin/tmux-ide"));
+      await assert.rejects(stat(join(ssh.root, "bin/tmux-ide")), { code: "ENOENT" });
+      ownedCliRepair.removed = true;
+    } else if (failureKind === "host-key") {
       ssh.files.verify("known_hosts");
       ssh.files.verify("host.pub");
       trustedKnownHosts = await readFile(join(ssh.root, "known_hosts"), "utf8");
@@ -309,7 +331,7 @@ try {
   assert.equal(latest.inputReady, false);
   facts.denial = true;
   // Establish the exact semantic target using supported metadata promotion on the owned daemon.
-  // Authentication remains denied in the browser; no terminal input is sent by this setup.
+  // The remote route remains denied in the browser; no terminal input is sent by this setup.
   const setupCatalog = createPreviewCatalog(
     await discoverPreviewHost(join(scratch.daemonInfoDir, "daemon.json")),
   );
@@ -340,8 +362,18 @@ try {
   });
 
   trace.push({ phase, diagnostic: denied.diagnostic, frame: false, input: false });
-  // Restore only independently known fixture trust/credentials; never weaken SSH verification.
-  if (failureKind === "host-key") {
+  // Restore only owned fixture trust, credentials or executable; never weaken SSH verification.
+  if (failureKind === "missing-cli") {
+    ssh.files.verify("bin");
+    assert.ok(ownedCliBytes && ownedCliRepair.removed);
+    await writeFile(join(ssh.root, "bin/tmux-ide"), ownedCliBytes, { mode: 0o700, flag: "wx" });
+    ssh.files.capture("bin/tmux-ide");
+    ssh.files.verify("bin/tmux-ide");
+    ownedCliRepair.restoredSha256 = createHash("sha256")
+      .update(await readFile(join(ssh.root, "bin/tmux-ide")))
+      .digest("hex");
+    assert.equal(ownedCliRepair.restoredSha256, ownedCliRepair.originalSha256);
+  } else if (failureKind === "host-key") {
     ssh.files.verify("known_hosts");
     ssh.files.verify("host.pub");
     assert.ok(trustedKnownHosts);
@@ -428,6 +460,7 @@ try {
       .update(await readFile(cli))
       .digest("hex"),
     ...facts,
+    ...(failureKind === "missing-cli" ? { ownedCliRepair } : {}),
     discoveryDescriptor: publicDiscovery
       ? "actual explicit CLI remote-daemon-info using mirrored verified private record"
       : "synthetic descriptor for actual private daemon",
