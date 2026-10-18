@@ -98,7 +98,7 @@ it.each(["seed", "history", "dimensions", "alternate", "retirement"])(
     expect(owner.resolve(p, t).status).toBe(kind === "alternate" ? "unavailable" : "lost");
   },
 );
-it("bounds tokens and expiration, rejects wrong proof and foreign tokens", () => {
+it("bounds tokens, rejects wrong proof and foreign tokens", () => {
   let now = 0;
   const owner = new HistoryAnchorOwner(() => now),
     s = seed();
@@ -113,7 +113,7 @@ it("bounds tokens and expiration, rejects wrong proof and foreign tokens", () =>
   other.observe(s);
   expect(other.resolve(s, last).status).toBe("lost");
   now = 300001;
-  expect(owner.resolve(s, last).status).toBe("lost");
+  expect(owner.resolve(s, last).status).toBe("resolved");
   owner.observe(s);
   expect(owner.capture(s, -1).status).toBe("lost");
   expect(owner.capture(s, 4).status).toBe("lost");
@@ -149,7 +149,29 @@ it("allows a fresh anchor on a quiet current snapshot after historical metadata 
   owner.observe(s);
   const old = token(owner, s);
   now = 300001;
-  expect(owner.resolve(s, old).status).toBe("lost");
+  expect(owner.resolve(s, old).status).toBe("resolved");
   const fresh = token(owner, s);
   expect(owner.resolve(s, fresh).status).toBe("resolved");
+});
+
+it("retains a long-paused anchor while historical capture proofs expire", () => {
+  let now = 0;
+  const owner = new HistoryAnchorOwner(() => now);
+  const s = seed();
+  owner.observe(s);
+  const saved = token(owner, s, 2);
+  now = 24 * 60 * 60_000;
+  expect(owner.resolve(s, saved)).toMatchObject({ status: "resolved", historyIndex: 2 });
+  expect(owner.capture(s, 1).status).toBe("captured");
+  const p = patch(s, { rows: [], historyDelta: { trim: 1, append: [blank.grid[0]!] } });
+  owner.observe(p);
+  expect(owner.capture(s, 2).status).toBe("stale");
+  expect(owner.resolve(p, saved)).toMatchObject({
+    status: "resolved",
+    historyIndex: 1,
+    proof: { revision: p.revision, stateHash: p.stateHash },
+  });
+  const q = patch(p, { rows: [], historyDelta: { trim: 2, append: [] } });
+  owner.observe(q);
+  expect(owner.resolve(q, saved)).toEqual({ status: "lost" });
 });

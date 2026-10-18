@@ -15,7 +15,7 @@ export type HistoryAnchorIdentity = Pick<
 >;
 type Failure = { readonly status: "unavailable" | "stale" | "lost" };
 const MAX_TOKENS = 32;
-const TTL_MS = 5 * 60_000;
+const PROOF_TTL_MS = 5 * 60_000;
 
 /** Owner-private row ordinals. Never changes terminal v1 payloads or hashes. */
 export class HistoryAnchorOwner {
@@ -23,7 +23,7 @@ export class HistoryAnchorOwner {
   #first = 0;
   #length = 0;
   #proofs = new Map<string, { first: number; length: number; expires: number }>();
-  #tokens = new Map<string, { ordinal: number; expires: number }>();
+  #tokens = new Map<string, { ordinal: number }>();
   constructor(private readonly now: () => number = () => performance.now()) {}
 
   invalidate(): void {
@@ -128,7 +128,8 @@ export class HistoryAnchorOwner {
     if (ordinal < this.#first || ordinal >= this.#first + this.#length) return { status: "lost" };
     while (this.#tokens.size >= MAX_TOKENS) this.#tokens.delete(this.#tokens.keys().next().value!);
     const token = randomUUID();
-    this.#tokens.set(token, { ordinal, expires: this.now() + TTL_MS });
+    // Saved tabs retain identity until capacity eviction or actual history loss.
+    this.#tokens.set(token, { ordinal });
     return { status: "captured", token };
   }
 
@@ -176,18 +177,14 @@ export class HistoryAnchorOwner {
     this.#proofs.set(this.#key(this.#current), {
       first: this.#first,
       length: this.#length,
-      expires: this.now() + TTL_MS,
+      expires: this.now() + PROOF_TTL_MS,
     });
   }
   #prune(): void {
     const now = this.now();
     for (const [key, value] of this.#proofs) if (value.expires <= now) this.#proofs.delete(key);
     for (const [token, entry] of this.#tokens)
-      if (
-        entry.expires <= now ||
-        entry.ordinal < this.#first ||
-        entry.ordinal >= this.#first + this.#length
-      )
+      if (entry.ordinal < this.#first || entry.ordinal >= this.#first + this.#length)
         this.#tokens.delete(token);
   }
 }
