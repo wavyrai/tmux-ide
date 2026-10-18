@@ -1,0 +1,11 @@
+Open the sole session, wait Keyboard ready/SPLIT_SOURCE, then Actions -> Split pane right. Do not type into terminals.
+tmux-preview: native chrome glass true
+{"stage":"split-verified","direction":"right","original":"%0","created":"%1","terminalInputBytes":0}
+Wait for coherent two-pane layout/Keyboard ready. Original SPLIT_SOURCE must remain selected. Actions -> Split pane down.
+TMUX_GPUI_DIAGNOSTIC {"code":"topology-changed"}
+TMUX_GPUI_RECOVERY topology-changed
+{"stage":"split-verified","direction":"down","original":"%0","created":"%2","terminalInputBytes":0}
+Both directions verified. Observe coherent three-pane layout with original selected, then Cmd-Q.
+TMUX_GPUI_DIAGNOSTIC {"code":"topology-changed"}
+TMUX_GPUI_RECOVERY topology-changed
+{"passed":true,"rightAndDown":true,"terminalInputBytes":0,"originalPid":"37145","sourceSurvivesClose":true,"nativeLayoutAndSelection":"operator observation required","cleanup":true}

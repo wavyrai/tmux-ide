@@ -1,0 +1,38 @@
+---
+title: tmux-ide 2.9.7
+metaTitle: "What's new in 2.9.7"
+description: "Compatibility with stock tmux 3.8 without replacing existing tmux sessions."
+---
+
+Version `2.9.7` fixes terminal connections to stock tmux 3.8.
+
+## Stock tmux compatibility
+
+Stock tmux 3.8 accepts `capture-pane -R` but returns a textual grid format rather
+than the JSON extension used by bundled tmux. The daemon now recognizes that
+format and uses its existing stock capture path. Previously this could close
+terminal streams with code 1011 and leave clients repeatedly reconnecting.
+
+You do not need to downgrade tmux, change your PATH or kill existing sessions.
+The daemon also observes retirement after a concurrent shutdown transport failure.
+
+## Updating
+
+Update the CLI through your existing installation method, then explicitly update
+the running daemon:
+
+```bash
+tmux-ide update --daemon --json
+```
+
+Existing tmux sessions are preserved. Apple Silicon macOS and glibc Linux x64/ARM64
+remain supported; Intel macOS remains unsupported.
+
+## Separate native alpha
+
+The [native macOS alpha](/docs/native-alpha) has a separate update path. Its pane-split
+recovery change refreshes the selected pane after layout changes without replaying
+input or split commands. Updating the CLI alone does not update the native app.
+
+See the [changelog](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md)
+for the full release history.
