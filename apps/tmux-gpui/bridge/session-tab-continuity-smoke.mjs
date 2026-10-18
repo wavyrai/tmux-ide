@@ -69,6 +69,9 @@ const source = () =>
     .split("\n")
     .sort();
 let before;
+let ownedCleanupPassed = false;
+let identityRecreationPassed = false;
+let rapidSwitchPassed = false;
 let daemon,
   browser,
   latest,
@@ -396,8 +399,88 @@ try {
     assert.equal(latest.snapshot, null);
     appearanceInvalidationPassed = true;
     assert.ok(fingerprintChecks > 0);
+    // Warm both caches under the changed appearance before testing cancellation/identity.
+    await completeCatalog(a);
+    phase = "identity-warm-b";
+    let tabs = latest.sessionTabs;
+    send({
+      type: "session-tab",
+      request: ++request,
+      fromRequest: latest.request,
+      revision: tabs.revision,
+      action: tabs.rows.find((r) => r.id === bTab).activate,
+    });
+    await completeCatalog(b);
+    phase = "rapid-a-b";
+    await activateWithoutPane(aTab, a);
+    // Supersede A before its pane continuation; only B may become live.
+    await activateWithoutPane(bTab, b);
+    await completeCatalog(b);
+    assert.equal(latest.selectedSession, b.sessionId);
+    rapidSwitchPassed = true;
+    phase = "delete-pending-a";
+    const expectedSurvivor = tmux(
+      "list-panes",
+      "-s",
+      "-t",
+      `=${b.name}`,
+      "-F",
+      "#{pane_id}|#{pane_pid}|#{pane_birth_id}",
+    )
+      .trim()
+      .split("\n")
+      .sort();
+    await activateWithoutPane(aTab, a);
+    fleet.killSession(a.name);
+    await until(
+      () =>
+        !latest.retainedPreview &&
+        latest.sessionTabs?.rows.find((r) => r.id === aTab)?.available === false,
+    );
+    assert.equal(latest.inputReady, false);
+    assert.equal(latest.snapshot, null);
+    phase = "recreate-same-name-a";
+    fleet.createSession(a.name);
+    await until(() =>
+      latest.fleet?.groups
+        .find((g) => g.id === "local")
+        ?.sessions.some((s) => s.name === a.name && s.sessionId !== a.sessionId),
+    );
+    const replacement = latest.fleet.groups
+      .find((g) => g.id === "local")
+      .sessions.find((s) => s.name === a.name);
+    assert.notEqual(replacement.id, a.id);
+    assert.notEqual(replacement.sessionId, a.sessionId);
+    tabs = latest.sessionTabs;
+    const old = tabs.rows.find((r) => r.id === aTab);
+    assert.equal(old.available, false);
+    const priorRequest = latest.request;
+    send({
+      type: "session-tab",
+      request: ++request,
+      fromRequest: priorRequest,
+      revision: tabs.revision,
+      action: old.activate,
+    });
+    await until(
+      () =>
+        latest.sessionTabResult?.request === request &&
+        latest.sessionTabResult.outcome === "rejected",
+    );
+    assert.equal(latest.request, priorRequest);
+    assert.equal(latest.retainedPreview, null);
+    assert.equal(latest.inputReady, false);
+    assert.deepEqual(
+      tmux("list-panes", "-s", "-t", `=${b.name}`, "-F", "#{pane_id}|#{pane_pid}|#{pane_birth_id}")
+        .trim()
+        .split("\n")
+        .sort(),
+      expectedSurvivor,
+    );
+    identityRecreationPassed = true;
   }
-  assert.deepEqual(source(), before, "Source pane births and processes survive tab navigation");
+  if (!qualifyRetention)
+    assert.deepEqual(source(), before, "Source pane births and processes survive tab navigation");
 } catch (error) {
   failures.push(error);
 } finally {
@@ -416,7 +499,10 @@ try {
   // Bounded cleanup addresses only the server created by this fixture. Retain its root on failure.
   try {
     tmux("kill-server");
-    if (!childCleanupFailed) await rm(fleet.root, { recursive: true, force: true });
+    if (!childCleanupFailed) {
+      await rm(fleet.root, { recursive: true, force: true });
+      ownedCleanupPassed = true;
+    }
   } catch (error) {
     failures.push(error);
   }
@@ -435,12 +521,16 @@ const result = {
   retainedHomeCancellation: homeCancellationPassed,
   retainedAppearanceInvalidation: appearanceInvalidationPassed,
   targetFingerprintChecks: fingerprintChecks,
+  rapidSwitch: rapidSwitchPassed,
+  sameNameRecreationRejected: identityRecreationPassed,
+  intentionallyRecreatedTarget: qualifyRetention,
   switches,
-  sourceBirthsPreserved: failures.length === 0,
+  sourceBirthsPreserved: !qualifyRetention && failures.length === 0,
+  survivorBirthsPreserved: qualifyRetention && identityRecreationPassed,
   inputSent: false,
   resizeSent: false,
   nativeUi: false,
-  ownedCleanup: failures.length === 0,
+  ownedCleanup: ownedCleanupPassed,
   trace,
 };
 console.log(JSON.stringify(result));
