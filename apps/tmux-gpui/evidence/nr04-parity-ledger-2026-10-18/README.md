@@ -1,6 +1,23 @@
 # NR04 evidence and parity gap ledger — 2026-10-18
 
-Read-only inventory at HEAD `0fbaef5b4aff0207b9304296278a9456bb617466`. Working tree has concurrent uncommitted GPUI changes; those are not qualified by older receipts. No workloads/builds/GUI were run for this audit. NR04 remains open: no matched plain-tmux/TUI/GPUI matrix has been demonstrated.
+## Current bounded results through `652b7b99`
+
+NR04 remains open. Matched local stock tmux 3.8 comparisons now exist for the workflows below. These compare canonical outcomes through plain tmux, actual TUI and the GPUI bridge; they do not qualify current native GPUI rendering, all supported platforms, owned SSH, or performance.
+
+| Workflow | Current result | Evidence commit |
+| --- | --- | --- |
+| Quiet window resize | Matching geometry, identities, markers and fresh input | `f75b10ea` |
+| Quiet horizontal divider | Matching widths; GPUI movement before release | `5b92f4f4` |
+| Divider during finite output | Source output advances around actions; final marker and input survive | `e5b85427` |
+| Split-right, zoom, restore, close-new | Matching lifecycle outcomes; survivor process remains alive | `aa7c0d4f` |
+| Unicode paste with bracketed mode on/off | Original TUI failure retained; corrected source and compiled TUI pass exact bytes | `c513c772`, `e0f813bd`, `bb1216ff` |
+| DEC1049 alternate-screen round trip | Main screen and source cursor restored; fresh input survives | `652b7b99` |
+
+The detailed additions below retain artifact identities, adapter differences and limitations. Mouse reporting, history/copy-mode, links, broader switching/recovery, vertical/nested resizing and source-mutation cases still need matched qualification. Historical evidence is useful only within its recorded scope.
+
+## Initial inventory (historical)
+
+The following inventory was written at HEAD `0fbaef5b4aff0207b9304296278a9456bb617466`, before the matched runs above. At that time GPUI changes were uncommitted and no workloads/builds/GUI were run for the inventory itself. Statements that a matched workflow is untested describe that initial state; the dated additions and current summary supersede them only for their explicit bounded cases.
 
 Paths are repository-relative. `E` = `apps/tmux-gpui/evidence/`; `G` = `apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/`; `B` = `apps/tmux-gpui/bridge/`; `T` = `packages/daemon/src/tui/mirror/`. “Verified” below always means the specific receipt/artifact/platform, not current global parity. Source/test presence describes implementation or coverage intent, not a newly passed test.
 
