@@ -1,0 +1,28 @@
+{
+  "passed": false,
+  "node": "v24.21.0",
+  "cliSha256": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
+  "realSsh": true,
+  "failureKind": "host-key",
+  "actualSavedAdd": false,
+  "denial": false,
+  "repaired": false,
+  "input": false,
+  "deniedInputAbsent": false,
+  "cleanup": true,
+  "discoveryDescriptor": "actual explicit CLI remote-daemon-info using mirrored verified private record",
+  "remoteCliPreflightQualified": false,
+  "installedPackageQualified": false,
+  "cliArtifact": {
+    "kind": "explicit-cli",
+    "packageVersion": null
+  },
+  "syntheticHandshakeRequests": 0,
+  "trace": [],
+  "failures": [
+    {
+      "phase": "registry-ready",
+      "message": "Owned child exited early"
+    }
+  ]
+}

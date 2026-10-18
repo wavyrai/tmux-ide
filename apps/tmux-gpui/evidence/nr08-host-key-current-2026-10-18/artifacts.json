@@ -1,0 +1,9 @@
+{
+  "apps/tmux-gpui/bridge/ssh-onboarding-smoke.mjs": "dbaad3c1b21ace497c881409f2673fd6c435ea1e333551682c0bd51da1c3a2ae",
+  "scripts/lib/owned-ssh-fixture.mjs": "c73933aac1d178bcbea8e145ae0a8763e0982023c3236b7aadc33e0ab691c726",
+  ".tasks/native-reliability-mission/nr07-guidance-runtime/cli.mjs": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
+  ".tasks/native-reliability-mission/current-native-db8d15a2/Tmux IDE Current QA.app/Contents/Resources/bridge/browser.bundle.mjs": "85984f3a07871576191978ed5b889fdaa56a4186c9bd06fb3fb2c7cf51a757b9",
+  ".tasks/native-reliability-mission/current-native-db8d15a2/Tmux IDE Current QA.app/Contents/Resources/bridge/live.bundle.mjs": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0",
+  ".tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b",
+  ".tasks/tmux38-compat/tmux-3.8/tmux": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96"
+}
