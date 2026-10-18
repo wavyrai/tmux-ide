@@ -69,3 +69,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Compiled TUI paste qualification
 
 `../nr04-compiled-paste-2026-10-18/README.md` extends paste-mode verification to a standalone baseline TUI compiled from archived e0f813bd and the genuinely npm-installed current CLI/daemon. Both mode-on/off exact-byte and rendered-marker checks pass with source identities, geometry and cleanup intact. npm excludes the TUI binary, so this is an explicit separate runtime + installed daemon fixture, not public-install qualification. Initial package-recipe assumption failure and npm11 blocked lifecycle scripts are retained; private allowlisted lifecycle rebuild and dependency-load checks are recorded. Native GPUI, qualified release renderer, signing, platform and customer journey gates remain open.
+
+## Matched alternate-screen round trip
+
+`../nr04-alternate-screen-2026-10-18/README.md` verifies local stock3.8 DEC1049 enter/exit across plain tmux, compiled TUI and GPUI bridge. Exact receiver input, source flag/cursor, saved/main captured text, history size and identity/geometry restore; TUI rendered markers and GPUI published mode/cursor pass separately. All processes cleaned up. Initial resize-before-initialization fixture failure is retained and explained. This does not qualify trailing whitespace/styles, physical GUI cursor rendering, mouse/copy-mode, SSH or all alternate-screen variants.
