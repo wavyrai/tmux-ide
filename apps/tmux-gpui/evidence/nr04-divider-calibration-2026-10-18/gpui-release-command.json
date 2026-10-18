@@ -1,0 +1,46 @@
+{
+  "lane": "actual-source-GPUI-bridge",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Bridge grid calibration; no native physical GUI or performance parity claim",
+  "before": [
+    "%0|76992||0|0|40|24|80|24|0",
+    "%1|76998||41|0|39|24|80|24|0"
+  ],
+  "request": 2,
+  "initial": [
+    "%0|76992||0|1|66|40|132|41|0",
+    "%1|76998||67|1|65|40|132|41|0"
+  ],
+  "capabilities": {
+    "splitLayout": null,
+    "resizeGestureSupported": true,
+    "resizeTokenAvailable": true
+  },
+  "mode": "stock3.8-release-only-resize-pane",
+  "moved": [
+    "%0|76992||0|1|69|40|132|41|0",
+    "%1|76998||70|1|62|40|132|41|0"
+  ],
+  "released": [
+    "%0|76992||0|1|75|40|132|41|0",
+    "%1|76998||76|1|56|40|132|41|0"
+  ],
+  "restored": [
+    "%0|76992||0|1|66|40|132|41|0",
+    "%1|76998||67|1|65|40|132|41|0"
+  ],
+  "publishedBothMarkers": true,
+  "paneBirthIdSupported": false,
+  "identityPreserved": true,
+  "geometryRestored": true,
+  "freshInput": true,
+  "sourceFreshInput": true,
+  "pass": true,
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 5,
+  "cleanup": true,
+  "protectedCliUnchanged": true
+}

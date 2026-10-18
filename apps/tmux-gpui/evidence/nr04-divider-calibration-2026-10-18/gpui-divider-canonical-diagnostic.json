@@ -1,0 +1,30 @@
+{
+  "lane": "actual-source-GPUI-bridge",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Bridge grid calibration; no native physical GUI or performance parity claim",
+  "before": [
+    "%0|76344||0|0|40|24|80|24|0",
+    "%1|76350||41|0|39|24|80|24|0"
+  ],
+  "request": 2,
+  "pass": false,
+  "error": "AssertionError [ERR_ASSERTION]: calibrated split deadline",
+  "last": {
+    "split": null,
+    "gesture": null,
+    "cols": 132,
+    "rows": 41,
+    "input": true
+  },
+  "lastGeometry": [
+    "%0|76344||0|1|66|40|132|41|0",
+    "%1|76350||67|1|65|40|132|41|0"
+  ],
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 5,
+  "cleanup": true,
+  "protectedCliUnchanged": true
+}

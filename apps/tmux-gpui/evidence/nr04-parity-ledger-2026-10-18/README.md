@@ -45,3 +45,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Later bounded resize calibration
 
 `../nr04-resize-calibration-2026-10-18/README.md` records a matched local stock3.8 quiet two-pane window round-trip across plain tmux, actual source OpenTUI, and source GPUI bridge. Final receipts independently match pane geometry at132×41→152×45→132×41, preserve original per-lane identities/processes and fresh input, and verify observed owned processes exit. Plain explicitly matches the daemon clients’ top-header policy. This updates the window-resize row only; full matched workflows, native GPUI rendering, divider drag, busy workloads, bundled/SSH comparisons and performance remain unqualified.
+
+## Later quiet divider calibration
+
+`../nr04-divider-calibration-2026-10-18/README.md` adds matched stock3.8 horizontal two-pane divider geometry66→69→75→66 across direct plain-tmux commands, actual source TUI mouse drags and the GPUI bridge’s advertised token-based resize gesture. GPUI movement reaches width69 before release; all lanes retain identities, marker content, fresh input and observed-process cleanup. Canonical split handles are absent on stock3.8 but continuous token gestures remain supported. Native pointer/paint, busy output, vertical/nested geometry, bundled/SSH and performance are still unqualified.
