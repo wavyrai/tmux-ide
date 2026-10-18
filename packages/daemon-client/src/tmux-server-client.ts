@@ -1,4 +1,7 @@
 import {
+  HistoryAnchorRequestSchemaZ,
+  HistoryAnchorResponseSchemaZ,
+  type HistoryAnchorRequest,
   TmuxServerDiagnosticsSchemaZ,
   TmuxAgentOpenRequestSchemaZ,
   TmuxAgentOpenResponseSchemaZ,
@@ -482,6 +485,53 @@ export async function readTmuxServerDiagnostics(
     if (result.server.serverId !== scope.serverId || result.server.generation !== scope.generation)
       throw new TmuxServerClientError("scope-mismatch");
     return result;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof TmuxServerClientError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+/** Optional old-daemon endpoint. Never retries, creates sessions, or admits input. */
+export async function requestHistoryAnchor(
+  options: TmuxServerClientOptions,
+  scopeInput: TmuxServerScope,
+  input: HistoryAnchorRequest,
+  signal?: AbortSignal,
+) {
+  const scope = TmuxServerScopeSchemaZ.parse(scopeInput),
+    body = HistoryAnchorRequestSchemaZ.parse(input);
+  if (body.proof.generation !== scope.generation) throw new TmuxServerClientError("scope-mismatch");
+  signal?.throwIfAborted();
+  try {
+    const value = HistoryAnchorResponseSchemaZ.parse(
+      await request(
+        options,
+        `${TMUX_SERVERS_API_PATH}/${scope.serverId}/${scope.generation}/history-anchor`,
+        body,
+        undefined,
+        undefined,
+        signal,
+        4096,
+      ),
+    );
+    if (value.server.serverId !== scope.serverId || value.server.generation !== scope.generation)
+      throw new TmuxServerClientError("scope-mismatch");
+    if (
+      value.result.status === "resolved" &&
+      Object.entries(body.proof).some(
+        ([key, v]) =>
+          value.result.status === "resolved" &&
+          value.result.proof[key as keyof typeof body.proof] !== v,
+      )
+    )
+      throw new TmuxServerClientError("scope-mismatch");
+    if (
+      (body.operation.kind === "capture" && value.result.status === "resolved") ||
+      (body.operation.kind === "resolve" && value.result.status === "captured")
+    )
+      throw new TmuxServerClientError("scope-mismatch");
+    return value;
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof TmuxServerClientError && error.status === 404) return null;

@@ -1300,7 +1300,7 @@ it("captures real committed history and restores it after subscriber disposal wi
       status: "resolved",
       historyIndex: 1,
     });
-    expect(owner.captureHistoryAnchor(initial, 1)).toEqual({ status: "stale" });
+    expect(owner.captureHistoryAnchor(initial, 1).status).toBe("captured");
     expect(JSON.stringify(current)).not.toContain(captured.token);
     source.onEvent({ type: "reset", cols: 4, rows: 2 });
     expect(owner.resolveHistoryAnchor(current, captured.token)).toEqual({ status: "unavailable" });

@@ -1,0 +1,18 @@
+
+/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon-client/src/history-anchor.test.ts
+  46:21  error  '_r' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  46:36  error  '_h' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon/src/command-center/tmux-server-history-anchor.test.ts
+    3:10  error  'randomUUID' is defined but never used                                   @typescript-eslint/no-unused-vars
+   11:7   error  The value assigned to 'generation' is not used in subsequent statements  no-useless-assignment
+   12:51  error  Unexpected any. Specify a different type                                 @typescript-eslint/no-explicit-any
+   70:27  error  Unexpected any. Specify a different type                                 @typescript-eslint/no-explicit-any
+   85:21  error  '_r' is assigned a value but never used                                  @typescript-eslint/no-unused-vars
+   85:36  error  '_h' is assigned a value but never used                                  @typescript-eslint/no-unused-vars
+  118:21  error  '_r' is assigned a value but never used                                  @typescript-eslint/no-unused-vars
+  118:36  error  '_h' is assigned a value but never used                                  @typescript-eslint/no-unused-vars
+  140:45  error  Unexpected any. Specify a different type                                 @typescript-eslint/no-explicit-any
+
+✖ 11 problems (11 errors, 0 warnings)
+

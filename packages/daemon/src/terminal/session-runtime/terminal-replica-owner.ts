@@ -1,4 +1,8 @@
-import { HistoryAnchorOwner, type HistoryAnchorProof } from "./history-anchor-owner.ts";
+import {
+  HistoryAnchorOwner,
+  type HistoryAnchorIdentity,
+  type HistoryAnchorProof,
+} from "./history-anchor-owner.ts";
 import { layoutContentRows } from "../mirror/layout-content-rows.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type {
@@ -242,7 +246,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     return this.#historyAnchors.capture(proof, historyIndex);
   }
 
-  resolveHistoryAnchor(proof: HistoryAnchorProof, token: string) {
+  resolveHistoryAnchor(proof: HistoryAnchorIdentity, token: string) {
     if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture)
       return { status: "unavailable" as const };
     return this.#historyAnchors.resolve(proof, token);

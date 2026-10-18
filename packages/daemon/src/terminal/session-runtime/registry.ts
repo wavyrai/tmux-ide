@@ -1,3 +1,4 @@
+import type { HistoryAnchorRequest, HistoryAnchorResult } from "@tmux-ide/contracts";
 import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import type { OwnedNativePlanCompletion } from "../../lib/owned-native-interaction-bindings.ts";
 import type {
@@ -873,6 +874,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
 
   async describeSession(session: string): Promise<MirrorSessionDescription> {
     return await this.#runtime(session).describe();
+  }
+
+  historyAnchor(session: string, request: HistoryAnchorRequest): HistoryAnchorResult {
+    const runtime = this.#sessions.get(session);
+    if (this.#disposed || !runtime) return { status: "unavailable" };
+    return runtime.historyAnchor(request);
   }
 
   async captureNativeBacking(
@@ -1878,6 +1885,18 @@ class SessionRuntime {
       await owner.dispose("session-restarted");
       throw error;
     }
+  }
+
+  historyAnchor(request: HistoryAnchorRequest): HistoryAnchorResult {
+    if (this.#disposed) return { status: "unavailable" };
+    const owner = this.#terminalReplicas.get(request.proof.semanticPaneId);
+    if (!owner) return { status: "unavailable" };
+    if (request.operation.kind === "capture") {
+      if (!("revision" in request.proof) || !("stateHash" in request.proof))
+        return { status: "stale" };
+      return owner.captureHistoryAnchor(request.proof, request.operation.historyIndex);
+    }
+    return owner.resolveHistoryAnchor(request.proof, request.operation.token);
   }
 
   async captureNativeBacking(

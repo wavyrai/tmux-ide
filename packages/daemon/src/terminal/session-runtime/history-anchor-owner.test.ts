@@ -60,8 +60,13 @@ it("distinguishes duplicate text by ordinal and survives trim before anchor, not
     historyIndex: 1,
   });
   expect(owner.resolve(p, first)).toEqual({ status: "lost" });
-  expect(owner.resolve(s, t)).toEqual({ status: "stale" });
-  expect(owner.capture(s, 1)).toEqual({ status: "stale" });
+  expect(owner.resolve(s, t)).toMatchObject({
+    status: "resolved",
+    historyIndex: 1,
+    proof: { revision: p.revision, stateHash: p.stateHash },
+  });
+  expect(owner.capture(s, 1).status).toBe("captured");
+  expect(owner.capture(s, 0).status).toBe("lost");
   const q = patch(p, { rows: [], historyDelta: { trim: 2, append: [] } });
   owner.observe(q);
   expect(owner.resolve(q, t)).toEqual({ status: "lost" });
@@ -102,13 +107,14 @@ it("bounds tokens and expiration, rejects wrong proof and foreign tokens", () =>
   for (let i = 0; i < 32; i++) token(owner, s);
   expect(owner.resolve(s, first).status).toBe("lost");
   const last = token(owner, s);
-  expect(owner.resolve({ ...s, stateHash: "ffffffffffffffff" }, last).status).toBe("stale");
+  expect(owner.resolve({ ...s, incarnation: "replacement" }, last).status).toBe("stale");
   expect(owner.capture({ ...s, semanticPaneId: "other" }, 1).status).toBe("stale");
   const other = new HistoryAnchorOwner();
   other.observe(s);
   expect(other.resolve(s, last).status).toBe("lost");
   now = 300001;
   expect(owner.resolve(s, last).status).toBe("lost");
+  owner.observe(s);
   expect(owner.capture(s, -1).status).toBe("lost");
   expect(owner.capture(s, 4).status).toBe("lost");
 });
@@ -121,4 +127,29 @@ it("missing or mismatched patch continuity cannot mint anchors", () => {
   owner.observe(s);
   owner.observe({ ...p, baseRevision: 100 });
   expect(owner.capture(p, 0).status).toBe("unavailable");
+});
+
+it("evicts old exact proofs and never substitutes latest offsets", () => {
+  const owner = new HistoryAnchorOwner();
+  const s = seed();
+  owner.observe(s);
+  let current: CanonicalTerminalReplicaSeed | CanonicalTerminalReplicaPatch = s;
+  for (let i = 0; i < 64; i++) {
+    current = patch(current, { rows: [] });
+    owner.observe(current);
+  }
+  expect(owner.capture(s, 1).status).toBe("stale");
+  expect(owner.capture(current, 1).status).toBe("captured");
+});
+
+it("allows a fresh anchor on a quiet current snapshot after historical metadata expires", () => {
+  let now = 0;
+  const owner = new HistoryAnchorOwner(() => now),
+    s = seed();
+  owner.observe(s);
+  const old = token(owner, s);
+  now = 300001;
+  expect(owner.resolve(s, old).status).toBe("lost");
+  const fresh = token(owner, s);
+  expect(owner.resolve(s, fresh).status).toBe("resolved");
 });

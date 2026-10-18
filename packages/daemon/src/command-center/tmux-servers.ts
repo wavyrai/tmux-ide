@@ -1,3 +1,4 @@
+import { mountTmuxServerHistoryAnchorRoute } from "./tmux-server-history-anchor.ts";
 import { mountTmuxServerDiagnosticsRoute } from "./tmux-server-diagnostics.ts";
 import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { streamTmuxInteractions } from "./tmux-server-interaction-events.ts";
@@ -134,6 +135,11 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     }),
   );
   const scoped = `${base}/:serverId/:generation`;
+  mountTmuxServerHistoryAnchorRoute(app, {
+    scopedPath: scoped,
+    owners: options.owners,
+    readBody: (request) => boundedJson(request, 4096),
+  });
   mountTmuxServerDiagnosticsRoute(app, { scopedPath: scoped, owners: options.owners });
   mountTmuxServerEditorContextRoute(app, {
     scopedPath: scoped,

@@ -9,6 +9,10 @@ export interface HistoryAnchorProof {
   readonly revision: number;
   readonly stateHash: string;
 }
+export type HistoryAnchorIdentity = Pick<
+  HistoryAnchorProof,
+  "workspaceName" | "semanticPaneId" | "generation" | "incarnation"
+>;
 type Failure = { readonly status: "unavailable" | "stale" | "lost" };
 const MAX_TOKENS = 32;
 const TTL_MS = 5 * 60_000;
@@ -18,6 +22,7 @@ export class HistoryAnchorOwner {
   #current: (HistoryAnchorProof & { cols: number; rows: number; alternate: boolean }) | null = null;
   #first = 0;
   #length = 0;
+  #proofs = new Map<string, { first: number; length: number; expires: number }>();
   #tokens = new Map<string, { ordinal: number; expires: number }>();
   constructor(private readonly now: () => number = () => performance.now()) {}
 
@@ -26,6 +31,7 @@ export class HistoryAnchorOwner {
     this.#first = 0;
     this.#length = 0;
     this.#tokens.clear();
+    this.#proofs.clear();
   }
 
   observe(update: CanonicalTerminalReplicaUpdate): void {
@@ -47,6 +53,7 @@ export class HistoryAnchorOwner {
         rows: update.rows,
         alternate: update.snapshot.modes.alternateScreen,
       };
+      this.#remember();
       return;
     }
     const old = this.#current;
@@ -80,6 +87,7 @@ export class HistoryAnchorOwner {
       alternate !== old.alternate;
     if (reset) {
       this.#tokens.clear();
+      this.#proofs.clear();
       this.#first = 0;
     } else this.#first += delta?.trim ?? 0;
     if (!Number.isSafeInteger(this.#first + length)) {
@@ -99,28 +107,36 @@ export class HistoryAnchorOwner {
       alternate,
     };
     this.#prune();
+    this.#remember();
   }
 
   capture(
     proof: HistoryAnchorProof,
     historyIndex: number,
   ): Failure | { status: "captured"; token: string } {
-    const failure = this.#admit(proof);
+    const failure = this.#admitIdentity(proof);
     if (failure) return failure;
-    if (!Number.isSafeInteger(historyIndex) || historyIndex < 0 || historyIndex >= this.#length)
-      return { status: "lost" };
     this.#prune();
+    const known =
+      this.#current && this.#key(proof) === this.#key(this.#current)
+        ? { first: this.#first, length: this.#length }
+        : this.#proofs.get(this.#key(proof));
+    if (!known) return { status: "stale" };
+    if (!Number.isSafeInteger(historyIndex) || historyIndex < 0 || historyIndex >= known.length)
+      return { status: "lost" };
+    const ordinal = known.first + historyIndex;
+    if (ordinal < this.#first || ordinal >= this.#first + this.#length) return { status: "lost" };
     while (this.#tokens.size >= MAX_TOKENS) this.#tokens.delete(this.#tokens.keys().next().value!);
     const token = randomUUID();
-    this.#tokens.set(token, { ordinal: this.#first + historyIndex, expires: this.now() + TTL_MS });
+    this.#tokens.set(token, { ordinal, expires: this.now() + TTL_MS });
     return { status: "captured", token };
   }
 
   resolve(
-    proof: HistoryAnchorProof,
+    proof: HistoryAnchorIdentity,
     token: string,
   ): Failure | { status: "resolved"; proof: HistoryAnchorProof; historyIndex: number } {
-    const failure = this.#admit(proof);
+    const failure = this.#admitIdentity(proof);
     if (failure) return failure;
     this.#prune();
     const entry = this.#tokens.get(token);
@@ -134,20 +150,38 @@ export class HistoryAnchorOwner {
     };
   }
 
-  #admit(proof: HistoryAnchorProof): Failure | null {
+  #admitIdentity(proof: HistoryAnchorIdentity): Failure | null {
     const current = this.#current;
     if (!current || current.alternate) return { status: "unavailable" };
     return current.workspaceName === proof.workspaceName &&
       current.semanticPaneId === proof.semanticPaneId &&
       current.generation === proof.generation &&
-      current.incarnation === proof.incarnation &&
-      current.revision === proof.revision &&
-      current.stateHash === proof.stateHash
+      current.incarnation === proof.incarnation
       ? null
       : { status: "stale" };
   }
+  #key(proof: HistoryAnchorProof): string {
+    return JSON.stringify([
+      proof.workspaceName,
+      proof.semanticPaneId,
+      proof.generation,
+      proof.incarnation,
+      proof.revision,
+      proof.stateHash,
+    ]);
+  }
+  #remember(): void {
+    if (!this.#current || this.#current.alternate) return;
+    while (this.#proofs.size >= 64) this.#proofs.delete(this.#proofs.keys().next().value!);
+    this.#proofs.set(this.#key(this.#current), {
+      first: this.#first,
+      length: this.#length,
+      expires: this.now() + TTL_MS,
+    });
+  }
   #prune(): void {
     const now = this.now();
+    for (const [key, value] of this.#proofs) if (value.expires <= now) this.#proofs.delete(key);
     for (const [token, entry] of this.#tokens)
       if (
         entry.expires <= now ||
