@@ -21,6 +21,10 @@ import {
 } from "../../../scripts/lib/owned-ssh-fixture.mjs";
 process.umask(0o077);
 const useSsh = true;
+const failureKind = process.env.TMUX_GPUI_TEST_SSH_FAILURE ?? "authentication";
+assert.ok(["authentication", "host-key"].includes(failureKind), "Unknown SSH failure fixture");
+const expectedFailure = failureKind === "host-key" ? "ssh-host-key" : "ssh-authentication";
+let trustedKnownHosts;
 const publicDiscovery = process.env.TMUX_GPUI_TEST_PUBLIC_DISCOVERY === "1";
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(output && isAbsolute(output), "Explicit private receipt prefix required");
@@ -28,6 +32,7 @@ assert.match(process.version, /^v24\./);
 const trace = [];
 const facts = {
   realSsh: true,
+  failureKind,
   actualSavedAdd: false,
   denial: false,
   repaired: false,
@@ -228,9 +233,19 @@ try {
     });
     // Shared private local registry permits the actual owner-mediated Add path.
     Object.assign(browserEnv, { PATH: bin + ":" + env.PATH });
-    ssh.files.verify("authorized_keys");
-    await writeFile(join(ssh.root, "authorized_keys"), "", { mode: 0o600 });
-    ssh.files.capture("authorized_keys");
+    if (failureKind === "host-key") {
+      ssh.files.verify("known_hosts");
+      ssh.files.verify("host.pub");
+      trustedKnownHosts = await readFile(join(ssh.root, "known_hosts"), "utf8");
+      const endpoint = trustedKnownHosts.split(" ")[0];
+      const wrongKey = await readFile(join(ssh.root, "client.pub"), "utf8");
+      await writeFile(join(ssh.root, "known_hosts"), endpoint + " " + wrongKey, { mode: 0o600 });
+      ssh.files.capture("known_hosts");
+    } else {
+      ssh.files.verify("authorized_keys");
+      await writeFile(join(ssh.root, "authorized_keys"), "", { mode: 0o600 });
+      ssh.files.capture("authorized_keys");
+    }
   }
   browser = own(
     spawn(
@@ -285,7 +300,7 @@ try {
   await until(() =>
     latest?.fleet?.groups.some(
       (group) =>
-        group.id === machineId && group.diagnostic?.failure === "ssh-authentication" && group.retry,
+        group.id === machineId && group.diagnostic?.failure === expectedFailure && group.retry,
     ),
   );
   const denied = latest.fleet.groups.find((group) => group.id === machineId);
@@ -325,12 +340,24 @@ try {
   });
 
   trace.push({ phase, diagnostic: denied.diagnostic, frame: false, input: false });
-  // Repair only the credential file created and identity-tracked by this fixture.
-  ssh.files.verify("authorized_keys");
-  await writeFile(join(ssh.root, "authorized_keys"), await readFile(join(ssh.root, "client.pub")), {
-    mode: 0o600,
-  });
-  ssh.files.capture("authorized_keys");
+  // Restore only independently known fixture trust/credentials; never weaken SSH verification.
+  if (failureKind === "host-key") {
+    ssh.files.verify("known_hosts");
+    ssh.files.verify("host.pub");
+    assert.ok(trustedKnownHosts);
+    await writeFile(join(ssh.root, "known_hosts"), trustedKnownHosts, { mode: 0o600 });
+    ssh.files.capture("known_hosts");
+  } else {
+    ssh.files.verify("authorized_keys");
+    await writeFile(
+      join(ssh.root, "authorized_keys"),
+      await readFile(join(ssh.root, "client.pub")),
+      {
+        mode: 0o600,
+      },
+    );
+    ssh.files.capture("authorized_keys");
+  }
   phase = "explicit-retry";
   send({ type: "fleet-retry", request: latest.request, retry: denied.retry });
   await until(() =>
