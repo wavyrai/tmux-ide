@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
+  realpathSync,
   mkdirSync,
   writeFileSync,
   readFileSync,
@@ -14,14 +15,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const source = readFileSync(resolve("docs/public/install-native-alpha.sh"), "utf8");
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 const hash = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
-function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), "native-alpha-bootstrap-"));
+const maintenanceSource = readFileSync(
+  resolve("scripts/install-native-alpha-maintenance.sh"),
+  "utf8",
+);
+function fixture(t, backend, bootstrap = source) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "native-alpha-bootstrap-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home with spaces");
   const bin = join(root, "bin");
@@ -42,7 +47,8 @@ function fixture(t) {
   const installer = join(root, "installer.mjs");
   writeFileSync(
     installer,
-    `import fs from 'node:fs';
+    backend ??
+      `import fs from 'node:fs';
 const args=process.argv.slice(2);const at=args.indexOf('--policy');
 fs.writeFileSync(process.env.TEST_RECEIPT,JSON.stringify({args,policy:at<0?null:JSON.parse(fs.readFileSync(args[at+1],'utf8'))}));
 process.exit(Number(process.env.TEST_INSTALL_EXIT||0));`,
@@ -64,7 +70,7 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
   const entry = join(root, "bootstrap.sh");
   writeFileSync(
     entry,
-    source
+    bootstrap
       .replace(/installer_sha=[a-f0-9]{64}/, `installer_sha=${hash(installer)}`)
       .replace(/archive_sha=[a-f0-9]{64}/, `archive_sha=${hash(archive)}`),
   );
@@ -86,7 +92,7 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
       encoding: "utf8",
       timeout: 15000,
     });
-  return { run, receipt, downloads, temp, home, node };
+  return { run, receipt, downloads, temp, home, node, root };
 }
 
 test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
@@ -222,3 +228,129 @@ test("redirected Applications directory is refused without touching its destinat
   assert.deepEqual(readdirSync(elsewhere), []);
   assert.ok(!existsSync(f.downloads));
 });
+test("explicit recovery delegates keep-current only without downloading an app or claiming installation", (t) => {
+  const f = fixture(t, undefined, maintenanceSource);
+  const result = f.run(["--recover"]);
+  assert.equal(result.status, 0, result.stderr);
+  const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
+  assert.deepEqual(
+    receipt.args.filter((x) => x === "recover" || x === "keep-current"),
+    ["recover", "keep-current"],
+  );
+  assert.ok(receipt.args.includes("--disposition"));
+  assert.equal(readFileSync(f.downloads, "utf8").trim().split("\n").length, 1);
+  assert.ok(!existsSync(entry(f)));
+  assert.match(result.stdout, /No installed native app remains/);
+  assert.deepEqual(readdirSync(f.temp), []);
+});
+test("recovery retains an existing app link and propagates refusal without changing it", (t) => {
+  const f = fixture(t, undefined, maintenanceSource);
+  mkdirSync(target(f), { recursive: true });
+  const first = f.run(["--recover"]);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(readlinkSync(entry(f)), target(f));
+  assert.match(first.stdout, /current verified native app/);
+  const refused = f.run(["--recover"], { TEST_INSTALL_EXIT: "9" });
+  assert.notEqual(refused.status, 0);
+  assert.equal(readlinkSync(entry(f)), target(f));
+});
+
+// Synthetic app/verifier seam exercises the real journal owner through the shell;
+// this is not Apple signature/notarization qualification.
+for (const [phase, previous, expected] of [
+  ["candidate-renamed", true, "1"],
+  ["current-switched", true, "2"],
+  ["candidate-renamed", false, null],
+]) {
+  test(
+    `shell recovery after owned SIGKILL ${phase}, previous=${previous}`,
+    { timeout: 15000 },
+    async (t) => {
+      const cliUrl = new URL("../apps/tmux-gpui/scripts/install-cli.mjs", import.meta.url).href;
+      const ownerUrl = new URL("../apps/tmux-gpui/scripts/install-transaction.mjs", import.meta.url)
+        .href;
+      const f = fixture(
+        t,
+        `import fs from 'node:fs';
+import {main} from ${JSON.stringify(cliUrl)};
+const result=await main(process.argv.slice(2), {platform:'darwin',verify:async()=>true});
+fs.writeFileSync(process.env.TEST_RECEIPT,JSON.stringify(result));
+console.log(JSON.stringify(result.output));process.exitCode=result.exitCode;`,
+        maintenanceSource,
+      );
+      const installRoot = join(f.home, "Library/Application Support/tmux-ide/native-alpha");
+      mkdirSync(join(f.home, "Library/Application Support/tmux-ide"), { recursive: true });
+      const stagedApp = join(f.root, "Stage.app");
+      mkdirSync(stagedApp);
+      writeFileSync(join(stagedApp, "payload"), "old");
+      const { installApp } = await import(ownerUrl);
+      if (previous)
+        await installApp({ installRoot, stagedApp, version: "1", verify: async () => true });
+      writeFileSync(join(stagedApp, "payload"), "new");
+      const sentinel = join(f.home, "settings-sentinel");
+      writeFileSync(sentinel, "unchanged");
+      const child = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+import {installApp} from ${JSON.stringify(ownerUrl)};
+await installApp({installRoot:${JSON.stringify(installRoot)},stagedApp:${JSON.stringify(stagedApp)},version:'2',verify:async()=>true,onBoundary:async phase=>{
+if(phase===${JSON.stringify(phase)})await new Promise(()=>{setInterval(()=>{},1000);process.stdout.write('READY\\n');});}});`,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const closed = new Promise((resolve) =>
+        child.once("close", (code, signal) => resolve({ code, signal })),
+      );
+      t.after(async () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        await closed;
+      });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error("boundary timeout")), 5000);
+        child.stdout.once("data", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        child.once("error", reject);
+      });
+      // An alive transaction owner must be refused without deleting its lock.
+      const lock = join(installRoot, ".transaction-lock");
+      if (!previous) {
+        mkdirSync(join(f.home, "Applications"));
+        symlinkSync(target(f), entry(f));
+      }
+      const beforeLock = readdirSync(lock).sort();
+      const refused = f.run(["--recover"]);
+      assert.notEqual(refused.status, 0);
+      assert.deepEqual(readdirSync(lock).sort(), beforeLock);
+      if (!previous) assert.equal(readlinkSync(entry(f)), target(f));
+      child.kill("SIGKILL");
+      assert.deepEqual(await closed, { code: null, signal: "SIGKILL" });
+      const result = f.run(["--recover"]);
+      assert.equal(result.status, 0, result.stderr + result.stdout);
+      const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
+      assert.equal(receipt.output.result.version, expected);
+      assert.equal(existsSync(lock), false);
+      assert.equal(readFileSync(sentinel, "utf8"), "unchanged");
+      assert.equal(readFileSync(f.downloads, "utf8").trim().split("\n").length, 2);
+      if (expected) {
+        assert.equal(
+          readlinkSync(join(installRoot, "current")),
+          `versions/${expected}/TmuxIDE.app`,
+        );
+        assert.equal(readlinkSync(entry(f)), target(f));
+        assert.equal(
+          readFileSync(join(target(f), "payload"), "utf8"),
+          expected === "1" ? "old" : "new",
+        );
+      } else {
+        assert.equal(receipt.output.result.launchPath, null);
+        assert.throws(() => lstatSync(entry(f)), { code: "ENOENT" });
+        assert.match(result.stdout, /No installed native app remains/);
+      }
+    },
+  );
+}

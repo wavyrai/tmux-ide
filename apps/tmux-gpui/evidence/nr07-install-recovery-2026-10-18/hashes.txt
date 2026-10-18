@@ -1,0 +1,4 @@
+f09acb9b1a4ae9349b7d10858234995066085ff8e9403150cbb70002a9fea428  bin/cli.js
+55ff60fc2046e5f38ce05493cb457fc6c9f9a5038beb2c2cd57ef705a0ec0e0a  docs/public/install.sh
+2a71d6d3cbb14d516e0ebe8d01226d3540c674865adb051245bd5c0373214c83  docs/public/install-native-alpha.sh
+4fadd3652757181b58936e542eef15be3f9d5f09f7fad2f2e2c44784e677392f  scripts/install-native-alpha-maintenance.sh

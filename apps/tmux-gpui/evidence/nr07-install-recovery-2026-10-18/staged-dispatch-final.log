@@ -1,0 +1,33 @@
+✔ native help is side-effect free even on unsupported systems (5.6385ms)
+✔ unsupported OS/architecture and pre-26 macOS reject before bootstrap (127.661667ms)
+✔ maintenance and invalid args never bootstrap missing runtime regardless argument order (141.96025ms)
+✔ existing runtime delegates native-only prefix and preserves child failure/cleanup (410.266083ms)
+✔ checksum mismatch prevents native execution and cleans stage (390.167625ms)
+✔ bootstrap failure is propagated before native fetch and runs subshell cleanup (100.197625ms)
+✔ CLI prerequisite ignores native prefix and inherited CLI prefix (101.6015ms)
+✔ successful CLI prerequisite runs its own cleanup then continues native bootstrap (300.835958ms)
+✔ dispatcher pin matches the maintained native bootstrap bytes (0.162ms)
+✔ old managed CLI is upgraded before native install (326.816166ms)
+✔ old managed CLI is upgraded before native --update (429.478417ms)
+✔ --rollback never upgrades an older managed CLI (322.727958ms)
+✔ --uninstall never upgrades an older managed CLI (262.578125ms)
+✔ old CLI bootstrap failure prevents native installation (251.321542ms)
+✔ qualified CLI 2.9.6 is preserved before native install (306.127917ms)
+✔ qualified CLI 2.9.6 is preserved before native --update (456.480333ms)
+✔ native install handles managed CLI 2.9.5 without silent downgrade (410.029875ms)
+✔ native install handles managed CLI 2.9.7 without silent downgrade (154.925709ms)
+✔ native install handles managed CLI 2.10.0 without silent downgrade (233.75675ms)
+✔ native install handles managed CLI 3.0.0 without silent downgrade (170.155833ms)
+✔ native install handles managed CLI 2.9.7-beta.1 without silent downgrade (230.144959ms)
+✔ native install handles managed CLI unknown without silent downgrade (237.091417ms)
+✔ unreadable existing CLI is preserved (TEST_VERSION_FAIL) (160.704542ms)
+✔ unreadable existing CLI is preserved (TEST_VERSION_EMPTY) (243.291292ms)
+✔ STAGED ONLY recovery delegates exact args without CLI bootstrap and retains refusal (371.337792ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6186.987542
