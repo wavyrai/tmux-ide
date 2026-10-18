@@ -1,0 +1,15 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+error: unnecessary qualification
+  --> crates/herdr-gpui/src/tmux_snapshot/terminal_links/native_fixture_tests.rs:44:20
+   |
+44 |         modifiers: gpui::Modifiers {
+   |                    ^^^^^^^^^^^^^^^
+   |
+   = note: requested on the command line with `-D unused-qualifications`
+help: remove the unnecessary path segments
+   |
+44 -         modifiers: gpui::Modifiers {
+44 +         modifiers: Modifiers {
+   |
+
+error: could not compile `herdr-gpui` (lib test) due to 1 previous error

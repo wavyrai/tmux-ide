@@ -317,3 +317,6 @@ mod uncertain_pointer;
 mod pointer_event_tests;
 #[path = "input_interruption_tests/retained_preview.rs"]
 mod retained_preview;
+
+#[path = "terminal_links/native_fixture_tests.rs"]
+mod native_link_fixture_tests;

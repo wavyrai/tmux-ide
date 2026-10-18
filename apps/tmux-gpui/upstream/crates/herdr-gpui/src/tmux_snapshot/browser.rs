@@ -873,3 +873,8 @@ mod local_setup_tests;
 #[cfg(test)]
 #[path = "browser_selection_identity_tests.rs"]
 mod selection_identity_tests;
+
+#[cfg(test)]
+pub(super) fn fixture_state(bytes: &[u8]) -> Result<State, Error> {
+    Reader::default().accept(bytes)
+}
