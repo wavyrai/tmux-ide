@@ -1,0 +1,65 @@
+{
+  "harnessSha256": "28641e979f0118314a869373eb8745c3857a194f1960e4d1f1aaa1ecc612e118",
+  "runs": [
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-1-baseline.json",
+      "passed": true
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-1-candidate.json",
+      "passed": true
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-2-candidate.json",
+      "passed": true
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-2-baseline.json",
+      "passed": true
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-3-baseline.json",
+      "passed": true
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-3-candidate.json",
+      "passed": true
+    },
+    {
+      "pair": 4,
+      "variant": "candidate",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-4-candidate.json",
+      "passed": true
+    },
+    {
+      "pair": 4,
+      "variant": "baseline",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-4-baseline.json",
+      "passed": true
+    },
+    {
+      "pair": 5,
+      "variant": "baseline",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-5-baseline.json",
+      "passed": true
+    },
+    {
+      "pair": 5,
+      "variant": "candidate",
+      "output": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr09-retained-serialization/pair-5-candidate.json",
+      "passed": true
+    }
+  ]
+}
