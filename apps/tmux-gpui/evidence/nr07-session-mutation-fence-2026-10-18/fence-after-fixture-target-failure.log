@@ -1,0 +1,36 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon
+
+ ❯ src/lib/tmux-session-mutation-fence-live.test.ts (1 test | 1 failed) 53ms
+   × uses exact selected session context and rejects replacement before mutation 52ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/tmux-session-mutation-fence-live.test.ts > uses exact selected session context and rejects replacement before mutation
+TmuxError: tmux command failed
+ ❯ classifyTmuxError ../tmux-bridge/src/runner.ts:188:10
+    186|   }
+    187|
+    188|   return new TmuxError("tmux command failed", "TMUX_ERROR", {
+       |          ^
+    189|     cause: error as Error,
+    190|   });
+ ❯ runTmuxBinary ../tmux-bridge/src/runner.ts:128:11
+ ❯ src/lib/workspace-pane-creation.ts:323:7
+ ❯ src/lib/tmux-server-generation-runner.ts:69:27
+ ❯ src/lib/tmux-session-mutation-fence.ts:23:24
+ ❯ src/lib/tmux-session-mutation-fence-live.test.ts:47:33
+ ❯ Object.execute src/lib/tmux-session-mutation-fence.ts:67:22
+ ❯ src/lib/tmux-session-mutation-fence-live.test.ts:47:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  15:45:09
+   Duration  643ms (transform 291ms, setup 0ms, import 457ms, tests 53ms, environment 0ms)
+
+undefined
+/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: vitest run --config vitest.live.config.ts src/lib/tmux-session-mutation-fence-live.test.ts

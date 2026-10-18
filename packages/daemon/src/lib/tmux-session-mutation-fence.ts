@@ -23,7 +23,8 @@ export function createTmuxSessionMutationFence() {
         const output = run([
           "if-shell",
           "-t",
-          `=${selected.name}`,
+          // if-shell resolves a pane target: the colon selects this exact session.
+          `=${selected.name}:`,
           "-F",
           `#{&&:#{==:#{session_id},${selected.id}},#{==:#{session_created},${selected.created}}}`,
           args.map((arg) => (arg === ";" ? ";" : shellEscape(arg))).join(" "),

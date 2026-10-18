@@ -1,0 +1,5 @@
+{
+  "packages/daemon/src/lib/tmux-session-mutation-fence.ts": "e0429c8c85a72e950f839f88e3babd3a209d82d6ea7aca9aad116dd1351d9647",
+  "packages/daemon/src/lib/tmux-session-mutation-fence-live.test.ts": "d8967c396afa566daf489cfef6995959114c6795d9b616ea66decf8bdf10dbd7",
+  ".tasks/tmux38-compat/tmux-3.8/tmux": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96"
+}
