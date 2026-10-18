@@ -326,6 +326,7 @@ impl SnapshotView {
             .w_full()
             .flex()
             .flex_shrink_0()
+            .mb(px(4.))
             .bg(rgb(theme.background))
             .child(strip)
             .child(add)
