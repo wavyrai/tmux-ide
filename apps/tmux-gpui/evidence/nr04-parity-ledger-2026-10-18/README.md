@@ -57,3 +57,7 @@ Independent evidence review checked selected cited receipts and required the abo
 ## Later matched pane lifecycle
 
 `../nr04-pane-actions-2026-10-18/README.md` records matched stock3.8 split-right→zoom original→restore→close new→fresh input across direct tmux, actual source TUI and GPUI bridge. Five geometry stages, survivor IDs/PIDs and closed-new-PID exit match. Actual TUI two-step confirmation is exercised; native GPUI confirmation is not. Earlier disabled-action and harness assumptions are retained with proven owner explanations. Transient “Open a live session first” wording during reconciliation remains an NR05 follow-up. Wider layouts/races/native/SSH/version and performance acceptance remain open.
+
+## Matched Unicode and bracketed-paste check
+
+`../nr04-unicode-paste-2026-10-18/README.md` records the same 2,138-byte Unicode payload across stock3.8 plain tmux, actual source TUI and GPUI bridge with DEC2004 on/off. Mode-on passes all three paths, including a supplementary-code-point chunk boundary. Mode-off plain tmux and GPUI deliver exact raw bytes; TUI incorrectly adds 12 framing bytes. This is a reproduced failure, tracked by follow-up card kn71bd5tenv59w3mshy8g6j0m58ggdec, not complete parity. All private processes cleaned up. Exact byte fidelity and final text markers do not establish native clipboard, font/cell-width, SSH or platform acceptance.
