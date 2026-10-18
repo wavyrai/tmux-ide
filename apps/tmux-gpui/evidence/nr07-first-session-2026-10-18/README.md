@@ -26,3 +26,11 @@ These receipts do not prove native GUI or signed packaged qualification. Source 
 Affected bridge suite:38 passed. Native focused tests:4 local_session and8 new_session passed before a mechanical test-module extraction. ESLint/typecheck and formatting pass. Full Rust gates passed: default 3095 passed/11 ignored; all-features 3129 passed/18 ignored; zero failures. Both clippy configurations, formatting and file-size checks passed; independent source review found no remaining blocker after catalog-publication and passive-revocation fixes.
 
 Still required: actual native GUI dialog-to-input, packaged installer/first launch, second supported Mac, missing tools and SSH onboarding, plus remaining mission gates. Mac locked during this slice. No signing, push, merge or publication performed.
+
+## Retained installed CLI compatibility control
+
+The optional `TMUX_GPUI_TEST_PACKAGE` harness input copies a complete retained managed installation, including its original manifest, dependencies and native resources. It rejects escaping/nonrelocatable links and checks copied CLI/manifest bytes. No source node_modules link is added to the copied package.
+
+`first-session-packed296.json`: actual CLI 2.9.6 package, current standalone bridge, Node 24.21, stock tmux 3.8. Setup and creation succeeded, then terminal transport closed with 1011 and input readiness timed out. Cleanup passed. The receipt does not establish the underlying capture failure by itself.
+
+`first-session-packed296-tmux37.json`: same CLI package and bridge, Homebrew tmux 3.7c instead; setup/create/open/input and cleanup passed. This qualifies the retained 2.9.6 compatibility lane only. It does not replace genuine current 2.9.7 package, native GUI, installer or second-Mac qualification. `sourceDependencies:false` refers to the copied CLI; `bundledBridge:true` separately identifies bridge execution.

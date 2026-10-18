@@ -4,6 +4,10 @@ import process from "node:process";
 import { Buffer } from "node:buffer";
 import { spawn, execFileSync } from "node:child_process";
 import {
+  cp,
+  lstat,
+  readdir,
+  readlink,
   mkdir,
   mkdtemp,
   rm,
@@ -15,7 +19,7 @@ import {
   stat,
   realpath,
 } from "node:fs/promises";
-import { join, isAbsolute } from "node:path";
+import { join, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,7 +30,46 @@ const bundle = process.env.TMUX_GPUI_TEST_BUNDLE;
 if (bundle) assert.ok(isAbsolute(bundle), "Explicit absolute bundle directory required");
 const createFirst = process.env.TMUX_GPUI_TEST_CREATE === "1";
 const externalServer = process.env.TMUX_GPUI_TEST_EXTERNAL_SERVER === "1";
-const cli = process.env.TMUX_GPUI_TEST_CLI;
+const packageInput = process.env.TMUX_GPUI_TEST_PACKAGE;
+let packageRoot, packageVersion, packageJsonSha256;
+if (packageInput) {
+  assert.ok(isAbsolute(packageInput), "Explicit absolute package directory required");
+  packageRoot = await realpath(packageInput);
+  assert.ok((await stat(packageRoot)).isDirectory());
+  assert.ok(
+    (await stat(join(packageRoot, "package.json"))).size < 65536,
+    "Bounded package manifest required",
+  );
+  const metadata = await readFile(join(packageRoot, "package.json"));
+  assert.ok(metadata.byteLength < 65536, "Bounded package manifest required");
+  const manifest = JSON.parse(metadata);
+  assert.equal(manifest.name, "tmux-ide");
+  assert.ok(["2.9.6", "2.9.7"].includes(manifest.version));
+  assert.equal(manifest.bin?.["tmux-ide"], "bin/cli.js");
+  packageVersion = manifest.version;
+  packageJsonSha256 = createHash("sha256").update(metadata).digest("hex");
+  let entries = 0;
+  async function validateTree(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      assert.ok(++entries < 100000, "Bounded package tree required");
+      const path = join(directory, entry.name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) {
+        assert.ok(!isAbsolute(await readlink(path)), "Package links must remain relocatable");
+        const target = relative(packageRoot, await realpath(path));
+        assert.ok(
+          target !== ".." && !target.startsWith(`..${sep}`) && !isAbsolute(target),
+          "Package symlink escapes installation",
+        );
+      } else if (info.isDirectory()) await validateTree(path);
+      else assert.ok(info.isFile(), "Only regular package files are allowed");
+    }
+  }
+  await validateTree(packageRoot);
+  assert.ok((await lstat(join(packageRoot, "bin/cli.js"))).isFile());
+  assert.ok((await lstat(join(packageRoot, "node_modules"))).isDirectory());
+}
+const cli = packageRoot ? join(packageRoot, "bin/cli.js") : process.env.TMUX_GPUI_TEST_CLI;
 const output = process.env.TMUX_GPUI_TEST_OUTPUT;
 assert.ok(cli && isAbsolute(cli) && (await stat(cli)).isFile(), "Explicit private CLI required");
 assert.ok(output && isAbsolute(output), "Explicit private output prefix required");
@@ -190,21 +233,41 @@ try {
   await mkdir(join(release, "node/bin"), { recursive: true });
   await copyFile(process.execPath, node);
   await chmod(node, 0o700);
-  await copyFile(cli, join(pkg, "bin/cli.js"));
-  await writeFile(
-    join(pkg, "package.json"),
-    JSON.stringify({
-      name: "tmux-ide",
-      version: "2.9.7",
-      type: "module",
-      bin: { "tmux-ide": "bin/cli.js" },
-    }),
-  );
-  // Source bundle externals only. This is not an installed-package qualification.
-  await symlink(
-    fileURLToPath(new URL("../../../node_modules", import.meta.url)),
-    join(pkg, "node_modules"),
-  );
+  if (packageRoot) {
+    await cp(packageRoot, pkg, {
+      recursive: true,
+      verbatimSymlinks: true,
+      preserveTimestamps: true,
+    });
+    assert.deepEqual(
+      await readFile(join(pkg, "bin/cli.js")),
+      await readFile(cli),
+      "Copied CLI must match package",
+    );
+    assert.equal(
+      createHash("sha256")
+        .update(await readFile(join(pkg, "package.json")))
+        .digest("hex"),
+      packageJsonSha256,
+      "Copied manifest must match package",
+    );
+  } else {
+    await copyFile(cli, join(pkg, "bin/cli.js"));
+    await writeFile(
+      join(pkg, "package.json"),
+      JSON.stringify({
+        name: "tmux-ide",
+        version: "2.9.7",
+        type: "module",
+        bin: { "tmux-ide": "bin/cli.js" },
+      }),
+    );
+    // Source bundle externals only. This is not an installed-package qualification.
+    await symlink(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(pkg, "node_modules"),
+    );
+  }
   await writeFile(join(root, "installer-v1"), "1\n");
   await writeFile(join(release, ".installer-release-v1"), "1\n");
   await symlink(release, join(root, "current"));
@@ -425,7 +488,10 @@ try {
     cliSha256: createHash("sha256")
       .update(await readFile(cli))
       .digest("hex"),
-    sourceDependencies: true,
+    // Describes CLI dependencies; bundledBridge separately identifies bridge provenance.
+    sourceDependencies: !packageRoot,
+    packageVersion: packageVersion ?? null,
+    packageJsonSha256: packageJsonSha256 ?? null,
     bundledBridge: !!bundle,
     socketName,
     initialAbsent,
