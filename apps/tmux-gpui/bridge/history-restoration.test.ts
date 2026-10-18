@@ -150,3 +150,31 @@ test("bounded history slice keeps canonical indices and refuses omitted rows", a
     f.owner.dispose();
   }
 });
+
+test("handoff waits for the newest capture rather than superseded completion", async () => {
+  const f = fixture();
+  f.owner.capture(0);
+  f.owner.capture(1);
+  let finished = false;
+  const handoff = f.owner.settleCapture().then((value) => {
+    finished = true;
+    return value;
+  });
+  f.requests[0]!.resolve({ status: "captured", token: "old" });
+  await settle();
+  assert.equal(finished, false);
+  f.requests[1]!.resolve({ status: "captured", token: "new" });
+  assert.deepEqual(await handoff, { state: "historical", token: "new" });
+  f.owner.dispose();
+});
+
+test("return-live handoff does not wait for an obsolete capture", async () => {
+  const f = fixture();
+  f.owner.capture(0);
+  f.owner.live();
+  assert.deepEqual(await f.owner.settleCapture(), { state: "live", token: null });
+  f.requests[0]!.resolve({ status: "captured", token: "obsolete" });
+  await settle();
+  assert.deepEqual(f.owner.publication(), { state: "live", token: null });
+  f.owner.dispose();
+});

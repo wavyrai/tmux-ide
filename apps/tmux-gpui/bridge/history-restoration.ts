@@ -57,10 +57,12 @@ export function createHistoryRestoration(options: {
     bytes = 0;
   let resolved: Extract<AnchorResult, { status: "resolved" }> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let captureCompletion: Promise<void> = Promise.resolve();
   const cancel = () => {
     serial++;
     pending?.abort();
     pending = undefined;
+    captureCompletion = Promise.resolve();
     if (timer) clearTimeout(timer);
     timer = undefined;
     resolved = undefined;
@@ -91,6 +93,10 @@ export function createHistoryRestoration(options: {
   }
   return {
     publication: () => ({ state, token }),
+    settleCapture: async () => {
+      await captureCompletion;
+      return { state, token };
+    },
     observe(frame: HistoryFrame | null) {
       if (!frame) {
         frames = [];
@@ -140,7 +146,7 @@ export function createHistoryRestoration(options: {
       const revision = serial,
         controller = new AbortController();
       pending = controller;
-      void options
+      captureCompletion = options
         .read(frame.proof, { kind: "capture", historyIndex: index }, controller.signal)
         .then((result) => {
           if (revision !== serial) return;

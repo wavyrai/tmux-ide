@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { createSourceFaultFence } from "./offscreen-source-fault.ts";
 import { createLiveDiagnostics } from "./live-diagnostics.ts";
 import { selectedWindowSurfaces } from "./selected-window-surfaces.ts";
@@ -596,7 +597,7 @@ try {
   if (interactive && !stopped) {
     if (latest.snapshot) output(latest.snapshot);
     let buffer = Buffer.alloc(0);
-    for await (const chunk of process.stdin) {
+    inputLoop: for await (const chunk of process.stdin) {
       buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
       let end;
       while ((end = buffer.indexOf(10)) >= 0) {
@@ -604,6 +605,31 @@ try {
         const line = buffer.subarray(0, end).toString("utf8");
         buffer = buffer.subarray(end + 1);
         const value: unknown = JSON.parse(line);
+        const handoff = z
+          .object({ kind: z.literal("history-handoff"), intent: z.uuid() })
+          .strict()
+          .safeParse(value);
+        if (handoff.success) {
+          // Ordered after accepted history navigation; no later command may act.
+          foreground = false;
+          closePaneReady = null;
+          actionFence.invalidate();
+          mouseOwner.retire();
+          splitGesture.retire();
+          resizeGesture.retire();
+          await applyPresence(runtime, false);
+          const captured = await historyRestoration?.settleCapture();
+          if (!stopped)
+            process.stdout.write(
+              JSON.stringify({
+                kind: "history-handoff",
+                intent: handoff.data.intent,
+                ...(captured ?? { state: "unavailable", token: null }),
+              }) + "\n",
+            );
+          stop();
+          break inputLoop;
+        }
         const presence = presenceSchema.safeParse(value);
         if (presence.success) {
           admittedPresenceRevision = presence.data.revision;

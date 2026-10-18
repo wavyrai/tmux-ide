@@ -1,0 +1,2035 @@
+{
+  "passed": false,
+  "anchor": "NR03_LINE_060",
+  "anchorRow": 1,
+  "restoredAnchorRow": 1,
+  "busyRestored": true,
+  "inputFenced": true,
+  "error": "Error: deadline immediate-scroll-switch",
+  "ownedPids": [
+    61969,
+    61970,
+    61975,
+    61981,
+    62003
+  ],
+  "remainingPids": [],
+  "cleanup": true,
+  "protectedCliUnchanged": true,
+  "sourceBefore": {
+    "apps/tmux-gpui/bridge/browser.ts": "c8fb3214e467603442da92e84316d9d1f2715d2c606b62255644a83c631c5bdb",
+    "apps/tmux-gpui/bridge/live.ts": "4ebec99ec3bfad124c53d9e9fb9658b0752eef8149257be67a9d13bc3325c246",
+    "apps/tmux-gpui/bridge/history.ts": "9f12dc6461052eef1dd58d9db39c7b5867e5aa3f38c469e53ca1ad2ed08c2d5c",
+    "apps/tmux-gpui/bridge/history-restoration.ts": "c1591cb8cb9282b47323174af355bd756a00d50ee68307a310d760121649552d"
+  },
+  "sourceAfter": {
+    "apps/tmux-gpui/bridge/browser.ts": "c8fb3214e467603442da92e84316d9d1f2715d2c606b62255644a83c631c5bdb",
+    "apps/tmux-gpui/bridge/live.ts": "4ebec99ec3bfad124c53d9e9fb9658b0752eef8149257be67a9d13bc3325c246",
+    "apps/tmux-gpui/bridge/history.ts": "9f12dc6461052eef1dd58d9db39c7b5867e5aa3f38c469e53ca1ad2ed08c2d5c",
+    "apps/tmux-gpui/bridge/history-restoration.ts": "c1591cb8cb9282b47323174af355bd756a00d50ee68307a310d760121649552d"
+  },
+  "sourceStable": true,
+  "trace": [
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 1,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 2,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 3,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 4,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 5,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 6,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 7,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 8,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 9,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 10,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 11,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 12,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 13,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 14,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 15,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 16,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 17,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 18,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 19,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 20,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 21,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 22,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 23,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 24,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 25,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 26,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 27,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 28,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 29,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 30,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 31,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 0,
+      "sequence": 32,
+      "status": "Choose a session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 33,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 34,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 35,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 36,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 37,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 38,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 39,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 40,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 41,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 42,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 43,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 44,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 45,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 46,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 47,
+      "status": "Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 48,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 49,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 50,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 51,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 52,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 53,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 54,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 55,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 56,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 57,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 58,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 59,
+      "status": "Waiting for input authority",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 62,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 63,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 65,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 66,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 67,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 68,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 69,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 70,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 71,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 72,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 73,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 74,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 75,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 76,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 77,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 78,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 79,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 80,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 81,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 82,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 83,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 84,
+      "status": "Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 85,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 86,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 87,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 88,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 89,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 90,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 91,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 92,
+      "status": "Waiting for input authority",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 94,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 95,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 4,
+      "sequence": 97,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 101,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 102,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 103,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 104,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 106,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 107,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 108,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 109,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 110,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 112,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 113,
+      "status": "Restoring terminal… — Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 114,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 117,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 118,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 119,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 121,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 122,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 123,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 124,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 125,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 126,
+      "status": "Restoring saved history",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 128,
+      "status": "History: 77 lines above live — Shift-End returns to live",
+      "offset": 77,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 129,
+      "status": "History: 77 lines above live — Shift-End returns to live",
+      "offset": 77,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 130,
+      "status": "History: 77 lines above live — Shift-End returns to live",
+      "offset": 77,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 131,
+      "status": "History: 78 lines above live — Shift-End returns to live",
+      "offset": 78,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 132,
+      "status": "History: 79 lines above live — Shift-End returns to live",
+      "offset": 79,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 133,
+      "status": "History: 80 lines above live — Shift-End returns to live",
+      "offset": 80,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 134,
+      "status": "History: 81 lines above live — Shift-End returns to live",
+      "offset": 81,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 135,
+      "status": "History: 82 lines above live — Shift-End returns to live",
+      "offset": 82,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 136,
+      "status": "History: 83 lines above live — Shift-End returns to live",
+      "offset": 83,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 137,
+      "status": "History: 84 lines above live — Shift-End returns to live",
+      "offset": 84,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 138,
+      "status": "History: 85 lines above live — Shift-End returns to live",
+      "offset": 85,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 139,
+      "status": "History: 86 lines above live — Shift-End returns to live",
+      "offset": 86,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 140,
+      "status": "History: 87 lines above live — Shift-End returns to live",
+      "offset": 87,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 141,
+      "status": "History: 88 lines above live — Shift-End returns to live",
+      "offset": 88,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 142,
+      "status": "History: 89 lines above live — Shift-End returns to live",
+      "offset": 89,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 143,
+      "status": "History: 89 lines above live — Shift-End returns to live",
+      "offset": 89,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 144,
+      "status": "History: 89 lines above live — Shift-End returns to live",
+      "offset": 89,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 145,
+      "status": "History: 90 lines above live — Shift-End returns to live",
+      "offset": 90,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 146,
+      "status": "History: 91 lines above live — Shift-End returns to live",
+      "offset": 91,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 147,
+      "status": "History: 92 lines above live — Shift-End returns to live",
+      "offset": 92,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 148,
+      "status": "History: 93 lines above live — Shift-End returns to live",
+      "offset": 93,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 149,
+      "status": "History: 94 lines above live — Shift-End returns to live",
+      "offset": 94,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 150,
+      "status": "History: 95 lines above live — Shift-End returns to live",
+      "offset": 95,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 151,
+      "status": "History: 96 lines above live — Shift-End returns to live",
+      "offset": 96,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 152,
+      "status": "History: 97 lines above live — Shift-End returns to live",
+      "offset": 97,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 153,
+      "status": "History: 98 lines above live — Shift-End returns to live",
+      "offset": 98,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 154,
+      "status": "History: 99 lines above live — Shift-End returns to live",
+      "offset": 99,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 155,
+      "status": "History: 100 lines above live — Shift-End returns to live",
+      "offset": 100,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 156,
+      "status": "History: 101 lines above live — Shift-End returns to live",
+      "offset": 101,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 157,
+      "status": "History: 102 lines above live — Shift-End returns to live",
+      "offset": 102,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 158,
+      "status": "History: 103 lines above live — Shift-End returns to live",
+      "offset": 103,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 159,
+      "status": "History: 103 lines above live — Shift-End returns to live",
+      "offset": 103,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 160,
+      "status": "History: 103 lines above live — Shift-End returns to live",
+      "offset": 103,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 161,
+      "status": "History: 104 lines above live — Shift-End returns to live",
+      "offset": 104,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 162,
+      "status": "History: 105 lines above live — Shift-End returns to live",
+      "offset": 105,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 163,
+      "status": "History: 106 lines above live — Shift-End returns to live",
+      "offset": 106,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 164,
+      "status": "History: 107 lines above live — Shift-End returns to live",
+      "offset": 107,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 165,
+      "status": "History: 108 lines above live — Shift-End returns to live",
+      "offset": 108,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 166,
+      "status": "History: 109 lines above live — Shift-End returns to live",
+      "offset": 109,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 167,
+      "status": "History: 110 lines above live — Shift-End returns to live",
+      "offset": 110,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 168,
+      "status": "History: 111 lines above live — Shift-End returns to live",
+      "offset": 111,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 170,
+      "status": "History: 111 lines above live — Shift-End returns to live",
+      "offset": 111,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 171,
+      "status": "History: 112 lines above live — Shift-End returns to live",
+      "offset": 112,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 172,
+      "status": "History: 113 lines above live — Shift-End returns to live",
+      "offset": 113,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 173,
+      "status": "History: 114 lines above live — Shift-End returns to live",
+      "offset": 114,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 174,
+      "status": "History: 115 lines above live — Shift-End returns to live",
+      "offset": 115,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 175,
+      "status": "History: 116 lines above live — Shift-End returns to live",
+      "offset": 116,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 176,
+      "status": "History: 116 lines above live — Shift-End returns to live",
+      "offset": 116,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 177,
+      "status": "History: 116 lines above live — Shift-End returns to live",
+      "offset": 116,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 178,
+      "status": "History: 117 lines above live — Shift-End returns to live",
+      "offset": 117,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 179,
+      "status": "History: 118 lines above live — Shift-End returns to live",
+      "offset": 118,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 180,
+      "status": "History: 119 lines above live — Shift-End returns to live",
+      "offset": 119,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 181,
+      "status": "History: 120 lines above live — Shift-End returns to live",
+      "offset": 120,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 182,
+      "status": "History: 121 lines above live — Shift-End returns to live",
+      "offset": 121,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 183,
+      "status": "History: 122 lines above live — Shift-End returns to live",
+      "offset": 122,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 184,
+      "status": "History: 123 lines above live — Shift-End returns to live",
+      "offset": 123,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 185,
+      "status": "History: 124 lines above live — Shift-End returns to live",
+      "offset": 124,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 186,
+      "status": "History: 125 lines above live — Shift-End returns to live",
+      "offset": 125,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 187,
+      "status": "History: 126 lines above live — Shift-End returns to live",
+      "offset": 126,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 188,
+      "status": "History: 127 lines above live — Shift-End returns to live",
+      "offset": 127,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 189,
+      "status": "History: 128 lines above live — Shift-End returns to live",
+      "offset": 128,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 190,
+      "status": "History: 128 lines above live — Shift-End returns to live",
+      "offset": 128,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 191,
+      "status": "History: 128 lines above live — Shift-End returns to live",
+      "offset": 128,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 192,
+      "status": "History: 129 lines above live — Shift-End returns to live",
+      "offset": 129,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 193,
+      "status": "History: 130 lines above live — Shift-End returns to live",
+      "offset": 130,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 194,
+      "status": "History: 131 lines above live — Shift-End returns to live",
+      "offset": 131,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 195,
+      "status": "History: 132 lines above live — Shift-End returns to live",
+      "offset": 132,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 196,
+      "status": "History: 133 lines above live — Shift-End returns to live",
+      "offset": 133,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 197,
+      "status": "History: 134 lines above live — Shift-End returns to live",
+      "offset": 134,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 198,
+      "status": "History: 135 lines above live — Shift-End returns to live",
+      "offset": 135,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 199,
+      "status": "History: 136 lines above live — Shift-End returns to live",
+      "offset": 136,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 200,
+      "status": "History: 137 lines above live — Shift-End returns to live",
+      "offset": 137,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 201,
+      "status": "History: 138 lines above live — Shift-End returns to live",
+      "offset": 138,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 202,
+      "status": "History: 139 lines above live — Shift-End returns to live",
+      "offset": 139,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 203,
+      "status": "History: 140 lines above live — Shift-End returns to live",
+      "offset": 140,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 204,
+      "status": "History: 141 lines above live — Shift-End returns to live",
+      "offset": 141,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 205,
+      "status": "History: 141 lines above live — Shift-End returns to live",
+      "offset": 141,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 206,
+      "status": "History: 141 lines above live — Shift-End returns to live",
+      "offset": 141,
+      "ready": false
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 207,
+      "status": "History: 142 lines above live — Shift-End returns to live",
+      "offset": 142,
+      "ready": false
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 208,
+      "status": "History: 143 lines above live — Shift-End returns to live",
+      "offset": 143,
+      "ready": false
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 209,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 210,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 211,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-live",
+      "request": 6,
+      "sequence": 212,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 213,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 214,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 215,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 216,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 218,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 219,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 220,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 221,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 7,
+      "sequence": 222,
+      "status": "Restoring terminal… — Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 223,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 226,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 227,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 228,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 229,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 230,
+      "status": "Waiting for input authority",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 231,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 232,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 8,
+      "sequence": 235,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 236,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 237,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 238,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 239,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 241,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 242,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 243,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 244,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 9,
+      "sequence": 245,
+      "status": "Restoring terminal… — Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 246,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 249,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 250,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 251,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 254,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 255,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 256,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 257,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 258,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 259,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 261,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 262,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 263,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 264,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 265,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 266,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 267,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 268,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 269,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 270,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 271,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 272,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 273,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 274,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 275,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "immediate-scroll-switch",
+      "request": 10,
+      "sequence": 276,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    }
+  ],
+  "cliSha": "cfc6a6494551c49f2620965ec75fdc71e6a64687d876fb0eb4481189ff69b9cc"
+}

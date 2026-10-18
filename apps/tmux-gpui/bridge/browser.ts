@@ -1,3 +1,4 @@
+import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache } from "./retained-frame-cache.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
@@ -359,6 +360,8 @@ let active:
       child: ChildProcess;
       done: Promise<void>;
       catalogOnly: boolean;
+      historyIntent?: number;
+      drainHistory?: () => void;
       presentation: ReturnType<typeof createWindowPresentation>;
     }
   | undefined;
@@ -479,6 +482,13 @@ function recoverTerminal(reason: string) {
   publish();
 }
 const retainedFrames = createRetainedFrameCache();
+const historyDrains = new Map<string, { result: Promise<unknown>; cancel: () => void }>();
+let historyDrainEpoch = 0;
+function cancelHistoryDrains() {
+  historyDrainEpoch++;
+  for (const drain of historyDrains.values()) drain.cancel();
+  historyDrains.clear();
+}
 const retainedHistory = new Map<string, { proof: string; pane: string; token: string | null }>();
 let lastCoherentFrame: {
   request: number;
@@ -1072,6 +1082,11 @@ function publish() {
     appliedPresenceRevision = presenceRevision;
   if (stopped) return;
   retainedFrames.retain(sessionTabs.keys());
+  for (const [key, drain] of historyDrains)
+    if (!sessionTabs.keys().includes(key)) {
+      drain.cancel();
+      historyDrains.delete(key);
+    }
   for (const key of retainedHistory.keys())
     if (!sessionTabs.keys().includes(key)) retainedHistory.delete(key);
   if (
@@ -1196,6 +1211,10 @@ async function retire() {
   resizeGesture = null;
   activeGesture = null;
   if (!old) return;
+  if (!stopped && old.historyIntent === historyDrainEpoch && old.drainHistory) {
+    old.drainHistory();
+    return;
+  }
   old.child.kill("SIGTERM");
   const timer = setTimeout(() => old.child.kill("SIGKILL"), 500);
   try {
@@ -1209,6 +1228,7 @@ function retireMachineRoute() {
   cancelLocalSetup();
   clearRetainedPreview();
   retainedFrames.clear();
+  cancelHistoryDrains();
   retainedHistory.clear();
   lastCoherentFrame = null;
   recoverTerminal("machine-route-retired");
@@ -1249,6 +1269,7 @@ async function stop() {
   sessionTabs.dispose();
   clearRetainedPreview();
   retainedFrames.clear();
+  cancelHistoryDrains();
   retainedHistory.clear();
   lastCoherentFrame = null;
   workspaceFleetAgents.cancel();
@@ -1305,6 +1326,42 @@ async function openPane(
 ) {
   const admissionPresence = presenceRevision;
   const owningCatalog = catalog;
+  const waitingKey = fleet?.attachmentKey(config);
+  const waiting = !catalogOnly && waitingKey ? historyDrains.get(waitingKey) : undefined;
+  if (waiting) {
+    inputReady = false;
+    status = "Restoring saved history";
+    publish();
+    // Do not block command admission: close and another navigation can cancel.
+    void waiting.result
+      .then(() => {
+        if (
+          stopped ||
+          request !== token ||
+          catalog !== owningCatalog ||
+          presenceRevision !== admissionPresence ||
+          (requiredCurrent && !requiredCurrent())
+        )
+          return;
+        return openPane(
+          config,
+          token,
+          catalogOnly,
+          splitConfirmation,
+          requiredCurrent,
+          closeConfirmation,
+          recoveryNotice,
+        );
+      })
+      .catch(() => {
+        if (!stopped && request === token) {
+          inputReady = false;
+          status = "Saved history restoration unavailable";
+          publish();
+        }
+      });
+    return;
+  }
   const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
   let handedOff = false;
   const presentation = createWindowPresentation(config.semanticPaneId);
@@ -1365,7 +1422,51 @@ async function openPane(
       inputReady = false;
       void retire();
     });
-    active = { child, done, catalogOnly, presentation };
+    active = {
+      child,
+      done,
+      catalogOnly,
+      presentation,
+      drainHistory: () => {
+        const key = fleet?.attachmentKey(config);
+        const proof = key ? fleet?.retainedFrameProof(key) : null;
+        if (!key || !proof || !sessionTabs.keys().includes(key)) {
+          child.kill("SIGTERM");
+          const timer = setTimeout(() => child.kill("SIGKILL"), 500);
+          void done.then(() => clearTimeout(timer));
+          return;
+        }
+        historyDrains.get(key)?.cancel();
+        while (historyDrains.size >= 8) {
+          const first = historyDrains.keys().next().value!;
+          historyDrains.get(first)!.cancel();
+          historyDrains.delete(first);
+        }
+        const drainEpoch = historyDrainEpoch;
+        retainedHistory.set(key, { proof, pane: config.semanticPaneId, token: null });
+        const drain = drainHistoryCapture(child, done);
+        const record = { result: Promise.resolve() as Promise<unknown>, cancel: drain.cancel };
+        historyDrains.set(key, record);
+        record.result = drain.result.then((result) => {
+          if (historyDrains.get(key) !== record) return;
+          historyDrains.delete(key);
+          if (
+            stopped ||
+            drainEpoch !== historyDrainEpoch ||
+            !sessionTabs.keys().includes(key) ||
+            fleet?.retainedFrameProof(key) !== proof
+          )
+            return;
+          if (result?.state === "live") retainedHistory.delete(key);
+          else
+            retainedHistory.set(key, {
+              proof,
+              pane: config.semanticPaneId,
+              token: result?.state === "historical" ? result.token : null,
+            });
+        });
+      },
+    };
     if (!catalogOnly)
       child.stdin.write(
         JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
@@ -2186,6 +2287,7 @@ async function command(value: unknown) {
   if (cmd.type === "theme" || cmd.type === "appearance") {
     clearRetainedPreview();
     retainedFrames.clear();
+    cancelHistoryDrains();
     retainedHistory.clear();
     lastCoherentFrame = null;
     if (cmd.type === "theme") appearance.select(cmd.id);
@@ -2200,6 +2302,7 @@ async function command(value: unknown) {
       cancelLocalSetup();
       clearRetainedPreview();
       retainedFrames.clear();
+      cancelHistoryDrains();
       retainedHistory.clear();
       lastCoherentFrame = null;
       workspaceFleetAgents.cancel();
@@ -2425,8 +2528,9 @@ async function command(value: unknown) {
       !active?.child.stdin
     )
       return; // Discard stale/focus-lost input, never reinterpret it for another pane.
-    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel")
+    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel") {
       active.presentation.update(undefined, [], false);
+    }
     const line = JSON.stringify(cmd.input) + "\n";
     if (
       Buffer.byteLength(line) > MAX_INPUT_LINE ||
@@ -2434,6 +2538,8 @@ async function command(value: unknown) {
     )
       throw new Error("Input queue full");
     active.child.stdin.write(line);
+    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel")
+      active.historyIntent = historyDrainEpoch;
     return;
   }
   if (cmd.type === "open-workspace-fleet-agent") {
