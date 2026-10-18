@@ -30,6 +30,7 @@ import { observedAgentSchema } from "./tmux-server-agent-admission.ts";
 import { createPaneEditorContextResolver } from "./tmux-pane-editor-context.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  TmuxServerVersionSchemaZ,
   WorkspaceIdSchemaZ,
   WindowLinkTargetSchemaZ,
   type WindowLinkTarget,
@@ -594,6 +595,15 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     throw error;
   }
   return {
+    readServerVersion: async (signal?: AbortSignal) => {
+      assertOpen();
+      const combined = AbortSignal.any([credentialLifetime.signal, ...(signal ? [signal] : [])]);
+      combined.throwIfAborted();
+      const output = await generationRunAsync(["display-message", "-p", "#{version}"], combined);
+      combined.throwIfAborted();
+      assertOpen();
+      return TmuxServerVersionSchemaZ.parse(output.trim());
+    },
     serverId: options.serverId,
     generation,
     resolvePaneEditorContext,

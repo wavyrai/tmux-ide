@@ -1,3 +1,4 @@
+import { mountTmuxServerDiagnosticsRoute } from "./tmux-server-diagnostics.ts";
 import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { streamTmuxInteractions } from "./tmux-server-interaction-events.ts";
 import { mountTmuxServerNativeBackingRoute } from "./tmux-server-native-backing.ts";
@@ -133,6 +134,7 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     }),
   );
   const scoped = `${base}/:serverId/:generation`;
+  mountTmuxServerDiagnosticsRoute(app, { scopedPath: scoped, owners: options.owners });
   mountTmuxServerEditorContextRoute(app, {
     scopedPath: scoped,
     owners: options.owners,

@@ -1,0 +1,26 @@
+bun test v1.3.11 (af24e281)
+
+src/tmux-server-diagnostics.test.ts:
+(pass) old route404 is optional and performs exactly one authenticated GET [6.01ms]
+(pass) accepts exact scope and rejects replacement scope or malformed versions [6.99ms]
+(pass) aborted caller cannot publish metadata or interpret404 as availability [0.39ms]
+(pass) bounds metadata response bytes without retry [0.20ms]
+(pass) times out while reading an unfinished response body [10.27ms]
+
+src/tmux-server-client.test.ts:
+(pass) explicit tmux server SDK client > validates versioned server listing without fallback [1.00ms]
+(pass) explicit tmux server SDK client > binds copied inputs and cache keys to an immutable exact scope [0.46ms]
+(pass) explicit tmux server SDK client > rejects scope mismatches and stale HTTP refusal without retries
+(pass) explicit tmux server SDK client > drops an old selection's late response after disposal [0.31ms]
+(pass) explicit tmux server SDK client > uses explicit owner authority for passive fleet close without a controller principal [0.66ms]
+(pass) explicit tmux server SDK client > sends owner-scoped mutations and verifies generation and operation echoes [0.36ms]
+(pass) explicit tmux server SDK client > sends exact issue headers and validates scoped redemption [0.54ms]
+(pass) explicit tmux server SDK client > rejects inventories from the wrong workspace [0.45ms]
+(pass) server registration and adopted default > passes remote selector intent unchanged and removes by opaque registration [0.18ms]
+(pass) server registration and adopted default > accepts default redemption only with an exact generation and request echo
+(pass) server registration and adopted default > preserves authoritative workspace aliases and unavailable collisions
+
+ 16 pass
+ 0 fail
+ 47 expect() calls
+Ran 16 tests across 2 files. [227.00ms]

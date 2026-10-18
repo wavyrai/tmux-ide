@@ -1,4 +1,5 @@
 import {
+  TmuxServerDiagnosticsSchemaZ,
   TmuxAgentOpenRequestSchemaZ,
   TmuxAgentOpenResponseSchemaZ,
   type TmuxAgentOpenRequest,
@@ -61,7 +62,11 @@ async function request(
   headers?: Record<string, string>,
   method?: "DELETE",
   signal?: AbortSignal,
+  responseLimit?: number,
 ) {
+  const requestSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
+    : AbortSignal.timeout(options.timeoutMs ?? 5_000);
   const response = await (options.fetch ?? fetch)(new URL(path, options.baseUrl), {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: {
@@ -72,13 +77,40 @@ async function request(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "error",
     cache: "no-store",
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
-      : AbortSignal.timeout(options.timeoutMs ?? 5_000),
+    signal: requestSignal,
   });
   if (!response.ok) throw new TmuxServerClientError("request-failed", response.status);
-  const result: unknown = await response.json();
-  signal?.throwIfAborted();
+  let result: unknown;
+  if (responseLimit === undefined) result = await response.json();
+  else {
+    const reader = response.body?.getReader();
+    if (!reader) throw new TmuxServerClientError("request-failed");
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      for (;;) {
+        requestSignal.throwIfAborted();
+        const item = await reader.read();
+        if (item.done) break;
+        length += item.value.byteLength;
+        if (length > responseLimit) {
+          void reader.cancel().catch(() => undefined);
+          throw new TmuxServerClientError("request-failed");
+        }
+        chunks.push(item.value);
+      }
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  requestSignal.throwIfAborted();
   return result;
 }
 export async function listTmuxServers(options: TmuxServerClientOptions) {
@@ -426,3 +458,33 @@ export function createTmuxServerClient(
   };
 }
 export type TmuxServerClient = ReturnType<typeof createTmuxServerClient>;
+
+/** Optional metadata; old servers have no route. Callers own selected-scope currentness. */
+export async function readTmuxServerDiagnostics(
+  options: TmuxServerClientOptions,
+  scopeInput: TmuxServerScope,
+  signal?: AbortSignal,
+) {
+  const scope = TmuxServerScopeSchemaZ.parse(scopeInput);
+  signal?.throwIfAborted();
+  try {
+    const result = TmuxServerDiagnosticsSchemaZ.parse(
+      await request(
+        options,
+        `${TMUX_SERVERS_API_PATH}/${scope.serverId}/${scope.generation}/diagnostics`,
+        undefined,
+        undefined,
+        undefined,
+        signal,
+        4096,
+      ),
+    );
+    if (result.server.serverId !== scope.serverId || result.server.generation !== scope.generation)
+      throw new TmuxServerClientError("scope-mismatch");
+    return result;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof TmuxServerClientError && error.status === 404) return null;
+    throw error;
+  }
+}

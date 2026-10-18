@@ -115,3 +115,5 @@ export * from "./window-split-layout.ts";
 export * from "./pane-editor-context.ts";
 
 export * from "./tmux-agent-open.ts";
+
+export * from "./tmux-server-diagnostics.ts";
