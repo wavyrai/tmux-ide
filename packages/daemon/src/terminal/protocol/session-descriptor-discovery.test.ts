@@ -57,7 +57,12 @@ describe("SessionDescriptorDiscovery", () => {
   });
 
   it("applies the native inventory value and reply bounds", () => {
-    expect(parseSessionPaneDescriptors([line("%1", "/repo", "x".repeat(1_025))])).toEqual([]);
+    // An overlong title (stock tmux titles panes with kitty graphics APCs) is
+    // ignored; the pane itself stays in the inventory.
+    expect(parseSessionPaneDescriptors([line("%1", "/repo", "x".repeat(1_025))])).toEqual([
+      expect.objectContaining({ runtimePaneId: "%1", title: null }),
+    ]);
+    expect(parseSessionPaneDescriptors([line("%1", "/x".repeat(2_049))])).toEqual([]);
     expect(parseSessionPaneDescriptors(Array.from({ length: 4_097 }, () => line("%1")))).toEqual(
       [],
     );
