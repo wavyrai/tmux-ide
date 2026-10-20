@@ -1,4 +1,6 @@
-import { deflateSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { deflateSync, inflateSync } from "node:zlib";
+import { parseControlLine } from "../protocol/control.ts";
 import { describe, expect, it } from "vitest";
 import { TerminalReplicaInterpreter } from "../session-runtime/terminal-replica-interpreter.ts";
 import type { TerminalGraphicsState } from "@tmux-ide/contracts";
@@ -82,9 +84,89 @@ describe("kitty image store", () => {
       expect(store.images().size).toBe(0);
       store.apply(parseKittyCommand(`Gm=0;${data.slice(16)}`)!, null);
       const image = store.images().get(8)!;
-      expect(image).toMatchObject({ format: "rgba", width: 4, height: 4 });
-      expect(Buffer.from(image.data)).toEqual(rgba);
+      // Deflated pixels stay deflated end to end; renderers inflate them.
+      expect(image).toMatchObject({
+        format: compressed ? "rgba-zlib" : "rgba",
+        width: 4,
+        height: 4,
+      });
+      expect(Buffer.from(compressed ? inflateSync(image.data) : image.data)).toEqual(rgba);
     }
+  });
+
+  it("re-transmitting an id keeps its placements and shows the new pixels", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    const send = (fill: number) =>
+      store.apply(
+        parseKittyCommand(
+          `Ga=T,f=32,o=z,s=4,v=4,i=0x0a0b0c,U=1,c=8,r=2,q=2;${deflateSync(Buffer.alloc(64, fill)).toString("base64")}`.replace(
+            "0x0a0b0c",
+            String(0x0a0b0c),
+          ),
+        )!,
+        null,
+      );
+    send(1);
+    const first = store.state(0, 5, 20, false).images[0]!;
+    // A plain transmit (no placement keys) must not orphan the placeholder grid.
+    store.apply(
+      parseKittyCommand(
+        `Ga=t,f=32,o=z,s=4,v=4,i=${0x0a0b0c},q=2;${deflateSync(Buffer.alloc(64, 2)).toString("base64")}`,
+      )!,
+      null,
+    );
+    const second = store.state(0, 5, 20, false).images[0]!;
+    expect(second.placeholder).toEqual({ columns: 8, rows: 2 });
+    expect(second.digest).not.toBe(first.digest);
+    expect(store.images().size).toBe(1);
+  });
+
+  it("deletes only the named placement when p is given", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    store.apply(
+      parseKittyCommand(`Ga=T,f=100,i=5,U=1,c=4,r=2,q=2;${PNG.toString("base64")}`)!,
+      null,
+    );
+    store.apply(parseKittyCommand(`Ga=p,i=5,p=1,c=2,r=1,q=2`)!, {
+      x: 0,
+      line: 0,
+      alternate: false,
+    });
+    store.apply(parseKittyCommand("Ga=d,d=i,i=5,p=1,q=2")!, null);
+    const state = store.state(0, 5, 20, false);
+    expect(state.placements).toEqual([]);
+    expect(state.images[0]!.placeholder).toEqual({ columns: 4, rows: 2 });
+    store.apply(parseKittyCommand("Ga=d,d=I,i=5,p=0,q=2")!, null);
+    expect(store.state(0, 5, 20, false).images[0]!.placeholder).toBeNull();
+    expect(store.images().size).toBe(1);
+    store.apply(parseKittyCommand("Ga=d,d=I,i=5,q=2")!, null);
+    expect(store.images().size).toBe(0);
+  });
+
+  it("applies root-frame edits by replacing or blending a rectangle", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    const base = Buffer.alloc(2 * 2 * 4, 0);
+    store.apply(
+      parseKittyCommand(`Ga=t,f=32,o=z,s=2,v=2,i=302,q=2;${deflateSync(base).toString("base64")}`)!,
+      null,
+    );
+    const before = store.images().get(302)!.digest;
+    const patch = Buffer.from([10, 20, 30, 255]);
+    store.apply(
+      parseKittyCommand(`Ga=f,f=32,i=302,r=1,X=1,x=1,y=1,s=1,v=1,q=2;${patch.toString("base64")}`)!,
+      null,
+    );
+    const edited = store.images().get(302)!;
+    expect(edited.digest).not.toBe(before);
+    const pixels = inflateSync(edited.data);
+    expect([...pixels.subarray(12, 16)]).toEqual([10, 20, 30, 255]);
+    expect([...pixels.subarray(0, 12)]).toEqual(Array(12).fill(0));
+    // New animation frames (no r) are not modelled and leave the image alone.
+    store.apply(
+      parseKittyCommand(`Ga=f,f=32,i=302,s=1,v=1,q=2;${patch.toString("base64")}`)!,
+      null,
+    );
+    expect(store.images().get(302)!.digest).toBe(edited.digest);
   });
 
   it("projects cursor placements clipped by scroll and deletes by id", () => {
@@ -327,5 +409,76 @@ describe("chunked image transmissions through %output-sized writes", () => {
     // A trailing ESC is held for the next chunk, then forwarded with it.
     expect(Buffer.from(scanner.scan(bytes(`x${ESC}`)).forward).toString("latin1")).toBe("x");
     expect(Buffer.from(scanner.scan(bytes("[0my")).forward).toString("latin1")).toBe(`${ESC}[0my`);
+  });
+});
+
+describe("full-frame kitty-graphics client under tmux (recorded %output)", () => {
+  // A client that detects tmux: one image id re-transmitted every frame as a
+  // U=1 virtual placement (RGBA, o=z, 4096-byte chunks, each wrapped in
+  // DCS tmux;), a placeholder grid with a 24-bit colour id, synchronized
+  // output. Recorded from stock tmux 3.7c control mode: 3 frames, 40x12 pane.
+  it("resolves the whole grid to the newest frame, kept deflated", async () => {
+    const transcript = readFileSync(
+      new URL("./__fixtures__/full-frame-client.ctl", import.meta.url),
+      "latin1",
+    );
+    const interpreter = new TerminalReplicaInterpreter({
+      generation: "00000000-0000-4000-8000-000000000001",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: "00000000-0000-4000-8000-000000000001:0",
+      cols: 40,
+      rows: 12,
+      kittyImageBudget: budget(),
+    });
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 40,
+      rows: 12,
+      chunks: [],
+      cursor: { x: 0, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    const states: TerminalGraphicsState[] = [];
+    interpreter.onGraphics((state) => states.push(state));
+    for (const line of transcript.split("\n")) {
+      const event = parseControlLine(line, false);
+      if (event.kind === "output") await interpreter.enqueue({ type: "write", data: event.data });
+    }
+    await interpreter.whenIdle();
+    const state = interpreter.currentGraphics()!;
+    expect(state.images).toEqual([
+      expect.objectContaining({
+        imageId: 0x0a0b0c,
+        format: "rgba-zlib",
+        width: 320,
+        height: 176,
+        digest: "9b04b7506552e857ae9345b050de2c4f",
+        placeholder: { columns: 40, rows: 11 },
+      }),
+    ]);
+    // Three frames, three distinct digests, the placeholder grid never orphaned.
+    expect(new Set(states.map((s) => s.images[0]?.digest)).size).toBe(3);
+    expect(states.every((s) => s.images[0]?.placeholder !== null)).toBe(true);
+    const placements = resolveKittyPlacements(interpreter.currentSnapshot().grid, state);
+    expect(placements).toEqual([
+      {
+        digest: "9b04b7506552e857ae9345b050de2c4f",
+        row: 0,
+        column: 0,
+        rows: 11,
+        columns: 40,
+        sourceRow: 0,
+        sourceColumn: 0,
+        totalRows: 11,
+        totalColumns: 40,
+      },
+    ]);
+    // No payload reached the grid as text.
+    const text = interpreter
+      .currentSnapshot()
+      .grid.map((row) => row.cells.map((cell) => cell.grapheme).join(""))
+      .join("");
+    expect(text).not.toMatch(/[A-Za-z0-9+/]{16}/u);
   });
 });

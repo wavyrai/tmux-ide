@@ -512,6 +512,11 @@ export class TerminalReplicaInterpreter {
     // Always forward the scanner's output: tmux splits %output (~2 KiB) inside
     // kitty APCs (~4 KiB chunks), so a chunk with no completed command can still
     // be all image payload that must never reach the VT parser as text.
+    // A chunk entirely inside image payload changes nothing the parser can
+    // see. Skipping it matters: every parser write settles on a later timer
+    // turn, so a frame split into dozens of %output chunks would otherwise
+    // serialize dozens of turns and fall behind a 30 fps image stream.
+    if (scanned.forward.byteLength === 0) return;
     await this.#writeToBackend(this.#backend, scanned.forward);
     if (this.#observability.enabled)
       this.#observability.recordSpan(

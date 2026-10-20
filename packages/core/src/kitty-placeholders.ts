@@ -158,7 +158,19 @@ export function resolveKittyPlacements(
   grid: readonly TerminalReplicaRow[],
   state: TerminalGraphicsState,
 ): TerminalGraphicsPlacement[] {
-  const placements: TerminalGraphicsPlacement[] = [];
+  return resolveKittyImagePlacements(grid, state).map(({ placement }) => placement);
+}
+
+/**
+ * As {@link resolveKittyPlacements}, with the kitty image id each placement
+ * shows: exact for placeholder cells (they encode it); for cursor placements
+ * the first image with that content.
+ */
+export function resolveKittyImagePlacements(
+  grid: readonly TerminalReplicaRow[],
+  state: TerminalGraphicsState,
+): { placement: TerminalGraphicsPlacement; imageId: number }[] {
+  const placements: { placement: TerminalGraphicsPlacement; imageId: number }[] = [];
   const byId = new Map(state.images.map((image) => [image.imageId, image]));
   let scan = false;
   for (const image of state.images) if (image.placeholder) scan = true;
@@ -173,18 +185,24 @@ export function resolveKittyPlacements(
       )
         continue;
       placements.push({
-        digest: image.digest,
-        row: rect.row,
-        column: rect.column,
-        rows: rect.rows,
-        columns: rect.columns,
-        sourceRow: rect.srcRow,
-        sourceColumn: rect.srcCol,
-        totalRows: virtualGrid.rows,
-        totalColumns: virtualGrid.columns,
+        imageId: image.imageId,
+        placement: {
+          digest: image.digest,
+          row: rect.row,
+          column: rect.column,
+          rows: rect.rows,
+          columns: rect.columns,
+          sourceRow: rect.srcRow,
+          sourceColumn: rect.srcCol,
+          totalRows: virtualGrid.rows,
+          totalColumns: virtualGrid.columns,
+        },
       });
     }
   }
-  placements.push(...state.placements);
+  for (const placement of state.placements) {
+    const image = state.images.find((candidate) => candidate.digest === placement.digest);
+    if (image) placements.push({ placement, imageId: image.imageId });
+  }
   return placements;
 }
