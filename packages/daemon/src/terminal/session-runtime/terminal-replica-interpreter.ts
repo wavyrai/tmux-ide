@@ -174,6 +174,7 @@ export class TerminalReplicaInterpreter {
     reject: (error: unknown) => void;
   }> = [];
   #writeFlushScheduled = false;
+  #writeInFlight = false;
   #widgetGate = false;
   // kitty graphics: images outlive reseeds; the scanner owns split APCs.
   readonly #kittyScanner = new KittyApcScanner();
@@ -257,7 +258,7 @@ export class TerminalReplicaInterpreter {
         this.#pendingWrites.length > 0 &&
         (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null)
       )
-        this.#flushWrites();
+        this.#flushWrites(true);
       const promise = new Promise<void>((resolve, reject) => {
         this.#pendingWrites.push({ data, trace, resolve, reject });
       });
@@ -267,7 +268,7 @@ export class TerminalReplicaInterpreter {
       }
       return promise;
     }
-    this.#flushWrites();
+    this.#flushWrites(true);
     const admitted =
       operation.type === "reseed"
         ? {
@@ -282,7 +283,7 @@ export class TerminalReplicaInterpreter {
   }
 
   whenIdle(): Promise<void> {
-    this.#flushWrites();
+    this.#flushWrites(true);
     return this.#tail;
   }
 
@@ -509,7 +510,7 @@ export class TerminalReplicaInterpreter {
     const scanned = this.#kittyScanner.scan(data);
     for (const command of scanned.commands) this.#kittyPending.set(command.marker, command);
     const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
+    await this.#writeToBackend(this.#backend, scanned.forward);
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
@@ -840,9 +841,12 @@ export class TerminalReplicaInterpreter {
     }
   }
 
-  #flushWrites(): void {
+  #flushWrites(force = false): void {
     this.#writeFlushScheduled = false;
     if (this.#pendingWrites.length === 0) return;
+    // Research prototype: while a write is in the parser, keep coalescing
+    // output so each parser turn sees everything that arrived meanwhile.
+    if (this.#writeInFlight && !force) return;
     const pending = this.#pendingWrites.splice(0);
     const length = pending.reduce((total, entry) => total + entry.data.length, 0);
     const data = new Uint8Array(length);
@@ -852,8 +856,12 @@ export class TerminalReplicaInterpreter {
       offset += entry.data.length;
     }
     const trace = pending.find(({ trace }) => trace !== null)?.trace ?? null;
+    this.#writeInFlight = true;
     const run = this.#tail.then(() => this.#write(data, trace));
-    this.#tail = run.catch(() => undefined);
+    this.#tail = run.catch(() => undefined).finally(() => {
+      this.#writeInFlight = false;
+      if (this.#pendingWrites.length > 0 && !this.#writeFlushScheduled) this.#flushWrites();
+    });
     void run.then(
       () => pending.forEach((entry) => entry.resolve()),
       (error) => pending.forEach((entry) => entry.reject(error)),
