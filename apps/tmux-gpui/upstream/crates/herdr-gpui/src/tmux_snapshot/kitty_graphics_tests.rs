@@ -45,17 +45,13 @@ fn placement(row: u16, source_row: u16) -> Placement {
 }
 
 #[test]
-fn assembles_chunks_and_maps_placements_onto_source_rectangles() {
+fn assembles_chunks_and_maps_placements_onto_source_rectangles() -> anyhow::Result<()> {
     let store = Store::default();
     let pixels = [7u8; 16];
-    store
-        .accept_line(&chunk(DIGEST, 16, 0, &pixels[..9]))
-        .unwrap();
+    store.accept_line(&chunk(DIGEST, 16, 0, &pixels[..9]))?;
     assert!(store.scene(&[placement(0, 1)]).is_empty());
     assert!(!store.take_changed());
-    store
-        .accept_line(&chunk(DIGEST, 16, 9, &pixels[9..]))
-        .unwrap();
+    store.accept_line(&chunk(DIGEST, 16, 9, &pixels[9..]))?;
     assert!(store.take_changed());
     let scene = store.scene(&[placement(5, 1)]);
     let p = &scene[0];
@@ -63,23 +59,19 @@ fn assembles_chunks_and_maps_placements_onto_source_rectangles() {
     assert_eq!((p.source_x, p.source_y), (0, 1));
     assert_eq!((p.source_width, p.source_height), (2, 1));
     assert!(store.with_images(|images| images.get(&p.asset).is_some()));
+    Ok(())
 }
 
 #[test]
-fn out_of_order_chunks_drop_the_partial_image() {
+fn out_of_order_chunks_drop_the_partial_image() -> anyhow::Result<()> {
     let store = Store::default();
     let pixels = [1u8; 16];
-    store
-        .accept_line(&chunk(DIGEST, 16, 0, &pixels[..8]))
-        .unwrap();
-    store
-        .accept_line(&chunk(DIGEST, 16, 12, &pixels[12..]))
-        .unwrap();
-    store
-        .accept_line(&chunk(DIGEST, 16, 8, &pixels[8..12]))
-        .unwrap();
+    store.accept_line(&chunk(DIGEST, 16, 0, &pixels[..8]))?;
+    store.accept_line(&chunk(DIGEST, 16, 12, &pixels[12..]))?;
+    store.accept_line(&chunk(DIGEST, 16, 8, &pixels[8..12]))?;
     assert!(store.scene(&[placement(0, 0)]).is_empty());
     assert!(!store.take_changed());
+    Ok(())
 }
 
 #[test]
@@ -123,9 +115,11 @@ fn paints_real_wire_kitty_images_at_their_cells(cx: &mut gpui::TestAppContext) {
         terminal_painter::{ImageTarget, PlacedImages, TerminalPainter},
     };
     use gpui::{Bounds, Empty, Point, Styled, VisualTestContext, canvas, font, point, px, size};
-    let frame = Arc::new(super::super::decode::frame(FIXTURE).unwrap());
+    let frame =
+        Arc::new(super::super::decode::frame(FIXTURE).unwrap_or_else(|error| panic!("{error}")));
     let store = Store::default();
-    let placements = load_static(FIXTURE, frame.width, frame.height, &store).unwrap();
+    let placements = load_static(FIXTURE, frame.width, frame.height, &store)
+        .unwrap_or_else(|error| panic!("{error}"));
     let scene = Arc::new(store.scene(&placements));
     assert_eq!(scene.len(), 3);
     let (_, cx) = cx.add_window_view(|_, _| Empty);
@@ -179,7 +173,7 @@ fn paints_real_wire_kitty_images_at_their_cells(cx: &mut gpui::TestAppContext) {
         .iter()
         .map(|(_, bounds)| *bounds)
         .collect();
-    painted.sort_by(|a, b| a.origin.y.partial_cmp(&b.origin.y).unwrap());
+    painted.sort_by(|a, b| f32::from(a.origin.y).total_cmp(&f32::from(b.origin.y)));
     assert_eq!(
         painted,
         [

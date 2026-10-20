@@ -1,5 +1,5 @@
 /**
- * SPIKE: replay a recorded control-mode transcript through the daemon's
+ * Replay a recorded control-mode transcript through the daemon's
  * replica interpreter and write a preview snapshot with its kitty images.
  *
  *   bun render-snapshot.ts TRANSCRIPT OUT.json [cols rows]
