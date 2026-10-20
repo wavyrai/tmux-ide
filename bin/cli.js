@@ -68034,12 +68034,6 @@ async function discoverWorkspaceRegistryTerminalInventory(registry, runner, sign
     const argv = ["list-panes", "-s", "-t", identity2.id, "-F", PANE_FORMAT];
     const before = await requiredTmuxResult(runner, argv, signal);
     if (before === null) continue;
-    const first = parsePaneSnapshot(before, identity2);
-    const panes2 = first.panes;
-    const after = await requiredTmuxResult(runner, argv, signal);
-    if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    const second = parsePaneSnapshot(after, identity2);
-    const latest = second.panes;
     const proofKeys = [
       "sessionName",
       "sessionId",
@@ -68051,10 +68045,21 @@ async function discoverWorkspaceRegistryTerminalInventory(registry, runner, sign
       "windowStamp",
       "index"
     ];
-    if (first.linksProof !== second.linksProof || panes2.length !== latest.length || panes2.some((pane, index) => proofKeys.some((key2) => pane[key2] !== latest[index][key2]))) {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    const matches = (first, second) => first.linksProof === second.linksProof && first.panes.length === second.panes.length && first.panes.every(
+      (pane, index) => proofKeys.every((key2) => pane[key2] === second.panes[index][key2])
+    );
+    let previous = parsePaneSnapshot(before, identity2);
+    let stable = null;
+    for (let attempt = 0; attempt < INVENTORY_FENCE_ATTEMPTS && !stable; attempt += 1) {
+      if (attempt > 0) await settleDelay(attempt);
+      const after = await requiredTmuxResult(runner, argv, signal);
+      if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      const next = parsePaneSnapshot(after, identity2);
+      if (matches(previous, next)) stable = next;
+      else previous = next;
     }
-    bySessionName.set(sessionName, latest);
+    if (!stable) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    bySessionName.set(sessionName, stable.panes);
   }
   const panes = [];
   for (const workspace of workspaces) {
@@ -68117,7 +68122,7 @@ async function enumerateStartupMarkedViews(executor) {
 function createNativeTerminalAttachmentRuntime(options) {
   return new NativeTerminalAttachmentRuntime(options);
 }
-var MAX_TMUX_OUTPUT_BYTES3, TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS, STARTUP_ORPHAN_ENUMERATION_ATTEMPTS, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID2, ERROR_MESSAGES5, NativeTerminalAttachmentRuntimeError, nativeTerminalAttachmentRuntimeConstructions, SESSION_FORMAT2, PANE_FORMAT, NativeTerminalAttachmentGeometryResolver, WorkspaceTerminalInventoryRuntime, NativeTerminalAttachmentRuntime;
+var MAX_TMUX_OUTPUT_BYTES3, TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS, STARTUP_ORPHAN_ENUMERATION_ATTEMPTS, MAX_DISCOVERED_WORKSPACES, MAX_DISCOVERED_PANES, MAX_GEOMETRY_CLIENTS, SAFE_SESSION_NAME, SAFE_TERMINAL_VALUE2, SAFE_COLOR_TERMINAL_VALUE, SAFE_LOCALE_VALUE2, INTEGER, VIEW_MISMATCH, SESSION_WIRE_SENTINEL, PANE_WIRE_SENTINEL, WIRE_SEPARATOR, RUNTIME_SESSION_ID, RUNTIME_WINDOW_ID, RUNTIME_PANE_ID2, ERROR_MESSAGES5, NativeTerminalAttachmentRuntimeError, nativeTerminalAttachmentRuntimeConstructions, SESSION_FORMAT2, PANE_FORMAT, INVENTORY_FENCE_ATTEMPTS, settleDelay, NativeTerminalAttachmentGeometryResolver, WorkspaceTerminalInventoryRuntime, NativeTerminalAttachmentRuntime;
 var init_native_runtime = __esm({
   "packages/daemon/src/terminal/attachments/native-runtime.ts"() {
     "use strict";
@@ -68198,6 +68203,8 @@ var init_native_runtime = __esm({
       "#{pane_birth_id}",
       PANE_WIRE_SENTINEL
     ].join(WIRE_SEPARATOR);
+    INVENTORY_FENCE_ATTEMPTS = 4;
+    settleDelay = (attempt) => new Promise((resolve44) => setTimeout(resolve44, 25 * 2 ** (attempt - 1)));
     NativeTerminalAttachmentGeometryResolver = class {
       #catalog;
       #runner;

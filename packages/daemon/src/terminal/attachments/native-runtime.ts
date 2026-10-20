@@ -918,6 +918,11 @@ function parsePaneSnapshot(
  * application-shell inventory. Names are resolved exactly to `$session_id`
  * before any pane query, and a second identity/topology snapshot closes races.
  */
+const INVENTORY_FENCE_ATTEMPTS = 4;
+/** 25, 50, 100 ms: enough for a mutation's identity stamps, bounded for every reader. */
+const settleDelay = (attempt: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, 25 * 2 ** (attempt - 1)));
+
 export async function discoverWorkspaceRegistryTerminalInventory(
   registry: WorkspaceRegistry,
   runner: NativeTerminalInventoryReadRunner,
@@ -941,12 +946,6 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     const argv = ["list-panes", "-s", "-t", identity.id, "-F", PANE_FORMAT] as const;
     const before = await requiredTmuxResult(runner, argv, signal);
     if (before === null) continue;
-    const first = parsePaneSnapshot(before, identity);
-    const panes = first.panes;
-    const after = await requiredTmuxResult(runner, argv, signal);
-    if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    const second = parsePaneSnapshot(after, identity);
-    const latest = second.panes;
     // Foreground commands, titles, focus and paths can change while the same
     // pane remains valid. Fence binding/topology only, then publish one complete
     // latest snapshot rather than mixing presentation values across reads.
@@ -961,14 +960,30 @@ export async function discoverWorkspaceRegistryTerminalInventory(
       "windowStamp",
       "index",
     ] as const;
-    if (
-      first.linksProof !== second.linksProof ||
-      panes.length !== latest.length ||
-      panes.some((pane, index) => proofKeys.some((key) => pane[key] !== latest[index]![key]))
-    ) {
-      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    const matches = (
+      first: ReturnType<typeof parsePaneSnapshot>,
+      second: ReturnType<typeof parsePaneSnapshot>,
+    ) =>
+      first.linksProof === second.linksProof &&
+      first.panes.length === second.panes.length &&
+      first.panes.every((pane, index) =>
+        proofKeys.every((key) => pane[key] === second.panes[index]![key]),
+      );
+    // A just-created window or split is still being stamped, so topology can
+    // move between two reads. Let it settle for a bounded number of re-reads;
+    // only two consecutive matching reads are ever published.
+    let previous = parsePaneSnapshot(before, identity);
+    let stable: ReturnType<typeof parsePaneSnapshot> | null = null;
+    for (let attempt = 0; attempt < INVENTORY_FENCE_ATTEMPTS && !stable; attempt += 1) {
+      if (attempt > 0) await settleDelay(attempt);
+      const after = await requiredTmuxResult(runner, argv, signal);
+      if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      const next = parsePaneSnapshot(after, identity);
+      if (matches(previous, next)) stable = next;
+      else previous = next;
     }
-    bySessionName.set(sessionName, latest);
+    if (!stable) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    bySessionName.set(sessionName, stable.panes);
   }
 
   const panes: NativeTerminalInventoryPaneSnapshot[] = [];
