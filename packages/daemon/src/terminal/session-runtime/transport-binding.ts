@@ -104,6 +104,13 @@ function assertLiveControllerPrincipal(
   }
 }
 
+function holdsCurrentLease(shared: SharedClient): boolean {
+  const lease = shared.lease;
+  if (!lease) return false;
+  const snapshot = shared.consumer.controllerSnapshot();
+  return snapshot.controllerClientId === lease.clientId && snapshot.revision === lease.revision;
+}
+
 const clientsByRegistry = new WeakMap<object, Map<string, SharedClient>>();
 
 function authenticatedSurface(transport: SessionRuntimeTransport, hostClientId: string): string {
@@ -695,20 +702,37 @@ export class SessionRuntimeTransportBinder {
   }
 
   activateController(target: SharedClient): void {
-    if (target.lease) return;
-    const current = [...this.#clients.values()].find(
-      (candidate) =>
-        candidate !== target &&
-        candidate.consumer.session === target.consumer.session &&
-        candidate.lease,
-    );
-    if (current?.lease) {
-      const previous = current.lease;
-      current.lease = null;
-      target.lease = current.consumer.handoffController(previous, target.consumer.clientId);
+    if (target.lease && holdsCurrentLease(target)) return;
+    target.lease = null;
+    const controllerClientId = target.consumer.controllerSnapshot().controllerClientId;
+    const current =
+      controllerClientId === null || controllerClientId === target.consumer.clientId
+        ? undefined
+        : [...this.#clients.values()].find(
+            (candidate) =>
+              candidate !== target &&
+              candidate.consumer.session === target.consumer.session &&
+              candidate.consumer.clientId === controllerClientId,
+          );
+    if (!current) {
+      // Free, already ours, or held by a principal outside this binder (for
+      // example the command-center owner route): plain acquisition decides.
+      target.lease = target.consumer.acquireController();
       return;
     }
-    target.lease = target.consumer.acquireController();
+    // A transport-bound holder whose binding lost its executable lease can
+    // never type again, yet it would keep every other viewer locked out. Re-
+    // derive its exact current lease so the handoff below reclaims it; a live
+    // holder simply hands off as before. Either way only one client can type.
+    const previous =
+      current.lease && holdsCurrentLease(current)
+        ? current.lease
+        : current.consumer.acquireController();
+    const handedOff = current.consumer.handoffController(previous, target.consumer.clientId);
+    // Drop the holder's lease only after the runtime accepted the handoff; a
+    // refusal (e.g. during topology verification) must leave it executable.
+    current.lease = null;
+    target.lease = handedOff;
   }
 
   async release(
@@ -727,18 +751,23 @@ export class SessionRuntimeTransportBinder {
     }
     shared.refs -= 1;
     if (shared.refs > 0) return;
-    if (shared.lease) {
-      // A same-host passive session channel keeps the controller PRINCIPAL
-      // continuous across interactive pane retargeting. It contributes no
-      // source-pane grant and cannot type; the lease retires with the last
-      // host/session ref, while a passive-only host never acquires one.
-      const retired = shared.lease;
-      shared.lease = null;
-      shared.consumer.releaseController(retired);
+    try {
+      if (shared.lease) {
+        // A same-host passive session channel keeps the controller PRINCIPAL
+        // continuous across interactive pane retargeting. It contributes no
+        // source-pane grant and cannot type; the lease retires with the last
+        // host/session ref, while a passive-only host never acquires one.
+        const retired = shared.lease;
+        shared.lease = null;
+        shared.consumer.releaseController(retired);
+      }
+    } finally {
+      // A refused surrender must never strand the controller on a client with
+      // no transport: closing the consumer retires whatever it still owns.
+      for (const [key, candidate] of this.#clients) {
+        if (candidate === shared) this.#clients.delete(key);
+      }
+      await shared.consumer.close();
     }
-    for (const [key, candidate] of this.#clients) {
-      if (candidate === shared) this.#clients.delete(key);
-    }
-    await shared.consumer.close();
   }
 }
