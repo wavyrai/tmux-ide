@@ -97,12 +97,15 @@ export class KittyApcScanner {
   #overflowed = false;
 
   scan(chunk: Uint8Array): KittyScanResult {
-    const out: number[] = [];
+    // Verbatim runs stay views of the chunk; ordinary output is never copied.
+    const parts: Uint8Array[] = [];
+    const emit = (...bytes: number[]) => void parts.push(Uint8Array.from(bytes));
     const commands: (KittyCommand & { marker: number })[] = [];
     let ground = -1; // start of a pending verbatim run
+    let escAt = -1; // index of a held ESC inside this chunk (-1: held from an earlier chunk)
     const flushGround = (end: number) => {
       if (ground >= 0) {
-        for (let k = ground; k < end; k += 1) out.push(chunk[k]!);
+        if (end > ground) parts.push(chunk.subarray(ground, end));
         ground = -1;
       }
     };
@@ -111,34 +114,38 @@ export class KittyApcScanner {
       if (!command) return;
       const marker = this.#nextMarker++;
       commands.push({ ...command, marker });
-      for (const byte of Buffer.from(`\x1b]${KITTY_PLACEMENT_OSC};${marker}\x07`, "latin1"))
-        out.push(byte);
+      parts.push(Buffer.from(`\x1b]${KITTY_PLACEMENT_OSC};${marker}\x07`, "latin1"));
     };
     for (let i = 0; i < chunk.length; i += 1) {
       const byte = chunk[i]!;
       switch (this.#state) {
         case "ground":
+          // The ESC stays in the verbatim run until it turns out to start an APC/DCS.
+          if (ground < 0) ground = i;
           if (byte === ESC) {
-            flushGround(i);
+            escAt = i;
             this.#held = [byte];
             this.#state = "esc";
-          } else if (ground < 0) ground = i;
+          }
           break;
         case "esc":
-          if (byte === 0x5f) {
+          if (byte === 0x5f || byte === 0x50) {
+            if (escAt >= 0) flushGround(escAt);
             this.#held.push(byte);
-            this.#state = "apc-start";
-          } else if (byte === 0x50) {
-            this.#held.push(byte);
-            this.#prefixMatched = 0;
-            this.#state = "dcs-start";
-          } else if (byte === ESC) {
-            out.push(...this.#held);
-            this.#held = [byte];
+            if (byte === 0x50) this.#prefixMatched = 0;
+            this.#state = byte === 0x5f ? "apc-start" : "dcs-start";
           } else {
-            out.push(...this.#held, byte);
-            this.#held = [];
-            this.#state = "ground";
+            if (escAt < 0) {
+              emit(...this.#held);
+              ground = i;
+            }
+            if (byte === ESC) {
+              escAt = i;
+              this.#held = [byte];
+            } else {
+              this.#held = [];
+              this.#state = "ground";
+            }
           }
           break;
         case "apc-start":
@@ -150,7 +157,7 @@ export class KittyApcScanner {
             this.#state = "apc-body";
           } else {
             // Another APC: the VT parser ignores it; pass it through untouched.
-            out.push(...this.#held, byte);
+            emit(...this.#held, byte);
             this.#held = [];
             this.#state = "ground";
           }
@@ -179,6 +186,7 @@ export class KittyApcScanner {
           if (byte !== 0x5c) {
             this.#state = "esc";
             this.#held = [ESC];
+            escAt = -1;
             i -= 1;
           }
           break;
@@ -193,7 +201,7 @@ export class KittyApcScanner {
               this.#state = "pt-body";
             }
           } else {
-            out.push(...this.#held, byte);
+            emit(...this.#held, byte);
             this.#held = [];
             this.#state = "ground";
           }
@@ -215,11 +223,9 @@ export class KittyApcScanner {
             this.#nextMarker = nested.#nextMarker;
             for (const command of result.commands) {
               commands.push(command);
-              for (const b of Buffer.from(
-                `\x1b]${KITTY_PLACEMENT_OSC};${command.marker}\x07`,
-                "latin1",
-              ))
-                out.push(b);
+              parts.push(
+                Buffer.from(`\x1b]${KITTY_PLACEMENT_OSC};${command.marker}\x07`, "latin1"),
+              );
             }
             this.#inner = [];
             this.#state = "ground";
@@ -230,8 +236,13 @@ export class KittyApcScanner {
           break;
       }
     }
-    flushGround(chunk.length);
-    return { forward: Uint8Array.from(out), commands };
+    // A trailing ESC is held for the next chunk, not forwarded twice.
+    flushGround(this.#state === "esc" && escAt >= 0 ? escAt : chunk.length);
+    const forward =
+      parts.length === 1 && parts[0]!.length === chunk.length && parts[0]!.buffer === chunk.buffer
+        ? chunk
+        : Uint8Array.from(Buffer.concat(parts));
+    return { forward, commands };
   }
 }
 

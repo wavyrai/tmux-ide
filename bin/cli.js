@@ -57882,12 +57882,14 @@ var init_kitty_graphics = __esm({
       #nextMarker = 1;
       #overflowed = false;
       scan(chunk) {
-        const out = [];
+        const parts = [];
+        const emit = (...bytes) => void parts.push(Uint8Array.from(bytes));
         const commands2 = [];
         let ground = -1;
+        let escAt = -1;
         const flushGround = (end) => {
           if (ground >= 0) {
-            for (let k = ground; k < end; k += 1) out.push(chunk[k]);
+            if (end > ground) parts.push(chunk.subarray(ground, end));
             ground = -1;
           }
         };
@@ -57896,34 +57898,37 @@ var init_kitty_graphics = __esm({
           if (!command3) return;
           const marker = this.#nextMarker++;
           commands2.push({ ...command3, marker });
-          for (const byte of Buffer.from(`\x1B]${KITTY_PLACEMENT_OSC};${marker}\x07`, "latin1"))
-            out.push(byte);
+          parts.push(Buffer.from(`\x1B]${KITTY_PLACEMENT_OSC};${marker}\x07`, "latin1"));
         };
         for (let i = 0; i < chunk.length; i += 1) {
           const byte = chunk[i];
           switch (this.#state) {
             case "ground":
+              if (ground < 0) ground = i;
               if (byte === ESC) {
-                flushGround(i);
+                escAt = i;
                 this.#held = [byte];
                 this.#state = "esc";
-              } else if (ground < 0) ground = i;
+              }
               break;
             case "esc":
-              if (byte === 95) {
+              if (byte === 95 || byte === 80) {
+                if (escAt >= 0) flushGround(escAt);
                 this.#held.push(byte);
-                this.#state = "apc-start";
-              } else if (byte === 80) {
-                this.#held.push(byte);
-                this.#prefixMatched = 0;
-                this.#state = "dcs-start";
-              } else if (byte === ESC) {
-                out.push(...this.#held);
-                this.#held = [byte];
+                if (byte === 80) this.#prefixMatched = 0;
+                this.#state = byte === 95 ? "apc-start" : "dcs-start";
               } else {
-                out.push(...this.#held, byte);
-                this.#held = [];
-                this.#state = "ground";
+                if (escAt < 0) {
+                  emit(...this.#held);
+                  ground = i;
+                }
+                if (byte === ESC) {
+                  escAt = i;
+                  this.#held = [byte];
+                } else {
+                  this.#held = [];
+                  this.#state = "ground";
+                }
               }
               break;
             case "apc-start":
@@ -57934,7 +57939,7 @@ var init_kitty_graphics = __esm({
                 this.#held = [];
                 this.#state = "apc-body";
               } else {
-                out.push(...this.#held, byte);
+                emit(...this.#held, byte);
                 this.#held = [];
                 this.#state = "ground";
               }
@@ -57962,6 +57967,7 @@ var init_kitty_graphics = __esm({
               if (byte !== 92) {
                 this.#state = "esc";
                 this.#held = [ESC];
+                escAt = -1;
                 i -= 1;
               }
               break;
@@ -57976,7 +57982,7 @@ var init_kitty_graphics = __esm({
                   this.#state = "pt-body";
                 }
               } else {
-                out.push(...this.#held, byte);
+                emit(...this.#held, byte);
                 this.#held = [];
                 this.#state = "ground";
               }
@@ -57996,11 +58002,9 @@ var init_kitty_graphics = __esm({
                 this.#nextMarker = nested.#nextMarker;
                 for (const command3 of result2.commands) {
                   commands2.push(command3);
-                  for (const b of Buffer.from(
-                    `\x1B]${KITTY_PLACEMENT_OSC};${command3.marker}\x07`,
-                    "latin1"
-                  ))
-                    out.push(b);
+                  parts.push(
+                    Buffer.from(`\x1B]${KITTY_PLACEMENT_OSC};${command3.marker}\x07`, "latin1")
+                  );
                 }
                 this.#inner = [];
                 this.#state = "ground";
@@ -58011,8 +58015,9 @@ var init_kitty_graphics = __esm({
               break;
           }
         }
-        flushGround(chunk.length);
-        return { forward: Uint8Array.from(out), commands: commands2 };
+        flushGround(this.#state === "esc" && escAt >= 0 ? escAt : chunk.length);
+        const forward = parts.length === 1 && parts[0].length === chunk.length && parts[0].buffer === chunk.buffer ? chunk : Uint8Array.from(Buffer.concat(parts));
+        return { forward, commands: commands2 };
       }
     };
     KittyImageBudget = class {
@@ -58650,7 +58655,7 @@ var init_terminal_replica_interpreter = __esm({
         const scanned = this.#kittyScanner.scan(data);
         for (const command3 of scanned.commands) this.#kittyPending.set(command3.marker, command3);
         const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
+        await this.#writeToBackend(this.#backend, scanned.forward);
         if (this.#observability.enabled)
           this.#observability.recordSpan(
             "parse",

@@ -231,3 +231,101 @@ describe("interpreter integration", () => {
     ]);
   });
 });
+
+describe("chunked image transmissions through %output-sized writes", () => {
+  const rowText = (row: { cells: readonly { grapheme: string }[] }) =>
+    row.cells
+      .map((cell) => cell.grapheme)
+      .join("")
+      .trimEnd();
+  // An m=1 transmission in 4 KiB APC chunks, like real kitty clients send.
+  const transmission = (id: number, seed: number) => {
+    const raw = Buffer.alloc(30 * 1024);
+    for (let i = 0; i < raw.length; i += 1) raw[i] = (i * 31 + seed * 7) & 0xff;
+    const payload = raw.toString("base64");
+    let wire = "";
+    for (let offset = 0; offset < payload.length; offset += 4096) {
+      const more = offset + 4096 < payload.length ? 1 : 0;
+      const control =
+        offset === 0 ? `a=T,f=24,s=128,v=80,i=${id},U=1,c=4,r=2,m=${more}` : `m=${more}`;
+      wire += apc(control, payload.slice(offset, offset + 4096));
+    }
+    return wire;
+  };
+
+  it("never forwards image payload as text when tmux splits inside an APC", async () => {
+    const interpreter = new TerminalReplicaInterpreter({
+      generation: "00000000-0000-4000-8000-000000000002",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: "00000000-0000-4000-8000-000000000002:0",
+      cols: 110,
+      rows: 8,
+      kittyImageBudget: budget(),
+    });
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 110,
+      rows: 8,
+      chunks: [],
+      cursor: { x: 0, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    // Several frames, each followed by visible text, cut every 2000 bytes.
+    const frames = [1, 2, 3].map((n) => `${transmission(n, n)}${ESC}[H${ESC}[2JFRAME${n}\r\n`);
+    for (const frame of frames) {
+      const all = bytes(frame);
+      for (let start = 0; start < all.length; start += 2000)
+        await interpreter.enqueue({ type: "write", data: all.subarray(start, start + 2000) });
+      await interpreter.whenIdle();
+      const n = frames.indexOf(frame) + 1;
+      expect(interpreter.currentSnapshot().grid.map(rowText).filter(Boolean)).toEqual([
+        `FRAME${n}`,
+      ]);
+    }
+    await interpreter.enqueue({ type: "write", data: bytes("HELLO\r\n") });
+    await interpreter.whenIdle();
+    const snapshot = interpreter.currentSnapshot();
+    expect([...snapshot.history, ...snapshot.grid].map(rowText).filter(Boolean)).toEqual([
+      "FRAME3",
+      "HELLO",
+    ]);
+    expect(interpreter.currentGraphics()!.images).toHaveLength(3);
+  });
+
+  it("forwards identical bytes and commands for any chunking", () => {
+    let seed = 1;
+    const random = (n: number) => (seed = (seed * 1103515245 + 12345) % 2 ** 31) % n;
+    const pieces = [
+      "text ",
+      `${ESC}[1m`,
+      `${ESC}${ESC}[0m`,
+      apc("a=T,f=100,i=3", PNG.toString("base64")),
+      `${ESC}_Xother${ESC}\\`,
+      `${ESC}Ptmux;${apc("a=T,f=100,i=4", "QUJD").replaceAll(ESC, ESC + ESC)}${ESC}\\`,
+      `${ESC}Pq#0${ESC}\\`,
+      "\r\n",
+    ];
+    for (let round = 0; round < 200; round += 1) {
+      const input = bytes(Array.from({ length: 12 }, () => pieces[random(pieces.length)]).join(""));
+      const whole = scanAll(new KittyApcScanner(), input, []);
+      const cuts = [...new Set(Array.from({ length: 6 }, () => random(input.length + 1)))].sort(
+        (a, b) => a - b,
+      );
+      const split = scanAll(new KittyApcScanner(), input, cuts);
+      expect(split.forward).toBe(whole.forward);
+      expect(split.commands.map((c) => [c.marker, c.payload])).toEqual(
+        whole.commands.map((c) => [c.marker, c.payload]),
+      );
+    }
+  });
+
+  it("returns ordinary output without copying it", () => {
+    const scanner = new KittyApcScanner();
+    const chunk = bytes(`plain ${ESC}[1mbold${ESC}[0m text\r\n`);
+    expect(scanner.scan(chunk).forward).toBe(chunk);
+    // A trailing ESC is held for the next chunk, then forwarded with it.
+    expect(Buffer.from(scanner.scan(bytes(`x${ESC}`)).forward).toString("latin1")).toBe("x");
+    expect(Buffer.from(scanner.scan(bytes("[0my")).forward).toString("latin1")).toBe(`${ESC}[0my`);
+  });
+});

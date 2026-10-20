@@ -509,7 +509,10 @@ export class TerminalReplicaInterpreter {
     const scanned = this.#kittyScanner.scan(data);
     for (const command of scanned.commands) this.#kittyPending.set(command.marker, command);
     const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
+    // Always forward the scanner's output: tmux splits %output (~2 KiB) inside
+    // kitty APCs (~4 KiB chunks), so a chunk with no completed command can still
+    // be all image payload that must never reach the VT parser as text.
+    await this.#writeToBackend(this.#backend, scanned.forward);
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
