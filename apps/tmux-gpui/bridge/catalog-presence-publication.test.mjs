@@ -8,6 +8,7 @@ import { URL } from "node:url";
 import { Buffer } from "node:buffer";
 import { setTimeout, clearTimeout } from "node:timers";
 import ts from "typescript";
+import { serializeBrowserPublication } from "./browser-publication.ts";
 
 const source = await readFile(new URL("./browser.ts", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("browser.ts", source, ts.ScriptTarget.Latest, true);
@@ -80,6 +81,22 @@ function fixture(overrides = {}) {
     machines: null,
     machineMessage: null,
     MAX_FRAME: 8 * 1024 * 1024,
+    serializeBrowserPublication,
+    localCreateProof: null,
+    revokeLocalCreateOffer() {},
+    localSetup: null,
+    localSetupContext: () => false,
+    retainedFrames: { retain() {} },
+    historyDrains: new Map(),
+    historyDrainEpoch: 0,
+    retainedHistory: new Map(),
+    retainedPreview: null,
+    clearRetainedPreview() {},
+    frameProof: () => null,
+    diagnosticTmuxVersion: () => null,
+    homeRecovery: { publication: () => null },
+    homeAgentFilter: null,
+    selectionIdentity: null,
     blocked: false,
     pending: null,
     ...overrides,

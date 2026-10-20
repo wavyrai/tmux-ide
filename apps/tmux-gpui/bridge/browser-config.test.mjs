@@ -135,6 +135,11 @@ test("malformed private config stays recoverable without leaking its contents", 
         "workspaceFleetAgentRejected",
         "sessionHistory",
         "sessionHistoryRejected",
+        "diagnostics",
+        "localSetup",
+        "localSessionCreate",
+        "retainedPreview",
+        "selectionIdentity",
       ].sort(),
     );
     assert.equal(event.homeAgentRecovery, null);
@@ -197,6 +202,11 @@ test("malformed private config stays recoverable without leaking its contents", 
         "workspaceFleetAgentRejected",
         "sessionHistory",
         "sessionHistoryRejected",
+        "diagnostics",
+        "localSetup",
+        "localSessionCreate",
+        "retainedPreview",
+        "selectionIdentity",
       ].sort(),
     );
     assert.equal(registryEvent.homeAgentRecovery, null);
