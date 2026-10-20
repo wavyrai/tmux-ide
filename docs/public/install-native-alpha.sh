@@ -52,16 +52,16 @@ applications_entry() {
   ' "$1" "$HOME" "$prefix"
 }
 applications_entry check
-base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101702
+base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102001
 installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4
-archive_sha=4633e227a5ecff7cbb867185ccbb248f91fc197e96596c959cb4fa6664547324
+archive_sha=a2fa54c380bad79b1864afffde99c7a397af08bffba439a7af5764c70c5cc5df
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --max-time 300 --max-filesize 536870912 "$1" -o "$2"; }
 verify() { actual=$(shasum -a 256 "$1" | awk '{print $1}'); [ "$actual" = "$2" ] || fail 'Downloaded asset checksum mismatch'; }
-fetch "$base/tmux-ide-install-v3.mjs" "$scratch/installer.mjs"
+fetch "$base/tmux-ide-install-v4.mjs" "$scratch/installer.mjs"
 verify "$scratch/installer.mjs" "$installer_sha"
 printf '%s\n' '{"teamId":"7HWMF997US","bundleId":"com.tmux-ide.gpui.alpha","architecture":"arm64","minimumMacOS":"14.2"}' > "$scratch/policy.json"
 mkdir -p "$(dirname "$prefix")"
@@ -69,7 +69,7 @@ case "$action" in
   uninstall) "$node" "$scratch/installer.mjs" uninstall --prefix "$prefix" ;;
   rollback) "$node" "$scratch/installer.mjs" rollback --prefix "$prefix" --policy "$scratch/policy.json" ;;
   install|update)
-    fetch "$base/tmux-ide-gpui-0.1.2-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
+    fetch "$base/tmux-ide-gpui-0.1.4-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
     verify "$scratch/app.tar.gz" "$archive_sha"
     # Only the pinned, checksum-verified archive reaches tar. Bound both reads.
     "$node" --input-type=module -e '
@@ -82,7 +82,7 @@ case "$action" in
       const extraction=spawnSync("/usr/bin/tar",["-xzf",archive,"-C",destination],{stdio:"inherit",timeout:120000});
       if(extraction.error || extraction.status!==0) process.exit(1);
     ' "$scratch/app.tar.gz" "$scratch"
-    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.2-2026101702 ;;
+    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.4-2026102001 ;;
 esac
 case "$action" in
   uninstall) applications_entry remove ;;
