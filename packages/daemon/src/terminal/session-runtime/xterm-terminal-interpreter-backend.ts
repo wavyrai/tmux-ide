@@ -102,6 +102,19 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     return this.#terminal.rows;
   }
 
+  graphicsCursor(): { x: number; line: number; alternate: boolean } {
+    const buffer = this.#terminal.buffer.active;
+    return {
+      x: Math.min(buffer.cursorX, this.#terminal.cols - 1),
+      line: buffer.baseY + buffer.cursorY,
+      alternate: buffer.type === "alternate",
+    };
+  }
+
+  graphicsViewportTop(): number {
+    return this.#terminal.buffer.active.baseY;
+  }
+
   write(data: Uint8Array | string): Promise<void> {
     return new Promise((resolve) => this.#terminal.write(data, resolve));
   }

@@ -18,6 +18,13 @@ import {
   TerminalAttachmentSemanticWindowIdSchemaZ,
 } from "./semantic-identity.ts";
 import { TerminalAttachmentViewerModeSchemaZ } from "./terminal-attachments.ts";
+import {
+  TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES,
+  TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS,
+  TerminalGraphicsBlobSchemaZ,
+  TerminalGraphicsDigestSchemaZ,
+  TerminalGraphicsStateSchemaZ,
+} from "./terminal-graphics.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 import {
   TerminalDeliveryAckSchemaZ,
@@ -341,6 +348,18 @@ export const PaneStreamClockProbeFrameSchemaZ = z
   })
   .strict();
 
+/** Ask for image bytes by digest; only after the daemon sent graphics state. */
+export const PaneStreamTerminalGraphicsRequestFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-graphics-request"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    digests: z
+      .array(TerminalGraphicsDigestSchemaZ)
+      .min(1)
+      .max(TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS),
+  })
+  .strict();
+
 export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamInputFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
@@ -354,6 +373,7 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamAuthorityRequestFrameSchemaZ,
   PaneStreamAuthorityReleaseFrameSchemaZ,
   PaneStreamClockProbeFrameSchemaZ,
+  PaneStreamTerminalGraphicsRequestFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -645,6 +665,21 @@ export const PaneStreamTerminalDeliveryFaultFrameSchemaZ = z
     fault: TerminalDeliveryFaultSchemaZ,
   })
   .strict();
+export const PaneStreamTerminalGraphicsFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-graphics"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    state: TerminalGraphicsStateSchemaZ,
+  })
+  .strict();
+export const PaneStreamTerminalGraphicsBlobFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-graphics-blob"),
+    pane: PaneStreamSemanticPaneIdSchemaZ,
+    blob: TerminalGraphicsBlobSchemaZ,
+    data: Base64SchemaZ(Math.ceil(TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES / 3) * 4).min(4),
+  })
+  .strict();
 export const PaneStreamSemanticIntentAckFrameSchemaZ = z
   .object({
     type: z.literal("semantic-intent-ack"),
@@ -749,6 +784,8 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
   PaneStreamTerminalDeliveryChunkFrameSchemaZ,
   PaneStreamTerminalDeliveryFaultFrameSchemaZ,
+  PaneStreamTerminalGraphicsFrameSchemaZ,
+  PaneStreamTerminalGraphicsBlobFrameSchemaZ,
   PaneStreamSemanticIntentAckFrameSchemaZ,
   PaneStreamViewportAckFrameSchemaZ,
   PaneStreamAuthoritySnapshotFrameSchemaZ,

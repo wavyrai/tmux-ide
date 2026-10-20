@@ -44,6 +44,14 @@ import {
   cellsEqual,
   type CausalCellLedgerResult,
 } from "./causal-cell-ledger.ts";
+import {
+  KITTY_PLACEMENT_OSC,
+  KittyApcScanner,
+  KittyImageStore,
+  type KittyCommand,
+  type KittyImageBudget,
+} from "../graphics/kitty-graphics.ts";
+import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
@@ -115,6 +123,8 @@ export interface TerminalReplicaInterpreterOptions {
   readonly observability?: SessionRuntimeObservability;
   /** Parser implementation only; SessionRuntime remains the sole state authority. */
   readonly backendFactory?: TerminalInterpreterBackendFactory;
+  /** Shared kitty image byte quotas; defaults to the daemon-wide budget. */
+  readonly kittyImageBudget?: KittyImageBudget;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -165,6 +175,13 @@ export class TerminalReplicaInterpreter {
   }> = [];
   #writeFlushScheduled = false;
   #widgetGate = false;
+  // kitty graphics: images outlive reseeds; the scanner owns split APCs.
+  readonly #kittyScanner = new KittyApcScanner();
+  readonly #kitty: KittyImageStore;
+  readonly #kittyPending = new Map<number, KittyCommand>();
+  readonly #graphicsListeners = new Set<(state: TerminalGraphicsState) => void>();
+  #graphics: TerminalGraphicsState | null = null;
+  #graphicsKey = "";
   #markerTail = "";
   #pendingResize: { cols: number; rows: number } | null = null;
   // null: no unpublished writes; undefined: a write requires full projection.
@@ -208,6 +225,10 @@ export class TerminalReplicaInterpreter {
       rows: options.rows,
       scrollback: this.#scrollback,
     });
+    this.#kitty = new KittyImageStore(
+      options.kittyImageBudget ? { budget: options.kittyImageBudget } : {},
+    );
+    this.#attachKitty(this.#backend);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
       this.#resolveSeedReady = resolve;
@@ -400,6 +421,9 @@ export class TerminalReplicaInterpreter {
       }
       const previous = this.#backend;
       this.#backend = replacement;
+      this.#attachKitty(replacement);
+      // tmux never saw cursor-anchored placements; a capture cannot restore them.
+      this.#kitty.dropCursorPlacements();
       this.#nativeReseedRequested = false;
       this.#scrollback = scrollback;
       this.#bootstrap = {
@@ -421,6 +445,7 @@ export class TerminalReplicaInterpreter {
         this.#nativeSeedBackingCandidate = undefined;
       }
       previous.dispose();
+      this.#publishGraphics();
       return;
     }
     if (operation.type === "cursor") {
@@ -445,6 +470,7 @@ export class TerminalReplicaInterpreter {
       }
       this.#backend.resize(operation.cols, operation.rows);
       this.#commit(false);
+      this.#publishGraphics();
       return;
     }
     const baseRevision = this.#revision;
@@ -462,6 +488,7 @@ export class TerminalReplicaInterpreter {
     };
     this.#revision = revision;
     this.#closed = true;
+    this.#kitty.dispose();
     this.#causalCell?.fail("transport-closed");
     this.#clearSyncRecovery();
     if (this.#needsSeed)
@@ -479,8 +506,10 @@ export class TerminalReplicaInterpreter {
     this.#admitRaw(data);
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
+    const scanned = this.#kittyScanner.scan(data);
+    for (const command of scanned.commands) this.#kittyPending.set(command.marker, command);
     const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    await this.#writeToBackend(this.#backend, data);
+    await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
@@ -519,6 +548,7 @@ export class TerminalReplicaInterpreter {
     } else {
       this.#commit(false, this.#backend.dirtyRange(), trace);
     }
+    this.#publishGraphics();
   }
 
   #scheduleSyncRecovery(): void {
@@ -716,6 +746,55 @@ export class TerminalReplicaInterpreter {
       modes: projection.modes,
       placements,
       bootstrap: this.#bootstrap,
+    });
+  }
+
+  /** The pane's kitty image store (bytes for the graphics side channel). */
+  kittyImages(): KittyImageStore {
+    return this.#kitty;
+  }
+
+  /** Latest graphics state, or null while the pane has never held an image. */
+  currentGraphics(): TerminalGraphicsState | null {
+    return this.#graphics;
+  }
+
+  onGraphics(listener: (state: TerminalGraphicsState) => void): () => void {
+    this.#graphicsListeners.add(listener);
+    return () => this.#graphicsListeners.delete(listener);
+  }
+
+  /** Publish graphics state when the store or the viewport-relative placements moved. */
+  #publishGraphics(): void {
+    if (this.#graphics === null && this.#kitty.revision === 0) return;
+    const state = this.#kitty.state(
+      this.#backend.graphicsViewportTop?.() ?? 0,
+      this.#backend.rows,
+      this.#backend.cols,
+      this.#backend.modes().alternateScreen,
+    );
+    const key = JSON.stringify([state.revision, state.placements]);
+    if (key === this.#graphicsKey) return;
+    this.#graphicsKey = key;
+    this.#graphics = state;
+    for (const listener of this.#graphicsListeners) {
+      try {
+        listener(state);
+      } catch {
+        // Renderer callbacks never poison the authoritative parser FIFO.
+      }
+    }
+  }
+
+  #attachKitty(backend: TerminalInterpreterBackend): void {
+    // Minimal test backends omit the OSC seam; they simply never place images.
+    if (typeof backend.registerOscHandler !== "function") return;
+    backend.registerOscHandler(KITTY_PLACEMENT_OSC, (data) => {
+      const command = this.#kittyPending.get(Number(data));
+      if (!command) return true;
+      this.#kittyPending.delete(Number(data));
+      this.#kitty.apply(command, backend.graphicsCursor?.() ?? null);
+      return true;
     });
   }
 

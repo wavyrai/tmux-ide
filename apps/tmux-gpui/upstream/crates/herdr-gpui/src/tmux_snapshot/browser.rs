@@ -124,6 +124,8 @@ pub(super) struct State {
     pub selected_pane: Option<String>,
     pub status: String,
     pub frame: Option<Arc<FrameData>>,
+    /// Kitty graphics placements in frame cells.
+    pub graphics: Vec<super::kitty_graphics::Placement>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -189,6 +191,8 @@ struct Publication {
     status: String,
     snapshot: Option<serde_json::Value>,
     retained_preview: Option<RetainedPreview>,
+    #[serde(default)]
+    graphics: Vec<super::kitty_graphics::Placement>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -401,6 +405,10 @@ pub(super) enum Command {
     Pane {
         request: u64,
         id: String,
+    },
+    #[serde(rename = "kitty-missing")]
+    KittyMissing {
+        digests: Vec<String>,
     },
 }
 pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
@@ -618,6 +626,13 @@ impl Reader {
             .or_else(|| p.retained_preview.map(|preview| preview.snapshot))
             .map(|s| decode::frame(&serde_json::to_vec(&s)?).map(Arc::new))
             .transpose()?;
+        match frame.as_deref() {
+            Some(frame) => super::kitty_graphics::validate(&p.graphics, frame.width, frame.height)?,
+            None if !p.graphics.is_empty() => {
+                return Err(Error::Invalid("kitty graphics without a frame"));
+            }
+            None => {}
+        }
         if !super::hit_regions::valid(&p.regions, frame.as_deref(), &p.panes) {
             return Err(Error::Invalid("invalid pane regions"));
         }
@@ -702,6 +717,7 @@ impl Reader {
             selected_pane: p.selected_pane,
             status: p.status,
             frame,
+            graphics: p.graphics,
         })
     }
 }
@@ -735,7 +751,7 @@ fn rejection_reason(error: &Error) -> &'static str {
     }
 }
 
-pub(super) fn start() -> Bridge {
+pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
     std::thread::spawn(move || {
@@ -747,6 +763,20 @@ pub(super) fn start() -> Bridge {
                 .by_ref()
                 .take(8 * 1024 * 1024 + 1)
                 .read_until(b'\n', &mut line);
+            if matches!(count, Ok(n) if n > 0 && n <= 8 * 1024 * 1024)
+                && line.last() == Some(&b'\n')
+                && super::kitty_graphics::is_chunk_line(&line)
+            {
+                // Image bytes ride beside publications; a bad chunk only loses
+                // that image, which the window reports missing.
+                if let Err(error) = kitty.accept_line(&line) {
+                    eprintln!(
+                        "tmux-preview: kitty image chunk rejected: {}",
+                        rejection_reason(&error)
+                    );
+                }
+                continue;
+            }
             let state = match count {
                 Ok(n) if n > 0 && n <= 8 * 1024 * 1024 && line.last() == Some(&b'\n') => {
                     match reader.accept(&line) {

@@ -33,6 +33,9 @@ import {
   type TerminalDeliveryVisibility,
   type WorkspaceMultiplexerMutationResult,
   type WindowLinkTopology,
+  TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS,
+  type TerminalGraphicsBlob,
+  type TerminalGraphicsState,
 } from "@tmux-ide/contracts";
 import {
   calibratePaneStreamClocks,
@@ -270,6 +273,14 @@ export interface OpenPaneStreamClientOptions {
   readonly onClockCalibrationOutcome?: (outcome: PaneStreamClockCalibrationOutcome) => void;
   readonly diagnosticNextTurn?: (callback: () => void) => () => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
+  /** Kitty graphics state; only sent when the offer carried the graphics capability. */
+  readonly onTerminalGraphics?: (pane: string, state: TerminalGraphicsState) => void;
+  /** One chunk of requested image bytes (`blob.offset` into `blob.total`). */
+  readonly onTerminalGraphicsBlob?: (
+    pane: string,
+    blob: TerminalGraphicsBlob,
+    bytes: Uint8Array,
+  ) => void;
   readonly onLayoutSnapshot?: (
     frame: Extract<PaneStreamServerFrame, { type: "layout-snapshot" }>,
   ) => void;
@@ -313,6 +324,8 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onClockCalibrationOutcome"
   | "diagnosticNextTurn"
   | "onLayout"
+  | "onTerminalGraphics"
+  | "onTerminalGraphicsBlob"
   | "onLayoutSnapshot"
   | "onInputAck"
   | "onCausalCellProof"
@@ -369,6 +382,8 @@ export interface PaneStreamRuntimeClient {
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
   ): Promise<WorkspaceMultiplexerMutationResult | null>;
+  /** Pull image bytes announced in graphics state; the daemon sends each once per request. */
+  requestTerminalGraphics(pane: string, digests: readonly string[]): void;
   close(): void;
 }
 
@@ -1590,6 +1605,14 @@ export async function connectIssuedPaneStreamRuntimeClient(
     nack: (nack) => send({ type: "terminal-delivery-nack", nack }),
     setVisibility: (address, visibility) =>
       send({ type: "terminal-delivery-visibility", ...address, visibility }),
+    requestTerminalGraphics: (pane, digests) => {
+      for (let start = 0; start < digests.length; start += TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS)
+        send({
+          type: "terminal-graphics-request",
+          pane,
+          digests: digests.slice(start, start + TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS),
+        });
+    },
     submitIntent: (operationId, intent) =>
       new Promise<WorkspaceMultiplexerMutationResult | null>((resolve, reject) => {
         const timer = createRuntimeTimer(() => {
@@ -1650,6 +1673,12 @@ function routeFrame(
       return;
     case "layout":
       options.onLayout?.(frame);
+      return;
+    case "terminal-graphics":
+      options.onTerminalGraphics?.(frame.pane, frame.state);
+      return;
+    case "terminal-graphics-blob":
+      options.onTerminalGraphicsBlob?.(frame.pane, frame.blob, decodeBase64(frame.data));
       return;
     case "layout-snapshot":
       options.onLayoutSnapshot?.(frame);

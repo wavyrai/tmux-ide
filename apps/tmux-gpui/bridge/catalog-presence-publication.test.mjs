@@ -52,6 +52,7 @@ function fixture(overrides = {}) {
     selectedPane: null,
     panes: [{ semanticPaneId: "pane-a", liveSessionId: "session-a" }],
     layouts: [],
+    kittyPlacements: [],
     fleet: null,
     acceptSessionVisit: null,
     observingTabs: false,

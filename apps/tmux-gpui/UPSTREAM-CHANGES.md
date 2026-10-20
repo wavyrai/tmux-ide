@@ -1,5 +1,14 @@
 # Changes from the pinned upstream revision
 
+- Kitty graphics: `tmux_snapshot/kitty_graphics.rs` assembles bridge image
+  chunk lines into a bounded LRU and maps publication `graphics` placements onto
+  the existing painter graphics scene (`terminal_painter/images.rs` decodes and
+  paints). `browser.rs` accepts chunk lines beside publications and a
+  `kitty-missing` command; `decode.rs` still rejects replica placements;
+  `herdr-client` `SurfaceImages` gains `insert`/`remove` for incrementally
+  arriving images; `terminal_painter.rs` gains a test-only `painted_images()`
+  accessor. See `KITTY-GRAPHICS.md`.
+
 - Native terminal web links: `tmux_snapshot/terminal_links.rs` reuses Herdr
   `terminal::link_at` HTTP(S) parsing and validation. Cmd/Ctrl-click resolves only
   the exact painted selected pane; canonical copy-region wrapping joins complete

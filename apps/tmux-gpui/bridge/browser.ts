@@ -104,6 +104,14 @@ import { mouseSchema } from "./mouse.ts";
 import { wheelSchema } from "./wheel.ts";
 import { surfacesSchema } from "./window-canvas.ts";
 import { createWindowPresentation } from "./window-presentation.ts";
+import {
+  KITTY_KNOWN_ENV,
+  canvasPlacements,
+  createKnownDigests,
+  kittyChunkLineSchema,
+  paneGraphicsSchema,
+} from "./kitty-graphics.ts";
+import type { TerminalGraphicsPlacement } from "../../../packages/contracts/src/terminal-graphics.ts";
 import { paneChoices, preferredPane, topologySchema, type Layout } from "./topology.ts";
 import { resizeSchema } from "./geometry.ts";
 import { previewInputSchema, MAX_INPUT_LINE } from "./input.ts";
@@ -147,6 +155,15 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
+  z
+    .object({
+      type: z.literal("kitty-missing"),
+      digests: z
+        .array(z.string().regex(/^[0-9a-f]{32}$/u))
+        .min(1)
+        .max(64),
+    })
+    .strict(),
   z
     .object({ type: z.literal("local-setup"), request: z.number().int().nonnegative().safe() })
     .strict(),
@@ -346,6 +363,12 @@ let snapshot: unknown = null;
 let historyOffset = 0;
 let copyRegion: unknown = null;
 let regions: unknown[] = [];
+let kittyPlacements: TerminalGraphicsPlacement[] = [];
+const kittyKnown = createKnownDigests();
+// Image chunk lines are ordered ahead of publications and never coalesced.
+const orderedLines: string[] = [];
+let orderedBytes = 0;
+const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
 let inputReady = false;
 let foreground = true;
@@ -1180,6 +1203,7 @@ function publish() {
     historyOffset: snapshot && selectedPane ? historyOffset : 0,
     copyRegion: snapshot ? copyRegion : null,
     regions: snapshot ? regions : [],
+    graphics: snapshot && !preview ? kittyPlacements : [],
     inputReady,
     resizeToken: inputReady && snapshot ? resizeToken : null,
     splitLayout: inputReady && snapshot ? splitLayout : null,
@@ -1200,8 +1224,25 @@ function publish() {
   if (blocked) pending = line;
   else blocked = !process.stdout.write(line);
 }
+// A window that cannot keep up loses whole images; it reports the gap and the
+// helper pulls them again (see kitty_graphics.rs).
+function writeOrdered(line: string) {
+  if (!blocked) {
+    blocked = !process.stdout.write(line);
+    return;
+  }
+  if (orderedBytes + line.length > MAX_ORDERED_BYTES) return;
+  orderedLines.push(line);
+  orderedBytes += line.length;
+}
 process.stdout.on("drain", () => {
   blocked = false;
+  while (orderedLines.length > 0 && !blocked) {
+    const line = orderedLines.shift()!;
+    orderedBytes -= line.length;
+    blocked = !process.stdout.write(line);
+  }
+  if (blocked) return;
   if (pending) {
     const line = pending;
     pending = null;
@@ -1419,7 +1460,10 @@ async function openPane(
         path,
         catalogOnly ? "--catalog" : "--interactive",
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, [KITTY_KNOWN_ENV]: kittyKnown.env() },
+      },
     );
     const done = new Promise<void>((resolve) =>
       child.once("close", () => {
@@ -1543,6 +1587,13 @@ async function openPane(
           publicationStage = "decode";
           const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
           buffer = buffer.subarray(end + 1);
+          if (event && typeof event === "object" && "kittyImageChunk" in event) {
+            publicationStage = "graphics";
+            const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
+            kittyKnown.observe(chunk);
+            writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
+            continue;
+          }
           publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
@@ -2047,6 +2098,10 @@ async function openPane(
           historyOffset = snapshot ? scrollOffset : 0;
           copyRegion = coherent?.copyRegion ?? null;
           regions = coherent?.regions ?? [];
+          publicationStage = "graphics";
+          kittyPlacements = coherent
+            ? canvasPlacements(layout, paneGraphicsSchema.parse(event.graphics ?? []))
+            : [];
           inputReady = hasAuthority && !!snapshot;
           publicationStage = "resize-token";
           resizeToken = resizePresentationMatches(layout, coherent?.regions ?? [])
@@ -2215,6 +2270,14 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "kitty-missing") {
+    kittyKnown.forget(cmd.digests);
+    if (active && !active.catalogOnly)
+      active.child.stdin?.write(
+        JSON.stringify({ kind: "kitty-missing", digests: cmd.digests }) + "\n",
+      );
+    return;
+  }
   if (cmd.type === "create-local-session") {
     startLocalSessionCreation(cmd);
     return;

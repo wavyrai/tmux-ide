@@ -19,6 +19,7 @@ mod hit_regions;
 mod home;
 mod input_gate;
 mod keys;
+mod kitty_graphics;
 mod navigation;
 mod new_session;
 mod pane_actions;
@@ -40,7 +41,7 @@ mod tests;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
-use crate::terminal_painter::TerminalPainter;
+use crate::terminal_painter::{ImageTarget, PlacedImages, TerminalPainter};
 use gpui::{prelude::*, *};
 use herdr_client::protocol::FrameData;
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
@@ -74,29 +75,39 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<(), Error> {
         return Err(Error::TooLarge);
     }
     let frame = Arc::new(decode::frame(&bytes)?);
+    let graphics = KittyView::default();
+    graphics.placements.replace(kitty_graphics::load_static(
+        &bytes,
+        frame.width,
+        frame.height,
+        &graphics.store,
+    )?);
     if valid_only {
         println!("Validated tmux snapshot: {}x{}", frame.width, frame.height);
         return Ok(());
     }
-    show(Some(frame), None, None)
+    show(Some(frame), None, None, graphics)
 }
 
 pub(crate) fn welcome() -> Result<(), Error> {
-    show(None, None, None)
+    show(None, None, None, KittyView::default())
 }
 
 pub(crate) fn live() -> Result<(), Error> {
-    show(None, Some(stream::start()), None)
+    show(None, Some(stream::start()), None, KittyView::default())
 }
 
 pub(crate) fn browse() -> Result<(), Error> {
-    show(None, None, Some(browser::start()))
+    let graphics = KittyView::default();
+    let bridge = browser::start(graphics.store.clone());
+    show(None, None, Some(bridge), graphics)
 }
 
 fn show(
     frame: Option<Arc<FrameData>>,
     mailbox: Option<stream::Mailbox>,
     browser: Option<browser::Bridge>,
+    graphics: KittyView,
 ) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
@@ -172,6 +183,7 @@ fn show(
                                         view.flush_resize_gesture(cx);
                                         view.flush_attention();
                                         view.flush_palette(cx);
+                                        view.flush_kitty_graphics(cx);
                                         view.tick_agent_indicators(cx);
                                         if view.glass.take_policy_change() {
                                             cx.notify();
@@ -228,6 +240,7 @@ fn show(
                     });
                     let mut view = SnapshotView {
                         frame,
+                        graphics: graphics.clone(),
                         presence: presence::Presence::new(window.is_window_active()),
                         _activation: Some(activation),
                         _appearance: Some(appearance),
@@ -294,8 +307,18 @@ fn show(
     Ok(())
 }
 
+/// Kitty graphics owned by one window: the image store (shared with the
+/// publication reader) and, for static snapshots, their fixed placements.
+#[derive(Clone, Default)]
+struct KittyView {
+    store: kitty_graphics::Store,
+    placements: Rc<RefCell<Vec<kitty_graphics::Placement>>>,
+}
+
 struct SnapshotView {
     frame: Option<Arc<FrameData>>,
+    /// Kitty graphics images and the static snapshot's placements.
+    graphics: KittyView,
     browsing: bool,
     presence: presence::Presence,
     _activation: Option<Subscription>,
@@ -341,6 +364,21 @@ struct SnapshotView {
     _task: Option<Task<()>>,
     painter: Rc<RefCell<TerminalPainter>>,
 }
+impl SnapshotView {
+    /// Repaint when an image completes; ask the bridge for absent images.
+    fn flush_kitty_graphics(&mut self, cx: &mut Context<Self>) {
+        if self.graphics.store.take_changed() {
+            cx.notify();
+        }
+        let missing = self.graphics.store.take_missing();
+        if !missing.is_empty()
+            && let Some(sender) = &self.browser_commands
+        {
+            let _ = sender.try_send(browser::Command::KittyMissing { digests: missing });
+        }
+    }
+}
+
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
@@ -364,6 +402,15 @@ impl SnapshotView {
             .as_ref()
             .map_or_else(Vec::new, |selection| selection.highlights.clone());
         let entity = cx.entity();
+        // Browse publications carry placements per frame; static files once.
+        let kitty_scene = if self.browsing {
+            self.graphics.store.scene(&self.browser_state.graphics)
+        } else {
+            self.graphics
+                .store
+                .scene(&self.graphics.placements.borrow())
+        };
+        let kitty_store = self.graphics.store.clone();
         let Some(frame) = self.frame.clone() else {
             let guidance = if self.browsing && self.browser_commands.is_some() {
                 "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
@@ -473,19 +520,25 @@ impl SnapshotView {
                             cells.dedup();
                             cells
                         });
-                        painter.borrow_mut().paint_frame(
-                            &frame,
-                            bounds.origin,
-                            Some(bounds.size),
-                            width,
-                            &font,
-                            &highlights,
-                            &[],
-                            None,
-                            None,
-                            window,
-                            cx,
-                        );
+                        kitty_store.with_images(|images| {
+                            painter.borrow_mut().paint_frame(
+                                &frame,
+                                bounds.origin,
+                                Some(bounds.size),
+                                width,
+                                &font,
+                                &highlights,
+                                &[],
+                                None,
+                                (!kitty_scene.is_empty()).then_some(PlacedImages {
+                                    placements: &kitty_scene,
+                                    images,
+                                    target: ImageTarget::Main,
+                                }),
+                                window,
+                                cx,
+                            )
+                        });
                         window.with_content_mask(
                             Some(ContentMask {
                                 bounds,

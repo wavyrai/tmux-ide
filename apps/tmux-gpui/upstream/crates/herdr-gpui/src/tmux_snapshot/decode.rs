@@ -15,6 +15,9 @@ struct Snapshot {
     modes: Modes,
     placements: Vec<serde_json::Value>,
     bootstrap: Bootstrap,
+    /// Static developer snapshots may carry inline images (kitty_graphics.rs).
+    #[serde(default, rename = "kittyGraphics")]
+    _kitty_graphics: Option<serde::de::IgnoredAny>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,6 +130,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         modes,
         placements,
         bootstrap,
+        _kitty_graphics: _,
     } = snapshot;
     if cols == 0 || rows == 0 || usize::from(cols) * usize::from(rows) > 262_144 {
         return Err(Error::Invalid("dimensions out of bounds"));

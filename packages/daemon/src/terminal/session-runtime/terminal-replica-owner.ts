@@ -32,6 +32,8 @@ import type {
 } from "./runtime-observability.ts";
 import { DISABLED_SESSION_RUNTIME_OBSERVABILITY } from "./runtime-observability.ts";
 import type { CausalCellLedgerResult } from "./causal-cell-ledger.ts";
+import type { KittyImage } from "../graphics/kitty-graphics.ts";
+import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -368,6 +370,18 @@ export class SessionRuntimeTerminalReplicaOwner {
         this.#listeners.delete(listener);
       },
     };
+  }
+
+  /** Kitty graphics side channel: current state now (if any), then every change. */
+  subscribeGraphics(listener: (state: TerminalGraphicsState) => void): () => void {
+    const current = this.#interpreter.currentGraphics();
+    if (current) listener(current);
+    return this.#interpreter.onGraphics(listener);
+  }
+
+  /** Image bytes by content digest, while the pane's store still holds them. */
+  graphicsImage(digest: string): KittyImage | null {
+    return this.#interpreter.kittyImages().imageByDigest(digest) ?? null;
   }
 
   async subscribeSource(
