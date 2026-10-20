@@ -7175,8 +7175,63 @@ var init_causal_cell = __esm({
   }
 });
 
-// packages/contracts/src/terminal-delivery.ts
+// packages/contracts/src/terminal-graphics.ts
 import { z as z45 } from "zod";
+var TERMINAL_GRAPHICS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES, TERMINAL_GRAPHICS_MAX_IMAGE_BYTES, TERMINAL_GRAPHICS_MAX_IMAGES, TERMINAL_GRAPHICS_MAX_PLACEMENTS, TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS, TerminalGraphicsDigestSchemaZ, TerminalGraphicsFormatSchemaZ, Dimension, Cells, CellIndex, TerminalGraphicsImageSchemaZ, TerminalGraphicsPlacementSchemaZ, TerminalGraphicsStateSchemaZ, TerminalGraphicsBlobSchemaZ;
+var init_terminal_graphics = __esm({
+  "packages/contracts/src/terminal-graphics.ts"() {
+    "use strict";
+    TERMINAL_GRAPHICS_CAPABILITY_VERSION = /* @__PURE__ */ (() => 101)();
+    TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
+    TERMINAL_GRAPHICS_MAX_IMAGE_BYTES = /* @__PURE__ */ (() => 32 * 1024 * 1024)();
+    TERMINAL_GRAPHICS_MAX_IMAGES = /* @__PURE__ */ (() => 256)();
+    TERMINAL_GRAPHICS_MAX_PLACEMENTS = /* @__PURE__ */ (() => 256)();
+    TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS = /* @__PURE__ */ (() => 64)();
+    TerminalGraphicsDigestSchemaZ = /* @__PURE__ */ (() => z45.string().regex(/^[0-9a-f]{32}$/u))();
+    TerminalGraphicsFormatSchemaZ = /* @__PURE__ */ (() => z45.enum(["png", "rgba", "rgb"]))();
+    Dimension = /* @__PURE__ */ (() => z45.number().int().min(1).max(1e4))();
+    Cells = /* @__PURE__ */ (() => z45.number().int().min(1).max(1e3))();
+    CellIndex = /* @__PURE__ */ (() => z45.number().int().min(0).max(1e3))();
+    TerminalGraphicsImageSchemaZ = /* @__PURE__ */ (() => z45.object({
+      /** Program-chosen kitty image id (placeholder cells encode it in colour). */
+      imageId: z45.number().int().min(0).max(4294967295),
+      digest: TerminalGraphicsDigestSchemaZ,
+      format: TerminalGraphicsFormatSchemaZ,
+      width: Dimension,
+      height: Dimension,
+      bytes: z45.number().int().min(1).max(TERMINAL_GRAPHICS_MAX_IMAGE_BYTES),
+      /** The `U=1` virtual placement's cell grid, when placeholders may show it. */
+      placeholder: z45.object({ columns: Cells, rows: Cells }).strict().nullable()
+    }).strict())();
+    TerminalGraphicsPlacementSchemaZ = /* @__PURE__ */ (() => z45.object({
+      digest: TerminalGraphicsDigestSchemaZ,
+      row: CellIndex,
+      column: CellIndex,
+      rows: Cells,
+      columns: Cells,
+      sourceRow: CellIndex,
+      sourceColumn: CellIndex,
+      totalRows: Cells,
+      totalColumns: Cells
+    }).strict())();
+    TerminalGraphicsStateSchemaZ = /* @__PURE__ */ (() => z45.object({
+      revision: z45.number().int().nonnegative(),
+      images: z45.array(TerminalGraphicsImageSchemaZ).max(TERMINAL_GRAPHICS_MAX_IMAGES),
+      placements: z45.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS)
+    }).strict())();
+    TerminalGraphicsBlobSchemaZ = /* @__PURE__ */ (() => z45.object({
+      digest: TerminalGraphicsDigestSchemaZ,
+      format: TerminalGraphicsFormatSchemaZ,
+      width: Dimension,
+      height: Dimension,
+      total: z45.number().int().min(1).max(TERMINAL_GRAPHICS_MAX_IMAGE_BYTES),
+      offset: z45.number().int().nonnegative().max(TERMINAL_GRAPHICS_MAX_IMAGE_BYTES)
+    }).strict())();
+  }
+});
+
+// packages/contracts/src/terminal-delivery.ts
+import { z as z46 } from "zod";
 var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
@@ -7191,76 +7246,76 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_CHUNK_BYTES = /* @__PURE__ */ (() => 256 * 1024)();
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
     TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = /* @__PURE__ */ (() => 16 * 1024 * 1024)();
-    TerminalDeliveryEncodingSchemaZ = /* @__PURE__ */ (() => z45.enum([
+    TerminalDeliveryEncodingSchemaZ = /* @__PURE__ */ (() => z46.enum([
       "semantic-compact-v1",
       "semantic-v1",
       "ansi-diff-v1",
       "ansi-raw-v1"
     ]))();
-    TerminalDeliveryOfferSchemaZ = /* @__PURE__ */ (() => z45.object({
-      protocolVersions: z45.array(z45.number().int().positive()).min(1).max(8),
-      encodings: z45.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
-      richPlacements: z45.boolean()
+    TerminalDeliveryOfferSchemaZ = /* @__PURE__ */ (() => z46.object({
+      protocolVersions: z46.array(z46.number().int().positive()).min(1).max(8),
+      encodings: z46.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
+      richPlacements: z46.boolean()
     }).strict().superRefine((value, context) => {
       if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
         context.addIssue({ code: "custom", message: "protocolVersions must be unique" });
       if (new Set(value.encodings).size !== value.encodings.length)
         context.addIssue({ code: "custom", message: "encodings must be unique" });
     }))();
-    TerminalDeliveryNegotiatedSchemaZ = /* @__PURE__ */ (() => z45.object({
-      protocolVersion: z45.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+    TerminalDeliveryNegotiatedSchemaZ = /* @__PURE__ */ (() => z46.object({
+      protocolVersion: z46.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      fallbackEncoding: z45.literal("semantic-v1").nullable().optional(),
-      richPlacements: z45.boolean(),
+      fallbackEncoding: z46.literal("semantic-v1").nullable().optional(),
+      richPlacements: z46.boolean(),
       generation: SessionRuntimeGenerationSchemaZ,
-      deliveryNonce: z45.uuid()
+      deliveryNonce: z46.uuid()
     }).strict().superRefine((value, context) => {
       if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
       if (value.richPlacements && value.encoding !== "semantic-v1" && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
     }))();
-    TerminalDeliveryNegotiationResultSchemaZ = /* @__PURE__ */ (() => z45.discriminatedUnion("accepted", [
-      z45.object({ accepted: z45.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
-      z45.object({
-        accepted: z45.literal(false),
-        reason: z45.enum([
+    TerminalDeliveryNegotiationResultSchemaZ = /* @__PURE__ */ (() => z46.discriminatedUnion("accepted", [
+      z46.object({ accepted: z46.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
+      z46.object({
+        accepted: z46.literal(false),
+        reason: z46.enum([
           "protocol-version-mismatch",
           "encoding-mismatch",
           "unsupported-capability-combination"
         ])
       }).strict()
     ]))();
-    DeliveryAddressSchemaZ = /* @__PURE__ */ (() => z45.object({
+    DeliveryAddressSchemaZ = /* @__PURE__ */ (() => z46.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z45.string().min(1).max(256),
-      deliveryNonce: z45.uuid()
+      incarnation: z46.string().min(1).max(256),
+      deliveryNonce: z46.uuid()
     }))();
     TerminalDeliveryEnvelopeSchemaZ = /* @__PURE__ */ (() => DeliveryAddressSchemaZ.extend({
-      type: z45.literal("terminal.delivery"),
-      transactionId: z45.uuid(),
+      type: z46.literal("terminal.delivery"),
+      transactionId: z46.uuid(),
       /**
        * Optional diagnostics-only controlled next-output probe id. It never grants
        * authority, is absent while tracing is disabled, and must not be interpreted
        * as general causality: unrelated external tmux output may consume the probe.
        */
-      performanceTraceId: z45.uuid().optional(),
+      performanceTraceId: z46.uuid().optional(),
       /** Finalized diagnostic proof for this exact canonical revision/hash. */
       causalCellProof: CausalCellProofV1SchemaZ.optional(),
-      protocolVersion: z45.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+      protocolVersion: z46.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      frame: z45.enum(["seed", "patch", "tombstone"]),
-      baseRevision: z45.number().int().min(-1).nullable(),
-      canonicalRevision: z45.number().int().nonnegative(),
-      canonicalStateHash: z45.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z45.string().regex(/^[0-9a-f]{16}$/u),
-      representationBytes: z45.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
-      chunkCount: z45.number().int().positive().max(256),
-      canonicalEquivalent: z45.boolean(),
-      history: z45.enum(["complete", "truncated", "not-applicable"]),
-      richPlacements: z45.boolean()
+      frame: z46.enum(["seed", "patch", "tombstone"]),
+      baseRevision: z46.number().int().min(-1).nullable(),
+      canonicalRevision: z46.number().int().nonnegative(),
+      canonicalStateHash: z46.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z46.string().regex(/^[0-9a-f]{16}$/u),
+      representationBytes: z46.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+      chunkCount: z46.number().int().positive().max(256),
+      canonicalEquivalent: z46.boolean(),
+      history: z46.enum(["complete", "truncated", "not-applicable"]),
+      richPlacements: z46.boolean()
     }).strict().superRefine((value, context) => {
       const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1";
       const expectedChunks = Math.max(
@@ -7294,23 +7349,23 @@ var init_terminal_delivery = __esm({
       if (!semantic && value.richPlacements)
         context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
     }))();
-    TerminalDeliveryFaultSchemaZ = /* @__PURE__ */ (() => z45.object({
-      type: z45.literal("terminal.delivery.fault"),
-      reason: z45.enum(["state-too-large", "source-closed", "protocol-violation"]),
-      message: z45.string().min(1).max(1024),
-      deliveryNonce: z45.uuid()
+    TerminalDeliveryFaultSchemaZ = /* @__PURE__ */ (() => z46.object({
+      type: z46.literal("terminal.delivery.fault"),
+      reason: z46.enum(["state-too-large", "source-closed", "protocol-violation"]),
+      message: z46.string().min(1).max(1024),
+      deliveryNonce: z46.uuid()
     }).strict())();
     TerminalDeliveryAckSchemaZ = /* @__PURE__ */ (() => DeliveryAddressSchemaZ.extend({
-      type: z45.literal("terminal.delivery.ack"),
-      transactionId: z45.uuid(),
-      canonicalRevision: z45.number().int().nonnegative(),
-      canonicalStateHash: z45.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z45.string().regex(/^[0-9a-f]{16}$/u)
+      type: z46.literal("terminal.delivery.ack"),
+      transactionId: z46.uuid(),
+      canonicalRevision: z46.number().int().nonnegative(),
+      canonicalStateHash: z46.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z46.string().regex(/^[0-9a-f]{16}$/u)
     }).strict())();
     TerminalDeliveryNackSchemaZ = /* @__PURE__ */ (() => DeliveryAddressSchemaZ.extend({
-      type: z45.literal("terminal.delivery.nack"),
-      transactionId: z45.uuid().nullable(),
-      reason: z45.enum([
+      type: z46.literal("terminal.delivery.nack"),
+      transactionId: z46.uuid().nullable(),
+      reason: z46.enum([
         "gap",
         "hash-mismatch",
         "decode-failed",
@@ -7318,30 +7373,30 @@ var init_terminal_delivery = __esm({
         "stale-generation",
         "protocol-violation"
       ]),
-      appliedRevision: z45.number().int().min(-1)
+      appliedRevision: z46.number().int().min(-1)
     }).strict())();
-    TerminalDeliveryVisibilitySchemaZ = /* @__PURE__ */ (() => z45.enum([
+    TerminalDeliveryVisibilitySchemaZ = /* @__PURE__ */ (() => z46.enum([
       "visible",
       "background",
       "hidden",
       "frozen"
     ]))();
-    TerminalSemanticDeliveryPayloadSchemaZ = /* @__PURE__ */ (() => z45.discriminatedUnion("frame", [
-      z45.object({
-        frame: z45.literal("seed"),
-        revision: z45.number().int().nonnegative(),
+    TerminalSemanticDeliveryPayloadSchemaZ = /* @__PURE__ */ (() => z46.discriminatedUnion("frame", [
+      z46.object({
+        frame: z46.literal("seed"),
+        revision: z46.number().int().nonnegative(),
         snapshot: TerminalReplicaSnapshotSchemaZ
       }).strict(),
-      z45.object({
-        frame: z45.literal("patch"),
-        baseRevision: z45.number().int().nonnegative(),
-        revision: z45.number().int().nonnegative(),
+      z46.object({
+        frame: z46.literal("patch"),
+        baseRevision: z46.number().int().nonnegative(),
+        revision: z46.number().int().nonnegative(),
         patch: TerminalReplicaPatchPayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "patch revision must advance"),
-      z45.object({
-        frame: z45.literal("tombstone"),
-        baseRevision: z45.number().int().nonnegative(),
-        revision: z45.number().int().nonnegative(),
+      z46.object({
+        frame: z46.literal("tombstone"),
+        baseRevision: z46.number().int().nonnegative(),
+        revision: z46.number().int().nonnegative(),
         tombstone: TerminalReplicaTombstonePayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
     ]))();
@@ -7349,8 +7404,8 @@ var init_terminal_delivery = __esm({
 });
 
 // packages/contracts/src/pane-stream.ts
-import { z as z46 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+import { z as z47 } from "zod";
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7360,15 +7415,16 @@ var init_pane_stream = __esm({
     init_issue_error();
     init_semantic_identity();
     init_terminal_attachments();
+    init_terminal_graphics();
     init_workspace_state();
     init_terminal_delivery();
     init_session_runtime();
     init_workspace_multiplexer();
     init_window_links();
     PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = /* @__PURE__ */ (() => "clock-bounds-v1")();
-    PaneStreamDiagnosticCapabilitySchemaZ = /* @__PURE__ */ (() => z46.union([
+    PaneStreamDiagnosticCapabilitySchemaZ = /* @__PURE__ */ (() => z47.union([
       CausalCellCapabilitySchemaZ,
-      z46.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1)
+      z47.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1)
     ]))();
     PANE_STREAM_PROTOCOL_VERSION = /* @__PURE__ */ (() => 2)();
     PANE_STREAM_ISSUE_PATH = /* @__PURE__ */ (() => "/api/v2/terminal/pane-streams/issue")();
@@ -7385,65 +7441,65 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_INPUT_SEQUENCE = /* @__PURE__ */ (() => 4294967295)();
     PaneStreamSemanticPaneIdSchemaZ = /* @__PURE__ */ (() => TerminalAttachmentSemanticPaneIdSchemaZ)();
     PaneStreamViewerModeSchemaZ = /* @__PURE__ */ (() => TerminalAttachmentViewerModeSchemaZ)();
-    PaneSetSchemaZ = /* @__PURE__ */ (() => z46.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane"))();
-    PaneStreamLeaseRequestSchemaZ = /* @__PURE__ */ (() => z46.object({
-      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneSetSchemaZ = /* @__PURE__ */ (() => z47.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane"))();
+    PaneStreamLeaseRequestSchemaZ = /* @__PURE__ */ (() => z47.object({
+      protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       workspaceName: WorkspaceIdSchemaZ,
       panes: PaneSetSchemaZ,
       viewerMode: PaneStreamViewerModeSchemaZ,
       /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
       terminalDelivery: TerminalDeliveryOfferSchemaZ.optional()
     }).strict())();
-    PaneStreamRedemptionTicketSchemaZ = /* @__PURE__ */ (() => z46.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u))();
-    PaneStreamLoopbackWebSocketUrlSchemaZ = /* @__PURE__ */ (() => z46.url().max(2048).refine((value) => {
+    PaneStreamRedemptionTicketSchemaZ = /* @__PURE__ */ (() => z47.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u))();
+    PaneStreamLoopbackWebSocketUrlSchemaZ = /* @__PURE__ */ (() => z47.url().max(2048).refine((value) => {
       const url = new URL(value);
       return url.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port.length > 0 && url.username.length === 0 && url.password.length === 0 && (url.pathname === PANE_STREAM_REDEEM_PATH || isTmuxServerPaneStreamPath(url.pathname)) && url.search.length === 0 && url.hash.length === 0 && url.toString() === value;
     }, "pane-stream URL must be the canonical uncredentialed loopback redemption endpoint"))();
-    PaneStreamIssueDescriptorSchemaZ = /* @__PURE__ */ (() => z46.object({
-      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamIssueDescriptorSchemaZ = /* @__PURE__ */ (() => z47.object({
+      protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       webSocketUrl: PaneStreamLoopbackWebSocketUrlSchemaZ,
-      subprotocol: z46.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
+      subprotocol: z47.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
       redemptionTicket: PaneStreamRedemptionTicketSchemaZ,
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      requestId: z46.uuid(),
-      expiresAt: z46.number().int().positive(),
+      requestId: z47.uuid(),
+      expiresAt: z47.number().int().positive(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict())();
     PaneStreamIssueErrorSchemaZ = /* @__PURE__ */ (() => TerminalIssueErrorCompatSchemaZ)();
-    PaneStreamIssueResultSchemaZ = /* @__PURE__ */ (() => z46.discriminatedUnion("status", [
-      z46.object({ status: z46.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
-      z46.object({ status: z46.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
+    PaneStreamIssueResultSchemaZ = /* @__PURE__ */ (() => z47.discriminatedUnion("status", [
+      z47.object({ status: z47.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
+      z47.object({ status: z47.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
     ]))();
-    PaneStreamIssueMutationRequestSchemaZ = /* @__PURE__ */ (() => z46.object({
-      requestId: z46.uuid(),
+    PaneStreamIssueMutationRequestSchemaZ = /* @__PURE__ */ (() => z47.object({
+      requestId: z47.uuid(),
       expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       stream: PaneStreamLeaseRequestSchemaZ
     }).strict())();
-    BoundedIdentitySchemaZ = /* @__PURE__ */ (() => z46.string().min(1).max(4096).refine((value) => !value.includes("\0")))();
-    PaneStreamRedeemFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("redeem"),
-      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
+    BoundedIdentitySchemaZ = /* @__PURE__ */ (() => z47.string().min(1).max(4096).refine((value) => !value.includes("\0")))();
+    PaneStreamRedeemFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("redeem"),
+      protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       ticket: PaneStreamRedemptionTicketSchemaZ,
-      requestId: z46.uuid(),
+      requestId: z47.uuid(),
       daemonInstanceId: BoundedIdentitySchemaZ,
       /**
        * The client commits to sending `consumed` frames, activating the
        * renderer-backlog flow owner from the first delivered frame. Card 3's
        * renderer sets this; simple transcript clients omit it.
        */
-      deliveryAcks: z46.boolean().optional(),
-      diagnosticCapabilities: z46.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
+      deliveryAcks: z47.boolean().optional(),
+      diagnosticCapabilities: z47.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict())();
     PaneStreamInputFrameMetadataShape = /* @__PURE__ */ (() => ({
-      type: z46.literal("input"),
+      type: z47.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z46.uuid().optional(),
+      performanceTraceId: z47.uuid().optional(),
       causalProbe: CausalCellProbeV1SchemaZ.optional()
     }))();
-    PaneStreamInputFrameSchemaZ = /* @__PURE__ */ (() => z46.discriminatedUnion("kind", [
+    PaneStreamInputFrameSchemaZ = /* @__PURE__ */ (() => z47.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
       SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape)
     ]).superRefine((value, context) => {
@@ -7455,15 +7511,15 @@ var init_pane_stream = __esm({
       if (value.pane !== value.causalProbe.semanticPaneId)
         context.addIssue({ code: "custom", message: "causal probe pane mismatch" });
     }))();
-    PaneStreamConsumedFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("consumed"),
+    PaneStreamConsumedFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("consumed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z46.number().int().positive()
+      seq: z47.number().int().positive()
     }).strict())();
-    PaneStreamTerminalDeliveryAckFrameSchemaZ = /* @__PURE__ */ (() => z46.object({ type: z46.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict())();
-    PaneStreamTerminalDeliveryNackFrameSchemaZ = /* @__PURE__ */ (() => z46.object({ type: z46.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict())();
-    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("terminal-delivery-visibility"),
+    PaneStreamTerminalDeliveryAckFrameSchemaZ = /* @__PURE__ */ (() => z47.object({ type: z47.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict())();
+    PaneStreamTerminalDeliveryNackFrameSchemaZ = /* @__PURE__ */ (() => z47.object({ type: z47.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict())();
+    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-delivery-visibility"),
       workspaceName: TerminalDeliveryAckSchemaZ.shape.workspaceName,
       pane: PaneStreamSemanticPaneIdSchemaZ,
       generation: TerminalDeliveryAckSchemaZ.shape.generation,
@@ -7471,54 +7527,59 @@ var init_pane_stream = __esm({
       deliveryNonce: TerminalDeliveryAckSchemaZ.shape.deliveryNonce,
       visibility: TerminalDeliveryVisibilitySchemaZ
     }).strict())();
-    PaneStreamSemanticIntentFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("semantic-intent"),
-      operationId: z46.uuid(),
+    PaneStreamSemanticIntentFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("semantic-intent"),
+      operationId: z47.uuid(),
       intent: SessionRuntimeSemanticIntentSchemaZ
     }).strict())();
-    PaneStreamViewportFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("viewport"),
+    PaneStreamViewportFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("viewport"),
       semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
-      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z47.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z47.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
       authorityLease: SessionRuntimeAuthorityLeaseSchemaZ
     }).strict().refine((frame) => frame.authorityLease.authority === "geometry", {
       message: "Viewport authority must be a geometry lease.",
       path: ["authorityLease", "authority"]
     }))();
-    PaneStreamAuthorityRequestIdSchemaZ = /* @__PURE__ */ (() => z46.uuid())();
+    PaneStreamAuthorityRequestIdSchemaZ = /* @__PURE__ */ (() => z47.uuid())();
     PaneStreamAuthorityGenerationSchemaZ = /* @__PURE__ */ (() => DaemonInstanceIdentitySchemaZ.shape.instanceId)();
-    PaneStreamPresenceFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("presence"),
+    PaneStreamPresenceFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("presence"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       state: SessionRuntimePresenceStateSchemaZ
     }).strict())();
-    PaneStreamActivityFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("activity"),
+    PaneStreamActivityFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("activity"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       activity: SessionRuntimeActivityKindSchemaZ
     }).strict())();
-    PaneStreamAuthorityRequestFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("authority-request"),
+    PaneStreamAuthorityRequestFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("authority-request"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict())();
-    PaneStreamAuthorityReleaseFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("authority-release"),
+    PaneStreamAuthorityReleaseFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("authority-release"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict())();
-    SharedMonotonicMicrosSchemaZ = /* @__PURE__ */ (() => z46.number().int().nonnegative().safe())();
-    PaneStreamClockProbeFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("clock-probe"),
-      requestId: z46.uuid(),
-      probe: z46.number().int().min(1).max(5),
+    SharedMonotonicMicrosSchemaZ = /* @__PURE__ */ (() => z47.number().int().nonnegative().safe())();
+    PaneStreamClockProbeFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("clock-probe"),
+      requestId: z47.uuid(),
+      probe: z47.number().int().min(1).max(5),
       clientSendMicros: SharedMonotonicMicrosSchemaZ
     }).strict())();
-    PaneStreamClientFrameSchemaZ = /* @__PURE__ */ (() => z46.union([
+    PaneStreamTerminalGraphicsRequestFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-graphics-request"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      digests: z47.array(TerminalGraphicsDigestSchemaZ).min(1).max(TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS)
+    }).strict())();
+    PaneStreamClientFrameSchemaZ = /* @__PURE__ */ (() => z47.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ,
       PaneStreamTerminalDeliveryAckFrameSchemaZ,
@@ -7530,69 +7591,70 @@ var init_pane_stream = __esm({
       PaneStreamActivityFrameSchemaZ,
       PaneStreamAuthorityRequestFrameSchemaZ,
       PaneStreamAuthorityReleaseFrameSchemaZ,
-      PaneStreamClockProbeFrameSchemaZ
+      PaneStreamClockProbeFrameSchemaZ,
+      PaneStreamTerminalGraphicsRequestFrameSchemaZ
     ]))();
-    Base64SchemaZ = (maxChars) => z46.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
-    ServerSeqSchemaZ = /* @__PURE__ */ (() => z46.number().int().positive())();
-    GridCellSchemaZ = /* @__PURE__ */ (() => z46.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS))();
-    CellCoordinateSchemaZ = /* @__PURE__ */ (() => z46.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS))();
-    PaneStreamReadyFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("ready"),
-      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
+    Base64SchemaZ = (maxChars) => z47.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
+    ServerSeqSchemaZ = /* @__PURE__ */ (() => z47.number().int().positive())();
+    GridCellSchemaZ = /* @__PURE__ */ (() => z47.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS))();
+    CellCoordinateSchemaZ = /* @__PURE__ */ (() => z47.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS))();
+    PaneStreamReadyFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("ready"),
+      protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
-      requestId: z46.uuid(),
+      requestId: z47.uuid(),
       /** Daemon-authenticated identity of this exact redeemed physical connection. */
       connectionClientId: BoundedIdentitySchemaZ.optional(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ,
       authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
-      diagnosticCapabilities: z46.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
+      diagnosticCapabilities: z47.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict())();
-    PaneStreamSeedBatchFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("seed-batch"),
+    PaneStreamSeedBatchFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("seed-batch"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      reset: z46.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
+      reset: z47.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
       seed: Base64SchemaZ(PANE_STREAM_MAX_SEED_BASE64_CHARS),
-      held: z46.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
-      cursor: z46.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
+      held: z47.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
+      cursor: z47.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
     }).strict())();
-    PaneStreamOutputFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("output"),
+    PaneStreamOutputFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("output"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       data: Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)
     }).strict())();
-    PaneStreamCursorFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("cursor"),
+    PaneStreamCursorFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("cursor"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       x: CellCoordinateSchemaZ,
       y: CellCoordinateSchemaZ
     }).strict())();
-    BoundedDisplayNameSchemaZ = /* @__PURE__ */ (() => z46.string().max(256).refine((value) => !/[\0\r\n]/u.test(value)))();
-    PaneDisplayNameSourceSchemaZ = /* @__PURE__ */ (() => z46.enum([
+    BoundedDisplayNameSchemaZ = /* @__PURE__ */ (() => z47.string().max(256).refine((value) => !/[\0\r\n]/u.test(value)))();
+    PaneDisplayNameSourceSchemaZ = /* @__PURE__ */ (() => z47.enum([
       "manual",
       "agent",
       "process",
       "title",
       "generated"
     ]))();
-    PaneStreamLayoutFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("layout"),
+    PaneStreamLayoutFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
       semanticWindowId: WorkspaceIdSchemaZ.nullable(),
       windowName: BoundedDisplayNameSchemaZ.nullable(),
-      currentWindow: z46.boolean(),
+      currentWindow: z47.boolean(),
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
-      zoomed: z46.boolean(),
+      zoomed: z47.boolean(),
       /** Backward-compatible while older daemons are still in the reconnect window. */
-      paneBorderStatus: z46.enum(["top", "bottom", "off"]).default("off"),
+      paneBorderStatus: z47.enum(["top", "bottom", "off"]).default("off"),
       /** Effective native window copy key mode; older daemons may omit it. */
-      modeKeys: z46.enum(["emacs", "vi"]).optional(),
-      panes: z46.array(
-        z46.object({
+      modeKeys: z47.enum(["emacs", "vi"]).optional(),
+      panes: z47.array(
+        z47.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
           /** Optional for compatibility with an older daemon during reconnect. */
@@ -7602,14 +7664,14 @@ var init_pane_stream = __esm({
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
           height: GridCellSchemaZ,
-          active: z46.boolean()
+          active: z47.boolean()
         }).strict()
       ).max(PANE_STREAM_MAX_LAYOUT_PANES)
     }).strict())();
-    PaneStreamLayoutSnapshotV1FrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("layout-snapshot"),
-      topologyEpoch: z46.number().int().nonnegative(),
-      layouts: z46.array(PaneStreamLayoutFrameSchemaZ).min(1).max(PANE_STREAM_MAX_PANES)
+    PaneStreamLayoutSnapshotV1FrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("layout-snapshot"),
+      topologyEpoch: z47.number().int().nonnegative(),
+      layouts: z47.array(PaneStreamLayoutFrameSchemaZ).min(1).max(PANE_STREAM_MAX_PANES)
     }).strict().superRefine((snapshot2, context) => {
       const windows = /* @__PURE__ */ new Set();
       const panes = /* @__PURE__ */ new Set();
@@ -7617,13 +7679,13 @@ var init_pane_stream = __esm({
       for (const [layoutIndex, layout] of snapshot2.layouts.entries()) {
         if (layout.semanticWindowId === null) {
           context.addIssue({
-            code: z46.ZodIssueCode.custom,
+            code: z47.ZodIssueCode.custom,
             message: "Layout authority snapshots require semantic window identities",
             path: ["layouts", layoutIndex, "semanticWindowId"]
           });
         } else if (windows.has(layout.semanticWindowId)) {
           context.addIssue({
-            code: z46.ZodIssueCode.custom,
+            code: z47.ZodIssueCode.custom,
             message: "Layout authority snapshots require unique windows",
             path: ["layouts", layoutIndex, "semanticWindowId"]
           });
@@ -7634,13 +7696,13 @@ var init_pane_stream = __esm({
         for (const [paneIndex, pane] of layout.panes.entries()) {
           if (pane.pane === null) {
             context.addIssue({
-              code: z46.ZodIssueCode.custom,
+              code: z47.ZodIssueCode.custom,
               message: "Layout authority snapshots require semantic pane identities",
               path: ["layouts", layoutIndex, "panes", paneIndex, "pane"]
             });
           } else if (panes.has(pane.pane)) {
             context.addIssue({
-              code: z46.ZodIssueCode.custom,
+              code: z47.ZodIssueCode.custom,
               message: "Layout authority snapshots require unique panes",
               path: ["layouts", layoutIndex, "panes", paneIndex, "pane"]
             });
@@ -7651,7 +7713,7 @@ var init_pane_stream = __esm({
       }
       if (currentWindows !== 1) {
         context.addIssue({
-          code: z46.ZodIssueCode.custom,
+          code: z47.ZodIssueCode.custom,
           message: "Layout authority snapshots require exactly one current window",
           path: ["layouts"]
         });
@@ -7690,67 +7752,78 @@ var init_pane_stream = __esm({
       }
     }))();
     PaneStreamLayoutSnapshotFrameSchemaZ = /* @__PURE__ */ (() => PaneStreamLayoutSnapshotV2FrameSchemaZ)();
-    PaneStreamFlowFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("flow"),
+    PaneStreamFlowFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("flow"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      state: z46.enum(["paused", "resumed"]),
-      reason: z46.enum(["backpressure", "requested"])
+      state: z47.enum(["paused", "resumed"]),
+      reason: z47.enum(["backpressure", "requested"])
     }).strict())();
-    PaneStreamClosedFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("closed"),
+    PaneStreamClosedFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ
     }).strict())();
-    PaneStreamInputAckFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("input-ack"),
+    PaneStreamInputAckFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+      seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
     }).strict())();
-    PaneStreamClockProbeAckFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("clock-probe-ack"),
-      requestId: z46.uuid(),
+    PaneStreamClockProbeAckFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("clock-probe-ack"),
+      requestId: z47.uuid(),
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      probe: z46.number().int().min(1).max(5),
+      probe: z47.number().int().min(1).max(5),
       clientSendMicros: SharedMonotonicMicrosSchemaZ,
       daemonReceiveMicros: SharedMonotonicMicrosSchemaZ,
       daemonSendMicros: SharedMonotonicMicrosSchemaZ
     }).strict())();
-    PaneStreamCausalCellProofFrameSchemaZ = /* @__PURE__ */ (() => z46.object({ type: z46.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict())();
-    PaneStreamCausalCellFailureFrameSchemaZ = /* @__PURE__ */ (() => z46.object({ type: z46.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict())();
-    PaneStreamTerminalDeliveryReadyFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("terminal-delivery-ready"),
+    PaneStreamCausalCellProofFrameSchemaZ = /* @__PURE__ */ (() => z47.object({ type: z47.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict())();
+    PaneStreamCausalCellFailureFrameSchemaZ = /* @__PURE__ */ (() => z47.object({ type: z47.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict())();
+    PaneStreamTerminalDeliveryReadyFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-delivery-ready"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       negotiation: TerminalDeliveryNegotiationResultSchemaZ
     }).strict())();
-    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("terminal-delivery-envelope"),
+    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-delivery-envelope"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       envelope: TerminalDeliveryEnvelopeSchemaZ
     }).strict())();
-    PaneStreamTerminalDeliveryChunkFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("terminal-delivery-chunk"),
+    PaneStreamTerminalDeliveryChunkFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-delivery-chunk"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      transactionId: z46.uuid(),
-      index: z46.number().int().nonnegative().max(255),
+      transactionId: z47.uuid(),
+      index: z47.number().int().nonnegative().max(255),
       data: Base64SchemaZ(Math.ceil(TERMINAL_DELIVERY_CHUNK_BYTES / 3) * 4)
     }).strict())();
-    PaneStreamTerminalDeliveryFaultFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("terminal-delivery-fault"),
+    PaneStreamTerminalDeliveryFaultFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-delivery-fault"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       fault: TerminalDeliveryFaultSchemaZ
     }).strict())();
-    PaneStreamSemanticIntentAckFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("semantic-intent-ack"),
-      operationId: z46.uuid(),
-      outcome: z46.discriminatedUnion("status", [
-        z46.object({
-          status: z46.literal("applied"),
+    PaneStreamTerminalGraphicsFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-graphics"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      state: TerminalGraphicsStateSchemaZ
+    }).strict())();
+    PaneStreamTerminalGraphicsBlobFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-graphics-blob"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      blob: TerminalGraphicsBlobSchemaZ,
+      data: Base64SchemaZ(Math.ceil(TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES / 3) * 4).min(4)
+    }).strict())();
+    PaneStreamSemanticIntentAckFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("semantic-intent-ack"),
+      operationId: z47.uuid(),
+      outcome: z47.discriminatedUnion("status", [
+        z47.object({
+          status: z47.literal("applied"),
           result: WorkspaceMultiplexerMutationResultSchemaZ.nullable()
         }).strict(),
-        z46.object({
-          status: z46.literal("rejected"),
-          code: z46.enum([
+        z47.object({
+          status: z47.literal("rejected"),
+          code: z47.enum([
             "controller-conflict",
             "controller-target-unavailable",
             "stale-controller-lease",
@@ -7764,34 +7837,34 @@ var init_pane_stream = __esm({
             "pane_not_active",
             "stream-unavailable"
           ]),
-          message: z46.string().min(1).max(512)
+          message: z47.string().min(1).max(512)
         }).strict()
       ])
     }).strict())();
-    PaneStreamViewportAckFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("viewport-ack"),
-      seq: z46.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z46.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      outcome: z46.enum(["ok", "geometry-authority-conflict"]),
+    PaneStreamViewportAckFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("viewport-ack"),
+      seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z47.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z47.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      outcome: z47.enum(["ok", "geometry-authority-conflict"]),
       authorityLease: SessionRuntimeAuthorityLeaseSchemaZ
     }).strict().refine((frame) => frame.authorityLease.authority === "geometry", {
       message: "Viewport authority must be a geometry lease.",
       path: ["authorityLease", "authority"]
     }))();
-    PaneStreamAuthoritySnapshotFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("authority-snapshot"),
+    PaneStreamAuthoritySnapshotFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("authority-snapshot"),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict())();
-    PaneStreamAuthorityReceiptFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("authority-receipt"),
+    PaneStreamAuthorityReceiptFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("authority-receipt"),
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ,
-      status: z46.enum(["granted", "released", "rejected"]),
+      status: z47.enum(["granted", "released", "rejected"]),
       lease: SessionRuntimeAuthorityLeaseSchemaZ.nullable(),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict())();
-    PaneStreamErrorFrameCodeSchemaZ = /* @__PURE__ */ (() => z46.enum([
+    PaneStreamErrorFrameCodeSchemaZ = /* @__PURE__ */ (() => z47.enum([
       "redemption-rejected",
       "ticket-expired",
       "live-capacity-exhausted",
@@ -7800,13 +7873,13 @@ var init_pane_stream = __esm({
       "input-rejected",
       "protocol-error"
     ]))();
-    PaneStreamErrorFrameSchemaZ = /* @__PURE__ */ (() => z46.object({
-      type: z46.literal("error"),
-      protocolVersion: z46.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamErrorFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("error"),
+      protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       code: PaneStreamErrorFrameCodeSchemaZ,
-      retryable: z46.boolean()
+      retryable: z47.boolean()
     }).strict())();
-    PaneStreamServerFrameSchemaZ = /* @__PURE__ */ (() => z46.discriminatedUnion("type", [
+    PaneStreamServerFrameSchemaZ = /* @__PURE__ */ (() => z47.discriminatedUnion("type", [
       PaneStreamReadyFrameSchemaZ,
       PaneStreamSeedBatchFrameSchemaZ,
       PaneStreamOutputFrameSchemaZ,
@@ -7823,6 +7896,8 @@ var init_pane_stream = __esm({
       PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
       PaneStreamTerminalDeliveryChunkFrameSchemaZ,
       PaneStreamTerminalDeliveryFaultFrameSchemaZ,
+      PaneStreamTerminalGraphicsFrameSchemaZ,
+      PaneStreamTerminalGraphicsBlobFrameSchemaZ,
       PaneStreamSemanticIntentAckFrameSchemaZ,
       PaneStreamViewportAckFrameSchemaZ,
       PaneStreamAuthoritySnapshotFrameSchemaZ,
@@ -7833,78 +7908,78 @@ var init_pane_stream = __esm({
 });
 
 // packages/contracts/src/control.ts
-import { z as z47 } from "zod";
+import { z as z48 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = /* @__PURE__ */ (() => 1)();
-    controlIdSchema = /* @__PURE__ */ (() => z47.union([z47.string(), z47.number()]))();
-    agentStatusSchema = /* @__PURE__ */ (() => z47.enum(["blocked", "working", "done", "idle", "unknown"]))();
-    controlRequestSchema = /* @__PURE__ */ (() => z47.object({
-      v: z47.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = /* @__PURE__ */ (() => z48.union([z48.string(), z48.number()]))();
+    agentStatusSchema = /* @__PURE__ */ (() => z48.enum(["blocked", "working", "done", "idle", "unknown"]))();
+    controlRequestSchema = /* @__PURE__ */ (() => z48.object({
+      v: z48.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z47.string().min(1),
-      params: z47.record(z47.string(), z47.unknown()).optional()
+      verb: z48.string().min(1),
+      params: z48.record(z48.string(), z48.unknown()).optional()
     }))();
-    controlErrorSchema = /* @__PURE__ */ (() => z47.object({
-      code: z47.string(),
-      message: z47.string()
+    controlErrorSchema = /* @__PURE__ */ (() => z48.object({
+      code: z48.string(),
+      message: z48.string()
     }))();
-    controlResponseSchema = /* @__PURE__ */ (() => z47.discriminatedUnion("ok", [
-      z47.object({
-        v: z47.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = /* @__PURE__ */ (() => z48.discriminatedUnion("ok", [
+      z48.object({
+        v: z48.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z47.literal(true),
-        data: z47.unknown()
+        ok: z48.literal(true),
+        data: z48.unknown()
       }),
-      z47.object({
-        v: z47.literal(CONTROL_PROTOCOL_VERSION),
+      z48.object({
+        v: z48.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z47.literal(false),
+        ok: z48.literal(false),
         error: controlErrorSchema
       })
     ]))();
-    controlEventSchema = /* @__PURE__ */ (() => z47.object({
-      v: z47.literal(CONTROL_PROTOCOL_VERSION),
-      event: z47.string().min(1),
-      data: z47.unknown()
+    controlEventSchema = /* @__PURE__ */ (() => z48.object({
+      v: z48.literal(CONTROL_PROTOCOL_VERSION),
+      event: z48.string().min(1),
+      data: z48.unknown()
     }))();
-    agentsParamsSchema = /* @__PURE__ */ (() => z47.object({
-      session: z47.string().optional()
+    agentsParamsSchema = /* @__PURE__ */ (() => z48.object({
+      session: z48.string().optional()
     }))();
-    sendParamsSchema = /* @__PURE__ */ (() => z47.object({
-      session: z47.string().min(1),
-      target: z47.string().min(1),
-      message: z47.string().min(1),
-      noEnter: z47.boolean().optional(),
-      dir: z47.string().optional()
+    sendParamsSchema = /* @__PURE__ */ (() => z48.object({
+      session: z48.string().min(1),
+      target: z48.string().min(1),
+      message: z48.string().min(1),
+      noEnter: z48.boolean().optional(),
+      dir: z48.string().optional()
     }))();
     CONTROL_WAIT_MAX_TIMEOUT_MS = /* @__PURE__ */ (() => 6e5)();
-    waitTimeoutSchema = /* @__PURE__ */ (() => z47.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional())();
-    waitParamsSchema = /* @__PURE__ */ (() => z47.discriminatedUnion("kind", [
-      z47.object({
-        kind: z47.literal("agent-status"),
-        session: z47.string().min(1),
+    waitTimeoutSchema = /* @__PURE__ */ (() => z48.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional())();
+    waitParamsSchema = /* @__PURE__ */ (() => z48.discriminatedUnion("kind", [
+      z48.object({
+        kind: z48.literal("agent-status"),
+        session: z48.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z47.object({
-        kind: z47.literal("output"),
-        target: z47.string().min(1),
-        match: z47.string().min(1),
+      z48.object({
+        kind: z48.literal("output"),
+        target: z48.string().min(1),
+        match: z48.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]))();
-    spawnPlacementSchema = /* @__PURE__ */ (() => z47.enum(["window", "split-h", "split-v"]))();
-    spawnParamsSchema = /* @__PURE__ */ (() => z47.object({
-      kind: z47.string().min(1).optional(),
-      command: z47.string().min(1).optional(),
-      session: z47.string().min(1).optional(),
-      sessionName: z47.string().min(1).optional(),
-      dir: z47.string().optional(),
+    spawnPlacementSchema = /* @__PURE__ */ (() => z48.enum(["window", "split-h", "split-v"]))();
+    spawnParamsSchema = /* @__PURE__ */ (() => z48.object({
+      kind: z48.string().min(1).optional(),
+      command: z48.string().min(1).optional(),
+      session: z48.string().min(1).optional(),
+      sessionName: z48.string().min(1).optional(),
+      dir: z48.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z47.string().optional()
+      paneId: z48.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -7912,24 +7987,24 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     }))();
-    restartAgentParamsSchema = /* @__PURE__ */ (() => z47.object({
-      paneId: z47.string().min(1),
-      kind: z47.string().min(1).optional(),
-      command: z47.string().min(1).optional()
+    restartAgentParamsSchema = /* @__PURE__ */ (() => z48.object({
+      paneId: z48.string().min(1),
+      kind: z48.string().min(1).optional(),
+      command: z48.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     }))();
-    stopAgentParamsSchema = /* @__PURE__ */ (() => z47.object({
-      paneId: z47.string().min(1)
+    stopAgentParamsSchema = /* @__PURE__ */ (() => z48.object({
+      paneId: z48.string().min(1)
     }))();
-    explainParamsSchema = /* @__PURE__ */ (() => z47.object({
-      target: z47.string().min(1)
+    explainParamsSchema = /* @__PURE__ */ (() => z48.object({
+      target: z48.string().min(1)
     }))();
   }
 });
 
 // packages/contracts/src/desktop-missions.ts
-import { z as z48 } from "zod";
+import { z as z49 } from "zod";
 var DESKTOP_MISSION_MAX_VISIBLE, DESKTOP_MISSION_MAX_HISTORY, DESKTOP_MISSION_MAX_ACTIVITY, TimestampSchemaZ3, BoundedReasonSchemaZ, DesktopMissionProofSummarySchemaZ, DesktopMissionLatestAttemptSchemaZ, DesktopMissionSummarySchemaZ, DesktopMissionHistorySummarySchemaZ, DesktopMissionActivityEventSchemaZ, DesktopMissionCountsSchemaZ, DesktopMissionWorkspacePayloadSchemaZ, DesktopMissionWorkspaceResourceSchemaZ;
 var init_desktop_missions = __esm({
   "packages/contracts/src/desktop-missions.ts"() {
@@ -7940,28 +8015,28 @@ var init_desktop_missions = __esm({
     DESKTOP_MISSION_MAX_VISIBLE = /* @__PURE__ */ (() => 64)();
     DESKTOP_MISSION_MAX_HISTORY = /* @__PURE__ */ (() => 64)();
     DESKTOP_MISSION_MAX_ACTIVITY = /* @__PURE__ */ (() => 128)();
-    TimestampSchemaZ3 = /* @__PURE__ */ (() => z48.string().datetime({ offset: false }))();
-    BoundedReasonSchemaZ = /* @__PURE__ */ (() => z48.string().min(1).max(240))();
-    DesktopMissionProofSummarySchemaZ = /* @__PURE__ */ (() => z48.object({
-      hasProof: z48.boolean(),
-      proofCount: z48.number().int().nonnegative(),
-      notesCount: z48.number().int().nonnegative(),
-      noProofReasons: z48.array(z48.string().min(1).max(160)).max(4),
-      tests: z48.object({
-        suites: z48.number().int().nonnegative(),
-        passed: z48.number().int().nonnegative(),
-        failed: z48.number().int().nonnegative(),
-        skipped: z48.number().int().nonnegative(),
-        total: z48.number().int().nonnegative()
+    TimestampSchemaZ3 = /* @__PURE__ */ (() => z49.string().datetime({ offset: false }))();
+    BoundedReasonSchemaZ = /* @__PURE__ */ (() => z49.string().min(1).max(240))();
+    DesktopMissionProofSummarySchemaZ = /* @__PURE__ */ (() => z49.object({
+      hasProof: z49.boolean(),
+      proofCount: z49.number().int().nonnegative(),
+      notesCount: z49.number().int().nonnegative(),
+      noProofReasons: z49.array(z49.string().min(1).max(160)).max(4),
+      tests: z49.object({
+        suites: z49.number().int().nonnegative(),
+        passed: z49.number().int().nonnegative(),
+        failed: z49.number().int().nonnegative(),
+        skipped: z49.number().int().nonnegative(),
+        total: z49.number().int().nonnegative()
       }).strict(),
-      commitCount: z48.number().int().nonnegative(),
-      filesChanged: z48.number().int().nonnegative(),
-      insertions: z48.number().int().nonnegative(),
-      deletions: z48.number().int().nonnegative(),
-      pullRequestCount: z48.number().int().nonnegative(),
-      artifactCount: z48.number().int().nonnegative()
+      commitCount: z49.number().int().nonnegative(),
+      filesChanged: z49.number().int().nonnegative(),
+      insertions: z49.number().int().nonnegative(),
+      deletions: z49.number().int().nonnegative(),
+      pullRequestCount: z49.number().int().nonnegative(),
+      artifactCount: z49.number().int().nonnegative()
     }).strict())();
-    DesktopMissionLatestAttemptSchemaZ = /* @__PURE__ */ (() => z48.object({
+    DesktopMissionLatestAttemptSchemaZ = /* @__PURE__ */ (() => z49.object({
       id: MissionAttemptIdSchemaZ,
       taskId: MissionTaskIdSchemaZ,
       status: MissionAttemptStatusSchemaZ,
@@ -7970,78 +8045,78 @@ var init_desktop_missions = __esm({
       harness: MissionReferenceIdSchemaZ,
       model: MissionReferenceIdSchemaZ.optional(),
       updatedAt: TimestampSchemaZ3,
-      durationMs: z48.number().int().nonnegative().nullable(),
-      proofCount: z48.number().int().nonnegative()
+      durationMs: z49.number().int().nonnegative().nullable(),
+      proofCount: z49.number().int().nonnegative()
     }).strict())();
-    DesktopMissionSummarySchemaZ = /* @__PURE__ */ (() => z48.object({
+    DesktopMissionSummarySchemaZ = /* @__PURE__ */ (() => z49.object({
       id: MissionIdSchemaZ,
-      title: z48.string().min(1).max(160),
-      summary: z48.string().min(1).max(512),
+      title: z49.string().min(1).max(160),
+      summary: z49.string().min(1).max(512),
       status: MissionStatusSchemaZ,
       column: MissionBoardColumnSchemaZ,
       updatedAt: TimestampSchemaZ3,
       startedAt: TimestampSchemaZ3.optional(),
       finishedAt: TimestampSchemaZ3.optional(),
-      durationMs: z48.number().int().nonnegative().nullable(),
+      durationMs: z49.number().int().nonnegative().nullable(),
       progress: MissionProgressSummarySchemaZ,
-      blockedCount: z48.number().int().nonnegative(),
+      blockedCount: z49.number().int().nonnegative(),
       latestAttempt: DesktopMissionLatestAttemptSchemaZ.nullable(),
       proof: DesktopMissionProofSummarySchemaZ
     }).strict())();
-    DesktopMissionHistorySummarySchemaZ = /* @__PURE__ */ (() => z48.object({
+    DesktopMissionHistorySummarySchemaZ = /* @__PURE__ */ (() => z49.object({
       mission: DesktopMissionSummarySchemaZ,
-      outcome: z48.enum(["completed", "failed", "cancelled"]),
+      outcome: z49.enum(["completed", "failed", "cancelled"]),
       startedAt: TimestampSchemaZ3.optional(),
       finishedAt: TimestampSchemaZ3,
-      durationMs: z48.number().int().nonnegative().nullable(),
-      attempts: z48.object({
-        total: z48.number().int().nonnegative(),
-        approved: z48.number().int().nonnegative(),
-        rejected: z48.number().int().nonnegative(),
-        failed: z48.number().int().nonnegative(),
-        interrupted: z48.number().int().nonnegative()
+      durationMs: z49.number().int().nonnegative().nullable(),
+      attempts: z49.object({
+        total: z49.number().int().nonnegative(),
+        approved: z49.number().int().nonnegative(),
+        rejected: z49.number().int().nonnegative(),
+        failed: z49.number().int().nonnegative(),
+        interrupted: z49.number().int().nonnegative()
       }).strict(),
-      lastEventLabel: z48.string().min(1).max(160).nullable()
+      lastEventLabel: z49.string().min(1).max(160).nullable()
     }).strict())();
-    DesktopMissionActivityEventSchemaZ = /* @__PURE__ */ (() => z48.object({
+    DesktopMissionActivityEventSchemaZ = /* @__PURE__ */ (() => z49.object({
       id: SemanticProductIdSchemaZ,
-      sequence: z48.number().int().positive(),
+      sequence: z49.number().int().positive(),
       timestamp: TimestampSchemaZ3,
       missionId: MissionIdSchemaZ,
       taskId: MissionTaskIdSchemaZ.optional(),
-      type: z48.string().min(1).max(80),
-      label: z48.string().min(1).max(160),
-      reason: z48.string().min(1).max(240).optional(),
-      actor: z48.object({
-        type: z48.enum(["user", "system", "agent", "service"]),
-        label: z48.string().min(1).max(200)
+      type: z49.string().min(1).max(80),
+      label: z49.string().min(1).max(160),
+      reason: z49.string().min(1).max(240).optional(),
+      actor: z49.object({
+        type: z49.enum(["user", "system", "agent", "service"]),
+        label: z49.string().min(1).max(200)
       }).strict()
     }).strict())();
-    DesktopMissionCountsSchemaZ = /* @__PURE__ */ (() => z48.object({
-      missions: z48.number().int().nonnegative(),
-      history: z48.number().int().nonnegative(),
-      activity: z48.number().int().nonnegative()
+    DesktopMissionCountsSchemaZ = /* @__PURE__ */ (() => z49.object({
+      missions: z49.number().int().nonnegative(),
+      history: z49.number().int().nonnegative(),
+      activity: z49.number().int().nonnegative()
     }).strict())();
-    DesktopMissionWorkspacePayloadSchemaZ = /* @__PURE__ */ (() => z48.object({
+    DesktopMissionWorkspacePayloadSchemaZ = /* @__PURE__ */ (() => z49.object({
       counts: DesktopMissionCountsSchemaZ,
-      missions: z48.array(DesktopMissionSummarySchemaZ).max(DESKTOP_MISSION_MAX_VISIBLE),
-      history: z48.array(DesktopMissionHistorySummarySchemaZ).max(DESKTOP_MISSION_MAX_HISTORY),
-      activity: z48.array(DesktopMissionActivityEventSchemaZ).max(DESKTOP_MISSION_MAX_ACTIVITY),
-      truncated: z48.boolean()
+      missions: z49.array(DesktopMissionSummarySchemaZ).max(DESKTOP_MISSION_MAX_VISIBLE),
+      history: z49.array(DesktopMissionHistorySummarySchemaZ).max(DESKTOP_MISSION_MAX_HISTORY),
+      activity: z49.array(DesktopMissionActivityEventSchemaZ).max(DESKTOP_MISSION_MAX_ACTIVITY),
+      truncated: z49.boolean()
     }))();
-    DesktopMissionWorkspaceResourceSchemaZ = /* @__PURE__ */ (() => z48.discriminatedUnion("status", [
-      DesktopMissionWorkspacePayloadSchemaZ.extend({ status: z48.literal("ready") }).strict(),
-      DesktopMissionWorkspacePayloadSchemaZ.extend({ status: z48.literal("empty") }).strict().refine(
+    DesktopMissionWorkspaceResourceSchemaZ = /* @__PURE__ */ (() => z49.discriminatedUnion("status", [
+      DesktopMissionWorkspacePayloadSchemaZ.extend({ status: z49.literal("ready") }).strict(),
+      DesktopMissionWorkspacePayloadSchemaZ.extend({ status: z49.literal("empty") }).strict().refine(
         (value) => value.counts.missions === 0 && value.counts.history === 0 && value.counts.activity === 0 && value.missions.length === 0 && value.history.length === 0 && value.activity.length === 0 && !value.truncated,
         "empty mission resources cannot contain durable mission data"
       ),
-      z48.object({ status: z48.literal("degraded"), reason: BoundedReasonSchemaZ }).strict()
+      z49.object({ status: z49.literal("degraded"), reason: BoundedReasonSchemaZ }).strict()
     ]))();
   }
 });
 
 // packages/contracts/src/visual-tokens.ts
-import { z as z49 } from "zod";
+import { z as z50 } from "zod";
 function mixSrgbColors(left, right, rightWeight) {
   const weight = Math.max(0, Math.min(1, rightWeight));
   const channel = (a, b) => Math.round(a * (1 - weight) + b * weight);
@@ -8073,32 +8148,32 @@ var init_visual_tokens = __esm({
   "packages/contracts/src/visual-tokens.ts"() {
     "use strict";
     VISUAL_THEME_VERSION = /* @__PURE__ */ (() => 1)();
-    RendererNeutralColorSchemaZ = /* @__PURE__ */ (() => z49.object({
-      space: z49.literal("srgb"),
-      red: z49.number().int().min(0).max(255),
-      green: z49.number().int().min(0).max(255),
-      blue: z49.number().int().min(0).max(255),
-      alpha: z49.number().int().min(0).max(255)
+    RendererNeutralColorSchemaZ = /* @__PURE__ */ (() => z50.object({
+      space: z50.literal("srgb"),
+      red: z50.number().int().min(0).max(255),
+      green: z50.number().int().min(0).max(255),
+      blue: z50.number().int().min(0).max(255),
+      alpha: z50.number().int().min(0).max(255)
     }).strict())();
-    RhythmValueSchemaZ = /* @__PURE__ */ (() => z49.object({ unit: z49.literal("rhythm"), value: z49.number().finite().min(0).max(16) }).strict())();
-    RatioValueSchemaZ = /* @__PURE__ */ (() => z49.object({ unit: z49.literal("ratio"), value: z49.number().finite().min(0).max(20) }).strict())();
-    DurationValueSchemaZ = /* @__PURE__ */ (() => z49.object({ unit: z49.literal("ms"), value: z49.number().finite().min(0).max(1e4) }).strict())();
-    ElevationValueSchemaZ = /* @__PURE__ */ (() => z49.object({
-      level: z49.number().int().min(0).max(4),
-      intent: z49.enum(["flat", "raised", "overlay"])
+    RhythmValueSchemaZ = /* @__PURE__ */ (() => z50.object({ unit: z50.literal("rhythm"), value: z50.number().finite().min(0).max(16) }).strict())();
+    RatioValueSchemaZ = /* @__PURE__ */ (() => z50.object({ unit: z50.literal("ratio"), value: z50.number().finite().min(0).max(20) }).strict())();
+    DurationValueSchemaZ = /* @__PURE__ */ (() => z50.object({ unit: z50.literal("ms"), value: z50.number().finite().min(0).max(1e4) }).strict())();
+    ElevationValueSchemaZ = /* @__PURE__ */ (() => z50.object({
+      level: z50.number().int().min(0).max(4),
+      intent: z50.enum(["flat", "raised", "overlay"])
     }).strict())();
-    TypographyValueSchemaZ = /* @__PURE__ */ (() => z49.object({
-      family: z49.enum(["monospace", "system"]),
-      weight: z49.enum(["regular", "medium", "semibold", "bold"]),
+    TypographyValueSchemaZ = /* @__PURE__ */ (() => z50.object({
+      family: z50.enum(["monospace", "system"]),
+      weight: z50.enum(["regular", "medium", "semibold", "bold"]),
       lineHeight: RatioValueSchemaZ,
-      truncation: z49.enum(["ellipsis", "clip", "wrap"])
+      truncation: z50.enum(["ellipsis", "clip", "wrap"])
     }).strict())();
-    MotionEasingSchemaZ = /* @__PURE__ */ (() => z49.object({
-      standard: z49.enum(["linear", "standard", "decelerate"]),
-      emphasized: z49.enum(["linear", "standard", "decelerate"])
+    MotionEasingSchemaZ = /* @__PURE__ */ (() => z50.object({
+      standard: z50.enum(["linear", "standard", "decelerate"]),
+      emphasized: z50.enum(["linear", "standard", "decelerate"])
     }).strict())();
-    WindowActivityValueSchemaZ = /* @__PURE__ */ (() => z49.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict())();
-    SurfacesSchemaZ = /* @__PURE__ */ (() => z49.object({
+    WindowActivityValueSchemaZ = /* @__PURE__ */ (() => z50.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict())();
+    SurfacesSchemaZ = /* @__PURE__ */ (() => z50.object({
       canvas: RendererNeutralColorSchemaZ,
       panel: RendererNeutralColorSchemaZ,
       panelRaised: RendererNeutralColorSchemaZ,
@@ -8107,7 +8182,7 @@ var init_visual_tokens = __esm({
       headerActive: RendererNeutralColorSchemaZ,
       command: RendererNeutralColorSchemaZ
     }).strict())();
-    TextSchemaZ = /* @__PURE__ */ (() => z49.object({
+    TextSchemaZ = /* @__PURE__ */ (() => z50.object({
       primary: RendererNeutralColorSchemaZ,
       secondary: RendererNeutralColorSchemaZ,
       muted: RendererNeutralColorSchemaZ,
@@ -8115,7 +8190,7 @@ var init_visual_tokens = __esm({
       inverse: RendererNeutralColorSchemaZ,
       link: RendererNeutralColorSchemaZ
     }).strict())();
-    BordersSchemaZ = /* @__PURE__ */ (() => z49.object({
+    BordersSchemaZ = /* @__PURE__ */ (() => z50.object({
       subtle: RendererNeutralColorSchemaZ,
       default: RendererNeutralColorSchemaZ,
       focused: RendererNeutralColorSchemaZ,
@@ -8123,21 +8198,21 @@ var init_visual_tokens = __esm({
       attention: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ
     }).strict())();
-    StatusToneSchemaZ = /* @__PURE__ */ (() => z49.object({
+    StatusToneSchemaZ = /* @__PURE__ */ (() => z50.object({
       neutral: RendererNeutralColorSchemaZ,
       info: RendererNeutralColorSchemaZ,
       warning: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ,
       success: RendererNeutralColorSchemaZ
     }).strict())();
-    SelectionSchemaZ = /* @__PURE__ */ (() => z49.object({
+    SelectionSchemaZ = /* @__PURE__ */ (() => z50.object({
       selection: RendererNeutralColorSchemaZ,
       selectionText: RendererNeutralColorSchemaZ,
       hover: RendererNeutralColorSchemaZ,
       pressed: RendererNeutralColorSchemaZ,
       disabled: RendererNeutralColorSchemaZ
     }).strict())();
-    DensitySchemaZ = /* @__PURE__ */ (() => z49.object({
+    DensitySchemaZ = /* @__PURE__ */ (() => z50.object({
       cellHeight: RhythmValueSchemaZ,
       headerHeight: RhythmValueSchemaZ,
       statusHeight: RhythmValueSchemaZ,
@@ -8145,39 +8220,39 @@ var init_visual_tokens = __esm({
       sectionGap: RhythmValueSchemaZ,
       controlPadding: RhythmValueSchemaZ
     }).strict())();
-    ShapeSchemaZ = /* @__PURE__ */ (() => z49.object({
+    ShapeSchemaZ = /* @__PURE__ */ (() => z50.object({
       dockedRadius: RhythmValueSchemaZ,
       floatingRadius: RhythmValueSchemaZ,
       controlRadius: RhythmValueSchemaZ,
       statusRadius: RhythmValueSchemaZ
     }).strict())();
-    ElevationSchemaZ = /* @__PURE__ */ (() => z49.object({
+    ElevationSchemaZ = /* @__PURE__ */ (() => z50.object({
       floating: ElevationValueSchemaZ,
       palette: ElevationValueSchemaZ,
       windowMode: ElevationValueSchemaZ
     }).strict())();
-    MotionSchemaZ = /* @__PURE__ */ (() => z49.object({
+    MotionSchemaZ = /* @__PURE__ */ (() => z50.object({
       instant: DurationValueSchemaZ,
       fast: DurationValueSchemaZ,
       standard: DurationValueSchemaZ,
       emphasized: DurationValueSchemaZ,
       easing: MotionEasingSchemaZ
     }).strict())();
-    TypographySchemaZ = /* @__PURE__ */ (() => z49.object({
+    TypographySchemaZ = /* @__PURE__ */ (() => z50.object({
       workspace: TypographyValueSchemaZ,
       label: TypographyValueSchemaZ,
       title: TypographyValueSchemaZ,
       metadata: TypographyValueSchemaZ,
       code: TypographyValueSchemaZ
     }).strict())();
-    FocusSchemaZ = /* @__PURE__ */ (() => z49.object({
+    FocusSchemaZ = /* @__PURE__ */ (() => z50.object({
       outline: RhythmValueSchemaZ,
       outlineOffset: RhythmValueSchemaZ,
       focusContrast: RatioValueSchemaZ,
       highContrastOutline: RendererNeutralColorSchemaZ
     }).strict())();
-    WindowActivitySchemaZ = /* @__PURE__ */ (() => z49.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict())();
-    VisualTokenOverridesV1SchemaZ = /* @__PURE__ */ (() => z49.object({
+    WindowActivitySchemaZ = /* @__PURE__ */ (() => z50.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict())();
+    VisualTokenOverridesV1SchemaZ = /* @__PURE__ */ (() => z50.object({
       surfaces: SurfacesSchemaZ.partial().optional(),
       text: TextSchemaZ.partial().optional(),
       borders: BordersSchemaZ.partial().optional(),
@@ -8191,22 +8266,22 @@ var init_visual_tokens = __esm({
       focus: FocusSchemaZ.partial().optional(),
       windowActivity: WindowActivitySchemaZ.partial().optional()
     }).strict())();
-    ThemeIdSchemaZ = /* @__PURE__ */ (() => z49.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u))();
-    ThemeNameSchemaZ = /* @__PURE__ */ (() => z49.string().min(1).max(120))();
-    ThemeAppearanceSchemaZ = /* @__PURE__ */ (() => z49.enum(["dark", "light"]))();
-    VisualThemeDocumentV1SchemaZ = /* @__PURE__ */ (() => z49.object({
-      version: z49.literal(VISUAL_THEME_VERSION),
+    ThemeIdSchemaZ = /* @__PURE__ */ (() => z50.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u))();
+    ThemeNameSchemaZ = /* @__PURE__ */ (() => z50.string().min(1).max(120))();
+    ThemeAppearanceSchemaZ = /* @__PURE__ */ (() => z50.enum(["dark", "light"]))();
+    VisualThemeDocumentV1SchemaZ = /* @__PURE__ */ (() => z50.object({
+      version: z50.literal(VISUAL_THEME_VERSION),
       id: ThemeIdSchemaZ,
       name: ThemeNameSchemaZ,
       appearance: ThemeAppearanceSchemaZ.optional(),
       overrides: VisualTokenOverridesV1SchemaZ
     }).strict())();
-    ThemeAccessibilityPreferencesSchemaZ = /* @__PURE__ */ (() => z49.object({ reducedMotion: z49.boolean(), increasedContrast: z49.boolean() }).strict())();
+    ThemeAccessibilityPreferencesSchemaZ = /* @__PURE__ */ (() => z50.object({ reducedMotion: z50.boolean(), increasedContrast: z50.boolean() }).strict())();
   }
 });
 
 // packages/contracts/src/cohesion-fixture.ts
-import { z as z50 } from "zod";
+import { z as z51 } from "zod";
 var COHESION_FIXTURE_VERSION, LabelSchemaZ, OptionalLabelSchemaZ, ReadinessSchemaZ, SessionSidebarItemSchemaZ, AgentSidebarItemSchemaZ, PaneActionSchemaZ, PaneFixtureSchemaZ, DockToolDataSchemaZ, DockToolFixtureSchemaZ, ConnectionRecoverySchemaZ, CohesionFixtureV1SchemaZ;
 var init_cohesion_fixture = __esm({
   "packages/contracts/src/cohesion-fixture.ts"() {
@@ -8219,30 +8294,30 @@ var init_cohesion_fixture = __esm({
     init_pane_appearance();
     init_visual_tokens();
     COHESION_FIXTURE_VERSION = /* @__PURE__ */ (() => 1)();
-    LabelSchemaZ = /* @__PURE__ */ (() => z50.string().min(1).max(160))();
-    OptionalLabelSchemaZ = /* @__PURE__ */ (() => z50.string().min(1).max(240).nullable())();
-    ReadinessSchemaZ = /* @__PURE__ */ (() => z50.object({
-      state: z50.enum(["ready", "warning", "blocked"]),
-      facts: z50.array(LabelSchemaZ).max(24),
-      warnings: z50.array(LabelSchemaZ).max(24)
+    LabelSchemaZ = /* @__PURE__ */ (() => z51.string().min(1).max(160))();
+    OptionalLabelSchemaZ = /* @__PURE__ */ (() => z51.string().min(1).max(240).nullable())();
+    ReadinessSchemaZ = /* @__PURE__ */ (() => z51.object({
+      state: z51.enum(["ready", "warning", "blocked"]),
+      facts: z51.array(LabelSchemaZ).max(24),
+      warnings: z51.array(LabelSchemaZ).max(24)
     }).strict())();
-    SessionSidebarItemSchemaZ = /* @__PURE__ */ (() => z50.object({
+    SessionSidebarItemSchemaZ = /* @__PURE__ */ (() => z51.object({
       id: SemanticProductIdSchemaZ,
       label: LabelSchemaZ,
-      state: z50.enum(["connected", "reconnecting", "disconnected"]),
-      active: z50.boolean()
+      state: z51.enum(["connected", "reconnecting", "disconnected"]),
+      active: z51.boolean()
     }).strict())();
-    AgentSidebarItemSchemaZ = /* @__PURE__ */ (() => z50.object({
+    AgentSidebarItemSchemaZ = /* @__PURE__ */ (() => z51.object({
       team: PaneTeamMembershipSchemaZ.optional(),
       id: SemanticProductIdSchemaZ,
       name: LabelSchemaZ,
-      harness: z50.enum(["codex", "claude-code", "custom"]),
+      harness: z51.enum(["codex", "claude-code", "custom"]),
       activity: AgentActivitySchemaZ,
       paneId: SemanticProductIdSchemaZ.nullable(),
-      attention: z50.boolean()
+      attention: z51.boolean()
     }).strict())();
-    PaneActionSchemaZ = /* @__PURE__ */ (() => z50.object({
-      id: z50.enum([
+    PaneActionSchemaZ = /* @__PURE__ */ (() => z51.object({
+      id: z51.enum([
         "focus-terminal",
         "split",
         "duplicate",
@@ -8253,13 +8328,13 @@ var init_cohesion_fixture = __esm({
       icon: SemanticIconIdSchemaZ,
       label: LabelSchemaZ,
       commandId: CommandIdSchemaZ,
-      available: z50.boolean(),
+      available: z51.boolean(),
       disabledReason: OptionalLabelSchemaZ
     }).strict().refine((action) => action.available === (action.disabledReason === null), {
       message: "available actions must not have a disabled reason and unavailable actions must",
       path: ["disabledReason"]
     }))();
-    PaneFixtureSchemaZ = /* @__PURE__ */ (() => z50.object({
+    PaneFixtureSchemaZ = /* @__PURE__ */ (() => z51.object({
       id: SemanticProductIdSchemaZ,
       role: PaneRoleIdSchemaZ,
       title: LabelSchemaZ,
@@ -8267,7 +8342,7 @@ var init_cohesion_fixture = __esm({
       terminalSourceId: SemanticProductIdSchemaZ.nullable(),
       agentId: SemanticProductIdSchemaZ.nullable(),
       state: PaneVisualStateV1SchemaZ,
-      actions: z50.array(PaneActionSchemaZ).min(1).max(6)
+      actions: z51.array(PaneActionSchemaZ).min(1).max(6)
     }).strict().superRefine((pane, ctx) => {
       const expectedOrder = [
         "focus-terminal",
@@ -8282,7 +8357,7 @@ var init_cohesion_fixture = __esm({
         const order = expectedOrder.indexOf(action.id);
         if (order <= last) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "pane actions must follow canonical action order",
             path: ["actions", index, "id"]
           });
@@ -8290,74 +8365,74 @@ var init_cohesion_fixture = __esm({
         last = order;
       }
     }))();
-    DockToolDataSchemaZ = /* @__PURE__ */ (() => z50.discriminatedUnion("kind", [
-      z50.object({
-        kind: z50.literal("files"),
+    DockToolDataSchemaZ = /* @__PURE__ */ (() => z51.discriminatedUnion("kind", [
+      z51.object({
+        kind: z51.literal("files"),
         selectedResourceId: SemanticProductIdSchemaZ.nullable(),
-        fileCount: z50.number().int().nonnegative()
+        fileCount: z51.number().int().nonnegative()
       }).strict(),
-      z50.object({
-        kind: z50.literal("changes"),
+      z51.object({
+        kind: z51.literal("changes"),
         selectedResourceId: SemanticProductIdSchemaZ.nullable(),
-        changeCount: z50.number().int().nonnegative()
+        changeCount: z51.number().int().nonnegative()
       }).strict(),
-      z50.object({
-        kind: z50.literal("missions"),
+      z51.object({
+        kind: z51.literal("missions"),
         missionId: SemanticProductIdSchemaZ.nullable(),
         title: LabelSchemaZ,
         status: CanonicalDomainStatusSchemaZ,
-        goalCount: z50.number().int().nonnegative(),
-        taskCount: z50.number().int().nonnegative()
+        goalCount: z51.number().int().nonnegative(),
+        taskCount: z51.number().int().nonnegative()
       }).strict(),
-      z50.object({
-        kind: z50.literal("activity"),
-        eventCount: z50.number().int().nonnegative(),
+      z51.object({
+        kind: z51.literal("activity"),
+        eventCount: z51.number().int().nonnegative(),
         latestEventLabel: OptionalLabelSchemaZ
       }).strict()
     ]))();
-    DockToolFixtureSchemaZ = /* @__PURE__ */ (() => z50.object({
+    DockToolFixtureSchemaZ = /* @__PURE__ */ (() => z51.object({
       id: DockToolIdSchemaZ,
       label: LabelSchemaZ,
       shortcut: LabelSchemaZ,
-      unreadCount: z50.number().int().nonnegative(),
+      unreadCount: z51.number().int().nonnegative(),
       disabledReason: OptionalLabelSchemaZ,
       data: DockToolDataSchemaZ
     }).strict().refine((tool) => tool.id === tool.data.kind, {
       message: "dock tool data kind must match its canonical tool id",
       path: ["data", "kind"]
     }))();
-    ConnectionRecoverySchemaZ = /* @__PURE__ */ (() => z50.object({
-      state: z50.enum(["connected", "reconnecting", "disconnected", "recovering"]),
+    ConnectionRecoverySchemaZ = /* @__PURE__ */ (() => z51.object({
+      state: z51.enum(["connected", "reconnecting", "disconnected", "recovering"]),
       message: LabelSchemaZ,
       safeState: LabelSchemaZ,
       nextAction: LabelSchemaZ
     }).strict())();
-    CohesionFixtureV1SchemaZ = /* @__PURE__ */ (() => z50.object({
-      version: z50.literal(COHESION_FIXTURE_VERSION),
-      project: z50.object({
+    CohesionFixtureV1SchemaZ = /* @__PURE__ */ (() => z51.object({
+      version: z51.literal(COHESION_FIXTURE_VERSION),
+      project: z51.object({
         id: SemanticProductIdSchemaZ,
         name: LabelSchemaZ,
         rootLabel: LabelSchemaZ,
         readiness: ReadinessSchemaZ
       }).strict(),
-      workspace: z50.object({
+      workspace: z51.object({
         id: SemanticProductIdSchemaZ,
         name: LabelSchemaZ,
         activeMode: PrimaryWorkspaceModeIdSchemaZ,
         session: SessionSidebarItemSchemaZ,
-        sidebar: z50.object({
-          sessions: z50.array(SessionSidebarItemSchemaZ).min(1).max(32),
-          agents: z50.array(AgentSidebarItemSchemaZ).max(64)
+        sidebar: z51.object({
+          sessions: z51.array(SessionSidebarItemSchemaZ).min(1).max(32),
+          agents: z51.array(AgentSidebarItemSchemaZ).max(64)
         }).strict()
       }).strict(),
-      panes: z50.array(PaneFixtureSchemaZ).min(1).max(32),
-      dock: z50.object({
-        mode: z50.enum(["collapsed", "open", "maximized"]),
+      panes: z51.array(PaneFixtureSchemaZ).min(1).max(32),
+      dock: z51.object({
+        mode: z51.enum(["collapsed", "open", "maximized"]),
         activeTool: DockToolIdSchemaZ,
-        tools: z50.array(DockToolFixtureSchemaZ).length(4)
+        tools: z51.array(DockToolFixtureSchemaZ).length(4)
       }).strict(),
       focus: FocusOverlayStateV1SchemaZ,
-      theme: z50.object({
+      theme: z51.object({
         user: VisualThemeDocumentV1SchemaZ.nullable(),
         project: VisualThemeDocumentV1SchemaZ.nullable(),
         accessibility: ThemeAccessibilityPreferencesSchemaZ
@@ -8368,7 +8443,7 @@ var init_cohesion_fixture = __esm({
       const paneIdSet = new Set(paneIds);
       if (paneIdSet.size !== paneIds.length) {
         ctx.addIssue({
-          code: z50.ZodIssueCode.custom,
+          code: z51.ZodIssueCode.custom,
           message: "pane ids must be unique",
           path: ["panes"]
         });
@@ -8376,7 +8451,7 @@ var init_cohesion_fixture = __esm({
       const agentIds = fixture.workspace.sidebar.agents.map((agent) => agent.id);
       if (new Set(agentIds).size !== agentIds.length) {
         ctx.addIssue({
-          code: z50.ZodIssueCode.custom,
+          code: z51.ZodIssueCode.custom,
           message: "agent ids must be unique",
           path: ["workspace", "sidebar", "agents"]
         });
@@ -8384,7 +8459,7 @@ var init_cohesion_fixture = __esm({
       const sessionIds = fixture.workspace.sidebar.sessions.map((session) => session.id);
       if (new Set(sessionIds).size !== sessionIds.length) {
         ctx.addIssue({
-          code: z50.ZodIssueCode.custom,
+          code: z51.ZodIssueCode.custom,
           message: "session ids must be unique",
           path: ["workspace", "sidebar", "sessions"]
         });
@@ -8393,7 +8468,7 @@ var init_cohesion_fixture = __esm({
         (session) => session.id === fixture.workspace.session.id
       )) {
         ctx.addIssue({
-          code: z50.ZodIssueCode.custom,
+          code: z51.ZodIssueCode.custom,
           message: "active session must be present in the sidebar",
           path: ["workspace", "session", "id"]
         });
@@ -8401,7 +8476,7 @@ var init_cohesion_fixture = __esm({
       for (const [index, agent] of fixture.workspace.sidebar.agents.entries()) {
         if (agent.paneId !== null && !paneIdSet.has(agent.paneId)) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "agent pane must exist in fixture panes",
             path: ["workspace", "sidebar", "agents", index, "paneId"]
           });
@@ -8415,7 +8490,7 @@ var init_cohesion_fixture = __esm({
       for (const paneId of focusReferences) {
         if (paneId !== null && !paneIdSet.has(paneId)) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "focus state references an unknown pane",
             path: ["focus"]
           });
@@ -8427,28 +8502,28 @@ var init_cohesion_fixture = __esm({
         const shouldBeSelected = pane.id === fixture.focus.layoutSelectedPaneId;
         if (pane.state.applicationFocus.pane !== shouldBeFocused) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "pane focus channel must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "pane"]
           });
         }
         if (pane.state.applicationFocus.terminalInput !== shouldOwnTerminal) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "terminal input channel must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "terminalInput"]
           });
         }
         if (pane.state.layoutInteraction.selected !== shouldBeSelected) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "layout selection channel must match canonical focus state",
             path: ["panes", index, "state", "layoutInteraction", "selected"]
           });
         }
         if (pane.state.applicationFocus.windowActive !== (fixture.focus.windowActivity === "active")) {
           ctx.addIssue({
-            code: z50.ZodIssueCode.custom,
+            code: z51.ZodIssueCode.custom,
             message: "pane window activity must match canonical focus state",
             path: ["panes", index, "state", "applicationFocus", "windowActive"]
           });
@@ -8460,7 +8535,7 @@ var init_cohesion_fixture = __esm({
       const actualDockOrder = fixture.dock.tools.map((tool) => tool.id);
       if (actualDockOrder.some((tool, index) => tool !== expectedDockOrder[index])) {
         ctx.addIssue({
-          code: z50.ZodIssueCode.custom,
+          code: z51.ZodIssueCode.custom,
           message: "dock tools must use canonical identity and order",
           path: ["dock", "tools"]
         });
@@ -8470,7 +8545,7 @@ var init_cohesion_fixture = __esm({
 });
 
 // packages/contracts/src/application-shell.ts
-import { z as z51 } from "zod";
+import { z as z52 } from "zod";
 function refineUniqueAgentPaneIds(agents, ctx, pathPrefix) {
   const paneIds = /* @__PURE__ */ new Set();
   for (const [index, agent] of agents.entries()) {
@@ -8595,7 +8670,7 @@ var init_application_shell = __esm({
     init_agent_graph_overlay();
     init_fleet_catalog();
     APPLICATION_SHELL_PROJECTION_VERSION = /* @__PURE__ */ (() => 1)();
-    TerminalResourceUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z51.enum([
+    TerminalResourceUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z52.enum([
       "invalid-runtime-proof",
       "missing-semantic-stamp",
       "invalid-semantic-stamp",
@@ -8614,25 +8689,25 @@ var init_application_shell = __esm({
       "window-stamp-inconsistent",
       "duplicate-window-stamp"
     ]))();
-    TerminalWindowResourceIdSchemaZ = /* @__PURE__ */ (() => z51.string().regex(
+    TerminalWindowResourceIdSchemaZ = /* @__PURE__ */ (() => z52.string().regex(
       /^terminal-window\.[0-9a-f]{20}$/u,
       "window grouping key must be a wire-safe window stamp digest"
     ))();
-    TerminalResourceAttachabilitySchemaZ = /* @__PURE__ */ (() => z51.discriminatedUnion("status", [
-      z51.object({
-        status: z51.literal("available"),
+    TerminalResourceAttachabilitySchemaZ = /* @__PURE__ */ (() => z52.discriminatedUnion("status", [
+      z52.object({
+        status: z52.literal("available"),
         semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
       }).strict(),
-      z51.object({
-        status: z51.literal("unavailable"),
+      z52.object({
+        status: z52.literal("unavailable"),
         reason: TerminalResourceUnavailableReasonSchemaZ
       }).strict()
     ]))();
-    ApplicationShellTerminalResourceSchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellTerminalResourceSchemaZ = /* @__PURE__ */ (() => z52.object({
       id: SemanticProductIdSchemaZ,
-      title: z51.string().min(1).max(160),
-      kind: z51.enum(["agent", "terminal"]),
-      active: z51.boolean(),
+      title: z52.string().min(1).max(160),
+      kind: z52.enum(["agent", "terminal"]),
+      active: z52.boolean(),
       attachability: TerminalResourceAttachabilitySchemaZ,
       /** Current daemon-owned pane lifetime; null means attribution is unavailable. */
       interactionEndpoint: InteractionPaneEndpointSchemaZ.options[0].nullable(),
@@ -8651,9 +8726,9 @@ var init_application_shell = __esm({
         });
       }
     }))();
-    ApplicationShellTerminalInventorySchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellTerminalInventorySchemaZ = /* @__PURE__ */ (() => z52.object({
       activeResourceId: SemanticProductIdSchemaZ.nullable(),
-      resources: z51.array(ApplicationShellTerminalResourceSchemaZ).max(512)
+      resources: z52.array(ApplicationShellTerminalResourceSchemaZ).max(512)
     }).strict().superRefine((inventory, ctx) => {
       const ids = /* @__PURE__ */ new Set();
       const active2 = inventory.resources.filter((resource3) => resource3.active);
@@ -8703,14 +8778,14 @@ var init_application_shell = __esm({
       focus: FocusOverlayStateV1SchemaZ,
       connection: CohesionFixtureV1SchemaZ.shape.connection
     }))();
-    ApplicationShellProjectionInputV1WireSchemaZ = /* @__PURE__ */ (() => z51.object(ApplicationShellProjectionInputV1Fields).strict().superRefine((input, ctx) => {
+    ApplicationShellProjectionInputV1WireSchemaZ = /* @__PURE__ */ (() => z52.object(ApplicationShellProjectionInputV1Fields).strict().superRefine((input, ctx) => {
       refineUniqueAgentPaneIds(input.workspace.sidebar.agents, ctx, [
         "workspace",
         "sidebar",
         "agents"
       ]);
     }))();
-    ApplicationShellProjectionInputV1SchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellProjectionInputV1SchemaZ = /* @__PURE__ */ (() => z52.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional()
     }).strict().superRefine((input, ctx) => {
@@ -8735,7 +8810,7 @@ var init_application_shell = __esm({
         }
       }
     }))();
-    ApplicationShellProjectionInputV2SchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellProjectionInputV2SchemaZ = /* @__PURE__ */ (() => z52.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ
     }).strict().superRefine((input, ctx) => {
@@ -8759,7 +8834,7 @@ var init_application_shell = __esm({
         }
       }
     }))();
-    ApplicationShellProjectionInputV3SchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellProjectionInputV3SchemaZ = /* @__PURE__ */ (() => z52.object({
       ...ApplicationShellProjectionInputV1Fields,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ,
       appWindows: AppWindowDocumentV1SchemaZ,
@@ -8806,53 +8881,53 @@ var init_application_shell = __esm({
       }
     }))();
     WorkspaceFixtureSchemaZ = /* @__PURE__ */ (() => CohesionFixtureV1SchemaZ.shape.workspace)();
-    ApplicationShellSurfaceProjectionSchemaZ = /* @__PURE__ */ (() => z51.object({
+    ApplicationShellSurfaceProjectionSchemaZ = /* @__PURE__ */ (() => z52.object({
       id: ProductSurfaceIdSchemaZ,
       icon: SemanticIconIdSchemaZ,
-      label: z51.string().min(1).max(160),
-      kind: z51.enum(["primary-mode", "dock-tool"]),
-      area: z51.enum(["workspace-canvas", "bottom-dock"]),
-      order: z51.number().int().nonnegative(),
+      label: z52.string().min(1).max(160),
+      kind: z52.enum(["primary-mode", "dock-tool"]),
+      area: z52.enum(["workspace-canvas", "bottom-dock"]),
+      order: z52.number().int().nonnegative(),
       owningMode: PrimaryWorkspaceModeIdSchemaZ,
-      shortcut: z51.string().min(1).max(32),
+      shortcut: z52.string().min(1).max(32),
       activation: SurfaceCommandTemplateSchemaZ,
-      active: z51.boolean(),
-      attention: z51.boolean(),
-      disabledReason: z51.string().min(1).max(240).nullable()
+      active: z52.boolean(),
+      attention: z52.boolean(),
+      disabledReason: z52.string().min(1).max(240).nullable()
     }).strict())();
-    ApplicationShellProjectionV1SchemaZ = /* @__PURE__ */ (() => z51.object({
-      version: z51.literal(APPLICATION_SHELL_PROJECTION_VERSION),
+    ApplicationShellProjectionV1SchemaZ = /* @__PURE__ */ (() => z52.object({
+      version: z52.literal(APPLICATION_SHELL_PROJECTION_VERSION),
       project: CohesionFixtureV1SchemaZ.shape.project,
-      workspace: z51.object({
+      workspace: z52.object({
         id: SemanticProductIdSchemaZ,
-        name: z51.string().min(1).max(160)
+        name: z52.string().min(1).max(160)
       }).strict(),
-      sidebar: z51.object({
+      sidebar: z52.object({
         activeSessionId: SemanticProductIdSchemaZ,
         sessions: WorkspaceFixtureSchemaZ.shape.sidebar.shape.sessions,
         agents: WorkspaceFixtureSchemaZ.shape.sidebar.shape.agents
       }).strict(),
-      primaryNavigation: z51.object({
+      primaryNavigation: z52.object({
         activeMode: PrimaryWorkspaceModeIdSchemaZ,
-        items: z51.array(ApplicationShellSurfaceProjectionSchemaZ)
+        items: z52.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
-      workspaceCanvas: z51.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
-      bottomDock: z51.object({
+      workspaceCanvas: z52.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
+      bottomDock: z52.object({
         mode: ApplicationShellDockModeSchemaZ,
         activeTool: DockToolIdSchemaZ,
-        tools: z51.array(ApplicationShellSurfaceProjectionSchemaZ)
+        tools: z52.array(ApplicationShellSurfaceProjectionSchemaZ)
       }).strict(),
       statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
       terminalInventory: ApplicationShellTerminalInventorySchemaZ.optional(),
-      focus: z51.object({
-        windowActivity: z51.enum(["active", "inactive"]),
+      focus: z52.object({
+        windowActivity: z52.enum(["active", "inactive"]),
         zone: FocusZoneSchemaZ,
         appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
         terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
         layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
-        overlays: z51.array(SemanticOverlaySchemaZ).max(16),
-        palette: z51.object({
-          open: z51.boolean(),
+        overlays: z52.array(SemanticOverlaySchemaZ).max(16),
+        palette: z52.object({
+          open: z52.boolean(),
           overlayId: SemanticProductIdSchemaZ.nullable(),
           focusReturnTarget: SemanticFocusTargetSchemaZ.nullable()
         }).strict()
@@ -8879,7 +8954,7 @@ var init_application_shell = __esm({
 });
 
 // packages/contracts/src/startup-readiness.ts
-import { z as z52 } from "zod";
+import { z as z53 } from "zod";
 function buildStartupReadinessLadder(verdicts, observedAt) {
   const rungs = [];
   let blocked = false;
@@ -8925,7 +9000,7 @@ var init_startup_readiness = __esm({
 });
 
 // packages/contracts/src/application-shell-resource.ts
-import { z as z53 } from "zod";
+import { z as z54 } from "zod";
 var APPLICATION_SHELL_RESOURCE_V1_VERSION, APPLICATION_SHELL_RESOURCE_V2_VERSION, APPLICATION_SHELL_RESOURCE_V3_VERSION;
 var init_application_shell_resource = __esm({
   "packages/contracts/src/application-shell-resource.ts"() {
@@ -8937,16 +9012,16 @@ var init_application_shell_resource = __esm({
 });
 
 // packages/contracts/src/workspace-resource-identity.ts
-import { z as z54 } from "zod";
+import { z as z55 } from "zod";
 function opaqueIdentity(prefix) {
-  return z54.string().max(prefix.length + 64).regex(new RegExp(`^${prefix.replace(".", "\\.")}[A-Za-z0-9_-]{16,64}$`, "u")).refine((value) => !RESERVED_RECORD_KEYS5.has(value), "reserved record key is not allowed");
+  return z55.string().max(prefix.length + 64).regex(new RegExp(`^${prefix.replace(".", "\\.")}[A-Za-z0-9_-]{16,64}$`, "u")).refine((value) => !RESERVED_RECORD_KEYS5.has(value), "reserved record key is not allowed");
 }
 var RESERVED_RECORD_KEYS5, WorkspaceResourceWorkspaceNameSchemaZ, WorkspaceFileResourceIdSchemaZ, WorkspaceChangeResourceIdSchemaZ, WorkspaceFilesRevisionSchemaZ, WorkspaceChangesRevisionSchemaZ, WorkspaceResourceNameSchemaZ, WorkspaceRelativeDisplayPathSchemaZ;
 var init_workspace_resource_identity = __esm({
   "packages/contracts/src/workspace-resource-identity.ts"() {
     "use strict";
     RESERVED_RECORD_KEYS5 = /* @__PURE__ */ (() => /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]))();
-    WorkspaceResourceWorkspaceNameSchemaZ = /* @__PURE__ */ (() => z54.string().trim().min(1).max(160).refine(
+    WorkspaceResourceWorkspaceNameSchemaZ = /* @__PURE__ */ (() => z55.string().trim().min(1).max(160).refine(
       (value) => [...value].every((character) => {
         const code2 = character.charCodeAt(0);
         return code2 >= 32 && code2 !== 127;
@@ -8957,14 +9032,14 @@ var init_workspace_resource_identity = __esm({
     WorkspaceChangeResourceIdSchemaZ = /* @__PURE__ */ (() => opaqueIdentity("change."))();
     WorkspaceFilesRevisionSchemaZ = /* @__PURE__ */ (() => opaqueIdentity("files-rev."))();
     WorkspaceChangesRevisionSchemaZ = /* @__PURE__ */ (() => opaqueIdentity("changes-rev."))();
-    WorkspaceResourceNameSchemaZ = /* @__PURE__ */ (() => z54.string().min(1).max(255).refine((value) => value !== "." && value !== "..", "dot path segments are not resources").refine((value) => !/[\\/\0\r\n]/u.test(value), "resource name must be one path segment").refine(
+    WorkspaceResourceNameSchemaZ = /* @__PURE__ */ (() => z55.string().min(1).max(255).refine((value) => value !== "." && value !== "..", "dot path segments are not resources").refine((value) => !/[\\/\0\r\n]/u.test(value), "resource name must be one path segment").refine(
       (value) => [...value].every((character) => {
         const code2 = character.charCodeAt(0);
         return code2 >= 32 && code2 !== 127;
       }),
       "resource name contains control characters"
     ))();
-    WorkspaceRelativeDisplayPathSchemaZ = /* @__PURE__ */ (() => z54.string().min(1).max(1024).refine((value) => !value.startsWith("/"), "workspace display path must be relative").refine((value) => !value.includes("\\"), "workspace display path uses forward slashes").refine(
+    WorkspaceRelativeDisplayPathSchemaZ = /* @__PURE__ */ (() => z55.string().min(1).max(1024).refine((value) => !value.startsWith("/"), "workspace display path must be relative").refine((value) => !value.includes("\\"), "workspace display path uses forward slashes").refine(
       (value) => [...value].every((character) => {
         const code2 = character.charCodeAt(0);
         return code2 >= 32 && code2 !== 127;
@@ -8978,7 +9053,7 @@ var init_workspace_resource_identity = __esm({
 });
 
 // packages/contracts/src/workspace-files-resource.ts
-import { z as z55 } from "zod";
+import { z as z56 } from "zod";
 var WORKSPACE_FILES_CATALOG_RESOURCE_VERSION, WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION, WORKSPACE_FILES_CATALOG_MAX_ENTRIES, WORKSPACE_FILES_MAX_BREADCRUMBS, WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS, WORKSPACE_FILE_PREVIEW_MAX_LINES, WorkspaceFileGitStatusSchemaZ, WorkspaceFileEntryKindSchemaZ, WorkspaceFileEntrySchemaZ, WorkspaceFileBreadcrumbSchemaZ, WorkspaceFilesCatalogReadySchemaZ, WorkspaceFilesCatalogUnavailableReasonSchemaZ, WorkspaceFilesCatalogUnavailableSchemaZ, WorkspaceFilesCatalogResourceV1SchemaZ, WorkspaceFilesCatalogEnvelopeV1SchemaZ, WorkspaceFilePreviewBase, WorkspaceFilePreviewReadySchemaZ, WorkspaceFilePreviewBinarySchemaZ, WorkspaceFilePreviewTooLargeSchemaZ, WorkspaceFilePreviewUnavailableReasonSchemaZ, WorkspaceFilePreviewUnavailableSchemaZ, WorkspaceFilePreviewResourceV1SchemaZ, WorkspaceFilePreviewEnvelopeV1SchemaZ;
 var init_workspace_files_resource = __esm({
   "packages/contracts/src/workspace-files-resource.ts"() {
@@ -8991,7 +9066,7 @@ var init_workspace_files_resource = __esm({
     WORKSPACE_FILES_MAX_BREADCRUMBS = /* @__PURE__ */ (() => 64)();
     WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS = /* @__PURE__ */ (() => 512 * 1024)();
     WORKSPACE_FILE_PREVIEW_MAX_LINES = /* @__PURE__ */ (() => 1e4)();
-    WorkspaceFileGitStatusSchemaZ = /* @__PURE__ */ (() => z55.enum([
+    WorkspaceFileGitStatusSchemaZ = /* @__PURE__ */ (() => z56.enum([
       "modified",
       "added",
       "deleted",
@@ -8999,16 +9074,16 @@ var init_workspace_files_resource = __esm({
       "untracked",
       "conflicted"
     ]))();
-    WorkspaceFileEntryKindSchemaZ = /* @__PURE__ */ (() => z55.enum(["directory", "file", "symlink"]))();
-    WorkspaceFileEntrySchemaZ = /* @__PURE__ */ (() => z55.strictObject({
+    WorkspaceFileEntryKindSchemaZ = /* @__PURE__ */ (() => z56.enum(["directory", "file", "symlink"]))();
+    WorkspaceFileEntrySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
       id: WorkspaceFileResourceIdSchemaZ,
       parentId: WorkspaceFileResourceIdSchemaZ,
       name: WorkspaceResourceNameSchemaZ,
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       kind: WorkspaceFileEntryKindSchemaZ,
-      hidden: z55.boolean(),
-      ignored: z55.boolean(),
-      hasChildren: z55.boolean(),
+      hidden: z56.boolean(),
+      ignored: z56.boolean(),
+      hasChildren: z56.boolean(),
       gitStatus: WorkspaceFileGitStatusSchemaZ.nullable()
     }).superRefine((entry, ctx) => {
       if (entry.relativePath.split("/").at(-1) !== entry.name) {
@@ -9026,25 +9101,25 @@ var init_workspace_files_resource = __esm({
         });
       }
     }))();
-    WorkspaceFileBreadcrumbSchemaZ = /* @__PURE__ */ (() => z55.strictObject({
+    WorkspaceFileBreadcrumbSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
       id: WorkspaceFileResourceIdSchemaZ,
       label: WorkspaceResourceNameSchemaZ
     }))();
-    WorkspaceFilesCatalogReadySchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("ready"),
+    WorkspaceFilesCatalogReadySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("ready"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       revision: WorkspaceFilesRevisionSchemaZ,
       rootId: WorkspaceFileResourceIdSchemaZ,
-      directory: z55.strictObject({
+      directory: z56.strictObject({
         id: WorkspaceFileResourceIdSchemaZ,
         name: WorkspaceResourceNameSchemaZ,
         relativePath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
         parentId: WorkspaceFileResourceIdSchemaZ.nullable()
       }),
-      breadcrumbs: z55.array(WorkspaceFileBreadcrumbSchemaZ).min(1).max(WORKSPACE_FILES_MAX_BREADCRUMBS),
-      entries: z55.array(WorkspaceFileEntrySchemaZ).max(WORKSPACE_FILES_CATALOG_MAX_ENTRIES),
-      totalEntries: z55.number().int().nonnegative(),
-      truncated: z55.boolean()
+      breadcrumbs: z56.array(WorkspaceFileBreadcrumbSchemaZ).min(1).max(WORKSPACE_FILES_MAX_BREADCRUMBS),
+      entries: z56.array(WorkspaceFileEntrySchemaZ).max(WORKSPACE_FILES_CATALOG_MAX_ENTRIES),
+      totalEntries: z56.number().int().nonnegative(),
+      truncated: z56.boolean()
     }).superRefine((resource3, ctx) => {
       const breadcrumbIds = resource3.breadcrumbs.map(({ id: id2 }) => id2);
       if (new Set(breadcrumbIds).size !== breadcrumbIds.length) {
@@ -9125,7 +9200,7 @@ var init_workspace_files_resource = __esm({
         });
       }
     }))();
-    WorkspaceFilesCatalogUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z55.enum([
+    WorkspaceFilesCatalogUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z56.enum([
       "workspace-unavailable",
       "resource-changed",
       "directory-not-found",
@@ -9134,19 +9209,19 @@ var init_workspace_files_resource = __esm({
       "too-many-entries",
       "io-error"
     ]))();
-    WorkspaceFilesCatalogUnavailableSchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("unavailable"),
+    WorkspaceFilesCatalogUnavailableSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       reason: WorkspaceFilesCatalogUnavailableReasonSchemaZ,
-      message: z55.string().min(1).max(240),
-      retryable: z55.boolean()
+      message: z56.string().min(1).max(240),
+      retryable: z56.boolean()
     }))();
-    WorkspaceFilesCatalogResourceV1SchemaZ = /* @__PURE__ */ (() => z55.discriminatedUnion("status", [
+    WorkspaceFilesCatalogResourceV1SchemaZ = /* @__PURE__ */ (() => z56.discriminatedUnion("status", [
       WorkspaceFilesCatalogReadySchemaZ,
       WorkspaceFilesCatalogUnavailableSchemaZ
     ]))();
-    WorkspaceFilesCatalogEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      version: z55.literal(WORKSPACE_FILES_CATALOG_RESOURCE_VERSION),
+    WorkspaceFilesCatalogEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      version: z56.literal(WORKSPACE_FILES_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceFilesCatalogResourceV1SchemaZ
     }))();
@@ -9157,15 +9232,15 @@ var init_workspace_files_resource = __esm({
       name: WorkspaceResourceNameSchemaZ,
       relativePath: WorkspaceRelativeDisplayPathSchemaZ
     }))();
-    WorkspaceFilePreviewReadySchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("ready"),
+    WorkspaceFilePreviewReadySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("ready"),
       ...WorkspaceFilePreviewBase,
-      encoding: z55.literal("utf-8"),
-      languageHint: z55.string().min(1).max(64).nullable(),
-      content: z55.string().max(WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS),
-      totalBytes: z55.number().int().nonnegative(),
-      totalLines: z55.number().int().nonnegative(),
-      truncated: z55.boolean()
+      encoding: z56.literal("utf-8"),
+      languageHint: z56.string().min(1).max(64).nullable(),
+      content: z56.string().max(WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS),
+      totalBytes: z56.number().int().nonnegative(),
+      totalLines: z56.number().int().nonnegative(),
+      truncated: z56.boolean()
     }).superRefine((preview, ctx) => {
       if (preview.content.includes("\0")) {
         ctx.addIssue({
@@ -9197,19 +9272,19 @@ var init_workspace_files_resource = __esm({
         });
       }
     }))();
-    WorkspaceFilePreviewBinarySchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("binary"),
+    WorkspaceFilePreviewBinarySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("binary"),
       ...WorkspaceFilePreviewBase,
-      totalBytes: z55.number().int().nonnegative(),
-      mediaType: z55.string().min(1).max(160).nullable()
+      totalBytes: z56.number().int().nonnegative(),
+      mediaType: z56.string().min(1).max(160).nullable()
     }))();
-    WorkspaceFilePreviewTooLargeSchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("too-large"),
+    WorkspaceFilePreviewTooLargeSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("too-large"),
       ...WorkspaceFilePreviewBase,
-      totalBytes: z55.number().int().nonnegative(),
-      limitBytes: z55.number().int().positive()
+      totalBytes: z56.number().int().nonnegative(),
+      limitBytes: z56.number().int().positive()
     }))();
-    WorkspaceFilePreviewUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z55.enum([
+    WorkspaceFilePreviewUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z56.enum([
       "workspace-unavailable",
       "resource-changed",
       "file-not-found",
@@ -9220,23 +9295,23 @@ var init_workspace_files_resource = __esm({
       "unsupported-encoding",
       "io-error"
     ]))();
-    WorkspaceFilePreviewUnavailableSchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      status: z55.literal("unavailable"),
+    WorkspaceFilePreviewUnavailableSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      status: z56.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       catalogRevision: WorkspaceFilesRevisionSchemaZ,
       fileId: WorkspaceFileResourceIdSchemaZ,
       reason: WorkspaceFilePreviewUnavailableReasonSchemaZ,
-      message: z55.string().min(1).max(240),
-      retryable: z55.boolean()
+      message: z56.string().min(1).max(240),
+      retryable: z56.boolean()
     }))();
-    WorkspaceFilePreviewResourceV1SchemaZ = /* @__PURE__ */ (() => z55.discriminatedUnion("status", [
+    WorkspaceFilePreviewResourceV1SchemaZ = /* @__PURE__ */ (() => z56.discriminatedUnion("status", [
       WorkspaceFilePreviewReadySchemaZ,
       WorkspaceFilePreviewBinarySchemaZ,
       WorkspaceFilePreviewTooLargeSchemaZ,
       WorkspaceFilePreviewUnavailableSchemaZ
     ]))();
-    WorkspaceFilePreviewEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z55.strictObject({
-      version: z55.literal(WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION),
+    WorkspaceFilePreviewEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+      version: z56.literal(WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceFilePreviewResourceV1SchemaZ
     }))();
@@ -9244,7 +9319,7 @@ var init_workspace_files_resource = __esm({
 });
 
 // packages/contracts/src/workspace-changes-resource.ts
-import { z as z56 } from "zod";
+import { z as z57 } from "zod";
 var WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION, WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION, WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES, WORKSPACE_CHANGE_MAX_LINE_DELTA, WORKSPACE_CHANGE_BRANCH_MAX_LENGTH, WORKSPACE_CHANGE_DIFF_MAX_HUNKS, WORKSPACE_CHANGE_DIFF_MAX_LINES, WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH, WorkspaceChangeGroupSchemaZ, WorkspaceChangeStatusSchemaZ, DiffCountSchemaZ, WorkspaceChangeEntrySchemaZ, WorkspaceChangesCatalogReadySchemaZ, WorkspaceChangesCatalogUnavailableReasonSchemaZ, WorkspaceChangesCatalogUnavailableSchemaZ, WorkspaceChangesCatalogResourceV1SchemaZ, WorkspaceChangesCatalogEnvelopeV1SchemaZ, WorkspaceDiffLineKindSchemaZ, WorkspaceDiffLineSchemaZ, WorkspaceDiffHunkSchemaZ, WorkspaceChangeDiffBase, WorkspaceChangeDiffReadySchemaZ, WorkspaceChangeDiffBinarySchemaZ, WorkspaceChangeDiffTooLargeSchemaZ, WorkspaceChangeDiffUnavailableReasonSchemaZ, WorkspaceChangeDiffUnavailableSchemaZ, WorkspaceChangeDiffResourceV1SchemaZ, WorkspaceChangeDiffEnvelopeV1SchemaZ;
 var init_workspace_changes_resource = __esm({
   "packages/contracts/src/workspace-changes-resource.ts"() {
@@ -9259,8 +9334,8 @@ var init_workspace_changes_resource = __esm({
     WORKSPACE_CHANGE_DIFF_MAX_HUNKS = /* @__PURE__ */ (() => 512)();
     WORKSPACE_CHANGE_DIFF_MAX_LINES = /* @__PURE__ */ (() => 2e4)();
     WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH = /* @__PURE__ */ (() => 4096)();
-    WorkspaceChangeGroupSchemaZ = /* @__PURE__ */ (() => z56.enum(["staged", "unstaged", "untracked"]))();
-    WorkspaceChangeStatusSchemaZ = /* @__PURE__ */ (() => z56.enum([
+    WorkspaceChangeGroupSchemaZ = /* @__PURE__ */ (() => z57.enum(["staged", "unstaged", "untracked"]))();
+    WorkspaceChangeStatusSchemaZ = /* @__PURE__ */ (() => z57.enum([
       "modified",
       "added",
       "deleted",
@@ -9270,8 +9345,8 @@ var init_workspace_changes_resource = __esm({
       "conflicted",
       "untracked"
     ]))();
-    DiffCountSchemaZ = /* @__PURE__ */ (() => z56.number().int().nonnegative().max(WORKSPACE_CHANGE_MAX_LINE_DELTA))();
-    WorkspaceChangeEntrySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+    DiffCountSchemaZ = /* @__PURE__ */ (() => z57.number().int().nonnegative().max(WORKSPACE_CHANGE_MAX_LINE_DELTA))();
+    WorkspaceChangeEntrySchemaZ = /* @__PURE__ */ (() => z57.strictObject({
       id: WorkspaceChangeResourceIdSchemaZ,
       group: WorkspaceChangeGroupSchemaZ,
       status: WorkspaceChangeStatusSchemaZ,
@@ -9279,7 +9354,7 @@ var init_workspace_changes_resource = __esm({
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       /** Present only for renames and copies; the pre-change display path. */
       originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable(),
-      binary: z56.boolean(),
+      binary: z57.boolean(),
       additions: DiffCountSchemaZ.nullable(),
       deletions: DiffCountSchemaZ.nullable()
     }).superRefine((entry, ctx) => {
@@ -9337,16 +9412,16 @@ var init_workspace_changes_resource = __esm({
         });
       }
     }))();
-    WorkspaceChangesCatalogReadySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("ready"),
+    WorkspaceChangesCatalogReadySchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("ready"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       revision: WorkspaceChangesRevisionSchemaZ,
       /** The current branch, or null when the workspace is detached or unborn. */
-      branch: z56.string().min(1).max(WORKSPACE_CHANGE_BRANCH_MAX_LENGTH).nullable(),
-      detached: z56.boolean(),
-      entries: z56.array(WorkspaceChangeEntrySchemaZ).max(WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES),
-      totalEntries: z56.number().int().nonnegative(),
-      truncated: z56.boolean()
+      branch: z57.string().min(1).max(WORKSPACE_CHANGE_BRANCH_MAX_LENGTH).nullable(),
+      detached: z57.boolean(),
+      entries: z57.array(WorkspaceChangeEntrySchemaZ).max(WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES),
+      totalEntries: z57.number().int().nonnegative(),
+      truncated: z57.boolean()
     }).superRefine((resource3, ctx) => {
       if (resource3.detached && resource3.branch !== null) {
         ctx.addIssue({
@@ -9391,7 +9466,7 @@ var init_workspace_changes_resource = __esm({
         });
       }
     }))();
-    WorkspaceChangesCatalogUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z56.enum([
+    WorkspaceChangesCatalogUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z57.enum([
       "workspace-unavailable",
       "resource-changed",
       "not-a-git-repository",
@@ -9399,28 +9474,28 @@ var init_workspace_changes_resource = __esm({
       "too-many-changes",
       "io-error"
     ]))();
-    WorkspaceChangesCatalogUnavailableSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("unavailable"),
+    WorkspaceChangesCatalogUnavailableSchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       reason: WorkspaceChangesCatalogUnavailableReasonSchemaZ,
-      message: z56.string().min(1).max(240),
-      retryable: z56.boolean()
+      message: z57.string().min(1).max(240),
+      retryable: z57.boolean()
     }))();
-    WorkspaceChangesCatalogResourceV1SchemaZ = /* @__PURE__ */ (() => z56.discriminatedUnion("status", [
+    WorkspaceChangesCatalogResourceV1SchemaZ = /* @__PURE__ */ (() => z57.discriminatedUnion("status", [
       WorkspaceChangesCatalogReadySchemaZ,
       WorkspaceChangesCatalogUnavailableSchemaZ
     ]))();
-    WorkspaceChangesCatalogEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      version: z56.literal(WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION),
+    WorkspaceChangesCatalogEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      version: z57.literal(WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceChangesCatalogResourceV1SchemaZ
     }))();
-    WorkspaceDiffLineKindSchemaZ = /* @__PURE__ */ (() => z56.enum(["context", "insert", "delete"]))();
-    WorkspaceDiffLineSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
+    WorkspaceDiffLineKindSchemaZ = /* @__PURE__ */ (() => z57.enum(["context", "insert", "delete"]))();
+    WorkspaceDiffLineSchemaZ = /* @__PURE__ */ (() => z57.strictObject({
       kind: WorkspaceDiffLineKindSchemaZ,
-      content: z56.string().max(WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH),
-      oldLine: z56.number().int().positive().nullable(),
-      newLine: z56.number().int().positive().nullable()
+      content: z57.string().max(WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH),
+      oldLine: z57.number().int().positive().nullable(),
+      newLine: z57.number().int().positive().nullable()
     }).superRefine((line, ctx) => {
       if (/[\0\r\n]/u.test(line.content)) {
         ctx.addIssue({
@@ -9446,13 +9521,13 @@ var init_workspace_changes_resource = __esm({
         });
       }
     }))();
-    WorkspaceDiffHunkSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      header: z56.string().min(1).max(255),
-      oldStart: z56.number().int().nonnegative(),
-      oldLines: z56.number().int().nonnegative(),
-      newStart: z56.number().int().nonnegative(),
-      newLines: z56.number().int().nonnegative(),
-      lines: z56.array(WorkspaceDiffLineSchemaZ).min(1).max(WORKSPACE_CHANGE_DIFF_MAX_LINES)
+    WorkspaceDiffHunkSchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      header: z57.string().min(1).max(255),
+      oldStart: z57.number().int().nonnegative(),
+      oldLines: z57.number().int().nonnegative(),
+      newStart: z57.number().int().nonnegative(),
+      newLines: z57.number().int().nonnegative(),
+      lines: z57.array(WorkspaceDiffLineSchemaZ).min(1).max(WORKSPACE_CHANGE_DIFF_MAX_LINES)
     }).superRefine((hunk, ctx) => {
       if (hunk.oldLines > 0 && hunk.oldStart < 1) {
         ctx.addIssue({
@@ -9519,13 +9594,13 @@ var init_workspace_changes_resource = __esm({
       relativePath: WorkspaceRelativeDisplayPathSchemaZ,
       originPath: WorkspaceRelativeDisplayPathSchemaZ.nullable()
     }))();
-    WorkspaceChangeDiffReadySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("ready"),
+    WorkspaceChangeDiffReadySchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("ready"),
       ...WorkspaceChangeDiffBase,
-      hunks: z56.array(WorkspaceDiffHunkSchemaZ).max(WORKSPACE_CHANGE_DIFF_MAX_HUNKS),
-      totalHunks: z56.number().int().nonnegative(),
-      totalLines: z56.number().int().nonnegative(),
-      truncated: z56.boolean()
+      hunks: z57.array(WorkspaceDiffHunkSchemaZ).max(WORKSPACE_CHANGE_DIFF_MAX_HUNKS),
+      totalHunks: z57.number().int().nonnegative(),
+      totalLines: z57.number().int().nonnegative(),
+      truncated: z57.boolean()
     }).superRefine((diff, ctx) => {
       if (diff.originPath !== null && diff.originPath === diff.relativePath) {
         ctx.addIssue({
@@ -9558,19 +9633,19 @@ var init_workspace_changes_resource = __esm({
         });
       }
     }))();
-    WorkspaceChangeDiffBinarySchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("binary"),
+    WorkspaceChangeDiffBinarySchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("binary"),
       ...WorkspaceChangeDiffBase,
-      oldBytes: z56.number().int().nonnegative().nullable(),
-      newBytes: z56.number().int().nonnegative().nullable()
+      oldBytes: z57.number().int().nonnegative().nullable(),
+      newBytes: z57.number().int().nonnegative().nullable()
     }))();
-    WorkspaceChangeDiffTooLargeSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("too-large"),
+    WorkspaceChangeDiffTooLargeSchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("too-large"),
       ...WorkspaceChangeDiffBase,
-      totalBytes: z56.number().int().nonnegative(),
-      limitBytes: z56.number().int().positive()
+      totalBytes: z57.number().int().nonnegative(),
+      limitBytes: z57.number().int().positive()
     }))();
-    WorkspaceChangeDiffUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z56.enum([
+    WorkspaceChangeDiffUnavailableReasonSchemaZ = /* @__PURE__ */ (() => z57.enum([
       "workspace-unavailable",
       "resource-changed",
       "change-not-found",
@@ -9578,23 +9653,23 @@ var init_workspace_changes_resource = __esm({
       "permission-denied",
       "io-error"
     ]))();
-    WorkspaceChangeDiffUnavailableSchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      status: z56.literal("unavailable"),
+    WorkspaceChangeDiffUnavailableSchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      status: z57.literal("unavailable"),
       workspaceName: WorkspaceResourceWorkspaceNameSchemaZ,
       changesRevision: WorkspaceChangesRevisionSchemaZ,
       changeId: WorkspaceChangeResourceIdSchemaZ,
       reason: WorkspaceChangeDiffUnavailableReasonSchemaZ,
-      message: z56.string().min(1).max(240),
-      retryable: z56.boolean()
+      message: z57.string().min(1).max(240),
+      retryable: z57.boolean()
     }))();
-    WorkspaceChangeDiffResourceV1SchemaZ = /* @__PURE__ */ (() => z56.discriminatedUnion("status", [
+    WorkspaceChangeDiffResourceV1SchemaZ = /* @__PURE__ */ (() => z57.discriminatedUnion("status", [
       WorkspaceChangeDiffReadySchemaZ,
       WorkspaceChangeDiffBinarySchemaZ,
       WorkspaceChangeDiffTooLargeSchemaZ,
       WorkspaceChangeDiffUnavailableSchemaZ
     ]))();
-    WorkspaceChangeDiffEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z56.strictObject({
-      version: z56.literal(WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION),
+    WorkspaceChangeDiffEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z57.strictObject({
+      version: z57.literal(WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceChangeDiffResourceV1SchemaZ
     }))();
@@ -9602,7 +9677,7 @@ var init_workspace_changes_resource = __esm({
 });
 
 // packages/contracts/src/workspace-missions-resource.ts
-import { z as z57 } from "zod";
+import { z as z58 } from "zod";
 var WORKSPACE_MISSIONS_RESOURCE_VERSION, WorkspaceMissionsResourceV1SchemaZ, WorkspaceMissionsEnvelopeV1SchemaZ;
 var init_workspace_missions_resource = __esm({
   "packages/contracts/src/workspace-missions-resource.ts"() {
@@ -9612,13 +9687,13 @@ var init_workspace_missions_resource = __esm({
     init_desktop_workspace_name();
     init_daemon_wire();
     WORKSPACE_MISSIONS_RESOURCE_VERSION = /* @__PURE__ */ (() => 1)();
-    WorkspaceMissionsResourceV1SchemaZ = /* @__PURE__ */ (() => z57.object({
+    WorkspaceMissionsResourceV1SchemaZ = /* @__PURE__ */ (() => z58.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       missionWorkspace: DesktopMissionWorkspaceResourceSchemaZ,
       agentGraphOverlay: AgentGraphOverlaySchemaZ.optional()
     }).strict())();
-    WorkspaceMissionsEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z57.object({
-      version: z57.literal(WORKSPACE_MISSIONS_RESOURCE_VERSION),
+    WorkspaceMissionsEnvelopeV1SchemaZ = /* @__PURE__ */ (() => z58.object({
+      version: z58.literal(WORKSPACE_MISSIONS_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceMissionsResourceV1SchemaZ
     }).strict())();
@@ -9626,7 +9701,7 @@ var init_workspace_missions_resource = __esm({
 });
 
 // packages/contracts/src/daemon-resources.ts
-import { z as z58 } from "zod";
+import { z as z59 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonProjectResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonRegisteredProjectSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -9635,29 +9710,29 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = /* @__PURE__ */ (() => SessionOverviewSchemaZ.strict())();
     DaemonPaneInfoSchemaZ = /* @__PURE__ */ (() => PaneInfoSchemaZ.strict())();
-    DaemonProjectResponseSchemaZ = /* @__PURE__ */ (() => z58.object({
-      session: z58.string(),
-      dir: z58.string(),
-      panes: z58.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = /* @__PURE__ */ (() => z59.object({
+      session: z59.string(),
+      dir: z59.string(),
+      panes: z59.array(DaemonPaneInfoSchemaZ)
     }).strict())();
     DaemonWorkspaceSchemaZ = /* @__PURE__ */ (() => WorkspaceSchemaZ.strict())();
-    DaemonRegisteredProjectSchemaZ = /* @__PURE__ */ (() => z58.object({
-      name: z58.string(),
-      dir: z58.string(),
-      hasIdeYml: z58.boolean(),
-      hasWorkspaceConfig: z58.boolean().optional(),
-      configKind: z58.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z58.string().nullable().optional(),
-      ideConfigPath: z58.string().nullable().optional(),
-      gitOrigin: z58.string().nullable(),
-      gitBranch: z58.string().nullable(),
-      registeredAt: z58.string()
+    DaemonRegisteredProjectSchemaZ = /* @__PURE__ */ (() => z59.object({
+      name: z59.string(),
+      dir: z59.string(),
+      hasIdeYml: z59.boolean(),
+      hasWorkspaceConfig: z59.boolean().optional(),
+      configKind: z59.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z59.string().nullable().optional(),
+      ideConfigPath: z59.string().nullable().optional(),
+      gitOrigin: z59.string().nullable(),
+      gitBranch: z59.string().nullable(),
+      registeredAt: z59.string()
     }).strict())();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z59 } from "zod";
+import { z as z60 } from "zod";
 var SessionNamesSchemaZ, DaemonEventResourceInterestSchemaZ, DaemonEventResourceInterestsSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventResourceKindSchemaZ, DaemonEventResourceChangedFrameSchemaZ, DaemonEventResourceObservedFrameSchemaZ, DaemonEventResourceInterestsAckFrameSchemaZ, DaemonEventSnapshotRequiredFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventAgentTurnCompletedFrameSchemaZ, DaemonEventWorkspacePromotionCompletedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
@@ -9666,14 +9741,14 @@ var init_daemon_events = __esm({
     init_daemon_wire();
     init_desktop_workspace_name();
     init_interaction_receipts();
-    SessionNamesSchemaZ = /* @__PURE__ */ (() => z59.array(z59.string()))();
-    DaemonEventResourceInterestSchemaZ = /* @__PURE__ */ (() => z59.discriminatedUnion("resource", [
-      z59.object({
-        resource: z59.enum(["workspace-catalog", "fleet-catalog"]),
-        workspaceName: z59.null()
+    SessionNamesSchemaZ = /* @__PURE__ */ (() => z60.array(z60.string()))();
+    DaemonEventResourceInterestSchemaZ = /* @__PURE__ */ (() => z60.discriminatedUnion("resource", [
+      z60.object({
+        resource: z60.enum(["workspace-catalog", "fleet-catalog"]),
+        workspaceName: z60.null()
       }).strict(),
-      z59.object({
-        resource: z59.enum([
+      z60.object({
+        resource: z60.enum([
           "application-shell",
           "terminal-runtime-inventory",
           "workspace-files",
@@ -9683,9 +9758,9 @@ var init_daemon_events = __esm({
         workspaceName: DesktopWorkspaceNameSchemaZ
       }).strict()
     ]))();
-    DaemonEventResourceInterestsSchemaZ = /* @__PURE__ */ (() => z59.array(DaemonEventResourceInterestSchemaZ).max(128))();
-    DaemonEventSubscribeFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("subscribe"),
+    DaemonEventResourceInterestsSchemaZ = /* @__PURE__ */ (() => z60.array(DaemonEventResourceInterestSchemaZ).max(128))();
+    DaemonEventSubscribeFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("subscribe"),
       sessions: SessionNamesSchemaZ,
       /**
        * Explicit push/observation demand. Omitted by legacy clients, which keep
@@ -9694,73 +9769,73 @@ var init_daemon_events = __esm({
        */
       interests: DaemonEventResourceInterestsSchemaZ.optional(),
       /** Independently selects broad legacy frame delivery. Omission preserves legacy behaviour. */
-      legacyEvents: z59.boolean().optional(),
+      legacyEvents: z60.boolean().optional(),
       /** Client-owned ordering token for an observer-installation barrier. */
-      interestRevision: z59.number().int().positive().optional(),
+      interestRevision: z60.number().int().positive().optional(),
       /**
        * Last resource-event sequence the client applied for this daemon
        * generation. Omitted by legacy clients. The daemon either replays every
        * later retained event or answers `snapshot-required` when the bounded
        * journal no longer covers the requested cursor.
        */
-      afterSequence: z59.number().int().nonnegative().optional()
+      afterSequence: z60.number().int().nonnegative().optional()
     }).strict())();
-    DaemonEventUnsubscribeFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ,
       interests: DaemonEventResourceInterestsSchemaZ.optional(),
-      legacyEvents: z59.boolean().optional(),
-      interestRevision: z59.number().int().positive().optional()
+      legacyEvents: z60.boolean().optional(),
+      interestRevision: z60.number().int().positive().optional()
     }).strict())();
-    DaemonEventPingFrameSchemaZ = /* @__PURE__ */ (() => z59.object({ type: z59.literal("ping") }).strict())();
-    DaemonEventClientFrameSchemaZ = /* @__PURE__ */ (() => z59.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = /* @__PURE__ */ (() => z60.object({ type: z60.literal("ping") }).strict())();
+    DaemonEventClientFrameSchemaZ = /* @__PURE__ */ (() => z60.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]))();
-    DaemonSessionSnapshotSchemaZ = /* @__PURE__ */ (() => z59.object({
+    DaemonSessionSnapshotSchemaZ = /* @__PURE__ */ (() => z60.object({
       project: DaemonProjectResponseSchemaZ
     }).strict())();
-    DaemonEventHelloFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z59.array(DaemonSessionOverviewSchemaZ),
+      sessions: z60.array(DaemonSessionOverviewSchemaZ),
       /** Current head of the generation-scoped resource-event journal. */
-      eventSequence: z59.number().int().nonnegative().optional()
+      eventSequence: z60.number().int().nonnegative().optional()
     }).strict())();
-    DaemonEventSnapshotFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("snapshot"),
-      sessionName: z59.string(),
+    DaemonEventSnapshotFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("snapshot"),
+      sessionName: z60.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict())();
-    DaemonEventSessionsChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({ type: z59.literal("sessions.changed") }).strict())();
-    DaemonEventProjectsChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({ type: z59.literal("projects.changed") }).strict())();
-    DaemonEventInitOutputFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("init.output"),
-      jobId: z59.string(),
-      chunk: z59.string(),
-      done: z59.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({ type: z60.literal("sessions.changed") }).strict())();
+    DaemonEventProjectsChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({ type: z60.literal("projects.changed") }).strict())();
+    DaemonEventInitOutputFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("init.output"),
+      jobId: z60.string(),
+      chunk: z60.string(),
+      done: z60.boolean().optional()
     }).strict())();
-    DaemonEventInitErrorFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("init.error"),
-      jobId: z59.string(),
-      message: z59.string()
+    DaemonEventInitErrorFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("init.error"),
+      jobId: z60.string(),
+      message: z60.string()
     }).strict())();
-    DaemonEventPongFrameSchemaZ = /* @__PURE__ */ (() => z59.object({ type: z59.literal("pong") }).strict())();
-    DaemonEventActionCompleteFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("action.complete"),
-      name: z59.string(),
-      result: z59.unknown()
+    DaemonEventPongFrameSchemaZ = /* @__PURE__ */ (() => z60.object({ type: z60.literal("pong") }).strict())();
+    DaemonEventActionCompleteFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("action.complete"),
+      name: z60.string(),
+      result: z60.unknown()
     }).strict())();
-    DaemonEventConfigChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("config.changed"),
-      sessionName: z59.string()
+    DaemonEventConfigChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("config.changed"),
+      sessionName: z60.string()
     }).strict())();
-    DaemonEventTerminalsChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("terminals.changed"),
-      sessionName: z59.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("terminals.changed"),
+      sessionName: z60.string()
     }).strict())();
-    DaemonEventResourceKindSchemaZ = /* @__PURE__ */ (() => z59.enum([
+    DaemonEventResourceKindSchemaZ = /* @__PURE__ */ (() => z60.enum([
       "workspace-catalog",
       "fleet-catalog",
       "application-shell",
@@ -9769,65 +9844,65 @@ var init_daemon_events = __esm({
       "workspace-changes",
       "workspace-missions"
     ]))();
-    DaemonEventResourceChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("resource.changed"),
-      sequence: z59.number().int().positive(),
+    DaemonEventResourceChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("resource.changed"),
+      sequence: z60.number().int().positive(),
       workspaceName: DesktopWorkspaceNameSchemaZ.nullable(),
       resource: DaemonEventResourceKindSchemaZ,
-      revision: z59.number().int().nonnegative(),
-      causeOperationId: z59.uuid().nullable()
+      revision: z60.number().int().nonnegative(),
+      causeOperationId: z60.uuid().nullable()
     }).strict())();
-    DaemonEventResourceObservedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("resource.observed"),
-      sequence: z59.number().int().positive()
+    DaemonEventResourceObservedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("resource.observed"),
+      sequence: z60.number().int().positive()
     }).strict())();
-    DaemonEventResourceInterestsAckFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("resource.interests-ack"),
-      interestRevision: z59.number().int().positive(),
-      sequence: z59.number().int().nonnegative(),
+    DaemonEventResourceInterestsAckFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("resource.interests-ack"),
+      interestRevision: z60.number().int().positive(),
+      sequence: z60.number().int().nonnegative(),
       unavailableInterests: DaemonEventResourceInterestsSchemaZ
     }).strict())();
-    DaemonEventSnapshotRequiredFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("snapshot-required"),
-      afterSequence: z59.number().int().nonnegative(),
-      oldestAvailableSequence: z59.number().int().positive().nullable(),
-      currentSequence: z59.number().int().nonnegative(),
-      reason: z59.enum(["cursor-ahead", "journal-gap"])
+    DaemonEventSnapshotRequiredFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("snapshot-required"),
+      afterSequence: z60.number().int().nonnegative(),
+      oldestAvailableSequence: z60.number().int().positive().nullable(),
+      currentSequence: z60.number().int().nonnegative(),
+      reason: z60.enum(["cursor-ahead", "journal-gap"])
     }).strict())();
-    DaemonEventAgentStatusChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("agent-status.changed"),
-      sessionName: z59.string()
+    DaemonEventAgentStatusChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("agent-status.changed"),
+      sessionName: z60.string()
     }).strict())();
-    DaemonEventFleetChangedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({ type: z59.literal("fleet.changed") }).strict())();
-    DaemonEventAgentTurnCompletedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("agent.turn-completed"),
-      sessionName: z59.string(),
-      agentId: z59.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
-      fromStatus: z59.literal("working"),
-      toStatus: z59.enum(["done", "idle"]),
-      at: z59.iso.datetime({ offset: true })
+    DaemonEventFleetChangedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({ type: z60.literal("fleet.changed") }).strict())();
+    DaemonEventAgentTurnCompletedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("agent.turn-completed"),
+      sessionName: z60.string(),
+      agentId: z60.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
+      fromStatus: z60.literal("working"),
+      toStatus: z60.enum(["done", "idle"]),
+      at: z60.iso.datetime({ offset: true })
     }).strict())();
-    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("workspace.promotion-completed"),
+    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("workspace.promotion-completed"),
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      outcome: z59.enum(["promoted", "replayed"]),
-      at: z59.iso.datetime({ offset: true })
+      outcome: z60.enum(["promoted", "replayed"]),
+      at: z60.iso.datetime({ offset: true })
     }).strict())();
-    DaemonEventWorkspaceAddedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict())();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("workspace.removed"),
-      name: z59.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("workspace.removed"),
+      name: z60.string()
     }).strict())();
-    DaemonEventProtocolErrorCodeSchemaZ = /* @__PURE__ */ (() => z59.enum(["invalid-json", "invalid-frame"]))();
-    DaemonEventProtocolErrorFrameSchemaZ = /* @__PURE__ */ (() => z59.object({
-      type: z59.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = /* @__PURE__ */ (() => z60.enum(["invalid-json", "invalid-frame"]))();
+    DaemonEventProtocolErrorFrameSchemaZ = /* @__PURE__ */ (() => z60.object({
+      type: z60.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z59.string()
+      message: z60.string()
     }).strict())();
-    DaemonEventServerFrameSchemaZ = /* @__PURE__ */ (() => z59.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = /* @__PURE__ */ (() => z60.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -9855,7 +9930,7 @@ var init_daemon_events = __esm({
 });
 
 // packages/contracts/src/desktop-host.ts
-import { z as z60 } from "zod";
+import { z as z61 } from "zod";
 var DesktopDaemonCapabilitiesResultSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
@@ -9863,22 +9938,22 @@ var init_desktop_host = __esm({
     init_desktop_daemon_capability_error();
     init_daemon_wire();
     init_commands();
-    DesktopDaemonCapabilitiesResultSchemaZ = /* @__PURE__ */ (() => z60.discriminatedUnion("status", [
-      z60.object({
-        status: z60.literal("ok"),
+    DesktopDaemonCapabilitiesResultSchemaZ = /* @__PURE__ */ (() => z61.discriminatedUnion("status", [
+      z61.object({
+        status: z61.literal("ok"),
         daemon: DaemonInstanceIdentitySchemaZ,
-        capabilities: z60.object({
+        capabilities: z61.object({
           appWindowMutation: CommandAvailabilitySchemaZ,
           semanticWindowViewport: CommandAvailabilitySchemaZ.optional()
         }).strict()
       }).strict(),
-      z60.object({ status: z60.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z61.object({ status: z61.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]))();
   }
 });
 
 // packages/contracts/src/multiplexer-verbs.ts
-import { z as z61 } from "zod";
+import { z as z62 } from "zod";
 var init_multiplexer_verbs = __esm({
   "packages/contracts/src/multiplexer-verbs.ts"() {
     "use strict";
@@ -9886,12 +9961,12 @@ var init_multiplexer_verbs = __esm({
 });
 
 // packages/contracts/src/widget-asset.ts
-import { z as z62 } from "zod";
+import { z as z63 } from "zod";
 var WidgetAssetIdSchemaZ, WIDGET_ASSET_MEDIA_TYPES, WidgetAssetMediaTypeSchemaZ;
 var init_widget_asset = __esm({
   "packages/contracts/src/widget-asset.ts"() {
     "use strict";
-    WidgetAssetIdSchemaZ = /* @__PURE__ */ (() => z62.string().regex(/^[0-9a-f]{64}$/u))();
+    WidgetAssetIdSchemaZ = /* @__PURE__ */ (() => z63.string().regex(/^[0-9a-f]{64}$/u))();
     WIDGET_ASSET_MEDIA_TYPES = /* @__PURE__ */ (() => [
       "text/markdown",
       "image/png",
@@ -9900,12 +9975,12 @@ var init_widget_asset = __esm({
       "image/webp",
       "image/avif"
     ])();
-    WidgetAssetMediaTypeSchemaZ = /* @__PURE__ */ (() => z62.enum(WIDGET_ASSET_MEDIA_TYPES))();
+    WidgetAssetMediaTypeSchemaZ = /* @__PURE__ */ (() => z63.enum(WIDGET_ASSET_MEDIA_TYPES))();
   }
 });
 
 // packages/contracts/src/daemon-resource-request.ts
-import { z as z63 } from "zod";
+import { z as z64 } from "zod";
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
     "use strict";
@@ -9913,7 +9988,7 @@ var init_daemon_resource_request = __esm({
 });
 
 // packages/contracts/src/terminal-runtime-inventory.ts
-import { z as z64 } from "zod";
+import { z as z65 } from "zod";
 var TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION, TerminalRuntimeInventoryProjectionV1SchemaZ;
 var init_terminal_runtime_inventory = __esm({
   "packages/contracts/src/terminal-runtime-inventory.ts"() {
@@ -9923,13 +9998,13 @@ var init_terminal_runtime_inventory = __esm({
     init_fleet_catalog();
     init_pane_appearance();
     TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION = /* @__PURE__ */ (() => 1)();
-    TerminalRuntimeInventoryProjectionV1SchemaZ = /* @__PURE__ */ (() => z64.object({
+    TerminalRuntimeInventoryProjectionV1SchemaZ = /* @__PURE__ */ (() => z65.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       workspaceId: SemanticProductIdSchemaZ,
       sessionId: FleetSessionIdSchemaZ,
       /** Daemon-scoped revision observed by the terminal-runtime event lane. */
-      resourceRevision: z64.number().int().nonnegative(),
-      semanticPaneIds: z64.array(TerminalAttachmentSemanticPaneIdSchemaZ).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique").refine(
+      resourceRevision: z65.number().int().nonnegative(),
+      semanticPaneIds: z65.array(TerminalAttachmentSemanticPaneIdSchemaZ).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique").refine(
         (values2) => values2.every((value, index) => index === 0 || values2[index - 1] < value),
         "pane ids must be sorted"
       )
@@ -9952,22 +10027,22 @@ var init_workspace_changes_view = __esm({
 });
 
 // packages/contracts/src/interaction-journal.ts
-import { z as z65 } from "zod";
+import { z as z66 } from "zod";
 var InteractionEvidenceRecordSchemaZ, InteractionJournalEntrySchemaZ;
 var init_interaction_journal = __esm({
   "packages/contracts/src/interaction-journal.ts"() {
     "use strict";
     init_interaction_evidence();
     init_interaction_receipts();
-    InteractionEvidenceRecordSchemaZ = /* @__PURE__ */ (() => z65.object({
-      type: z65.literal("interaction.evidence"),
-      sequence: z65.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    InteractionEvidenceRecordSchemaZ = /* @__PURE__ */ (() => z66.object({
+      type: z66.literal("interaction.evidence"),
+      sequence: z66.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       evidence: InteractionEvidenceSchemaZ
     }).strict().superRefine((record, ctx) => {
       if (record.evidence.observation.kind !== "native-journal")
         ctx.addIssue({ code: "custom", message: "Evidence-only records require native observation" });
     }))();
-    InteractionJournalEntrySchemaZ = /* @__PURE__ */ (() => z65.union([
+    InteractionJournalEntrySchemaZ = /* @__PURE__ */ (() => z66.union([
       InteractionReceiptSchemaZ,
       InteractionEvidenceRecordSchemaZ
     ]))();
@@ -9989,7 +10064,7 @@ var init_fleet_agent_graph = __esm({
 });
 
 // packages/contracts/src/desktop-update.ts
-import { z as z66 } from "zod";
+import { z as z67 } from "zod";
 var init_desktop_update = __esm({
   "packages/contracts/src/desktop-update.ts"() {
     "use strict";
@@ -10109,48 +10184,48 @@ var init_pane_widget_marker = __esm({
 });
 
 // packages/contracts/src/rich-card-widget.ts
-import { z as z67 } from "zod";
+import { z as z68 } from "zod";
 var RichCardToneSchemaZ, RichCardItemSchemaZ, RichCardWidgetArgsSchemaZ;
 var init_rich_card_widget = __esm({
   "packages/contracts/src/rich-card-widget.ts"() {
     "use strict";
-    RichCardToneSchemaZ = /* @__PURE__ */ (() => z67.enum(["neutral", "info", "success", "warning", "danger"]))();
-    RichCardItemSchemaZ = /* @__PURE__ */ (() => z67.discriminatedUnion("type", [
-      z67.object({ type: z67.literal("text"), text: z67.string().max(8e3) }).strict(),
-      z67.object({
-        type: z67.literal("badge"),
-        text: z67.string().min(1).max(120),
+    RichCardToneSchemaZ = /* @__PURE__ */ (() => z68.enum(["neutral", "info", "success", "warning", "danger"]))();
+    RichCardItemSchemaZ = /* @__PURE__ */ (() => z68.discriminatedUnion("type", [
+      z68.object({ type: z68.literal("text"), text: z68.string().max(8e3) }).strict(),
+      z68.object({
+        type: z68.literal("badge"),
+        text: z68.string().min(1).max(120),
         tone: RichCardToneSchemaZ.default("neutral")
       }).strict(),
-      z67.object({
-        type: z67.literal("progress"),
-        label: z67.string().max(160).optional(),
-        value: z67.number().min(0).max(100)
+      z68.object({
+        type: z68.literal("progress"),
+        label: z68.string().max(160).optional(),
+        value: z68.number().min(0).max(100)
       }).strict(),
-      z67.object({
-        type: z67.literal("code"),
-        code: z67.string().max(32e3),
-        language: z67.string().max(40).optional()
+      z68.object({
+        type: z68.literal("code"),
+        code: z68.string().max(32e3),
+        language: z68.string().max(40).optional()
       }).strict(),
-      z67.object({
-        type: z67.literal("button"),
-        label: z67.string().min(1).max(120),
+      z68.object({
+        type: z68.literal("button"),
+        label: z68.string().min(1).max(120),
         /** Bytes written to the owning pane after an explicit user click. */
-        input: z67.string().min(1).max(2e3),
-        submit: z67.boolean().default(true),
+        input: z68.string().min(1).max(2e3),
+        submit: z68.boolean().default(true),
         tone: RichCardToneSchemaZ.default("neutral")
       }).strict()
     ]))();
-    RichCardWidgetArgsSchemaZ = /* @__PURE__ */ (() => z67.object({
-      title: z67.string().min(1).max(200),
-      subtitle: z67.string().max(500).optional(),
-      items: z67.array(RichCardItemSchemaZ).max(128)
+    RichCardWidgetArgsSchemaZ = /* @__PURE__ */ (() => z68.object({
+      title: z68.string().min(1).max(200),
+      subtitle: z68.string().max(500).optional(),
+      items: z68.array(RichCardItemSchemaZ).max(128)
     }).strict())();
   }
 });
 
 // packages/contracts/src/pane-widget-descriptor.ts
-import { z as z68 } from "zod";
+import { z as z69 } from "zod";
 var init_pane_widget_descriptor = __esm({
   "packages/contracts/src/pane-widget-descriptor.ts"() {
     "use strict";
@@ -10158,7 +10233,7 @@ var init_pane_widget_descriptor = __esm({
 });
 
 // packages/contracts/src/performance-qualification.ts
-import { z as z69 } from "zod";
+import { z as z70 } from "zod";
 var init_performance_qualification = __esm({
   "packages/contracts/src/performance-qualification.ts"() {
     "use strict";
@@ -10166,7 +10241,7 @@ var init_performance_qualification = __esm({
 });
 
 // packages/contracts/src/performance-metrics.ts
-import { z as z70 } from "zod";
+import { z as z71 } from "zod";
 var init_performance_metrics = __esm({
   "packages/contracts/src/performance-metrics.ts"() {
     "use strict";
@@ -10672,29 +10747,29 @@ __export(saved_machines_exports, {
   SavedMachineRegistrySchema: () => SavedMachineRegistrySchema,
   SavedMachineSchema: () => SavedMachineSchema
 });
-import { z as z71 } from "zod";
+import { z as z72 } from "zod";
 var LOCAL_MACHINE_ID, MAX_SAVED_MACHINES, SavedMachineIdSchema, SshTargetSchema, SavedMachineSchema, SavedMachineRegistrySchema, SavedMachineMutationSchema;
 var init_saved_machines = __esm({
   "packages/contracts/src/saved-machines.ts"() {
     "use strict";
     LOCAL_MACHINE_ID = /* @__PURE__ */ (() => "local")();
     MAX_SAVED_MACHINES = /* @__PURE__ */ (() => 64)();
-    SavedMachineIdSchema = /* @__PURE__ */ (() => z71.uuid().transform((id2) => id2.toLowerCase()))();
-    SshTargetSchema = /* @__PURE__ */ (() => z71.string().max(255).regex(
+    SavedMachineIdSchema = /* @__PURE__ */ (() => z72.uuid().transform((id2) => id2.toLowerCase()))();
+    SshTargetSchema = /* @__PURE__ */ (() => z72.string().max(255).regex(
       /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?(?:[A-Za-z0-9_][A-Za-z0-9_.-]*|\[[A-Fa-f0-9:]+\])$/u,
       "Expected an SSH alias or [user@]host"
     ))();
-    SavedMachineSchema = /* @__PURE__ */ (() => z71.strictObject({
+    SavedMachineSchema = /* @__PURE__ */ (() => z72.strictObject({
       id: SavedMachineIdSchema,
-      label: z71.string().trim().min(1).max(80).regex(/^[^\p{Cc}\p{Cf}]+$/u),
+      label: z72.string().trim().min(1).max(80).regex(/^[^\p{Cc}\p{Cf}]+$/u),
       sshTarget: SshTargetSchema,
       /** Optional imported identity hint; verified after SSH authentication, never a credential. */
-      expectedEnvironmentId: z71.uuid().transform((id2) => id2.toLowerCase()).optional(),
-      enabled: z71.boolean().default(true)
+      expectedEnvironmentId: z72.uuid().transform((id2) => id2.toLowerCase()).optional(),
+      enabled: z72.boolean().default(true)
     }))();
-    SavedMachineRegistrySchema = /* @__PURE__ */ (() => z71.strictObject({
-      version: z71.literal(1),
-      machines: z71.array(SavedMachineSchema).max(MAX_SAVED_MACHINES)
+    SavedMachineRegistrySchema = /* @__PURE__ */ (() => z72.strictObject({
+      version: z72.literal(1),
+      machines: z72.array(SavedMachineSchema).max(MAX_SAVED_MACHINES)
     }).superRefine((registry, context) => {
       const ids = /* @__PURE__ */ new Set();
       const labels = /* @__PURE__ */ new Set(["local"]);
@@ -10711,14 +10786,14 @@ var init_saved_machines = __esm({
         labels.add(label4);
       });
     }))();
-    SavedMachineMutationSchema = /* @__PURE__ */ (() => z71.discriminatedUnion("operation", [
-      z71.strictObject({
+    SavedMachineMutationSchema = /* @__PURE__ */ (() => z72.discriminatedUnion("operation", [
+      z72.strictObject({
         id: SavedMachineIdSchema,
-        operation: z71.enum(["enable", "disable", "remove"])
+        operation: z72.enum(["enable", "disable", "remove"])
       }),
-      z71.strictObject({
+      z72.strictObject({
         id: SavedMachineIdSchema,
-        operation: z71.literal("edit"),
+        operation: z72.literal("edit"),
         patch: SavedMachineSchema.pick({ label: true, sshTarget: true }).partial().refine(
           (patch) => patch.label !== void 0 || patch.sshTarget !== void 0,
           "Provide a label or SSH target"
@@ -10729,7 +10804,7 @@ var init_saved_machines = __esm({
 });
 
 // packages/contracts/src/semantic-icons.ts
-import { z as z72 } from "zod";
+import { z as z73 } from "zod";
 var init_semantic_icons = __esm({
   "packages/contracts/src/semantic-icons.ts"() {
     "use strict";
@@ -10737,25 +10812,25 @@ var init_semantic_icons = __esm({
 });
 
 // packages/contracts/src/workspace-admission.ts
-import { z as z73 } from "zod";
+import { z as z74 } from "zod";
 var WorkspaceAdmissionSnapshotSchemaZ;
 var init_workspace_admission = __esm({
   "packages/contracts/src/workspace-admission.ts"() {
     "use strict";
-    WorkspaceAdmissionSnapshotSchemaZ = /* @__PURE__ */ (() => z73.object({
-      pending: z73.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-      limit: z73.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-      disposed: z73.boolean(),
-      retained: z73.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-      retentionLimit: z73.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    WorkspaceAdmissionSnapshotSchemaZ = /* @__PURE__ */ (() => z74.object({
+      pending: z74.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      limit: z74.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      disposed: z74.boolean(),
+      retained: z74.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      retentionLimit: z74.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       /** Open's legacy ledger can require retirement; promotion replay never blocks new admission. */
-      retentionMayBlock: z73.boolean()
+      retentionMayBlock: z74.boolean()
     }).strict())();
   }
 });
 
 // packages/contracts/src/tmux-server-interaction-events.ts
-import { z as z74 } from "zod";
+import { z as z75 } from "zod";
 var TMUX_INTERACTION_BATCH_LIMIT, cursor, TmuxInteractionCursorSchemaZ, base, TmuxServerInteractionEventSchemaZ;
 var init_tmux_server_interaction_events = __esm({
   "packages/contracts/src/tmux-server-interaction-events.ts"() {
@@ -10764,30 +10839,30 @@ var init_tmux_server_interaction_events = __esm({
     init_interaction_evidence();
     init_interaction_journal();
     TMUX_INTERACTION_BATCH_LIMIT = /* @__PURE__ */ (() => 64)();
-    cursor = /* @__PURE__ */ (() => z74.number().int().min(0).max(Number.MAX_SAFE_INTEGER))();
-    TmuxInteractionCursorSchemaZ = /* @__PURE__ */ (() => z74.object({ server: TmuxServerScopeSchemaZ, cursor }).strict())();
-    base = /* @__PURE__ */ (() => ({ version: z74.literal(1), server: TmuxServerScopeSchemaZ }))();
-    TmuxServerInteractionEventSchemaZ = /* @__PURE__ */ (() => z74.discriminatedUnion("type", [
-      z74.object({
+    cursor = /* @__PURE__ */ (() => z75.number().int().min(0).max(Number.MAX_SAFE_INTEGER))();
+    TmuxInteractionCursorSchemaZ = /* @__PURE__ */ (() => z75.object({ server: TmuxServerScopeSchemaZ, cursor }).strict())();
+    base = /* @__PURE__ */ (() => ({ version: z75.literal(1), server: TmuxServerScopeSchemaZ }))();
+    TmuxServerInteractionEventSchemaZ = /* @__PURE__ */ (() => z75.discriminatedUnion("type", [
+      z75.object({
         ...base,
-        type: z74.literal("ready"),
+        type: z75.literal("ready"),
         after: cursor,
         observationStatus: InteractionObservationStatusSchemaZ
       }).strict(),
-      z74.object({
+      z75.object({
         ...base,
-        type: z74.literal("status"),
+        type: z75.literal("status"),
         observationStatus: InteractionObservationStatusSchemaZ
       }).strict(),
-      z74.object({
+      z75.object({
         ...base,
-        type: z74.literal("batch"),
+        type: z75.literal("batch"),
         after: cursor,
         cursor,
-        gap: z74.object({ from: cursor, through: cursor }).strict().nullable(),
-        receipts: z74.array(InteractionJournalEntrySchemaZ).min(1).max(TMUX_INTERACTION_BATCH_LIMIT)
+        gap: z75.object({ from: cursor, through: cursor }).strict().nullable(),
+        receipts: z75.array(InteractionJournalEntrySchemaZ).min(1).max(TMUX_INTERACTION_BATCH_LIMIT)
       }).strict(),
-      z74.object({ ...base, type: z74.literal("retired") }).strict()
+      z75.object({ ...base, type: z75.literal("retired") }).strict()
     ]).superRefine((event, ctx) => {
       if (event.type === "ready" || event.type === "status") {
         if (event.observationStatus.serverScope.serverId !== event.server.serverId || event.observationStatus.serverScope.generation !== event.server.generation)
@@ -10814,7 +10889,7 @@ var init_tmux_server_interaction_events = __esm({
 });
 
 // packages/contracts/src/automation-operations.ts
-import { z as z75 } from "zod";
+import { z as z76 } from "zod";
 var AUTOMATION_API_PATH, AUTOMATION_INPUT_MAX_BYTES, AutomationOperationHandleSchemaZ, AutomationPaneEndpointSchemaZ, endpoints, AutomationOperationIntentSchemaZ, AutomationReserveRequestSchemaZ, AutomationExecuteRequestSchemaZ, AutomationOperationSummarySchemaZ, AutomationOperationStatusSchemaZ, displayLabel, AutomationPanesResponseSchemaZ, AutomationReserveResponseSchemaZ, readContent, AutomationExecuteResponseSchemaZ, statusEnvelope, AutomationStatusResponseSchemaZ, AutomationErrorResponseSchemaZ;
 var init_automation_operations = __esm({
   "packages/contracts/src/automation-operations.ts"() {
@@ -10822,7 +10897,7 @@ var init_automation_operations = __esm({
     init_interaction_evidence();
     AUTOMATION_API_PATH = /* @__PURE__ */ (() => "/api/v1/automation")();
     AUTOMATION_INPUT_MAX_BYTES = /* @__PURE__ */ (() => 16 * 1024)();
-    AutomationOperationHandleSchemaZ = /* @__PURE__ */ (() => z75.object({ generation: z75.uuid(), operationId: z75.uuid() }).strict())();
+    AutomationOperationHandleSchemaZ = /* @__PURE__ */ (() => z76.object({ generation: z76.uuid(), operationId: z76.uuid() }).strict())();
     AutomationPaneEndpointSchemaZ = /* @__PURE__ */ (() => InteractionPaneEndpointSchemaZ.options[0])();
     endpoints = /* @__PURE__ */ (() => ({
       target: AutomationPaneEndpointSchemaZ,
@@ -10830,35 +10905,35 @@ var init_automation_operations = __esm({
       // this exact source lifetime. Missing source remains explicitly unbound.
       source: AutomationPaneEndpointSchemaZ.nullable()
     }))();
-    AutomationOperationIntentSchemaZ = /* @__PURE__ */ (() => z75.discriminatedUnion("kind", [
-      z75.object({
-        kind: z75.literal("send"),
+    AutomationOperationIntentSchemaZ = /* @__PURE__ */ (() => z76.discriminatedUnion("kind", [
+      z76.object({
+        kind: z76.literal("send"),
         ...endpoints,
-        text: z75.string().min(1).max(AUTOMATION_INPUT_MAX_BYTES).refine((value) => !value.includes("\0"), "Input contains NUL").refine(
+        text: z76.string().min(1).max(AUTOMATION_INPUT_MAX_BYTES).refine((value) => !value.includes("\0"), "Input contains NUL").refine(
           (value) => new TextEncoder().encode(value).byteLength <= AUTOMATION_INPUT_MAX_BYTES,
           "Input exceeds UTF-8 byte limit"
         ),
-        enter: z75.boolean()
+        enter: z76.boolean()
       }).strict(),
-      z75.object({ kind: z75.literal("read"), ...endpoints }).strict()
+      z76.object({ kind: z76.literal("read"), ...endpoints }).strict()
     ]))();
-    AutomationReserveRequestSchemaZ = /* @__PURE__ */ (() => z75.object({
-      version: z75.literal(1),
+    AutomationReserveRequestSchemaZ = /* @__PURE__ */ (() => z76.object({
+      version: z76.literal(1),
       intent: AutomationOperationIntentSchemaZ,
       // Adapter metadata is a declaration, never evidence of the calling agent.
       // Existing v1 clients omitted it and retain their original SDK label.
-      origin: z75.enum(["cli", "sdk", "mcp"]).default("sdk")
+      origin: z76.enum(["cli", "sdk", "mcp"]).default("sdk")
     }).strict())();
     AutomationExecuteRequestSchemaZ = /* @__PURE__ */ (() => AutomationReserveRequestSchemaZ.extend({
       handle: AutomationOperationHandleSchemaZ
     }).strict())();
-    AutomationOperationSummarySchemaZ = /* @__PURE__ */ (() => z75.discriminatedUnion("kind", [
-      z75.object({ kind: z75.literal("send"), submitted: z75.boolean() }).strict(),
-      z75.object({
-        kind: z75.literal("read"),
-        capturedBytes: z75.number().int().nonnegative().max(65536),
-        returnedBytes: z75.number().int().nonnegative().max(16384),
-        truncated: z75.boolean()
+    AutomationOperationSummarySchemaZ = /* @__PURE__ */ (() => z76.discriminatedUnion("kind", [
+      z76.object({ kind: z76.literal("send"), submitted: z76.boolean() }).strict(),
+      z76.object({
+        kind: z76.literal("read"),
+        capturedBytes: z76.number().int().nonnegative().max(65536),
+        returnedBytes: z76.number().int().nonnegative().max(16384),
+        truncated: z76.boolean()
       }).strict()
     ]).superRefine((summary, context) => {
       if (summary.kind !== "read") return;
@@ -10866,43 +10941,43 @@ var init_automation_operations = __esm({
         context.addIssue({ code: "custom", message: "Inconsistent snapshot byte counts" });
       }
     }))();
-    AutomationOperationStatusSchemaZ = /* @__PURE__ */ (() => z75.discriminatedUnion("status", [
-      z75.object({ status: z75.literal("reserved") }).strict(),
-      z75.object({ status: z75.literal("running") }).strict(),
-      z75.object({ status: z75.literal("outcome-unknown") }).strict(),
-      z75.object({ status: z75.literal("completed"), result: AutomationOperationSummarySchemaZ }).strict()
+    AutomationOperationStatusSchemaZ = /* @__PURE__ */ (() => z76.discriminatedUnion("status", [
+      z76.object({ status: z76.literal("reserved") }).strict(),
+      z76.object({ status: z76.literal("running") }).strict(),
+      z76.object({ status: z76.literal("outcome-unknown") }).strict(),
+      z76.object({ status: z76.literal("completed"), result: AutomationOperationSummarySchemaZ }).strict()
     ]))();
-    displayLabel = /* @__PURE__ */ (() => z75.string().max(160).refine(
+    displayLabel = /* @__PURE__ */ (() => z76.string().max(160).refine(
       (value) => [...value].every((character) => {
         const code2 = character.codePointAt(0);
         return code2 >= 32 && (code2 < 127 || code2 > 159);
       })
     ))();
-    AutomationPanesResponseSchemaZ = /* @__PURE__ */ (() => z75.object({
-      version: z75.literal(1),
+    AutomationPanesResponseSchemaZ = /* @__PURE__ */ (() => z76.object({
+      version: z76.literal(1),
       // Resolved by the daemon from the invoking pane credential, never a title.
       source: AutomationPaneEndpointSchemaZ.nullable().optional(),
-      panes: z75.array(
-        z75.object({
+      panes: z76.array(
+        z76.object({
           endpoint: AutomationPaneEndpointSchemaZ,
           title: displayLabel.nullable(),
           sessionName: displayLabel
         }).strict()
       ).max(4096)
     }).strict())();
-    AutomationReserveResponseSchemaZ = /* @__PURE__ */ (() => z75.object({
-      version: z75.literal(1),
+    AutomationReserveResponseSchemaZ = /* @__PURE__ */ (() => z76.object({
+      version: z76.literal(1),
       handle: AutomationOperationHandleSchemaZ
     }).strict())();
-    readContent = /* @__PURE__ */ (() => z75.discriminatedUnion("availability", [
-      z75.object({
-        availability: z75.literal("available"),
-        text: z75.string().max(16384).refine((text) => new TextEncoder().encode(text).byteLength <= 16384)
+    readContent = /* @__PURE__ */ (() => z76.discriminatedUnion("availability", [
+      z76.object({
+        availability: z76.literal("available"),
+        text: z76.string().max(16384).refine((text) => new TextEncoder().encode(text).byteLength <= 16384)
       }).strict(),
-      z75.object({ availability: z75.literal("replay-unavailable"), text: z75.null() }).strict()
+      z76.object({ availability: z76.literal("replay-unavailable"), text: z76.null() }).strict()
     ]))();
-    AutomationExecuteResponseSchemaZ = /* @__PURE__ */ (() => z75.object({
-      version: z75.literal(1),
+    AutomationExecuteResponseSchemaZ = /* @__PURE__ */ (() => z76.object({
+      version: z76.literal(1),
       handle: AutomationOperationHandleSchemaZ,
       result: AutomationOperationSummarySchemaZ,
       read: readContent.optional()
@@ -10912,16 +10987,16 @@ var init_automation_operations = __esm({
       if (response3.result.kind === "read" && response3.read?.availability === "available" && new TextEncoder().encode(response3.read.text).byteLength !== response3.result.returnedBytes)
         ctx.addIssue({ code: "custom", message: "Snapshot byte count mismatch" });
     }))();
-    statusEnvelope = /* @__PURE__ */ (() => ({ version: z75.literal(1), handle: AutomationOperationHandleSchemaZ }))();
-    AutomationStatusResponseSchemaZ = /* @__PURE__ */ (() => z75.discriminatedUnion("status", [
+    statusEnvelope = /* @__PURE__ */ (() => ({ version: z76.literal(1), handle: AutomationOperationHandleSchemaZ }))();
+    AutomationStatusResponseSchemaZ = /* @__PURE__ */ (() => z76.discriminatedUnion("status", [
       AutomationOperationStatusSchemaZ.options[0].extend(statusEnvelope),
       AutomationOperationStatusSchemaZ.options[1].extend(statusEnvelope),
       AutomationOperationStatusSchemaZ.options[2].extend(statusEnvelope),
       AutomationOperationStatusSchemaZ.options[3].extend(statusEnvelope)
     ]))();
-    AutomationErrorResponseSchemaZ = /* @__PURE__ */ (() => z75.object({
-      error: z75.object({
-        code: z75.enum([
+    AutomationErrorResponseSchemaZ = /* @__PURE__ */ (() => z76.object({
+      error: z76.object({
+        code: z76.enum([
           "owner-required",
           "invalid-request",
           "invalid-source",
@@ -10936,12 +11011,12 @@ var init_automation_operations = __esm({
 });
 
 // packages/contracts/src/native-interaction-journal.ts
-import { z as z76 } from "zod";
+import { z as z77 } from "zod";
 var NativeJournalUint64SchemaZ, positive, NATIVE_JOURNAL_COVERAGE, NativeJournalCapabilitySchemaZ, NativeJournalRecordSchemaZ, NativeJournalBatchSchemaZ, NativeJournalResetSchemaZ, NativeJournalReadSchemaZ, NativeJournalCursorSchemaZ, NativeJournalIdentitySchemaZ;
 var init_native_interaction_journal = __esm({
   "packages/contracts/src/native-interaction-journal.ts"() {
     "use strict";
-    NativeJournalUint64SchemaZ = /* @__PURE__ */ (() => z76.string().regex(/^(0|[1-9][0-9]{0,19})$/u).refine(
+    NativeJournalUint64SchemaZ = /* @__PURE__ */ (() => z77.string().regex(/^(0|[1-9][0-9]{0,19})$/u).refine(
       (value) => /^(0|[1-9][0-9]{0,19})$/u.test(value) && BigInt(value) <= 18446744073709551615n,
       "uint64 overflow"
     ))();
@@ -10953,93 +11028,93 @@ var init_native_interaction_journal = __esm({
       "cooperative-operation-v1",
       "pane-identity-v1"
     ])();
-    NativeJournalCapabilitySchemaZ = /* @__PURE__ */ (() => z76.object({
-      schemaVersion: z76.literal(2),
-      type: z76.literal("capability"),
-      readerTransport: z76.literal("sessionless-control-v1").optional(),
-      ownedOperationTransport: z76.literal("direct-wrapper-v1").optional(),
-      ownedOperationEpochGuard: z76.literal("server-epoch-v1").optional(),
-      ownedOperationPaneGuard: z76.literal("direct-pane-v1").optional(),
-      ownedOperationSessionGuard: z76.literal("direct-session-v1").optional(),
-      atomicPaneSnapshot: z76.literal("capture-resume-v1").optional(),
-      atomicPaneSnapshotDual: z76.literal("capture-resume-dual-v2").optional(),
-      serverEpoch: z76.uuid(),
-      journalEpoch: z76.uuid(),
-      enabled: z76.boolean(),
-      coverage: z76.array(z76.enum(NATIVE_JOURNAL_COVERAGE)).length(5).refine((items) => new Set(items).size === 5),
-      capacity: z76.literal(4096),
-      maxBatch: z76.literal(256),
-      maxWaiters: z76.literal(4),
-      waitingReaders: z76.int().min(0).max(4),
-      degraded: z76.int().min(0).max(31)
+    NativeJournalCapabilitySchemaZ = /* @__PURE__ */ (() => z77.object({
+      schemaVersion: z77.literal(2),
+      type: z77.literal("capability"),
+      readerTransport: z77.literal("sessionless-control-v1").optional(),
+      ownedOperationTransport: z77.literal("direct-wrapper-v1").optional(),
+      ownedOperationEpochGuard: z77.literal("server-epoch-v1").optional(),
+      ownedOperationPaneGuard: z77.literal("direct-pane-v1").optional(),
+      ownedOperationSessionGuard: z77.literal("direct-session-v1").optional(),
+      atomicPaneSnapshot: z77.literal("capture-resume-v1").optional(),
+      atomicPaneSnapshotDual: z77.literal("capture-resume-dual-v2").optional(),
+      serverEpoch: z77.uuid(),
+      journalEpoch: z77.uuid(),
+      enabled: z77.boolean(),
+      coverage: z77.array(z77.enum(NATIVE_JOURNAL_COVERAGE)).length(5).refine((items) => new Set(items).size === 5),
+      capacity: z77.literal(4096),
+      maxBatch: z77.literal(256),
+      maxWaiters: z77.literal(4),
+      waitingReaders: z77.int().min(0).max(4),
+      degraded: z77.int().min(0).max(31)
     }).strict())();
-    NativeJournalRecordSchemaZ = /* @__PURE__ */ (() => z76.object({
+    NativeJournalRecordSchemaZ = /* @__PURE__ */ (() => z77.object({
       sequence: positive,
       commandId: NativeJournalUint64SchemaZ,
       issuerId: NativeJournalUint64SchemaZ,
       monotonicUs: NativeJournalUint64SchemaZ,
       count: NativeJournalUint64SchemaZ,
       targetBirthId: NativeJournalUint64SchemaZ,
-      targetId: z76.int().min(0).max(4294967295),
-      kind: z76.int().min(1).max(6),
-      outcome: z76.int().min(1).max(3),
-      flags: z76.int().min(0).max(63),
+      targetId: z77.int().min(0).max(4294967295),
+      kind: z77.int().min(1).max(6),
+      outcome: z77.int().min(1).max(3),
+      flags: z77.int().min(0).max(63),
       requestId: NativeJournalUint64SchemaZ,
       parentCommandId: NativeJournalUint64SchemaZ,
-      transport: z76.int().min(0).max(2),
-      derivation: z76.int().min(0).max(3),
-      correlation: z76.uuid().nullable()
+      transport: z77.int().min(0).max(2),
+      derivation: z77.int().min(0).max(3),
+      correlation: z77.uuid().nullable()
     }).strict().superRefine((record, context) => {
       if (record.kind <= 4 && record.count !== "0" || record.kind === 1 && (record.flags & ~31) !== 0 || record.kind === 2 && (record.flags & ~33) !== 0 || (record.kind === 3 || record.kind === 4) && (record.flags & ~1) !== 0 || record.kind >= 5 && (record.flags !== 1 || record.outcome !== 1) || !(record.flags & 1) && (record.targetId !== 0 || record.targetBirthId !== "0") || record.kind === 5 && record.count === "0")
         context.addIssue({ code: "custom", message: "inconsistent native record" });
     }))();
-    NativeJournalBatchSchemaZ = /* @__PURE__ */ (() => z76.object({
-      schemaVersion: z76.literal(2),
-      type: z76.literal("batch"),
-      serverEpoch: z76.uuid(),
-      journalEpoch: z76.uuid(),
+    NativeJournalBatchSchemaZ = /* @__PURE__ */ (() => z77.object({
+      schemaVersion: z77.literal(2),
+      type: z77.literal("batch"),
+      serverEpoch: z77.uuid(),
+      journalEpoch: z77.uuid(),
       oldest: positive,
       newest: NativeJournalUint64SchemaZ,
-      gap: z76.object({ from: positive, through: positive }).strict().nullable(),
-      records: z76.array(NativeJournalRecordSchemaZ).max(64),
+      gap: z77.object({ from: positive, through: positive }).strict().nullable(),
+      records: z77.array(NativeJournalRecordSchemaZ).max(64),
       next: NativeJournalUint64SchemaZ,
-      degraded: z76.int().min(0).max(31)
+      degraded: z77.int().min(0).max(31)
     }).strict())();
-    NativeJournalResetSchemaZ = /* @__PURE__ */ (() => z76.object({
-      schemaVersion: z76.literal(2),
-      type: z76.literal("reset"),
-      serverEpoch: z76.uuid(),
-      journalEpoch: z76.uuid()
+    NativeJournalResetSchemaZ = /* @__PURE__ */ (() => z77.object({
+      schemaVersion: z77.literal(2),
+      type: z77.literal("reset"),
+      serverEpoch: z77.uuid(),
+      journalEpoch: z77.uuid()
     }).strict())();
-    NativeJournalReadSchemaZ = /* @__PURE__ */ (() => z76.union([
+    NativeJournalReadSchemaZ = /* @__PURE__ */ (() => z77.union([
       NativeJournalBatchSchemaZ,
       NativeJournalResetSchemaZ
     ]))();
-    NativeJournalCursorSchemaZ = /* @__PURE__ */ (() => z76.object({ serverEpoch: z76.uuid(), journalEpoch: z76.uuid(), sequence: NativeJournalUint64SchemaZ }).strict())();
-    NativeJournalIdentitySchemaZ = /* @__PURE__ */ (() => z76.object({
-      schemaVersion: z76.literal(2),
-      type: z76.literal("identity"),
-      serverEpoch: z76.uuid(),
+    NativeJournalCursorSchemaZ = /* @__PURE__ */ (() => z77.object({ serverEpoch: z77.uuid(), journalEpoch: z77.uuid(), sequence: NativeJournalUint64SchemaZ }).strict())();
+    NativeJournalIdentitySchemaZ = /* @__PURE__ */ (() => z77.object({
+      schemaVersion: z77.literal(2),
+      type: z77.literal("identity"),
+      serverEpoch: z77.uuid(),
       connectionId: positive
     }).strict())();
   }
 });
 
 // packages/contracts/src/native-operation-identity.ts
-import { z as z77 } from "zod";
+import { z as z78 } from "zod";
 var positive2, NativeOperationIdentitySchemaZ;
 var init_native_operation_identity = __esm({
   "packages/contracts/src/native-operation-identity.ts"() {
     "use strict";
     init_native_interaction_journal();
     positive2 = /* @__PURE__ */ (() => NativeJournalUint64SchemaZ.refine((value) => value !== "0"))();
-    NativeOperationIdentitySchemaZ = /* @__PURE__ */ (() => z77.object({
-      schemaVersion: z77.literal(2),
-      type: z77.literal("operation-identity"),
-      serverEpoch: z77.uuid(),
+    NativeOperationIdentitySchemaZ = /* @__PURE__ */ (() => z78.object({
+      schemaVersion: z78.literal(2),
+      type: z78.literal("operation-identity"),
+      serverEpoch: z78.uuid(),
       connectionId: positive2,
       wrapperCommandId: positive2,
-      operationId: z77.uuid()
+      operationId: z78.uuid()
     }).strict())();
   }
 });
@@ -11052,7 +11127,7 @@ var init_visual_terminal_palette = __esm({
 });
 
 // packages/contracts/src/pane-editor-context.ts
-import { z as z78 } from "zod";
+import { z as z79 } from "zod";
 var PaneEditorContextTargetSchemaZ, DirectorySchema, PaneEditorContextObservationSchemaZ, PaneEditorContextResponseSchemaZ;
 var init_pane_editor_context = __esm({
   "packages/contracts/src/pane-editor-context.ts"() {
@@ -11061,13 +11136,13 @@ var init_pane_editor_context = __esm({
     init_owner_scope_identity();
     init_workspace_catalog_resource();
     init_workspace_state();
-    PaneEditorContextTargetSchemaZ = /* @__PURE__ */ (() => z78.object({
+    PaneEditorContextTargetSchemaZ = /* @__PURE__ */ (() => z79.object({
       generation: TmuxServerGenerationSchemaZ,
       workspaceName: WorkspaceIdSchemaZ,
       liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict())();
-    DirectorySchema = /* @__PURE__ */ (() => z78.string().min(1).max(4096).refine(
+    DirectorySchema = /* @__PURE__ */ (() => z79.string().min(1).max(4096).refine(
       (value) => !value.includes("\0") && /^(?:\/|[A-Za-z]:[/\\]|\\\\[^\\]+\\[^\\]+)/u.test(value),
       "Expected an absolute filesystem directory"
     ))();
@@ -11078,8 +11153,8 @@ var init_pane_editor_context = __esm({
       (value) => value.cwd.kind !== "absolute" || value.cwd.path === value.directory,
       "Absolute cwd must match the observed directory"
     ))();
-    PaneEditorContextResponseSchemaZ = /* @__PURE__ */ (() => z78.object({
-      version: z78.literal(1),
+    PaneEditorContextResponseSchemaZ = /* @__PURE__ */ (() => z79.object({
+      version: z79.literal(1),
       server: TmuxServerScopeSchemaZ,
       context: PaneEditorContextObservationSchemaZ
     }).strict().refine(
@@ -11090,7 +11165,7 @@ var init_pane_editor_context = __esm({
 });
 
 // packages/contracts/src/tmux-agent-open.ts
-import { z as z79 } from "zod";
+import { z as z80 } from "zod";
 var TmuxAgentOpenRequestSchemaZ, TmuxAgentOpenResponseSchemaZ;
 var init_tmux_agent_open = __esm({
   "packages/contracts/src/tmux-agent-open.ts"() {
@@ -11101,12 +11176,12 @@ var init_tmux_agent_open = __esm({
     init_owner_scope_identity();
     init_workspace_catalog_resource();
     init_workspace_state();
-    TmuxAgentOpenRequestSchemaZ = /* @__PURE__ */ (() => z79.object({
+    TmuxAgentOpenRequestSchemaZ = /* @__PURE__ */ (() => z80.object({
       observedPaneId: SemanticProductIdSchemaZ,
       observedAgentId: FleetAgentIdSchemaZ
     }).strict())();
-    TmuxAgentOpenResponseSchemaZ = /* @__PURE__ */ (() => z79.object({
-      version: z79.literal(1),
+    TmuxAgentOpenResponseSchemaZ = /* @__PURE__ */ (() => z80.object({
+      version: z80.literal(1),
       server: TmuxServerScopeSchemaZ,
       workspaceName: WorkspaceIdSchemaZ,
       liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
@@ -11116,15 +11191,15 @@ var init_tmux_agent_open = __esm({
 });
 
 // packages/contracts/src/tmux-server-diagnostics.ts
-import { z as z80 } from "zod";
+import { z as z81 } from "zod";
 var TmuxServerVersionSchemaZ, TmuxServerDiagnosticsSchemaZ;
 var init_tmux_server_diagnostics = __esm({
   "packages/contracts/src/tmux-server-diagnostics.ts"() {
     "use strict";
     init_tmux_server_scope();
-    TmuxServerVersionSchemaZ = /* @__PURE__ */ (() => z80.string().max(32).regex(/^[0-9]+\.[0-9]+[a-z]?$/u))();
-    TmuxServerDiagnosticsSchemaZ = /* @__PURE__ */ (() => z80.object({
-      version: z80.literal(1),
+    TmuxServerVersionSchemaZ = /* @__PURE__ */ (() => z81.string().max(32).regex(/^[0-9]+\.[0-9]+[a-z]?$/u))();
+    TmuxServerDiagnosticsSchemaZ = /* @__PURE__ */ (() => z81.object({
+      version: z81.literal(1),
       server: TmuxServerScopeSchemaZ,
       tmuxVersion: TmuxServerVersionSchemaZ
     }).strict())();
@@ -11132,7 +11207,7 @@ var init_tmux_server_diagnostics = __esm({
 });
 
 // packages/contracts/src/terminal-history-anchor.ts
-import { z as z81 } from "zod";
+import { z as z82 } from "zod";
 var HistoryAnchorProofSchemaZ, HistoryAnchorIdentitySchemaZ, HistoryAnchorRequestSchemaZ, HistoryAnchorResultSchemaZ, HistoryAnchorResponseSchemaZ;
 var init_terminal_history_anchor = __esm({
   "packages/contracts/src/terminal-history-anchor.ts"() {
@@ -11141,45 +11216,45 @@ var init_terminal_history_anchor = __esm({
     init_semantic_identity();
     init_tmux_server_scope();
     init_workspace_catalog_resource();
-    HistoryAnchorProofSchemaZ = /* @__PURE__ */ (() => z81.object({
+    HistoryAnchorProofSchemaZ = /* @__PURE__ */ (() => z82.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      generation: z81.uuid(),
-      incarnation: z81.string().min(1).max(256),
-      revision: z81.number().int().nonnegative().safe(),
-      stateHash: z81.string().regex(/^[0-9a-f]{16}$/u)
+      generation: z82.uuid(),
+      incarnation: z82.string().min(1).max(256),
+      revision: z82.number().int().nonnegative().safe(),
+      stateHash: z82.string().regex(/^[0-9a-f]{16}$/u)
     }).strict())();
     HistoryAnchorIdentitySchemaZ = /* @__PURE__ */ (() => HistoryAnchorProofSchemaZ.omit({
       revision: true,
       stateHash: true
     }))();
-    HistoryAnchorRequestSchemaZ = /* @__PURE__ */ (() => z81.union([
-      z81.object({
-        version: z81.literal(1),
+    HistoryAnchorRequestSchemaZ = /* @__PURE__ */ (() => z82.union([
+      z82.object({
+        version: z82.literal(1),
         liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
         proof: HistoryAnchorProofSchemaZ,
-        operation: z81.object({ kind: z81.literal("capture"), historyIndex: z81.number().int().nonnegative().safe() }).strict()
+        operation: z82.object({ kind: z82.literal("capture"), historyIndex: z82.number().int().nonnegative().safe() }).strict()
       }).strict(),
-      z81.object({
-        version: z81.literal(1),
+      z82.object({
+        version: z82.literal(1),
         liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
         proof: HistoryAnchorIdentitySchemaZ,
-        operation: z81.object({ kind: z81.literal("resolve"), token: z81.uuid() }).strict()
+        operation: z82.object({ kind: z82.literal("resolve"), token: z82.uuid() }).strict()
       }).strict()
     ]))();
-    HistoryAnchorResultSchemaZ = /* @__PURE__ */ (() => z81.discriminatedUnion("status", [
-      z81.object({ status: z81.literal("captured"), token: z81.uuid() }).strict(),
-      z81.object({
-        status: z81.literal("resolved"),
+    HistoryAnchorResultSchemaZ = /* @__PURE__ */ (() => z82.discriminatedUnion("status", [
+      z82.object({ status: z82.literal("captured"), token: z82.uuid() }).strict(),
+      z82.object({
+        status: z82.literal("resolved"),
         proof: HistoryAnchorProofSchemaZ,
-        historyIndex: z81.number().int().nonnegative().safe()
+        historyIndex: z82.number().int().nonnegative().safe()
       }).strict(),
-      z81.object({ status: z81.literal("unavailable") }).strict(),
-      z81.object({ status: z81.literal("stale") }).strict(),
-      z81.object({ status: z81.literal("lost") }).strict()
+      z82.object({ status: z82.literal("unavailable") }).strict(),
+      z82.object({ status: z82.literal("stale") }).strict(),
+      z82.object({ status: z82.literal("lost") }).strict()
     ]))();
-    HistoryAnchorResponseSchemaZ = /* @__PURE__ */ (() => z81.object({
-      version: z81.literal(1),
+    HistoryAnchorResponseSchemaZ = /* @__PURE__ */ (() => z82.object({
+      version: z82.literal(1),
       server: TmuxServerScopeSchemaZ,
       result: HistoryAnchorResultSchemaZ
     }).strict())();
@@ -11219,6 +11294,7 @@ var init_src2 = __esm({
     init_session_runtime();
     init_terminal_replica();
     init_terminal_delivery();
+    init_terminal_graphics();
     init_terminal_runtime_inventory();
     init_experience_shell();
     init_application_shell();
@@ -12940,21 +13016,21 @@ var init_classify = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z82 } from "zod";
+import { z as z83 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src2();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z82.object({
-      dir: z82.string().min(1),
-      name: z82.string().min(1).optional(),
-      persistence: z82.enum(["durable", "volatile"]).optional()
+    RegisterProjectRequestSchemaZ = z83.object({
+      dir: z83.string().min(1),
+      name: z83.string().min(1).optional(),
+      persistence: z83.enum(["durable", "volatile"]).optional()
     });
-    InitProjectRequestSchemaZ = z82.object({
-      dir: z82.string().min(1),
-      template: z82.string().min(1).optional()
+    InitProjectRequestSchemaZ = z83.object({
+      dir: z83.string().min(1),
+      template: z83.string().min(1).optional()
     });
   }
 });
@@ -13224,7 +13300,7 @@ var init_project_probe = __esm({
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname12, isAbsolute as isAbsolute8, join as join14, resolve as resolve10 } from "node:path";
-import { z as z83 } from "zod";
+import { z as z84 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -13384,9 +13460,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     init_runtime_namespace();
-    RegistryFileSchemaZ = z83.object({
-      version: z83.literal(1),
-      projects: z83.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z84.object({
+      version: z84.literal(1),
+      projects: z84.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -17034,7 +17110,7 @@ var init_notify_state = __esm({
 // packages/daemon/src/tui/chrome/snapshot.ts
 import { existsSync as existsSync17, mkdirSync as mkdirSync14, readFileSync as readFileSync15, renameSync as renameSync8, writeFileSync as writeFileSync12 } from "node:fs";
 import { dirname as dirname19, join as join22 } from "node:path";
-import { z as z84 } from "zod";
+import { z as z85 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -17208,32 +17284,32 @@ var init_snapshot2 = __esm({
     init_src();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z84.object({
-      index: z84.number(),
-      cwd: z84.string(),
-      command: z84.string().nullable(),
-      agent: z84.string().nullable(),
-      agentSessionId: z84.string().nullable(),
-      agentState: z84.string().nullable(),
-      title: z84.string()
+    PaneSnapshotSchemaZ = z85.object({
+      index: z85.number(),
+      cwd: z85.string(),
+      command: z85.string().nullable(),
+      agent: z85.string().nullable(),
+      agentSessionId: z85.string().nullable(),
+      agentState: z85.string().nullable(),
+      title: z85.string()
     });
-    WindowSnapshotSchemaZ = z84.object({
-      index: z84.number(),
-      name: z84.string(),
-      active: z84.boolean(),
-      layout: z84.string(),
-      panes: z84.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z85.object({
+      index: z85.number(),
+      name: z85.string(),
+      active: z85.boolean(),
+      layout: z85.string(),
+      panes: z85.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z84.object({
-      name: z84.string(),
-      cwd: z84.string(),
-      adopted: z84.boolean(),
-      windows: z84.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z85.object({
+      name: z85.string(),
+      cwd: z85.string(),
+      adopted: z85.boolean(),
+      windows: z85.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z84.object({
-      version: z84.literal(1),
-      savedAt: z84.string(),
-      sessions: z84.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z85.object({
+      version: z85.literal(1),
+      savedAt: z85.string(),
+      sessions: z85.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -19644,7 +19720,7 @@ var init_agent_kind = __esm({
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { existsSync as existsSync23, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync10, writeFileSync as writeFileSync15 } from "node:fs";
 import { dirname as dirname24, join as join26 } from "node:path";
-import { z as z85 } from "zod";
+import { z as z86 } from "zod";
 function isSessionInventory(value) {
   return !Array.isArray(value);
 }
@@ -19722,9 +19798,9 @@ var init_workspace_registry = __esm({
     init_runtime_namespace();
     init_src2();
     init_runtime_namespace();
-    RegistryFileSchemaZ2 = z85.object({
-      version: z85.literal(1),
-      workspaces: z85.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z86.object({
+      version: z86.literal(1),
+      workspaces: z86.array(WorkspaceSchemaZ)
     });
     WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS = 2e3;
     WorkspaceAlreadyExistsError = class extends Error {
@@ -23826,7 +23902,7 @@ import { createRequire } from "node:module";
 import { randomUUID as randomUUID8 } from "node:crypto";
 import { basename as basename9, dirname as dirname25, resolve as resolve19 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
-import { z as z86 } from "zod";
+import { z as z87 } from "zod";
 function defaultCliEntryPath() {
   const namespace = resolveRuntimeNamespace();
   if (namespace.development) return readDevelopmentBuild(namespace.development).cli;
@@ -23923,7 +23999,7 @@ async function tryDispatchAction(name, input, options = {}) {
         details: failure4.data.error.details
       });
     }
-    const success = z86.object({ ok: z86.literal(true), result: contract.result }).safeParse(body);
+    const success = z87.object({ ok: z87.literal(true), result: contract.result }).safeParse(body);
     if (success.success) return success.data.result;
   }
   return null;
@@ -23938,12 +24014,12 @@ var init_cli_action_bridge = __esm({
     init_canonical_daemon();
     init_canonical_daemon_bootstrap();
     init_pane_source_credentials();
-    FailureEnvelopeZ = z86.object({
-      ok: z86.literal(false),
-      error: z86.object({
-        code: z86.string(),
-        message: z86.string(),
-        details: z86.unknown().optional()
+    FailureEnvelopeZ = z87.object({
+      ok: z87.literal(false),
+      error: z87.object({
+        code: z87.string(),
+        message: z87.string(),
+        details: z87.unknown().optional()
       })
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([
@@ -25662,7 +25738,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
     const bounded4 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
-    if (!bounded4(semanticPaneId3, 256) || !bounded4(role, 256) || !bounded4(type, 256) || !bounded4(currentCommand, 512) || !bounded4(cwd, 4096) || !bounded4(title, 1024) || !bounded4(windowName, 1024) || !bounded4(name, 256) || !bounded4(missionStamp, 256) || !bounded4(semanticWindowId, 256) || !bounded4(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
+    if (!bounded4(semanticPaneId3, 256) || !bounded4(role, 256) || !bounded4(type, 256) || !bounded4(currentCommand, 512) || !bounded4(cwd, 4096) || !bounded4(windowName, 1024) || !bounded4(name, 256) || !bounded4(missionStamp, 256) || !bounded4(semanticWindowId, 256) || !bounded4(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
       continue;
     }
     descriptors.push({
@@ -25674,7 +25750,9 @@ function parseSessionPaneDescriptorReply(lines) {
       type: nonempty(type),
       currentCommand: nonempty(currentCommand),
       cwd: nonempty(cwd),
-      title: nonempty(title),
+      // Stock tmux turns any APC, including kitty graphics payloads, into the
+      // pane title; an overlong title names nothing and must not drop the pane.
+      title: bounded4(title, 1024) ? nonempty(title) : null,
       windowIndex,
       windowName: nonempty(windowName),
       windowId: /^@(?:0|[1-9][0-9]*)$/u.test(windowId) ? windowId : null,
@@ -26377,7 +26455,7 @@ var init_tmux_interaction_retention = __esm({
 
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
 import { execFile as execFile8 } from "node:child_process";
-import { z as z87 } from "zod";
+import { z as z88 } from "zod";
 function nextHookHealthcheckDelay(previousMs, outcome, schedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE) {
   const base2 = Math.max(1, Math.floor(schedule.baseMs));
   const max = Math.max(base2, Math.floor(schedule.maxMs));
@@ -26852,7 +26930,7 @@ var init_tmux_external_interaction_observer = __esm({
         }
         const ownPrefix = `${this.#daemonInstanceId}:`;
         const authoredOperationId = record.operationMarker?.startsWith(ownPrefix) ? record.operationMarker.slice(ownPrefix.length) : null;
-        const operationId = z87.uuid().safeParse(authoredOperationId);
+        const operationId = z88.uuid().safeParse(authoredOperationId);
         if (this.#resolveCapturedTarget) {
           const target = record.capturedTarget ? this.#resolveCapturedTarget(record.capturedTarget) : null;
           if (!target) {
@@ -28550,13 +28628,13 @@ var init_canonical_split_mutation = __esm({
 });
 
 // packages/daemon/src/lib/native-operation-command.ts
-import { z as z88 } from "zod";
+import { z as z89 } from "zod";
 function supportsNativeSessionGuard(session) {
   return typeof session.name === "string" && session.name.length > 0 && !session.name.includes("\0") && Buffer.byteLength(session.name, "utf8") <= 4096 && /^\$(0|[1-9][0-9]*)$/u.test(session.id) && BigInt(session.id.slice(1)) <= 4294967295n && NativeJournalUint64SchemaZ.safeParse(session.created).success;
 }
 function nativeOperationWrapperArgs(operationId, commands2, serverEpoch, target, session) {
-  z88.uuid().parse(operationId);
-  if (serverEpoch !== void 0) z88.uuid().parse(serverEpoch);
+  z89.uuid().parse(operationId);
+  if (serverEpoch !== void 0) z89.uuid().parse(serverEpoch);
   if (session && (!serverEpoch || !supportsNativeSessionGuard(session)))
     throw new Error("Invalid guarded native session identity");
   if (target) {
@@ -28863,7 +28941,7 @@ var init_native_grid_capture = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/native-atomic-snapshot.ts
-import { z as z89 } from "zod";
+import { z as z90 } from "zod";
 function validLimit(limit) {
   return Number.isSafeInteger(limit) && limit > 0 && limit <= NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES;
 }
@@ -29028,26 +29106,26 @@ var init_native_atomic_snapshot = __esm({
     NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024;
     NATIVE_ATOMIC_DUAL_MAX_RECORDS = 1e5;
     MAX_LINES = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES / 64;
-    TargetSchema = z89.object({
-      serverEpoch: z89.uuid(),
-      paneId: z89.string().regex(/^%(0|[1-9][0-9]{0,9})$/u).refine((value) => Number(value.slice(1)) <= 4294967295),
+    TargetSchema = z90.object({
+      serverEpoch: z90.uuid(),
+      paneId: z90.string().regex(/^%(0|[1-9][0-9]{0,9})$/u).refine((value) => Number(value.slice(1)) <= 4294967295),
       paneBirthId: NativeJournalUint64SchemaZ.refine((value) => value !== "0")
     }).strict();
     MetadataSchema = TargetSchema.extend({
-      snapshotVersion: z89.literal(1),
-      cursor: z89.string().max(1024),
-      resumed: z89.literal(true)
+      snapshotVersion: z90.literal(1),
+      cursor: z90.string().max(1024),
+      resumed: z90.literal(true)
     }).strict();
     decimal = (value) => value !== void 0 && /^(0|[1-9][0-9]*)$/u.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
     DualMetadataSchema = MetadataSchema.extend({
-      snapshotVersion: z89.literal(2),
-      representation: z89.literal("dual")
+      snapshotVersion: z90.literal(2),
+      representation: z90.literal("dual")
     }).strict();
-    AnsiChunkSchema = z89.object({ ansiHex: z89.string().regex(/^(?:[0-9a-f]{2}){1,4096}$/u) }).strict();
-    AnsiEndSchema = z89.object({
-      ansiEnd: z89.literal(true),
-      bytes: z89.number().int().nonnegative().max(NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES / 2),
-      chunks: z89.number().int().nonnegative().max(NATIVE_ATOMIC_DUAL_MAX_RECORDS)
+    AnsiChunkSchema = z90.object({ ansiHex: z90.string().regex(/^(?:[0-9a-f]{2}){1,4096}$/u) }).strict();
+    AnsiEndSchema = z90.object({
+      ansiEnd: z90.literal(true),
+      bytes: z90.number().int().nonnegative().max(NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES / 2),
+      chunks: z90.number().int().nonnegative().max(NATIVE_ATOMIC_DUAL_MAX_RECORDS)
     }).strict();
   }
 });
@@ -32932,7 +33010,7 @@ var init_session_channel = __esm({
 
 // packages/daemon/src/terminal/mirror/window-split-authority.ts
 import { randomUUID as randomUUID13 } from "node:crypto";
-import { z as z90 } from "zod";
+import { z as z91 } from "zod";
 var MAX_RETAINED_WINDOWS, WindowSplitLayoutUnavailable, WindowSplitAuthority;
 var init_window_split_authority = __esm({
   "packages/daemon/src/terminal/mirror/window-split-authority.ts"() {
@@ -32957,7 +33035,7 @@ var init_window_split_authority = __esm({
       #disposed = false;
       #capture(window2) {
         if (this.#disposed) throw new WindowSplitLayoutUnavailable();
-        const serverEpoch = z90.uuid().parse(this.options.serverEpoch());
+        const serverEpoch = z91.uuid().parse(this.options.serverEpoch());
         const snapshot2 = structuredClone(this.options.describe(window2));
         if (snapshot2.semanticWindowId !== window2.expectedSemanticWindowId || !/^@(0|[1-9][0-9]{0,9})$/u.test(snapshot2.runtimeWindowId) || Number(snapshot2.runtimeWindowId.slice(1)) > 4294967295 || !supportsNativeSessionGuard({
           id: snapshot2.runtimeSessionId,
@@ -37003,7 +37081,7 @@ var init_tmux_session_mutation_fence = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-agent-admission.ts
-import { z as z91 } from "zod";
+import { z as z92 } from "zod";
 async function captureAgentAdmission(run, session, observed) {
   const scan = async () => {
     const raw = await run([
@@ -37061,15 +37139,15 @@ var init_tmux_server_agent_admission = __esm({
     "use strict";
     init_src2();
     init_application_shell2();
-    observedAgentSchema = z91.object({
-      observedPaneId: z91.string().min(1).max(512),
-      observedAgentId: z91.string().min(1).max(512)
+    observedAgentSchema = z92.object({
+      observedPaneId: z92.string().min(1).max(512),
+      observedAgentId: z92.string().min(1).max(512)
     }).strict();
   }
 });
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
-import { z as z92 } from "zod";
+import { z as z93 } from "zod";
 function analyzeTrustedSemanticPaneCatalog(candidates) {
   const rows = [];
   let invalidRuntimeProof = false;
@@ -37118,18 +37196,18 @@ var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
     init_src2();
-    RuntimeSessionIdSchemaZ = z92.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ = z92.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ = z92.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
-    TrustedSemanticPaneSnapshotSchemaZ = z92.object({
+    RuntimeSessionIdSchemaZ = z93.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ = z93.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ = z93.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    TrustedSemanticPaneSnapshotSchemaZ = z93.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       windowStamp: TerminalAttachmentSemanticWindowIdSchemaZ.nullable().optional(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
-      windowPaneCount: z92.number().int().positive(),
-      sessionWindowCount: z92.number().int().positive()
+      windowPaneCount: z93.number().int().positive(),
+      sessionWindowCount: z93.number().int().positive()
     }).strict();
     SemanticPaneCatalogError = class extends Error {
       code;
@@ -37152,7 +37230,7 @@ var init_semantic_pane_catalog = __esm({
       }
       /** Resolves a pane set from one trusted discovery snapshot. */
       async resolveMany(targets) {
-        const parsedTargets = z92.array(TerminalAttachmentSemanticTargetSchemaZ).min(1).max(4096).parse(targets);
+        const parsedTargets = z93.array(TerminalAttachmentSemanticTargetSchemaZ).min(1).max(4096).parse(targets);
         const diagnosticTarget = parsedTargets[0];
         let discovered;
         try {
@@ -38251,9 +38329,9 @@ var init_workspace_state2 = __esm({
 
 // packages/daemon/src/lib/tmux-pane-editor-context.ts
 import { isAbsolute as isAbsolute16, resolve as resolve23 } from "node:path";
-import { z as z93 } from "zod";
+import { z as z94 } from "zod";
 function createPaneEditorContextResolver(options) {
-  const generation = z93.uuid().parse(options.generation);
+  const generation = z94.uuid().parse(options.generation);
   return async (input, cancellation) => {
     const target = PaneEditorContextTargetSchemaZ.parse(input);
     const signal = cancellation ? AbortSignal.any([cancellation, AbortSignal.timeout(5e3)]) : AbortSignal.timeout(5e3);
@@ -38333,7 +38411,7 @@ var init_tmux_pane_editor_context = __esm({
 
 // packages/daemon/src/terminal/session-runtime/runtime-observability.ts
 import { randomUUID as randomUUID21 } from "node:crypto";
-import { z as z94 } from "zod";
+import { z as z95 } from "zod";
 function createSessionRuntimeObservability(options = {}) {
   const capacity = options.capacity ?? 1024;
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 65536)
@@ -38351,7 +38429,7 @@ function createSessionRuntimeObservability(options = {}) {
     nowMicros,
     beginTrace(scenario, authority2, traceId) {
       return Object.freeze({
-        traceId: z94.uuid().parse(traceId ?? createTraceId()),
+        traceId: z95.uuid().parse(traceId ?? createTraceId()),
         scenario,
         authority: authority2
       });
@@ -38582,7 +38660,7 @@ function waitForExit(proc, timeoutMs) {
     proc.once("exit", onExit);
   });
 }
-var NATIVE_VIEWER_PRIMITIVES, ATOMIC_CAPTURE_BYTE_HARD_CAP, ATOMIC_CAPTURE_LINE_HARD_CAP, ATOMIC_CURSOR_BYTE_HARD_CAP, ControlChannelCore, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
+var NATIVE_VIEWER_PRIMITIVES, ATOMIC_CAPTURE_BYTE_HARD_CAP, ATOMIC_CAPTURE_LINE_HARD_CAP, ATOMIC_CURSOR_BYTE_HARD_CAP, ControlChannelCore, KITTY_GRAPHICS_SETUP, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
 var init_control_channel = __esm({
   "packages/daemon/src/terminal/mirror/control-channel.ts"() {
     "use strict";
@@ -39273,6 +39351,10 @@ var init_control_channel = __esm({
         );
       }
     };
+    KITTY_GRAPHICS_SETUP = [
+      "set-option -gq kitty-graphics on",
+      "set-environment -g TMUX_IDE_GRAPHICS kitty"
+    ];
     DEFAULT_PAUSE_AFTER_SECONDS = 2;
     MirrorControlChannel = class {
       proc = null;
@@ -39372,7 +39454,10 @@ var init_control_channel = __esm({
             this.core.fail(String(err));
             reject(err);
           });
-        }).then(() => this.initializeNativeViewer());
+        }).then(() => {
+          if (this.opts.kittyGraphics) for (const command3 of KITTY_GRAPHICS_SETUP) this.send(command3);
+          return this.initializeNativeViewer();
+        });
       }
       get nativeViewerIdentity() {
         return this.viewerIdentity ? { ...this.viewerIdentity } : null;
@@ -40196,6 +40281,7 @@ var init_mirror_service = __esm({
                 nativeServerIdentity: this.opts.nativeServerIdentity,
                 configFile: this.opts.configFile,
                 pauseAfterSeconds: this.opts.pauseAfterSeconds,
+                kittyGraphics: this.opts.kittyGraphics ?? process.env.TMUX_IDE_KITTY_GRAPHICS !== "0",
                 nowMicros: this.opts.nowMicros,
                 nativeViewer: ownedViewer?.controlOptions(),
                 nativeViewerReady: ownedViewer ? {
@@ -40569,7 +40655,7 @@ var init_semantic_mutation_resource_changes = __esm({
 // packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
 import { randomUUID as randomUUID22 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
-import { z as z95 } from "zod";
+import { z as z96 } from "zod";
 function replayedResult(result2) {
   if (result2 === void 0) return void 0;
   if (result2.verb === "workspace.pane.read") return retainedResult(result2);
@@ -40638,7 +40724,7 @@ var init_semantic_mutation_executor = __esm({
             new SessionRuntimeIntentError("rejected", "Session semantic mutation executor is disposed")
           );
         }
-        const operationId = z95.uuid().parse(rawOperationId);
+        const operationId = z96.uuid().parse(rawOperationId);
         let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
         if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
           intent = { ...intent, origin: authority2.origin };
@@ -43208,7 +43294,7 @@ var init_terminal_replica2 = __esm({
 });
 
 // packages/core/src/terminal-delivery.ts
-import { z as z96 } from "zod";
+import { z as z97 } from "zod";
 function negotiateTerminalDelivery(offer, generation, deliveryNonce) {
   if (!offer.protocolVersions.includes(TERMINAL_DELIVERY_PROTOCOL_VERSION))
     return { accepted: false, reason: "protocol-version-mismatch" };
@@ -43860,8 +43946,8 @@ var init_terminal_delivery2 = __esm({
     validatedOwnedEncodingRows = /* @__PURE__ */ new WeakSet();
     CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
     trustedBlankCellsValidated = false;
-    CompactOwnedCellSchema = z96.union([
-      z96.custom((cell) => {
+    CompactOwnedCellSchema = z97.union([
+      z97.custom((cell) => {
         if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) return false;
         validateTrustedBlankCells();
         return true;
@@ -43872,8 +43958,8 @@ var init_terminal_delivery2 = __esm({
     CompactOwnedEncodingRowSchema = TerminalReplicaRowSchemaZ.extend({
       cells: CompactOwnedCellSliceSchema
     });
-    CompactEncodingRowSchema = z96.union([
-      z96.custom((input) => {
+    CompactEncodingRowSchema = z97.union([
+      z97.custom((input) => {
         if (!isOwnedTerminalReplicaRow(input)) return false;
         if (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
           return true;
@@ -43895,7 +43981,7 @@ var init_terminal_delivery2 = __esm({
     StrictCompactPatchRowSchema = TerminalReplicaRowSchemaZ.catch((context) => {
       throw new CompactPatchRowFailure(context.issues, context.value);
     });
-    CompactPatchEncodingRowSchema = z96.custom(() => true).transform((input, context) => {
+    CompactPatchEncodingRowSchema = z97.custom(() => true).transform((input, context) => {
       const owned = isOwnedTerminalReplicaRow(input);
       if (owned && (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input)))
         return input;
@@ -43919,20 +44005,20 @@ var init_terminal_delivery2 = __esm({
     });
     CompactPatchEncodingPayloadSchema = TerminalSemanticDeliveryPayloadSchemaZ.options[1].safeExtend({
       patch: TerminalReplicaPatchPayloadSchemaZ.extend({
-        rows: z96.array(
+        rows: z97.array(
           TerminalReplicaPatchPayloadSchemaZ.shape.rows.element.extend({
             row: CompactPatchEncodingRowSchema
           })
         ),
-        history: z96.array(CompactPatchEncodingRowSchema).optional(),
-        historyDelta: TerminalReplicaPatchPayloadSchemaZ.shape.historyDelta.unwrap().extend({ append: z96.array(CompactPatchEncodingRowSchema) }).optional()
+        history: z97.array(CompactPatchEncodingRowSchema).optional(),
+        historyDelta: TerminalReplicaPatchPayloadSchemaZ.shape.historyDelta.unwrap().extend({ append: z97.array(CompactPatchEncodingRowSchema) }).optional()
       })
     });
-    CompactEncodingPayloadSchema = z96.discriminatedUnion("frame", [
+    CompactEncodingPayloadSchema = z97.discriminatedUnion("frame", [
       TerminalSemanticDeliveryPayloadSchemaZ.options[0].extend({
         snapshot: TerminalReplicaSnapshotSchemaZ.extend({
-          grid: z96.array(CompactEncodingRowSchema),
-          history: z96.array(CompactEncodingRowSchema)
+          grid: z97.array(CompactEncodingRowSchema),
+          history: z97.array(CompactEncodingRowSchema)
         })
       }),
       TerminalSemanticDeliveryPayloadSchemaZ.options[1],
@@ -44101,47 +44187,47 @@ var init_saved_machines2 = __esm({
 });
 
 // packages/contracts/src/fleet-client-state.ts
-import { z as z97 } from "zod";
+import { z as z98 } from "zod";
 var key, label2, FleetCacheRouteIdSchema, FleetCachedSessionSchema, FleetCachedRouteSchema, FleetClientStateSchema, FleetClientStateChangeSchema, FleetClientStateRequestSchema;
 var init_fleet_client_state = __esm({
   "packages/contracts/src/fleet-client-state.ts"() {
     "use strict";
     init_tmux_server_scope();
     init_saved_machines();
-    key = /* @__PURE__ */ (() => z97.string().min(1).max(1024).regex(/^[^\p{Cc}\p{Cf}]+$/u))();
-    label2 = /* @__PURE__ */ (() => z97.string().min(1).max(255).regex(/^[^\p{Cc}\p{Cf}]+$/u))();
-    FleetCacheRouteIdSchema = /* @__PURE__ */ (() => z97.union([z97.literal("local"), SavedMachineIdSchema]))();
-    FleetCachedSessionSchema = /* @__PURE__ */ (() => z97.strictObject({
+    key = /* @__PURE__ */ (() => z98.string().min(1).max(1024).regex(/^[^\p{Cc}\p{Cf}]+$/u))();
+    label2 = /* @__PURE__ */ (() => z98.string().min(1).max(255).regex(/^[^\p{Cc}\p{Cf}]+$/u))();
+    FleetCacheRouteIdSchema = /* @__PURE__ */ (() => z98.union([z98.literal("local"), SavedMachineIdSchema]))();
+    FleetCachedSessionSchema = /* @__PURE__ */ (() => z98.strictObject({
       id: key,
       liveSessionId: key.optional(),
       server: TmuxServerScopeSchemaZ.optional(),
       serverLabel: label2.optional(),
       name: label2,
-      paneCount: z97.number().int().min(0).max(4096)
+      paneCount: z98.number().int().min(0).max(4096)
     }))();
-    FleetCachedRouteSchema = /* @__PURE__ */ (() => z97.strictObject({
+    FleetCachedRouteSchema = /* @__PURE__ */ (() => z98.strictObject({
       routeId: FleetCacheRouteIdSchema,
-      environmentId: z97.uuid().nullable(),
+      environmentId: z98.uuid().nullable(),
       generation: key.nullable(),
-      seenAt: z97.number().int().nonnegative(),
-      sessions: z97.array(FleetCachedSessionSchema).max(64)
+      seenAt: z98.number().int().nonnegative(),
+      sessions: z98.array(FleetCachedSessionSchema).max(64)
     }))();
-    FleetClientStateSchema = /* @__PURE__ */ (() => z97.strictObject({
-      version: z97.literal(1),
-      favorites: z97.array(key).max(128),
-      collapsed: z97.array(key).max(64),
-      recent: z97.array(key).max(64),
-      catalog: z97.array(FleetCachedRouteSchema).max(64)
+    FleetClientStateSchema = /* @__PURE__ */ (() => z98.strictObject({
+      version: z98.literal(1),
+      favorites: z98.array(key).max(128),
+      collapsed: z98.array(key).max(64),
+      recent: z98.array(key).max(64),
+      catalog: z98.array(FleetCachedRouteSchema).max(64)
     }))();
-    FleetClientStateChangeSchema = /* @__PURE__ */ (() => z97.discriminatedUnion("type", [
-      z97.strictObject({ type: z97.literal("cache"), route: FleetCachedRouteSchema }),
-      z97.strictObject({ type: z97.literal("favorite"), key, enabled: z97.boolean() }),
-      z97.strictObject({ type: z97.literal("collapse"), key, enabled: z97.boolean() }),
-      z97.strictObject({ type: z97.literal("visit"), key }),
-      z97.strictObject({ type: z97.literal("forget-route"), routeId: FleetCacheRouteIdSchema })
+    FleetClientStateChangeSchema = /* @__PURE__ */ (() => z98.discriminatedUnion("type", [
+      z98.strictObject({ type: z98.literal("cache"), route: FleetCachedRouteSchema }),
+      z98.strictObject({ type: z98.literal("favorite"), key, enabled: z98.boolean() }),
+      z98.strictObject({ type: z98.literal("collapse"), key, enabled: z98.boolean() }),
+      z98.strictObject({ type: z98.literal("visit"), key }),
+      z98.strictObject({ type: z98.literal("forget-route"), routeId: FleetCacheRouteIdSchema })
     ]))();
-    FleetClientStateRequestSchema = /* @__PURE__ */ (() => z97.strictObject({
-      expectedInstanceId: z97.uuid(),
+    FleetClientStateRequestSchema = /* @__PURE__ */ (() => z98.strictObject({
+      expectedInstanceId: z98.uuid(),
       change: FleetClientStateChangeSchema
     }))();
   }
@@ -44196,6 +44282,33 @@ var init_resize_transaction = __esm({
   }
 });
 
+// packages/core/src/kitty-placeholders.ts
+var DIACRITICS, DIACRITIC_VALUE;
+var init_kitty_placeholders = __esm({
+  "packages/core/src/kitty-placeholders.ts"() {
+    "use strict";
+    DIACRITICS = [
+      "0305 030D 030E 0310 0312 033D 033E 033F 0346 034A 034B 034C 0350 0351 0352 0357 035B 0363 0364",
+      "0365 0366 0367 0368 0369 036A 036B 036C 036D 036E 036F 0483 0484 0485 0486 0487 0592 0593 0594",
+      "0595 0597 0598 0599 059C 059D 059E 059F 05A0 05A1 05A8 05A9 05AB 05AC 05AF 05C4 0610 0611 0612",
+      "0613 0614 0615 0616 0617 0657 0658 0659 065A 065B 065D 065E 06D6 06D7 06D8 06D9 06DA 06DB 06DC",
+      "06DF 06E0 06E1 06E2 06E4 06E7 06E8 06EB 06EC 0730 0732 0733 0735 0736 073A 073D 073F 0740 0741",
+      "0743 0745 0747 0749 074A 07EB 07EC 07ED 07EE 07EF 07F0 07F1 07F3 0816 0817 0818 0819 081B 081C",
+      "081D 081E 081F 0820 0821 0822 0823 0825 0826 0827 0829 082A 082B 082C 082D 0951 0953 0954 0F82",
+      "0F83 0F86 0F87 135D 135E 135F 17DD 193A 1A17 1A75 1A76 1A77 1A78 1A79 1A7A 1A7B 1A7C 1B6B 1B6D",
+      "1B6E 1B6F 1B70 1B71 1B72 1B73 1CD0 1CD1 1CD2 1CDA 1CDB 1CE0 1DC0 1DC1 1DC3 1DC4 1DC5 1DC6 1DC7",
+      "1DC8 1DC9 1DCB 1DCC 1DD1 1DD2 1DD3 1DD4 1DD5 1DD6 1DD7 1DD8 1DD9 1DDA 1DDB 1DDC 1DDD 1DDE 1DDF",
+      "1DE0 1DE1 1DE2 1DE3 1DE4 1DE5 1DE6 1DFE 20D0 20D1 20D4 20D5 20D6 20D7 20DB 20DC 20E1 20E7 20E9",
+      "20F0 2CEF 2CF0 2CF1 2DE0 2DE1 2DE2 2DE3 2DE4 2DE5 2DE6 2DE7 2DE8 2DE9 2DEA 2DEB 2DEC 2DED 2DEE",
+      "2DEF 2DF0 2DF1 2DF2 2DF3 2DF4 2DF5 2DF6 2DF7 2DF8 2DF9 2DFA 2DFB 2DFC 2DFD 2DFE 2DFF A66F A67C",
+      "A67D A6F0 A6F1 A8E0 A8E1 A8E2 A8E3 A8E4 A8E5 A8E6 A8E7 A8E8 A8E9 A8EA A8EB A8EC A8ED A8EE A8EF",
+      "A8F0 A8F1 AAB0 AAB2 AAB3 AAB7 AAB8 AABE AABF AAC1 FE20 FE21 FE22 FE23 FE24 FE25 FE26 10A0F 10A38",
+      "1D185 1D186 1D187 1D188 1D189 1D1AA 1D1AB 1D1AC 1D1AD 1D242 1D243 1D244"
+    ].join(" ").split(" ");
+    DIACRITIC_VALUE = new Map(DIACRITICS.map((hex, index) => [Number.parseInt(hex, 16), index]));
+  }
+});
+
 // packages/core/src/index.ts
 var init_src3 = __esm({
   "packages/core/src/index.ts"() {
@@ -44219,6 +44332,7 @@ var init_src3 = __esm({
     init_saved_machines2();
     init_fleet_client_state2();
     init_resize_transaction();
+    init_kitty_placeholders();
   }
 });
 
@@ -57192,6 +57306,17 @@ var init_xterm_terminal_interpreter_backend = __esm({
       get rows() {
         return this.#terminal.rows;
       }
+      graphicsCursor() {
+        const buffer = this.#terminal.buffer.active;
+        return {
+          x: Math.min(buffer.cursorX, this.#terminal.cols - 1),
+          line: buffer.baseY + buffer.cursorY,
+          alternate: buffer.type === "alternate"
+        };
+      }
+      graphicsViewportTop() {
+        return this.#terminal.buffer.active.baseY;
+      }
       write(data) {
         return new Promise((resolve44) => this.#terminal.write(data, resolve44));
       }
@@ -57709,6 +57834,480 @@ var init_causal_cell_ledger = __esm({
   }
 });
 
+// packages/daemon/src/terminal/graphics/kitty-graphics.ts
+import { createHash as createHash19 } from "node:crypto";
+import { inflateSync } from "node:zlib";
+function parseKittyCommand(body) {
+  if (!body.startsWith("G")) return null;
+  const separator = body.indexOf(";");
+  const controlText = separator < 0 ? body.slice(1) : body.slice(1, separator);
+  const payload = separator < 0 ? "" : body.slice(separator + 1);
+  const control = /* @__PURE__ */ new Map();
+  for (const pair of controlText.split(",")) {
+    if (!pair) continue;
+    const eq = pair.indexOf("=");
+    if (eq !== 1) return null;
+    control.set(pair[0], pair.slice(2));
+  }
+  return { control, payload };
+}
+function int(control, key2, fallback = 0) {
+  const value = control.get(key2);
+  if (value === void 0 || !/^-?[0-9]+$/u.test(value)) return fallback;
+  return Number(value);
+}
+function pngDimensions(data) {
+  if (data.length < 24) return null;
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (signature.some((b, i) => data[i] !== b)) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+var KITTY_PLACEMENT_OSC, ESC, MAX_COMMAND_BYTES2, PASSTHROUGH_PREFIX, KittyApcScanner, KittyImageBudget, DEFAULT_KITTY_IMAGE_BUDGET, KittyImageStore, MAX_IMAGES_PER_PANE, MAX_IMAGE_SIDE, clampCells;
+var init_kitty_graphics = __esm({
+  "packages/daemon/src/terminal/graphics/kitty-graphics.ts"() {
+    "use strict";
+    init_src2();
+    KITTY_PLACEMENT_OSC = 6974;
+    ESC = 27;
+    MAX_COMMAND_BYTES2 = 32 * 1024 * 1024;
+    PASSTHROUGH_PREFIX = [116, 109, 117, 120, 59];
+    KittyApcScanner = class _KittyApcScanner {
+      #state = "ground";
+      #held = [];
+      #body = [];
+      #bodyBytes = 0;
+      #prefixMatched = 0;
+      #inner = [];
+      #nextMarker = 1;
+      #overflowed = false;
+      scan(chunk) {
+        const out = [];
+        const commands2 = [];
+        let ground = -1;
+        const flushGround = (end) => {
+          if (ground >= 0) {
+            for (let k = ground; k < end; k += 1) out.push(chunk[k]);
+            ground = -1;
+          }
+        };
+        const complete = (bodyBytes) => {
+          const command3 = parseKittyCommand(Buffer.from(bodyBytes).toString("latin1"));
+          if (!command3) return;
+          const marker = this.#nextMarker++;
+          commands2.push({ ...command3, marker });
+          for (const byte of Buffer.from(`\x1B]${KITTY_PLACEMENT_OSC};${marker}\x07`, "latin1"))
+            out.push(byte);
+        };
+        for (let i = 0; i < chunk.length; i += 1) {
+          const byte = chunk[i];
+          switch (this.#state) {
+            case "ground":
+              if (byte === ESC) {
+                flushGround(i);
+                this.#held = [byte];
+                this.#state = "esc";
+              } else if (ground < 0) ground = i;
+              break;
+            case "esc":
+              if (byte === 95) {
+                this.#held.push(byte);
+                this.#state = "apc-start";
+              } else if (byte === 80) {
+                this.#held.push(byte);
+                this.#prefixMatched = 0;
+                this.#state = "dcs-start";
+              } else if (byte === ESC) {
+                out.push(...this.#held);
+                this.#held = [byte];
+              } else {
+                out.push(...this.#held, byte);
+                this.#held = [];
+                this.#state = "ground";
+              }
+              break;
+            case "apc-start":
+              if (byte === 71) {
+                this.#body = [Uint8Array.of(byte)];
+                this.#bodyBytes = 1;
+                this.#overflowed = false;
+                this.#held = [];
+                this.#state = "apc-body";
+              } else {
+                out.push(...this.#held, byte);
+                this.#held = [];
+                this.#state = "ground";
+              }
+              break;
+            case "apc-body": {
+              const end = chunk.indexOf(ESC, i);
+              const stop3 = end < 0 ? chunk.length : end;
+              if (!this.#overflowed && this.#bodyBytes + (stop3 - i) <= MAX_COMMAND_BYTES2) {
+                this.#body.push(chunk.subarray(i, stop3).slice());
+                this.#bodyBytes += stop3 - i;
+              } else this.#overflowed = true;
+              i = stop3 - 1;
+              if (end >= 0) {
+                i = end;
+                this.#state = "apc-esc";
+              }
+              break;
+            }
+            case "apc-esc": {
+              const body = this.#overflowed ? null : Buffer.concat(this.#body);
+              this.#body = [];
+              this.#bodyBytes = 0;
+              if (body) complete(body);
+              this.#state = "ground";
+              if (byte !== 92) {
+                this.#state = "esc";
+                this.#held = [ESC];
+                i -= 1;
+              }
+              break;
+            }
+            case "dcs-start":
+              if (byte === PASSTHROUGH_PREFIX[this.#prefixMatched]) {
+                this.#held.push(byte);
+                this.#prefixMatched += 1;
+                if (this.#prefixMatched === PASSTHROUGH_PREFIX.length) {
+                  this.#held = [];
+                  this.#inner = [];
+                  this.#state = "pt-body";
+                }
+              } else {
+                out.push(...this.#held, byte);
+                this.#held = [];
+                this.#state = "ground";
+              }
+              break;
+            case "pt-body":
+              if (byte === ESC) this.#state = "pt-esc";
+              else if (this.#inner.length < MAX_COMMAND_BYTES2) this.#inner.push(byte);
+              break;
+            case "pt-esc":
+              if (byte === ESC) {
+                this.#inner.push(ESC);
+                this.#state = "pt-body";
+              } else if (byte === 92) {
+                const nested = new _KittyApcScanner();
+                nested.#nextMarker = this.#nextMarker;
+                const result2 = nested.scan(Uint8Array.from(this.#inner));
+                this.#nextMarker = nested.#nextMarker;
+                for (const command3 of result2.commands) {
+                  commands2.push(command3);
+                  for (const b of Buffer.from(
+                    `\x1B]${KITTY_PLACEMENT_OSC};${command3.marker}\x07`,
+                    "latin1"
+                  ))
+                    out.push(b);
+                }
+                this.#inner = [];
+                this.#state = "ground";
+              } else {
+                this.#inner.push(ESC, byte);
+                this.#state = "pt-body";
+              }
+              break;
+          }
+        }
+        flushGround(chunk.length);
+        return { forward: Uint8Array.from(out), commands: commands2 };
+      }
+    };
+    KittyImageBudget = class {
+      perPaneBytes;
+      globalBytes;
+      #stores = /* @__PURE__ */ new Set();
+      #tick = 0;
+      constructor(options) {
+        this.perPaneBytes = options.perPaneBytes;
+        this.globalBytes = options.globalBytes;
+      }
+      get totalBytes() {
+        let total = 0;
+        for (const store of this.#stores) total += store.bytes;
+        return total;
+      }
+      register(store) {
+        this.#stores.add(store);
+      }
+      unregister(store) {
+        this.#stores.delete(store);
+      }
+      nextTick() {
+        return ++this.#tick;
+      }
+      enforce() {
+        let total = this.totalBytes;
+        while (total > this.globalBytes) {
+          let victim = null;
+          let oldest = Infinity;
+          for (const store of this.#stores) {
+            const used = store.oldestUse();
+            if (used < oldest) {
+              oldest = used;
+              victim = store;
+            }
+          }
+          if (!victim) return;
+          total -= victim.evictOldest();
+        }
+      }
+    };
+    DEFAULT_KITTY_IMAGE_BUDGET = new KittyImageBudget({
+      perPaneBytes: 64 * 1024 * 1024,
+      globalBytes: 256 * 1024 * 1024
+    });
+    KittyImageStore = class {
+      #images = /* @__PURE__ */ new Map();
+      #used = /* @__PURE__ */ new Map();
+      #cursorPlacements = [];
+      #virtual = /* @__PURE__ */ new Map();
+      #pending = null;
+      #nextAnonymous = 2130706432;
+      #bytes = 0;
+      #cellWidth;
+      #cellHeight;
+      #budget;
+      #revision = 0;
+      constructor(options = {}) {
+        this.#cellWidth = options.cellWidthPx ?? 10;
+        this.#cellHeight = options.cellHeightPx ?? 20;
+        this.#budget = options.budget ?? DEFAULT_KITTY_IMAGE_BUDGET;
+        this.#budget.register(this);
+      }
+      /** Bumps whenever images or placements change. */
+      get revision() {
+        return this.#revision;
+      }
+      get bytes() {
+        return this.#bytes;
+      }
+      images() {
+        return this.#images;
+      }
+      imageByDigest(digest3) {
+        for (const image of this.#images.values()) if (image.digest === digest3) return image;
+        return void 0;
+      }
+      cursorPlacements() {
+        return this.#cursorPlacements;
+      }
+      dispose() {
+        this.#budget.unregister(this);
+        this.#images.clear();
+        this.#used.clear();
+        this.#bytes = 0;
+      }
+      /** A capture reseed replaced the grid: tmux holds no record of cursor placements. */
+      dropCursorPlacements() {
+        if (this.#cursorPlacements.length === 0) return;
+        this.#cursorPlacements.length = 0;
+        this.#revision += 1;
+      }
+      oldestUse() {
+        let oldest = Infinity;
+        for (const used of this.#used.values()) oldest = Math.min(oldest, used);
+        return oldest;
+      }
+      /** Evict the least recently used image; returns the bytes freed. */
+      evictOldest() {
+        let victim = null;
+        let oldest = Infinity;
+        for (const [id2, used] of this.#used)
+          if (used < oldest) {
+            oldest = used;
+            victim = id2;
+          }
+        if (victim === null) return 0;
+        return this.#remove(victim);
+      }
+      #remove(imageId) {
+        const image = this.#images.get(imageId);
+        if (!image) return 0;
+        this.#images.delete(imageId);
+        this.#used.delete(imageId);
+        this.#virtual.delete(imageId);
+        this.#bytes -= image.data.byteLength;
+        const kept = this.#cursorPlacements.filter((p) => p.imageId !== imageId);
+        this.#cursorPlacements.length = 0;
+        this.#cursorPlacements.push(...kept);
+        this.#revision += 1;
+        return image.data.byteLength;
+      }
+      /**
+       * Apply one command. `cursor` is the parser's position at the command's byte
+       * offset (from the marker OSC); null when unavailable.
+       */
+      apply(command3, cursor2) {
+        let { control } = command3;
+        const more = control.get("m") === "1";
+        if (this.#pending) {
+          this.#pending.payload.push(command3.payload);
+          this.#pending.bytes += command3.payload.length;
+          if (this.#pending.bytes > MAX_COMMAND_BYTES2) {
+            this.#pending = null;
+            return;
+          }
+          if (more) return;
+          control = this.#pending.control;
+          const payload = this.#pending.payload.join("");
+          this.#pending = null;
+          this.#finish(control, payload, cursor2);
+          return;
+        }
+        const action = control.get("a") ?? "t";
+        if ((action === "t" || action === "T") && more) {
+          this.#pending = { control, payload: [command3.payload], bytes: command3.payload.length };
+          return;
+        }
+        this.#finish(control, command3.payload, cursor2);
+      }
+      #finish(control, payload, cursor2) {
+        const action = control.get("a") ?? "t";
+        if (action === "d") return this.#delete(control);
+        if (action === "q") return;
+        let imageId = int(control, "i");
+        if (action === "t" || action === "T") {
+          if ((control.get("t") ?? "d") !== "d") return;
+          if (imageId === 0) imageId = this.#nextAnonymous++;
+          const image2 = this.#decode(imageId, control, payload);
+          if (!image2) return;
+          this.#remove(imageId);
+          this.#images.set(imageId, image2);
+          this.#bytes += image2.data.byteLength;
+          this.#used.set(imageId, this.#budget.nextTick());
+          this.#revision += 1;
+          while ((this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) && this.#images.size > 1)
+            this.evictOldest();
+          this.#budget.enforce();
+          if (action === "t" || !this.#images.has(imageId)) return;
+        }
+        if (action !== "T" && action !== "p") return;
+        const image = this.#images.get(imageId);
+        if (!image) return;
+        this.#used.set(imageId, this.#budget.nextTick());
+        const columns = clampCells(int(control, "c") || Math.ceil(image.width / this.#cellWidth));
+        const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
+        const placementId = int(control, "p");
+        if (control.get("U") === "1") {
+          this.#virtual.set(imageId, { columns, rows });
+        } else if (cursor2) {
+          const existing = this.#cursorPlacements.findIndex(
+            (p) => p.imageId === imageId && placementId !== 0 && p.placementId === placementId
+          );
+          if (existing >= 0) this.#cursorPlacements.splice(existing, 1);
+          if (this.#cursorPlacements.length >= TERMINAL_GRAPHICS_MAX_PLACEMENTS)
+            this.#cursorPlacements.shift();
+          this.#cursorPlacements.push({
+            imageId,
+            placementId,
+            line: cursor2.line,
+            column: cursor2.x,
+            columns,
+            rows,
+            alternate: cursor2.alternate
+          });
+        }
+        this.#revision += 1;
+      }
+      #decode(imageId, control, payload) {
+        let data = Buffer.from(payload, "base64");
+        if (control.get("o") === "z") {
+          try {
+            data = inflateSync(data, { maxOutputLength: TERMINAL_GRAPHICS_MAX_IMAGE_BYTES });
+          } catch {
+            return null;
+          }
+        }
+        if (data.byteLength === 0 || data.byteLength > TERMINAL_GRAPHICS_MAX_IMAGE_BYTES) return null;
+        const f = int(control, "f", 32);
+        let format;
+        let width;
+        let height;
+        if (f === 100) {
+          const size = pngDimensions(data);
+          if (!size) return null;
+          ({ width, height } = size);
+          format = "png";
+        } else if (f === 32 || f === 24) {
+          width = int(control, "s");
+          height = int(control, "v");
+          format = f === 32 ? "rgba" : "rgb";
+          if (!width || !height || data.length !== width * height * (f === 32 ? 4 : 3)) return null;
+        } else return null;
+        if (width < 1 || height < 1 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE) return null;
+        const digest3 = createHash19("sha256").update(data).digest("hex").slice(0, 32);
+        return { imageId, format, width, height, data, digest: digest3 };
+      }
+      #delete(control) {
+        const what = control.get("d") ?? "a";
+        const id2 = int(control, "i");
+        const all = what === "a" || what === "A";
+        const byId = (what === "i" || what === "I") && id2 !== 0;
+        if (!all && !byId) return;
+        const keep = (imageId) => !all && imageId !== id2;
+        const kept = this.#cursorPlacements.filter((p) => keep(p.imageId));
+        if (kept.length !== this.#cursorPlacements.length) {
+          this.#cursorPlacements.length = 0;
+          this.#cursorPlacements.push(...kept);
+          this.#revision += 1;
+        }
+        for (const key2 of [...this.#virtual.keys()])
+          if (!keep(key2)) {
+            this.#virtual.delete(key2);
+            this.#revision += 1;
+          }
+        if (what === "A") for (const key2 of [...this.#images.keys()]) this.#remove(key2);
+        if (what === "I") this.#remove(id2);
+      }
+      /**
+       * The pane's graphics state for renderers: the image registry (with each
+       * image's placeholder grid) and cursor placements clipped to the viewport.
+       * `viewportTop` is the absolute line of grid row 0.
+       */
+      state(viewportTop, gridRows, cols, alternate) {
+        const images = [...this.#images.values()].slice(-TERMINAL_GRAPHICS_MAX_IMAGES).map((image) => ({
+          imageId: image.imageId,
+          digest: image.digest,
+          format: image.format,
+          width: image.width,
+          height: image.height,
+          bytes: image.data.byteLength,
+          placeholder: this.#virtual.get(image.imageId) ?? null
+        }));
+        const placements = [];
+        for (const placement of this.#cursorPlacements) {
+          if (placement.alternate !== alternate) continue;
+          const image = this.#images.get(placement.imageId);
+          if (!image) continue;
+          const top = placement.line - viewportTop;
+          const first = Math.max(0, top);
+          const last = Math.min(gridRows, top + placement.rows);
+          const right = Math.min(cols, placement.column + placement.columns);
+          if (first >= last || placement.column >= right) continue;
+          placements.push({
+            digest: image.digest,
+            row: first,
+            column: placement.column,
+            rows: last - first,
+            columns: right - placement.column,
+            sourceRow: first - top,
+            sourceColumn: 0,
+            totalRows: placement.rows,
+            totalColumns: placement.columns
+          });
+        }
+        return { revision: this.#revision, images, placements };
+      }
+    };
+    MAX_IMAGES_PER_PANE = TERMINAL_GRAPHICS_MAX_IMAGES;
+    MAX_IMAGE_SIDE = 1e4;
+    clampCells = (cells) => Math.max(1, Math.min(1e3, cells));
+  }
+});
+
 // packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts
 function projectPlacements(rows, viewportRows, cols) {
   const marker = detectWidgetMarkerFromReplicaRows(rows);
@@ -57741,6 +58340,7 @@ var init_terminal_replica_interpreter = __esm({
     init_runtime_observability();
     init_xterm_terminal_interpreter_backend();
     init_causal_cell_ledger();
+    init_kitty_graphics();
     TerminalReplicaInterpreter = class {
       #nativeSeedBackingCandidate;
       #generation;
@@ -57771,6 +58371,13 @@ var init_terminal_replica_interpreter = __esm({
       #pendingWrites = [];
       #writeFlushScheduled = false;
       #widgetGate = false;
+      // kitty graphics: images outlive reseeds; the scanner owns split APCs.
+      #kittyScanner = new KittyApcScanner();
+      #kitty;
+      #kittyPending = /* @__PURE__ */ new Map();
+      #graphicsListeners = /* @__PURE__ */ new Set();
+      #graphics = null;
+      #graphicsKey = "";
       #markerTail = "";
       #pendingResize = null;
       // null: no unpublished writes; undefined: a write requires full projection.
@@ -57813,6 +58420,10 @@ var init_terminal_replica_interpreter = __esm({
           rows: options.rows,
           scrollback: this.#scrollback
         });
+        this.#kitty = new KittyImageStore(
+          options.kittyImageBudget ? { budget: options.kittyImageBudget } : {}
+        );
+        this.#attachKitty(this.#backend);
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
         this.#seedReady = new Promise((resolve44, reject) => {
           this.#resolveSeedReady = resolve44;
@@ -57962,6 +58573,8 @@ var init_terminal_replica_interpreter = __esm({
           }
           const previous = this.#backend;
           this.#backend = replacement;
+          this.#attachKitty(replacement);
+          this.#kitty.dropCursorPlacements();
           this.#nativeReseedRequested = false;
           this.#scrollback = scrollback;
           this.#bootstrap = {
@@ -57981,6 +58594,7 @@ var init_terminal_replica_interpreter = __esm({
             this.#nativeSeedBackingCandidate = void 0;
           }
           previous.dispose();
+          this.#publishGraphics();
           return;
         }
         if (operation.type === "cursor") {
@@ -58001,6 +58615,7 @@ var init_terminal_replica_interpreter = __esm({
           }
           this.#backend.resize(operation.cols, operation.rows);
           this.#commit(false);
+          this.#publishGraphics();
           return;
         }
         const baseRevision = this.#revision;
@@ -58018,6 +58633,7 @@ var init_terminal_replica_interpreter = __esm({
         };
         this.#revision = revision;
         this.#closed = true;
+        this.#kitty.dispose();
         this.#causalCell?.fail("transport-closed");
         this.#clearSyncRecovery();
         if (this.#needsSeed)
@@ -58031,8 +58647,10 @@ var init_terminal_replica_interpreter = __esm({
         this.#admitRaw(data);
         this.#stats.parseBatches += 1;
         this.#observeMarkerBytes(data);
+        const scanned = this.#kittyScanner.scan(data);
+        for (const command3 of scanned.commands) this.#kittyPending.set(command3.marker, command3);
         const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        await this.#writeToBackend(this.#backend, data);
+        await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
         if (this.#observability.enabled)
           this.#observability.recordSpan(
             "parse",
@@ -58063,6 +58681,7 @@ var init_terminal_replica_interpreter = __esm({
         } else {
           this.#commit(false, this.#backend.dirtyRange(), trace);
         }
+        this.#publishGraphics();
       }
       #scheduleSyncRecovery() {
         if (this.#syncRecovery || this.#closed) return;
@@ -58231,6 +58850,48 @@ var init_terminal_replica_interpreter = __esm({
           modes: projection.modes,
           placements,
           bootstrap: this.#bootstrap
+        });
+      }
+      /** The pane's kitty image store (bytes for the graphics side channel). */
+      kittyImages() {
+        return this.#kitty;
+      }
+      /** Latest graphics state, or null while the pane has never held an image. */
+      currentGraphics() {
+        return this.#graphics;
+      }
+      onGraphics(listener) {
+        this.#graphicsListeners.add(listener);
+        return () => this.#graphicsListeners.delete(listener);
+      }
+      /** Publish graphics state when the store or the viewport-relative placements moved. */
+      #publishGraphics() {
+        if (this.#graphics === null && this.#kitty.revision === 0) return;
+        const state = this.#kitty.state(
+          this.#backend.graphicsViewportTop?.() ?? 0,
+          this.#backend.rows,
+          this.#backend.cols,
+          this.#backend.modes().alternateScreen
+        );
+        const key2 = JSON.stringify([state.revision, state.placements]);
+        if (key2 === this.#graphicsKey) return;
+        this.#graphicsKey = key2;
+        this.#graphics = state;
+        for (const listener of this.#graphicsListeners) {
+          try {
+            listener(state);
+          } catch {
+          }
+        }
+      }
+      #attachKitty(backend2) {
+        if (typeof backend2.registerOscHandler !== "function") return;
+        backend2.registerOscHandler(KITTY_PLACEMENT_OSC, (data) => {
+          const command3 = this.#kittyPending.get(Number(data));
+          if (!command3) return true;
+          this.#kittyPending.delete(Number(data));
+          this.#kitty.apply(command3, backend2.graphicsCursor?.() ?? null);
+          return true;
         });
       }
       #currentSnapshotHash() {
@@ -58551,6 +59212,16 @@ var init_terminal_replica_owner = __esm({
             this.#listeners.delete(listener);
           }
         };
+      }
+      /** Kitty graphics side channel: current state now (if any), then every change. */
+      subscribeGraphics(listener) {
+        const current = this.#interpreter.currentGraphics();
+        if (current) listener(current);
+        return this.#interpreter.onGraphics(listener);
+      }
+      /** Image bytes by content digest, while the pane's store still holds them. */
+      graphicsImage(digest3) {
+        return this.#interpreter.kittyImages().imageByDigest(digest3) ?? null;
       }
       async subscribeSource(listener, onRaw) {
         const canonical = await this.subscribe(listener);
@@ -59323,7 +59994,8 @@ var init_terminal_delivery_hub = __esm({
                 this.#schedule(client);
               this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
             },
-            close: async () => this.#closeClient(client)
+            close: async () => this.#closeClient(client),
+            ...offer.protocolVersions.includes(TERMINAL_GRAPHICS_CAPABILITY_VERSION) ? { graphics: this.#graphicsFor(semanticPaneId3, client, closed) } : {}
           };
         } catch (error) {
           if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
@@ -59348,6 +60020,21 @@ var init_terminal_delivery_hub = __esm({
         } finally {
           this.#pendingClients.delete(key2);
         }
+      }
+      #graphicsFor(semanticPaneId3, client, closed) {
+        const owner = this.#ownerForPane(semanticPaneId3);
+        return {
+          subscribe: (listener) => {
+            if (client.closed || !owner.subscribeGraphics) return () => {
+            };
+            const unsubscribe = owner.subscribeGraphics((state) => {
+              if (!client.closed) listener(state);
+            });
+            void closed.then(unsubscribe);
+            return unsubscribe;
+          },
+          image: (digest3) => client.closed ? null : owner.graphicsImage?.(digest3) ?? null
+        };
       }
       /** Retire only this pane's delivery owners before its canonical owner is disposed. */
       failPaneCapture(semanticPaneId3, error) {
@@ -60919,7 +61606,7 @@ var init_authority_arbiter = __esm({
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
 import { randomUUID as randomUUID24 } from "node:crypto";
-import { z as z98 } from "zod";
+import { z as z99 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
   signal.throwIfAborted();
@@ -61964,7 +62651,7 @@ var init_registry2 = __esm({
           );
         }
         const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
-        if (performanceTraceId !== void 0) performanceTraceId = z98.uuid().parse(performanceTraceId);
+        if (performanceTraceId !== void 0) performanceTraceId = z99.uuid().parse(performanceTraceId);
         const causalProbe = rawCausalProbe === void 0 ? null : CausalCellProbeV1SchemaZ.parse(rawCausalProbe);
         if (causalProbe) {
           if (causalProbe.traceId !== performanceTraceId || causalProbe.clientId !== clientId || causalProbe.semanticPaneId !== semanticPaneId3 || causalProbe.generation !== this.generation)
@@ -62414,7 +63101,7 @@ var init_registry2 = __esm({
       #assignController(clientId) {
         this.#controllerRevision += 1;
         this.#controllerClientId = clientId;
-        this.#controllerToken = z98.uuid().parse(this.#createControllerToken());
+        this.#controllerToken = z99.uuid().parse(this.#createControllerToken());
         return this.#currentLease();
       }
       #clearController() {
@@ -62628,7 +63315,8 @@ var init_registry2 = __esm({
             closed = true;
             this.#deliveryConnections.delete(connection);
             await upstream.close();
-          }
+          },
+          ...upstream.graphics ? { graphics: upstream.graphics } : {}
         };
         this.#deliveryConnections.add(connection);
         return connection;
@@ -62673,7 +63361,7 @@ var init_registry2 = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/transport-binding.ts
-import { z as z99 } from "zod";
+import { z as z100 } from "zod";
 function sameAuthorityLease(left, right) {
   return left.generation === right.generation && left.session === right.session && left.clientId === right.clientId && left.authority === right.authority && left.token === right.token && left.revision === right.revision;
 }
@@ -62714,9 +63402,9 @@ var init_transport_binding = __esm({
     "use strict";
     init_src2();
     init_registry2();
-    TransportSchemaZ = z99.enum(["terminal-attachment", "pane-stream"]);
-    LeaseIdSchemaZ = z99.uuid();
-    HostClientIdSchemaZ = z99.string().min(1).max(4096).refine((v) => !/[\0\r\n]/u.test(v));
+    TransportSchemaZ = z100.enum(["terminal-attachment", "pane-stream"]);
+    LeaseIdSchemaZ = z100.uuid();
+    HostClientIdSchemaZ = z100.string().min(1).max(4096).refine((v) => !/[\0\r\n]/u.test(v));
     clientsByRegistry = /* @__PURE__ */ new WeakMap();
     SessionRuntimeTransportBinding = class {
       #binder;
@@ -63219,7 +63907,7 @@ var init_transport_binding = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash19, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash20, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -63267,7 +63955,7 @@ function safeCloseSocket(socket, code2, reason) {
   }
 }
 function digestSecret(secret) {
-  return createHash19("sha256").update(secret, "utf8").digest();
+  return createHash20("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
@@ -63281,7 +63969,7 @@ var init_admission_util = __esm({
 });
 
 // packages/contracts/src/terminal-attachment-stream.ts
-import { z as z100 } from "zod";
+import { z as z101 } from "zod";
 function decodeTerminalAttachmentInputFrame(frame) {
   if (!(frame instanceof Uint8Array) || frame.byteLength <= TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES || frame.byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES || frame[0] !== TERMINAL_ATTACHMENT_INPUT_FRAME_KIND) {
     return null;
@@ -63304,10 +63992,10 @@ var init_terminal_attachment_stream = __esm({
     TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES = /* @__PURE__ */ (() => 5)();
     TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES = /* @__PURE__ */ (() => 64 * 1024)();
     TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES = /* @__PURE__ */ (() => TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES + TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES)();
-    TerminalAttachmentInputLimitsSchemaZ = /* @__PURE__ */ (() => z100.object({
-      maxFrameBytes: z100.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      maxAcceptedBytes: z100.number().int().positive().max(4 * 1024 * 1024),
-      maxAcceptedFrames: z100.number().int().positive().max(16384)
+    TerminalAttachmentInputLimitsSchemaZ = /* @__PURE__ */ (() => z101.object({
+      maxFrameBytes: z101.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      maxAcceptedBytes: z101.number().int().positive().max(4 * 1024 * 1024),
+      maxAcceptedFrames: z101.number().int().positive().max(16384)
     }).strict().refine((limits) => limits.maxFrameBytes <= limits.maxAcceptedBytes, {
       message: "terminal input frame limit cannot exceed its lifetime byte limit"
     }))();
@@ -63315,13 +64003,13 @@ var init_terminal_attachment_stream = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z101 } from "zod";
+import { z as z102 } from "zod";
 function tmux4(argv) {
   return { executable: "tmux", argv };
 }
 function groupedTmuxViewSessionName(attachmentId, generation) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z101.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  const parsedGeneration = z102.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
   return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
 }
 function markerValue(attachmentId, generation) {
@@ -63446,17 +64134,17 @@ var init_grouped_tmux = __esm({
     GROUPED_TMUX_MAX_GENERATION = 65535;
     GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
     GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z101.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z101.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z101.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z101.object({
-      attachmentId: z101.uuid(),
-      generation: z101.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    RuntimeSessionIdSchemaZ2 = z102.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z102.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z102.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z102.object({
+      attachmentId: z102.uuid(),
+      generation: z102.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
       geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
       viewport: TerminalAttachmentViewportSchemaZ,
-      source: z101.object({
+      source: z102.object({
         sessionId: RuntimeSessionIdSchemaZ2,
         windowId: RuntimeWindowIdSchemaZ2,
         runtimePaneId: RuntimePaneIdSchemaZ2,
@@ -63466,15 +64154,15 @@ var init_grouped_tmux = __esm({
          * gate: any positive count is valid. Single-pane windows keep passing
          * `1`, so their plans stay byte-identical.
          */
-        windowPaneCount: z101.number().int().positive()
+        windowPaneCount: z102.number().int().positive()
       }).strict()
     }).strict().superRefine(refuseReadOnlyGeometryOwner);
   }
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash20, randomBytes as randomBytes5, randomUUID as randomUUID25, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
-import { z as z102 } from "zod";
+import { createHash as createHash21, randomBytes as randomBytes5, randomUUID as randomUUID25, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { z as z103 } from "zod";
 function positiveDuration(value, fallback, label4) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -63483,7 +64171,7 @@ function positiveDuration(value, fallback, label4) {
   return resolved2;
 }
 function hashTicket(ticket) {
-  return createHash20("sha256").update(ticket, "utf8").digest();
+  return createHash21("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
@@ -63510,10 +64198,10 @@ var init_lease_manager = __esm({
     "use strict";
     init_src2();
     init_grouped_tmux();
-    BindingIdSchemaZ = z102.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z102.uuid();
+    BindingIdSchemaZ = z103.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z103.uuid();
     RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z102.enum(["create", "attach", "recover"]);
+    AttachmentViewOperationSchemaZ = z103.enum(["create", "attach", "recover"]);
     RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
@@ -63804,7 +64492,7 @@ var init_lease_manager = __esm({
             throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
           }
           const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z102.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+          if (clientClaim && (!z103.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
             this.#removeState(state);
             await this.#cleanupPlan(state);
             throw new AttachmentLeaseError(
@@ -63963,7 +64651,7 @@ var init_lease_manager = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z102.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z103.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new AttachmentLeaseError(
           "identity-generation-failed",
@@ -64149,7 +64837,7 @@ var init_lease_manager = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/direct-websocket.ts
-import { z as z103 } from "zod";
+import { z as z104 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -64200,7 +64888,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor) {
-  return z103.uuid().safeParse(descriptor.leaseId).success && z103.uuid().safeParse(descriptor.requestId).success && Number.isSafeInteger(descriptor.issuedAt) && Number.isSafeInteger(descriptor.expiresAt) && Number.isSafeInteger(descriptor.bindingGeneration) && descriptor.bindingGeneration >= 0 && Number.isSafeInteger(descriptor.viewGeneration) && descriptor.viewGeneration >= 0;
+  return z104.uuid().safeParse(descriptor.leaseId).success && z104.uuid().safeParse(descriptor.requestId).success && Number.isSafeInteger(descriptor.issuedAt) && Number.isSafeInteger(descriptor.expiresAt) && Number.isSafeInteger(descriptor.bindingGeneration) && descriptor.bindingGeneration >= 0 && Number.isSafeInteger(descriptor.viewGeneration) && descriptor.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -64241,18 +64929,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN2 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ2 = z103.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z103.object({
-      type: z103.literal("redeem"),
-      protocolVersion: z103.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z103.string().regex(TicketPattern),
-      requestId: z103.uuid(),
+    BindingIdSchemaZ2 = z104.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z104.object({
+      type: z104.literal("redeem"),
+      protocolVersion: z104.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z104.string().regex(TicketPattern),
+      requestId: z104.uuid(),
       daemonInstanceId: BindingIdSchemaZ2
     }).strict();
-    ResizeFrameSchemaZ = z103.object({
-      type: z103.literal("resize"),
-      protocolVersion: z103.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z103.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z104.object({
+      type: z104.literal("resize"),
+      protocolVersion: z104.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z104.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -64372,7 +65060,7 @@ var init_direct_websocket = __esm({
           }
           const parsedRequest = TerminalAttachRequestSchemaZ.parse(request3);
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z103.uuid().parse(context.requestId);
+          const requestId = z104.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
@@ -65569,7 +66257,7 @@ var init_NodePtyAdapter = __esm({
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
 import { isDeepStrictEqual as isDeepStrictEqual4 } from "node:util";
-import { z as z104 } from "zod";
+import { z as z105 } from "zod";
 function tmux5(argv) {
   return { executable: "tmux", argv };
 }
@@ -65660,7 +66348,7 @@ function parseViewSessionName(value) {
   const match = ViewNamePattern.exec(value);
   if (!match) return null;
   const attachmentId = uuidFromCompactHex(match[1]);
-  if (!z104.uuid().safeParse(attachmentId).success) return null;
+  if (!z105.uuid().safeParse(attachmentId).success) return null;
   const generation = Number.parseInt(match[2], 36);
   if (!Number.isSafeInteger(generation) || generation < 0 || generation > GROUPED_TMUX_MAX_GENERATION || generation.toString(36) !== match[2]) {
     return null;
@@ -65727,9 +66415,9 @@ var init_tmux_view_executor = __esm({
     MAX_MARKER_OUTPUT_ROWS = 1;
     SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
     VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
-    RuntimeSessionIdSchemaZ3 = z104.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ3 = z104.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ3 = z104.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    RuntimeSessionIdSchemaZ3 = z105.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ3 = z105.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ3 = z105.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
     MarkerPattern2 = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u;
     ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
     TmuxAttachmentClientTransportError = class extends Error {
@@ -65791,18 +66479,18 @@ var init_tmux_view_executor = __esm({
         }
       }
     };
-    TmuxAttachmentClientTransportInputSchemaZ = z104.object({
-      operation: z104.enum(["attach", "recover"]),
-      identity: z104.object({
-        attachmentId: z104.uuid(),
-        generation: z104.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-        viewSessionName: z104.string(),
-        markerValue: z104.string(),
+    TmuxAttachmentClientTransportInputSchemaZ = z105.object({
+      operation: z105.enum(["attach", "recover"]),
+      identity: z105.object({
+        attachmentId: z105.uuid(),
+        generation: z105.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+        viewSessionName: z105.string(),
+        markerValue: z105.string(),
         expectedSourceSessionId: RuntimeSessionIdSchemaZ3,
         expectedViewSessionId: RuntimeSessionIdSchemaZ3,
         expectedWindowId: RuntimeWindowIdSchemaZ3,
         expectedPaneId: RuntimePaneIdSchemaZ3,
-        expectedWindowPaneCount: z104.number().int().positive()
+        expectedWindowPaneCount: z105.number().int().positive()
       }).strict(),
       viewport: TerminalAttachmentViewportSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
@@ -65872,7 +66560,7 @@ var init_tmux_view_executor = __esm({
             throw new TmuxAttachmentViewExecutorError("invalid-request");
           }
           const result2 = this.#clientTransport.beginGuardedAttach(input);
-          if (result2.status !== "claimed" || !z104.uuid().safeParse(result2.attemptId).success || result2.attachmentId !== plan.identity.attachmentId || result2.generation !== plan.identity.generation || !(result2.outcome instanceof Promise)) {
+          if (result2.status !== "claimed" || !z105.uuid().safeParse(result2.attemptId).success || result2.attachmentId !== plan.identity.attachmentId || result2.generation !== plan.identity.generation || !(result2.outcome instanceof Promise)) {
             throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
           }
           return result2;
@@ -66851,7 +67539,7 @@ var init_pty_tmux_attachment_launcher = __esm({
 import { accessSync as accessSync9, constants as constants13, realpathSync as realpathSync17, statSync as statSync15 } from "node:fs";
 import { execFile as execFile10 } from "node:child_process";
 import { isAbsolute as isAbsolute19 } from "node:path";
-import { z as z105 } from "zod";
+import { z as z106 } from "zod";
 function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
@@ -67393,7 +68081,7 @@ function commandString(argv) {
   return argv.map((value) => value === ";" ? ";" : quoteArgument(value)).join(" ");
 }
 function geometryDescriptorIsValid(descriptor, client) {
-  return z105.uuid().safeParse(descriptor.leaseId).success && z105.uuid().safeParse(descriptor.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor.target).success && descriptor.status === "active" && Number.isSafeInteger(descriptor.bindingGeneration) && descriptor.bindingGeneration >= 0 && Number.isSafeInteger(descriptor.viewGeneration) && descriptor.viewGeneration >= 0 && descriptor.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z105.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor.leaseId && client.generation === descriptor.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
+  return z106.uuid().safeParse(descriptor.leaseId).success && z106.uuid().safeParse(descriptor.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor.target).success && descriptor.status === "active" && Number.isSafeInteger(descriptor.bindingGeneration) && descriptor.bindingGeneration >= 0 && Number.isSafeInteger(descriptor.viewGeneration) && descriptor.viewGeneration >= 0 && descriptor.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z106.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor.leaseId && client.generation === descriptor.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
 }
 async function enumerateStartupMarkedViews(executor) {
   let failure4;
@@ -68820,8 +69508,8 @@ var init_agent_status_probe = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash21, randomBytes as randomBytes6, randomUUID as randomUUID27, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
-import { z as z106 } from "zod";
+import { createHash as createHash22, randomBytes as randomBytes6, randomUUID as randomUUID27, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { z as z107 } from "zod";
 function positiveDuration2(value, fallback, label4) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -68830,7 +69518,7 @@ function positiveDuration2(value, fallback, label4) {
   return resolved2;
 }
 function hashTicket2(ticket) {
-  return createHash21("sha256").update(ticket, "utf8").digest();
+  return createHash22("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
@@ -68847,9 +69535,9 @@ var init_lease_manager2 = __esm({
   "packages/daemon/src/terminal/pane-stream/lease-manager.ts"() {
     "use strict";
     init_src2();
-    BindingIdSchemaZ3 = z106.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ2 = z106.uuid();
-    SessionNameSchemaZ = z106.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    BindingIdSchemaZ3 = z107.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ2 = z107.uuid();
+    SessionNameSchemaZ = z107.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
     TicketPattern2 = /^ps2_[A-Za-z0-9_-]{43}$/u;
     PaneStreamLeaseError = class extends Error {
       code;
@@ -69005,7 +69693,7 @@ var init_lease_manager2 = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z106.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z107.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new PaneStreamLeaseError(
           "identity-generation-failed",
@@ -69145,7 +69833,7 @@ var init_wire_ledger = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
-import { z as z107 } from "zod";
+import { z as z108 } from "zod";
 function semanticBackendRefusal(error) {
   let candidate = error;
   for (let depth = 0; depth < 3; depth += 1) {
@@ -69224,7 +69912,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -69248,7 +69936,7 @@ var init_pane_stream_websocket = __esm({
     ]);
     TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
     TicketPattern3 = /^ps2_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ4 = z107.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    BindingIdSchemaZ4 = z108.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     PaneStreamAdmissionError = class extends Error {
       code;
       constructor(code2, message) {
@@ -69345,7 +70033,7 @@ var init_pane_stream_websocket = __esm({
           if (origin === null) {
             throw new PaneStreamAdmissionError("invalid-origin", "Renderer Origin is invalid.");
           }
-          const requestId = z107.uuid().parse(context.requestId);
+          const requestId = z108.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ4.parse(context.projectIdentity);
           if (this.#pending.size >= this.#maxPending) {
             throw new PaneStreamAdmissionError(
@@ -69396,7 +70084,7 @@ var init_pane_stream_websocket = __esm({
           });
           const descriptor = issued.descriptor;
           const ticket = issued.redemptionTicket;
-          const valid = TicketPattern3.test(ticket) && z107.uuid().safeParse(descriptor.leaseId).success && descriptor.requestId === requestId && (this.#mirror.describeSessionAuthority === void 0 || descriptor.runtimeSessionId === runtimeSessionId) && descriptor.status === "awaiting-redemption" && descriptor.viewerMode === request3.viewerMode && descriptor.workspaceName === request3.workspaceName && descriptor.panes.length === request3.panes.length && descriptor.panes.every((pane, index) => pane === request3.panes[index]) && descriptor.expiresAt > this.#now();
+          const valid = TicketPattern3.test(ticket) && z108.uuid().safeParse(descriptor.leaseId).success && descriptor.requestId === requestId && (this.#mirror.describeSessionAuthority === void 0 || descriptor.runtimeSessionId === runtimeSessionId) && descriptor.status === "awaiting-redemption" && descriptor.viewerMode === request3.viewerMode && descriptor.workspaceName === request3.workspaceName && descriptor.panes.length === request3.panes.length && descriptor.panes.every((pane, index) => pane === request3.panes[index]) && descriptor.expiresAt > this.#now();
           const ticketDigest = digestSecret(ticket);
           const duplicate = [...this.#pending.values()].some(
             (pending2) => digestsEqual(pending2.ticketDigest, ticketDigest)
@@ -69467,7 +70155,7 @@ var init_pane_stream_websocket = __esm({
         if (input.hostClientId && !hostClientId) {
           return { accepted: false, code: "origin-rejected", httpStatus: 403 };
         }
-        const requestId = input.requestId ? z107.uuid().safeParse(input.requestId).data : void 0;
+        const requestId = input.requestId ? z108.uuid().safeParse(input.requestId).data : void 0;
         if (input.requestId && !requestId) {
           return { accepted: false, code: "origin-rejected", httpStatus: 403 };
         }
@@ -69779,6 +70467,8 @@ var init_pane_stream_websocket = __esm({
         socket.off("error", this.#onClose);
       }
     };
+    GRAPHICS_MAX_QUEUED_DIGESTS = 256;
+    GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
     PaneStreamLiveConnection = class {
       #clientId;
       #socket;
@@ -69913,7 +70603,10 @@ var init_pane_stream_websocket = __esm({
             nextInputSeq: 1,
             frozenByWire: false,
             closed: false,
-            batch: null
+            batch: null,
+            graphicsAnnounced: false,
+            graphicsQueue: [],
+            graphicsSending: false
           });
         }
       }
@@ -70237,6 +70930,7 @@ var init_pane_stream_websocket = __esm({
             await this.#sendTerminalDelivery(channel.semanticPaneId, message);
           pending.length = 0;
           markReady();
+          this.#startGraphics(channel);
         }
         this.#closeIfAllPanesGone();
       }
@@ -70329,6 +71023,63 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         await this.#awaitSemanticCredit(pane);
+      }
+      /** Announce the pane's kitty graphics state; the client pulls bytes it lacks. */
+      #startGraphics(channel) {
+        const graphics = channel.delivery?.graphics;
+        if (!graphics) return;
+        graphics.subscribe((state) => {
+          if (this.#closed || channel.closed) return;
+          channel.graphicsAnnounced = true;
+          this.#sendFrame(null, { type: "terminal-graphics", pane: channel.semanticPaneId, state });
+        });
+      }
+      #requestGraphics(pane, digests) {
+        const channel = this.#panes.get(pane);
+        if (!channel || channel.closed || !channel.graphicsAnnounced) return;
+        for (const digest3 of digests)
+          if (!channel.graphicsQueue.includes(digest3) && channel.graphicsQueue.length < GRAPHICS_MAX_QUEUED_DIGESTS)
+            channel.graphicsQueue.push(digest3);
+        if (!channel.graphicsSending) void this.#drainGraphics(channel);
+      }
+      /**
+       * Blob bytes yield to terminal frames: each chunk waits until the socket's
+       * buffered bytes fall below a small window, so images never trip the
+       * socket-wide backpressure ceiling or delay a pane's next seed for long.
+       */
+      async #drainGraphics(channel) {
+        channel.graphicsSending = true;
+        try {
+          while (!this.#closed && !channel.closed && channel.graphicsQueue.length > 0) {
+            const digest3 = channel.graphicsQueue.shift();
+            const image = channel.delivery?.graphics?.image(digest3);
+            if (!image) continue;
+            const total = image.data.byteLength;
+            for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
+              while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
+                if (this.#closed || channel.closed) return;
+                await new Promise((resolve44) => setTimeout(resolve44, 5));
+              }
+              if (this.#closed || channel.closed) return;
+              const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
+              this.#sendFrame(null, {
+                type: "terminal-graphics-blob",
+                pane: channel.semanticPaneId,
+                blob: {
+                  digest: digest3,
+                  format: image.format,
+                  width: image.width,
+                  height: image.height,
+                  total,
+                  offset
+                },
+                data: Buffer.from(image.data.subarray(offset, end)).toString("base64")
+              });
+            }
+          }
+        } finally {
+          channel.graphicsSending = false;
+        }
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
@@ -70803,6 +71554,10 @@ var init_pane_stream_websocket = __esm({
         }
         if (frame.type === "semantic-intent") {
           this.#acceptSemanticIntent(frame.operationId, frame.intent);
+          return;
+        }
+        if (frame.type === "terminal-graphics-request") {
+          this.#requestGraphics(frame.pane, frame.digests);
           return;
         }
         if (frame.type === "viewport") {
@@ -71778,14 +72533,14 @@ var init_tmux_interaction_observation_handler = __esm({
 
 // packages/daemon/src/lib/tmux-server-owner.ts
 import { execFileSync as execFileSync17 } from "node:child_process";
-import { createHash as createHash22, randomUUID as randomUUID30 } from "node:crypto";
+import { createHash as createHash23, randomUUID as randomUUID30 } from "node:crypto";
 import { mkdirSync as mkdirSync21 } from "node:fs";
-import { z as z108 } from "zod";
+import { z as z109 } from "zod";
 function discoveredWorkspaceName(registry, sessionName) {
   if (WorkspaceIdSchemaZ.safeParse(sessionName).success && !registry.has(sessionName))
     return sessionName;
   for (let suffix = 0; suffix <= registry.list().length; suffix += 1) {
-    const digest3 = createHash22("sha256").update(`tmux-ide.discovered-workspace.v1\0${sessionName}\0${suffix}`).digest("hex");
+    const digest3 = createHash23("sha256").update(`tmux-ide.discovered-workspace.v1\0${sessionName}\0${suffix}`).digest("hex");
     const name = `session-${digest3}`;
     if (!registry.has(name)) return name;
   }
@@ -71843,7 +72598,7 @@ function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () =
   };
 }
 async function createNativeTmuxServerOwner(options) {
-  const generation = z108.uuid().parse(options.generation);
+  const generation = z109.uuid().parse(options.generation);
   const authority2 = options.tmuxAuthority;
   requireSupportedTmuxVersion(
     execFileSync17(authority2.executablePath, ["-V"], { encoding: "utf8", timeout: 3e3 })
@@ -72554,7 +73309,7 @@ var init_tmux_server_owners = __esm({
 // packages/daemon/src/lib/tmux-server-registration.ts
 import { execFile as execFile11 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
-import { createHash as createHash23, randomUUID as randomUUID32 } from "node:crypto";
+import { createHash as createHash24, randomUUID as randomUUID32 } from "node:crypto";
 import {
   mkdirSync as mkdirSync22,
   readFileSync as readFileSync24,
@@ -72564,7 +73319,7 @@ import {
   unlinkSync as unlinkSync6
 } from "node:fs";
 import { dirname as dirname29 } from "node:path";
-import { z as z109 } from "zod";
+import { z as z110 } from "zod";
 function readTmuxServerRegistrations(path2) {
   try {
     return FileSchema.parse(JSON.parse(readFileSync24(path2, "utf8"))).servers;
@@ -72618,7 +73373,7 @@ function createTmuxServerProbe(executable) {
       revalidateUnixSocketIdentity(socket);
       return {
         nativeServerIdentity: { pid: match[2], startTime: match[3] },
-        fingerprint: createHash23("sha256").update(JSON.stringify([socket.path, match[2], match[3]])).digest("hex"),
+        fingerprint: createHash24("sha256").update(JSON.stringify([socket.path, match[2], match[3]])).digest("hex"),
         authority: { executablePath, socketSelector: { kind: "path", path: socket.path } },
         valid: () => {
           try {
@@ -72642,9 +73397,9 @@ var init_tmux_server_registration = __esm({
     init_unix_socket_authority();
     init_tmux_server_owners();
     exec = promisify2(execFile11);
-    FileSchema = z109.object({
-      version: z109.literal(1),
-      servers: z109.array(TmuxServerRegistrationSchemaZ).max(MAX_TMUX_SERVER_OWNERS)
+    FileSchema = z110.object({
+      version: z110.literal(1),
+      servers: z110.array(TmuxServerRegistrationSchemaZ).max(MAX_TMUX_SERVER_OWNERS)
     }).strict().superRefine((file, ctx) => {
       if (new Set(file.servers.map((server) => server.serverId)).size !== file.servers.length)
         ctx.addIssue({ code: "custom", message: "Duplicate server registration" });
@@ -72988,7 +73743,7 @@ var init_owner_authority = __esm({
 });
 
 // packages/daemon/src/command-center/resources/fleet-preview-route.ts
-import { z as z110 } from "zod";
+import { z as z111 } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { stripVTControlCharacters } from "node:util";
 function createFleetPreviewCapture(run, native2) {
@@ -73173,17 +73928,17 @@ var init_fleet_preview_route = __esm({
     init_owner_authority();
     init_discovery();
     cleanText = (value) => stripVTControlCharacters(value).replace(/[^\P{Cc}\n\t]/gu, "");
-    requestSchema = z110.strictObject({
-      expectedInstanceId: z110.uuid(),
-      paneId: z110.string().regex(/^%\d+$/u).optional(),
-      windowId: z110.string().regex(/^@\d+$/u).optional(),
-      liveSessionId: z110.string().regex(/^live-session\.[a-f0-9]{20}$/u)
+    requestSchema = z111.strictObject({
+      expectedInstanceId: z111.uuid(),
+      paneId: z111.string().regex(/^%\d+$/u).optional(),
+      windowId: z111.string().regex(/^@\d+$/u).optional(),
+      liveSessionId: z111.string().regex(/^live-session\.[a-f0-9]{20}$/u)
     });
   }
 });
 
 // packages/daemon/src/command-center/resources/terminal-native-backing-route.ts
-import { z as z111 } from "zod";
+import { z as z112 } from "zod";
 function mountTerminalNativeBackingRoute(app, options) {
   const authorize = ownerAuthorityGate(options.ownerToken, {
     whenOwnerless: "unavailable",
@@ -73249,11 +74004,11 @@ var init_terminal_native_backing_route = __esm({
     "use strict";
     init_owner_authority();
     init_native_grid_capture();
-    requestSchema2 = z111.object({
-      generation: z111.uuid(),
-      incarnation: z111.string().min(1).max(512),
-      revision: z111.coerce.number().int().nonnegative(),
-      stateHash: z111.string().min(1).max(128)
+    requestSchema2 = z112.object({
+      generation: z112.uuid(),
+      incarnation: z112.string().min(1).max(512),
+      revision: z112.coerce.number().int().nonnegative(),
+      stateHash: z112.string().min(1).max(128)
     }).strict();
   }
 });
@@ -76659,7 +77414,7 @@ var init_daemon_shutdown = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open.ts
-import { createHash as createHash24 } from "node:crypto";
+import { createHash as createHash25 } from "node:crypto";
 import { realpathSync as realpathSync19, statSync as statSync17 } from "node:fs";
 import { basename as basename13, isAbsolute as isAbsolute21 } from "node:path";
 function boundedAuthorityLimit3(value, fallback) {
@@ -76680,7 +77435,7 @@ function safeBaseName2(projectDir) {
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
-  const projectKey = createHash24("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
+  const projectKey = createHash25("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
   const name = `${safeBaseName2(canonicalProjectDir3).slice(0, 64)}-${projectKey}`;
   return Object.freeze({
     workspaceName: name,
@@ -79945,7 +80700,7 @@ var init_daemon_provenance = __esm({
 });
 
 // packages/daemon/src/lib/automation-operation-registry.ts
-import { createHash as createHash25, randomUUID as randomUUID36 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID36 } from "node:crypto";
 var AutomationOperationUnavailableError, AutomationOperationRegistry;
 var init_automation_operation_registry = __esm({
   "packages/daemon/src/lib/automation-operation-registry.ts"() {
@@ -80030,7 +80785,7 @@ var init_automation_operation_registry = __esm({
           if (entry.state !== "running" && entry.expiresAt <= now) this.#entries.delete(id2);
       }
       #fingerprint(intent) {
-        return createHash25("sha256").update(intent).digest("hex");
+        return createHash26("sha256").update(intent).digest("hex");
       }
     };
   }
@@ -80038,7 +80793,7 @@ var init_automation_operation_registry = __esm({
 
 // packages/daemon/src/command-center/automation.ts
 import { stripVTControlCharacters as stripVTControlCharacters2 } from "node:util";
-import { z as z112 } from "zod";
+import { z as z113 } from "zod";
 async function boundedJson(request3) {
   if (!request3.body) throw new AutomationRequestError("invalid-request");
   const reader = request3.body.getReader();
@@ -80079,7 +80834,7 @@ function mountAutomationRoutes(app, options) {
     try {
       return await work(c);
     } catch (error) {
-      const code2 = error instanceof AutomationRequestError ? error.code : error instanceof z112.ZodError || error instanceof SyntaxError || error instanceof TypeError ? "invalid-request" : "server-unavailable";
+      const code2 = error instanceof AutomationRequestError ? error.code : error instanceof z113.ZodError || error instanceof SyntaxError || error instanceof TypeError ? "invalid-request" : "server-unavailable";
       return c.json(
         { error: { code: code2 } },
         code2 === "invalid-request" ? 400 : code2 === "capacity" ? 429 : code2 === "server-unavailable" ? 503 : 409
@@ -80807,7 +81562,7 @@ var init_terminal_runtime_inventory2 = __esm({
 // packages/daemon/src/command-center/tmux-servers.ts
 import { Hono as Hono2 } from "hono";
 import { streamSSE as streamSSE2 } from "hono/streaming";
-import { z as z113 } from "zod";
+import { z as z114 } from "zod";
 async function boundedJson2(request3, limit = 64 * 1024) {
   if (!request3.body) throw new TypeError("Missing body");
   const reader = request3.body.getReader();
@@ -80847,7 +81602,7 @@ function failure(c, error) {
     return c.json({ error: { code: "harness_unavailable" } }, 409);
   if (error instanceof WorkspaceMultiplexerError)
     return c.json({ error: { code: error.code } }, 409);
-  if (error instanceof z113.ZodError || error instanceof SyntaxError || error instanceof TypeError)
+  if (error instanceof z114.ZodError || error instanceof SyntaxError || error instanceof TypeError)
     return c.json({ error: { code: "invalid-request" } }, 400);
   return c.json({ error: { code: "server-unavailable" } }, 503);
 }
@@ -80961,9 +81716,9 @@ function mountTmuxServerRoutes(app, options) {
     `${scoped}/sessions/create`,
     route(async (c) => {
       const server = scope(c);
-      const request3 = z113.object({
-        operationId: z113.uuid(),
-        expectedDaemonInstanceId: z113.uuid(),
+      const request3 = z114.object({
+        operationId: z114.uuid(),
+        expectedDaemonInstanceId: z114.uuid(),
         intent: WorkspaceSessionCreateArgumentsSchemaZ
       }).strict().parse(await boundedJson2(c.req.raw));
       if (request3.expectedDaemonInstanceId !== server.generation || request3.intent.expectedDaemonInstanceId && request3.intent.expectedDaemonInstanceId !== server.generation)
@@ -81297,7 +82052,7 @@ var init_tmux_servers = __esm({
     init_pane_stream_issue();
     init_terminal_runtime_inventory2();
     registrationSchema = TmuxServerRegistrationSchemaZ.omit({ serverId: true }).strict();
-    workspaceSchema = z113.string().min(1).max(160).refine((value) => !/[\0\r\n]/u.test(value));
+    workspaceSchema = z114.string().min(1).max(160).refine((value) => !/[\0\r\n]/u.test(value));
   }
 });
 
@@ -81543,7 +82298,7 @@ var init_saved_machines3 = __esm({
 
 // packages/daemon/src/command-center/resources/saved-machine-route.ts
 import { bodyLimit as bodyLimit2 } from "hono/body-limit";
-import { z as z114 } from "zod";
+import { z as z115 } from "zod";
 function mountSavedMachineRoute(app, options) {
   const authorize = ownerAuthorityGate(options.ownerToken, {
     whenOwnerless: "unavailable",
@@ -81624,12 +82379,12 @@ var init_saved_machine_route = __esm({
     init_saved_machines();
     init_saved_machines3();
     init_owner_authority();
-    Request2 = z114.strictObject({
-      expectedInstanceId: z114.uuid(),
+    Request2 = z115.strictObject({
+      expectedInstanceId: z115.uuid(),
       registry: SavedMachineRegistrySchema
     });
-    MutationRequest = z114.strictObject({
-      expectedInstanceId: z114.uuid(),
+    MutationRequest = z115.strictObject({
+      expectedInstanceId: z115.uuid(),
       change: SavedMachineMutationSchema
     });
   }
@@ -81806,87 +82561,87 @@ var init_semantic_multiplexer_actions = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z115 } from "zod";
+import { z as z116 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z115.object({
-      status: z115.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z115.string().optional(),
-      title: z115.string().optional(),
-      description: z115.string().optional(),
-      priority: z115.number().optional()
+    updateTaskSchema = z116.object({
+      status: z116.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z116.string().optional(),
+      title: z116.string().optional(),
+      description: z116.string().optional(),
+      priority: z116.number().optional()
     });
-    createTaskSchema = z115.object({
-      title: z115.string().trim().min(1, "Title is required"),
-      description: z115.string().optional(),
-      priority: z115.number().optional(),
-      goal: z115.string().optional(),
-      tags: z115.array(z115.string()).optional()
+    createTaskSchema = z116.object({
+      title: z116.string().trim().min(1, "Title is required"),
+      description: z116.string().optional(),
+      priority: z116.number().optional(),
+      goal: z116.string().optional(),
+      tags: z116.array(z116.string()).optional()
     });
-    savePlanSchema = z115.object({
-      content: z115.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z116.object({
+      content: z116.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z115.object({
-      content: z115.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z116.object({
+      content: z116.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z115.object({
-      target: z115.string().min(1, "Target pane is required"),
-      message: z115.string().min(1, "Message is required"),
-      noEnter: z115.boolean().optional()
+    sendCommandSchema = z116.object({
+      target: z116.string().min(1, "Target pane is required"),
+      message: z116.string().min(1, "Message is required"),
+      noEnter: z116.boolean().optional()
     });
-    createMilestoneSchema = z115.object({
-      title: z115.string().trim().min(1, "Title is required"),
-      sequence: z115.number().int().positive(),
-      description: z115.string().optional()
+    createMilestoneSchema = z116.object({
+      title: z116.string().trim().min(1, "Title is required"),
+      sequence: z116.number().int().positive(),
+      description: z116.string().optional()
     });
-    updateMilestoneSchema = z115.object({
-      status: z115.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z115.string().optional(),
-      description: z115.string().optional()
+    updateMilestoneSchema = z116.object({
+      status: z116.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z116.string().optional(),
+      description: z116.string().optional()
     });
-    updateAssertionSchema = z115.object({
-      status: z115.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z115.string().optional(),
-      verifiedBy: z115.string().optional()
+    updateAssertionSchema = z116.object({
+      status: z116.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z116.string().optional(),
+      verifiedBy: z116.string().optional()
     });
-    triggerResearchSchema = z115.object({
-      type: z115.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z116.object({
+      type: z116.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z115.object({
-      attach: z115.boolean().optional()
+    launchSchema = z116.object({
+      attach: z116.boolean().optional()
     }).optional();
-    stopSchema = z115.object({}).optional();
+    stopSchema = z116.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z115.object({
-      name: z115.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z116.object({
+      name: z116.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z115.string().trim().optional(),
-      description: z115.string().optional(),
-      specialties: z115.array(z115.string()).optional(),
-      body: z115.string().optional()
+      role: z116.string().trim().optional(),
+      description: z116.string().optional(),
+      specialties: z116.array(z116.string()).optional(),
+      body: z116.string().optional()
     });
-    updateSkillSchema = z115.object({
-      role: z115.string().trim().optional(),
-      description: z115.string().optional(),
-      specialties: z115.array(z115.string()).optional(),
-      body: z115.string().optional()
+    updateSkillSchema = z116.object({
+      role: z116.string().trim().optional(),
+      description: z116.string().optional(),
+      specialties: z116.array(z116.string()).optional(),
+      body: z116.string().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { createHash as createHash26 } from "node:crypto";
+import { createHash as createHash27 } from "node:crypto";
 import { realpathSync as realpathSync21 } from "node:fs";
 import { existsSync as existsSync28, mkdirSync as mkdirSync27, readFileSync as readFileSync29, renameSync as renameSync17, writeFileSync as writeFileSync24 } from "node:fs";
 import { dirname as dirname35, join as join41 } from "node:path";
 function path(dir) {
   const namespace = resolveRuntimeNamespace();
   if (namespace.development) {
-    const identity2 = createHash26("sha256").update(realpathSync21(dir)).digest("hex");
+    const identity2 = createHash27("sha256").update(realpathSync21(dir)).digest("hex");
     return runtimeOwnedPath(join41(namespace.stateHome, "projects", identity2, "terminals.json"));
   }
   return join41(dir, TERMINALS_FILE);
@@ -82244,9 +82999,9 @@ var init_sizes = __esm({
 
 // packages/daemon/src/lib/launch-plan.ts
 import { resolve as resolve26 } from "node:path";
-import { createHash as createHash27 } from "node:crypto";
+import { createHash as createHash28 } from "node:crypto";
 function semanticWindowIdForSession(session) {
-  const digest3 = createHash27("sha256").update("tmux-ide.launch.window.v1\0", "utf8").update(session, "utf8").digest("hex").slice(0, 20);
+  const digest3 = createHash28("sha256").update("tmux-ide.launch.window.v1\0", "utf8").update(session, "utf8").digest("hex").slice(0, 20);
   return `window.launch.${digest3}`;
 }
 function semanticPaneIdForPane(pane) {
@@ -82262,7 +83017,7 @@ function semanticPaneIdForPane(pane) {
       ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
     )
   });
-  const digest3 = createHash27("sha256").update(metadata).digest("hex").slice(0, 16);
+  const digest3 = createHash28("sha256").update(metadata).digest("hex").slice(0, 16);
   const label4 = paneIdentityLabel(pane);
   return `pane-${label4}-${digest3}`;
 }
@@ -82747,7 +83502,7 @@ __export(launch_exports, {
 });
 import { resolve as resolve29 } from "node:path";
 import { execSync } from "node:child_process";
-import { createHash as createHash28 } from "node:crypto";
+import { createHash as createHash29 } from "node:crypto";
 function stripWidgetPanes(rows) {
   return rows.map((row) => ({
     ...row,
@@ -82758,7 +83513,7 @@ function sleepMs3(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function configHash(config2) {
-  return createHash28("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
+  return createHash29("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
 }
 function waitForPaneCommand(targetPane, expectedCommands, {
   attempts = 20,
@@ -85087,64 +85842,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z116 } from "zod";
+import { z as z117 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z116.object({
+    ProjectInspectDetectedSchemaZ = z117.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z116.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z117.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z116.array(z116.string()),
+      frameworks: z117.array(z117.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z116.string().nullable(),
+      devCommand: z117.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z116.string().nullable()
+      testCommand: z117.string().nullable()
     });
-    ProjectInspectSchemaZ = z116.object({
+    ProjectInspectSchemaZ = z117.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z116.string(),
+      name: z117.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z116.string(),
+      dir: z117.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z116.boolean(),
+      hasIdeYml: z117.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z116.boolean().optional(),
+      hasWorkspaceConfig: z117.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z116.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z117.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z116.string().nullable().optional(),
+      configPath: z117.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z116.string().nullable().optional(),
+      ideConfigPath: z117.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z116.string().nullable(),
+      gitOrigin: z117.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z116.string().nullable(),
+      gitBranch: z117.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z116.object({
-      dir: z116.string().min(1)
+    InspectFilesystemRequestSchemaZ = z117.object({
+      dir: z117.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z116.object({
-      dir: z116.string().min(1),
+    OnboardProjectRequestSchemaZ = z117.object({
+      dir: z117.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z116.string().min(1).optional(),
+      name: z117.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z116.number().int().min(1).max(3),
+      agents: z117.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z116.array(z116.string().min(1)).optional(),
+      agentNames: z117.array(z117.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z116.string().min(1).nullable().optional(),
+      devCommand: z117.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z116.string().min(1).nullable().optional(),
+      testCommand: z117.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z116.string().min(1).nullable().optional()
+      lintCommand: z117.string().min(1).nullable().optional()
     });
   }
 });
@@ -85535,9 +86290,9 @@ var init_project_onboard = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-resource-ids.ts
-import { createHash as createHash29 } from "node:crypto";
+import { createHash as createHash30 } from "node:crypto";
 function opaqueDigest(...parts) {
-  const hash = createHash29("sha256");
+  const hash = createHash30("sha256");
   for (const part of parts) {
     hash.update(part, "utf8");
     hash.update("\0");
@@ -87938,7 +88693,7 @@ var init_fleet_resource_route = __esm({
 });
 
 // packages/daemon/src/command-center/resources/agent-graph-overlay.ts
-import { createHash as createHash30 } from "node:crypto";
+import { createHash as createHash31 } from "node:crypto";
 function pairKey(a, b) {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`;
 }
@@ -87954,7 +88709,7 @@ function nodeLabel(value) {
   return normalized.length > 0 ? normalized : null;
 }
 function groupId(missionId) {
-  const token2 = createHash30("sha256").update(missionId).digest("hex").slice(0, 32);
+  const token2 = createHash31("sha256").update(missionId).digest("hex").slice(0, 32);
   return `group.${token2}`;
 }
 function projectApplicationShellAgentGraphOverlay(input) {
@@ -88527,7 +89282,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash31, randomUUID as randomUUID40 } from "node:crypto";
+import { createHash as createHash32, randomUUID as randomUUID40 } from "node:crypto";
 import {
   chmodSync as chmodSync7,
   existsSync as existsSync33,
@@ -88617,7 +89372,7 @@ function publishWidgetAsset(bytes, options) {
     throw new WidgetAssetStoreError("unsupported-media", "The widget asset media type is unsafe.");
   }
   const root = ensureAssetRoot();
-  const assetId = createHash31("sha256").update(bytes).digest("hex");
+  const assetId = createHash32("sha256").update(bytes).digest("hex");
   const paths = assetPaths(root, assetId);
   const metadata = {
     version: 1,
@@ -88655,7 +89410,7 @@ function readWidgetAsset(assetIdInput) {
       return null;
     }
     const bytes = readFileSync34(paths.data);
-    if (createHash31("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
+    if (createHash32("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
     return { ...metadata, bytes };
   } catch {
     return null;
@@ -88700,7 +89455,7 @@ import { Hono as Hono3 } from "hono";
 import { streamSSE as streamSSE3 } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z117 } from "zod";
+import { z as z118 } from "zod";
 import { realpathSync as realpathSync25 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { isAbsolute as isAbsolute25, resolve as pathResolve } from "node:path";
@@ -88750,7 +89505,7 @@ function requireHostCapability(ownerToken) {
       if (denied) return denied;
       markActionOwnerAuthorized(c);
     }
-    if (requirement === "owner-and-operation-id" && !z117.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (requirement === "owner-and-operation-id" && !z118.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -88935,7 +89690,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z117.object({}).strict().safeParse(body).success) {
+      if (!z118.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id: id2 }) => id2 === "workspace.app-window.mutate");
@@ -92869,7 +93624,7 @@ var init_daemon_service_manager = __esm({
 });
 
 // packages/daemon/src/lib/daemon-service-plan.ts
-import { createHash as createHash32 } from "node:crypto";
+import { createHash as createHash33 } from "node:crypto";
 import { isAbsolute as isAbsolute26, join as join49 } from "node:path";
 function safeValue(value, name) {
   if (!value || [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
@@ -92900,7 +93655,7 @@ function planDaemonService(options) {
     throw new TypeError("Development instances own their lifecycle; use dev:instance instead");
   const home = absolute(options.home, "Home directory");
   const executable = absolute(options.executable, "Stable CLI executable");
-  const identity2 = createHash32("sha256").update(absolute(namespace.daemonInfoDir, "Daemon state directory")).digest("hex").slice(0, 24);
+  const identity2 = createHash33("sha256").update(absolute(namespace.daemonInfoDir, "Daemon state directory")).digest("hex").slice(0, 24);
   const supervisionId = `tmux-ide.${identity2}`;
   const stdoutPath = join49(namespace.daemonInfoDir, "service.stdout.log");
   const stderrPath = join49(namespace.daemonInfoDir, "service.stderr.log");
@@ -93011,7 +93766,7 @@ import {
 import { randomUUID as randomUUID43 } from "node:crypto";
 import { dirname as dirname40, join as join50 } from "node:path";
 import { homedir as homedir8 } from "node:os";
-import { z as z118 } from "zod";
+import { z as z119 } from "zod";
 function defaults() {
   const namespace = resolveRuntimeNamespace();
   return {
@@ -93217,11 +93972,11 @@ var init_daemon_service = __esm({
     init_runtime_namespace();
     init_errors2();
     init_private_operation_lock();
-    RecordSchema = z118.strictObject({
-      version: z118.literal(1),
-      removing: z118.boolean().optional(),
-      executable: z118.string().min(1),
-      contents: z118.string().min(1).max(64 * 1024)
+    RecordSchema = z119.strictObject({
+      version: z119.literal(1),
+      removing: z119.boolean().optional(),
+      executable: z119.string().min(1),
+      contents: z119.string().min(1).max(64 * 1024)
     });
   }
 });
@@ -94534,7 +95289,7 @@ __export(ssh_daemon_transport_exports, {
 });
 import { spawn as spawn10 } from "node:child_process";
 import { createServer as createServer4 } from "node:net";
-import { z as z119 } from "zod";
+import { z as z120 } from "zod";
 function failure3(message, code2 = "unavailable") {
   return new SshConnectionError(message, code2);
 }
@@ -94815,16 +95570,16 @@ var init_ssh_daemon_transport = __esm({
     init_remote_tmux_command();
     init_ssh_daemon_relay();
     init_src2();
-    RemoteDaemonHandshakeSchema = z119.object({
-      version: z119.literal(1),
+    RemoteDaemonHandshakeSchema = z120.object({
+      version: z120.literal(1),
       daemon: CanonicalDaemonInfoSchema.strict().extend({
-        bindHostname: z119.enum(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]),
-        authToken: z119.string().min(1).max(4096)
+        bindHostname: z120.enum(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]),
+        authToken: z120.string().min(1).max(4096)
       })
     }).strict();
-    RemoteDaemonHandshakeFailureSchema = z119.strictObject({
-      version: z119.literal(1),
-      error: z119.strictObject({ code: z119.enum(["daemon-missing", "incompatible", "unavailable"]) })
+    RemoteDaemonHandshakeFailureSchema = z120.strictObject({
+      version: z120.literal(1),
+      error: z120.strictObject({ code: z120.enum(["daemon-missing", "incompatible", "unavailable"]) })
     });
     SshConnectionError = class extends Error {
       constructor(message, code2 = "unavailable") {
@@ -96279,7 +97034,7 @@ __export(automation_exports, {
   resolveAutomationIntent: () => resolveAutomationIntent,
   runAutomationCli: () => runAutomationCli
 });
-import { z as z120 } from "zod";
+import { z as z121 } from "zod";
 import { execFileSync as execFileSync24 } from "node:child_process";
 import { parseArgs } from "node:util";
 function invokingPaneCredential(env = process.env) {
@@ -96446,7 +97201,7 @@ var init_automation2 = __esm({
         return { ...super.toJSON(), handle: this.handle };
       }
     };
-    AutomationInvocationIntentSchemaZ = z120.discriminatedUnion("kind", [
+    AutomationInvocationIntentSchemaZ = z121.discriminatedUnion("kind", [
       AutomationOperationIntentSchemaZ.options[0].extend({
         source: AutomationOperationIntentSchemaZ.options[0].shape.source.optional()
       }),
@@ -96465,7 +97220,7 @@ __export(mcp_exports, {
 });
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { z as z121 } from "zod";
+import { z as z122 } from "zod";
 async function call(work) {
   try {
     return result(await work());
@@ -96488,7 +97243,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_panes",
     {
       description: "Discover current panes across this daemon's tmux servers. Use returned endpoint objects unchanged; names and native pane numbers are not unique identities.",
-      inputSchema: z121.object({}).strict(),
+      inputSchema: z122.object({}).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
     async (_args, context) => call(() => client.discover({ signal: context.mcpReq.signal }))
@@ -96497,7 +97252,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_prepare",
     {
       description: "Prepare a read or send and receive a generation-fenced operation handle. This does not send input. Save the handle before executing. Omit source to resolve this MCP process\u2019s verified pane automatically, or use source:null for an unbound caller. Save the returned intent unchanged with the handle.",
-      inputSchema: z121.object({ intent: AutomationInvocationIntentSchemaZ }).strict(),
+      inputSchema: z122.object({ intent: AutomationInvocationIntentSchemaZ }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
     },
     async ({ intent }, context) => call(async () => {
@@ -96514,7 +97269,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_execute",
     {
       description: "Execute a prepared read or send using its exact handle and unchanged intent. Sends may run terminal commands. On uncertainty, check status or retry this same handle; never prepare another operation. Read text is returned once; replay returns metadata only. A completed send is command completion, not proof the recipient consumed it.",
-      inputSchema: z121.object({
+      inputSchema: z122.object({
         handle: AutomationOperationHandleSchemaZ,
         intent: AutomationOperationIntentSchemaZ
       }).strict(),
@@ -96526,7 +97281,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_operation_status",
     {
       description: "Look up a prepared operation without repeating its effect. Status contains no sent or captured text. Outcome-unknown includes expired retention and must not be interpreted as not executed.",
-      inputSchema: z121.object({ handle: AutomationOperationHandleSchemaZ }).strict(),
+      inputSchema: z122.object({ handle: AutomationOperationHandleSchemaZ }).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
     async ({ handle }, context) => call(() => client.status(handle, { signal: context.mcpReq.signal }))
@@ -96535,9 +97290,9 @@ function createTmuxIdeMcpServer(client) {
     "tmux_interactions",
     {
       description: "Read at most one batch of scoped interaction metadata, optionally waiting for new events. Carry the returned cursor into the next call. Gaps explicitly mean missing history; these events contain no terminal contents.",
-      inputSchema: z121.object({
+      inputSchema: z122.object({
         resume: TmuxInteractionCursorSchemaZ,
-        waitMs: z121.number().int().min(1).max(3e4).default(1e3)
+        waitMs: z122.number().int().min(1).max(3e4).default(1e3)
       }).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
