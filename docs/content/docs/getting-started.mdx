@@ -39,6 +39,14 @@ The installer prints a PATH instruction if your shell needs one. It installs
 under `~/.local`, verifies the Node.js and app runtime downloads, and preserves existing tmux
 sessions. To inspect it before running, download `install.sh` and read it first.
 
+Rerun the same command to upgrade. A running older daemon restarts on the new
+release while your tmux sessions keep running. On macOS, a launchd job that still
+starts an older tmux-ide copy is repointed at `~/.local/bin/tmux-ide`, with a
+backup of its definition. To keep the running daemon and update it yourself, pass
+`--no-daemon-upgrade` or set `TMUX_IDE_NO_DAEMON_UPGRADE=1`. If an older tmux-ide,
+such as a global npm install, comes first on your PATH, the installer names it and
+prints the command that removes it.
+
 To choose a version or a different user-owned location:
 
 ```bash

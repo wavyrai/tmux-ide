@@ -50,7 +50,10 @@ curl -fsSL https://tmux-ide.com/install.sh | sh -s -- --native-alpha
 
 The native installer verifies pinned download checksums and the app's Apple
 signing identity. It installs under your user account, without sudo, and does
-not open the app or start the daemon. Start or update the daemon explicitly:
+not open the app. The CLI step restarts a running older daemon on the managed CLI
+and repoints a launchd job that starts an older tmux-ide copy, keeping your tmux
+sessions running. It does not start a daemon that is not running. Start one, or
+retry an update, explicitly:
 
 ```bash
 ~/.local/bin/tmux-ide update --daemon --json

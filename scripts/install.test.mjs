@@ -44,7 +44,7 @@ const root=path.join(prefix,'lib/node_modules/tmux-ide');
 for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']) fs.mkdirSync(path.join(root,dir),{recursive:true});
 const version = process.env.MOCK_VERSION || '2.9.0';
 fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version}));
-fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.argv.includes('agent-teams')){ if(process.env.MOCK_TEAMS_FAIL) process.exit(1); const r=require('node:child_process').spawnSync(process.execPath,['${path.resolve("bin/cli.js")}',...process.argv.slice(2)],{stdio:'inherit'}); process.exit(r.status ?? 1); } if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
+fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.argv.includes('--daemon')){ require('node:fs').appendFileSync(process.env.HOME+'/daemon-upgrades', process.argv.slice(2).join(' ')+'\\\\n'); console.log(JSON.stringify({ok:true,status:'ready',productVersion:'"+version+"'})); process.exit(0); } if(process.argv.includes('agent-teams')){ if(process.env.MOCK_TEAMS_FAIL) process.exit(1); const r=require('node:child_process').spawnSync(process.execPath,['${path.resolve("bin/cli.js")}',...process.argv.slice(2)],{stdio:'inherit'}); process.exit(r.status ?? 1); } if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
 fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_HOLD) { require('node:fs').writeFileSync(process.env.MOCK_POSTINSTALL_HOLD, 'ready'); setInterval(()=>{}, 1000); } if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
 
 if (!process.env.MOCK_MISSING_TMUX) fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux'),'#!/bin/sh\\necho tmux '+(process.env.MOCK_OLD_TMUX ? '3.4' : '3.7c')+'\\n');
@@ -399,4 +399,176 @@ test("an agent-teams failure warns but never fails the install", (t) => {
   assert.match(result.stdout, /Warning: could not configure Claude Code agent teams/);
   assert.match(result.stdout, /Installed successfully/);
   assert.ok(fs.existsSync(path.join(prefix, "bin/tmux-ide")));
+});
+
+// A running older daemon moves to the new release; tmux sessions are not touched.
+function writeDaemonRecord(root, record) {
+  fs.mkdirSync(path.join(root, ".tmux-ide"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".tmux-ide/daemon.json"), JSON.stringify(record));
+}
+test("install restarts a running older daemon on the new release", (t) => {
+  const { root, run } = fixture(t);
+  writeDaemonRecord(root, { pid: process.pid, productVersion: "2.8.0" });
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Restarted the daemon on 2\.9\.0; tmux sessions kept running/);
+  assert.equal(
+    fs.readFileSync(path.join(root, "daemon-upgrades"), "utf8"),
+    "update --daemon --if-running --json\n",
+  );
+});
+test("install leaves a current or stopped daemon alone", (t) => {
+  const { root, run } = fixture(t);
+  writeDaemonRecord(root, { pid: process.pid, productVersion: "2.9.0" });
+  assert.equal(run().status, 0);
+  writeDaemonRecord(root, { pid: 2 ** 22 + 1, productVersion: "2.8.0" });
+  assert.equal(run().status, 0);
+  assert.equal(fs.existsSync(path.join(root, "daemon-upgrades")), false);
+});
+for (const [label, extra, args] of [
+  ["--no-daemon-upgrade", {}, ["--no-daemon-upgrade"]],
+  ["TMUX_IDE_NO_DAEMON_UPGRADE=1", { TMUX_IDE_NO_DAEMON_UPGRADE: "1" }, []],
+])
+  test(`${label} keeps the running daemon and prints the move command`, (t) => {
+    const { root, run } = fixture(t);
+    writeDaemonRecord(root, { pid: process.pid, productVersion: "2.8.0" });
+    const result = run(extra, args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /A tmux-ide 2\.8\.0 daemon is still running[^]*update --daemon --if-running/,
+    );
+    assert.equal(fs.existsSync(path.join(root, "daemon-upgrades")), false);
+  });
+test("--no-daemon-upgrade is refused for maintenance actions", (t) => {
+  const { run } = fixture(t);
+  assert.equal(run().status, 0);
+  const result = run({}, ["--rollback", "--no-daemon-upgrade"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /only valid when installing/);
+});
+
+// launchd: a job that starts another tmux-ide copy would relaunch it forever.
+const launchdTest = process.platform === "darwin" ? test : test.skip;
+function launchdFixture(t, ownerVersion) {
+  const context = fixture(t);
+  const { root } = context;
+  const agents = path.join(root, "Library/LaunchAgents");
+  fs.mkdirSync(agents, { recursive: true });
+  const owner = path.join(root, "old global", "tmux-ide");
+  fs.mkdirSync(path.dirname(owner));
+  fs.writeFileSync(owner, `#!/bin/sh\necho 'tmux-ide v${ownerVersion}'\n`, { mode: 0o755 });
+  const plist = path.join(agents, "com.tmux-ide.daemon.plist");
+  const xml = (value) => value.replaceAll("&", "&amp;").replaceAll("'", "&apos;");
+  fs.writeFileSync(
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.tmux-ide.daemon</string>
+<key>ProgramArguments</key><array><string>${xml(owner)}</string><string>--headless</string><string>--supervised</string><string>launchd-user</string></array>
+<key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(path.dirname(owner))}:/usr/bin:/bin</string></dict>
+<key>KeepAlive</key><true/>
+</dict></plist>
+`,
+  );
+  // Mock launchctl: the job starts loaded; bootstrap publishes the new daemon.
+  const state = path.join(root, "launchd-loaded");
+  fs.writeFileSync(state, "");
+  fs.writeFileSync(
+    path.join(root, "tools/launchctl"),
+    `#!/bin/sh
+echo "$*" >> ${quote(path.join(root, "launchctl.log"))}
+case "$1" in
+  print) [ -f ${quote(state)} ] ;;
+  bootout) rm -f ${quote(state)} ;;
+  bootstrap) : > ${quote(state)}; mkdir -p "$HOME/.tmux-ide"; printf '{"pid":%s,"productVersion":"2.9.0","supervisionId":"launchd-user"}' "$MOCK_DAEMON_PID" > "$HOME/.tmux-ide/daemon.json" ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const job = () =>
+    JSON.parse(
+      spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", plist], {
+        encoding: "utf8",
+      }).stdout,
+    );
+  const launchctl = () => fs.readFileSync(path.join(root, "launchctl.log"), "utf8");
+  return { ...context, plist, owner, job, launchctl };
+}
+launchdTest("install moves a launchd job from an older copy to the managed launcher", (t) => {
+  const { root, prefix, run, job, launchctl, owner } = launchdFixture(t, "2.8.0");
+  const result = run({ MOCK_DAEMON_PID: String(process.pid) });
+  assert.equal(result.status, 0, result.stderr);
+  const launcher = path.join(prefix, "bin/tmux-ide");
+  const moved = job();
+  assert.deepEqual(moved.ProgramArguments, [
+    launcher,
+    "--headless",
+    "--supervised",
+    "launchd-user",
+  ]);
+  assert.equal(moved.AbandonProcessGroup, true);
+  assert.equal(moved.KeepAlive, true);
+  assert.equal(
+    moved.EnvironmentVariables.PATH,
+    `${path.join(prefix, "bin")}:${path.dirname(owner)}:/usr/bin:/bin`,
+  );
+  assert.match(
+    launchctl(),
+    /^print .*\nbootout gui\/\d+\/com\.tmux-ide\.daemon\n(print .*\n)+bootstrap gui\/\d+ .*com\.tmux-ide\.daemon\.plist\n$/,
+  );
+  assert.match(
+    result.stdout,
+    /Moved launchd job com\.tmux-ide\.daemon from .* to this installation/,
+  );
+  assert.doesNotMatch(result.stdout, /has not reported/);
+  const backups = fs.readdirSync(path.join(prefix, "share/tmux-ide/service-backups"));
+  assert.equal(backups.length, 1);
+  // The daemon came back on the new release: no separate restart is needed.
+  assert.equal(fs.existsSync(path.join(root, "daemon-upgrades")), false);
+  // Idempotent: the job already points at the managed launcher.
+  assert.equal(run({ MOCK_DAEMON_PID: String(process.pid) }).status, 0);
+  assert.doesNotMatch(launchctl(), /bootout[^]*bootout/);
+});
+launchdTest("install leaves a launchd job from a newer copy unchanged", (t) => {
+  const { run, job, owner, launchctl } = launchdFixture(t, "9.0.0");
+  const before = job();
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(job(), before);
+  assert.equal(job().ProgramArguments[0], owner);
+  assert.match(
+    result.stdout,
+    /launchd job com\.tmux-ide\.daemon starts tmux-ide 9\.0\.0 .* left unchanged/,
+  );
+  assert.throws(launchctl);
+});
+launchdTest("--no-daemon-upgrade reports a stale launchd job without changing it", (t) => {
+  const { run, job, launchctl } = launchdFixture(t, "2.8.0");
+  const before = job();
+  const result = run({}, ["--no-daemon-upgrade"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(job(), before);
+  assert.match(
+    result.stdout,
+    /launchd job com\.tmux-ide\.daemon still starts .*without --no-daemon-upgrade/,
+  );
+  assert.throws(launchctl);
+});
+launchdTest("a failed launchd restart restores the previous job definition", (t) => {
+  const { root, run, job, plist } = launchdFixture(t, "2.8.0");
+  const before = fs.readFileSync(plist);
+  fs.writeFileSync(
+    path.join(root, "tools/launchctl"),
+    `#!/bin/sh\ncase "$1" in print) [ ! -f ${quote(path.join(root, "out"))} ] ;; bootout) : > ${quote(path.join(root, "out"))} ;; bootstrap) exit 5 ;; esac\n`,
+    { mode: 0o755 },
+  );
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(fs.readFileSync(plist), before);
+  assert.equal(job().ProgramArguments.length, 4);
+  assert.match(
+    result.stdout,
+    /Could not restart launchd job com\.tmux-ide\.daemon; restored its previous definition/,
+  );
 });
