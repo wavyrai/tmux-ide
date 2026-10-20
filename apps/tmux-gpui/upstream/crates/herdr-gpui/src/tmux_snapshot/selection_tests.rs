@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use super::*;
 fn state() -> anyhow::Result<browser::State> {
     let mut frame =
