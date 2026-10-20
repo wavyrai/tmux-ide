@@ -166,11 +166,9 @@ try {
   await until(() => events.some((e) => e.sessions?.length === 1), "catalog");
   send({ type: "session", request: 1, id: events.at(-1).sessions[0].id });
   await until(() => events.at(-1)?.request === 1 && events.at(-1)?.panes.length === 2, "panes");
-  const rightPane = events
-    .at(-1)
-    .panes.map((p) => p.id)
-    .at(-1);
-  send({ type: "pane", request: 2, id: rightPane });
+  // Either pane selects the window; the canvas holds both.
+  const selected = events.at(-1).panes[0].id;
+  send({ type: "pane", request: 2, id: selected });
   await until(() => events.some((e) => e.request === 2 && e.snapshot && e.inputReady), "ready");
   tmux("send-keys", "-t", right, "-l", `clear; cat ${fleet.root}/image.seq`);
   tmux("send-keys", "-t", right, "Enter");
@@ -181,8 +179,10 @@ try {
       .reduce((sum, c) => sum + Buffer.byteLength(c.data, "base64"), 0);
   await until(() => total() === image.length, "bytes");
   const placement = events.at(-1).graphics[0];
-  const region = events.at(-1).regions.find((r) => r.id === rightPane);
-  assert.ok(region && region.left > 0, "image pane is the right pane");
+  // The image is in the right-hand pane: its placement starts at that pane's
+  // canvas column, not at column 0.
+  const region = events.at(-1).regions.find((r) => r.left > 0);
+  assert.ok(region, "two-pane canvas");
   assert.equal(placement.digest, digest);
   assert.equal(placement.column, region.left, "placement moved to the pane's canvas column");
   assert.deepEqual(
