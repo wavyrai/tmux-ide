@@ -1529,6 +1529,11 @@ async function openPane(
     let buffer = Buffer.alloc(0),
       childConnection: string | undefined,
       childSequence = 0;
+    let content: {
+      bytes: Buffer;
+      value: { snapshot: unknown; surfaces: unknown };
+      surfaces: z.infer<typeof surfacesSchema> | null;
+    } | null = null;
     let childPresentationEpoch: number | undefined;
     const diagnostics = createDiagnosticChannel((fault) => {
       if (stopped || request !== token || active?.child !== child) return;
@@ -1602,8 +1607,29 @@ async function openPane(
           publicationStage = "framing";
           if (end > MAX_FRAME) throw new Error("Oversized child publication");
           publicationStage = "decode";
-          const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
+          const line = buffer.subarray(0, end);
           buffer = buffer.subarray(end + 1);
+          // The helper puts terminal content last behind its byte length. An unchanged
+          // tail (gesture, presence or status-only publications) is not decoded again.
+          const tailBytes = Number(
+            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
+          );
+          const tailStart = line.length - tailBytes;
+          const sameTail =
+            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
+          const event = JSON.parse(
+            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
+          );
+          if (sameTail) Object.assign(event, content!.value);
+          else
+            content =
+              tailStart > 0
+                ? {
+                    bytes: Buffer.from(line.subarray(tailStart)),
+                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
+                    surfaces: null,
+                  }
+                : null;
           publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
@@ -2023,7 +2049,11 @@ async function openPane(
           childPresentationEpoch = epoch;
           const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
           publicationStage = "surfaces";
-          const surfaces = surfacesSchema.parse(event.surfaces ?? []);
+          const surfaces =
+            sameTail && content!.surfaces
+              ? content!.surfaces
+              : surfacesSchema.parse(event.surfaces ?? []);
+          if (content) content.surfaces = surfaces;
           const scrollOffset = z
             .number()
             .int()

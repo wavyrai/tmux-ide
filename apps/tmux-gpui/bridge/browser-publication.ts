@@ -10,15 +10,29 @@ export function serializeBrowserPublication(
   suffix: { selectionIdentity: unknown; machines: unknown } & Record<string, unknown>,
   retainedSnapshot: RetainedSnapshotJson | null,
 ): string {
-  if (retainedSnapshot === null)
-    return JSON.stringify({ ...prefix, retainedPreview: null, ...suffix }) + "\n";
   // These fixed-schema objects are nonempty; strip only their outer braces.
   return (
     JSON.stringify(prefix).slice(0, -1) +
-    ',"retainedPreview":{"snapshot":' +
-    retainedSnapshot +
-    "}," +
-    JSON.stringify(suffix).slice(1) +
+    ',"retainedPreview":' +
+    (retainedSnapshot === null ? "null" : '{"snapshot":' + retainedSnapshot + "}") +
+    "," +
+    stringifySuffix(suffix).slice(1) +
     "\n"
   );
+}
+
+// Presented snapshots are replaced, never mutated: an unchanged frame serializes once.
+const snapshotText = new WeakMap<object, string>();
+function stringifySuffix(suffix: Record<string, unknown>) {
+  const fields = Object.entries(suffix)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => {
+      let text: string | undefined;
+      if (key === "snapshot" && value !== null && typeof value === "object") {
+        text = snapshotText.get(value);
+        if (text === undefined) snapshotText.set(value, (text = JSON.stringify(value)));
+      } else text = JSON.stringify(value);
+      return `${JSON.stringify(key)}:${text}`;
+    });
+  return `{${fields.join(",")}}`;
 }
