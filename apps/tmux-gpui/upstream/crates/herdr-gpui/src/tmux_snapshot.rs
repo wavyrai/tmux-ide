@@ -19,6 +19,7 @@ mod hit_regions;
 mod home;
 mod input_gate;
 mod keys;
+mod kitty_graphics;
 mod navigation;
 mod new_session;
 mod pane_actions;
@@ -40,7 +41,7 @@ mod tests;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
-use crate::terminal_painter::TerminalPainter;
+use crate::terminal_painter::{ImageTarget, PlacedImages, TerminalPainter};
 use gpui::{prelude::*, *};
 use herdr_client::protocol::FrameData;
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
@@ -74,29 +75,31 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<(), Error> {
         return Err(Error::TooLarge);
     }
     let frame = Arc::new(decode::frame(&bytes)?);
+    let graphics = kitty_graphics::graphics(&bytes, "snapshot")?.map(Arc::new);
     if valid_only {
         println!("Validated tmux snapshot: {}x{}", frame.width, frame.height);
         return Ok(());
     }
-    show(Some(frame), None, None)
+    show(Some(frame), None, None, graphics)
 }
 
 pub(crate) fn welcome() -> Result<(), Error> {
-    show(None, None, None)
+    show(None, None, None, None)
 }
 
 pub(crate) fn live() -> Result<(), Error> {
-    show(None, Some(stream::start()), None)
+    show(None, Some(stream::start()), None, None)
 }
 
 pub(crate) fn browse() -> Result<(), Error> {
-    show(None, None, Some(browser::start()))
+    show(None, None, Some(browser::start()), None)
 }
 
 fn show(
     frame: Option<Arc<FrameData>>,
     mailbox: Option<stream::Mailbox>,
     browser: Option<browser::Bridge>,
+    graphics: Option<Arc<kitty_graphics::Graphics>>,
 ) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
@@ -228,6 +231,7 @@ fn show(
                     });
                     let mut view = SnapshotView {
                         frame,
+                        graphics: graphics.clone(),
                         presence: presence::Presence::new(window.is_window_active()),
                         _activation: Some(activation),
                         _appearance: Some(appearance),
@@ -296,6 +300,8 @@ fn show(
 
 struct SnapshotView {
     frame: Option<Arc<FrameData>>,
+    /// SPIKE: kitty graphics for the static snapshot path only.
+    graphics: Option<Arc<kitty_graphics::Graphics>>,
     browsing: bool,
     presence: presence::Presence,
     _activation: Option<Subscription>,
@@ -364,6 +370,7 @@ impl SnapshotView {
             .as_ref()
             .map_or_else(Vec::new, |selection| selection.highlights.clone());
         let entity = cx.entity();
+        let graphics = self.graphics.clone();
         let Some(frame) = self.frame.clone() else {
             let guidance = if self.browsing && self.browser_commands.is_some() {
                 "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
@@ -482,7 +489,11 @@ impl SnapshotView {
                             &highlights,
                             &[],
                             None,
-                            None,
+                            graphics.as_deref().map(|graphics| PlacedImages {
+                                placements: &graphics.placements,
+                                images: &graphics.images,
+                                target: ImageTarget::Main,
+                            }),
                             window,
                             cx,
                         );

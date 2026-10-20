@@ -29,6 +29,7 @@ fn make_view(
     let frame =
         Arc::new(decode::frame(include_bytes!("../../../../../fixtures/snapshot.json")).unwrap());
     SnapshotView {
+        graphics: None,
         presence,
         _activation: None,
         _appearance: None,

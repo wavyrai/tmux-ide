@@ -1,5 +1,11 @@
 # Changes from the pinned upstream revision
 
+- SPIKE (`spike/kitty-graphics`, not for release): `tmux_snapshot/kitty_graphics.rs`
+  maps daemon `kitty-image` placements plus a `kittyImages` side-table onto the
+  existing painter graphics scene; `decode.rs` accepts that placement kind only;
+  `terminal_painter.rs` gains a test-only `painted_images()` accessor. Static
+  `--tmux-snapshot` path only. See `KITTY-GRAPHICS-SPIKE.md`.
+
 - Native terminal web links: `tmux_snapshot/terminal_links.rs` reuses Herdr
   `terminal::link_at` HTTP(S) parsing and validation. Cmd/Ctrl-click resolves only
   the exact painted selected pane; canonical copy-region wrapping joins complete

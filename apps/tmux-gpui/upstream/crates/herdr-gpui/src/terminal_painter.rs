@@ -287,6 +287,12 @@ fn byte_index(text: &str, utf16: usize) -> usize {
 }
 
 impl TerminalPainter {
+    /// Each image painted, with its z, in paint order.
+    #[cfg(test)]
+    pub(crate) fn painted_images(&self) -> &[(i32, Bounds<Pixels>)] {
+        &self.painted_images
+    }
+
     pub fn set_appearance(&mut self, font_size: f32, cell_height: f32, theme: Theme) {
         if self.font_size != font_size || self.cell_height != cell_height || self.theme != theme {
             self.font_size = font_size;

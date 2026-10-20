@@ -25,6 +25,10 @@ export interface TerminalInterpreterBackend {
   /** Public-parser diagnostic OSC seam; installed only for an active probe. */
   registerOscHandler(identifier: number, handler: (data: string) => boolean): () => void;
   write(data: Uint8Array | string): Promise<void>;
+  /** SPIKE (kitty graphics): cursor as an absolute buffer line, read mid-parse. */
+  graphicsCursor?(): { readonly x: number; readonly line: number; readonly alternate: boolean };
+  /** SPIKE (kitty graphics): absolute buffer line of viewport row 0. */
+  graphicsViewportTop?(): number;
   /** Exact native painted state; false means this parser cannot import it. */
   canImportNativeGrid?(): boolean;
   importNativeGrid?(snapshot: NativeGridCapture): boolean;

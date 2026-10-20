@@ -44,6 +44,12 @@ import {
   cellsEqual,
   type CausalCellLedgerResult,
 } from "./causal-cell-ledger.ts";
+import {
+  KITTY_PLACEMENT_OSC,
+  KittyApcScanner,
+  KittyImageStore,
+  type KittyCommand,
+} from "../graphics/kitty-graphics.ts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
@@ -165,6 +171,10 @@ export class TerminalReplicaInterpreter {
   }> = [];
   #writeFlushScheduled = false;
   #widgetGate = false;
+  // SPIKE: kitty graphics. Images outlive reseeds; the scanner owns split APCs.
+  readonly #kittyScanner = new KittyApcScanner();
+  readonly #kitty = new KittyImageStore();
+  readonly #kittyPending = new Map<number, KittyCommand>();
   #markerTail = "";
   #pendingResize: { cols: number; rows: number } | null = null;
   // null: no unpublished writes; undefined: a write requires full projection.
@@ -208,6 +218,7 @@ export class TerminalReplicaInterpreter {
       rows: options.rows,
       scrollback: this.#scrollback,
     });
+    this.#attachKitty(this.#backend);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
       this.#resolveSeedReady = resolve;
@@ -400,6 +411,9 @@ export class TerminalReplicaInterpreter {
       }
       const previous = this.#backend;
       this.#backend = replacement;
+      this.#attachKitty(replacement);
+      // tmux never saw cursor-anchored placements; a capture cannot restore them.
+      this.#kitty.dropCursorPlacements();
       this.#nativeReseedRequested = false;
       this.#scrollback = scrollback;
       this.#bootstrap = {
@@ -479,8 +493,10 @@ export class TerminalReplicaInterpreter {
     this.#admitRaw(data);
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
+    const scanned = this.#kittyScanner.scan(data);
+    for (const command of scanned.commands) this.#kittyPending.set(command.marker, command);
     const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    await this.#writeToBackend(this.#backend, data);
+    await this.#writeToBackend(this.#backend, scanned.commands.length > 0 ? scanned.forward : data);
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
@@ -703,10 +719,19 @@ export class TerminalReplicaInterpreter {
     const scanPlacements = this.#widgetGate || this.#snapshot.placements.length > 0;
     const placementRows = scanPlacements ? [...projection.history, ...projection.grid] : [];
     if (scanPlacements) this.#stats.placementRowsRead += placementRows.length;
-    const placements = scanPlacements
-      ? projectPlacements(placementRows, projection.grid.length, projection.cols)
+    const placements: TerminalReplicaSnapshot["placements"][number][] = scanPlacements
+      ? [...projectPlacements(placementRows, projection.grid.length, projection.cols)]
       : [];
     if (scanPlacements && placements.length === 0) this.#widgetGate = false;
+    if (this.#kitty.images().size > 0)
+      placements.push(
+        ...this.#kitty.project(
+          projection.grid,
+          projection.cols,
+          this.#backend.graphicsViewportTop?.() ?? 0,
+          projection.modes.alternateScreen,
+        ),
+      );
     return assembleTerminalReplicaSnapshot({
       cols: projection.cols,
       rows: projection.rows,
@@ -716,6 +741,23 @@ export class TerminalReplicaInterpreter {
       modes: projection.modes,
       placements,
       bootstrap: this.#bootstrap,
+    });
+  }
+
+  /** SPIKE: the pane's kitty image store (side-channel for placement digests). */
+  kittyImages(): KittyImageStore {
+    return this.#kitty;
+  }
+
+  #attachKitty(backend: TerminalInterpreterBackend): void {
+    // Minimal test backends omit the OSC seam; they simply never place images.
+    if (typeof backend.registerOscHandler !== "function") return;
+    backend.registerOscHandler(KITTY_PLACEMENT_OSC, (data) => {
+      const command = this.#kittyPending.get(Number(data));
+      if (!command) return true;
+      this.#kittyPending.delete(Number(data));
+      this.#kitty.apply(command, backend.graphicsCursor?.() ?? null);
+      return true;
     });
   }
 
