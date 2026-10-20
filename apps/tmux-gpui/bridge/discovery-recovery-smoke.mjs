@@ -158,8 +158,8 @@ try {
   });
   const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
   await until(() => latest?.home.phase === "unavailable");
-  assert.match(latest.status, /No usable local daemon/);
-  assert.match(latest.status, /tmux-ide --headless/);
+  assert.match(latest.status, /Local sessions are not connected yet/);
+  assert.match(latest.status, /Use setup or refresh sessions/);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
   const connection = latest.connection;
