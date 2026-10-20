@@ -112,6 +112,43 @@ const latest: {
   snapshot: import("../../../packages/contracts/src/index.ts").TerminalReplicaSnapshot | null;
 } = { snapshot: null };
 const selectionIdentity = createSelectionIdentity();
+// Surface snapshots are replaced, never mutated, so each object serializes once.
+const serialized = new WeakMap<object, string>();
+function snapshotJson(snapshot: object | null) {
+  if (!snapshot) return "null";
+  let text = serialized.get(snapshot);
+  if (text === undefined) serialized.set(snapshot, (text = JSON.stringify(snapshot)));
+  return text;
+}
+// After a resize tmux reflows the window's panes one by one. A mix of old and new
+// sizes cannot be presented, so it is withheld briefly instead of published.
+const SKEW_HOLD_MS = 100;
+let skewSince: number | null = null;
+let skewTimer: ReturnType<typeof setTimeout> | undefined;
+function holdSkewedWindow(layout: Layout | undefined) {
+  const skewed =
+    !stopped &&
+    !!layout &&
+    layout.panes.every((p) => !!p.pane && surfaces.has(p.pane)) &&
+    layout.panes.some((p) => {
+      const frame = surfaces.get(p.pane!)!;
+      return frame.cols !== p.width || frame.rows !== contentRect(layout, p).rows;
+    });
+  if (!skewed) {
+    skewSince = null;
+    clearTimeout(skewTimer);
+    skewTimer = undefined;
+    return false;
+  }
+  skewSince ??= performance.now();
+  const remaining = SKEW_HOLD_MS - (performance.now() - skewSince);
+  if (remaining <= 0) return false;
+  skewTimer ??= setTimeout(() => {
+    skewTimer = undefined;
+    if (!stopped) publish();
+  }, remaining);
+  return true;
+}
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
@@ -144,77 +181,106 @@ function output(snapshot: typeof latest.snapshot) {
   mouseOwner.observe(inputReady ? snapshot : null, mouseIdentity());
   resizeGesture?.observe();
   splitGesture?.observe();
-  const line =
-    JSON.stringify({
-      connection,
-      sequence: ++sequence,
-      snapshot: catalogOnly ? null : snapshot,
-      ...(interactive || catalogOnly
-        ? {
-            inputReady,
-            presentationEpoch,
-            selectedPane: selectedActionPane,
-            ...(catalogOnly ? { catalogReady: catalogReceived && !stopped } : {}),
-            resizeBlocked,
-            splitLayout: splitReader?.current() ?? null,
-            splitGesture: splitGesture?.publication() ?? null,
-            resizeGestureSupported: true,
-            resizeGesture: resizeGesture?.publication() ?? null,
-            paneActions:
-              inputReady && !actionBusy && !actionFailed && selectedActionPane
-                ? actionFence.current(
-                    resizeLayout,
-                    selectedActionPane,
-                    lifetimes.get(selectedActionPane),
-                  )
-                : null,
-            paneSplitReceipt,
-            newWindowReceipt,
-            closePaneReady:
-              inputReady &&
-              runtime?.ownsConnectionAuthority("geometry") &&
-              !!closePaneReady &&
-              closePaneReady.token ===
-                actionFence.current(
+  // State changes within one event-loop turn (a frame and the gesture it settles)
+  // share one publication; the final publication is never deferred.
+  unpublished = true;
+  if (stopped) publish();
+  else if (!publicationQueued) {
+    publicationQueued = true;
+    setImmediate(() => {
+      publicationQueued = false;
+      publish();
+    });
+  }
+}
+let unpublished = false;
+let publicationQueued = false;
+function publish() {
+  if (!unpublished) return;
+  const snapshot = latest.snapshot;
+  const inputReady =
+    foreground &&
+    !stopped &&
+    !restorePending &&
+    historyRestoration?.publication().state !== "restoring" &&
+    viewport.offset === 0 &&
+    !!runtime?.ownsConnectionAuthority("input");
+  const resizeLayout = layouts.find((l) => l.semanticWindowId === semanticWindow);
+  if (holdSkewedWindow(resizeLayout)) return;
+  unpublished = false;
+  const { surfaces: published = [], ...fields } =
+    interactive || catalogOnly
+      ? {
+          inputReady,
+          presentationEpoch,
+          selectedPane: selectedActionPane,
+          ...(catalogOnly ? { catalogReady: catalogReceived && !stopped } : {}),
+          resizeBlocked,
+          splitLayout: splitReader?.current() ?? null,
+          splitGesture: splitGesture?.publication() ?? null,
+          resizeGestureSupported: true,
+          resizeGesture: resizeGesture?.publication() ?? null,
+          paneActions:
+            inputReady && !actionBusy && !actionFailed && selectedActionPane
+              ? actionFence.current(
                   resizeLayout,
-                  closePaneReady.id,
-                  lifetimes.get(closePaneReady.id),
-                )?.token
-                ? closePaneReady
-                : null,
-            paneActionError: actionFailed ? actionFailureMessage : null,
-            resizeToken: currentResizeToken,
-            selectionIdentity: selectionIdentity(
-              stopped || catalogOnly
-                ? null
-                : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ??
-                    null),
-              snapshot,
-              viewport.offset,
-              viewport.captureIndex(),
-              restorePending
-                ? { state: "restoring", token: null }
-                : (historyRestoration?.publication() ?? null),
-            ),
-            scrollOffset: viewport.offset,
-            historyReady:
-              foreground &&
-              !stopped &&
-              !restorePending &&
-              historyRestoration?.publication().state !== "restoring" &&
-              viewport.offset > 0 &&
-              !!runtime?.ownsConnectionAuthority("input"),
-            historyAnchor: restorePending
+                  selectedActionPane,
+                  lifetimes.get(selectedActionPane),
+                )
+              : null,
+          paneSplitReceipt,
+          newWindowReceipt,
+          closePaneReady:
+            inputReady &&
+            runtime?.ownsConnectionAuthority("geometry") &&
+            !!closePaneReady &&
+            closePaneReady.token ===
+              actionFence.current(resizeLayout, closePaneReady.id, lifetimes.get(closePaneReady.id))
+                ?.token
+              ? closePaneReady
+              : null,
+          paneActionError: actionFailed ? actionFailureMessage : null,
+          resizeToken: currentResizeToken,
+          selectionIdentity: selectionIdentity(
+            stopped || catalogOnly
+              ? null
+              : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ?? null),
+            snapshot,
+            viewport.offset,
+            viewport.captureIndex(),
+            restorePending
               ? { state: "restoring", token: null }
               : (historyRestoration?.publication() ?? null),
-            presenceRevision,
-            layouts,
-            surfaces: catalogOnly
-              ? []
-              : selectedWindowSurfaces(layouts, selectedActionPane, surfaces),
-          }
-        : {}),
-    }) + "\n";
+          ),
+          scrollOffset: viewport.offset,
+          historyReady:
+            foreground &&
+            !stopped &&
+            !restorePending &&
+            historyRestoration?.publication().state !== "restoring" &&
+            viewport.offset > 0 &&
+            !!runtime?.ownsConnectionAuthority("input"),
+          historyAnchor: restorePending
+            ? { state: "restoring", token: null }
+            : (historyRestoration?.publication() ?? null),
+          presenceRevision,
+          layouts,
+          surfaces: catalogOnly
+            ? []
+            : selectedWindowSurfaces(layouts, selectedActionPane, surfaces),
+        }
+      : {};
+  // Same JSON as one stringify, but unchanged panes reuse their text. Terminal content
+  // goes last behind its byte length so the browser can skip decoding an unchanged tail.
+  const head = `"connection":${JSON.stringify(connection)},"sequence":${++sequence}`;
+  const content = `"snapshot":${catalogOnly ? "null" : snapshotJson(snapshot)}`;
+  let line: string;
+  if (interactive || catalogOnly) {
+    const tail = `,${content},"surfaces":[${published
+      .map((s) => `{"paneId":${JSON.stringify(s.paneId)},"snapshot":${snapshotJson(s.snapshot)}}`)
+      .join(",")}]}`;
+    line = `{"surfaceBytes":${Buffer.byteLength(tail)},${head},${JSON.stringify(fields).slice(1, -1)}${tail}\n`;
+  } else line = `{${head},${content}}\n`;
   diagnostics.publication(line);
   if (blocked) {
     pending = line;
@@ -638,6 +704,7 @@ try {
           resizeGesture.retire();
           await applyPresence(runtime, false);
           const captured = await historyRestoration?.settleCapture();
+          publish();
           if (!stopped)
             process.stdout.write(
               JSON.stringify({
