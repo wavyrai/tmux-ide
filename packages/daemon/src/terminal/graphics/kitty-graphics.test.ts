@@ -482,3 +482,59 @@ describe("full-frame kitty-graphics client under tmux (recorded %output)", () =>
     expect(text).not.toMatch(/[A-Za-z0-9+/]{16}/u);
   });
 });
+
+describe("full-frame kitty-graphics client under tmux (real client recording)", () => {
+  // Two frames recorded from a real full-frame client through tmux pipe-pane
+  // (120x40 cells, 1920x1280 RGBA canvas; media-probe payloads neutralised).
+  // Its toolbar, edges and scrollbar are fully transparent pixels.
+  it("resolves the placeholder grid and keeps payload out of the grid", async () => {
+    const transcript = readFileSync(
+      new URL("./__fixtures__/full-frame-client-recorded.ctl", import.meta.url),
+      "latin1",
+    );
+    const interpreter = new TerminalReplicaInterpreter({
+      generation: "00000000-0000-4000-8000-000000000001",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: "00000000-0000-4000-8000-000000000001:0",
+      cols: 120,
+      rows: 40,
+      kittyImageBudget: budget(),
+    });
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 120,
+      rows: 40,
+      chunks: [],
+      cursor: { x: 0, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    for (const line of transcript.split("\n")) {
+      const event = parseControlLine(line, false);
+      if (event.kind === "output") await interpreter.enqueue({ type: "write", data: event.data });
+    }
+    await interpreter.whenIdle();
+    const state = interpreter.currentGraphics()!;
+    expect(state.images).toEqual([
+      expect.objectContaining({
+        imageId: 7424,
+        format: "rgba-zlib",
+        width: 1920,
+        height: 1280,
+        placeholder: { columns: 120, rows: 40 },
+      }),
+    ]);
+    const snapshot = interpreter.currentSnapshot();
+    expect(snapshot.modes.alternateScreen).toBe(true);
+    expect(resolveKittyPlacements(snapshot.grid, state)).toEqual([
+      expect.objectContaining({ row: 0, column: 0, rows: 40, columns: 120, totalRows: 40 }),
+    ]);
+    const pixels = inflateSync(interpreter.kittyImages().images().get(7424)!.data);
+    expect(pixels.length).toBe(1920 * 1280 * 4);
+    expect(pixels[(20 * 1920 + 300) * 4 + 3]).toBe(0); // transparent toolbar
+    const text = snapshot.grid
+      .map((row) => row.cells.map((cell) => cell.grapheme).join(""))
+      .join("");
+    expect(text).not.toMatch(/[A-Za-z0-9+/]{16}/u);
+  });
+});

@@ -54,7 +54,7 @@ def frame_pixels(scroll):
     rows = []
     for y in range(H):
         if y < toolbar:
-            row = bytes((40, 60, 160, 170)) * W  # translucent toolbar
+            row = bytes((0, 0, 0, 0)) * W  # transparent toolbar (as recorded clients draw it)
         else:
             band = ((y + scroll) // 24) % 2
             shade = 235 if band else 250
@@ -62,7 +62,7 @@ def frame_pixels(scroll):
             text = ((y + scroll) % 24) in (8, 9, 10)
             if text:
                 line = bytes((30, 30, 30, 255)) * ((W - CW) // 2) + line[((W - CW) // 2) * 4:]
-            row = line + bytes((90, 90, 90, 140)) * CW  # translucent scrollbar
+            row = line + bytes((0, 0, 0, 0)) * CW  # transparent scrollbar column
         rows.append(row)
     # Stamp the frame number into the page so every frame is distinct.
     stamp = scroll.to_bytes(4, "big")
