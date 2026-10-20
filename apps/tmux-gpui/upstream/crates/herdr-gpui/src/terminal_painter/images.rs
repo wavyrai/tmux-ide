@@ -225,7 +225,16 @@ pub(crate) struct ImageCache {
     decoding: usize,
     tick: u64,
     finished: Finished,
+    /// tmux-ide: the texture each placement rectangle last painted. A program
+    /// that redraws its image every frame (a new serial each time) would
+    /// otherwise always wait on a decode and never paint; until the newer
+    /// texture is ready, the previous one stays up.
+    last: HashMap<Slot, (u64, Arc<RenderImage>)>,
+    /// Which rectangle each in-flight decode was started for.
+    decoding_for: HashMap<u64, Slot>,
 }
+
+type Slot = (u16, u16, u32, u32);
 
 impl ImageCache {
     /// Starts a paint: applies finished decodes and returns textures to
@@ -276,6 +285,16 @@ impl ImageCache {
         self.decoding -= 1;
         match result {
             Ok(texture) => {
+                // A finished decode becomes its rectangle's fallback even if
+                // a newer image has been placed there since.
+                if let Some(slot) = self.decoding_for.remove(&serial)
+                    && self
+                        .last
+                        .get(&slot)
+                        .is_none_or(|(shown, _)| *shown < serial)
+                {
+                    self.last.insert(slot, (serial, texture.clone()));
+                }
                 let dimensions = texture.size(0);
                 entry.bytes = (dimensions.width.0.max(0) as usize)
                     .saturating_mul(dimensions.height.0.max(0) as usize)
@@ -284,6 +303,7 @@ impl ImageCache {
                 entry.state = State::Ready(texture);
             }
             Err(error) => {
+                self.decoding_for.remove(&serial);
                 tracing::debug!(category = "pane_images", %error, "image not shown");
                 entry.state = State::Failed;
             }
@@ -355,16 +375,31 @@ impl ImageCache {
         self.release_idle(window);
         let now = Instant::now();
         let mut placed = Vec::new();
+        let mut slots = Vec::new();
         for (placement, image) in images.resolved() {
             let Some(geometry) = geometry(placement, origin, cell, grid) else {
                 continue;
             };
-            match self.lookup(image.serial(), now) {
-                Lookup::Ready(texture) => placed.push((placement.z, geometry, texture)),
-                Lookup::Decode => self.spawn(image, &placement.asset, window, cx),
-                Lookup::Wait => {}
+            let slot = (placement.x, placement.y, placement.cols, placement.rows);
+            slots.push(slot);
+            let serial = image.serial();
+            let texture = match self.lookup(serial, now) {
+                Lookup::Ready(texture) => {
+                    self.last.insert(slot, (serial, texture.clone()));
+                    Some(texture)
+                }
+                Lookup::Decode => {
+                    self.decoding_for.insert(serial, slot);
+                    self.spawn(image, &placement.asset, window, cx);
+                    self.last.get(&slot).map(|(_, texture)| texture.clone())
+                }
+                Lookup::Wait => self.last.get(&slot).map(|(_, texture)| texture.clone()),
+            };
+            if let Some(texture) = texture {
+                placed.push((placement.z, geometry, texture));
             }
         }
+        self.last.retain(|slot, _| slots.contains(slot));
         // Lower z paints first; equal z keeps the scene's order.
         placed.sort_by_key(|(z, ..)| *z);
         placed
