@@ -63387,6 +63387,12 @@ function assertLiveControllerPrincipal(shared, lease) {
     );
   }
 }
+function holdsCurrentLease(shared) {
+  const lease = shared.lease;
+  if (!lease) return false;
+  const snapshot2 = shared.consumer.controllerSnapshot();
+  return snapshot2.controllerClientId === lease.clientId && snapshot2.revision === lease.revision;
+}
 function authenticatedSurface(transport, hostClientId) {
   if (/^(?:web|dev-web):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
     hostClientId
@@ -63868,17 +63874,20 @@ var init_transport_binding = __esm({
         return sourceSemanticPaneId === void 0 ? base2 : this.registry.bindExecutionSource(base2, sourceSemanticPaneId);
       }
       activateController(target) {
-        if (target.lease) return;
-        const current = [...this.#clients.values()].find(
-          (candidate) => candidate !== target && candidate.consumer.session === target.consumer.session && candidate.lease
+        if (target.lease && holdsCurrentLease(target)) return;
+        target.lease = null;
+        const controllerClientId = target.consumer.controllerSnapshot().controllerClientId;
+        const current = controllerClientId === null || controllerClientId === target.consumer.clientId ? void 0 : [...this.#clients.values()].find(
+          (candidate) => candidate !== target && candidate.consumer.session === target.consumer.session && candidate.consumer.clientId === controllerClientId
         );
-        if (current?.lease) {
-          const previous = current.lease;
-          current.lease = null;
-          target.lease = current.consumer.handoffController(previous, target.consumer.clientId);
+        if (!current) {
+          target.lease = target.consumer.acquireController();
           return;
         }
-        target.lease = target.consumer.acquireController();
+        const previous = current.lease && holdsCurrentLease(current) ? current.lease : current.consumer.acquireController();
+        const handedOff = current.consumer.handoffController(previous, target.consumer.clientId);
+        current.lease = null;
+        target.lease = handedOff;
       }
       async release(shared, grants, interactive) {
         if (shared.refs <= 0) return;
@@ -63892,15 +63901,18 @@ var init_transport_binding = __esm({
         }
         shared.refs -= 1;
         if (shared.refs > 0) return;
-        if (shared.lease) {
-          const retired = shared.lease;
-          shared.lease = null;
-          shared.consumer.releaseController(retired);
+        try {
+          if (shared.lease) {
+            const retired = shared.lease;
+            shared.lease = null;
+            shared.consumer.releaseController(retired);
+          }
+        } finally {
+          for (const [key2, candidate] of this.#clients) {
+            if (candidate === shared) this.#clients.delete(key2);
+          }
+          await shared.consumer.close();
         }
-        for (const [key2, candidate] of this.#clients) {
-          if (candidate === shared) this.#clients.delete(key2);
-        }
-        await shared.consumer.close();
       }
     };
   }
