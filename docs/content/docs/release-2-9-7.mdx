@@ -18,6 +18,14 @@ terminal streams with code 1011 and leave clients repeatedly reconnecting.
 You do not need to downgrade tmux, change your PATH or kill existing sessions.
 The daemon also observes retirement after a concurrent shutdown transport failure.
 
+## Input after a viewer disconnects
+
+A viewer that disconnected, or whose controller handoff was refused, could keep
+input authority for a session. Every other viewer then waited for input
+indefinitely. A viewer that asks for input now reclaims control from a holder
+whose connection is gone. Connected viewers still hand off normally, so only one
+client types at a time.
+
 ## Upgrades move the running daemon
 
 Rerunning the installer, or `tmux-ide update` on an installer-managed copy, now
