@@ -336,7 +336,6 @@ JS
   node --input-type=module - "$root" "$prefix" "$stage" "$agent_teams" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 const [root, prefix, stage, agentTeams] = process.argv.slice(2);
 const destination = path.join(root, 'releases', path.basename(stage).replace('.install.', 'install-'));
@@ -431,7 +430,7 @@ else if (firstOnPath !== launcherPath) {
 JS
   export PATH="$root/current/node/bin:$PATH"
   "$launcher" --version >/dev/null
-  reconcile_daemon "$prefix" "$daemon_upgrade"
+  reconcile_daemon "$prefix" "$daemon_upgrade" || printf '  ! Could not check the running daemon; your sessions are safe. Retry: %s update --daemon\n' "$launcher"
   printf '\n'
 }
 # Native alpha is explicit; ordinary CLI installs keep their existing behavior.
@@ -492,7 +491,9 @@ if [ "${1:-}" = --native-alpha ]; then
     (main --version 2.9.6 --prefix "$HOME/.local" --no-claude-agent-teams)
   elif [ "$native_action" = install ] || [ "$native_action" = update ]; then
     # The pinned CLI is already current; still move a stale daemon or launchd job onto it.
-    if [ "${TMUX_IDE_NO_DAEMON_UPGRADE:-}" = 1 ]; then reconcile_daemon "$HOME/.local" 0; else reconcile_daemon "$HOME/.local" 1; fi
+    native_upgrade=1
+    [ "${TMUX_IDE_NO_DAEMON_UPGRADE:-}" != 1 ] || native_upgrade=0
+    reconcile_daemon "$HOME/.local" "$native_upgrade" || printf '  ! Could not check the running daemon; your sessions are safe. Retry: %s update --daemon\n' "$HOME/.local/bin/tmux-ide"
   fi
   native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")
   trap 'rm -rf "$native_stage"' 0
