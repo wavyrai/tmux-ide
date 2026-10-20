@@ -140,6 +140,7 @@ test("malformed private config stays recoverable without leaking its contents", 
         "localSessionCreate",
         "retainedPreview",
         "selectionIdentity",
+        "graphics",
       ].sort(),
     );
     assert.equal(event.homeAgentRecovery, null);
@@ -207,6 +208,7 @@ test("malformed private config stays recoverable without leaking its contents", 
         "localSessionCreate",
         "retainedPreview",
         "selectionIdentity",
+        "graphics",
       ].sort(),
     );
     assert.equal(registryEvent.homeAgentRecovery, null);
