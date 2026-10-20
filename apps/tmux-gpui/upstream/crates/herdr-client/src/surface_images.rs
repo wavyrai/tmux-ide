@@ -75,6 +75,20 @@ impl SurfaceImages {
     pub fn is_empty(&self) -> bool {
         self.images.is_empty()
     }
+
+    /// Adds one asset when its bytes match its key; false otherwise.
+    /// (tmux-ide: images that arrive incrementally rather than per surface.)
+    pub fn insert(&mut self, asset: SurfaceGraphicsAsset) -> bool {
+        if !valid_asset(&asset.key, &asset.data) {
+            return false;
+        }
+        self.images.insert(asset.key, SurfaceImage::new(asset.data));
+        true
+    }
+
+    pub fn remove(&mut self, key: &SurfaceGraphicsAssetKey) -> bool {
+        self.images.remove(key).is_some()
+    }
 }
 
 /// Collects valid assets, skipping any whose bytes disagree with their key.

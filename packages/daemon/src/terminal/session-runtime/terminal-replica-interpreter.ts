@@ -49,7 +49,9 @@ import {
   KittyApcScanner,
   KittyImageStore,
   type KittyCommand,
+  type KittyImageBudget,
 } from "../graphics/kitty-graphics.ts";
+import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
@@ -121,6 +123,8 @@ export interface TerminalReplicaInterpreterOptions {
   readonly observability?: SessionRuntimeObservability;
   /** Parser implementation only; SessionRuntime remains the sole state authority. */
   readonly backendFactory?: TerminalInterpreterBackendFactory;
+  /** Shared kitty image byte quotas; defaults to the daemon-wide budget. */
+  readonly kittyImageBudget?: KittyImageBudget;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -171,10 +175,13 @@ export class TerminalReplicaInterpreter {
   }> = [];
   #writeFlushScheduled = false;
   #widgetGate = false;
-  // SPIKE: kitty graphics. Images outlive reseeds; the scanner owns split APCs.
+  // kitty graphics: images outlive reseeds; the scanner owns split APCs.
   readonly #kittyScanner = new KittyApcScanner();
-  readonly #kitty = new KittyImageStore();
+  readonly #kitty: KittyImageStore;
   readonly #kittyPending = new Map<number, KittyCommand>();
+  readonly #graphicsListeners = new Set<(state: TerminalGraphicsState) => void>();
+  #graphics: TerminalGraphicsState | null = null;
+  #graphicsKey = "";
   #markerTail = "";
   #pendingResize: { cols: number; rows: number } | null = null;
   // null: no unpublished writes; undefined: a write requires full projection.
@@ -218,6 +225,9 @@ export class TerminalReplicaInterpreter {
       rows: options.rows,
       scrollback: this.#scrollback,
     });
+    this.#kitty = new KittyImageStore(
+      options.kittyImageBudget ? { budget: options.kittyImageBudget } : {},
+    );
     this.#attachKitty(this.#backend);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
@@ -435,6 +445,7 @@ export class TerminalReplicaInterpreter {
         this.#nativeSeedBackingCandidate = undefined;
       }
       previous.dispose();
+      this.#publishGraphics();
       return;
     }
     if (operation.type === "cursor") {
@@ -459,6 +470,7 @@ export class TerminalReplicaInterpreter {
       }
       this.#backend.resize(operation.cols, operation.rows);
       this.#commit(false);
+      this.#publishGraphics();
       return;
     }
     const baseRevision = this.#revision;
@@ -476,6 +488,7 @@ export class TerminalReplicaInterpreter {
     };
     this.#revision = revision;
     this.#closed = true;
+    this.#kitty.dispose();
     this.#causalCell?.fail("transport-closed");
     this.#clearSyncRecovery();
     if (this.#needsSeed)
@@ -535,6 +548,7 @@ export class TerminalReplicaInterpreter {
     } else {
       this.#commit(false, this.#backend.dirtyRange(), trace);
     }
+    this.#publishGraphics();
   }
 
   #scheduleSyncRecovery(): void {
@@ -719,19 +733,10 @@ export class TerminalReplicaInterpreter {
     const scanPlacements = this.#widgetGate || this.#snapshot.placements.length > 0;
     const placementRows = scanPlacements ? [...projection.history, ...projection.grid] : [];
     if (scanPlacements) this.#stats.placementRowsRead += placementRows.length;
-    const placements: TerminalReplicaSnapshot["placements"][number][] = scanPlacements
-      ? [...projectPlacements(placementRows, projection.grid.length, projection.cols)]
+    const placements = scanPlacements
+      ? projectPlacements(placementRows, projection.grid.length, projection.cols)
       : [];
     if (scanPlacements && placements.length === 0) this.#widgetGate = false;
-    if (this.#kitty.images().size > 0)
-      placements.push(
-        ...this.#kitty.project(
-          projection.grid,
-          projection.cols,
-          this.#backend.graphicsViewportTop?.() ?? 0,
-          projection.modes.alternateScreen,
-        ),
-      );
     return assembleTerminalReplicaSnapshot({
       cols: projection.cols,
       rows: projection.rows,
@@ -744,9 +749,41 @@ export class TerminalReplicaInterpreter {
     });
   }
 
-  /** SPIKE: the pane's kitty image store (side-channel for placement digests). */
+  /** The pane's kitty image store (bytes for the graphics side channel). */
   kittyImages(): KittyImageStore {
     return this.#kitty;
+  }
+
+  /** Latest graphics state, or null while the pane has never held an image. */
+  currentGraphics(): TerminalGraphicsState | null {
+    return this.#graphics;
+  }
+
+  onGraphics(listener: (state: TerminalGraphicsState) => void): () => void {
+    this.#graphicsListeners.add(listener);
+    return () => this.#graphicsListeners.delete(listener);
+  }
+
+  /** Publish graphics state when the store or the viewport-relative placements moved. */
+  #publishGraphics(): void {
+    if (this.#graphics === null && this.#kitty.revision === 0) return;
+    const state = this.#kitty.state(
+      this.#backend.graphicsViewportTop?.() ?? 0,
+      this.#backend.rows,
+      this.#backend.cols,
+      this.#backend.modes().alternateScreen,
+    );
+    const key = JSON.stringify([state.revision, state.placements]);
+    if (key === this.#graphicsKey) return;
+    this.#graphicsKey = key;
+    this.#graphics = state;
+    for (const listener of this.#graphicsListeners) {
+      try {
+        listener(state);
+      } catch {
+        // Renderer callbacks never poison the authoritative parser FIFO.
+      }
+    }
   }
 
   #attachKitty(backend: TerminalInterpreterBackend): void {

@@ -7,6 +7,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseControlLine } from "../../../../packages/daemon/src/terminal/protocol/control.ts";
+import { resolveKittyPlacements } from "../../../../packages/core/src/kitty-placeholders.ts";
 import { TerminalReplicaInterpreter } from "../../../../packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts";
 
 const [transcript, out, colsArg = "80", rowsArg = "24"] = process.argv.slice(2);
@@ -43,9 +44,10 @@ for (const line of readFileSync(transcript).toString("latin1").split("\n")) {
 }
 await interpreter.whenIdle();
 const snapshot = interpreter.currentSnapshot();
+const state = interpreter.currentGraphics();
+const placements = state ? resolveKittyPlacements(snapshot.grid, state) : [];
 const store = interpreter.kittyImages();
-const digests = new Set(snapshot.placements.map((p) => p.contentDigest));
-const kittyImages = [...digests].flatMap((digest) => {
+const images = [...new Set(placements.map((p) => p.digest))].flatMap((digest) => {
   const image = store.imageByDigest(digest);
   return image
     ? [
@@ -59,13 +61,13 @@ const kittyImages = [...digests].flatMap((digest) => {
       ]
     : [];
 });
-writeFileSync(out, JSON.stringify({ ...snapshot, kittyImages }));
+writeFileSync(out, JSON.stringify({ ...snapshot, kittyGraphics: { placements, images } }));
 console.log(
   JSON.stringify(
     {
       wireBytes: wire,
-      placements: snapshot.placements,
-      images: kittyImages.map(({ data, ...rest }) => ({ ...rest, bytes: data.length })),
+      placements,
+      images: images.map(({ data, ...rest }) => ({ ...rest, bytes: data.length })),
     },
     null,
     1,

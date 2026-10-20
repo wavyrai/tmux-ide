@@ -15,9 +15,9 @@ struct Snapshot {
     modes: Modes,
     placements: Vec<serde_json::Value>,
     bootstrap: Bootstrap,
-    /// SPIKE: image side-table for `kitty-image` placements (see kitty_graphics.rs).
-    #[serde(default, rename = "kittyImages")]
-    _kitty_images: Option<serde::de::IgnoredAny>,
+    /// Static developer snapshots may carry inline images (kitty_graphics.rs).
+    #[serde(default, rename = "kittyGraphics")]
+    _kitty_graphics: Option<serde::de::IgnoredAny>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,7 +130,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         modes,
         placements,
         bootstrap,
-        _kitty_images: _,
+        _kitty_graphics: _,
     } = snapshot;
     if cols == 0 || rows == 0 || usize::from(cols) * usize::from(rows) > 262_144 {
         return Err(Error::Invalid("dimensions out of bounds"));
@@ -138,12 +138,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
     if grid.len() != usize::from(rows) {
         return Err(Error::Invalid("row count mismatch"));
     }
-    // SPIKE: kitty graphics placements are painted from the image side-table;
-    // every other placement kind is still unsupported in the preview.
-    if placements
-        .iter()
-        .any(|placement| placement["kind"] != "kitty-image")
-    {
+    if !placements.is_empty() {
         return Err(Error::Invalid(
             "graphics placements not supported in snapshot preview",
         ));

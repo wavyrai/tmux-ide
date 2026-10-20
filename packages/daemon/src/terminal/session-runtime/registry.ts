@@ -2443,6 +2443,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
         this.#deliveryConnections.delete(connection);
         await upstream.close();
       },
+      ...(upstream.graphics ? { graphics: upstream.graphics } : {}),
     };
     this.#deliveryConnections.add(connection);
     return connection;

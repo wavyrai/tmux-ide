@@ -18,7 +18,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
         presence.flush(&sender);
         presence.acknowledge(1);
         SnapshotView {
-            graphics: None,
+            graphics: Default::default(),
             presence,
             _activation: None,
             _appearance: None,

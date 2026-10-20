@@ -1,34 +1,43 @@
 /**
- * SPIKE — kitty graphics protocol extraction for the daemon pane feed.
+ * Kitty graphics protocol extraction for the daemon pane feed.
  *
  * tmux parses and drops APC sequences, so its grid never holds images. Its
  * control-mode `%output` stream, however, carries the pane's raw bytes before
  * that parse (octal-escaped, then decoded by `decodeControlBytes`), so the
  * daemon sees every `ESC _ G … ESC \` intact — split across arbitrary
  * `%output` lines. This module is the pure half: a streaming scanner, a
- * control-key parser, and a per-pane image store with placement projection.
+ * control-key parser, and a budgeted per-pane image store.
  *
- * Two placement models are projected onto the replica's existing
- * `placements` contract (kind `kitty-image`):
+ * Placement models:
  *
- *  - cursor-anchored (`a=T`/`a=p` without `U=1`): positioned by a marker OSC
- *    the scanner substitutes in place of the APC, so the VT parser reports the
- *    cursor at the exact byte position. tmux never sees these placements, so
- *    they cannot survive a capture reseed.
  *  - Unicode placeholders (`U=1` virtual placement + U+10EEEE cells): the
  *    position is ordinary grid text, so tmux keeps it through scroll, resize,
- *    copy-mode and capture-pane. Only the image bytes live in the daemon.
+ *    copy-mode and capture-pane. The store only records the image and its
+ *    virtual cell grid; renderers resolve the cells (`@tmux-ide/core`).
+ *  - cursor-anchored (`a=T`/`a=p` without `U=1`), best effort: positioned by a
+ *    marker OSC the scanner substitutes in place of the APC, so the VT parser
+ *    reports the cursor at the exact byte position. tmux never sees these
+ *    placements: they do not move the cursor, do not follow reflow, and are
+ *    dropped by a capture reseed.
  *
- * Spike limits: direct transmission (`t=d`) only; `a=q` is never answered;
- * `a=d` handles all/by-id; animation, relative placements and z-ordering are
- * not modelled.
+ * Limits: direct transmission (`t=d`) only — file and shared-memory media
+ * cannot cross machines; `a=d` handles all and by-id; animation, relative
+ * placements and z-ordering are not modelled. Acknowledgements (`a=q`) come
+ * from the patched tmux, in stream order (native/tmux/kitty-graphics.patch).
  */
 import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
+import {
+  TERMINAL_GRAPHICS_MAX_IMAGE_BYTES,
+  TERMINAL_GRAPHICS_MAX_IMAGES,
+  TERMINAL_GRAPHICS_MAX_PLACEMENTS,
+  type TerminalGraphicsFormat,
+  type TerminalGraphicsPlacement,
+  type TerminalGraphicsState,
+} from "@tmux-ide/contracts";
 
 /** Private OSC used to mark an APC's byte position for the VT parser. */
 export const KITTY_PLACEMENT_OSC = 6974;
-export const KITTY_PLACEHOLDER = 0x10eeee;
 const ESC = 0x1b;
 const MAX_COMMAND_BYTES = 32 * 1024 * 1024;
 const PASSTHROUGH_PREFIX = [0x74, 0x6d, 0x75, 0x78, 0x3b]; // "tmux;"
@@ -226,7 +235,7 @@ export class KittyApcScanner {
   }
 }
 
-export type KittyImageFormat = "png" | "rgba" | "rgb";
+export type KittyImageFormat = TerminalGraphicsFormat;
 
 export interface KittyImage {
   readonly imageId: number;
@@ -234,7 +243,7 @@ export interface KittyImage {
   readonly width: number;
   readonly height: number;
   readonly data: Uint8Array;
-  /** Content address used by placements and the GUI's side-channel. */
+  /** Content address; renderers fetch and cache bytes by it. */
   readonly digest: string;
 }
 
@@ -249,28 +258,11 @@ export interface KittyCursorPlacement {
   readonly alternate: boolean;
 }
 
-export interface KittyVirtualPlacement {
-  readonly imageId: number;
-  readonly placementId: number;
-  readonly columns: number;
-  readonly rows: number;
-}
-
 export interface KittyCursorProbe {
   readonly x: number;
   /** Absolute buffer line. */
   readonly line: number;
   readonly alternate: boolean;
-}
-
-export interface KittyProjectedPlacement {
-  readonly id: string;
-  readonly kind: "kitty-image";
-  readonly row: number;
-  readonly column: number;
-  readonly columns: number;
-  readonly rows: number;
-  readonly contentDigest: string;
 }
 
 function int(control: ReadonlyMap<string, string>, key: string, fallback = 0): number {
@@ -288,34 +280,100 @@ export function pngDimensions(data: Uint8Array): { width: number; height: number
   return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
+/**
+ * Byte quotas shared by every pane store in the daemon. Each pane keeps at
+ * most `perPaneBytes`; across panes the least recently used image goes first.
+ * An evicted image disappears from its pane's graphics state, so renderers
+ * stop placing it (placeholder cells then render as blank).
+ */
+export class KittyImageBudget {
+  readonly perPaneBytes: number;
+  readonly globalBytes: number;
+  readonly #stores = new Set<KittyImageStore>();
+  #tick = 0;
+
+  constructor(options: { perPaneBytes: number; globalBytes: number }) {
+    this.perPaneBytes = options.perPaneBytes;
+    this.globalBytes = options.globalBytes;
+  }
+
+  get totalBytes(): number {
+    let total = 0;
+    for (const store of this.#stores) total += store.bytes;
+    return total;
+  }
+
+  register(store: KittyImageStore): void {
+    this.#stores.add(store);
+  }
+
+  unregister(store: KittyImageStore): void {
+    this.#stores.delete(store);
+  }
+
+  nextTick(): number {
+    return ++this.#tick;
+  }
+
+  enforce(): void {
+    let total = this.totalBytes;
+    while (total > this.globalBytes) {
+      let victim: KittyImageStore | null = null;
+      let oldest = Infinity;
+      for (const store of this.#stores) {
+        const used = store.oldestUse();
+        if (used < oldest) {
+          oldest = used;
+          victim = store;
+        }
+      }
+      if (!victim) return;
+      total -= victim.evictOldest();
+    }
+  }
+}
+
+export const DEFAULT_KITTY_IMAGE_BUDGET = new KittyImageBudget({
+  perPaneBytes: 64 * 1024 * 1024,
+  globalBytes: 256 * 1024 * 1024,
+});
+
 export interface KittyImageStoreOptions {
   /** Nominal cell size used when a placement gives no `c`/`r`. */
   readonly cellWidthPx?: number;
   readonly cellHeightPx?: number;
-  readonly maxBytes?: number;
+  readonly budget?: KittyImageBudget;
 }
 
 /** Per-pane image store. Survives reseeds; cursor placements do not. */
 export class KittyImageStore {
   readonly #images = new Map<number, KittyImage>();
+  readonly #used = new Map<number, number>();
   readonly #cursorPlacements: KittyCursorPlacement[] = [];
-  readonly #virtual = new Map<number, KittyVirtualPlacement>();
-  #pending: { control: ReadonlyMap<string, string>; payload: string[] } | null = null;
+  readonly #virtual = new Map<number, { columns: number; rows: number }>();
+  #pending: { control: ReadonlyMap<string, string>; payload: string[]; bytes: number } | null =
+    null;
   #nextAnonymous = 0x7f000000;
+  #bytes = 0;
   readonly #cellWidth: number;
   readonly #cellHeight: number;
-  readonly #maxBytes: number;
+  readonly #budget: KittyImageBudget;
   #revision = 0;
 
   constructor(options: KittyImageStoreOptions = {}) {
     this.#cellWidth = options.cellWidthPx ?? 10;
     this.#cellHeight = options.cellHeightPx ?? 20;
-    this.#maxBytes = options.maxBytes ?? 320 * 1024 * 1024;
+    this.#budget = options.budget ?? DEFAULT_KITTY_IMAGE_BUDGET;
+    this.#budget.register(this);
   }
 
-  /** Bumps whenever images or placements change; cheap projection gate. */
+  /** Bumps whenever images or placements change. */
   get revision(): number {
     return this.#revision;
+  }
+
+  get bytes(): number {
+    return this.#bytes;
   }
 
   images(): ReadonlyMap<number, KittyImage> {
@@ -331,11 +389,51 @@ export class KittyImageStore {
     return this.#cursorPlacements;
   }
 
+  dispose(): void {
+    this.#budget.unregister(this);
+    this.#images.clear();
+    this.#used.clear();
+    this.#bytes = 0;
+  }
+
   /** A capture reseed replaced the grid: tmux holds no record of cursor placements. */
   dropCursorPlacements(): void {
     if (this.#cursorPlacements.length === 0) return;
     this.#cursorPlacements.length = 0;
     this.#revision += 1;
+  }
+
+  oldestUse(): number {
+    let oldest = Infinity;
+    for (const used of this.#used.values()) oldest = Math.min(oldest, used);
+    return oldest;
+  }
+
+  /** Evict the least recently used image; returns the bytes freed. */
+  evictOldest(): number {
+    let victim: number | null = null;
+    let oldest = Infinity;
+    for (const [id, used] of this.#used)
+      if (used < oldest) {
+        oldest = used;
+        victim = id;
+      }
+    if (victim === null) return 0;
+    return this.#remove(victim);
+  }
+
+  #remove(imageId: number): number {
+    const image = this.#images.get(imageId);
+    if (!image) return 0;
+    this.#images.delete(imageId);
+    this.#used.delete(imageId);
+    this.#virtual.delete(imageId);
+    this.#bytes -= image.data.byteLength;
+    const kept = this.#cursorPlacements.filter((p) => p.imageId !== imageId);
+    this.#cursorPlacements.length = 0;
+    this.#cursorPlacements.push(...kept);
+    this.#revision += 1;
+    return image.data.byteLength;
   }
 
   /**
@@ -348,6 +446,11 @@ export class KittyImageStore {
     if (this.#pending) {
       // Continuation chunks carry only m (and q); the first chunk's keys rule.
       this.#pending.payload.push(command.payload);
+      this.#pending.bytes += command.payload.length;
+      if (this.#pending.bytes > MAX_COMMAND_BYTES) {
+        this.#pending = null;
+        return;
+      }
       if (more) return;
       control = this.#pending.control;
       const payload = this.#pending.payload.join("");
@@ -357,7 +460,7 @@ export class KittyImageStore {
     }
     const action = control.get("a") ?? "t";
     if ((action === "t" || action === "T") && more) {
-      this.#pending = { control, payload: [command.payload] };
+      this.#pending = { control, payload: [command.payload], bytes: command.payload.length };
       return;
     }
     this.#finish(control, command.payload, cursor);
@@ -370,31 +473,42 @@ export class KittyImageStore {
   ): void {
     const action = control.get("a") ?? "t";
     if (action === "d") return this.#delete(control);
-    if (action === "q") return; // Spike: never answered (see findings).
+    if (action === "q") return; // Answered by the patched tmux; nothing to store.
     let imageId = int(control, "i");
     if (action === "t" || action === "T") {
       if ((control.get("t") ?? "d") !== "d") return; // file/shm cannot cross machines.
       if (imageId === 0) imageId = this.#nextAnonymous++;
       const image = this.#decode(imageId, control, payload);
       if (!image) return;
+      this.#remove(imageId);
       this.#images.set(imageId, image);
-      this.#evict();
+      this.#bytes += image.data.byteLength;
+      this.#used.set(imageId, this.#budget.nextTick());
       this.#revision += 1;
-      if (action === "t") return;
+      while (
+        (this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) &&
+        this.#images.size > 1
+      )
+        this.evictOldest();
+      this.#budget.enforce();
+      if (action === "t" || !this.#images.has(imageId)) return;
     }
     if (action !== "T" && action !== "p") return;
     const image = this.#images.get(imageId);
     if (!image) return;
-    const columns = int(control, "c") || Math.max(1, Math.ceil(image.width / this.#cellWidth));
-    const rows = int(control, "r") || Math.max(1, Math.ceil(image.height / this.#cellHeight));
+    this.#used.set(imageId, this.#budget.nextTick());
+    const columns = clampCells(int(control, "c") || Math.ceil(image.width / this.#cellWidth));
+    const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
     const placementId = int(control, "p");
     if (control.get("U") === "1") {
-      this.#virtual.set(imageId, { imageId, placementId, columns, rows });
+      this.#virtual.set(imageId, { columns, rows });
     } else if (cursor) {
       const existing = this.#cursorPlacements.findIndex(
         (p) => p.imageId === imageId && placementId !== 0 && p.placementId === placementId,
       );
       if (existing >= 0) this.#cursorPlacements.splice(existing, 1);
+      if (this.#cursorPlacements.length >= TERMINAL_GRAPHICS_MAX_PLACEMENTS)
+        this.#cursorPlacements.shift();
       this.#cursorPlacements.push({
         imageId,
         placementId,
@@ -416,11 +530,12 @@ export class KittyImageStore {
     let data: Uint8Array = Buffer.from(payload, "base64");
     if (control.get("o") === "z") {
       try {
-        data = inflateSync(data);
+        data = inflateSync(data, { maxOutputLength: TERMINAL_GRAPHICS_MAX_IMAGE_BYTES });
       } catch {
         return null;
       }
     }
+    if (data.byteLength === 0 || data.byteLength > TERMINAL_GRAPHICS_MAX_IMAGE_BYTES) return null;
     const f = int(control, "f", 32);
     let format: KittyImageFormat;
     let width: number;
@@ -436,6 +551,7 @@ export class KittyImageStore {
       format = f === 32 ? "rgba" : "rgb";
       if (!width || !height || data.length !== width * height * (f === 32 ? 4 : 3)) return null;
     } else return null;
+    if (width < 1 || height < 1 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE) return null;
     const digest = createHash("sha256").update(data).digest("hex").slice(0, 32);
     return { imageId, format, width, height, data, digest };
   }
@@ -443,244 +559,72 @@ export class KittyImageStore {
   #delete(control: ReadonlyMap<string, string>): void {
     const what = control.get("d") ?? "a";
     const id = int(control, "i");
-    const before = this.#cursorPlacements.length + this.#virtual.size + this.#images.size;
-    const keep = (p: { imageId: number }) =>
-      what === "a" || what === "A"
-        ? false
-        : (what === "i" || what === "I") && p.imageId === id
-          ? false
-          : true;
-    const kept = this.#cursorPlacements.filter(keep);
-    this.#cursorPlacements.length = 0;
-    this.#cursorPlacements.push(...kept);
-    for (const [key, value] of this.#virtual) if (!keep(value)) this.#virtual.delete(key);
-    // Upper-case variants also free the image data.
-    if (what === "A") this.#images.clear();
-    if (what === "I") this.#images.delete(id);
-    if (before !== this.#cursorPlacements.length + this.#virtual.size + this.#images.size)
+    const all = what === "a" || what === "A";
+    const byId = (what === "i" || what === "I") && id !== 0;
+    if (!all && !byId) return;
+    const keep = (imageId: number) => !all && imageId !== id;
+    const kept = this.#cursorPlacements.filter((p) => keep(p.imageId));
+    if (kept.length !== this.#cursorPlacements.length) {
+      this.#cursorPlacements.length = 0;
+      this.#cursorPlacements.push(...kept);
       this.#revision += 1;
-  }
-
-  #evict(): void {
-    let total = 0;
-    for (const image of this.#images.values()) total += image.data.byteLength;
-    for (const [id, image] of this.#images) {
-      if (total <= this.#maxBytes) break;
-      total -= image.data.byteLength;
-      this.#images.delete(id);
     }
+    for (const key of [...this.#virtual.keys()])
+      if (!keep(key)) {
+        this.#virtual.delete(key);
+        this.#revision += 1;
+      }
+    // Upper-case variants also free the image data.
+    if (what === "A") for (const key of [...this.#images.keys()]) this.#remove(key);
+    if (what === "I") this.#remove(id);
   }
 
   /**
-   * PURE over its inputs — project both placement models onto the visible
-   * grid. `viewportTop` is the absolute line of grid row 0. A partially
-   * visible placement is clipped; the id carries the source sub-rectangle as
-   * `kitty:<image>:<srcRow>:<srcCol>:<totalRows>:<totalCols>` (spike encoding:
-   * the shared placement contract has no source-rect fields).
+   * The pane's graphics state for renderers: the image registry (with each
+   * image's placeholder grid) and cursor placements clipped to the viewport.
+   * `viewportTop` is the absolute line of grid row 0.
    */
-  project(
-    grid: readonly {
-      readonly cells: readonly { readonly grapheme: string; readonly foreground: KittyCellColor }[];
-    }[],
-    cols: number,
+  state(
     viewportTop: number,
+    gridRows: number,
+    cols: number,
     alternate: boolean,
-  ): KittyProjectedPlacement[] {
-    const placements: KittyProjectedPlacement[] = [];
-    const push = (
-      image: KittyImage,
-      row: number,
-      column: number,
-      rows: number,
-      columns: number,
-      srcRow: number,
-      srcCol: number,
-      totalRows: number,
-      totalCols: number,
-    ) => {
-      placements.push({
-        id: `kitty:${image.imageId}:${srcRow}:${srcCol}:${totalRows}:${totalCols}`,
-        kind: "kitty-image",
-        row,
-        column,
-        columns,
-        rows,
-        contentDigest: image.digest,
-      });
-    };
+  ): TerminalGraphicsState {
+    const images = [...this.#images.values()].slice(-TERMINAL_GRAPHICS_MAX_IMAGES).map((image) => ({
+      imageId: image.imageId,
+      digest: image.digest,
+      format: image.format,
+      width: image.width,
+      height: image.height,
+      bytes: image.data.byteLength,
+      placeholder: this.#virtual.get(image.imageId) ?? null,
+    }));
+    const placements: TerminalGraphicsPlacement[] = [];
     for (const placement of this.#cursorPlacements) {
       if (placement.alternate !== alternate) continue;
       const image = this.#images.get(placement.imageId);
       if (!image) continue;
       const top = placement.line - viewportTop;
       const first = Math.max(0, top);
-      const last = Math.min(grid.length, top + placement.rows);
+      const last = Math.min(gridRows, top + placement.rows);
       const right = Math.min(cols, placement.column + placement.columns);
       if (first >= last || placement.column >= right) continue;
-      push(
-        image,
-        first,
-        placement.column,
-        last - first,
-        right - placement.column,
-        first - top,
-        0,
-        placement.rows,
-        placement.columns,
-      );
+      placements.push({
+        digest: image.digest,
+        row: first,
+        column: placement.column,
+        rows: last - first,
+        columns: right - placement.column,
+        sourceRow: first - top,
+        sourceColumn: 0,
+        totalRows: placement.rows,
+        totalColumns: placement.columns,
+      });
     }
-    for (const run of placeholderRects(grid)) {
-      const image = this.#images.get(run.imageId);
-      const virtual = this.#virtual.get(run.imageId);
-      if (!image || !virtual) continue;
-      if (run.srcRow + run.rows > virtual.rows || run.srcCol + run.columns > virtual.columns)
-        continue;
-      push(
-        image,
-        run.row,
-        run.column,
-        run.rows,
-        run.columns,
-        run.srcRow,
-        run.srcCol,
-        virtual.rows,
-        virtual.columns,
-      );
-    }
-    return placements;
+    return { revision: this.#revision, images, placements };
   }
 }
 
-export type KittyCellColor =
-  | { readonly kind: "default" }
-  | { readonly kind: "indexed"; readonly index: number }
-  | { readonly kind: "rgb"; readonly value: number };
-
-// Row/column diacritics for Unicode placeholders, in protocol order (index = value).
-const DIACRITICS = [
-  "0305 030D 030E 0310 0312 033D 033E 033F 0346 034A 034B 034C 0350 0351 0352 0357 035B 0363 0364",
-  "0365 0366 0367 0368 0369 036A 036B 036C 036D 036E 036F 0483 0484 0485 0486 0487 0592 0593 0594",
-  "0595 0597 0598 0599 059C 059D 059E 059F 05A0 05A1 05A8 05A9 05AB 05AC 05AF 05C4 0610 0611 0612",
-  "0613 0614 0615 0616 0617 0657 0658 0659 065A 065B 065D 065E 06D6 06D7 06D8 06D9 06DA 06DB 06DC",
-  "06DF 06E0 06E1 06E2 06E4 06E7 06E8 06EB 06EC 0730 0732 0733 0735 0736 073A 073D 073F 0740 0741",
-  "0743 0745 0747 0749 074A 07EB 07EC 07ED 07EE 07EF 07F0 07F1 07F3 0816 0817 0818 0819 081B 081C",
-  "081D 081E 081F 0820 0821 0822 0823 0825 0826 0827 0829 082A 082B 082C 082D 0951 0953 0954 0F82",
-  "0F83 0F86 0F87 135D 135E 135F 17DD 193A 1A17 1A75 1A76 1A77 1A78 1A79 1A7A 1A7B 1A7C 1B6B 1B6D",
-  "1B6E 1B6F 1B70 1B71 1B72 1B73 1CD0 1CD1 1CD2 1CDA 1CDB 1CE0 1DC0 1DC1 1DC3 1DC4 1DC5 1DC6 1DC7",
-  "1DC8 1DC9 1DCB 1DCC 1DD1 1DD2 1DD3 1DD4 1DD5 1DD6 1DD7 1DD8 1DD9 1DDA 1DDB 1DDC 1DDD 1DDE 1DDF",
-  "1DE0 1DE1 1DE2 1DE3 1DE4 1DE5 1DE6 1DFE 20D0 20D1 20D4 20D5 20D6 20D7 20DB 20DC 20E1 20E7 20E9",
-  "20F0 2CEF 2CF0 2CF1 2DE0 2DE1 2DE2 2DE3 2DE4 2DE5 2DE6 2DE7 2DE8 2DE9 2DEA 2DEB 2DEC 2DED 2DEE",
-  "2DEF 2DF0 2DF1 2DF2 2DF3 2DF4 2DF5 2DF6 2DF7 2DF8 2DF9 2DFA 2DFB 2DFC 2DFD 2DFE 2DFF A66F A67C",
-  "A67D A6F0 A6F1 A8E0 A8E1 A8E2 A8E3 A8E4 A8E5 A8E6 A8E7 A8E8 A8E9 A8EA A8EB A8EC A8ED A8EE A8EF",
-  "A8F0 A8F1 AAB0 AAB2 AAB3 AAB7 AAB8 AABE AABF AAC1 FE20 FE21 FE22 FE23 FE24 FE25 FE26 10A0F 10A38",
-  "1D185 1D186 1D187 1D188 1D189 1D1AA 1D1AB 1D1AC 1D1AD 1D242 1D243 1D244",
-]
-  .join(" ")
-  .split(" ");
-const DIACRITIC_VALUE = new Map(DIACRITICS.map((hex, index) => [Number.parseInt(hex, 16), index]));
-
-interface PlaceholderCell {
-  imageId: number;
-  row: number;
-  col: number;
-}
-
-/** PURE — decode one cell; null when it is not a placeholder. */
-export function decodePlaceholderCell(
-  grapheme: string,
-  foreground: KittyCellColor,
-  left: PlaceholderCell | null,
-): PlaceholderCell | null {
-  const points = [...grapheme].map((ch) => ch.codePointAt(0)!);
-  if (points[0] !== KITTY_PLACEHOLDER) return null;
-  const marks = points.slice(1).map((p) => DIACRITIC_VALUE.get(p));
-  let imageId =
-    foreground.kind === "indexed"
-      ? foreground.index
-      : foreground.kind === "rgb"
-        ? foreground.value & 0xffffff
-        : 0;
-  if (marks[2] !== undefined) imageId += marks[2] * 0x1000000;
-  const continues = left !== null && (marks[0] === undefined || marks[0] === left.row);
-  const row = marks[0] ?? (continues ? left!.row : 0);
-  const col = marks[1] ?? (continues ? left!.col + 1 : 0);
-  if (marks[2] === undefined && continues && imageId === (left!.imageId & 0xffffff))
-    imageId = left!.imageId;
-  return { imageId, row, col };
-}
-
-interface PlaceholderRect {
-  imageId: number;
-  row: number;
-  column: number;
-  rows: number;
-  columns: number;
-  srcRow: number;
-  srcCol: number;
-}
-
-function placeholderRects(
-  grid: readonly {
-    readonly cells: readonly { readonly grapheme: string; readonly foreground: KittyCellColor }[];
-  }[],
-): PlaceholderRect[] {
-  // Horizontal runs: same image and source row, consecutive source columns.
-  const open: PlaceholderRect[] = [];
-  const done: PlaceholderRect[] = [];
-  for (let y = 0; y < grid.length; y += 1) {
-    const runs: PlaceholderRect[] = [];
-    let left: PlaceholderCell | null = null;
-    let run: PlaceholderRect | null = null;
-    const cells = grid[y]!.cells;
-    for (let x = 0; x < cells.length; x += 1) {
-      const cell = decodePlaceholderCell(cells[x]!.grapheme, cells[x]!.foreground, left);
-      left = cell;
-      if (
-        cell &&
-        run &&
-        cell.imageId === run.imageId &&
-        cell.row === run.srcRow &&
-        cell.col === run.srcCol + run.columns
-      ) {
-        run.columns += 1;
-        continue;
-      }
-      if (run) runs.push(run);
-      run = cell
-        ? {
-            imageId: cell.imageId,
-            row: y,
-            column: x,
-            rows: 1,
-            columns: 1,
-            srcRow: cell.row,
-            srcCol: cell.col,
-          }
-        : null;
-    }
-    if (run) runs.push(run);
-    // Merge with the rectangle directly above when it continues the image.
-    const stillOpen: PlaceholderRect[] = [];
-    for (const candidate of runs) {
-      const above = open.find(
-        (rect) =>
-          rect.imageId === candidate.imageId &&
-          rect.column === candidate.column &&
-          rect.columns === candidate.columns &&
-          rect.srcCol === candidate.srcCol &&
-          rect.row + rect.rows === y &&
-          rect.srcRow + rect.rows === candidate.srcRow,
-      );
-      if (above) {
-        above.rows += 1;
-        open.splice(open.indexOf(above), 1);
-        stillOpen.push(above);
-      } else stillOpen.push(candidate);
-    }
-    done.push(...open);
-    open.length = 0;
-    open.push(...stillOpen);
-  }
-  done.push(...open);
-  return done;
-}
+const MAX_IMAGES_PER_PANE = TERMINAL_GRAPHICS_MAX_IMAGES;
+const MAX_IMAGE_SIDE = 10_000;
+const clampCells = (cells: number) => Math.max(1, Math.min(1_000, cells));

@@ -1,14 +1,17 @@
 import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { TerminalReplicaInterpreter } from "../session-runtime/terminal-replica-interpreter.ts";
-import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
+import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 import {
   KITTY_PLACEMENT_OSC,
   KittyApcScanner,
+  KittyImageBudget,
   KittyImageStore,
-  decodePlaceholderCell,
   parseKittyCommand,
 } from "./kitty-graphics.ts";
+import { resolveKittyPlacements } from "@tmux-ide/core";
+
+const budget = () => new KittyImageBudget({ perPaneBytes: 1 << 20, globalBytes: 1 << 22 });
 
 const ESC = "\x1b";
 const apc = (control: string, payload = "") => `${ESC}_G${control};${payload}${ESC}\\`;
@@ -71,7 +74,7 @@ describe("kitty image store", () => {
 
   it("assembles chunked m=1 RGBA transmissions, optionally compressed", () => {
     for (const compressed of [false, true]) {
-      const store = new KittyImageStore();
+      const store = new KittyImageStore({ budget: budget() });
       const data = (compressed ? deflateSync(rgba) : rgba).toString("base64");
       const head = `a=t,f=32,s=4,v=4,i=8,m=1${compressed ? ",o=z" : ""}`;
       store.apply(parseKittyCommand(`G${head};${data.slice(0, 8)}`)!, null);
@@ -85,35 +88,73 @@ describe("kitty image store", () => {
   });
 
   it("projects cursor placements clipped by scroll and deletes by id", () => {
-    const store = new KittyImageStore({ cellWidthPx: 1, cellHeightPx: 1 });
+    const store = new KittyImageStore({ cellWidthPx: 1, cellHeightPx: 1, budget: budget() });
     store.apply(parseKittyCommand(`Ga=T,f=100,i=3,c=4,r=3;${PNG.toString("base64")}`)!, {
       x: 2,
       line: 10,
       alternate: false,
     });
-    const grid = Array.from({ length: 5 }, () => ({ cells: [] }));
     // Viewport scrolled so the placement's first row is above row 0.
-    expect(store.project(grid, 20, 11, false)).toEqual([
-      expect.objectContaining({ id: "kitty:3:1:0:3:4", row: 0, column: 2, rows: 2, columns: 4 }),
+    const state = store.state(11, 5, 20, false);
+    expect(state.placements).toEqual([
+      expect.objectContaining({
+        row: 0,
+        column: 2,
+        rows: 2,
+        columns: 4,
+        sourceRow: 1,
+        totalRows: 3,
+      }),
     ]);
-    expect(store.project(grid, 20, 11, true)).toEqual([]);
+    expect(state.images).toEqual([
+      expect.objectContaining({
+        imageId: 3,
+        format: "png",
+        width: 2,
+        height: 1,
+        placeholder: null,
+      }),
+    ]);
+    expect(store.state(11, 5, 20, true).placements).toEqual([]);
     store.apply(parseKittyCommand("Ga=d,d=i,i=3")!, null);
-    expect(store.project(grid, 20, 11, false)).toEqual([]);
+    expect(store.state(11, 5, 20, false).placements).toEqual([]);
     expect(store.images().size).toBe(1);
+    store.apply(parseKittyCommand("Ga=d,d=I,i=3")!, null);
+    expect(store.images().size).toBe(0);
   });
 
-  it("decodes placeholder cells with inherited row and column", () => {
-    const fg = { kind: "indexed", index: 9 } as const;
-    const first = decodePlaceholderCell(PLACEHOLDER + D[1] + D[2], fg, null)!;
-    expect(first).toEqual({ imageId: 9, row: 1, col: 2 });
-    expect(decodePlaceholderCell(PLACEHOLDER, fg, first)).toEqual({ imageId: 9, row: 1, col: 3 });
-    expect(decodePlaceholderCell("x", fg, first)).toBeNull();
+  it("records the virtual placement grid for placeholders", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    store.apply(parseKittyCommand(`Ga=t,f=100,i=9;${PNG.toString("base64")}`)!, null);
+    store.apply(parseKittyCommand("Ga=p,U=1,i=9,c=24,r=8")!, null);
+    expect(store.state(0, 5, 20, false).images[0]!.placeholder).toEqual({ columns: 24, rows: 8 });
+  });
+
+  it("evicts least recently used images within per-pane and global quotas", () => {
+    const shared = new KittyImageBudget({ perPaneBytes: 200, globalBytes: 300 });
+    const a = new KittyImageStore({ budget: shared });
+    const b = new KittyImageStore({ budget: shared });
+    const send = (store: KittyImageStore, id: number) =>
+      store.apply(
+        parseKittyCommand(`Ga=t,f=32,s=5,v=5,i=${id};${Buffer.alloc(100, id).toString("base64")}`)!,
+        null,
+      );
+    send(a, 1);
+    send(a, 2);
+    send(a, 3); // per-pane: 300 > 200 drops a's oldest
+    expect([...a.images().keys()]).toEqual([2, 3]);
+    send(b, 4);
+    send(b, 5); // global: 400 > 300 drops the oldest across panes (a:2)
+    expect([...a.images().keys()]).toEqual([3]);
+    expect([...b.images().keys()]).toEqual([4, 5]);
+    expect(shared.totalBytes).toBe(300);
+    a.dispose();
+    expect(shared.totalBytes).toBe(200);
   });
 });
 
 describe("interpreter integration", () => {
-  it("places a direct image at the parser cursor and a placeholder image from grid text", async () => {
-    const updates: CanonicalTerminalReplicaUpdate[] = [];
+  it("publishes cursor placements and the placeholder registry; cells resolve placements", async () => {
     const interpreter = new TerminalReplicaInterpreter({
       generation: "00000000-0000-4000-8000-000000000001",
       workspaceName: "workspace",
@@ -121,8 +162,10 @@ describe("interpreter integration", () => {
       incarnation: "00000000-0000-4000-8000-000000000001:0",
       cols: 20,
       rows: 6,
-      onUpdate: (update) => updates.push(update),
+      kittyImageBudget: budget(),
     });
+    const states: TerminalGraphicsState[] = [];
+    interpreter.onGraphics((state) => states.push(state));
     await interpreter.enqueue({
       type: "reseed",
       cols: 20,
@@ -131,6 +174,7 @@ describe("interpreter integration", () => {
       cursor: { x: 0, y: 0 },
       bootstrap: "authoritative-stream",
     });
+    expect(interpreter.currentGraphics()).toBeNull();
     const png = PNG.toString("base64");
     const row = (r: number) => [0, 1, 2].map((c) => PLACEHOLDER + D[r] + D[c]).join("");
     const wire =
@@ -142,13 +186,48 @@ describe("interpreter integration", () => {
     await interpreter.enqueue({ type: "write", data: all.subarray(0, 17) });
     await interpreter.enqueue({ type: "write", data: all.subarray(17) });
     await interpreter.whenIdle();
-    const snapshot = interpreter.currentSnapshot();
-    expect(snapshot.placements).toEqual([
-      expect.objectContaining({ id: "kitty:7:0:0:1:2", row: 0, column: 2, rows: 1, columns: 2 }),
-      expect.objectContaining({ id: "kitty:9:0:0:2:3", row: 1, column: 2, rows: 2, columns: 3 }),
+    const state = interpreter.currentGraphics()!;
+    expect(states.at(-1)).toBe(state);
+    expect(interpreter.currentSnapshot().placements).toEqual([]);
+    const digest = state.images[0]!.digest;
+    expect(resolveKittyPlacements(interpreter.currentSnapshot().grid, state)).toEqual([
+      {
+        digest,
+        row: 1,
+        column: 2,
+        rows: 2,
+        columns: 3,
+        sourceRow: 0,
+        sourceColumn: 0,
+        totalRows: 2,
+        totalColumns: 3,
+      },
+      {
+        digest,
+        row: 0,
+        column: 2,
+        rows: 1,
+        columns: 2,
+        sourceRow: 0,
+        sourceColumn: 0,
+        totalRows: 1,
+        totalColumns: 2,
+      },
     ]);
-    const digest = snapshot.placements[0]!.contentDigest;
     expect(interpreter.kittyImages().imageByDigest(digest)?.format).toBe("png");
-    expect(updates.length).toBeGreaterThan(0);
+    // A capture reseed keeps placeholder images and drops cursor placements.
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 20,
+      rows: 6,
+      chunks: [Buffer.from(`ab\r\n${ESC}[38;5;9m  ${row(0)}\r\n  ${row(1)}`, "utf8")],
+      cursor: { x: 0, y: 3 },
+      bootstrap: "painted-capture",
+    });
+    const after = interpreter.currentGraphics()!;
+    expect(after.placements).toEqual([]);
+    expect(resolveKittyPlacements(interpreter.currentSnapshot().grid, after)).toEqual([
+      expect.objectContaining({ digest, row: 1, column: 2, rows: 2, columns: 3 }),
+    ]);
   });
 });

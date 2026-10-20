@@ -77,7 +77,7 @@ fn browser_fixture(
         window_label: Some("Long window label ".repeat(8)),
     };
     SnapshotView {
-        graphics: None,
+        graphics: Default::default(),
         presence,
         _activation: None,
         _appearance: None,

@@ -49,6 +49,7 @@ export * from "./semantic-identity.ts";
 export * from "./session-runtime.ts";
 export * from "./terminal-replica.ts";
 export * from "./terminal-delivery.ts";
+export * from "./terminal-graphics.ts";
 export * from "./terminal-runtime-inventory.ts";
 export * from "./experience-shell.ts";
 export * from "./application-shell.ts";

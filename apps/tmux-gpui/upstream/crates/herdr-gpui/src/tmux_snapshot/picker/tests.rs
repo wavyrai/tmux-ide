@@ -45,7 +45,7 @@ pub(super) fn make_view(
         decode::frame(include_bytes!("../../../../../../fixtures/snapshot.json")).unwrap(),
     );
     SnapshotView {
-        graphics: None,
+        graphics: Default::default(),
         presence,
         _activation: None,
         _appearance: None,

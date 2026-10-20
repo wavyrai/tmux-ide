@@ -1,4 +1,5 @@
 import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
+import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
@@ -8,6 +9,7 @@ import {
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+  TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES,
   PaneStreamClientFrameSchemaZ,
   PaneStreamLoopbackWebSocketUrlSchemaZ,
   PaneStreamRedeemFrameSchemaZ,
@@ -314,6 +316,7 @@ export interface SessionRuntimeTerminalDeliveryConnection {
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
   close(): Promise<void>;
+  readonly graphics?: TerminalDeliveryGraphics;
 }
 
 interface PendingTicket {
@@ -1039,12 +1042,19 @@ interface PaneChannel {
   frozenByWire: boolean;
   closed: boolean;
   batch: SeedBatch | null;
+  /** Kitty graphics: state announced to this client, and blob digests queued. */
+  graphicsAnnounced: boolean;
+  graphicsQueue: string[];
+  graphicsSending: boolean;
 }
 
 interface QueuedSend {
   readonly pane: string | null;
   remaining: number;
 }
+
+const GRAPHICS_MAX_QUEUED_DIGESTS = 256;
+const GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export class PaneStreamLiveConnection {
   readonly #clientId: string;
@@ -1214,6 +1224,9 @@ export class PaneStreamLiveConnection {
         frozenByWire: false,
         closed: false,
         batch: null,
+        graphicsAnnounced: false,
+        graphicsQueue: [],
+        graphicsSending: false,
       });
     }
   }
@@ -1619,6 +1632,7 @@ export class PaneStreamLiveConnection {
         await this.#sendTerminalDelivery(channel.semanticPaneId, message);
       pending.length = 0;
       markReady();
+      this.#startGraphics(channel);
     }
     this.#closeIfAllPanesGone();
   }
@@ -1728,6 +1742,70 @@ export class PaneStreamLiveConnection {
       return;
     }
     await this.#awaitSemanticCredit(pane);
+  }
+
+  /** Announce the pane's kitty graphics state; the client pulls bytes it lacks. */
+  #startGraphics(channel: PaneChannel): void {
+    const graphics = channel.delivery?.graphics;
+    if (!graphics) return;
+    graphics.subscribe((state) => {
+      if (this.#closed || channel.closed) return;
+      channel.graphicsAnnounced = true;
+      this.#sendFrame(null, { type: "terminal-graphics", pane: channel.semanticPaneId, state });
+    });
+  }
+
+  #requestGraphics(pane: string, digests: readonly string[]): void {
+    const channel = this.#panes.get(pane);
+    // Requests are only meaningful after an announcement; ignore stray ones.
+    if (!channel || channel.closed || !channel.graphicsAnnounced) return;
+    for (const digest of digests)
+      if (
+        !channel.graphicsQueue.includes(digest) &&
+        channel.graphicsQueue.length < GRAPHICS_MAX_QUEUED_DIGESTS
+      )
+        channel.graphicsQueue.push(digest);
+    if (!channel.graphicsSending) void this.#drainGraphics(channel);
+  }
+
+  /**
+   * Blob bytes yield to terminal frames: each chunk waits until the socket's
+   * buffered bytes fall below a small window, so images never trip the
+   * socket-wide backpressure ceiling or delay a pane's next seed for long.
+   */
+  async #drainGraphics(channel: PaneChannel): Promise<void> {
+    channel.graphicsSending = true;
+    try {
+      while (!this.#closed && !channel.closed && channel.graphicsQueue.length > 0) {
+        const digest = channel.graphicsQueue.shift()!;
+        const image = channel.delivery?.graphics?.image(digest);
+        if (!image) continue;
+        const total = image.data.byteLength;
+        for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
+          while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
+            if (this.#closed || channel.closed) return;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          if (this.#closed || channel.closed) return;
+          const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
+          this.#sendFrame(null, {
+            type: "terminal-graphics-blob",
+            pane: channel.semanticPaneId,
+            blob: {
+              digest,
+              format: image.format,
+              width: image.width,
+              height: image.height,
+              total,
+              offset,
+            },
+            data: Buffer.from(image.data.subarray(offset, end)).toString("base64"),
+          });
+        }
+      }
+    } finally {
+      channel.graphicsSending = false;
+    }
   }
 
   #awaitSemanticCredit(pane: string): Promise<void> {
@@ -2299,6 +2377,10 @@ export class PaneStreamLiveConnection {
     }
     if (frame.type === "semantic-intent") {
       this.#acceptSemanticIntent(frame.operationId, frame.intent);
+      return;
+    }
+    if (frame.type === "terminal-graphics-request") {
+      this.#requestGraphics(frame.pane, frame.digests);
       return;
     }
     if (frame.type === "viewport") {

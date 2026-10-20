@@ -1,3 +1,4 @@
+import type { KittyImage } from "../graphics/kitty-graphics.ts";
 import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import {
   MAX_RETAINED_NATIVE_BACKING_BYTES,
@@ -8,6 +9,8 @@ import {
 } from "./native-seed-backing.ts";
 import {
   WorkspaceIdSchemaZ,
+  TERMINAL_GRAPHICS_CAPABILITY_VERSION,
+  type TerminalGraphicsState,
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
@@ -124,6 +127,17 @@ export interface TerminalDeliveryConnection {
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
   close(): Promise<void>;
+  /**
+   * Kitty graphics side channel, present only when the client offered
+   * TERMINAL_GRAPHICS_CAPABILITY_VERSION. Delivery is independent of the
+   * canonical FIFO: renderers resolve state against cells they already hold.
+   */
+  readonly graphics?: TerminalDeliveryGraphics;
+}
+
+export interface TerminalDeliveryGraphics {
+  subscribe(listener: (state: TerminalGraphicsState) => void): () => void;
+  image(digest: string): KittyImage | null;
 }
 
 interface NativeBackingLease {
@@ -173,6 +187,8 @@ export interface TerminalDeliverySourceOwner {
     ) => void,
     onRaw: (record: TerminalReplicaCommittedRaw) => void,
   ): Promise<TerminalReplicaSourceSubscription>;
+  subscribeGraphics?(listener: (state: TerminalGraphicsState) => void): () => void;
+  graphicsImage?(digest: string): KittyImage | null;
 }
 
 interface ClientState {
@@ -451,6 +467,9 @@ export class SessionRuntimeTerminalDeliveryHub {
           this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
         },
         close: async () => this.#closeClient(client),
+        ...(offer.protocolVersions.includes(TERMINAL_GRAPHICS_CAPABILITY_VERSION)
+          ? { graphics: this.#graphicsFor(semanticPaneId, client, closed) }
+          : {}),
       };
     } catch (error) {
       if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
@@ -472,6 +491,25 @@ export class SessionRuntimeTerminalDeliveryHub {
     } finally {
       this.#pendingClients.delete(key);
     }
+  }
+
+  #graphicsFor(
+    semanticPaneId: string,
+    client: ClientState,
+    closed: Promise<unknown>,
+  ): TerminalDeliveryGraphics {
+    const owner = this.#ownerForPane(semanticPaneId);
+    return {
+      subscribe: (listener) => {
+        if (client.closed || !owner.subscribeGraphics) return () => {};
+        const unsubscribe = owner.subscribeGraphics((state) => {
+          if (!client.closed) listener(state);
+        });
+        void closed.then(unsubscribe);
+        return unsubscribe;
+      },
+      image: (digest) => (client.closed ? null : (owner.graphicsImage?.(digest) ?? null)),
+    };
   }
 
   /** Retire only this pane's delivery owners before its canonical owner is disposed. */

@@ -38,6 +38,13 @@ import {
   type PaneStreamClientSocket,
 } from "../../../packages/daemon-client/src/pane-stream-client.ts";
 import { createReplica } from "./replica.ts";
+import {
+  KITTY_KNOWN_ENV,
+  createKittyGraphicsReceiver,
+  kittyMissingSchema,
+  parseKnownDigests,
+} from "./kitty-graphics.ts";
+import { TERMINAL_GRAPHICS_CAPABILITY_VERSION } from "../../../packages/contracts/src/terminal-graphics.ts";
 
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
 let ready = false;
@@ -108,6 +115,30 @@ const latest: {
   snapshot: import("../../../packages/contracts/src/index.ts").TerminalReplicaSnapshot | null;
 } = { snapshot: null };
 const selectionIdentity = createSelectionIdentity();
+// Image chunks are ordered and never coalesced; they precede any publication
+// that references them. A window that cannot keep up drops whole images,
+// which are pulled again when next visible.
+const ordered: string[] = [];
+let orderedBytes = 0;
+const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
+const kitty = createKittyGraphicsReceiver({
+  known: parseKnownDigests(process.env[KITTY_KNOWN_ENV]),
+  request: (pane, digests) => runtime?.requestTerminalGraphics(pane, digests),
+  emit: (line) => {
+    if (!blocked) {
+      blocked = !process.stdout.write(line);
+      return;
+    }
+    if (orderedBytes + line.length > MAX_ORDERED_BYTES) {
+      const digest = (JSON.parse(line) as { kittyImageChunk: { digest: string } }).kittyImageChunk
+        .digest;
+      kitty.missing([digest]);
+      return;
+    }
+    ordered.push(line);
+    orderedBytes += line.length;
+  },
+});
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
@@ -204,9 +235,13 @@ function output(snapshot: typeof latest.snapshot) {
               : (historyRestoration?.publication() ?? null),
             presenceRevision,
             layouts,
-            surfaces: catalogOnly
-              ? []
-              : selectedWindowSurfaces(layouts, selectedActionPane, surfaces),
+            ...((published) => ({
+              surfaces: published,
+              graphics: published.flatMap(({ paneId, snapshot }) => {
+                const placements = kitty.placements(paneId, snapshot);
+                return placements.length > 0 ? [{ paneId, placements }] : [];
+              }),
+            }))(catalogOnly ? [] : selectedWindowSurfaces(layouts, selectedActionPane, surfaces)),
           }
         : {}),
     }) + "\n";
@@ -219,6 +254,12 @@ function output(snapshot: typeof latest.snapshot) {
 }
 process.stdout.on("drain", () => {
   blocked = false;
+  while (ordered.length > 0 && !blocked) {
+    const line = ordered.shift()!;
+    orderedBytes -= line.length;
+    blocked = !process.stdout.write(line);
+  }
+  if (blocked) return;
   if (pending) {
     const line = pending;
     pending = null;
@@ -435,7 +476,7 @@ try {
     panes: visiblePaneIds,
     viewerMode: interactive ? ("interactive" as const) : ("read-only" as const),
     terminalDelivery: {
-      protocolVersions: [1],
+      protocolVersions: interactive ? [1, TERMINAL_GRAPHICS_CAPABILITY_VERSION] : [1],
       encodings: ["semantic-compact-v1" as const, "semantic-v1" as const],
       richPlacements: false,
     },
@@ -598,6 +639,13 @@ try {
       onAuthoritySnapshot: () => {
         if (interactive && latest.snapshot) output(latest.snapshot);
       },
+      onTerminalGraphics: (pane, state) => {
+        kitty.state(pane, state);
+        if (interactive && latest.snapshot && !stopped) output(latest.snapshot);
+      },
+      onTerminalGraphicsBlob: (_pane, blob, bytes) => {
+        if (!stopped) kitty.blob(blob, bytes);
+      },
       onFault: (error) => {
         if (!stopped) diagnostics.runtimeFault(error);
         stop();
@@ -644,6 +692,12 @@ try {
             );
           stop();
           break inputLoop;
+        }
+        const missing = kittyMissingSchema.safeParse(value);
+        if (missing.success) {
+          kitty.missing(missing.data.digests);
+          if (latest.snapshot) output(latest.snapshot);
+          continue;
         }
         const presence = presenceSchema.safeParse(value);
         if (presence.success) {
