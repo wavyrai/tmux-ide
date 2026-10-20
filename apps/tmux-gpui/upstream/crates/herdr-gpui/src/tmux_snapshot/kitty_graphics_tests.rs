@@ -218,6 +218,7 @@ fn inflates_deflated_pixels_and_rejects_the_wrong_size() -> anyhow::Result<()> {
         0,
         &compressed,
     ))?;
+    store.settle();
     let scene = store.scene(&[placement(0, 0)]);
     assert_eq!(scene.len(), 1);
     assert_eq!(scene[0].asset.data_len, 16, "the painter receives raw RGBA");
@@ -226,6 +227,7 @@ fn inflates_deflated_pixels_and_rejects_the_wrong_size() -> anyhow::Result<()> {
     let other = "11111111111111111111111111111111";
     let short = deflate(&pixels[..12])?;
     store.accept_line(&chunk_as(other, "rgba-zlib", short.len(), 0, &short))?;
+    store.settle();
     let mut wrong = placement(1, 0);
     wrong.digest = other.into();
     assert!(

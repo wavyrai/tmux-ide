@@ -211,7 +211,18 @@ struct Inner {
 
 /// Shared between the publication reader thread and the window.
 #[derive(Clone, Default)]
-pub(super) struct Store(Arc<Mutex<Inner>>);
+pub(super) struct Store(Arc<Mutex<Inner>>, Arc<Inflater>);
+
+/// Deflated images inflate on one worker thread, so the publication reader
+/// keeps draining its pipe. A newer frame of the same program image replaces
+/// a queued older one: only the newest is worth inflating.
+#[derive(Default)]
+struct Inflater {
+    queue: Mutex<VecDeque<(String, Partial)>>,
+    wake: std::sync::Condvar,
+    busy: std::sync::atomic::AtomicBool,
+    started: std::sync::OnceLock<()>,
+}
 
 impl Store {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -282,20 +293,92 @@ impl Store {
         };
         // Inflate without the lock: the window keeps painting meanwhile.
         drop(inner);
-        let image = partial.image.clone();
-        if let Some(ready) = Ready::from(partial) {
-            let mut inner = self.lock();
-            inner.insert(chunk.digest.clone(), ready);
-            if let Some(image) = image
-                && inner.keys.contains_key(&chunk.digest)
-            {
-                if inner.latest.len() >= MAX_IMAGES && !inner.latest.contains_key(&image) {
-                    inner.latest.clear();
-                }
-                inner.latest.insert(image, chunk.digest);
-            }
+        if matches!(partial.format, Format::RgbaZlib | Format::RgbZlib) {
+            self.inflate_later(chunk.digest, partial);
+        } else {
+            self.complete(chunk.digest, partial);
         }
         Ok(())
+    }
+
+    fn complete(&self, digest: String, partial: Partial) {
+        let image = partial.image.clone();
+        let Some(ready) = Ready::from(partial) else {
+            return;
+        };
+        let mut inner = self.lock();
+        inner.insert(digest.clone(), ready);
+        if let Some(image) = image
+            && inner.keys.contains_key(&digest)
+        {
+            if inner.latest.len() >= MAX_IMAGES && !inner.latest.contains_key(&image) {
+                inner.latest.clear();
+            }
+            inner.latest.insert(image, digest);
+        }
+    }
+
+    fn inflate_later(&self, digest: String, partial: Partial) {
+        let inflater = &self.1;
+        {
+            let mut queue = inflater
+                .queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if partial.image.is_some() {
+                queue.retain(|(_, queued)| queued.image != partial.image);
+            }
+            queue.push_back((digest, partial));
+        }
+        inflater.wake.notify_one();
+        inflater.started.get_or_init(|| {
+            let store = self.clone();
+            std::thread::spawn(move || {
+                let inflater = store.1.clone();
+                loop {
+                    let next = {
+                        let mut queue = inflater
+                            .queue
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner);
+                        loop {
+                            if let Some(next) = queue.pop_front() {
+                                inflater
+                                    .busy
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                break next;
+                            }
+                            queue = inflater
+                                .wake
+                                .wait(queue)
+                                .unwrap_or_else(PoisonError::into_inner);
+                        }
+                    };
+                    store.complete(next.0, next.1);
+                    inflater
+                        .busy
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+        });
+    }
+
+    /// Test seam: wait until queued images are inflated.
+    #[cfg(test)]
+    pub(super) fn settle(&self) {
+        for _ in 0..500 {
+            let idle = self
+                .1
+                .queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+                && !self.1.busy.load(std::sync::atomic::Ordering::SeqCst);
+            if idle {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     /// Placements whose images are present, as the painter's scene; records
