@@ -365,6 +365,19 @@ impl SnapshotView {
                 | Selection::FleetServer(_)
         );
         let selecting_pane = matches!(selection, Selection::Pane(_));
+        // Another pane of the painted window: the bridge retargets its existing
+        // attachment, so the window's frame stays valid while input is re-gated.
+        let same_window_pane = match &selection {
+            Selection::Pane(id)
+                if self.frame.is_some()
+                    && !self.browser_state.retained_preview
+                    && self.browser_state.surface == browser::Surface::Workspace
+                    && self.browser_state.regions.iter().any(|r| &r.id == id) =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        };
         let command = match selection {
             Selection::WorkspaceAgent {
                 from_request,
@@ -416,7 +429,9 @@ impl SnapshotView {
             self.browser_request = request;
             self.pending_session_open =
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
-            if !selecting_pane || !self.browser_state.retained_preview {
+            if let Some(id) = same_window_pane {
+                self.browser_state.selected_pane = Some(id);
+            } else if !selecting_pane || !self.browser_state.retained_preview {
                 self.frame = None;
                 self.browser_state.retained_preview = false;
             }

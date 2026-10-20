@@ -193,4 +193,54 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
     });
 }
 
+#[gpui::test]
+fn reselecting_a_pane_of_the_painted_window_keeps_its_frame_until_confirmation(
+    cx: &mut TestAppContext,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    let mailbox: browser::Mailbox = Arc::new(std::sync::Mutex::new(None));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.request = 7;
+            view.browser_state.presence_revision = 1;
+            view.browser_state.panes[1].window_id = Some("window-a".into());
+            view.browser_state.regions = serde_json::from_str(
+                r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1},
+                    {"id":"pane-b","left":0,"top":0,"width":1,"height":1}]"#,
+            )
+            .unwrap();
+            let old = view.browser_state.clone();
+            let painted = view.frame.clone().unwrap();
+            view.select(Selection::Pane("pane-b".into()), window, cx);
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                browser::Command::Pane { request: 8, id } if id == "pane-b"
+            ));
+            assert!(Arc::ptr_eq(view.frame.as_ref().unwrap(), &painted));
+            assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
+            assert!(
+                !view.browser_state.input_ready,
+                "input waits for the bridge"
+            );
+            assert!(!view.terminal_input_ready());
+
+            // A late publication for the previous request cannot restore its target.
+            *mailbox.lock().unwrap() = Some(Some(old.clone()));
+            drain(view, &mailbox, cx);
+            assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
+            assert!(!view.browser_state.input_ready);
+
+            let mut current = old;
+            current.request = 8;
+            current.selected_pane = Some("pane-b".into());
+            *mailbox.lock().unwrap() = Some(Some(current));
+            drain(view, &mailbox, cx);
+            assert!(view.browser_state.input_ready);
+            assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
+        });
+    });
+}
+
 mod session_open;
