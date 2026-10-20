@@ -492,7 +492,9 @@ it("offers keyboard and mouse connection controls for the focused remote only", 
   key("end");
   await setup.renderOnce();
   const lines = setup.captureCharFrame().split("\n");
-  expect(lines.join("\n")).toContain("Incompatible daemon protocol");
+  expect(lines.join("\n").replace(/\s+/gu, " ")).toContain(
+    "App and remote daemon protocols are incompatible.",
+  );
   key("r");
   key("d");
   await setup.mockMouse.click(
