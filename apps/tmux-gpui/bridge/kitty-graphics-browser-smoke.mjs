@@ -7,6 +7,10 @@
 // (`--tmux-browser-stdio`) and requires it to accept every line; with
 // TMUX_GPUI_KITTY_SCREENSHOT=<absent absolute .png> it also captures the
 // window (needs an unlocked desktop).
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
+import { Buffer } from "node:buffer";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";

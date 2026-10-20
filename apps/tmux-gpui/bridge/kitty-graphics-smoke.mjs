@@ -6,6 +6,10 @@
 // placements but no bytes; after it reports the image missing it pulls the
 // bytes again from the daemon's store. Set TMUX_IDE_KITTY_SMOKE_TMUX to a directory holding the
 // patched tmux to also verify in-order acknowledgements.
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
+import { Buffer } from "node:buffer";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import {
