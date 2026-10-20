@@ -194,3 +194,16 @@ as an additional reference for layering.
   height within the existing titlebar. Inactive tabs inherit the continuous
   chrome instead of painting a separate surface, including on hover. Only the
   selected tab receives a theme-derived highlight. Navigation and drag-region ownership are unchanged.
+
+- Selecting another pane of the painted window keeps that window's frame and
+  moves pane chrome to the clicked pane immediately; input stays gated until the
+  bridge publishes the new request. Selections outside the painted window still
+  clear and reload.
+
+- Bridge snapshots are kept as raw JSON (`serde_json` `raw_value`) and decoded
+  once into the painter frame and pointer modes, instead of a value tree that
+  was re-serialized and decoded again.
+
+- A divider drag draws its pointer target boundary locally while tmux reflows.
+  The gesture protocol, its confirmed geometry and the painted frame are
+  unchanged.
