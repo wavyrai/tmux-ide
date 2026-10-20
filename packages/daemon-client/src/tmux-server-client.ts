@@ -1,4 +1,9 @@
+import { readPaneCreationRefusal } from "./pane-creation-refusal.ts";
 import {
+  HistoryAnchorRequestSchemaZ,
+  HistoryAnchorResponseSchemaZ,
+  type HistoryAnchorRequest,
+  TmuxServerDiagnosticsSchemaZ,
   TmuxAgentOpenRequestSchemaZ,
   TmuxAgentOpenResponseSchemaZ,
   type TmuxAgentOpenRequest,
@@ -49,6 +54,7 @@ export class TmuxServerClientError extends Error {
   constructor(
     readonly code: "disposed" | "scope-mismatch" | "request-failed",
     readonly status?: number,
+    readonly refusalCode?: "harness_unavailable",
   ) {
     super(`tmux server client ${code}`);
     this.name = "TmuxServerClientError";
@@ -61,7 +67,12 @@ async function request(
   headers?: Record<string, string>,
   method?: "DELETE",
   signal?: AbortSignal,
+  responseLimit?: number,
+  paneCreationRefusal = false,
 ) {
+  const requestSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
+    : AbortSignal.timeout(options.timeoutMs ?? 5_000);
   const response = await (options.fetch ?? fetch)(new URL(path, options.baseUrl), {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: {
@@ -72,13 +83,45 @@ async function request(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "error",
     cache: "no-store",
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 5_000)])
-      : AbortSignal.timeout(options.timeoutMs ?? 5_000),
+    signal: requestSignal,
   });
-  if (!response.ok) throw new TmuxServerClientError("request-failed", response.status);
-  const result: unknown = await response.json();
-  signal?.throwIfAborted();
+  if (!response.ok)
+    throw new TmuxServerClientError(
+      "request-failed",
+      response.status,
+      paneCreationRefusal ? await readPaneCreationRefusal(response, requestSignal) : undefined,
+    );
+  let result: unknown;
+  if (responseLimit === undefined) result = await response.json();
+  else {
+    const reader = response.body?.getReader();
+    if (!reader) throw new TmuxServerClientError("request-failed");
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      for (;;) {
+        requestSignal.throwIfAborted();
+        const item = await reader.read();
+        if (item.done) break;
+        length += item.value.byteLength;
+        if (length > responseLimit) {
+          void reader.cancel().catch(() => undefined);
+          throw new TmuxServerClientError("request-failed");
+        }
+        chunks.push(item.value);
+      }
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  requestSignal.throwIfAborted();
   return result;
 }
 export async function listTmuxServers(options: TmuxServerClientOptions) {
@@ -140,6 +183,7 @@ export function createTmuxServerClient(
     headers?: Record<string, string>,
     signal?: AbortSignal,
     defaultTimeoutMs?: number,
+    paneCreationRefusal = false,
   ) {
     assertCurrent();
     const result = await request(
@@ -151,6 +195,8 @@ export function createTmuxServerClient(
       headers,
       undefined,
       signal,
+      undefined,
+      paneCreationRefusal,
     );
     assertCurrent();
     return result;
@@ -352,6 +398,10 @@ export function createTmuxServerClient(
         await scopedRequest(
           `panes/create?liveSessionId=${encodeURIComponent(liveSessionId)}`,
           body,
+          undefined,
+          undefined,
+          undefined,
+          true,
         ),
       );
       if (
@@ -426,3 +476,80 @@ export function createTmuxServerClient(
   };
 }
 export type TmuxServerClient = ReturnType<typeof createTmuxServerClient>;
+
+/** Optional metadata; old servers have no route. Callers own selected-scope currentness. */
+export async function readTmuxServerDiagnostics(
+  options: TmuxServerClientOptions,
+  scopeInput: TmuxServerScope,
+  signal?: AbortSignal,
+) {
+  const scope = TmuxServerScopeSchemaZ.parse(scopeInput);
+  signal?.throwIfAborted();
+  try {
+    const result = TmuxServerDiagnosticsSchemaZ.parse(
+      await request(
+        options,
+        `${TMUX_SERVERS_API_PATH}/${scope.serverId}/${scope.generation}/diagnostics`,
+        undefined,
+        undefined,
+        undefined,
+        signal,
+        4096,
+      ),
+    );
+    if (result.server.serverId !== scope.serverId || result.server.generation !== scope.generation)
+      throw new TmuxServerClientError("scope-mismatch");
+    return result;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof TmuxServerClientError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+/** Optional old-daemon endpoint. Never retries, creates sessions, or admits input. */
+export async function requestHistoryAnchor(
+  options: TmuxServerClientOptions,
+  scopeInput: TmuxServerScope,
+  input: HistoryAnchorRequest,
+  signal?: AbortSignal,
+) {
+  const scope = TmuxServerScopeSchemaZ.parse(scopeInput),
+    body = HistoryAnchorRequestSchemaZ.parse(input);
+  if (body.proof.generation !== scope.generation) throw new TmuxServerClientError("scope-mismatch");
+  signal?.throwIfAborted();
+  try {
+    const value = HistoryAnchorResponseSchemaZ.parse(
+      await request(
+        options,
+        `${TMUX_SERVERS_API_PATH}/${scope.serverId}/${scope.generation}/history-anchor`,
+        body,
+        undefined,
+        undefined,
+        signal,
+        4096,
+      ),
+    );
+    if (value.server.serverId !== scope.serverId || value.server.generation !== scope.generation)
+      throw new TmuxServerClientError("scope-mismatch");
+    if (
+      value.result.status === "resolved" &&
+      Object.entries(body.proof).some(
+        ([key, v]) =>
+          value.result.status === "resolved" &&
+          value.result.proof[key as keyof typeof body.proof] !== v,
+      )
+    )
+      throw new TmuxServerClientError("scope-mismatch");
+    if (
+      (body.operation.kind === "capture" && value.result.status === "resolved") ||
+      (body.operation.kind === "resolve" && value.result.status === "captured")
+    )
+      throw new TmuxServerClientError("scope-mismatch");
+    return value;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof TmuxServerClientError && error.status === 404) return null;
+    throw error;
+  }
+}

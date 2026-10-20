@@ -108,7 +108,9 @@ export function createApplicationTerminalInputIngress(
     recovery = null;
   };
   const recover = (
-    inputs: ReturnType<typeof terminalInputsForPaste>,
+    inputs:
+      | ReturnType<typeof terminalInputsForPaste>
+      | (() => ReturnType<typeof terminalInputsForPaste> | null),
     bytes: Uint8Array,
     kind: "input" | "paste",
   ): boolean => {
@@ -145,7 +147,15 @@ export function createApplicationTerminalInputIngress(
         }
       : undefined;
     recovery.inputs.push(async () => {
-      for (const [index, input] of inputs.entries()) {
+      if (
+        version !== recoveryVersion ||
+        !sameScope(target, scope()) ||
+        generation()?.status !== "live"
+      )
+        return false;
+      const framed = typeof inputs === "function" ? inputs() : inputs;
+      if (framed === null) return false;
+      for (const [index, input] of framed.entries()) {
         if (
           version !== recoveryVersion ||
           !sameScope(target, scope()) ||
@@ -196,6 +206,23 @@ export function createApplicationTerminalInputIngress(
         } else setNote(null);
       }
     })();
+  };
+  const pasteMode = (): boolean | null => {
+    const active = generation();
+    const pane = focusedPane();
+    if (active?.status !== "live" || !active.fastLane || !pane) return null;
+    const mode = active.fastLane.lane.paneState(pane)?.snapshot?.modes.bracketedPaste;
+    return typeof mode === "boolean" ? mode : null;
+  };
+  const deliverPaste = (bytes: Uint8Array): void => {
+    const mode = pasteMode();
+    if (mode === null) {
+      // Do not let the successful drain of the surrounding FIFO hide refusal.
+      ownsNote = false;
+      setNote("terminal unavailable · paste was not sent");
+      return;
+    }
+    sendApplicationTerminalPaste(interaction, bytes, captureOrigin(), mode);
   };
   const captureOrigin = (): boolean =>
     Boolean(currentTuiPerformanceEventSink()?.terminalInputOrigin);
@@ -291,7 +318,7 @@ export function createApplicationTerminalInputIngress(
       if (bytes.length === 0) return;
       const copy = Uint8Array.from(bytes);
       try {
-        terminalInputsForPaste(Buffer.from(copy).toString("utf8"));
+        terminalInputsForPaste(Buffer.from(copy).toString("utf8"), false);
       } catch {
         setNote("terminal unavailable · paste was rejected");
         return;
@@ -304,16 +331,24 @@ export function createApplicationTerminalInputIngress(
         active.fastLane &&
         focusedPane()
       ) {
-        sendApplicationTerminalPaste(interaction, copy, captureOrigin());
+        deliverPaste(copy);
         return;
       }
-      if (recover(terminalInputsForPaste(Buffer.from(copy).toString("utf8")), copy, "paste"))
+      if (
+        recover(
+          () => {
+            const mode = pasteMode();
+            return mode === null
+              ? null
+              : terminalInputsForPaste(Buffer.from(copy).toString("utf8"), mode);
+          },
+          copy,
+          "paste",
+        )
+      )
         return;
       noteAdmission(
-        pending.enqueue(
-          () => sendApplicationTerminalPaste(interaction, copy, captureOrigin()),
-          copy.byteLength,
-        ),
+        pending.enqueue(() => deliverPaste(copy), copy.byteLength),
         "paste",
       );
     },

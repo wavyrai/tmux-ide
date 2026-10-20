@@ -1,0 +1,8 @@
+file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/scripts/build-native-release.mjs:35
+    throw new Error(`Unsupported build override: ${key}`);
+          ^
+
+Error: Unsupported build override: RUSTC
+    at file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/scripts/build-native-release.mjs:35:11
+
+Node.js v24.21.0

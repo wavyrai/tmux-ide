@@ -101,6 +101,16 @@ const until = async (predicate) => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 };
+// A controlled stop may legitimately start (and then abandon) one transport recovery.
+const shutdownDiagnosticLines = (lines) => {
+  const recoveryLines = lines.filter((line) => line.startsWith("TMUX_GPUI_RECOVERY "));
+  assert.ok(
+    recoveryLines.length <= 1 &&
+      recoveryLines.every((line) => line === "TMUX_GPUI_RECOVERY transport-closed"),
+    "Only the controlled transport closure may start recovery",
+  );
+  return lines.filter((line) => !line.startsWith("TMUX_GPUI_RECOVERY "));
+};
 try {
   browser = spawn(
     app ? join(app, "Contents/Resources/node") : process.execPath,
@@ -168,8 +178,8 @@ try {
   });
   const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
   await until(() => latest?.home.phase === "unavailable");
-  assert.match(latest.status, /No usable local daemon/);
-  assert.match(latest.status, /tmux-ide --headless/);
+  assert.match(latest.status, /Local sessions are not connected yet/);
+  assert.match(latest.status, /Use setup or refresh sessions/);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
   const connection = latest.connection;
@@ -268,7 +278,13 @@ try {
   await daemon.stop();
   daemon = undefined;
   await until(() => {
-    const lines = stderr.trim().split("\n").filter(Boolean);
+    // Stderr chunks can end midway through a protocol line.
+    const lines = shutdownDiagnosticLines(
+      stderr
+        .slice(0, stderr.lastIndexOf("\n") + 1)
+        .split("\n")
+        .filter(Boolean),
+    );
     const diagnostic = lines.length === 1 ? parseDiagnosticLine(lines[0]) : null;
     const expected =
       diagnostic?.code === "source-closed" ||
@@ -326,7 +342,7 @@ try {
 if (shutdownDiagnostic) {
   try {
     assert.deepEqual(
-      stderr.trim().split("\n").map(parseDiagnosticLine),
+      shutdownDiagnosticLines(stderr.trim().split("\n")).map(parseDiagnosticLine),
       [shutdownDiagnostic],
       "Only the controlled shutdown diagnostic is expected through cleanup",
     );

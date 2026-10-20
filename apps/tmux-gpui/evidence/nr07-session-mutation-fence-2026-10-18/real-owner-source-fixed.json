@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "ownerError": {
+    "message": "WorkspacePaneCreationError: The requested harness is not currently launchable.",
+    "context": {
+      "workspaceName": "owned",
+      "harnessProfileId": "owned-missing"
+    },
+    "cause": "undefined",
+    "stack": "WorkspacePaneCreationError: The requested harness is not currently launchable.\n    at Object.resolveHarness (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon/src/lib/workspace-pane-creation.ts:451:11)\n    at async WorkspacePaneCreationAuthority.#create (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon/src/lib/workspace-pane-creation.ts:808:13)"
+  },
+  "refusal": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "harness_unavailable"
+      }
+    }
+  },
+  "noPaneCreated": true,
+  "shell": {
+    "status": 200,
+    "body": {
+      "operationId": "13550142-31d7-4118-a74a-8cc374bb98d8",
+      "daemonInstanceId": "ae4edc52-50fe-4ecc-9085-f30b352884af",
+      "outcome": "created",
+      "resource": {
+        "resourceVersion": 1,
+        "workspaceName": "owned",
+        "semanticPaneId": "pane.1355014231d74118a74a8cc374bb98d8",
+        "displayTitle": "warm-nebula",
+        "kind": "terminal",
+        "harnessProfileId": null,
+        "role": null,
+        "missionId": null
+      }
+    }
+  },
+  "socketClosed": true
+}

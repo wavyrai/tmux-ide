@@ -1,0 +1,77 @@
+{
+  "attempts": [
+    {
+      "attempt": "before-integration",
+      "session": 4318,
+      "pass": false,
+      "actualBytes": 0,
+      "actualHex": "",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "after-integration",
+      "session": 80184,
+      "pass": false,
+      "actualBytes": 0,
+      "actualHex": "",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "mode-diagnostic",
+      "session": 73596,
+      "pass": false,
+      "actualBytes": 0,
+      "actualHex": "",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "after-raw-proof",
+      "session": 35340,
+      "pass": true,
+      "actualBytes": 22,
+      "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d6466",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "authority-after",
+      "session": 18588,
+      "pass": true,
+      "actualBytes": 32,
+      "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d1b5b3c303b31313b374d6466",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "after-copy-region",
+      "session": 5264,
+      "pass": true,
+      "actualBytes": 22,
+      "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d6466",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    },
+    {
+      "attempt": "authority-copy-region",
+      "session": 78526,
+      "pass": true,
+      "actualBytes": 32,
+      "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d1b5b3c303b31313b374d6466",
+      "cleanup": true,
+      "remainingOwnedPids": [],
+      "protectedCliUnchanged": true
+    }
+  ],
+  "finalBasicPass": true,
+  "finalAuthorityPass": true,
+  "bridgeSourceStable": false
+}

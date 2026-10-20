@@ -1,0 +1,30 @@
+{
+  "parserGapReproduced": true,
+  "actualInterruptedInstallTest": false,
+  "outcomes": [
+    {
+      "path": "docs/public/install.sh",
+      "args": [
+        "--native-alpha",
+        "--recover"
+      ],
+      "sourceSha256": "55ff60fc2046e5f38ce05493cb457fc6c9f9a5038beb2c2cd57ef705a0ec0e0a",
+      "exit": 1,
+      "stderr": "tmux-ide: Unknown native option: --recover\n",
+      "networkInvoked": false,
+      "privateHomePreserved": true
+    },
+    {
+      "path": "docs/public/install-native-alpha.sh",
+      "args": [
+        "--recover"
+      ],
+      "sourceSha256": "2a71d6d3cbb14d516e0ebe8d01226d3540c674865adb051245bd5c0373214c83",
+      "exit": 1,
+      "stderr": "tmux-ide native alpha: Unknown option: --recover\n",
+      "networkInvoked": false,
+      "privateHomePreserved": true
+    }
+  ],
+  "cleanup": true
+}

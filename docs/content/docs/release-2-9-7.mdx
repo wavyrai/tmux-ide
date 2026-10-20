@@ -1,0 +1,75 @@
+---
+title: tmux-ide 2.9.7
+metaTitle: "What's new in 2.9.7"
+description: "Compatibility with stock tmux 3.8, images in the native alpha, and installer upgrades that move a running daemon without replacing existing tmux sessions."
+---
+
+These notes describe the upcoming `2.9.7` release, which is not yet published.
+It fixes terminal connections to stock tmux 3.8, carries images from tmux panes
+to the native alpha, and makes upgrades move a running daemon onto the new release.
+
+## Stock tmux compatibility
+
+Stock tmux 3.8 accepts `capture-pane -R` but returns a textual grid format rather
+than the JSON extension used by bundled tmux. The daemon now recognizes that
+format and uses its existing stock capture path. Previously this could close
+terminal streams with code 1011 and leave clients repeatedly reconnecting.
+
+You do not need to downgrade tmux, change your PATH or kill existing sessions.
+The daemon also observes retirement after a concurrent shutdown transport failure.
+
+## Input after a viewer disconnects
+
+A viewer that disconnected, or whose controller handoff was refused, could keep
+input authority for a session. Every other viewer then waited for input
+indefinitely. A viewer that asks for input now reclaims control from a holder
+whose connection is gone. Connected viewers still hand off normally, so only one
+client types at a time.
+
+## Upgrades move the running daemon
+
+Rerunning the installer, or `tmux-ide update` on an installer-managed copy, now
+restarts a running older daemon on the new release. On macOS it also repoints a
+launchd job that still starts an older tmux-ide copy, such as a global npm
+install, at the managed launcher, keeping a backup of the job definition. Before,
+that job's automatic restart could keep bringing back the old daemon. Jobs that
+start a newer copy are left unchanged. tmux sessions keep running throughout. Pass
+`--no-daemon-upgrade` (or set `TMUX_IDE_NO_DAEMON_UPGRADE=1`) to keep the running
+daemon and update it later yourself.
+
+When another tmux-ide comes first on your PATH, the installer now names its version
+and, for a global npm install, prints the exact command that removes it.
+
+## Updating
+
+Once `2.9.7` is published, update the CLI through your existing installation method:
+
+```bash
+curl -fsSL https://tmux-ide.com/install.sh | sh
+```
+
+Global npm installs refresh a running daemon during installation. For any other
+installation method, update the running daemon explicitly:
+
+```bash
+tmux-ide update --daemon --json
+```
+
+Existing tmux sessions are preserved. Apple Silicon macOS and glibc Linux x64/ARM64
+remain supported; Intel macOS remains unsupported.
+
+## Separate native alpha
+
+The [native macOS alpha](/docs/native-alpha) has a separate update path. Its pane-split
+recovery change refreshes the selected pane after layout changes without replaying
+input or split commands. Updating the CLI alone does not update the native app.
+
+With a 2.9.7 daemon, the native window also shows images that programs in tmux panes
+send with the kitty graphics protocol, locally and over SSH. Unicode placeholder
+images are supported; cursor-placed images are best effort. The bundled tmux
+answers programs' graphics support queries; with a stock tmux, programs that wait
+for that answer may not send images. Set `TMUX_IDE_KITTY_GRAPHICS=0` for the daemon
+to turn this off. The terminal app does not show images.
+
+See the [changelog](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md)
+for the full release history.

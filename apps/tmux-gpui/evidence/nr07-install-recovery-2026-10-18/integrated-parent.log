@@ -1,0 +1,87 @@
+✔ real SIGKILL before-activate: keep-current (52.410292ms)
+✔ real SIGKILL candidate-renamed: keep-current (40.09725ms)
+✔ real SIGKILL current-switched: keep-current (38.646166ms)
+✔ real SIGKILL current-switched: restore-previous (42.013584ms)
+✔ live PID, journal tamper and verifier denial leave lock and current untouched (37.948708ms)
+✔ legacy empty lock refuses explicit recovery (4.305417ms)
+✔ initial preactivation keeps no selection, verifies and quarantines candidate before retry (40.08375ms)
+✔ CLI recovery after real SIGKILL requires policy and verifier (41.782333ms)
+✔ recovery marker blocks normal mutation even after transaction lock is absent (4.378125ms)
+✔ missing alias after switched current refuses without claiming a launch path (37.396625ms)
+✔ verifier replacement of a managed candidate directory refuses before pointer mutation (38.698792ms)
+✔ legacy prior without named alias recovers a usable launch path: keep-current (45.035167ms)
+✔ legacy prior without named alias recovers a usable launch path: restore-previous (41.33025ms)
+✔ pins the reviewed alpha assets and requires HTTPS redirects (0.443042ms)
+✔ delegates install to exact installer and cleans staging (449.908ms)
+✔ delegates --update to exact installer and cleans staging (383.996709ms)
+✔ delegates --rollback to exact installer and cleans staging (332.454208ms)
+✔ delegates --uninstall to exact installer and cleans staging (392.644ms)
+✔ rejects platform, old OS and missing managed Node before downloading (101.981291ms)
+✔ checksum/network/verifier failures propagate and remove staging (532.180917ms)
+✔ install update and rollback retain one exact Applications link (728.272375ms)
+✔ refuses foreign Applications file before installer mutation (243.321ms)
+✔ refuses foreign Applications directory before installer mutation (244.044084ms)
+✔ refuses foreign Applications foreign-link before installer mutation (324.052417ms)
+✔ uninstall removes only owned link and preserves managed version files (500.342875ms)
+✔ failed installer does not create Applications entry; custom prefix cannot claim another installation (600.810125ms)
+✔ redirected Applications directory is refused without touching its destination (126.475792ms)
+✔ explicit recovery delegates keep-current only without downloading an app or claiming installation (417.203292ms)
+✔ recovery retains an existing app link and propagates refusal without changing it (554.792292ms)
+✔ shell recovery after owned SIGKILL candidate-renamed, previous=true (613.90425ms)
+✔ shell recovery after owned SIGKILL current-switched, previous=true (511.526292ms)
+✔ shell recovery after owned SIGKILL candidate-renamed, previous=false (528.226166ms)
+✔ native help is side-effect free even on unsupported systems (6.499833ms)
+✔ unsupported OS/architecture and pre-26 macOS reject before bootstrap (187.467292ms)
+✔ maintenance and invalid args never bootstrap missing runtime regardless argument order (175.204334ms)
+✔ existing runtime delegates native-only prefix and preserves child failure/cleanup (356.43325ms)
+✔ checksum mismatch prevents native execution and cleans stage (326.150791ms)
+✔ bootstrap failure is propagated before native fetch and runs subshell cleanup (70.963042ms)
+✔ CLI prerequisite ignores native prefix and inherited CLI prefix (65.728541ms)
+✔ successful CLI prerequisite runs its own cleanup then continues native bootstrap (225.521708ms)
+✖ dispatcher pin matches the maintained native bootstrap bytes (2.582416ms)
+✔ old managed CLI is upgraded before native install (342.609292ms)
+✔ old managed CLI is upgraded before native --update (337.133583ms)
+✔ --rollback never upgrades an older managed CLI (222.100125ms)
+✔ --uninstall never upgrades an older managed CLI (312.759292ms)
+✔ old CLI bootstrap failure prevents native installation (91.350875ms)
+✔ qualified CLI 2.9.6 is preserved before native install (245.767209ms)
+✔ qualified CLI 2.9.6 is preserved before native --update (236.465875ms)
+✔ native install handles managed CLI 2.9.5 without silent downgrade (458.47625ms)
+✔ native install handles managed CLI 2.9.7 without silent downgrade (188.960833ms)
+✔ native install handles managed CLI 2.10.0 without silent downgrade (279.936291ms)
+✔ native install handles managed CLI 3.0.0 without silent downgrade (207.998875ms)
+✔ native install handles managed CLI 2.9.7-beta.1 without silent downgrade (202.86125ms)
+✔ native install handles managed CLI unknown without silent downgrade (200.442917ms)
+✔ unreadable existing CLI is preserved (TEST_VERSION_FAIL) (87.206917ms)
+✔ unreadable existing CLI is preserved (TEST_VERSION_EMPTY) (102.485209ms)
+ℹ tests 56
+ℹ suites 0
+ℹ pass 55
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7623.534
+
+✖ failing tests:
+
+test at scripts/install-native-dispatch.test.mjs:156:1
+✖ dispatcher pin matches the maintained native bootstrap bytes (2.582416ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+    assert.ok(source.includes(digest))
+
+      at TestContext.<anonymous> (file:///Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/scripts/install-native-dispatch.test.mjs:160:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

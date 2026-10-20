@@ -18,6 +18,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
         presence.flush(&sender);
         presence.acknowledge(1);
         SnapshotView {
+            graphics: Default::default(),
             presence,
             _activation: None,
             _appearance: None,
@@ -45,6 +46,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             agent_animation: Default::default(),
             sidebar_hidden: false,
             sidebar_keyboard: Default::default(),
+            developer_mode: Default::default(),
             terminal_font: Default::default(),
             window_reveal: Default::default(),
             resize_gesture: Default::default(),
@@ -54,6 +56,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             input_geometry: None,
             input_cell_width: None,
             painted_frame: None,
+            pointer: Default::default(),
             selection: None,
             divider: None,
             wheel: crate::terminal::WheelRemainder::default(),

@@ -1,0 +1,54 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide
+
+ ❯ .tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/command-center/tmux-servers.test.ts (0 test)
+ ❯ .tasks/nr02-linux/source/packages/daemon/src/command-center/tmux-servers.test.ts (0 test)
+ ❯ .tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/command-center/tmux-servers.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  .tasks/nr02-linux/source/packages/daemon/src/command-center/tmux-servers.test.ts [ .tasks/nr02-linux/source/packages/daemon/src/command-center/tmux-servers.test.ts ]
+Error: Cannot find package '@tmux-ide/tmux-bridge' imported from /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/nr02-linux/source/packages/daemon/src/lib/workspace-multiplexer-verbs.ts
+ ❯ .tasks/nr02-linux/source/packages/daemon/src/lib/workspace-multiplexer-verbs.ts:39:1
+     37|   type WindowLinkTopology,
+     38| } from "@tmux-ide/contracts";
+     39| import { TmuxError } from "@tmux-ide/tmux-bridge";
+       | ^
+     40|
+     41| import {
+ ❯ .tasks/nr02-linux/source/packages/daemon/src/command-center/tmux-servers.ts:32:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  .tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/command-center/tmux-servers.test.ts [ .tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/command-center/tmux-servers.test.ts ]
+Error: Cannot find package '@tmux-ide/tmux-bridge' imported from /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/lib/workspace-multiplexer-verbs.ts
+ ❯ .tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/lib/workspace-multiplexer-verbs.ts:39:1
+     37|   type WindowLinkTopology,
+     38| } from "@tmux-ide/contracts";
+     39| import { TmuxError } from "@tmux-ide/tmux-bridge";
+       | ^
+     40|
+     41| import {
+ ❯ .tasks/nr07/package-297-q_9y_u2s/source/packages/daemon/src/command-center/tmux-servers.ts:32:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  .tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/command-center/tmux-servers.test.ts [ .tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/command-center/tmux-servers.test.ts ]
+Error: Cannot find package '@tmux-ide/xterm-headless' imported from /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/terminal/session-runtime/xterm-terminal-interpreter-backend.ts
+ ❯ .tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/terminal/session-runtime/xterm-terminal-interpreter-backend.ts:4:1
+      2| import { projectNativeGridRow } from "../mirror/native-grid-projection…
+      3| import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
+      4| import { Terminal } from "@tmux-ide/xterm-headless";
+       | ^
+      5| import { Unicode11Addon } from "@xterm/addon-unicode11";
+      6| import type {
+ ❯ .tasks/nr07/package-297-yjzdjrdw/source/packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts:40:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  3 failed | 6 passed (9)
+      Tests  78 passed (78)
+   Start at  15:32:55
+   Duration  3.04s (transform 15.47s, setup 0ms, import 15.36s, tests 230ms, environment 1ms)
+

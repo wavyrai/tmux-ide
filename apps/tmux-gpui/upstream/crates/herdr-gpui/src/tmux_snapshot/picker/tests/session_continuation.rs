@@ -17,6 +17,7 @@ fn exercise(
     cx: &mut Context<SnapshotView>,
     receiver: &mpsc::Receiver<browser::Command>,
     tabs: bool,
+    retained_preview: bool,
 ) {
     prepare(v);
     v.input_interrupted = true;
@@ -39,7 +40,12 @@ fn exercise(
     loading.request = 8;
     loading.selected_session = None;
     loading.selected_pane = None;
-    loading.frame = None;
+    loading.frame = if retained_preview {
+        v.frame.clone()
+    } else {
+        None
+    };
+    loading.retained_preview = retained_preview;
     loading.input_ready = false;
     loading.session_catalog_complete = false;
     loading.preferred_pane = None;
@@ -76,14 +82,14 @@ fn retained_tab_admission_continues_completed_catalog_once(cx: &mut TestAppConte
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
     receiver.try_iter().for_each(drop);
-    cx.update(|w, cx| view.update(cx, |v, cx| exercise(v, w, cx, &receiver, true)));
+    cx.update(|w, cx| view.update(cx, |v, cx| exercise(v, w, cx, &receiver, true, false)));
 }
 #[gpui::test]
 fn history_admission_continues_completed_catalog_once(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
     receiver.try_iter().for_each(drop);
-    cx.update(|w, cx| view.update(cx, |v, cx| exercise(v, w, cx, &receiver, false)));
+    cx.update(|w, cx| view.update(cx, |v, cx| exercise(v, w, cx, &receiver, false, false)));
 }
 
 fn cancellation(cx: &mut TestAppContext, case: u8) {
@@ -187,4 +193,12 @@ fn admitted_continuation_missing_preference_consumes_intent(cx: &mut TestAppCont
 #[gpui::test]
 fn direct_live_admission_never_arms_catalog_continuation(cx: &mut TestAppContext) {
     cancellation(cx, 5);
+}
+
+#[gpui::test]
+fn retained_preview_does_not_block_exact_tab_catalog_continuation(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|w, cx| view.update(cx, |v, cx| exercise(v, w, cx, &receiver, true, true)));
 }

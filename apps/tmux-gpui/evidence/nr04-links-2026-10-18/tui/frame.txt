@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                         Local · e2e-nr04-links-tui-24320-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ○ node                                                        ⋯    ● node                                                       ⋯
+▾ Local                     NR04_LEFT                                                          NR04_RIGHT
+   e2e-nr04-links-tui-2… 2p https://example.invalid/a(b). done
+                            http://example.invalid/ok done
+                            https://example.invalid/wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+                            wwwwwwwwwwwwwwww done
+
+
+                            file:///tmp/no-open
+                            javascript:alert(1)
+                            mailto:a@example.invalid
+                            FRIENDLY_LABEL
+                                                                                      https:// example.invalid/ adjacent
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

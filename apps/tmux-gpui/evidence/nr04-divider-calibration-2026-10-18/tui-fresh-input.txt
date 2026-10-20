@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr04-divider-75676-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● nimble-jaguar                                               ⋯    ○ golden-nebula                                              ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT                                              RIG_NR04_RIGHT_CONTENT
+   e2e-nr04-divider-756… 2p sh-3.2$ printf 'RIG_NR04_FRESH_INPUT\n'                            sh-3.2$
+                            RIG_NR04_FRESH_INPUT
+                            sh-3.2$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

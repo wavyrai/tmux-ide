@@ -213,6 +213,7 @@ export function createNativeFleetRuntime(changed: () => void, retired: () => voi
     resolveCanonical: fleet.resolveCanonical,
     recoveryRoute: fleet.recoveryRoute,
     retainedTarget: fleet.retainedTarget,
+    retainedFrameProof: fleet.retainedFrameProof,
     tabObservation: fleet.tabObservation,
     attachmentKey,
     isSelectedAgent(

@@ -1,0 +1,39 @@
+{
+  "passed": false,
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "realSsh": true,
+  "actualSavedAdd": true,
+  "denial": true,
+  "repaired": false,
+  "input": false,
+  "deniedInputAbsent": false,
+  "cleanup": true,
+  "discoveryDescriptor": "actual explicit CLI remote-daemon-info using mirrored verified private record",
+  "remoteCliPreflightQualified": false,
+  "installedPackageQualified": false,
+  "cliArtifact": {
+    "kind": "installed-package-input",
+    "packageVersion": "2.9.7"
+  },
+  "syntheticHandshakeRequests": 0,
+  "lastRemote": [
+    {
+      "state": "disconnected",
+      "conflict": false,
+      "diagnostic": {
+        "phase": "needs-attention",
+        "failure": "ssh-authentication"
+      },
+      "sessionCount": 0,
+      "retry": true
+    }
+  ],
+  "trace": [],
+  "failures": [
+    {
+      "phase": "saved-add-denied",
+      "message": "Owned pane must have a real semantic identity before denied input"
+    }
+  ]
+}

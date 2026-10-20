@@ -41,8 +41,10 @@ impl SnapshotView {
                     .map(|selection| selection.frame.clone())
                     .or_else(|| state.frame.clone());
                 self.browser_state = state;
+                self.observe_pointer();
             }
             None => {
+                self.session_tabs.selections = Default::default();
                 self.workspace_fleet_agents.pending = None;
                 self.session_history.pending = None;
                 self.session_tabs.pending = None;
@@ -55,6 +57,8 @@ impl SnapshotView {
                 self.selection = None;
                 self.divider = None;
                 self.frame = None;
+                self.browser_state.diagnostics = None;
+                self.browser_state.retained_preview = false;
                 self.browser_state.status = "Connection unavailable — restart the preview".into();
                 self.browser_commands = None;
             }

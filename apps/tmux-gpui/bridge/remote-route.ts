@@ -1,3 +1,4 @@
+import { registerVerifiedVersion } from "./diagnostic-versions.ts";
 import { canonicalDaemonUrl } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
 import { randomUUID } from "node:crypto";
 import type { createDaemonConnectionOwner } from "../../../packages/daemon/src/lib/daemon-connection-owner.ts";
@@ -21,7 +22,8 @@ const messages = {
   unavailable: "Machine connection is unavailable. Reconnect the machine and try again.",
   retired: "Machine connection changed. Select the machine again.",
   identity: "Machine identity could not be verified. Reconnect the machine.",
-  incompatible: "Machine daemon is incompatible with this preview. Update the remote daemon.",
+  incompatible:
+    "App and remote daemon protocols are incompatible. Check that this app and tmux-ide on the remote machine are up to date, then retry.",
   "no-server": "The machine has no online tmux server. Open a tmux session and refresh.",
   "multiple-servers": "The machine has multiple online tmux servers. Select a server explicitly.",
   "server-changed":
@@ -192,6 +194,7 @@ export async function createRemotePreviewRoute(
       ownerToken: daemon.authToken,
       scope: { serverId: matches[0]!.serverId, generation: matches[0]!.generation },
     });
+    registerVerifiedVersion(host, daemon.productVersion, assertCurrent);
     Object.freeze(host.scope);
     Object.freeze(host);
     return { host, signal: controller.signal, assertCurrent, verify, dispose };

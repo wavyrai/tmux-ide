@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr05-palette-91343-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● nimble-firefly                                              ⋯    ○ witty-firefly                                              ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT                                              thijs@mini-m4 project %
+   e2e-nr05-palette-913… 2p sh-3.2$ Zoom pane
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

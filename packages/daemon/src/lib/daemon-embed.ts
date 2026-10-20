@@ -1,3 +1,4 @@
+import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
 import {
   createNativeSplitCapabilityProbe,
   createNativeSplitReadiness,
@@ -1400,6 +1401,7 @@ async function startEmbeddedDaemonGeneration(
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
     let defaultEditorContextRetired = false;
+    const defaultDiagnosticsLifetime = new AbortController();
     const defaultSessionCreator = createNativeTmuxSessionCreator({
       generation: instanceId,
       registry: workspaceRegistry,
@@ -1805,6 +1807,29 @@ async function startEmbeddedDaemonGeneration(
         stateDirectory: resolveRuntimeNamespace().runtimeDir,
         webSocketBaseUrl: canonicalDaemonUrl("ws", bindHostname, port),
         defaultOwner: {
+          readServerVersion: async (signal?: AbortSignal) => {
+            const assertCurrent = () => {
+              if (
+                defaultEditorContextRetired ||
+                serverOwners?.defaultRetired ||
+                !initialNativeServerIdentity
+              )
+                throw new Error("Default tmux diagnostics owner is unavailable");
+            };
+            assertCurrent();
+            const combined = AbortSignal.any([
+              defaultDiagnosticsLifetime.signal,
+              ...(signal ? [signal] : []),
+            ]);
+            combined.throwIfAborted();
+            const output = await fleetFactsTmuxRunner(
+              ["display-message", "-p", "#{version}"],
+              combined,
+            );
+            combined.throwIfAborted();
+            assertCurrent();
+            return TmuxServerVersionSchemaZ.parse(output.trim());
+          },
           get interactionObservation() {
             return interactionObservation;
           },
@@ -1913,6 +1938,7 @@ async function startEmbeddedDaemonGeneration(
           paneStreamRuntime,
           dispose: async () => {
             defaultEditorContextRetired = true;
+            defaultDiagnosticsLifetime.abort();
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
             const transportResults = await Promise.allSettled([

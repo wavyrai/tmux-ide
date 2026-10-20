@@ -10,6 +10,7 @@ import {
 import { boundedTmuxInteractionAppendCommand } from "../../lib/tmux-interaction-retention.ts";
 import {
   decodeNativeGridCapture,
+  isStockRawGridCapture,
   isNativeBootstrapCapture,
   type NativeGridCapture,
 } from "./native-grid-capture.ts";
@@ -212,7 +213,10 @@ function nativeBootstrapUnsupported(
   native: NativeGridCapture | null,
 ): boolean {
   if (ok)
-    return native !== null && (native.version !== 2 || native.currentAttributes === undefined);
+    return (
+      isStockRawGridCapture(lines) ||
+      (native !== null && (native.version !== 2 || native.currentAttributes === undefined))
+    );
   return lines.some((line) =>
     /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim()),
   );
@@ -345,6 +349,7 @@ interface SnapshotLease {
   cancelFence: (() => void) | null;
   cleanup?: () => void;
   ownsPause?: boolean;
+  attemptCharged?: boolean;
 }
 
 interface RecoveryRecord {
@@ -1959,6 +1964,7 @@ export class SessionChannel {
       return;
     }
     recovery.attempts += 1;
+    lease.attemptCharged = true;
     recovery.stage = "stock-pause";
     recovery.stock = new StockPaneSnapshot(this.snapshotContext(pane));
     // These rows were received before this pause and belong to the new seed,
@@ -2135,6 +2141,7 @@ export class SessionChannel {
       return;
     }
     recovery.attempts += 1;
+    lease.attemptCharged = true;
     const ordinal = ++recovery.reseedOrdinal;
     const participants = [...pane.subs]
       .filter((sub) => !sub.closed && !sub.frozen)
@@ -2924,6 +2931,12 @@ export class SessionChannel {
         if (pane.windowRuntimeId !== change.windowId) continue;
         const recovery = this.recoveries.get(pane.runtimeId);
         if (recovery?.lease && !recovery.lease.retired) {
+          // A newer layout cancels this capture; it is not a failed snapshot.
+          // Refund only this lease, retaining earlier failures and the original deadline.
+          if (recovery.lease.attemptCharged) {
+            recovery.lease.attemptCharged = false;
+            recovery.attempts -= 1;
+          }
           this.awaitSnapshotLayout(recovery);
           this.retrySnapshot(recovery);
         }

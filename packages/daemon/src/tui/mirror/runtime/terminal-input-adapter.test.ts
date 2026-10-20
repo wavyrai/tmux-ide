@@ -26,19 +26,27 @@ describe("OpenTUI terminal input adapter", () => {
     expect(terminalInputForOpenTuiKey(key("a"))).toEqual({ kind: "text", data: "a" });
   });
 
+  it("leaves mode-off paste bytes unframed", () => {
+    expect(
+      terminalInputsForPaste("界\ntext", false)
+        .map((input) => input.data)
+        .join(""),
+    ).toBe("界\ntext");
+  });
+
   it("chunks one bracketed paste in exact order and rejects NUL", () => {
-    const inputs = terminalInputsForPaste("x".repeat(2_100));
+    const inputs = terminalInputsForPaste("x".repeat(2_100), true);
     expect(inputs).toHaveLength(3);
     expect(inputs.map((input) => input.data).join("")).toBe(
       `\u001b[200~${"x".repeat(2_100)}\u001b[201~`,
     );
-    expect(() => terminalInputsForPaste("a\0b")).toThrow(/NUL/u);
+    expect(() => terminalInputsForPaste("a\0b", true)).toThrow(/NUL/u);
   });
   it.each([1016, 1017, 1018, 2040, 2041, 2042])(
     "preserves supplementary paste bytes across independently delivered messages at offset %i",
     async (prefixLength) => {
       const text = "a".repeat(prefixLength) + "😀" + "界e\u0301" + "z".repeat(1100);
-      const inputs = terminalInputsForPaste(text);
+      const inputs = terminalInputsForPaste(text, true);
       const received: Buffer[] = [];
       const coalescer = new InputCoalescer((action) => {
         if (action.kind !== "literal") throw new Error("unexpected non-text paste action");

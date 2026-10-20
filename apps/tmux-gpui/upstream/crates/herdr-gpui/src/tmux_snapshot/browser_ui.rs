@@ -34,160 +34,16 @@ pub(super) enum Selection {
     Pane(String),
 }
 impl SnapshotView {
-    fn terminal_click(
-        &mut self,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
-            return;
-        }
-        if super::terminal_links::gesture(event) {
-            if let Some(url) = self.terminal_web_link(event.position) {
-                cx.open_url(&url);
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if self.begin_divider(event.position, cx) {
-            return;
-        }
-        if self.selection.is_some() {
-            self.clear_selection(cx);
-        }
-        let input_ready = self.terminal_input_ready();
-        if !input_ready {
-            self.interrupt_input(cx);
-            // Keep keydown observable even before AppKit text input is installed.
-            self.terminal_focus.focus(window, cx);
-            if !self.historical_selection_ready() {
-                return;
-            }
-        }
-        if !super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()) {
-            // An unresolved target change must not leave the old pane armed for typing.
-            self.interrupt_input(cx);
-            return;
-        }
-        let (Some((bounds, _)), Some(width)) = (self.input_geometry, self.input_cell_width) else {
-            self.interrupt_input(cx);
-            return;
-        };
-        if !bounds.contains(&event.position) {
-            return;
-        }
-        let point = event.position - bounds.origin;
-        let id = super::hit_regions::hit(
-            &self.browser_state.regions,
-            f32::from(point.x),
-            f32::from(point.y),
-            width,
-            self.terminal_height(),
-        )
-        .map(str::to_owned);
-        if let Some(id) = id {
-            if self.browser_state.selected_pane.as_ref() != Some(&id) {
-                if input_ready {
-                    self.select(Selection::Pane(id), window, cx);
-                }
-            } else {
-                // Copying history is local; it cannot re-arm terminal input.
-                if input_ready {
-                    self.input_interrupted = false;
-                }
-                self.discard_composition(cx);
-                self.selection = super::selection::Capture::begin(
-                    &self.browser_state,
-                    f32::from(point.x) / width,
-                    f32::from(point.y) / self.terminal_height(),
-                );
-                cx.notify();
-            }
-            self.terminal_focus.focus(window, cx);
-        }
-    }
-    pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if self.selection.take().is_some() {
-            self.frame = self.browser_state.frame.clone();
-            cx.notify();
-        }
-    }
-    fn terminal_drag(
-        &mut self,
-        event: &MouseMoveEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.divider.is_some() {
-            if event.pressed_button != Some(MouseButton::Left) {
-                self.divider = None;
-            } else {
-                self.move_divider(event.position, false, cx);
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if event.pressed_button != Some(MouseButton::Left) {
-            if let Some(selection) = &mut self.selection {
-                selection.dragging = false;
-            }
-            return;
-        }
-        self.update_drag(event.position, cx);
-    }
-    fn update_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let height = self.terminal_height();
-        let (Some(selection), Some((bounds, _)), Some(width)) = (
-            &mut self.selection,
-            self.input_geometry,
-            self.input_cell_width,
-        ) else {
-            return;
-        };
-        if !selection.dragging {
-            return;
-        }
-        let point = position - bounds.origin;
-        if selection
-            .update(f32::from(point.x) / width, f32::from(point.y) / height)
-            .is_err()
-        {
-            self.clear_selection(cx);
-        }
-        cx.notify();
-        cx.stop_propagation();
-    }
-    fn terminal_release(
-        &mut self,
-        event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.divider.is_some() {
-            self.move_divider(event.position, true, cx);
-            cx.stop_propagation();
-            return;
-        }
-        self.update_drag(event.position, cx);
-        if let Some(selection) = &mut self.selection {
-            selection.dragging = false;
-        }
-        if self
-            .selection
-            .as_ref()
-            .is_some_and(|selection| selection.empty())
-        {
-            self.clear_selection(cx);
-        }
-        cx.notify();
-    }
     fn terminal_wheel(
         &mut self,
         event: &ScrollWheelEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.browser_state.retained_preview {
+            self.wheel = Default::default();
+            return;
+        }
         if self.pane_actions.is_some() || self.new_session.is_some() {
             return;
         }
@@ -267,6 +123,13 @@ impl SnapshotView {
             || super::session_tabs::shortcut(&event.keystroke)
             || sidebar::focus_shortcut(&event.keystroke)
         {
+            return;
+        }
+        self.cancel_tab_focus_restore();
+        self.cancel_tab_selection_restore();
+        if self.browser_state.retained_preview {
+            self.interrupt_input(cx);
+            cx.stop_propagation();
             return;
         }
         if self.divider.is_some() && !event.keystroke.modifiers.platform {
@@ -421,6 +284,12 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
+        if self.browser_state.retained_preview {
+            if terminal {
+                self.interrupt_input(cx);
+            }
+            return;
+        }
         if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
             return;
         }
@@ -452,6 +321,7 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_tab_focus_restore();
         self.sidebar_keyboard.active = false;
         self.attention.pending = None;
         self.cancel_attention();
@@ -546,7 +416,10 @@ impl SnapshotView {
             self.browser_request = request;
             self.pending_session_open =
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
-            self.frame = None;
+            if !selecting_pane || !self.browser_state.retained_preview {
+                self.frame = None;
+                self.browser_state.retained_preview = false;
+            }
             self.browser_state.input_ready = false;
             self.browser_state.status = "Loading selection".into();
             self.browser_state.surface = if going_home {
@@ -679,8 +552,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.observe_pointer();
         self.prepare_home_filter(cx);
         self.reconcile_sidebar_keyboard(window, cx);
+        self.restore_tab_focus(window, cx);
+        self.restore_tab_selection();
         self.agent_animation.begin_render();
         // GPUI dispatches shortcuts along the focused element path. Initial catalog
         // and selection transitions have no focused control; retain navigation without
@@ -800,7 +676,13 @@ impl SnapshotView {
             .child(self.sidebar_footer(cx));
         let application_tabs = self.application_tabs(window, cx);
         let window_strip = self.workspace_window_strip(window, cx);
-        let status = if self.selection.is_some() {
+        let status = if self.browser_state.retained_preview {
+            if self.browser_state.status.starts_with("Restoring terminal…") {
+                self.browser_state.status.clone()
+            } else {
+                format!("Restoring terminal… — {}", self.browser_state.status)
+            }
+        } else if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
         } else if self.input_interrupted {
             format!(
@@ -810,13 +692,24 @@ impl SnapshotView {
         } else {
             self.browser_state.status.clone()
         };
+        let show_status = super::status_presentation::visible(
+            &status,
+            self.developer_mode.enabled,
+            self.browser_state.input_ready,
+        );
         let terminal = (self.browser_state.surface != browser::Surface::Home).then(|| {
             div()
                 .size_full()
                 .track_focus(&self.terminal_focus)
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::terminal_click))
+                .on_mouse_down(MouseButton::Middle, cx.listener(Self::terminal_click))
+                .on_mouse_down(MouseButton::Right, cx.listener(Self::terminal_click))
                 .on_mouse_move(cx.listener(Self::terminal_drag))
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::terminal_release))
+                .on_mouse_up(MouseButton::Middle, cx.listener(Self::terminal_release))
+                .on_mouse_up(MouseButton::Right, cx.listener(Self::terminal_release))
+                .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::terminal_release))
+                .on_mouse_up_out(MouseButton::Right, cx.listener(Self::terminal_release))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(Self::terminal_release))
                 .on_key_down(cx.listener(Self::terminal_key))
                 .on_scroll_wheel(cx.listener(Self::terminal_wheel))
@@ -836,17 +729,19 @@ impl SnapshotView {
             .w_full()
             .bg(rgb(theme.background))
             .children(
-                super::pane_chrome::selected_title(&self.browser_state).map(|title| {
-                    div()
-                        .debug_selector(|| "tmux-selected-title".into())
-                        .flex_none()
-                        .max_w(px(160.))
-                        .px_2()
-                        .py_1()
-                        .truncate()
-                        .text_color(rgb(theme.muted))
-                        .child(title)
-                }),
+                super::pane_chrome::selected_title(&self.browser_state)
+                    .filter(|_| self.developer_mode.enabled)
+                    .map(|title| {
+                        div()
+                            .debug_selector(|| "tmux-selected-title".into())
+                            .flex_none()
+                            .max_w(px(160.))
+                            .px_2()
+                            .py_1()
+                            .truncate()
+                            .text_color(rgb(theme.muted))
+                            .child(title)
+                    }),
             )
             .child(
                 div()
@@ -889,7 +784,7 @@ impl SnapshotView {
                             .relative()
                             .flex_none()
                             .w_full()
-                            .child(context)
+                            .when(show_status, |footer| footer.child(context))
                             .children(
                                 self.pane_actions_panel(window, cx)
                                     .map(|panel| deferred(panel).with_priority(1)),

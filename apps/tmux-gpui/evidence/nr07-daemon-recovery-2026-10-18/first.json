@@ -1,0 +1,411 @@
+{
+  "passed": true,
+  "recovery": {
+    "sourceBefore": "$0|@0|%0|29471|29470",
+    "old": {
+      "pid": 29409,
+      "instanceId": "f17dab3a-ad0c-4ef2-926d-1d4c264672d8"
+    },
+    "authenticStaleRecord": true,
+    "readOnlyRefreshNoStart": true,
+    "replacement": {
+      "pid": 29960,
+      "instanceId": "a996bad4-ee3d-47ca-8681-2bd3c0db0050"
+    },
+    "sourceSurvived": true,
+    "freshInput": true
+  },
+  "observedOwnedPids": [
+    29409,
+    29960
+  ],
+  "observedSourcePids": [
+    29471,
+    29470
+  ],
+  "physicalNativeGui": false,
+  "node": "v24.21.0",
+  "cliSha256": "9f6c49a1155558be0689f8cea2bb433bbfc7c3eccf090827c3a3c0f0515c0366",
+  "sourceDependencies": false,
+  "packageVersion": "2.9.7",
+  "packageJsonSha256": "2171dadc16ffbf011f1c8ac4244a233eed484a77cfc8ab0287a2372b6846560f",
+  "bundledBridge": false,
+  "socketName": "nr07-tmi-recovery-HVsKki",
+  "initialAbsent": true,
+  "duplicateClicks": 2,
+  "runningObserved": true,
+  "observedDaemonIdentities": 2,
+  "zeroSessionGapReproduced": false,
+  "externalServer": false,
+  "firstSessionReady": true,
+  "inputVerified": true,
+  "socketInitiallyAbsent": true,
+  "noServerGuidance": false,
+  "noCreateAuthority": false,
+  "localTargetUnavailable": false,
+  "verifiedDaemonPresent": true,
+  "cleanupPassed": true,
+  "trace": [
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Loading sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "available",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "running",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Finding local sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The daemon has no online tmux server. Open an ordinary tmux session, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The daemon has no online tmux server. Open an ordinary tmux session, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Session created — choose it to open",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading windows",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Choose a pane or window",
+      "catalogComplete": true
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": false,
+      "status": "Waiting for input authority",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": true,
+      "status": "Keyboard ready — click terminal to type",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Terminal connection closed (code 1006)",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Reconnecting terminal",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Terminal connection closed (code 1006)",
+      "catalogComplete": false
+    },
+    {
+      "request": 3,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 3,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 3,
+      "home": "unavailable",
+      "setup": "available",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "unavailable",
+      "setup": "available",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "unavailable",
+      "setup": "running",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Finding local sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Finding local sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 4,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Choose a session",
+      "catalogComplete": false
+    },
+    {
+      "request": 5,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 5,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading windows",
+      "catalogComplete": false
+    },
+    {
+      "request": 5,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Choose a pane or window",
+      "catalogComplete": true
+    },
+    {
+      "request": 6,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 6,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": false,
+      "status": "Waiting for input authority",
+      "catalogComplete": false
+    },
+    {
+      "request": 6,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": true,
+      "status": "Keyboard ready — click terminal to type",
+      "catalogComplete": false
+    }
+  ],
+  "failures": []
+}

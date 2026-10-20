@@ -48,10 +48,13 @@ export function terminalInputForOpenTuiKey(
 }
 
 /** Preserve paste ordering and bracketed-paste semantics without an unbounded frame. */
-export function terminalInputsForPaste(text: string): readonly SessionRuntimeTerminalInput[] {
+export function terminalInputsForPaste(
+  text: string,
+  bracketedPaste: boolean,
+): readonly SessionRuntimeTerminalInput[] {
   if (text.length === 0) return [];
   if (text.includes("\0")) throw new TypeError("terminal paste must not contain NUL");
-  const framed = `\u001b[200~${text}\u001b[201~`;
+  const framed = bracketedPaste ? `\u001b[200~${text}\u001b[201~` : text;
   const inputs: SessionRuntimeTerminalInput[] = [];
   for (let offset = 0; offset < framed.length; ) {
     let end = Math.min(offset + SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, framed.length);

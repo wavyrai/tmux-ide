@@ -1,0 +1,39 @@
+{
+  "scope": "One instrumentation-validation pair only; not a comparative resource conclusion",
+  "runs": {
+    "baseline": {
+      "samples": 139,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "switchBoundaryCpuSeconds": [
+        0.12,
+        0.15,
+        0.12
+      ],
+      "busyToFreshBoundaryCpuSeconds": 5.88,
+      "sampledRssMaxKiB": 424464,
+      "maxPsCallMs": 8.447292000000743,
+      "maxQueueDelayMs": 8.675208999999995,
+      "maxInterSampleGapMs": 107.26916699999947,
+      "valid": true
+    },
+    "candidate": {
+      "samples": 137,
+      "cpuDisplayQuantumSeconds": [
+        0.01
+      ],
+      "switchBoundaryCpuSeconds": [
+        0.09,
+        0.1,
+        0.09
+      ],
+      "busyToFreshBoundaryCpuSeconds": 5.81,
+      "sampledRssMaxKiB": 430768,
+      "maxPsCallMs": 14.384833000000071,
+      "maxQueueDelayMs": 4.93579200000022,
+      "maxInterSampleGapMs": 115.15100000000075,
+      "valid": true
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node",
+    "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+    "rebuild",
+    "--global",
+    "--prefix",
+    "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/installed",
+    "--foreground-scripts",
+    "--allow-scripts=tmux-ide,@parcel/watcher,node-pty"
+  ],
+  "exitCode": 0,
+  "hashesUnchanged": true,
+  "canonicalRecordAbsent": true,
+  "homeStateRecordAbsent": true,
+  "nativeDependencyLoadExit": 0
+}

@@ -47,7 +47,12 @@ async function until(predicate) {
   }
 }
 try {
-  daemon = await startDaemon(fleet);
+  daemon = await startDaemon(
+    fleet,
+    process.env.TMUX_GPUI_TEST_CLI !== undefined
+      ? { cliPath: process.env.TMUX_GPUI_TEST_CLI }
+      : undefined,
+  );
   const options = {
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
@@ -66,11 +71,12 @@ try {
     }),
     { mode: 0o600 },
   );
+  const entry = process.env.TMUX_GPUI_TEST_DISCOVERY === "1" ? "--local" : config;
   browser = spawn(
     app ? join(app, "Contents/Resources/node") : process.execPath,
     app
-      ? [join(app, "Contents/Resources/bridge/browser.bundle.mjs"), config]
-      : ["--import", "tsx", resolve("apps/tmux-gpui/bridge/browser.ts"), config],
+      ? [join(app, "Contents/Resources/bridge/browser.bundle.mjs"), entry]
+      : ["--import", "tsx", resolve("apps/tmux-gpui/bridge/browser.ts"), entry],
     {
       env: { ...process.env, ...fleet.environment, ...(app ? { PATH: "/usr/bin:/bin" } : {}) },
       ...(app ? { cwd: fleet.root } : {}),

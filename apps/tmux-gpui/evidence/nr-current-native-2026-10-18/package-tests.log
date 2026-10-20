@@ -1,0 +1,11 @@
+✔ local app retains binary identity and refuses replacement (1453.36575ms)
+✔ local launcher never resolves dirname through caller PATH (6.474542ms)
+✔ assembler rejects a mismatched executable before running supplied tools (181.689667ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1723.299542

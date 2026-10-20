@@ -1,0 +1,257 @@
+{
+  "syntheticOwner": true,
+  "sourceBrowser": true,
+  "realDaemon": false,
+  "node": "v24.21.0",
+  "passed": true,
+  "checks": {
+    "initialUnavailable": true,
+    "refreshReadOnly": true,
+    "successfulReceiptReprobed": true,
+    "incompatibleRefused": true,
+    "noTerminalOrCreateAuthority": true,
+    "noAuthenticatedRequests": true,
+    "noAutomaticRetryObservationMs": 350,
+    "privateRecordSettingsUnchanged": true
+  },
+  "failures": [],
+  "requests": [
+    {
+      "path": "/identity",
+      "authorizationPresent": false
+    },
+    {
+      "path": "/identity",
+      "authorizationPresent": false
+    },
+    {
+      "path": "/identity",
+      "authorizationPresent": false
+    },
+    {
+      "path": "/identity",
+      "authorizationPresent": false
+    }
+  ],
+  "publications": [
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading sessions"
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "available",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading"
+    },
+    {
+      "request": 1,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading"
+    },
+    {
+      "request": 1,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading"
+    },
+    {
+      "request": 1,
+      "home": "loading",
+      "setup": null,
+      "status": "Loading"
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": null,
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "available",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "running",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "running",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "running",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "running",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "running",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    },
+    {
+      "request": 1,
+      "home": "unavailable",
+      "setup": "failed",
+      "status": "Daemon protocol 5 is incompatible with this preview (requires 4). Update the daemon or preview, then refresh."
+    }
+  ],
+  "expectedProtocol": 4,
+  "ownerProtocol": 5,
+  "browserPid": 62893,
+  "browserExited": true,
+  "serverClosed": true,
+  "cliChildrenExited": true,
+  "privateRootRemoved": true,
+  "protectedCliUnchanged": true,
+  "sourceHashes": {
+    "apps/tmux-gpui/bridge/browser.ts": "fb06f20db3ac99342cc98664d830f5bfd2dbd9be77da1b3f5e716ae74757b742",
+    "apps/tmux-gpui/bridge/discovery.ts": "9c24a7a428be77e18849132d58468cd9cd0be12b12ebcfc974b718b654ce4265",
+    "apps/tmux-gpui/bridge/local-setup.ts": "080b99051a2c96b69e18bf1c0ffbb59a53f22fb38f00b484799a68fd33077b1d"
+  },
+  "harnessHash": "65ccb6990cee627652318bd63824b90c4b1ada364fb4df18e5ab8f52976d5ed6",
+  "stderrBytes": 0
+}

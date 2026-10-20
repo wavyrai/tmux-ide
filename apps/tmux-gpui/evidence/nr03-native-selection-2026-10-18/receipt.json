@@ -1,0 +1,45 @@
+{
+  "sourceHead": "d8cfaa45",
+  "scope": "Completed selection coordinates retained across proven A/B/A viewport. Capture binds identity at original begin; cache contains no frame, text, composition, drag or terminal authority. At most8 entries via validated retained tab rows.",
+  "nativePaths": [
+    "browser.rs",
+    "browser_state.rs",
+    "browser_ui.rs",
+    "browser_selection_identity_tests.rs",
+    "picker/tests/session_tabs/selection_baseline.rs",
+    "pointer.rs",
+    "selection.rs",
+    "selection/retained.rs",
+    "selection_tests.rs",
+    "session_open.rs",
+    "session_tabs.rs",
+    "session_tabs/selection.rs"
+  ],
+  "checks": [
+    {
+      "log": "first.log",
+      "command": "cargo test --locked -p herdr-gpui selection --lib",
+      "result": "107 passed"
+    },
+    {
+      "log": "snapshot.log",
+      "command": "cargo test --locked -p herdr-gpui tmux_snapshot --lib",
+      "result": "436 passed,0 failed,1 ignored"
+    },
+    {
+      "log": "fmt.log",
+      "command": "cargo fmt --all -- --check",
+      "result": "exit0"
+    }
+  ],
+  "baseline": "../nr03-native-selection-baseline/expected-retention.log: proven prior A/B/A selected text loss",
+  "runtime": "../nr03-selection-identity-runtime/result.json (bridge agent): actual busy historical A/B/A identity stable atomically in first completed publication; reset changed identity",
+  "limitations": [
+    "No physical GUI verification while Mac locked",
+    "Live/mixed changed canonical proof conservatively declines restoration",
+    "Older bridge without optional identity continues clearing selection",
+    "No retained arbitrary focus controls or active IME composition"
+  ],
+  "protectedCliSha256": "f09acb9b1a4ae9349b7d10858234995066085ff8e9403150cbb70002a9fea428",
+  "review": "np01_review draft approved; final review requested after gates"
+}

@@ -77,6 +77,7 @@ fn browser_fixture(
         window_label: Some("Long window label ".repeat(8)),
     };
     SnapshotView {
+        graphics: Default::default(),
         presence,
         _activation: None,
         _appearance: None,
@@ -102,6 +103,7 @@ fn browser_fixture(
         agent_animation: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
+        developer_mode: Default::default(),
         terminal_font: Default::default(),
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
@@ -111,6 +113,7 @@ fn browser_fixture(
         input_geometry: None,
         input_cell_width: None,
         painted_frame: None,
+        pointer: Default::default(),
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
@@ -153,6 +156,7 @@ fn real_browser_keeps_long_status_and_terminal_usable_at_minimum_width(cx: &mut 
             view.update(cx, |view, _| {
                 view.browser_state.status = status;
                 view.input_interrupted = interrupted;
+                view.developer_mode.enabled = true;
             })
         });
         cx.simulate_resize(size(px(width), px(400.)));
@@ -191,6 +195,55 @@ fn real_browser_keeps_long_status_and_terminal_usable_at_minimum_width(cx: &mut 
                 }
             ),
             "layout must not offer terminal text or switch selection"
+        );
+    }
+}
+
+#[gpui::test]
+fn normal_ready_workspace_reclaims_footer_without_hiding_errors(cx: &mut TestAppContext) {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|_, cx| browser_fixture(cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| {
+            view.input_interrupted = false;
+            view.developer_mode.enabled = false;
+        });
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    assert!(cx.debug_bounds("tmux-status-viewport").is_none());
+    assert!(cx.debug_bounds("tmux-selected-title").is_none());
+    let quiet = cx.update(|_, cx| view.read(cx).input_geometry.unwrap().0);
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| view.developer_mode.enabled = true);
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    assert!(cx.debug_bounds("tmux-status-viewport").is_some());
+    let technical = cx.update(|_, cx| view.read(cx).input_geometry.unwrap().0);
+    assert!(quiet.size.height > technical.size.height);
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| {
+            view.developer_mode.enabled = false;
+            view.browser_state.status = "Copy failed — try again".into();
+        });
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    assert!(cx.debug_bounds("tmux-status-viewport").is_some());
+    assert!(cx.debug_bounds("tmux-selected-title").is_none());
+    while let Ok(command) = receiver.try_recv() {
+        assert!(
+            matches!(
+                command,
+                super::super::browser::Command::Input {
+                    input: super::super::keys::Input::Resize { .. },
+                    ..
+                }
+            ),
+            "presentation may resize but must not send text or navigate"
         );
     }
 }

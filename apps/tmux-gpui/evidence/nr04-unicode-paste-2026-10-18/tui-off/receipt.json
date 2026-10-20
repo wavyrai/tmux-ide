@@ -1,0 +1,40 @@
+{
+  "lane": "tui",
+  "modeOn": false,
+  "sourceHead": "d0348e83a5b9eb41343888bd67d0d2d290b57417",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxSha256": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96",
+  "tmuxVersion": "tmux 3.8",
+  "node": "v24.21.0",
+  "payloadBytes": 2138,
+  "payloadCodeUnits": 2127,
+  "expectedBytes": 2138,
+  "expectedSha256": "cca7eb9dfb059bd65c734bd09733b4feca3fbc3ba608b496967bba97fc4053b7",
+  "claim": "DEC2004-off byte fidelity and coherent content only; no physical GPUI or performance claim",
+  "before": "%0|96928|0|1|132|40|132|41",
+  "sourceBracketedPaste": false,
+  "inputReceipt": {
+    "version": 1,
+    "kind": "paste",
+    "target": "%0",
+    "paneId": "%0",
+    "sessionId": "$0",
+    "geometry": {
+      "cols": 160,
+      "rows": 44
+    },
+    "delivery": "exact-bytes-to-immutable-host-pane-pty",
+    "bytesInjected": 2150,
+    "phases": 1,
+    "transportCalls": 1,
+    "physicalTransportCalls": 1,
+    "elapsedMs": 23.22
+  },
+  "pass": false,
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n... Skipped lines\n\n+ Buffer(2150) [Uint8Array] [\n+   27,\n+   91,\n+   50,\n+   48,\n+   48,\n+   126,\n- Buffer(2138) [Uint8Array] [\n    231,\n    149,\n    140,\n    240,\n    159,\n...\n    68,\n+   27,\n+   91,\n+   50,\n+   48,\n+   49,\n+   126\n  ]\n",
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 5,
+  "cleanup": true,
+  "protectedCliUnchanged": true
+}

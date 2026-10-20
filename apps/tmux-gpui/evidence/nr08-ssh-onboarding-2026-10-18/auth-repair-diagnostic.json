@@ -1,0 +1,31 @@
+{
+  "passed": false,
+  "node": "v24.21.0",
+  "cliSha256": "79d42e21896287a3055c99200bfec697adebda3466fd703fcafcb09c4427ef7d",
+  "realSsh": true,
+  "actualSavedAdd": true,
+  "denial": true,
+  "repaired": false,
+  "input": false,
+  "cleanup": true,
+  "discoveryDescriptor": "synthetic descriptor for actual private daemon",
+  "remoteCliPreflightQualified": false,
+  "lastRemote": [],
+  "trace": [
+    {
+      "phase": "saved-add-denied",
+      "diagnostic": {
+        "phase": "needs-attention",
+        "failure": "ssh-authentication"
+      },
+      "frame": false,
+      "input": false
+    }
+  ],
+  "failures": [
+    {
+      "phase": "explicit-retry",
+      "message": "Recovery deadline; phase=explicit-retry"
+    }
+  ]
+}

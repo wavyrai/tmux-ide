@@ -1,0 +1,107 @@
+{
+  "passed": true,
+  "node": "v24.21.0",
+  "cliSha256": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
+  "realSsh": true,
+  "failureKind": "incompatible",
+  "actualSavedAdd": true,
+  "denial": true,
+  "repaired": true,
+  "input": true,
+  "deniedInputAbsent": true,
+  "cleanup": true,
+  "protocolRepair": {
+    "metadataRequests": [
+      {
+        "stage": "server-catalog",
+        "status": 200,
+        "code": null
+      },
+      {
+        "stage": "session-catalog",
+        "status": 200,
+        "code": null
+      },
+      {
+        "stage": "session-open",
+        "status": 200,
+        "code": null
+      }
+    ],
+    "deniedSemanticPane": "pane.promoted.775a72b0632233bc0a77",
+    "deniedIdentitySource": "owned physical pane stamp after authenticated historical session-open",
+    "before": {
+      "pid": 62929,
+      "instanceId": "cfbe095e-54d4-4f94-a565-8d422c3732fb",
+      "environmentId": "a30d3191-316e-47a0-a34d-d380386a03c4",
+      "protocolVersion": 3,
+      "productVersion": "2.9.0-beta.45"
+    },
+    "sourceBefore": [
+      "$0|@0|%0|62924"
+    ],
+    "oldExit": {
+      "code": 0,
+      "signal": null
+    },
+    "after": {
+      "pid": 63088,
+      "instanceId": "ef201c73-55b1-4ac7-b9af-4587d5a2f994",
+      "environmentId": "a30d3191-316e-47a0-a34d-d380386a03c4",
+      "protocolVersion": 4,
+      "productVersion": "2.9.7"
+    },
+    "sourceAfter": [
+      "$0|@0|%0|62924"
+    ],
+    "sourceAfterInput": [
+      "$0|@0|%0|62924"
+    ]
+  },
+  "historicalCliSha256": "928005012711bcbf1430ae9d29ac1dca08c8468aed07e558eb9fd8fa1277c39e",
+  "historicalArtifactScope": "source-built non-hermetic; not an exact published release",
+  "discoveryDescriptor": "actual explicit CLI remote-daemon-info using mirrored verified private record",
+  "remoteCliPreflightQualified": true,
+  "installedPackageQualified": false,
+  "cliArtifact": {
+    "kind": "explicit-cli",
+    "packageVersion": null
+  },
+  "syntheticHandshakeRequests": 0,
+  "lastRemote": [
+    {
+      "state": "ready",
+      "conflict": false,
+      "diagnostic": {
+        "phase": "ready",
+        "failure": null
+      },
+      "sessionCount": 1,
+      "retry": false
+    }
+  ],
+  "trace": [
+    {
+      "phase": "saved-add-denied",
+      "diagnostic": {
+        "phase": "needs-attention",
+        "failure": "incompatible"
+      },
+      "frame": false,
+      "input": false
+    },
+    {
+      "phase": "explicit-retry",
+      "diagnostic": {
+        "phase": "ready",
+        "failure": null
+      },
+      "sameSavedMachine": true
+    },
+    {
+      "phase": "input-ready",
+      "freshInputExecuted": true
+    }
+  ],
+  "failures": []
+}

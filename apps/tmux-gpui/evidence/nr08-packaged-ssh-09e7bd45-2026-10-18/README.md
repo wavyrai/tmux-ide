@@ -1,0 +1,5 @@
+# Current 09e7bd45 packaged bridge recovery over private SSH
+
+Existing terminal-recovery-smoke.mjs run43209 exited0 using TMUX_GPUI_TEST_SSH=1, the browser/helper inside the current unsigned app, explicit frozen source CLI d425 and stock tmux3.8. Exact input hashes are retained. Same-browser/same-pane automatic recovery after owned daemon replacement passed, fresh input executed and interrupted input was absent. Selecting Home after the second outage prevented late reopening. Fixture cleanup completed without error; no independent exhaustive PID census is claimed.
+
+Real private OpenSSH transports the connection. Discovery descriptor is synthetic for the real private daemon; this is not actual installed remote-CLI preflight, native GUI, Spark, signing or second-Mac acceptance. Latest serializer/guidance changes are present in the packaged browser. No production sessions or settings changed. The log is unmodified except trailing-newline normalization. No product fix was needed for this passing journey.

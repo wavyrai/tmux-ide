@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "scope": "historical source CLI build and static dependency resolution only; no CLI/daemon execution",
+  "sourceCommit": "0806cd438099b0dc8fb581bcca5a51a196b8df72",
+  "buildCommand": "Node24 source/scripts/build-cli.mjs --outfile source/bin/cli-v3.mjs --metafile build-metafile.json",
+  "protocol": 3,
+  "packageVersion": "2.9.0-beta.45",
+  "cliSha256": "928005012711bcbf1430ae9d29ac1dca08c8468aed07e558eb9fd8fa1277c39e",
+  "lockSha256": "07702e15118d75c17213590513b6e2e0d1bf6923a6812b18c022551b0eb2258f",
+  "protectedCliUnchanged": true,
+  "externalPackages": 16,
+  "sourceInputs": 428,
+  "hooksOrInstalls": false,
+  "runtimeLaunched": false
+}

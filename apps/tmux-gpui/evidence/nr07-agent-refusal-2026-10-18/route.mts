@@ -1,0 +1,10 @@
+import {Hono} from 'hono';
+import {mountTmuxServerRoutes} from '../../../packages/daemon/src/command-center/tmux-servers.ts';
+import {WorkspacePaneCreationError} from '../../../packages/daemon/src/lib/workspace-pane-creation.ts';
+import {writeFileSync} from 'node:fs';
+const scope={serverId:`tmux-server.${'a'.repeat(32)}`,generation:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'};
+let calls=0;
+const app=new Hono();mountTmuxServerRoutes(app,{ownerToken:'fixture',owners:{withOwner:async(_scope:any,work:any)=>work({createSessionPane:async()=>{calls++;throw new WorkspacePaneCreationError('harness_unavailable');}})} as any});
+const response=await app.request(`/api/v1/tmux-servers/${scope.serverId}/${scope.generation}/panes/create?liveSessionId=live-session.${'a'.repeat(20)}`,{method:'POST',headers:{Authorization:'Bearer fixture','Content-Type':'application/json'},body:JSON.stringify({operationId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',expectedDaemonInstanceId:scope.generation,intent:{workspaceName:'main',kind:'agent',displayTitle:'Claude',harnessProfileId:'claude',role:'implementer',placement:{kind:'window'}}})});
+const result={calls,status:response.status,body:await response.json(),scope:'Actual authenticated route with injected owner harness_unavailable; no actual executable probe or GUI'};
+writeFileSync('.tasks/native-reliability-mission/nr07-missing-agent/route-result.json',JSON.stringify(result,null,2));console.log(result);

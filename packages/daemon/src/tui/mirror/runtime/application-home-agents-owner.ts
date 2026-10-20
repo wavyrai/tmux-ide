@@ -326,7 +326,12 @@ export function createApplicationHomeNavigationOwner(options: {
         command === "switch-session"
       )
         return null;
-      if (options.sessionOwner()?.snapshot()?.status !== "live") return "Open a live session first";
+      const status = options.sessionOwner()?.snapshot()?.status;
+      if (status !== "live") {
+        if (status === "rebinding") return "Terminal is updating. Try again shortly.";
+        if (status === "connecting") return "Opening terminal…";
+        return "Open a live session first";
+      }
       return command !== "new-window" && command !== "new-agent" && !options.focusedPane()
         ? "Select a live pane first"
         : null;

@@ -81,7 +81,12 @@ const until = async (predicate) => {
   }
 };
 try {
-  daemon = await startDaemon(fleet);
+  daemon = await startDaemon(
+    fleet,
+    process.env.TMUX_GPUI_TEST_CLI !== undefined
+      ? { cliPath: process.env.TMUX_GPUI_TEST_CLI }
+      : undefined,
+  );
   const options = {
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
@@ -213,7 +218,7 @@ try {
           const diagnostic = parseDiagnosticLine(line);
           return (
             diagnostic &&
-            ["source-closed", "runtime-failure"].includes(diagnostic.code) &&
+            ["source-closed", "runtime-failure", "topology-changed"].includes(diagnostic.code) &&
             latest.status === diagnosticStatus(diagnostic)
           );
         })) &&

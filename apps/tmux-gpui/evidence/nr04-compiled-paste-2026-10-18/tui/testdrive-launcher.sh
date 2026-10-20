@@ -1,0 +1,5 @@
+#!/bin/sh
+cd '/tmp/tmi-e2e-nr04-paste-tui-tnKiss/tui/home'
+unset TMUX_IDE_RUNTIME_MODE TMUX_IDE_HOME TMUX_IDE_REGISTRY_DIR TMUX_IDE_DAEMON_INFO_DIR TMUX_IDE_CLEANUP_TOKEN TMUX_IDE_TMUX_SOCKET_NAME TMUX_IDE_TMUX_SOCKET_PATH
+export TMUX_IDE_CLIPBOARD_BACKEND=osc52 TMUX_IDE_CWD='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/tui/home' TMUX_IDE_CLI='/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/bin/cli.js' TMUX_IDE_TUI_PERF_LOG='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/tui/performance.jsonl' TMUX_IDE_TUI_LAUNCH_EPOCH_MS=1792323938104 TMUX_IDE_RUNTIME_MODE='testdrive' TMUX_IDE_HOME='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/tui/home' TMUX_IDE_REGISTRY_DIR='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/daemon' TMUX_IDE_DAEMON_INFO_DIR='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/daemon' TMUX_IDE_CLEANUP_TOKEN='testdrive:cleanup:501' TMUX_IDE_TMUX_SOCKET_PATH='/tmp/tmi-e2e-nr04-paste-tui-tnKiss/t.sock' TMUX_IDE_CAUSAL_CELL_FIXTURE='0' TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON=1
+exec '/tmp/tmi-e2e-nr04-paste-tui-tnKiss/installed-tui.sh' 'app' '--target=e2e-nr04-paste-tui-3427-0' 2>>'/tmp/tmi-e2e-nr04-paste-tui-tnKiss/tui/stderr.log'

@@ -93,3 +93,44 @@ fn local_creation_refuses_unavailable_and_stale_authority(cx: &mut TestAppContex
     });
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn first_local_session_uses_exact_capability_once_and_revokes_dialog(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.local_session_create = Some(browser::local_session::Capability {
+            action: "11111111-1111-4111-8111-111111111111".into(),
+        });
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            assert!(view.local_session_available());
+            view.open_local_session(99, window, cx);
+            assert!(view.new_session.is_none());
+            view.open_local_session(0, window, cx);
+            assert!(view.new_session.is_some());
+            view.browser_state.local_session_create = None;
+            view.submit_new_session(window, cx);
+            assert!(view.new_session.is_none());
+            view.browser_state.local_session_create = Some(browser::local_session::Capability {
+                action: "22222222-2222-4222-8222-222222222222".into(),
+            });
+            view.open_new_session(0, window, cx);
+            view.new_session
+                .as_ref()
+                .unwrap()
+                .input
+                .update(cx, |input, cx| input.set_text_selected("first-local", cx));
+            view.submit_new_session(window, cx);
+            view.open_local_session(0, window, cx);
+            assert!(view.new_session.is_none());
+        })
+    });
+    assert!(
+        matches!(receiver.try_recv().unwrap(), browser::Command::CreateLocalSession{request:0,action,name} if action=="22222222-2222-4222-8222-222222222222" && name=="first-local")
+    );
+    assert!(receiver.try_recv().is_err());
+}

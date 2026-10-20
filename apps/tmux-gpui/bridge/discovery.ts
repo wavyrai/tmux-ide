@@ -1,3 +1,4 @@
+import { registerVerifiedVersion } from "./diagnostic-versions.ts";
 import { randomUUID } from "node:crypto";
 import {
   getCanonicalDaemonInfoPath,
@@ -19,14 +20,14 @@ export interface LocalPreviewHostProof {
   verify(signal?: AbortSignal): Promise<void>;
 }
 // Provenance is process-private. Parsing a host file or copying its fields cannot mint it.
+const identityVersions = new WeakMap<object, string>();
 const localHosts = new WeakMap<PreviewHost, LocalPreviewHostProof>();
 export function localPreviewHostProof(host: PreviewHost): LocalPreviewHostProof | null {
   return localHosts.get(host) ?? null;
 }
 
 const discoveryMessages = Object.freeze({
-  "no-daemon":
-    "No usable local daemon was found. If tmux-ide is installed, run tmux-ide --headless in a terminal and keep it running, then Refresh sessions.",
+  "no-daemon": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
   unavailable:
     "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.",
   "no-server":
@@ -96,6 +97,7 @@ export async function discoverPreviewDaemon(
   const current = inspectCanonicalDaemonInfoPath(path);
   if (current.status !== "valid" || JSON.stringify(current.info) !== JSON.stringify(info))
     throw new DaemonDiscoveryError("record-changed");
+  identityVersions.set(info, identity.productVersion);
   return info;
 }
 
@@ -175,5 +177,6 @@ export async function discoverPreviewHost(
       assertCurrent();
     },
   });
+  registerVerifiedVersion(host, identityVersions.get(info), assertCurrent);
   return host;
 }

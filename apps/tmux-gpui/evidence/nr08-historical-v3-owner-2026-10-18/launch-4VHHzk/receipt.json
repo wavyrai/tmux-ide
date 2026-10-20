@@ -1,0 +1,42 @@
+{
+  "scope": "Historical source-built non-hermetic v3 owner smoke; no SSH or installed-release qualification",
+  "root": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-Ygdj2d",
+  "passed": true,
+  "cleanup": true,
+  "namespace": {
+    "mode": "test",
+    "home": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-Ygdj2d/home",
+    "state": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-Ygdj2d/state",
+    "info": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-Ygdj2d/info",
+    "socketName": "nr08-v3-bafd7046-8f09-4540-b5b0-d8b1abcb34e9",
+    "socketPath": "/tmp/tmux-501/nr08-v3-bafd7046-8f09-4540-b5b0-d8b1abcb34e9",
+    "alternateSocketPath": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-Ygdj2d/tmux-tmp/tmux-501/nr08-v3-bafd7046-8f09-4540-b5b0-d8b1abcb34e9",
+    "tmuxTmpdirStrippedByPinnedRunner": true
+  },
+  "socketAbsentBefore": true,
+  "childPid": 53025,
+  "identity": {
+    "pid": 53025,
+    "protocolVersion": 3,
+    "productVersion": "2.9.0-beta.45",
+    "instanceId": "b42f3da3-4f94-40c8-b123-4bfdd9c8603a",
+    "environmentId": "cf0c7c4d-8c76-40c8-b0eb-ed27d33ab370",
+    "startedAt": "2026-10-18T14:52:53.931Z"
+  },
+  "authenticatedSessionsRead": true,
+  "publicIdentityAndHealth": true,
+  "childExit": {
+    "code": 0,
+    "signal": null
+  },
+  "socketAbsentAfter": true,
+  "startupDiagnostic": {
+    "codes": [],
+    "modules": [],
+    "locations": []
+  },
+  "stdoutBytes": 82,
+  "stderrBytes": 0,
+  "cliSha256": "928005012711bcbf1430ae9d29ac1dca08c8468aed07e558eb9fd8fa1277c39e",
+  "protectedCliUnchanged": true
+}

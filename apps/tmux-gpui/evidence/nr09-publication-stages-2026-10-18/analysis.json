@@ -1,0 +1,234 @@
+{
+  "scope": "instrumented owned browser publication stages; synchronous elapsed times not CPU/utilization/flush/paint",
+  "wholeLifecycle": {
+    "publications": 215,
+    "bytes": 81904606,
+    "queued": 88,
+    "stages": {
+      "preludeUs": {
+        "sumUs": 176803,
+        "medianUs": 302,
+        "maxUs": 10868
+      },
+      "envelopeUs": {
+        "sumUs": 20450,
+        "medianUs": 98,
+        "maxUs": 553
+      },
+      "stringifyUs": {
+        "sumUs": 258525,
+        "medianUs": 1653,
+        "maxUs": 4919
+      },
+      "sizeUs": {
+        "sumUs": 48781,
+        "medianUs": 338,
+        "maxUs": 570
+      },
+      "writeUs": {
+        "sumUs": 24131,
+        "medianUs": 6,
+        "maxUs": 616
+      }
+    }
+  },
+  "byMeasuredRequest": {
+    "9": {
+      "publications": 10,
+      "bytes": 5773030,
+      "queued": 5,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 9145,
+          "medianUs": 342.0,
+          "maxUs": 5833
+        },
+        "envelopeUs": {
+          "sumUs": 1071,
+          "medianUs": 111.5,
+          "maxUs": 171
+        },
+        "stringifyUs": {
+          "sumUs": 20687,
+          "medianUs": 1747.5,
+          "maxUs": 4919
+        },
+        "sizeUs": {
+          "sumUs": 3862,
+          "medianUs": 368.0,
+          "maxUs": 570
+        },
+        "writeUs": {
+          "sumUs": 2617,
+          "medianUs": 231.5,
+          "maxUs": 616
+        }
+      }
+    },
+    "11": {
+      "publications": 18,
+      "bytes": 10393182,
+      "queued": 10,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 11146,
+          "medianUs": 315.0,
+          "maxUs": 5668
+        },
+        "envelopeUs": {
+          "sumUs": 1960,
+          "medianUs": 112.0,
+          "maxUs": 135
+        },
+        "stringifyUs": {
+          "sumUs": 33572,
+          "medianUs": 1732.0,
+          "maxUs": 4265
+        },
+        "sizeUs": {
+          "sumUs": 6403,
+          "medianUs": 347.5,
+          "maxUs": 387
+        },
+        "writeUs": {
+          "sumUs": 4014,
+          "medianUs": 2.5,
+          "maxUs": 544
+        }
+      }
+    },
+    "13": {
+      "publications": 10,
+      "bytes": 5773057,
+      "queued": 5,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 8277,
+          "medianUs": 304.5,
+          "maxUs": 5606
+        },
+        "envelopeUs": {
+          "sumUs": 960,
+          "medianUs": 103.5,
+          "maxUs": 130
+        },
+        "stringifyUs": {
+          "sumUs": 16805,
+          "medianUs": 1662.5,
+          "maxUs": 1910
+        },
+        "sizeUs": {
+          "sumUs": 3478,
+          "medianUs": 343.5,
+          "maxUs": 380
+        },
+        "writeUs": {
+          "sumUs": 2403,
+          "medianUs": 232.0,
+          "maxUs": 528
+        }
+      }
+    }
+  },
+  "frameKinds": {
+    "0": {
+      "publications": 74,
+      "bytes": 461369,
+      "queued": 0,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 13637,
+          "medianUs": 105.0,
+          "maxUs": 1806
+        },
+        "envelopeUs": {
+          "sumUs": 2225,
+          "medianUs": 23.5,
+          "maxUs": 82
+        },
+        "stringifyUs": {
+          "sumUs": 1452,
+          "medianUs": 18.0,
+          "maxUs": 55
+        },
+        "sizeUs": {
+          "sumUs": 184,
+          "medianUs": 2.0,
+          "maxUs": 16
+        },
+        "writeUs": {
+          "sumUs": 1118,
+          "medianUs": 11.5,
+          "maxUs": 193
+        }
+      }
+    },
+    "1": {
+      "publications": 93,
+      "bytes": 53695318,
+      "queued": 49,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 88363,
+          "medianUs": 328,
+          "maxUs": 8357
+        },
+        "envelopeUs": {
+          "sumUs": 9957,
+          "medianUs": 109,
+          "maxUs": 184
+        },
+        "stringifyUs": {
+          "sumUs": 168276,
+          "medianUs": 1682,
+          "maxUs": 4919
+        },
+        "sizeUs": {
+          "sumUs": 32955,
+          "medianUs": 346,
+          "maxUs": 570
+        },
+        "writeUs": {
+          "sumUs": 21553,
+          "medianUs": 1,
+          "maxUs": 616
+        }
+      }
+    },
+    "2": {
+      "publications": 48,
+      "bytes": 27747919,
+      "queued": 39,
+      "stages": {
+        "preludeUs": {
+          "sumUs": 74803,
+          "medianUs": 504.0,
+          "maxUs": 10868
+        },
+        "envelopeUs": {
+          "sumUs": 8268,
+          "medianUs": 150.5,
+          "maxUs": 553
+        },
+        "stringifyUs": {
+          "sumUs": 88797,
+          "medianUs": 1753.5,
+          "maxUs": 2424
+        },
+        "sizeUs": {
+          "sumUs": 15642,
+          "medianUs": 350.0,
+          "maxUs": 416
+        },
+        "writeUs": {
+          "sumUs": 1460,
+          "medianUs": 1.0,
+          "maxUs": 571
+        }
+      }
+    }
+  },
+  "drainWrites": 36,
+  "drainWriteSumUs": 19770,
+  "overflow": 0
+}

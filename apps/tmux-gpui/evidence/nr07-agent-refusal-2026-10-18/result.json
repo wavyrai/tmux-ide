@@ -1,0 +1,8 @@
+{
+  "calls": 1,
+  "observedCode": "request-failed",
+  "observedStatus": 409,
+  "observedMessage": "tmux server client request-failed",
+  "originalCodeRetained": false,
+  "scope": "Injected transport refusal only; no actual missing binary or GUI exercised"
+}

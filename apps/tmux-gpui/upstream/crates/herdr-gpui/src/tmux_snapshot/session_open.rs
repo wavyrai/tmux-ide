@@ -56,7 +56,7 @@ impl SnapshotView {
                     Target::Admitted => true,
                 })
             && state.selected_pane.is_none()
-            && state.frame.is_none()
+            && (state.frame.is_none() || state.retained_preview)
             && !state.input_ready;
         let pane = valid_session
             .then(|| state.preferred_pane.clone())
@@ -69,7 +69,11 @@ impl SnapshotView {
             });
         self.pending_session_open = None;
         if let Some(pane) = pane {
+            let restore_focus = self.session_tabs.focus.restore;
+            let restore_selection = self.session_tabs.selections.restore;
             self.select(Selection::Pane(pane), window, cx);
+            self.session_tabs.focus.restore = restore_focus;
+            self.session_tabs.selections.restore = restore_selection;
         }
     }
 }

@@ -212,6 +212,17 @@ impl SnapshotView {
                             .debug_selector(move || format!("fleet-machine-status-{index}")),
                         ),
                 );
+            if let Some(message) = group.connection_hint() {
+                card = card.child(
+                    div()
+                        .debug_selector(move || format!("fleet-machine-guidance-{index}"))
+                        .ml(px(36.))
+                        .mt_1()
+                        .min_w_0()
+                        .text_color(rgb(theme.muted))
+                        .child(message),
+                );
+            }
             let mut actions = div().mt_2().ml(px(36.)).flex().flex_wrap().gap_2();
             if let Some(token) = group.retry.clone() {
                 actions = actions.child(

@@ -4,6 +4,10 @@ use super::{Error, decode};
 pub(super) mod fleet;
 #[path = "home_agents.rs"]
 pub(super) mod home_agents;
+#[path = "browser_local_session.rs"]
+pub(super) mod local_session;
+#[path = "browser_local_setup.rs"]
+pub(super) mod local_setup;
 #[path = "browser_machines.rs"]
 pub(super) mod machines;
 use herdr_client::protocol::FrameData;
@@ -71,6 +75,10 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub diagnostics: Option<super::diagnostics::Versions>,
+    pub pointer_modes: Option<decode::PointerModes>,
+    pub local_setup: Option<local_setup::Setup>,
+    pub local_session_create: Option<local_session::Capability>,
     pub machines: Option<machines::Registry>,
     pub fleet: Option<fleet::Fleet>,
     pub selected_server: Option<fleet::SelectedServer>,
@@ -100,10 +108,12 @@ pub(super) struct State {
     pub surface: Surface,
     pub home_phase: HomePhase,
     pub appearance: Option<super::appearance::Appearance>,
+    pub selection_identity: Option<String>,
     pub copy_region: Option<super::copy::Region>,
     pub regions: Vec<super::hit_regions::Region>,
     pub request: u64,
     pub input_ready: bool,
+    pub retained_preview: bool,
     pub history_offset: u32,
     pub presence_revision: u64,
     pub sessions: Vec<Choice>,
@@ -114,10 +124,15 @@ pub(super) struct State {
     pub selected_pane: Option<String>,
     pub status: String,
     pub frame: Option<Arc<FrameData>>,
+    /// Kitty graphics placements in frame cells.
+    pub graphics: Vec<super::kitty_graphics::Placement>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Publication {
+    diagnostics: Option<super::diagnostics::Versions>,
+    local_setup: Option<local_setup::Setup>,
+    local_session_create: Option<local_session::Capability>,
     fleet: Option<fleet::Fleet>,
     selected_server: Option<fleet::SelectedServer>,
     machines: Option<machines::Registry>,
@@ -154,6 +169,8 @@ struct Publication {
     #[serde(default)]
     copy_region: Option<super::copy::Region>,
     #[serde(default)]
+    selection_identity: Option<String>,
+    #[serde(default)]
     regions: Vec<super::hit_regions::Region>,
     version: u8,
     connection: String,
@@ -173,6 +190,14 @@ struct Publication {
     selected_pane: Option<String>,
     status: String,
     snapshot: Option<serde_json::Value>,
+    retained_preview: Option<RetainedPreview>,
+    #[serde(default)]
+    graphics: Vec<super::kitty_graphics::Placement>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedPreview {
+    snapshot: serde_json::Value,
 }
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -287,6 +312,12 @@ pub(super) enum Command {
         roster_revision: u64,
         key: String,
     },
+    #[serde(rename = "create-local-session")]
+    CreateLocalSession {
+        request: u64,
+        action: String,
+        name: String,
+    },
     #[serde(rename = "create-session")]
     CreateSession {
         request: u64,
@@ -363,6 +394,10 @@ pub(super) enum Command {
     Refresh {
         request: u64,
     },
+    #[serde(rename = "local-setup")]
+    LocalSetup {
+        request: u64,
+    },
     Session {
         request: u64,
         id: String,
@@ -370,6 +405,10 @@ pub(super) enum Command {
     Pane {
         request: u64,
         id: String,
+    },
+    #[serde(rename = "kitty-missing")]
+    KittyMissing {
+        digests: Vec<String>,
     },
 }
 pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
@@ -391,6 +430,52 @@ impl Reader {
         } else {
             Surface::Home
         });
+        if p.local_setup.is_some() && surface != Surface::Home {
+            return Err(Error::Invalid("Local setup requires Home"));
+        }
+        local_session::validate(&p, surface)?;
+        let retained_preview = p.retained_preview.is_some();
+        if p.selection_identity.as_ref().is_some_and(|identity| {
+            identity.len() != 64
+                || !identity
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || surface != Surface::Workspace
+                || retained_preview
+                || p.snapshot.is_none()
+                || p.selected_pane.is_none()
+                || p.copy_region.is_none()
+        }) {
+            return Err(Error::Invalid("Invalid selection identity"));
+        }
+        if p.diagnostics.is_some()
+            && (surface != Surface::Workspace
+                || !p.input_ready
+                || retained_preview
+                || p.snapshot.is_none())
+        {
+            return Err(Error::Invalid(
+                "Diagnostic versions require current live workspace",
+            ));
+        }
+        if retained_preview
+            && (surface != Surface::Workspace
+                || p.snapshot.is_some()
+                || p.input_ready
+                || p.selected_pane.is_some()
+                || p.history_offset != 0
+                || p.copy_region.is_some()
+                || !p.regions.is_empty()
+                || p.resize_token.is_some()
+                || p.split_layout.is_some()
+                || p.split_gesture.is_some()
+                || p.resize_gesture.is_some()
+                || p.pane_actions.is_some())
+        {
+            return Err(Error::Invalid(
+                "Retained preview contains terminal authority",
+            ));
+        }
         if p.selected_server.as_ref().is_some_and(|selected| {
             surface != Surface::Home || p.fleet.as_ref().is_none_or(|fleet| !selected.valid(fleet))
         }) {
@@ -530,10 +615,24 @@ impl Reader {
         {
             return Err(Error::Invalid("invalid browser state"));
         }
+        let pointer_modes = p
+            .snapshot
+            .as_ref()
+            .map(decode::pointer_modes)
+            .transpose()?
+            .flatten();
         let frame = p
             .snapshot
+            .or_else(|| p.retained_preview.map(|preview| preview.snapshot))
             .map(|s| decode::frame(&serde_json::to_vec(&s)?).map(Arc::new))
             .transpose()?;
+        match frame.as_deref() {
+            Some(frame) => super::kitty_graphics::validate(&p.graphics, frame.width, frame.height)?,
+            None if !p.graphics.is_empty() => {
+                return Err(Error::Invalid("kitty graphics without a frame"));
+            }
+            None => {}
+        }
         if !super::hit_regions::valid(&p.regions, frame.as_deref(), &p.panes) {
             return Err(Error::Invalid("invalid pane regions"));
         }
@@ -569,6 +668,10 @@ impl Reader {
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
+            diagnostics: p.diagnostics,
+            pointer_modes,
+            local_setup: p.local_setup,
+            local_session_create: p.local_session_create,
             machines: p.machines,
             fleet: p.fleet,
             selected_server: p.selected_server,
@@ -598,10 +701,12 @@ impl Reader {
             surface,
             home_phase: p.home.map_or(HomePhase::Live, |home| home.phase),
             appearance: p.appearance,
+            selection_identity: p.selection_identity,
             copy_region: p.copy_region,
             regions: p.regions,
             request: p.request,
             input_ready: p.input_ready,
+            retained_preview,
             history_offset: p.history_offset,
             presence_revision: p.presence_revision,
             sessions: p.sessions,
@@ -612,6 +717,7 @@ impl Reader {
             selected_pane: p.selected_pane,
             status: p.status,
             frame,
+            graphics: p.graphics,
         })
     }
 }
@@ -645,7 +751,7 @@ fn rejection_reason(error: &Error) -> &'static str {
     }
 }
 
-pub(super) fn start() -> Bridge {
+pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
     std::thread::spawn(move || {
@@ -657,6 +763,20 @@ pub(super) fn start() -> Bridge {
                 .by_ref()
                 .take(8 * 1024 * 1024 + 1)
                 .read_until(b'\n', &mut line);
+            if matches!(count, Ok(n) if n > 0 && n <= 8 * 1024 * 1024)
+                && line.last() == Some(&b'\n')
+                && super::kitty_graphics::is_chunk_line(&line)
+            {
+                // Image bytes ride beside publications; a bad chunk only loses
+                // that image, which the window reports missing.
+                if let Err(error) = kitty.accept_line(&line) {
+                    eprintln!(
+                        "tmux-preview: kitty image chunk rejected: {}",
+                        rejection_reason(&error)
+                    );
+                }
+                continue;
+            }
             let state = match count {
                 Ok(n) if n > 0 && n <= 8 * 1024 * 1024 && line.last() == Some(&b'\n') => {
                     match reader.accept(&line) {
@@ -771,3 +891,20 @@ mod workspace_fleet_tests;
 #[cfg(test)]
 #[path = "browser_session_tabs_tests.rs"]
 mod session_tabs_tests;
+
+#[cfg(test)]
+#[path = "browser_retained_preview_tests.rs"]
+mod retained_preview_tests;
+
+#[cfg(test)]
+#[path = "browser_local_setup_tests.rs"]
+mod local_setup_tests;
+
+#[cfg(test)]
+#[path = "browser_selection_identity_tests.rs"]
+mod selection_identity_tests;
+
+#[cfg(test)]
+pub(super) fn fixture_state(bytes: &[u8]) -> Result<State, Error> {
+    Reader::default().accept(bytes)
+}

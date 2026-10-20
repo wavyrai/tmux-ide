@@ -1,3 +1,6 @@
+import { createSelectionIdentity } from "./selection-identity.ts";
+import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
+import { z } from "zod";
 import { createSourceFaultFence } from "./offscreen-source-fault.ts";
 import { createLiveDiagnostics } from "./live-diagnostics.ts";
 import { selectedWindowSurfaces } from "./selected-window-surfaces.ts";
@@ -14,7 +17,9 @@ import {
 } from "./pane-actions.ts";
 import { contentRect } from "./window-canvas.ts";
 import { createPaneResizeFence, paneResizeSchema, resizePane } from "./pane-resize.ts";
+import { createHistoryRestoration } from "./history-restoration.ts";
 import { createHistoryViewport, scrollSchema } from "./history.ts";
+import { createMouseOwner, mouseSchema } from "./mouse.ts";
 import { routeWheel, wheelSchema } from "./wheel.ts";
 import type { Layout } from "./topology.ts";
 import { applyPresence, presenceSchema } from "./presence.ts";
@@ -23,13 +28,23 @@ import { deliverInput, deliverPreviewInput, MAX_INPUT_LINE } from "./input.ts";
 import { connectionSchema, readPrivateConfig, paneStreamSocketUrl } from "./config.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
-import { createTmuxServerClient } from "../../../packages/daemon-client/src/tmux-server-client.ts";
+import {
+  requestHistoryAnchor,
+  createTmuxServerClient,
+} from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import {
   connectIssuedPaneStreamRuntimeClient,
   type PaneStreamRuntimeClient,
   type PaneStreamClientSocket,
 } from "../../../packages/daemon-client/src/pane-stream-client.ts";
 import { createReplica } from "./replica.ts";
+import {
+  KITTY_KNOWN_ENV,
+  createKittyGraphicsReceiver,
+  kittyMissingSchema,
+  parseKnownDigests,
+} from "./kitty-graphics.ts";
+import { TERMINAL_GRAPHICS_CAPABILITY_VERSION } from "../../../packages/contracts/src/terminal-graphics.ts";
 
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
 let ready = false;
@@ -37,6 +52,16 @@ let runtime: PaneStreamRuntimeClient | undefined;
 let disposeClient: (() => void) | undefined;
 let splitGesture: ReturnType<typeof createSplitGestureOwner> | undefined;
 const viewport = createHistoryViewport();
+let historyRestoration: ReturnType<typeof createHistoryRestoration> | undefined;
+let restorePending = false;
+const mouseOwner = createMouseOwner();
+const mouseIdentity = () =>
+  JSON.stringify([
+    connection,
+    presentationEpoch,
+    selectedActionPane ? lifetimes.get(selectedActionPane) : null,
+    currentResizeToken,
+  ]);
 const replicas = new Map<string, ReturnType<typeof createReplica>>();
 const surfaces = new Map<
   string,
@@ -73,6 +98,7 @@ let newWindowReceipt: {
 } | null = null;
 let actionBusy = false;
 let actionFailed = false;
+let actionFailureMessage = GENERIC_PANE_ACTION_ERROR;
 let paneSplitReceipt: {
   token: string;
   result: import("../../../packages/contracts/src/workspace-multiplexer.ts").WorkspaceWindowSplitResult;
@@ -88,11 +114,41 @@ let catalogReceived = false;
 const latest: {
   snapshot: import("../../../packages/contracts/src/index.ts").TerminalReplicaSnapshot | null;
 } = { snapshot: null };
+const selectionIdentity = createSelectionIdentity();
+// Image chunks are ordered and never coalesced; they precede any publication
+// that references them. A window that cannot keep up drops whole images,
+// which are pulled again when next visible.
+const ordered: string[] = [];
+let orderedBytes = 0;
+const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
+const kitty = createKittyGraphicsReceiver({
+  known: parseKnownDigests(process.env[KITTY_KNOWN_ENV]),
+  request: (pane, digests) => runtime?.requestTerminalGraphics(pane, digests),
+  emit: (line) => {
+    if (!blocked) {
+      blocked = !process.stdout.write(line);
+      return;
+    }
+    if (orderedBytes + line.length > MAX_ORDERED_BYTES) {
+      const digest = (JSON.parse(line) as { kittyImageChunk: { digest: string } }).kittyImageChunk
+        .digest;
+      kitty.missing([digest]);
+      return;
+    }
+    ordered.push(line);
+    orderedBytes += line.length;
+  },
+});
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
   const inputReady =
-    foreground && !stopped && viewport.offset === 0 && !!runtime?.ownsConnectionAuthority("input");
+    foreground &&
+    !stopped &&
+    !restorePending &&
+    historyRestoration?.publication().state !== "restoring" &&
+    viewport.offset === 0 &&
+    !!runtime?.ownsConnectionAuthority("input");
   const resizeLayout = layouts.find((l) => l.semanticWindowId === semanticWindow);
   const matchingLinks =
     windowLinks?.links.filter((link) => link.semanticWindowId === semanticWindow) ?? [];
@@ -112,6 +168,7 @@ function output(snapshot: typeof latest.snapshot) {
     presentationEpoch,
   );
   currentResizeToken = resizeFence(resizeLayout, presentationEpoch);
+  mouseOwner.observe(inputReady ? snapshot : null, mouseIdentity());
   resizeGesture?.observe();
   splitGesture?.observe();
   const line =
@@ -151,16 +208,40 @@ function output(snapshot: typeof latest.snapshot) {
                 )?.token
                 ? closePaneReady
                 : null,
-            paneActionError: actionFailed
-              ? "Pane action unavailable — reselect pane to retry"
-              : null,
+            paneActionError: actionFailed ? actionFailureMessage : null,
             resizeToken: currentResizeToken,
+            selectionIdentity: selectionIdentity(
+              stopped || catalogOnly
+                ? null
+                : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ??
+                    null),
+              snapshot,
+              viewport.offset,
+              viewport.captureIndex(),
+              restorePending
+                ? { state: "restoring", token: null }
+                : (historyRestoration?.publication() ?? null),
+            ),
             scrollOffset: viewport.offset,
+            historyReady:
+              foreground &&
+              !stopped &&
+              !restorePending &&
+              historyRestoration?.publication().state !== "restoring" &&
+              viewport.offset > 0 &&
+              !!runtime?.ownsConnectionAuthority("input"),
+            historyAnchor: restorePending
+              ? { state: "restoring", token: null }
+              : (historyRestoration?.publication() ?? null),
             presenceRevision,
             layouts,
-            surfaces: catalogOnly
-              ? []
-              : selectedWindowSurfaces(layouts, selectedActionPane, surfaces),
+            ...((published) => ({
+              surfaces: published,
+              graphics: published.flatMap(({ paneId, snapshot }) => {
+                const placements = kitty.placements(paneId, snapshot);
+                return placements.length > 0 ? [{ paneId, placements }] : [];
+              }),
+            }))(catalogOnly ? [] : selectedWindowSurfaces(layouts, selectedActionPane, surfaces)),
           }
         : {}),
     }) + "\n";
@@ -173,6 +254,12 @@ function output(snapshot: typeof latest.snapshot) {
 }
 process.stdout.on("drain", () => {
   blocked = false;
+  while (ordered.length > 0 && !blocked) {
+    const line = ordered.shift()!;
+    orderedBytes -= line.length;
+    blocked = !process.stdout.write(line);
+  }
+  if (blocked) return;
   if (pending) {
     const line = pending;
     pending = null;
@@ -185,6 +272,7 @@ function stop() {
   resizeGesture?.retire();
   splitReader?.dispose();
   splitGesture?.retire();
+  historyRestoration?.dispose();
   disposeClient?.();
   runtime?.close();
   if (interactive) process.stdin.destroy();
@@ -275,6 +363,50 @@ try {
   const origin = "tmux-ide://app";
   const hostClientId = `gpui:${randomUUID()}`;
   const client = createTmuxServerClient({ ...config, origin, hostClientId }, config.scope);
+  restorePending = !!config.historyAnchor;
+  historyRestoration = createHistoryRestoration({
+    current: () =>
+      (selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ?? null,
+    read: async (proof, operation, signal) => {
+      const identity = {
+        workspaceName: proof.workspaceName,
+        semanticPaneId: proof.semanticPaneId,
+        generation: proof.generation,
+        incarnation: proof.incarnation,
+      };
+      const input =
+        operation.kind === "capture"
+          ? { version: 1 as const, liveSessionId: config.liveSessionId, proof, operation }
+          : {
+              version: 1 as const,
+              liveSessionId: config.liveSessionId,
+              proof: identity,
+              operation,
+            };
+      return (
+        (
+          await requestHistoryAnchor(
+            { ...config, origin, hostClientId, timeoutMs: 2000 },
+            config.scope,
+            input,
+            signal,
+          )
+        )?.result ?? null
+      );
+    },
+    restore: (row) => {
+      const view = viewport.restoreRow(row);
+      if (!view) return false;
+      surfaces.set(config.semanticPaneId, view);
+      latest.snapshot = view;
+      return true;
+    },
+    changed: () => {
+      if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+    },
+  });
+
+  if (config.historyUnavailable) historyRestoration.unavailable();
   disposeClient = () => client.dispose();
   splitReader = createSplitLayoutReader({
     read: async (target, signal) =>
@@ -344,7 +476,7 @@ try {
     panes: visiblePaneIds,
     viewerMode: interactive ? ("interactive" as const) : ("read-only" as const),
     terminalDelivery: {
-      protocolVersions: [1],
+      protocolVersions: interactive ? [1, TERMINAL_GRAPHICS_CAPABILITY_VERSION] : [1],
       encodings: ["semantic-compact-v1" as const, "semantic-v1" as const],
       richPlacements: false,
     },
@@ -443,6 +575,7 @@ try {
             config.workspaceName,
             pane,
             (snapshot, lifetime) => {
+              const wasHistorical = pane === config.semanticPaneId && viewport.offset > 0;
               if (!lifetimes.has(pane) || lifetimes.get(pane) !== lifetime) {
                 // Saturation terminates the live stream; final retirement may still
                 // clear all surfaces without emitting an unsafe/reused epoch.
@@ -462,6 +595,14 @@ try {
               else {
                 surfaces.delete(pane);
                 if (pane === config.semanticPaneId) viewport.update(null);
+              }
+              if (wasHistorical && viewport.offset === 0) historyRestoration?.lost();
+              if (pane === config.semanticPaneId) {
+                historyRestoration?.observe(replicas.get(pane)?.current() ?? null);
+                if (restorePending && snapshot) {
+                  restorePending = false;
+                  historyRestoration?.restore(config.historyAnchor!);
+                }
               }
               if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
             },
@@ -498,8 +639,15 @@ try {
       onAuthoritySnapshot: () => {
         if (interactive && latest.snapshot) output(latest.snapshot);
       },
-      onFault: () => {
-        if (!stopped) diagnostics.report("runtime-failure");
+      onTerminalGraphics: (pane, state) => {
+        kitty.state(pane, state);
+        if (interactive && latest.snapshot && !stopped) output(latest.snapshot);
+      },
+      onTerminalGraphicsBlob: (_pane, blob, bytes) => {
+        if (!stopped) kitty.blob(blob, bytes);
+      },
+      onFault: (error) => {
+        if (!stopped) diagnostics.runtimeFault(error);
         stop();
       },
     },
@@ -512,7 +660,7 @@ try {
   if (interactive && !stopped) {
     if (latest.snapshot) output(latest.snapshot);
     let buffer = Buffer.alloc(0);
-    for await (const chunk of process.stdin) {
+    inputLoop: for await (const chunk of process.stdin) {
       buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
       let end;
       while ((end = buffer.indexOf(10)) >= 0) {
@@ -520,11 +668,43 @@ try {
         const line = buffer.subarray(0, end).toString("utf8");
         buffer = buffer.subarray(end + 1);
         const value: unknown = JSON.parse(line);
+        const handoff = z
+          .object({ kind: z.literal("history-handoff"), intent: z.uuid() })
+          .strict()
+          .safeParse(value);
+        if (handoff.success) {
+          // Ordered after accepted history navigation; no later command may act.
+          foreground = false;
+          closePaneReady = null;
+          actionFence.invalidate();
+          mouseOwner.retire();
+          splitGesture.retire();
+          resizeGesture.retire();
+          await applyPresence(runtime, false);
+          const captured = await historyRestoration?.settleCapture();
+          if (!stopped)
+            process.stdout.write(
+              JSON.stringify({
+                kind: "history-handoff",
+                intent: handoff.data.intent,
+                ...(captured ?? { state: "unavailable", token: null }),
+              }) + "\n",
+            );
+          stop();
+          break inputLoop;
+        }
+        const missing = kittyMissingSchema.safeParse(value);
+        if (missing.success) {
+          kitty.missing(missing.data.digests);
+          if (latest.snapshot) output(latest.snapshot);
+          continue;
+        }
         const presence = presenceSchema.safeParse(value);
         if (presence.success) {
           admittedPresenceRevision = presence.data.revision;
           closePaneReady = null;
           actionFence.invalidate();
+          mouseOwner.retire();
           foreground = presence.data.active;
           if (!foreground) splitGesture.retire();
           if (!foreground && latest.snapshot) output(latest.snapshot);
@@ -533,6 +713,10 @@ try {
           if (foreground) resizeBlocked = false;
           if (latest.snapshot) output(latest.snapshot);
           continue;
+        }
+        if (restorePending || historyRestoration?.publication().state === "restoring") {
+          const returnLive = scrollSchema.safeParse(value);
+          if (!returnLive.success || returnLive.data.data !== 0) continue;
         }
         const splitCommand = splitGestureSchema.safeParse(value);
         if (splitCommand.success) {
@@ -621,6 +805,7 @@ try {
             const revision = admittedPresenceRevision;
             actionBusy = true;
             newWindowReceipt = null;
+            actionFailureMessage = GENERIC_PANE_ACTION_ERROR;
             output(latest.snapshot);
             void executeNewWindow(
               client,
@@ -639,8 +824,12 @@ try {
                 actionFailed = !result;
                 if (result) newWindowReceipt = { token: paneAction.data.token, result };
               })
-              .catch(() => {
+              .catch((error: unknown) => {
                 actionFailed = true;
+                actionFailureMessage = agentLaunchGuidance(
+                  error,
+                  paneAction.data.action === "new-agent",
+                );
               })
               .finally(() => {
                 actionBusy = false;
@@ -706,8 +895,30 @@ try {
           output(latest.snapshot);
           continue;
         }
+        const mouse = mouseSchema.safeParse(value);
+        if (mouse.success) {
+          if (
+            !latest.snapshot ||
+            viewport.offset > 0 ||
+            !runtime.ownsConnectionAuthority("input")
+          ) {
+            mouseOwner.retire();
+            continue;
+          }
+          const input = mouseOwner.route(latest.snapshot, mouseIdentity(), mouse.data);
+          if (input) {
+            try {
+              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+            } catch (error) {
+              mouseOwner.retire();
+              throw error;
+            }
+          }
+          continue;
+        }
         const wheel = wheelSchema.safeParse(value);
         if (wheel.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           if (!latest.snapshot) continue;
           const route = routeWheel(latest.snapshot, viewport.offset, wheel.data);
@@ -719,20 +930,25 @@ try {
           } else {
             const view = viewport.scroll(route.lines);
             if (view) surfaces.set(config.semanticPaneId, view);
+            historyRestoration?.capture(viewport.captureIndex());
             output(view);
           }
           continue;
         }
         const scroll = scrollSchema.safeParse(value);
         if (scroll.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           const view = viewport.scroll(scroll.data.data);
+          restorePending = false;
           if (view) surfaces.set(config.semanticPaneId, view);
+          historyRestoration?.capture(viewport.captureIndex());
           output(view);
           continue;
         }
         const resize = resizeSchema.safeParse(value);
         if (resize.success) {
+          mouseOwner.retire();
           resizeGesture.retire();
           if (!resizeBlocked && latest.snapshot) {
             try {
@@ -744,7 +960,12 @@ try {
           }
           continue;
         }
-        if (viewport.offset > 0) continue; // Never type into a historical view.
+        if (
+          restorePending ||
+          historyRestoration?.publication().state === "restoring" ||
+          viewport.offset > 0
+        )
+          continue; // Never type into a historical view.
         if (!latest.snapshot) throw new Error("No verified input target");
         await deliverPreviewInput(
           runtime,

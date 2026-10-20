@@ -1,0 +1,17 @@
+{
+  "nodeMajor": 24,
+  "files": {
+    "browser.bundle.mjs": {
+      "bytes": 1516853,
+      "sha256": "049574f55f34fae09a643b183974dc3e04bdc0140d7ad61c9c9bc84bed2a2998"
+    },
+    "live.bundle.mjs": {
+      "bytes": 1153810,
+      "sha256": "08fd41b01bcc3be973f214625f917aa01a2806c0832ffaff5a4047a4697c0d2b"
+    },
+    "preview-launcher.bundle.mjs": {
+      "bytes": 3171,
+      "sha256": "f3c627fc96739193f4f1d55948fa444a7fa58d91a3e0ebe6e632e8c0a12fe3ad"
+    }
+  }
+}

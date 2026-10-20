@@ -1,0 +1,41 @@
+                                                                                                                                    
+RIG_NR04_LEFT_CONTENT thijs@mini-m4 project % 
+sh-3.2$  thijs@mini-m4 project % printf 'RIG_NR04_NEW_CONTENT\n'
+ RIG_NR04_NEW_CONTENT
+ thijs@mini-m4 project % 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 

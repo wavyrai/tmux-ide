@@ -41,6 +41,8 @@ export const connectionSchema = z
     workspaceName: z.string().min(1),
     liveSessionId: z.string().min(1),
     semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+    historyAnchor: z.uuid().optional(),
+    historyUnavailable: z.boolean().optional(),
     visiblePaneIds: z.array(TerminalAttachmentSemanticPaneIdSchemaZ).min(1).max(24).optional(),
   })
   .strict();

@@ -1,0 +1,266 @@
+{
+  "scope": "exact frozen873ef58e default payload rerun after user stopped other containers; not current-source qualification",
+  "command": [
+    "docker",
+    "create",
+    "--name",
+    "tmux-ide-nr01-idle-9c814c10ecd7",
+    "--network",
+    "none",
+    "--cpus=2",
+    "--memory=768m",
+    "--pids-limit=256",
+    "sha256:051c5eff12767eb13f4288d36112233b099e2925739b6612591a50e6af630653",
+    "sh",
+    "-c",
+    "env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-before.json && tar -xf /tmp/source-overlay.tar -C /work && sha256sum /work/.tasks/current-cli.mjs && env -u NODE_OPTIONS node /work/.tasks/current-cli.mjs --version && node --version && tmux -V && uname -m && env -u NODE_OPTIONS -u TMUX_IDE_RUNTIME_MODE TMUX_GPUI_TEST_CLI=/work/.tasks/current-cli.mjs TMUX_GPUI_TEST_BUNDLE=/work/.tasks/current-bridge timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-after.json; exit \"$result\""
+  ],
+  "hashesBefore": {
+    ".tasks/native-reliability-mission/nr01-current-payload/source-overlay.tar": "b8a4b35007af873d3a69fb577bed60835e2eae870b9b848920d6e570bcd815cc",
+    ".tasks/native-reliability-mission/nr01-current-payload/cli.mjs": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/THIRD_PARTY_NOTICES.txt": "f4a05fdf44b7c4a103c4a35a776fadfd3ac6a99cd3487e401212593bf083977a",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/bridge-manifest.json": "46457a7a1f08d156a1bebc85e41d0c29be873fd76b8ced4dd46f43f3ffea838b",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs": "85984f3a07871576191978ed5b889fdaa56a4186c9bd06fb3fb2c7cf51a757b9",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/live.bundle.mjs": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/preview-launcher.bundle.mjs": "f3c627fc96739193f4f1d55948fa444a7fa58d91a3e0ebe6e632e8c0a12fe3ad",
+    "bin/cli.js": "f09acb9b1a4ae9349b7d10858234995066085ff8e9403150cbb70002a9fea428"
+  },
+  "containersBefore": "",
+  "dockerMemTotalBefore": 1010122752,
+  "cleanup": true,
+  "container": "6cbd0da7f43450673d734573cf4e8ff58e9efe8342cf87447aa8cff9391b71fd",
+  "containersDuring": "6cbd0da7f434 tmux-ide-nr01-idle-9c814c10ecd7",
+  "exitCode": 0,
+  "inspect": {
+    "Id": "6cbd0da7f43450673d734573cf4e8ff58e9efe8342cf87447aa8cff9391b71fd",
+    "Created": "2026-10-18T20:08:58.789573678Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "sh",
+      "-c",
+      "env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-before.json && tar -xf /tmp/source-overlay.tar -C /work && sha256sum /work/.tasks/current-cli.mjs && env -u NODE_OPTIONS node /work/.tasks/current-cli.mjs --version && node --version && tmux -V && uname -m && env -u NODE_OPTIONS -u TMUX_IDE_RUNTIME_MODE TMUX_GPUI_TEST_CLI=/work/.tasks/current-cli.mjs TMUX_GPUI_TEST_BUNDLE=/work/.tasks/current-bridge timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-after.json; exit \"$result\""
+    ],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-18T20:08:59.125597719Z",
+      "FinishedAt": "2026-10-18T20:09:07.758306501Z"
+    },
+    "Image": "sha256:051c5eff12767eb13f4288d36112233b099e2925739b6612591a50e6af630653",
+    "ResolvConfPath": "/var/lib/docker/containers/6cbd0da7f43450673d734573cf4e8ff58e9efe8342cf87447aa8cff9391b71fd/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/6cbd0da7f43450673d734573cf4e8ff58e9efe8342cf87447aa8cff9391b71fd/hostname",
+    "HostsPath": "/var/lib/docker/containers/6cbd0da7f43450673d734573cf4e8ff58e9efe8342cf87447aa8cff9391b71fd/hosts",
+    "LogPath": "",
+    "Name": "/tmux-ide-nr01-idle-9c814c10ecd7",
+    "RestartCount": 0,
+    "Driver": "overlayfs",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": null,
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "local",
+        "Config": {}
+      },
+      "NetworkMode": "none",
+      "PortBindings": {},
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": null,
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": null,
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 805306368,
+      "NanoCpus": 2000000000,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": [],
+      "BlkioDeviceReadBps": [],
+      "BlkioDeviceWriteBps": [],
+      "BlkioDeviceReadIOps": [],
+      "BlkioDeviceWriteIOps": [],
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": [],
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 1610612736,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": 256,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "Storage": {
+      "RootFS": {
+        "Snapshot": {
+          "Name": "overlayfs"
+        }
+      }
+    },
+    "Mounts": [],
+    "Config": {
+      "Hostname": "6cbd0da7f434",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "PATH=/opt/tmux38/bin:/opt/tmux-supported/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "NODE_VERSION=24.21.0",
+        "YARN_VERSION=1.22.22",
+        "TMUX_IDE_RUNTIME_MODE=development",
+        "TMUX_GPUI_TEST_CLI=/work/.tasks/private-cli.mjs",
+        "TMUX_GPUI_TEST_DISCOVERY=1",
+        "TMUX_GPUI_TEST_BUNDLE=/work/.tasks/linux-bridge"
+      ],
+      "Cmd": [
+        "sh",
+        "-c",
+        "env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-before.json && tar -xf /tmp/source-overlay.tar -C /work && sha256sum /work/.tasks/current-cli.mjs && env -u NODE_OPTIONS node /work/.tasks/current-cli.mjs --version && node --version && tmux -V && uname -m && env -u NODE_OPTIONS -u TMUX_IDE_RUNTIME_MODE TMUX_GPUI_TEST_CLI=/work/.tasks/current-cli.mjs TMUX_GPUI_TEST_BUNDLE=/work/.tasks/current-bridge timeout --signal=TERM --kill-after=10s 90s node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs; result=$?; env -u NODE_OPTIONS node -e 'const f=require('\"'\"'fs'\"'\"');const r=p=>{try{return f.readFileSync(p,'\"'\"'utf8'\"'\"').trim()}catch{return null}};f.writeFileSync(process.argv[1],JSON.stringify({events:r('\"'\"'/sys/fs/cgroup/memory.events'\"'\"'),current:r('\"'\"'/sys/fs/cgroup/memory.current'\"'\"'),peak:r('\"'\"'/sys/fs/cgroup/memory.peak'\"'\"'),max:r('\"'\"'/sys/fs/cgroup/memory.max'\"'\"'),meminfo:r('\"'\"'/proc/meminfo'\"'\"'),nodeOptions:process.env.NODE_OPTIONS??null}));' /tmp/memory-after.json; exit \"$result\""
+      ],
+      "Image": "sha256:051c5eff12767eb13f4288d36112233b099e2925739b6612591a50e6af630653",
+      "Volumes": null,
+      "WorkingDir": "/work",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {}
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "none": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": null,
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "73813e3c2cbfa415a888bdfae3edf51f8cbcdf4b428e9c4833fdca0383268507",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": null
+        }
+      }
+    },
+    "ImageManifestDescriptor": {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:2a1105092b5a58939d95f11a4e7c2e6a808700bcd7c40c741443674b98a54488",
+      "size": 4315,
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      }
+    }
+  },
+  "memoryBefore": {
+    "events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+    "current": "104083456",
+    "peak": "104083456",
+    "max": "805306368",
+    "meminfo": "MemTotal:         986448 kB\nMemFree:          290864 kB\nMemAvailable:     575668 kB\nBuffers:            1304 kB\nCached:           329868 kB\nSwapCached:        15716 kB\nActive:           264760 kB\nInactive:         298032 kB\nActive(anon):     134760 kB\nInactive(anon):    97036 kB\nActive(file):     130000 kB\nInactive(file):   200996 kB\nUnevictable:           0 kB\nMlocked:               0 kB\nSwapTotal:       1048572 kB\nSwapFree:         986284 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:               112 kB\nWriteback:             0 kB\nAnonPages:        226376 kB\nMapped:            93816 kB\nShmem:                92 kB\nKReclaimable:      31776 kB\nSlab:              85056 kB\nSReclaimable:      31776 kB\nSUnreclaim:        53280 kB\nKernelStack:        4832 kB\nPageTables:         3876 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:     1541796 kB\nCommitted_AS:    1497636 kB\nVmallocTotal:   135288315904 kB\nVmallocUsed:       12032 kB\nVmallocChunk:          0 kB\nPercpu:             3720 kB\nAnonHugePages:     38912 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nBalloon:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB",
+    "nodeOptions": null
+  },
+  "memoryAfter": {
+    "events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 454",
+    "current": "137203712",
+    "peak": "731746304",
+    "max": "805306368",
+    "meminfo": "MemTotal:         986448 kB\nMemFree:          560564 kB\nMemAvailable:     730624 kB\nBuffers:            1960 kB\nCached:           212904 kB\nSwapCached:        19560 kB\nActive:            98632 kB\nInactive:         152568 kB\nActive(anon):      26184 kB\nInactive(anon):    10148 kB\nActive(file):      72448 kB\nInactive(file):   142420 kB\nUnevictable:           0 kB\nMlocked:               0 kB\nSwapTotal:       1048572 kB\nSwapFree:         817908 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:              1316 kB\nWriteback:             0 kB\nAnonPages:         21748 kB\nMapped:            62692 kB\nShmem:                 0 kB\nKReclaimable:      34544 kB\nSlab:              88768 kB\nSReclaimable:      34544 kB\nSUnreclaim:        54224 kB\nKernelStack:        4808 kB\nPageTables:         4236 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:     1541796 kB\nCommitted_AS:    1498220 kB\nVmallocTotal:   135288315904 kB\nVmallocUsed:       12032 kB\nVmallocChunk:          0 kB\nPercpu:             3560 kB\nAnonHugePages:      4096 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nBalloon:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB",
+    "nodeOptions": null
+  },
+  "hashesAfter": {
+    ".tasks/native-reliability-mission/nr01-current-payload/source-overlay.tar": "b8a4b35007af873d3a69fb577bed60835e2eae870b9b848920d6e570bcd815cc",
+    ".tasks/native-reliability-mission/nr01-current-payload/cli.mjs": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/THIRD_PARTY_NOTICES.txt": "f4a05fdf44b7c4a103c4a35a776fadfd3ac6a99cd3487e401212593bf083977a",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/bridge-manifest.json": "46457a7a1f08d156a1bebc85e41d0c29be873fd76b8ced4dd46f43f3ffea838b",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs": "85984f3a07871576191978ed5b889fdaa56a4186c9bd06fb3fb2c7cf51a757b9",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/live.bundle.mjs": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0",
+    ".tasks/native-reliability-mission/nr01-current-payload/bridge/preview-launcher.bundle.mjs": "f3c627fc96739193f4f1d55948fa444a7fa58d91a3e0ebe6e632e8c0a12fe3ad",
+    "bin/cli.js": "f09acb9b1a4ae9349b7d10858234995066085ff8e9403150cbb70002a9fea428"
+  },
+  "hashesUnchanged": true,
+  "containersAfter": "",
+  "dockerMemTotalAfter": 1010122752,
+  "passed": true
+}

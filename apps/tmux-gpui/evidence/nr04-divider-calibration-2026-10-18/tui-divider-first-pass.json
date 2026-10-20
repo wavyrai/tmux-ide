@@ -1,0 +1,73 @@
+{
+  "lane": "actual-source-OpenTUI",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Actual TUI divider correctness only; no GPUI or performance parity claim",
+  "before": [
+    "%0|73842||0|0|40|24|80|24|0",
+    "%1|73848||41|0|39|24|80|24|0"
+  ],
+  "launch": "OpenTUI test-drive chrome ready in 1302ms (source, 160x44, target e2e-nr04-divider-73817-0)\nAttach: tmux attach -t nr04-host-73817\nLogs:   /tmp/tmi-e2e-nr04-divider-piBuOp/tui/stderr.log\n\n   tmux-ide  F1 Home    F2 Terminals                                                                                                                   ● 1 live\n Machines            ? Help\n\n▾ Local\n   e2e-nr04-divider-738… 2p\n\n\n\n\n\n\n\n\n\n\n\n                                                                             Machine · e2e-nr04-divider-73817-0\n\n                                                                                  1 tmux session available\n\n                              Connecting to daemon · 0s\n\n\n                                                                                ○ Choose another session · F5\n\n                                                                                ○ Back to Home\n\n                                                                                ○ Copy connection details\n\n\n\n\n\n\n\n\n\n\n\n\n\n F6 Browse all sessions\n F7 Attention (0)\n A Add machine               Terminals  Connecting to daemon · 0s                                                                                 F5 Commands\n",
+  "initial": [
+    "%0|73842||0|1|66|40|132|41|0",
+    "%1|73848||67|1|65|40|132|41|0"
+  ],
+  "renderedBothMarkers": true,
+  "pointer": {
+    "contentX": 28,
+    "dividerX": 94,
+    "y": 12,
+    "units": "zero-based host cells"
+  },
+  "steps": [
+    {
+      "from": 94,
+      "to": 100,
+      "expectedLeftWidth": 72,
+      "rows": [
+        "%0|73842||0|1|72|40|132|41|0",
+        "%1|73848||73|1|59|40|132|41|0"
+      ]
+    },
+    {
+      "from": 100,
+      "to": 106,
+      "expectedLeftWidth": 78,
+      "rows": [
+        "%0|73842||0|1|78|40|132|41|0",
+        "%1|73848||79|1|53|40|132|41|0"
+      ]
+    },
+    {
+      "from": 106,
+      "to": 94,
+      "expectedLeftWidth": 66,
+      "rows": [
+        "%0|73842||0|1|66|40|132|41|0",
+        "%1|73848||67|1|65|40|132|41|0"
+      ]
+    }
+  ],
+  "expanded": [
+    "%0|73842||0|1|78|40|132|41|0",
+    "%1|73848||79|1|53|40|132|41|0"
+  ],
+  "restored": [
+    "%0|73842||0|1|66|40|132|41|0",
+    "%1|73848||67|1|65|40|132|41|0"
+  ],
+  "sourceIdentityPreserved": true,
+  "paneBirthIdSupported": false,
+  "geometryChanged": true,
+  "identityPreserved": true,
+  "geometryRestored": true,
+  "freshInput": true,
+  "sourceFreshInput": true,
+  "pass": true,
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 6,
+  "protectedCliUnchanged": true,
+  "cleanup": true
+}

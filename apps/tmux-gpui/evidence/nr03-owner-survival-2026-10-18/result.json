@@ -1,0 +1,64 @@
+{
+  "pass": true,
+  "before": {
+    "incarnation": "a1a11068-8cdc-477c-acf5-29c375723029:0",
+    "revision": 0,
+    "stateHash": "d2a174a9daf93479",
+    "stats": {
+      "fullWalks": 1,
+      "gridRowsRead": 24,
+      "historyRowsRead": 0,
+      "placementRowsRead": 0,
+      "cellsRead": 1920,
+      "parseBatches": 0,
+      "historyKeyVisits": 0
+    },
+    "listeners": {
+      "canonical": 1,
+      "raw": 0,
+      "upstream": 1
+    }
+  },
+  "idle": {
+    "incarnation": "a1a11068-8cdc-477c-acf5-29c375723029:0",
+    "revision": 0,
+    "stateHash": "d2a174a9daf93479",
+    "stats": {
+      "fullWalks": 1,
+      "gridRowsRead": 24,
+      "historyRowsRead": 0,
+      "placementRowsRead": 0,
+      "cellsRead": 1920,
+      "parseBatches": 0,
+      "historyKeyVisits": 0
+    },
+    "listeners": {
+      "canonical": 0,
+      "raw": 0,
+      "upstream": 1
+    }
+  },
+  "sameIncarnation": true,
+  "currentStateHash": true,
+  "outputWhileUnsubscribed": true,
+  "updated": {
+    "incarnation": "a1a11068-8cdc-477c-acf5-29c375723029:0",
+    "revision": 1,
+    "stateHash": "7edf6a4d205c4a3b",
+    "stats": {
+      "fullWalks": 1,
+      "gridRowsRead": 27,
+      "historyRowsRead": 0,
+      "placementRowsRead": 0,
+      "cellsRead": 2160,
+      "parseBatches": 1,
+      "historyKeyVisits": 0
+    },
+    "listeners": {
+      "canonical": 0,
+      "raw": 0,
+      "upstream": 1
+    }
+  },
+  "socketClosed": true
+}

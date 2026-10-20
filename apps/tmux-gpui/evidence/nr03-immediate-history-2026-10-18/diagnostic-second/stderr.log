@@ -1,0 +1,9 @@
+handoff open true saved=false token=false
+handoff open false saved=false token=false
+handoff before presence
+handoff settle historical
+handoff after presence
+handoff open true saved=false token=false
+handoff open false saved=false token=false
+handoff open true saved=true token=false
+handoff open false saved=true token=false

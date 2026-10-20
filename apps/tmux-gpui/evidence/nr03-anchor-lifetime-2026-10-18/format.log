@@ -1,0 +1,2 @@
+packages/daemon/src/terminal/session-runtime/history-anchor-owner.ts 34ms
+packages/daemon/src/terminal/session-runtime/history-anchor-owner.test.ts 12ms

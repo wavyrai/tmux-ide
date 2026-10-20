@@ -26,5 +26,9 @@ native/macos/notifier/AppIcon.icon/icon.json
 # Preserve the pinned third-party source baseline; Rust uses its own formatter.
 apps/tmux-gpui/upstream/
 
-# Generated qualification receipts preserve exact artifact/source evidence.
-apps/tmux-gpui/evidence/**/*.json
+# Qualification evidence preserves exact artifact/source bytes; receipts and
+# README files record SHA-256 hashes of the retained scripts.
+apps/tmux-gpui/evidence/
+
+# Byte-identical copy of the nr04 links evidence publication (see its README).
+apps/tmux-gpui/fixtures/nr04-links-publication.json

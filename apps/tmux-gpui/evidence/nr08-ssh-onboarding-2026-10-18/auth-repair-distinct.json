@@ -1,0 +1,49 @@
+{
+  "passed": true,
+  "node": "v24.21.0",
+  "cliSha256": "79d42e21896287a3055c99200bfec697adebda3466fd703fcafcb09c4427ef7d",
+  "realSsh": true,
+  "actualSavedAdd": true,
+  "denial": true,
+  "repaired": true,
+  "input": true,
+  "cleanup": true,
+  "discoveryDescriptor": "synthetic descriptor for actual private daemon",
+  "remoteCliPreflightQualified": false,
+  "lastRemote": [
+    {
+      "state": "ready",
+      "conflict": false,
+      "diagnostic": {
+        "phase": "ready",
+        "failure": null
+      },
+      "sessionCount": 1,
+      "retry": false
+    }
+  ],
+  "trace": [
+    {
+      "phase": "saved-add-denied",
+      "diagnostic": {
+        "phase": "needs-attention",
+        "failure": "ssh-authentication"
+      },
+      "frame": false,
+      "input": false
+    },
+    {
+      "phase": "explicit-retry",
+      "diagnostic": {
+        "phase": "ready",
+        "failure": null
+      },
+      "sameSavedMachine": true
+    },
+    {
+      "phase": "input-ready",
+      "freshInputExecuted": true
+    }
+  ],
+  "failures": []
+}

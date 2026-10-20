@@ -49,6 +49,7 @@ export * from "./semantic-identity.ts";
 export * from "./session-runtime.ts";
 export * from "./terminal-replica.ts";
 export * from "./terminal-delivery.ts";
+export * from "./terminal-graphics.ts";
 export * from "./terminal-runtime-inventory.ts";
 export * from "./experience-shell.ts";
 export * from "./application-shell.ts";
@@ -115,3 +116,7 @@ export * from "./window-split-layout.ts";
 export * from "./pane-editor-context.ts";
 
 export * from "./tmux-agent-open.ts";
+
+export * from "./tmux-server-diagnostics.ts";
+
+export * from "./terminal-history-anchor.ts";

@@ -1,0 +1,10 @@
+{
+  "node_modules/@tmux-ide/xterm-headless": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.5.tgz/node_modules/@tmux-ide/xterm-headless",
+  "node_modules/@tmux-ide/daemon-client": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/daemon-client",
+  "node_modules/@tmux-ide/core": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/core",
+  "node_modules/@tmux-ide/contracts": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/contracts",
+  "node_modules/@tmux-ide/daemon": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/daemon",
+  "node_modules/@tmux-ide/sdk": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/sdk",
+  "node_modules/@tmux-ide/tmux-bridge": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/tmux-bridge",
+  "node_modules/@tmux-ide/presentation": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/packaged-paste/package-297-8yx0htjo/source/packages/presentation"
+}

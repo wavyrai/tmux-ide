@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr05-palette-92336-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● rapid-redwood                                               ⋯    ○ golden-nebula                                              ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT                                              thijs@mini-m4 project %
+   e2e-nr05-palette-923… 2p sh-3.2$
+
+                                               Command palette                                                esc
+                                               ┃ Search commands…
+
+                                               Navigation
+                                                 Home                                                          F1
+                                                 Terminals                                                     F2
+
+                                               Panes
+                                                 New terminal window
+                                                 New agent…
+                                                 Split pane right
+                                                 Split pane down
+                                                 Close pane…
+                                                 Zoom / unzoom pane
+
+                                               Appearance
+                                                 Appearance…
+
+                                               Help
+                                                 Using tmux-ide
+                                                 Keyboard shortcuts                                        Ctrl+K
+                                                 What's new                                                Ctrl+B
+
+                                               Sessions
+                                                 Switch session                                                F6
+
+                                               Appearance
+                                                 Hide sidebar                                                 F10
+
+
+
+                                               SEARCH · ^Space navigation · ^H local/all hosts
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

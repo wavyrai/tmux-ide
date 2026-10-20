@@ -4,9 +4,14 @@ use crate::search_input::SearchInput;
 use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 
+enum Target {
+    CurrentScoped,
+    LocalServer(browser::fleet::SelectedServer),
+    LocalDaemon(String),
+}
 pub(super) struct Dialog {
     request: u64,
-    local_target: Option<browser::fleet::SelectedServer>,
+    local_target: Target,
     input: Entity<SearchInput>,
     error: Option<&'static str>,
 }
@@ -48,12 +53,19 @@ impl SnapshotView {
         if request != self.browser_request || !self.can_create_session() {
             return;
         }
-        self.begin_session_dialog(request, None, window, cx);
+        let target = self
+            .browser_state
+            .local_session_create
+            .as_ref()
+            .map_or(Target::CurrentScoped, |c| {
+                Target::LocalDaemon(c.action.clone())
+            });
+        self.begin_session_dialog(request, target, window, cx);
     }
     fn begin_session_dialog(
         &mut self,
         request: u64,
-        local_target: Option<browser::fleet::SelectedServer>,
+        local_target: Target,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -99,7 +111,10 @@ impl SnapshotView {
         }
         if self.new_session.as_ref().is_some_and(|dialog| {
             dialog.request != self.browser_request
-                || (dialog.local_target.is_none() && !self.can_create_session())
+                || (matches!(dialog.local_target, Target::CurrentScoped)
+                    && !self.can_create_session())
+                || (matches!(dialog.local_target, Target::LocalDaemon(_))
+                    && (!self.can_create_session() || !self.local_dialog_ready(dialog)))
         }) {
             self.new_session = None;
             cx.notify();
@@ -140,11 +155,19 @@ impl SnapshotView {
             .create_session
             .as_ref()
             .map_or(0, |state| state.revision);
-        if self.browser_commands.as_ref().is_some_and(|sender| {
-            sender
-                .try_send(browser::Command::CreateSession { request, name })
-                .is_ok()
-        }) {
+        let command = match &dialog.local_target {
+            Target::LocalDaemon(action) => browser::Command::CreateLocalSession {
+                request,
+                action: action.clone(),
+                name,
+            },
+            _ => browser::Command::CreateSession { request, name },
+        };
+        if self
+            .browser_commands
+            .as_ref()
+            .is_some_and(|sender| sender.try_send(command).is_ok())
+        {
             self.new_session_queued = Some((request, revision));
             self.close_new_session(window, cx);
         } else {
@@ -217,32 +240,51 @@ impl SnapshotView {
         ))
     }
     fn local_dialog_ready(&self, dialog: &Dialog) -> bool {
-        dialog.local_target.as_ref().is_none_or(|target| {
-            self.browser_state
-                .selected_server
+        match &dialog.local_target {
+            Target::CurrentScoped => true,
+            Target::LocalDaemon(action) => self
+                .browser_state
+                .local_session_create
                 .as_ref()
-                .is_some_and(|selected| {
-                    selected.machine_id == target.machine_id
-                        && selected.server_id == target.server_id
-                        && selected.generation == target.generation
-                })
-        })
+                .is_some_and(|c| &c.action == action),
+            Target::LocalServer(target) => {
+                self.browser_state
+                    .selected_server
+                    .as_ref()
+                    .is_some_and(|selected| {
+                        selected.machine_id == target.machine_id
+                            && selected.server_id == target.server_id
+                            && selected.generation == target.generation
+                    })
+            }
+        }
     }
+
     fn open_local_session(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
         if request != self.browser_request || self.new_session.is_some() || self.picker.is_some() {
             return;
         }
         let Some((token, target)) = self.local_session_target() else {
+            if self.can_create_session() && self.browser_state.local_session_create.is_some() {
+                self.open_new_session(request, window, cx);
+            }
             return;
         };
         self.select(Selection::FleetServer(token), window, cx);
         if self.browser_commands.is_some() {
-            self.begin_session_dialog(self.browser_request, Some(target), window, cx);
+            self.begin_session_dialog(
+                self.browser_request,
+                Target::LocalServer(target),
+                window,
+                cx,
+            );
         }
     }
     pub(super) fn local_session_action(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let request = self.browser_request;
-        let available = self.local_session_target().is_some() && self.new_session.is_none();
+        let available = (self.local_session_target().is_some()
+            || (self.can_create_session() && self.browser_state.local_session_create.is_some()))
+            && self.new_session.is_none();
         controls::action_button(
             "home-new-local-session",
             Some("New local session…"),
@@ -268,7 +310,9 @@ impl SnapshotView {
         })
     }
     pub(super) fn local_session_available(&self) -> bool {
-        self.local_session_target().is_some() && self.new_session.is_none()
+        (self.local_session_target().is_some()
+            || (self.can_create_session() && self.browser_state.local_session_create.is_some()))
+            && self.new_session.is_none()
     }
     pub(super) fn new_session_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let request = self.browser_request;
@@ -300,23 +344,31 @@ impl SnapshotView {
                 .p_3()
                 .w_full()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(if dialog.local_target.is_some() {
+                .child(if !matches!(dialog.local_target, Target::CurrentScoped) {
                     "New local session"
                 } else {
                     "New session"
                 })
-                .children(dialog.local_target.as_ref().map(|target| {
-                    div().text_color(rgb(self.theme().muted)).child(format!(
-                        "{} · {}{}",
-                        target.machine_label,
-                        target.label,
-                        if self.can_create_session() && self.local_dialog_ready(dialog) {
-                            ""
-                        } else {
-                            " — waiting for server"
-                        }
-                    ))
-                }))
+                .children(match &dialog.local_target {
+                    Target::CurrentScoped => None,
+                    Target::LocalDaemon(_) => Some(
+                        div()
+                            .text_color(rgb(self.theme().muted))
+                            .child("This Mac — first local session"),
+                    ),
+                    Target::LocalServer(target) => {
+                        Some(div().text_color(rgb(self.theme().muted)).child(format!(
+                            "{} · {}{}",
+                            target.machine_label,
+                            target.label,
+                            if self.can_create_session() && self.local_dialog_ready(dialog) {
+                                ""
+                            } else {
+                                " — waiting for server"
+                            }
+                        )))
+                    }
+                })
                 .child(dialog.input.clone())
                 .children(dialog.error.map(|error| {
                     super::design::palette(&self.theme())

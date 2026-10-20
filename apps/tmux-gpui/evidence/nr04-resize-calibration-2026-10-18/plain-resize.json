@@ -1,0 +1,30 @@
+{
+  "lane": "plain-tmux",
+  "tmuxVersion": "tmux 3.8",
+  "tmuxSha256": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96",
+  "node": "v24.21.0",
+  "headerPolicy": "Explicit pane-border-status top matches TUI-adopted source content geometry; plain default differs",
+  "initial": [
+    "%0|71570||0|1|66|40|132|41|0",
+    "%1|71576||67|1|65|40|132|41|0"
+  ],
+  "expanded": [
+    "%0|71570||0|1|76|44|152|45|0",
+    "%1|71576||77|1|75|44|152|45|0"
+  ],
+  "restored": [
+    "%0|71570||0|1|66|40|132|41|0",
+    "%1|71576||67|1|65|40|132|41|0"
+  ],
+  "contentPreserved": true,
+  "freshInput": true,
+  "originalIdentityPreserved": true,
+  "geometryRestored": true,
+  "paneBirthIdSupported": false,
+  "pass": true,
+  "cleanup": true,
+  "protectedCliUnchanged": true,
+  "remainingOwnedPids": [],
+  "ownedPidCount": 3,
+  "privateRootRemoved": true
+}

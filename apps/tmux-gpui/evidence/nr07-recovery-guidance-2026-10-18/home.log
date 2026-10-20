@@ -1,0 +1,65 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 18s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 2`
+     Running unittests src/lib.rs (target/debug/deps/herdr_gpui-63d2b88de9e91254)
+
+running 56 tests
+test tmux_snapshot::home::keyboard_tests::recovery::recovery_command_serializes_exact_current_request ... ok
+test tmux_snapshot::home::keyboard_tests::machine_filter::machine_filter_wire_is_explicit_null_for_all ... ok
+test tmux_snapshot::home::keyboard_tests::action_focus::home_navigation_retires_action_focus_before_terminal_surface ... ok
+test tmux_snapshot::home::keyboard_tests::recovery::full_recovery_queue_reports_failure_without_consuming_revision ... ok
+test tmux_snapshot::home::keyboard_tests::machine_filter::full_machine_filter_queue_is_not_an_ack ... ok
+test tmux_snapshot::home::keyboard_tests::machine_filter::machine_filter_preserves_composition_and_refuses_background_modal ... ok
+test tmux_snapshot::home::keyboard_tests::recovery::recovery_shortcuts_preserve_marked_text_and_modal_isolation ... ok
+test tmux_snapshot::home::keyboard_tests::action_focus::home_actions_tab_enter_space_and_escape_keep_input_owned ... ok
+test tmux_snapshot::home::keyboard_tests::recovery::recovery_preserves_search_selection_request_and_rejects_stale_duplicate ... ok
+test tmux_snapshot::home::keyboard_tests::recovery::recovery_waits_for_foreground_acknowledgement ... ok
+test tmux_snapshot::home::keyboard_tests::recovery::recovery_shortcuts_do_not_steal_search_text ... ok
+test tmux_snapshot::home::keyboard_tests::action_focus::home_focused_refresh_activates_once_without_opening_selected_agent ... ok
+test tmux_snapshot::home::tests::action_admission::home_refresh_cannot_activate_behind_picker ... ok
+test tmux_snapshot::home::keyboard_tests::theme_readiness::workspace_theme_without_appearance_does_not_open_a_picker ... ok
+test tmux_snapshot::home::keyboard_tests::machine_filter::exact_machine_cycle_waits_for_ack_and_preserves_query ... ok
+test tmux_snapshot::home::keyboard_tests::theme_readiness::unavailable_theme_is_inert_and_skipped_until_appearance_arrives ... ok
+test tmux_snapshot::home::keyboard_tests::home_without_terminal_surface_owns_shortcuts_and_picker_text ... ok
+test tmux_snapshot::home::tests::columns::home_columns_share_wide_row_and_stack_in_narrow_window ... ok
+test tmux_snapshot::home::tests::filters::filters_combine_display_search_with_authoritative_status ... ok
+test tmux_snapshot::home::keyboard_tests::selection::home_roster_navigation_preserves_search_composition_and_overlay_ownership ... ok
+test tmux_snapshot::home::tests::filter_keys::home_filter_keys_preserve_marked_search_and_do_not_retoggle_held_attention ... ok
+test tmux_snapshot::home::keyboard_tests::selection::home_roster_selection_reconciles_filter_removal_and_unavailability ... ok
+test tmux_snapshot::home::tests::filter_keys::home_filter_keys_preserve_modifiers_modal_input_and_workspace_ownership ... ok
+test tmux_snapshot::home::keyboard_tests::selection::home_enter_does_not_open_replacement_before_redraw ... ok
+test tmux_snapshot::home::tests::filters::home_search_is_not_an_appkit_terminal_composition_owner ... ok
+test tmux_snapshot::home::tests::fleet::fleet_click_uses_current_token_and_retires_terminal_input ... ok
+test tmux_snapshot::home::tests::fleet_admission::inactive_fleet_session_handler_refuses_without_consuming_intent ... ok
+test tmux_snapshot::home::tests::fleet_admission::ready_fleet_session_rejects_replaced_token_with_same_label ... ok
+test tmux_snapshot::home::tests::fleet_admission::preack_fleet_session_requires_a_new_explicit_click_after_ack ... ok
+test tmux_snapshot::home::tests::fleet_admission::ready_fleet_session_rejects_a_stale_publication ... ok
+test tmux_snapshot::home::tests::local_setup::recovery_publication_prefers_supported_setup_guidance_without_rewriting_diagnostics ... ok
+test tmux_snapshot::home::tests::home_dispatch_fences_request_surface_catalog_and_channel ... ok
+test tmux_snapshot::home::tests::local_setup::explicit_local_setup_preserves_request_and_refuses_duplicates ... ok
+test tmux_snapshot::home::tests::phase_and_catalog_are_truthful_without_inventing_counts_or_targets ... ok
+test tmux_snapshot::home::tests::preferences::collapse_keeps_favorites_and_active_by_published_identity ... ok
+test tmux_snapshot::home::tests::local_setup::setup_cannot_bypass_workspace_picker_or_composition ... ok
+test tmux_snapshot::home::keyboard_tests::selection::home_roster_irrelevant_publication_preserves_manual_scroll ... ok
+test tmux_snapshot::home::tests::local_setup::setup_queue_failure_shows_retry_without_automatic_submission ... ok
+test tmux_snapshot::home::tests::preferences::preference_svg_icons_are_embedded_and_listed ... ok
+test tmux_snapshot::home::tests::fleet_admission::fleet_session_pointer_refuses_inactive_and_preack_then_opens_when_ready ... ok
+test tmux_snapshot::home::tests::preferences::preference_modal_removal_and_full_queue_are_independent_controls ... ok
+test tmux_snapshot::home::tests::preferences::preference_new_epoch_and_acknowledged_foreground_retire_old_queue ... ok
+test tmux_snapshot::home::tests::preferences::preferences_queue_once_without_optimistic_flip_or_input ... ok
+test tmux_snapshot::home::tests::preferences::preferences_refuse_composition_background_and_removed_action ... ok
+test tmux_snapshot::home::tests::preferences::preference_pointer_isolated_at_normal_and_narrow_width ... ok
+test tmux_snapshot::home::tests::render::actual_home_suppresses_stale_cards_and_disconnected_refresh ... ok
+test tmux_snapshot::home::tests::render::actual_home_card_click_uses_current_id_not_duplicate_label ... ok
+test tmux_snapshot::home::tests::render::agents::agent_dispatch_rejects_changed_revision_unavailable_and_disconnected ... ok
+test tmux_snapshot::home::tests::filter_keys::home_filter_keys_search_and_escape_never_send_terminal_input ... ok
+test tmux_snapshot::home::tests::fleet_layout::fleet_hierarchy_keeps_long_labels_and_statuses_separate ... ok
+test tmux_snapshot::home::tests::render::startup_loading_then_verified_empty_and_populated_catalog ... ok
+test tmux_snapshot::home::tests::render::narrow_home_counts_refresh_without_changing_duplicate_label_identity ... ok
+test tmux_snapshot::home::tests::filters::home_search_filters_rows_without_terminal_commands_or_catalog_mutation ... ok
+test tmux_snapshot::home::tests::render::agents::rendered_agent_click_opens_exact_roster_identity ... ok
+test tmux_snapshot::home::keyboard_tests::selection::home_roster_keyboard_skips_unavailable_and_opens_current_revision ... ok
+test tmux_snapshot::home::tests::context::context_only_search_keeps_duplicate_agent_route_and_narrow_bounds ... ok
+
+test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 2789 filtered out; finished in 0.46s

@@ -9,14 +9,15 @@
  * the rung it is stuck at instead of a bare timeout.
  */
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
 import {
   captureDaemonTraceStart,
   stopOwnedDaemonWithTrace,
   observeDaemonClose,
 } from "../daemon-trace-admission.mjs";
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { CanonicalDaemonInfoSchema, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
@@ -91,8 +92,23 @@ async function ensureDaemonBundle(): Promise<void> {
   await bundleBuild;
 }
 
-export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
-  await ensureDaemonBundle();
+export interface StartDaemonOptions {
+  /** Explicit prebuilt CLI for isolated qualification; never inferred from ambient environment. */
+  readonly cliPath?: string;
+}
+
+export async function startDaemon(
+  fleet: ScratchFleet,
+  options: StartDaemonOptions = {},
+): Promise<RunningDaemon> {
+  const cliPath = options.cliPath ?? join(repoRoot, "bin", "cli.js");
+  if (options.cliPath !== undefined) {
+    if (!isAbsolute(cliPath)) throw new Error("Fixture CLI path must be absolute");
+    if (!(await stat(cliPath)).isFile()) throw new Error("Fixture CLI must be a regular file");
+    await access(cliPath, constants.R_OK);
+  } else {
+    await ensureDaemonBundle();
+  }
   const environment: NodeJS.ProcessEnv = { ...process.env, ...fleet.environment };
   // Inherited runtime hooks and a stale pane id would follow the daemon into
   // the scratch world and point it back at the developer's real tmux server.
@@ -105,7 +121,7 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
   const traceStart = tracePath ? await captureDaemonTraceStart(tracePath) : null;
   const harness: HarnessChild = spawnHarnessChild({
     command: process.execPath,
-    args: [join(repoRoot, "bin", "cli.js"), "--headless"],
+    args: [cliPath, "--headless"],
     cwd: repoRoot,
     env: environment,
   });

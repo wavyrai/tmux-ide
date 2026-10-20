@@ -1,0 +1,162 @@
+diff --git a/input.c b/input.c
+index 86725fa4..b1eb3602 100644
+--- a/input.c
++++ b/input.c
+@@ -130,6 +130,13 @@ struct input_ctx {
+ 	int				ch;
+ 	struct utf8_data		last;
+ 
++	/* kitty graphics: first chunk of an unfinished m=1 transmission. */
++	int				kitty_more;
++	u_int				kitty_i;
++	u_int				kitty_I;
++	u_int				kitty_p;
++	u_int				kitty_q;
++
+ 	const struct input_state       *state;
+ 	int				flags;
+ #define INPUT_DISCARD 0x1
+@@ -189,6 +196,8 @@ static void	input_enter_dcs(struct input_ctx *);
+ static void	input_enter_osc(struct input_ctx *);
+ static void	input_exit_osc(struct input_ctx *);
+ static void	input_enter_apc(struct input_ctx *);
++static void	input_kitty_graphics(struct input_ctx *, const u_char *,
++		    size_t);
+ static void	input_exit_apc(struct input_ctx *);
+ static void	input_enter_rename(struct input_ctx *);
+ static void	input_exit_rename(struct input_ctx *);
+@@ -2662,6 +2671,18 @@ input_dcs_dispatch(struct input_ctx *ictx)
+ 		 */
+ 	}
+ 
++	/*
++	 * A wrapped kitty graphics query is answered here, as the terminal
++	 * outside would, whether or not passthrough is allowed.
++	 */
++	if (len >= prefixlen + 4 && strncmp(buf, prefix, prefixlen) == 0 &&
++	    memcmp(buf + prefixlen, "\033_G", 3) == 0 &&
++	    len >= prefixlen + 5 && buf[len - 2] == '\033' &&
++	    buf[len - 1] == '\\') {
++		input_kitty_graphics(ictx, buf + prefixlen + 3,
++		    len - prefixlen - 5);
++	}
++
+ 	allow_passthrough = options_get_number(oo, "allow-passthrough");
+ 	if (!allow_passthrough)
+ 		return (0);
+@@ -2792,6 +2813,13 @@ input_exit_apc(struct input_ctx *ictx)
+ 		return;
+ 	log_debug("%s: \"%s\"", __func__, ictx->input_buf);
+ 
++	/* kitty graphics commands are never a title. */
++	if (ictx->input_buf[0] == 'G') {
++		input_kitty_graphics(ictx, ictx->input_buf + 1,
++		    ictx->input_len - 1);
++		return;
++	}
++
+ 	if (wp != NULL &&
+ 	    options_get_number(wp->options, "allow-set-title") &&
+ 	    screen_set_title(sctx->s, ictx->input_buf, 1)) {
+@@ -2801,6 +2829,82 @@ input_exit_apc(struct input_ctx *ictx)
+ 	}
+ }
+ 
++/*
++ * Acknowledge a kitty graphics command when kitty-graphics is on, in stream
++ * order with other replies. The pane's bytes reach control clients unchanged,
++ * and they render the image; tmux only answers so that programs detect
++ * support. Responses follow the protocol: only for commands naming an image
++ * (i or I), after the last chunk, and suppressed by q.
++ */
++static void
++input_kitty_graphics(struct input_ctx *ictx, const u_char *buf, size_t len)
++{
++	struct window_pane	*wp = ictx->wp;
++	struct options		*oo = wp != NULL ? wp->options : global_w_options;
++	char			 a = 't', key, more = 0;
++	u_int			 i = 0, I = 0, p = 0, q = 0, value;
++	size_t			 at = 0;
++	char			 extra[64];
++
++	if (!options_get_number(oo, "kitty-graphics"))
++		return;
++	while (at < len && buf[at] != ';') {
++		key = buf[at];
++		if (at + 1 >= len || buf[at + 1] != '=')
++			return;
++		at += 2;
++		value = 0;
++		if (key == 'a' && at < len && buf[at] != ',' && buf[at] != ';')
++			a = buf[at++];
++		while (at < len && buf[at] >= '0' && buf[at] <= '9' &&
++		    value < 100000000)
++			value = value * 10 + (buf[at++] - '0');
++		while (at < len && buf[at] != ',' && buf[at] != ';')
++			at++;
++		if (at < len && buf[at] == ',')
++			at++;
++		switch (key) {
++		case 'i': i = value; break;
++		case 'I': I = value; break;
++		case 'p': p = value; break;
++		case 'q': q = value; break;
++		case 'm': more = value != 0; break;
++		}
++	}
++	if (ictx->kitty_more) {
++		if (more)
++			return;
++		ictx->kitty_more = 0;
++		a = 't';
++		i = ictx->kitty_i;
++		I = ictx->kitty_I;
++		p = ictx->kitty_p;
++		q = ictx->kitty_q;
++	} else if ((a == 't' || a == 'T') && more) {
++		ictx->kitty_more = 1;
++		ictx->kitty_i = i;
++		ictx->kitty_I = I;
++		ictx->kitty_p = p;
++		ictx->kitty_q = q;
++		return;
++	}
++	if (q >= 1 || (i == 0 && I == 0))
++		return;
++	if (a != 't' && a != 'T' && a != 'p' && a != 'q')
++		return;
++	*extra = '\0';
++	if (I != 0 && i != 0)
++		xsnprintf(extra, sizeof extra, "i=%u,I=%u", i, I);
++	else if (I != 0)
++		xsnprintf(extra, sizeof extra, "I=%u", I);
++	else
++		xsnprintf(extra, sizeof extra, "i=%u", i);
++	if (p != 0 && a != 'q')
++		input_reply(ictx, 1, "\033_G%s,p=%u;OK\033\\", extra, p);
++	else
++		input_reply(ictx, 1, "\033_G%s;OK\033\\", extra);
++}
++
+ /* Rename string started. */
+ static void
+ input_enter_rename(struct input_ctx *ictx)
+diff --git a/options-table.c b/options-table.c
+index d743cdf1..472f9723 100644
+--- a/options-table.c
++++ b/options-table.c
+@@ -1110,6 +1110,14 @@ const struct options_table_entry options_table[] = {
+ 		  "to set the pane title."
+ 	},
+ 
++	{ .name = "kitty-graphics",
++	  .type = OPTIONS_TABLE_FLAG,
++	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,
++	  .default_num = 0,
++	  .text = "Whether to acknowledge kitty graphics protocol commands "
++		  "so applications detect a client that renders them."
++	},
++
+ 	{ .name = "alternate-screen",
+ 	  .type = OPTIONS_TABLE_FLAG,
+ 	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,

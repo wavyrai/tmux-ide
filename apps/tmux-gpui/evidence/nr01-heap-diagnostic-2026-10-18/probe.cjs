@@ -1,0 +1,1 @@
+const fs=require('node:fs');fs.appendFileSync('/tmp/node-heaps.jsonl',JSON.stringify({pid:process.pid,entry:process.argv[1],heapLimit:require('node:v8').getHeapStatistics().heap_size_limit})+'\n');

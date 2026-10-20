@@ -1,0 +1,33 @@
+[
+  {
+    "lane": "plain",
+    "session": 18061,
+    "exitCode": 0,
+    "pass": true,
+    "enabledPressReleaseHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d",
+    "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d6466",
+    "disabledNoLeak": true,
+    "cleanup": true,
+    "remainingOwnedPids": [],
+    "artifactsUnchanged": true,
+    "protectedCliUnchanged": true
+  },
+  {
+    "lane": "tui",
+    "session": 31202,
+    "exitCode": 0,
+    "pass": true,
+    "enabledPressReleaseHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d",
+    "actualHex": "1b5b3c303b31313b374d1b5b3c303b31313b376d6466",
+    "disabledNoLeak": true,
+    "cleanup": true,
+    "remainingOwnedPids": [],
+    "artifactsUnchanged": true,
+    "protectedCliUnchanged": true
+  },
+  {
+    "lane": "gpui",
+    "status": "unsupported semantic press/release path; source-audited, not GUI runtime failure",
+    "runtimeExecuted": false
+  }
+]

@@ -22,6 +22,42 @@ pub(in crate::tmux_snapshot::browser_ui) fn focus_shortcut(key: &Keystroke) -> b
         && !key.modifiers.shift
 }
 impl SnapshotView {
+    pub(in crate::tmux_snapshot) fn sidebar_scope_focused(&self, window: &Window) -> bool {
+        self.sidebar_keyboard.active
+            && self
+                .sidebar_keyboard
+                .focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+    }
+    pub(in crate::tmux_snapshot) fn focus_sidebar_scope(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.sidebar_keyboard_allowed() {
+            return false;
+        }
+        let current = rows(&self.browser_state);
+        if !current.iter().any(|row| row.target.is_some()) {
+            return false;
+        }
+        let state = &mut self.sidebar_keyboard;
+        state
+            .focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .focus(window, cx);
+        state.active = true;
+        state.machine_focus = None;
+        state.request = self.browser_request;
+        state.selected = current
+            .iter()
+            .find(|row| row.selected)
+            .and_then(|row| row.target.clone());
+        state.displayed = current.into_iter().map(|row| row.target).collect();
+        true
+    }
+
     pub(super) fn sidebar_keyboard_allowed(&self) -> bool {
         self.browser_state.surface == browser::Surface::Workspace
             && !self.sidebar_hidden
@@ -126,6 +162,7 @@ impl SnapshotView {
     ) -> bool {
         let key = &event.keystroke;
         if focus_shortcut(key) {
+            self.cancel_tab_focus_restore();
             if !event.is_held
                 && self.marked.is_empty()
                 && self.picker.is_none()

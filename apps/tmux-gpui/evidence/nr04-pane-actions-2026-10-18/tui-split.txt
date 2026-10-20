@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr04-actions-88749-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● clever-meteor                                               ⋯    ○ daring-fern                                                ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT                                              thijs@mini-m4 project %
+   e2e-nr04-actions-887… 2p sh-3.2$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

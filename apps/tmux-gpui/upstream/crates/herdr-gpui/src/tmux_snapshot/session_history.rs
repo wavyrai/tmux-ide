@@ -149,7 +149,7 @@ impl SnapshotView {
             self.session_history.pending = None;
             self.pending_session_open = (state.surface == browser::Surface::Workspace
                 && state.selected_pane.is_none()
-                && state.frame.is_none()
+                && (state.frame.is_none() || state.retained_preview)
                 && !state.input_ready)
                 .then(|| super::session_open::Intent::admitted(state.request));
             self.header_controls = Default::default();

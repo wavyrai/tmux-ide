@@ -79,6 +79,8 @@ export interface MirrorServiceOptions {
   /** `tmux -f <file>` — tests pass /dev/null. */
   configFile?: string;
   pauseAfterSeconds?: number;
+  /** Enable kitty graphics acknowledgements on attach (default: on unless TMUX_IDE_KITTY_GRAPHICS=0). */
+  kittyGraphics?: boolean;
   /** Explicit capture tail override. Omitted preserves native retained history. */
   historyLines?: number;
   internalReadHookEmission?: SessionChannelOptions["internalReadHookEmission"];
@@ -737,6 +739,7 @@ export class MirrorService {
               nativeServerIdentity: this.opts.nativeServerIdentity,
               configFile: this.opts.configFile,
               pauseAfterSeconds: this.opts.pauseAfterSeconds,
+              kittyGraphics: this.opts.kittyGraphics ?? process.env.TMUX_IDE_KITTY_GRAPHICS !== "0",
               nowMicros: this.opts.nowMicros,
               nativeViewer: ownedViewer?.controlOptions(),
               nativeViewerReady: ownedViewer

@@ -1,0 +1,63 @@
+{
+  "lane": "actual-source-GPUI-bridge",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Bridge grid calibration; no native physical GUI or performance parity claim",
+  "before": [
+    "%0|71841||0|0|40|24|80|24|0",
+    "%1|71847||41|0|39|24|80|24|0"
+  ],
+  "request": 2,
+  "grids": [
+    {
+      "name": "initial",
+      "cols": 132,
+      "rows": 41,
+      "bridgeCols": 132,
+      "bridgeRows": 41,
+      "publishedBothMarkers": true
+    },
+    {
+      "name": "expanded",
+      "cols": 152,
+      "rows": 45,
+      "bridgeCols": 152,
+      "bridgeRows": 45,
+      "publishedBothMarkers": true
+    },
+    {
+      "name": "restored",
+      "cols": 132,
+      "rows": 41,
+      "bridgeCols": 132,
+      "bridgeRows": 41,
+      "publishedBothMarkers": true
+    }
+  ],
+  "initial": [
+    "%0|71841||0|1|66|40|132|41|0",
+    "%1|71847||67|1|65|40|132|41|0"
+  ],
+  "expanded": [
+    "%0|71841||0|1|76|44|152|45|0",
+    "%1|71847||77|1|75|44|152|45|0"
+  ],
+  "restored": [
+    "%0|71841||0|1|66|40|132|41|0",
+    "%1|71847||67|1|65|40|132|41|0"
+  ],
+  "tuiReceiptSha256": "d44d93bf73b609065b65ef201c6d5224fe169d6a7693d1bb090a9d1b004b2edd",
+  "matchesTuiSourceGeometry": true,
+  "paneBirthIdSupported": false,
+  "identityPreserved": true,
+  "geometryRestored": true,
+  "freshInput": true,
+  "sourceFreshInput": true,
+  "pass": true,
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 5,
+  "cleanup": true,
+  "protectedCliUnchanged": true
+}

@@ -1,0 +1,27 @@
+   Compiling herdr-gpui v0.1.0 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/herdr-gpui)
+    Checking gpui-wry v0.6.6 (/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/apps/tmux-gpui/upstream/crates/gpui-wry)
+error: this `if` statement can be collapsed
+   --> crates/herdr-gpui/src/tmux_snapshot/pointer.rs:110:9
+    |
+110 | /         if let Some((gesture, _, lease)) = self.pointer.held.take() {
+111 | |             if let Some(sender) = &self.browser_commands {
+112 | |                 let _ = sender.try_send(browser::Command::Input {
+113 | |                     request: lease.request,
+...   |
+118 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+110 ~         if let Some((gesture, _, lease)) = self.pointer.held.take()
+111 ~             && let Some(sender) = &self.browser_commands {
+112 |                 let _ = sender.try_send(browser::Command::Input {
+...
+116 |                 });
+117 ~             }
+    |
+
+error: could not compile `herdr-gpui` (lib) due to 1 previous error

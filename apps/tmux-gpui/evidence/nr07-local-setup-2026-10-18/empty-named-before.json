@@ -1,0 +1,69 @@
+{
+  "passed": true,
+  "node": "v24.21.0",
+  "cliSha256": "79d42e21896287a3055c99200bfec697adebda3466fd703fcafcb09c4427ef7d",
+  "sourceDependencies": true,
+  "socketName": "nr07-tmi-empty-setup-DKAFN1",
+  "initialAbsent": true,
+  "duplicateClicks": 2,
+  "runningObserved": true,
+  "observedDaemonIdentities": 1,
+  "zeroSessionGapReproduced": true,
+  "socketInitiallyAbsent": true,
+  "noServerGuidance": true,
+  "noCreateAuthority": true,
+  "localTargetUnavailable": true,
+  "verifiedDaemonPresent": true,
+  "cleanupPassed": true,
+  "trace": [
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "available",
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "running",
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false
+    }
+  ],
+  "failures": []
+}

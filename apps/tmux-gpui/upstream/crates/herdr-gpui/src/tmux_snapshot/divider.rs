@@ -437,7 +437,8 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) -> bool {
         self.divider = None;
-        if self.selection.is_some()
+        if self.browser_state.retained_preview
+            || self.selection.is_some()
             || (self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some())
             || !self.presence.ready()
             || self.browser_request != self.browser_state.request

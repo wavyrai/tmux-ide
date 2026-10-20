@@ -1,0 +1,8 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon
+
+
+ Test Files  3 passed (3)
+      Tests  212 passed (212)
+   Start at  12:42:42
+   Duration  3.11s (transform 518ms, setup 0ms, import 726ms, tests 2.40s, environment 0ms)

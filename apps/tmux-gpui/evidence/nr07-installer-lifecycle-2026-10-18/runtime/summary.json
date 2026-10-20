@@ -1,0 +1,13 @@
+{
+  "session": 3168,
+  "exitCode": 0,
+  "pass": true,
+  "qualification": "Private fresh ignore-scripts + ownpostinstall installed daemon with separately compiled TUI; no thirdparty rebuild or fullpublicinstaller claim",
+  "actualBytes": 2138,
+  "actualSha256": "cca7eb9dfb059bd65c734bd09733b4feca3fbc3ba608b496967bba97fc4053b7",
+  "cleanup": true,
+  "remainingOwnedPids": [],
+  "artifactsUnchanged": true,
+  "protectedCliUnchanged": true,
+  "finalBytesRechecked": true
+}

@@ -1,0 +1,40 @@
+✔ history viewport stays anchored across append and returns to live cursor (1.547792ms)
+✔ trim preserves a surviving anchor; lost/reset/alternate-screen anchors return live (0.362833ms)
+✔ retained history is bounded and never exceeds a thousand rows (5.614875ms)
+✔ repeated row references cannot falsely prove an anchor occurrence (0.1135ms)
+✔ serialized history budget and width changes cannot retain stale views (5.027708ms)
+✔ input requires authority before sending and does not request it implicitly (0.546584ms)
+✔ pins exact pane and never retries an ambiguous acknowledgement (0.645541ms)
+✔ paste wraps once, preserves Unicode across chunks, and stays on its pane (1.128125ms)
+✔ paste stops on authority loss and rejects invalid clipboard content before sending (1.102042ms)
+✔ mouse requires an admitted down, consumes up, and refuses replay (1.120875ms)
+✔ cancel, mode, dimensions and attachment changes retire held gestures (0.233417ms)
+✔ disabled, shifted, out of bounds and stale mode expectations never send (0.09475ms)
+✔ encoding refusal never creates a held gesture and cancellation tombstones IDs (0.140583ms)
+✔ X10 retires release without bytes; ordinary content changes preserve gestures (0.085875ms)
+✔ drag and hover follow canonical protocol, buttons and monotonic hover IDs (0.125083ms)
+✔ mouse-reporting alternate-screen application receives wheel instead of empty local history (0.910875ms)
+✔ Shift, retained history, and non-reporting screens remain local without arrow fallback (0.104375ms)
+✔ canonical encodings retain Ctrl, strip Alt, and reject out-of-pane coordinates (0.67275ms)
+✔ maximum positive and negative wheel counts preserve whole reports in bounded batches (1.317541ms)
+✔ canvas preserves tmux offsets, separator gap and selected cursor (0.471625ms)
+✔ incomplete, resized, overlapping and unverified layouts never promote (0.177167ms)
+✔ top status row is outside pane content and cursor (3.100583ms)
+✔ top status only reduces the outer pane in vertical splits (0.125833ms)
+✔ bottom status row is outside pane content and cursor (0.070417ms)
+✔ bottom status only reduces the outer pane in vertical splits (0.043834ms)
+✔ layout-first resize retains one atomic presentation then promotes matching geometry (1.590792ms)
+✔ surfaces-first resize retains one atomic presentation then promotes matching geometry (0.3705ms)
+✔ sibling-first resize retains one atomic presentation then promotes matching geometry (0.198042ms)
+✔ outer status row copy geometry and wrap flags remain paired with retained pixels (0.556333ms)
+✔ scope replacement, missing surfaces, and invalid geometry clear retained state (0.460458ms)
+✔ authority, presence or history disable clears cache even when read-only composition succeeds (0.117375ms)
+✔ another instance and an initial skew cannot borrow an earlier coherent frame (0.059541ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 577.53825

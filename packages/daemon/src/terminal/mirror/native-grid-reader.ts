@@ -1,5 +1,9 @@
 import type { MirrorChannelIo } from "./control-channel.ts";
-import { decodeNativeGridCapture, type NativeGridCapture } from "./native-grid-capture.ts";
+import {
+  decodeNativeGridCapture,
+  isStockRawGridCapture,
+  type NativeGridCapture,
+} from "./native-grid-capture.ts";
 
 export type NativeGridReadResult =
   | {
@@ -81,6 +85,11 @@ export class NativeGridCaptureReader {
             }
             if (!isCurrent()) {
               finish({ status: "changed" });
+              return;
+            }
+            if (isStockRawGridCapture(reply.lines)) {
+              this.unsupported = true;
+              finish({ status: "unsupported" });
               return;
             }
             const snapshot = decodeNativeGridCapture(reply.lines.join("\n"));

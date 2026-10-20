@@ -1,3 +1,6 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout, clearTimeout } from "node:timers";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
@@ -105,7 +108,12 @@ const until = async (predicate) => {
 try {
   for (const name of fleet.sessionNames)
     fleet.typeInPane(name, "export LC_ALL=en_US.UTF-8; exec sh -i");
-  daemon = await startDaemon(fleet);
+  daemon = await startDaemon(
+    fleet,
+    process.env.TMUX_GPUI_TEST_CLI !== undefined
+      ? { cliPath: process.env.TMUX_GPUI_TEST_CLI }
+      : undefined,
+  );
   const options = {
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
@@ -493,7 +501,12 @@ try {
   }
   if (!native) {
     // Keep the same browser process across a real daemon replacement.
-    daemon = await startDaemon(fleet);
+    daemon = await startDaemon(
+      fleet,
+      process.env.TMUX_GPUI_TEST_CLI !== undefined
+        ? { cliPath: process.env.TMUX_GPUI_TEST_CLI }
+        : undefined,
+    );
     const freshOptions = {
       ...options,
       baseUrl: daemon.baseUrl + "/",

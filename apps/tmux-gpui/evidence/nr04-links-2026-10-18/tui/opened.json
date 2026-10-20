@@ -1,0 +1,14 @@
+[
+  [
+    "https://example.invalid/a(b)"
+  ],
+  [
+    "http://example.invalid/ok"
+  ],
+  [
+    "https://example.invalid/wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
+  ],
+  [
+    "https://example.invalid/a(b)"
+  ]
+]

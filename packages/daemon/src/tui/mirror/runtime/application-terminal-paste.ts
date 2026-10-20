@@ -20,9 +20,10 @@ export function sendApplicationTerminalPaste(
   interaction: ApplicationTerminalInteractionController,
   bytes: Uint8Array,
   captureOrigin: boolean,
+  bracketedPaste: boolean,
 ): void {
   const text = Buffer.from(bytes).toString("utf8");
-  const inputs = terminalInputsForPaste(text);
+  const inputs = terminalInputsForPaste(text, bracketedPaste);
   for (let index = 0; index < inputs.length; index += 1) {
     const parserOrigin =
       index === 0 && captureOrigin

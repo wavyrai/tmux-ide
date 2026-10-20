@@ -1,0 +1,30 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/packages/daemon
+
+ ❯ src/tui/mirror/runtime/application-home-agents-owner.test.ts (11 tests | 1 failed) 168ms
+     × explains transient terminal admission without enabling blocked palette actions 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/tui/mirror/runtime/application-home-agents-owner.test.ts > resident agent Home composition > explains transient terminal admission without enabling blocked palette actions
+AssertionError: expected 'Open a live session first' to be 'Opening terminal…' // Object.is equality
+
+Expected: "Opening terminal…"
+Received: "Open a live session first"
+
+ ❯ src/tui/mirror/runtime/application-home-agents-owner.test.ts:176:72
+    174|       ] as const) {
+    175|         current = status ? { ...r.generation, status } : null;
+    176|         expect(navigation.paletteCommands.disabledReason("zoom-pane"))…
+       |                                                                        ^
+    177|         navigation.paletteCommands.activate("zoom-pane", "keyboard");
+    178|         expect(setNote).toHaveBeenLastCalledWith(reason);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  13:26:25
+   Duration  760ms (transform 344ms, setup 0ms, import 527ms, tests 168ms, environment 0ms)
+

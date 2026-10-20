@@ -1,0 +1,6 @@
+b43a909ad38d30b387639d36f32bdf88078dba10c085cbc6201f7f898a75afa4  apps/tmux-gpui/bridge/browser.ts
+18adb4d9c45be6b1876abc6f6ee57c811ad0fd56bbd3cf586ba334bfb83b2dbe  apps/tmux-gpui/bridge/live.ts
+8ff0ab31fda33fee70a87ac264da0787f7196e84dd851a09c8ab304335003d96  apps/tmux-gpui/bridge/selection-identity.ts
+21ed8828e790e627e08138dd1f3d322a5d09449edd895665a0bafd8c893b1928  apps/tmux-gpui/bridge/agent-launch-guidance.ts
+f09acb9b1a4ae9349b7d10858234995066085ff8e9403150cbb70002a9fea428  bin/cli.js
+d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5  .tasks/native-reliability-mission/nr07-guidance-runtime/cli.mjs

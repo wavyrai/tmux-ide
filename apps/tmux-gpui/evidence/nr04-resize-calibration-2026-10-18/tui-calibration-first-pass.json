@@ -1,0 +1,32 @@
+{
+  "lane": "actual-source-OpenTUI",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Calibration only; no GPUI or performance parity claim",
+  "before": [
+    "%0|68551||0|0|40|24|80|24|0",
+    "%1|68557||41|0|39|24|80|24|0"
+  ],
+  "launch": "OpenTUI test-drive chrome ready in 1414ms (source, 160x44, target e2e-nr04-68527-0)\nAttach: tmux attach -t nr04-host-68527\nLogs:   /tmp/tmi-e2e-nr04-0QexaN/tui/stderr.log\n\n   tmux-ide  F1 Home    F2 Terminals                                                                                                         ○ finding sessions\n Machines            ? Help\n\n▾ Local               ready\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n                                                                                         Terminals\n\n                                                                                   Finding tmux sessions…\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n F6 Browse all sessions\n F7 Attention (0)\n A Add machine               Terminals  Finding tmux sessions                                                                                     F5 Commands\n",
+  "initial": [
+    "%0|68551||0|1|66|40|132|41|0",
+    "%1|68557||67|1|65|40|132|41|0"
+  ],
+  "renderedBothMarkers": true,
+  "resize": "",
+  "expanded": [
+    "%0|68551||0|1|76|44|152|45|0",
+    "%1|68557||77|1|75|44|152|45|0"
+  ],
+  "restored": [
+    "%0|68551||0|1|66|40|132|41|0",
+    "%1|68557||67|1|65|40|132|41|0"
+  ],
+  "identityPreserved": true,
+  "geometryRestored": true,
+  "freshInput": true,
+  "pass": true,
+  "protectedCliUnchanged": true,
+  "cleanup": true
+}

@@ -1,0 +1,42 @@
+✔ fresh install and upgrade work with spaces and shell punctuation (3291.432708ms)
+✔ installer output stays concise and names a PATH entry that shadows the launcher (1575.513917ms)
+✔ printed start and update commands execute with spaces and shell punctuation (1841.654709ms)
+✔ postinstall failure preserves an existing installation (2702.193792ms)
+✔ relocated CLI failure preserves an existing installation (2415.1395ms)
+✔ native checksum mismatch preserves an existing installation (1933.319042ms)
+✔ checksum mismatch preserves an existing installation (1794.707917ms)
+✔ npm failure preserves an existing installation (1684.289ms)
+✔ offline or proxy transport failure preserves an existing installation (1541.773625ms)
+✔ archive extraction failure preserves an existing installation (1612.90625ms)
+✔ unsupported operating system preserves an existing installation (1551.618375ms)
+✔ unsupported architecture preserves an existing installation (1557.25325ms)
+✔ unsupported Intel Mac preserves an existing installation (1585.830333ms)
+✔ unsupported libc preserves an existing installation (1719.5495ms)
+✔ mismatched CLI version preserves an existing installation (1943.533291ms)
+✔ TUI download failure preserves an existing installation (2301.462458ms)
+✔ missing platform bundle preserves an existing installation (2119.292042ms)
+✔ unsupported tmux version preserves an existing installation (2306.718958ms)
+✔ unmanaged launcher is preserved (7.678541ms)
+✔ rollback swaps verified releases offline and uninstall preserves user data (4837.430834ms)
+✔ missing or corrupt rollback target leaves the current release active (2953.5025ms)
+✔ late failure on a fresh install leaves no managed launcher or release (998.133ms)
+✔ an active installation lock prevents all mutations (1608.640292ms)
+✔ explicit pruning retains current and rollback, skips unknown files, and works offline (5128.914625ms)
+✔ retention cap refuses another install until explicit cleanup (2961.483ms)
+✔ pre-staging failure preserves every retained runtime (1743.376292ms)
+✔ SIGTERM during relocated setup removes the candidate and preserves the old release (3991.303209ms)
+✔ SIGINT during relocated setup removes the candidate and preserves the old release (3333.961416ms)
+✔ install enables Claude Code agent teams when ~/.claude exists (2833.68525ms)
+✔ install skips agent teams without Claude Code (1521.7125ms)
+✔ install respects a user's agent-teams opt-out (1534.889666ms)
+✔ --no-claude-agent-teams opts out of the agent-teams step (1456.08375ms)
+✔ TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1 opts out of the agent-teams step (1457.81ms)
+✔ an agent-teams failure warns but never fails the install (1578.397792ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 73518.42925

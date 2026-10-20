@@ -1,0 +1,22 @@
+✔ accepts only the exact drain intent, ignores display and foreign results (3.424292ms)
+✔ cancellation settles once and ignores late completion (0.180709ms)
+✔ deadline and early child close settle unavailable (5.561708ms)
+✔ stdin failure settles without waiting for deadline (0.199875ms)
+✔ framing handles split UTF8 obsolete display before exact result (0.406708ms)
+✔ capture uses exact canonical index and proof, never bounded viewport offset (2.970583ms)
+✔ busy output restore matches later delivered proof and carries exact row forward (0.617792ms)
+✔ replacement identical text cannot resurrect missing row (0.304584ms)
+✔ return live cancels pending restore and late reply cannot change viewport (0.339542ms)
+✔ unsupported old daemon is distinct from lost anchor (0.3455ms)
+✔ capture pending is explicitly unresolved and return live cancels late token (0.188875ms)
+✔ bounded history slice keeps canonical indices and refuses omitted rows (11.10475ms)
+✔ handoff waits for the newest capture rather than superseded completion (0.271583ms)
+✔ return-live handoff does not wait for an obsolete capture (0.176917ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 135.050667

@@ -1189,7 +1189,20 @@ export interface MirrorControlChannelOptions {
   pauseAfterSeconds?: number;
   /** Qualification-only clock. Omitted in production's zero-observer path. */
   nowMicros?: () => number;
+  /** Ask tmux to acknowledge kitty graphics commands (patched tmux; stock ignores it). */
+  kittyGraphics?: boolean;
 }
+
+/**
+ * Server-wide, idempotent: `-q` keeps a stock tmux (no such option) quiet.
+ * Images reach this control client either way; the option only lets programs
+ * detect support, and the environment tells new panes' programs that this
+ * server's renderer shows placeholder images.
+ */
+export const KITTY_GRAPHICS_SETUP = [
+  "set-option -gq kitty-graphics on",
+  "set-environment -g TMUX_IDE_GRAPHICS kitty",
+] as const;
 
 export function mirrorControlAttachArgs(
   options: Pick<
@@ -1348,7 +1361,11 @@ export class MirrorControlChannel implements MirrorChannelIo {
         this.core.fail(String(err));
         reject(err);
       });
-    }).then(() => this.initializeNativeViewer());
+    }).then(() => {
+      // One command per send: tmux answers a `;` list with one block per command.
+      if (this.opts.kittyGraphics) for (const command of KITTY_GRAPHICS_SETUP) this.send(command);
+      return this.initializeNativeViewer();
+    });
   }
 
   get nativeViewerIdentity(): NativeJournalIdentity | null {

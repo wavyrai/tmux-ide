@@ -36,7 +36,7 @@ impl Filter {
 }
 pub(in crate::tmux_snapshot) struct Controls {
     pub(super) search: Entity<SearchInput>,
-    pub(super) actions: [FocusHandle; 4],
+    pub(super) actions: [FocusHandle; 5],
     pub(super) filter: Filter,
     pub(super) selected: Option<String>,
     pub(super) recovery_queued: Option<(u64, u64)>,

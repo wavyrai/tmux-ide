@@ -12,7 +12,8 @@ pub(super) fn gesture(event: &MouseDownEvent) -> bool {
 
 impl SnapshotView {
     pub(super) fn terminal_web_link(&self, position: Point<Pixels>) -> Option<String> {
-        if self.picker.is_some()
+        if self.browser_state.retained_preview
+            || self.picker.is_some()
             || self.pane_actions.is_some()
             || self.new_session.is_some()
             || self.divider.is_some()

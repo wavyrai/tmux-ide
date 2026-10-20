@@ -1,0 +1,16 @@
+{
+  "scope": "Historical source-built non-hermetic v3 owner smoke; no SSH or installed-release qualification",
+  "root": "/var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/nr08-v3-HdfPmq",
+  "passed": false,
+  "cleanup": true,
+  "childPid": 50675,
+  "failure": "owner exited before readiness\n\n1 !== null\n",
+  "childExit": {
+    "code": 1,
+    "signal": null
+  },
+  "stdoutBytes": 0,
+  "stderrBytes": 1647,
+  "cliSha256": "928005012711bcbf1430ae9d29ac1dca08c8468aed07e558eb9fd8fa1277c39e",
+  "protectedCliUnchanged": true
+}

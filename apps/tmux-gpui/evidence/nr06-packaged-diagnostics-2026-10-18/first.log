@@ -1,0 +1,3 @@
+{"phase":"restored input","grid":{"cols":80,"rows":24},"snapshot":{"cols":80,"rows":24}}
+{"passed":true,"sameBrowser":true,"samePane":true,"automaticRecovery":true,"realSsh":false}
+{"passed":true,"cleanup":true,"hashesUnchanged":true,"output":"/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr06-packaged-diagnostics/first.json"}

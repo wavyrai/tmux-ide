@@ -14,11 +14,13 @@ export function createHistoryViewport() {
   let history: TerminalReplicaRow[] = [];
   let anchor: TerminalReplicaRow | null = null;
   let offset = 0;
+  let sourceHistory: TerminalReplicaRow[] = [];
   function update(snapshot: TerminalReplicaSnapshot | null) {
     if (!snapshot || current?.cols !== snapshot.cols || snapshot.modes.alternateScreen) {
       anchor = null;
       offset = 0;
     }
+    sourceHistory = snapshot?.history ?? [];
     current = snapshot ? { ...snapshot, history: [] } : null;
     history = [];
     if (snapshot && !snapshot.modes.alternateScreen) {
@@ -61,6 +63,18 @@ export function createHistoryViewport() {
     update,
     get offset() {
       return offset;
+    },
+    captureIndex(): number | null {
+      if (!anchor) return null;
+      const index = sourceHistory.indexOf(anchor);
+      return index >= 0 && index === sourceHistory.lastIndexOf(anchor) ? index : null;
+    },
+    restoreRow(row: TerminalReplicaRow): TerminalReplicaSnapshot | null {
+      const index = history.indexOf(row);
+      if (index < 0 || index !== history.lastIndexOf(row)) return null;
+      anchor = row;
+      offset = history.length - index;
+      return view();
     },
     scroll(lines: number) {
       offset = lines === 0 ? 0 : Math.max(0, Math.min(history.length, offset + lines));

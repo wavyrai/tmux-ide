@@ -1,0 +1,23 @@
+{
+  "lane": "actual-source-OpenTUI",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "sourceHead": "aa7c0d4f8ab325ba323c6e018cb699d8b0e7df47",
+  "claims": "TUI transient palette status; no native GUI or timing performance claim",
+  "before": [
+    "%0|91365||0|0|80|24|80|24|0"
+  ],
+  "launch": "OpenTUI test-drive chrome ready in 1200ms (source, 160x44, target e2e-nr05-palette-91343-0)\nAttach: tmux attach -t nr04-host-91343\nLogs:   /tmp/tmi-e2e-nr05-palette-zHFh9E/tui/stderr.log\n\n   tmux-ide  F1 Home    F2 Terminals                                                                                                                   ● 1 live\n Machines            ? Help\n\n▾ Local\n   e2e-nr05-palette-913… 1p\n\n\n\n\n\n\n\n\n\n\n\n                                                                             Machine · e2e-nr05-palette-91343-0\n\n                                                                                  1 tmux session available\n\n                              Connecting to daemon · 0s\n\n\n                                                                                ○ Choose another session · F5\n\n                                                                                ○ Back to Home\n\n                                                                                ○ Copy connection details\n\n\n\n\n\n\n\n\n\n\n\n\n\n F6 Browse all sessions\n F7 Attention (0)\n A Add machine               Terminals  Connecting to daemon · 0s                                                                                 F5 Commands\n",
+  "initial": [
+    "%0|91365||0|1|132|40|132|41|0"
+  ],
+  "renderedBothMarkers": true,
+  "pass": false,
+  "error": "AssertionError [ERR_ASSERTION]: Requested palette action must be visible",
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 6,
+  "protectedCliUnchanged": true,
+  "cleanup": true
+}

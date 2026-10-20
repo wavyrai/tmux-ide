@@ -15,6 +15,79 @@ function deferred<Value>() {
 }
 
 describe("application terminal input ingress", () => {
+  it.each([false, true, null])(
+    "uses exact canonical paste mode %s for live and recovered delivery",
+    async (mode) => {
+      for (const recovering of [false, true]) {
+        let currentMode: boolean | null = !mode;
+        const paneState = vi.fn((pane: string) =>
+          pane === "pane.alpha" && currentMode !== null
+            ? { snapshot: { modes: { bracketedPaste: currentMode } } }
+            : null,
+        );
+        let snapshot = {
+          status: recovering ? "rebinding" : "live",
+          daemonGeneration: "daemon-a",
+          rendererEpoch: 1,
+          connection: {},
+          client: { getSnapshot: () => ({ generation: 1 }) },
+          fastLane: { lane: { paneState } },
+        } as unknown as OpenTuiGenerationHostSnapshot;
+        const owner = {
+          sessionName: () => "alpha",
+          snapshot: () => snapshot,
+        } as unknown as OpenTuiSessionOwner;
+        const sent: string[] = [];
+        const sendInput = vi.fn(async (input: { data: string }) => {
+          sent.push(input.data);
+          currentMode = !mode;
+        });
+        const sendInputToPane = vi.fn(async (pane: string, input: { data: string }) => {
+          expect(pane).toBe("pane.alpha");
+          sent.push(input.data);
+          currentMode = !mode;
+          return true;
+        });
+        const notes: Array<string | null> = [];
+        const ingress = createApplicationTerminalInputIngress(
+          {
+            sendInput,
+            sendInputToPane,
+            cancelPendingInput: vi.fn(),
+          } as unknown as ApplicationTerminalInteractionController,
+          () => snapshot,
+          () => owner,
+          () => "pane.alpha",
+          (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
+        );
+        try {
+          const text = "界".repeat(2100);
+          if (!recovering) currentMode = mode;
+          ingress.routePaste(Buffer.from(text));
+          if (recovering) {
+            expect(sent).toEqual([]);
+            currentMode = mode;
+            snapshot = { ...snapshot, status: "live" };
+            ingress.adopt();
+          }
+          await vi.waitFor(() => {
+            if (mode === null) expect(notes.at(-1)).toContain("not sent");
+            else expect(sent.join("")).toBe(mode ? "\u001b[200~" + text + "\u001b[201~" : text);
+          });
+          expect(paneState).toHaveBeenCalledWith("pane.alpha");
+          if (mode === null) expect(sent).toEqual([]);
+          // Changing mode during the first send must not reframe subsequent chunks.
+          const delivered = sent.length;
+          ingress.adopt();
+          await Promise.resolve();
+          expect(sent).toHaveLength(delivered);
+        } finally {
+          ingress.dispose();
+        }
+      }
+    },
+  );
+
   it("cancels controller input when leaving terminals and on disposal", () => {
     const cancelPendingInput = vi.fn();
     const ingress = createApplicationTerminalInputIngress(
@@ -121,6 +194,7 @@ describe("application terminal input ingress", () => {
       );
       try {
         ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false });
+        ingress.routePaste(Buffer.from("queued paste"));
         if (changed === "connection")
           snapshot = { ...snapshot, connection: {} } as OpenTuiGenerationHostSnapshot;
         if (changed === "client")
@@ -228,7 +302,9 @@ describe("application terminal input ingress", () => {
         ...snapshot,
         status: "live",
         rendererEpoch: 2,
-        fastLane: {},
+        fastLane: {
+          lane: { paneState: () => ({ snapshot: { modes: { bracketedPaste: true } } }) },
+        },
       } as OpenTuiGenerationHostSnapshot;
       ingress.adopt();
       await vi.waitFor(() => expect(sendInputToPane).toHaveBeenCalledTimes(2));
@@ -243,65 +319,78 @@ describe("application terminal input ingress", () => {
     }
   });
 
-  it("retains first key and paste until the exact opened generation owns focus", async () => {
-    const sendInput = vi.fn(async () => true);
-    const interaction = {
-      sendInput,
-      cancelPendingInput: vi.fn(),
-    } as unknown as ApplicationTerminalInteractionController;
-    let snapshot = {
-      status: "connecting",
-      daemonGeneration: null,
-      rendererEpoch: 0,
-      client: null,
-      fastLane: null,
-    } as unknown as OpenTuiGenerationHostSnapshot;
-    let focusedPane: string | null = null;
-    const owner = {
-      sessionName: () => "alpha",
-      snapshot: () => snapshot,
-    } as unknown as OpenTuiSessionOwner;
-    const notes: Array<string | null> = [];
-    const ingress = createApplicationTerminalInputIngress(
-      interaction,
-      () => snapshot,
-      () => owner,
-      () => focusedPane,
-      (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
-    );
-    const started = deferred<ApplicationGenerationStartResult>();
-    const start = ingress.wrapStarter(async () => started.promise);
-    const opening = start("alpha");
+  it.each([true, false, null])(
+    "retains first paste until exact generation mode is available (%s)",
+    async (mode) => {
+      const sendInput = vi.fn(async () => true);
+      const interaction = {
+        sendInput,
+        cancelPendingInput: vi.fn(),
+      } as unknown as ApplicationTerminalInteractionController;
+      let snapshot = {
+        status: "connecting",
+        daemonGeneration: null,
+        rendererEpoch: 0,
+        client: null,
+        fastLane: null,
+      } as unknown as OpenTuiGenerationHostSnapshot;
+      let focusedPane: string | null = null;
+      const owner = {
+        sessionName: () => "alpha",
+        snapshot: () => snapshot,
+      } as unknown as OpenTuiSessionOwner;
+      const notes: Array<string | null> = [];
+      const ingress = createApplicationTerminalInputIngress(
+        interaction,
+        () => snapshot,
+        () => owner,
+        () => focusedPane,
+        (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
+      );
+      const started = deferred<ApplicationGenerationStartResult>();
+      const start = ingress.wrapStarter(async () => started.promise);
+      const opening = start("alpha");
 
-    ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false });
-    ingress.routePaste(Buffer.from("hello"));
-    expect(sendInput).not.toHaveBeenCalled();
-    expect(notes.at(-1)).toContain("terminal paste queued");
+      ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false });
+      ingress.routePaste(Buffer.from("hello"));
+      expect(sendInput).not.toHaveBeenCalled();
+      expect(notes.at(-1)).toContain("terminal paste queued");
 
-    snapshot = {
-      status: "live",
-      daemonGeneration: "daemon-a",
-      rendererEpoch: 1,
-      client: { getSnapshot: () => ({ generation: 1 }) },
-      fastLane: {},
-    } as unknown as OpenTuiGenerationHostSnapshot;
-    started.resolve({
-      opened: true,
-      sessionName: "alpha",
-      generationKey: "daemon-a:1:1",
-    });
-    await opening;
-    expect(sendInput).not.toHaveBeenCalled();
+      snapshot = {
+        status: "live",
+        daemonGeneration: "daemon-a",
+        rendererEpoch: 1,
+        client: { getSnapshot: () => ({ generation: 1 }) },
+        fastLane: {
+          lane: {
+            paneState: () =>
+              mode === null ? null : { snapshot: { modes: { bracketedPaste: mode } } },
+          },
+        },
+      } as unknown as OpenTuiGenerationHostSnapshot;
+      started.resolve({
+        opened: true,
+        sessionName: "alpha",
+        generationKey: "daemon-a:1:1",
+      });
+      await opening;
+      expect(sendInput).not.toHaveBeenCalled();
 
-    focusedPane = "pane.alpha";
-    ingress.adopt();
-    expect(sendInput).toHaveBeenCalledTimes(2);
-    expect(sendInput.mock.calls.map(([input]) => input)).toEqual([
-      { kind: "text", data: "a" },
-      { kind: "text", data: "\u001b[200~hello\u001b[201~" },
-    ]);
-    expect(notes.at(-1)).toBeNull();
-  });
+      focusedPane = "pane.alpha";
+      ingress.adopt();
+      expect(sendInput).toHaveBeenCalledTimes(mode === null ? 1 : 2);
+      expect(sendInput.mock.calls[0][0]).toEqual({ kind: "text", data: "a" });
+      if (mode === null) expect(notes.at(-1)).toBe("terminal unavailable · paste was not sent");
+      else {
+        expect(sendInput.mock.calls[1][0]).toEqual({
+          kind: "text",
+          data: mode ? "\u001b[200~hello\u001b[201~" : "hello",
+        });
+        expect(notes.at(-1)).toBeNull();
+      }
+      ingress.dispose();
+    },
+  );
 
   it("makes input visibly unavailable when no generation is pending or live", () => {
     const setNote = vi.fn();

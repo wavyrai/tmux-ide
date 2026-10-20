@@ -1,0 +1,41 @@
+{
+  "lane": "actual-source-GPUI-bridge",
+  "node": "v24.21.0",
+  "cliSha256": "7e7a6945cc350da7f41e6ab6b124ad6d94f3a487106b1a2658cc5789c01f740c",
+  "tmuxVersion": "tmux 3.8",
+  "claims": "Bridge grid calibration; no native physical GUI or performance parity claim",
+  "before": [
+    "%0|86071||0|0|80|24|80|24|0"
+  ],
+  "request": 2,
+  "initial": [
+    "%0|86071||0|1|132|40|132|41|0"
+  ],
+  "newPane": {
+    "runtimeId": "%1",
+    "pid": 86208
+  },
+  "split": [
+    "%0|86071||0|1|40|23|80|24|0",
+    "%1|86208||41|1|39|23|80|24|0"
+  ],
+  "pass": false,
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ '0|1|40|23|80|24|0'\n- '0|1|66|40|132|41|0'\n       ^\n",
+  "last": {
+    "resizeGesture": null,
+    "split": null,
+    "gesture": null,
+    "cols": 80,
+    "rows": 24,
+    "input": true
+  },
+  "lastGeometry": [
+    "%0|86071||0|1|40|23|80|24|0",
+    "%1|86208||41|1|39|23|80|24|0"
+  ],
+  "cleanupErrors": [],
+  "remainingOwnedPids": [],
+  "ownedPidCount": 5,
+  "cleanup": true,
+  "protectedCliUnchanged": true
+}

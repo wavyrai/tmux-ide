@@ -1,0 +1,59 @@
+--- original/browser.bundle.mjs
++++ instrumented/browser.bundle.mjs
+@@ -1,3 +1,9 @@
++import { writeFileSync as nrWrite } from "node:fs";
++const nrRecords=[];
++let nrOverflow=0;
++const nrNow=()=>Number(process.hrtime.bigint()/1000n);
++function nrRecord(value){ if(nrRecords.length<2048)nrRecords.push(value); else nrOverflow++; }
++process.once("exit",()=>{ nrWrite(process.env.NR09_STAGE_PROFILE,JSON.stringify({version:1,overflow:nrOverflow,records:nrRecords})+"\n",{flag:"wx",mode:0o600}); });
+ import { createRequire as __gpuiCreateRequire } from "node:module"; const require = __gpuiCreateRequire(import.meta.url);
+ var __create = Object.create;
+ var __defProp = Object.defineProperty;
+@@ -38371,6 +38377,7 @@
+   }) ?? null;
+ }
+ function publish() {
++  const nrStart = nrNow();
+   workspaceFleetAgents.sync(
+     request3,
+     catalog ?? null,
+@@ -38437,7 +38444,8 @@
+   if (retainedPreview && (retainedPreview.request !== request3 || surface !== "workspace" || !foreground || snapshot !== null || inputReady || Date.now() >= retainedPreview.expires || frameProof(retainedPreview.key) !== retainedPreview.proof))
+     clearRetainedPreview();
+   const preview = retainedPreview;
+-  const line = JSON.stringify({
++  const nrEnvelopeStart = nrNow();
++  const nrEnvelope = {
+     version: 1,
+     connection,
+     sequence: ++sequence,
+@@ -38496,17 +38504,26 @@
+     appearance: appearance.publication(),
+     fleet: fleet?.publication() ?? null,
+     machines: machines ? { ...machines.publication(), message: machineMessage } : null
+-  }) + "\n";
+-  if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
++  };
++  const nrEnvelopeEnd = nrNow();
++  const line = JSON.stringify(nrEnvelope) + "\n";
++  const nrStringifyEnd = nrNow();
++  const nrBytes = Buffer.byteLength(line);
++  if (nrBytes > MAX_FRAME) throw new Error("Browser publication too large");
++  const nrSizeEnd = nrNow();
++  const nrWasBlocked = blocked;
+   if (blocked) pending = line;
+   else blocked = !process.stdout.write(line);
++  nrRecord({kind:0,request:request3,sequence,frameKind:nrEnvelope.retainedPreview?1:nrEnvelope.snapshot?2:0,bytes:nrBytes,preludeUs:nrEnvelopeStart-nrStart,envelopeUs:nrEnvelopeEnd-nrEnvelopeStart,stringifyUs:nrStringifyEnd-nrEnvelopeEnd,sizeUs:nrSizeEnd-nrStringifyEnd,writeUs:nrNow()-nrSizeEnd,enqueued:nrWasBlocked?1:0});
+ }
+ process.stdout.on("drain", () => {
+   blocked = false;
+   if (pending) {
+     const line = pending;
+     pending = null;
++    const nrDrainStart=nrNow();
+     blocked = !process.stdout.write(line);
++    nrRecord({kind:1,writeUs:nrNow()-nrDrainStart});
+   }
+ });
+ async function retire() {

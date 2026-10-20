@@ -1,0 +1,193 @@
+{
+  "passed": true,
+  "node": "v24.21.0",
+  "cliSha256": "79d42e21896287a3055c99200bfec697adebda3466fd703fcafcb09c4427ef7d",
+  "sourceDependencies": true,
+  "socketName": "nr07-tmi-empty-setup-GKe07W",
+  "initialAbsent": true,
+  "duplicateClicks": 2,
+  "runningObserved": true,
+  "observedDaemonIdentities": 1,
+  "zeroSessionGapReproduced": false,
+  "firstSessionReady": true,
+  "inputVerified": true,
+  "socketInitiallyAbsent": true,
+  "noServerGuidance": false,
+  "noCreateAuthority": false,
+  "localTargetUnavailable": false,
+  "verifiedDaemonPresent": true,
+  "cleanupPassed": true,
+  "trace": [
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Loading sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "available",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": "running",
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Local sessions are not connected yet. Use setup or refresh sessions to continue.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "loading",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "Finding local sessions",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The daemon has no online tmux server. Open an ordinary tmux session, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "unavailable",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "The daemon has no online tmux server. Open an ordinary tmux session, then Refresh sessions.",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 0,
+      "frame": false,
+      "input": false,
+      "status": "No local sessions yet — create a session to get started",
+      "catalogComplete": false
+    },
+    {
+      "request": 0,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Session created — choose it to open",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading windows",
+      "catalogComplete": false
+    },
+    {
+      "request": 1,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Choose a pane or window",
+      "catalogComplete": true
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": false,
+      "input": false,
+      "status": "Loading",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": false,
+      "status": "Waiting for input authority",
+      "catalogComplete": false
+    },
+    {
+      "request": 2,
+      "home": "live",
+      "setup": null,
+      "sessions": 1,
+      "frame": true,
+      "input": true,
+      "status": "Keyboard ready — click terminal to type",
+      "catalogComplete": false
+    }
+  ],
+  "failures": []
+}

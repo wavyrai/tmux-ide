@@ -21,6 +21,12 @@ pub(super) fn initial_state() -> browser::State {
 fn live(state: &browser::State, connected: bool) -> bool {
     connected && state.home_phase == browser::HomePhase::Live
 }
+fn status_message(state: &browser::State, connected: bool) -> String {
+    if connected && let Some(setup) = &state.local_setup {
+        return setup.phase.guidance().into();
+    }
+    crate::notifications::safe_text(&state.status, 240)
+}
 fn summary(state: &browser::State, connected: bool) -> String {
     if connected && let Some(fleet) = &state.fleet {
         let sessions = fleet
@@ -74,9 +80,40 @@ impl SnapshotView {
             && self.pane_actions.is_none()
     }
     fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.home_action_current(request) {
-            self.select(Selection::Refresh, window, cx);
+        if !self.home_action_current(request) {
+            return;
         }
+        if let Some(setup) = &self.browser_state.local_setup {
+            if setup.phase == browser::local_setup::Phase::Running {
+                return;
+            }
+            if setup.phase.actionable() {
+                if !self.marked.is_empty()
+                    || !self.presence.ready()
+                    || self.browser_state.request != request
+                {
+                    return;
+                }
+                if self.browser_commands.as_ref().is_some_and(|sender| {
+                    sender
+                        .try_send(browser::Command::LocalSetup { request })
+                        .is_ok()
+                }) {
+                    self.browser_state.local_setup = Some(browser::local_setup::Setup {
+                        phase: browser::local_setup::Phase::Running,
+                    });
+                } else {
+                    self.browser_state.local_setup = Some(browser::local_setup::Setup {
+                        phase: browser::local_setup::Phase::Failed,
+                    });
+                    self.browser_state.status =
+                        "Local setup request could not be sent. Try again.".into();
+                }
+                cx.notify();
+                return;
+            }
+        }
+        self.select(Selection::Refresh, window, cx);
     }
     pub(super) fn home_render(
         &mut self,
@@ -99,6 +136,13 @@ impl SnapshotView {
         let theme = self.theme();
         let request = self.browser_request;
         let connected = self.browser_commands.is_some();
+        let setup_phase = self
+            .browser_state
+            .local_setup
+            .as_ref()
+            .map(|setup| setup.phase);
+        let refresh_label = setup_phase.map_or("Refresh sessions", |phase| phase.label());
+        let setup_running = setup_phase == Some(browser::local_setup::Phase::Running);
         let theme_ready = self.browser_state.appearance.is_some();
         let is_live = live(&self.browser_state, connected)
             || (connected
@@ -130,10 +174,39 @@ impl SnapshotView {
                     .text_color(rgb(theme.muted))
                     .child(summary(&self.browser_state, connected)),
             );
-        if !self.browser_state.status.is_empty() && !is_live {
-            body = body.child(div().mt_2().text_color(rgb(theme.muted)).child(
-                crate::notifications::safe_text(&self.browser_state.status, 240),
-            ));
+        if (connected && setup_phase.is_some())
+            || (!is_live && !self.browser_state.status.is_empty())
+        {
+            body = body.child(
+                div()
+                    .mt_2()
+                    .text_color(rgb(theme.muted))
+                    .child(status_message(&self.browser_state, connected)),
+            );
+        }
+        if self.home_diagnostics_available() {
+            body = body.child(
+                native_controls::button(
+                    "home-copy-diagnostics",
+                    Some("Copy diagnostics"),
+                    "Copy safe error details",
+                    native_controls::Icon::Copy,
+                    &theme,
+                )
+                .when_some(self.home_filter.as_ref(), |control, filter| {
+                    action_focus::focus_control(
+                        control,
+                        &filter.actions[4],
+                        4,
+                        theme.foreground,
+                        self.canvas(),
+                    )
+                })
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    cx.stop_propagation();
+                    view.home_copy_diagnostics(request, window, cx);
+                })),
+            );
         }
         if connected {
             let action_focus = self
@@ -210,10 +283,14 @@ impl SnapshotView {
                     .child(
                         native_controls::action_button(
                             "tmux-home-refresh",
-                            Some("Refresh sessions"),
-                            "Refresh sessions",
+                            Some(refresh_label),
+                            refresh_label,
                             native_controls::Icon::Refresh,
-                            native_controls::ButtonStyle::Quiet,
+                            if setup_running {
+                                native_controls::ButtonStyle::Unavailable
+                            } else {
+                                native_controls::ButtonStyle::Quiet
+                            },
                             &theme,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
@@ -245,7 +322,7 @@ impl SnapshotView {
                     action_focus::focus_control(control, &filters.actions[3], 3, theme.foreground, self.canvas())
                 })
             })))
-            .when(!self.local_session_available() && self.new_session.is_none(), |column| column.child(
+            .when(setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none(), |column| column.child(
                 div().mt_2().text_sm().text_color(rgb(theme.muted))
                     .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
             .child(self.new_session_controls(cx));
@@ -307,7 +384,7 @@ impl SnapshotView {
                 });
             fleet_column =
                 fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
-        } else {
+        } else if !connected || setup_phase.is_none() {
             let guidance = if !connected {
                 "Restart the native preview to reconnect."
             } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {

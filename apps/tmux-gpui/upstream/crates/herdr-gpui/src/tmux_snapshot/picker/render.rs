@@ -98,6 +98,13 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .gap_1()
+            .when(picker.mode == Mode::Commands, |panel| {
+                panel.children(
+                    self.developer_mode
+                        .note
+                        .map(|note| div().id("developer-mode-note").px_2().py_1().child(note)),
+                )
+            })
             .when(picker.mode == Mode::Theme, |panel| {
                 panel.child(theme_style::heading(self))
             })
@@ -146,6 +153,9 @@ impl SnapshotView {
         {
             panel = panel.child(div().id("theme-picker-error").child(error.clone()));
         }
+        if let Some(note) = picker.note {
+            panel = panel.child(div().id("command-picker-note").child(note));
+        }
         if let Some(error) = picker.error {
             panel = panel.child(div().id("theme-command-error").child(error));
         }
@@ -159,8 +169,13 @@ impl SnapshotView {
         for (index, row) in picker.rows.iter().enumerate() {
             let target = row.target.clone();
             let enabled = !picker.mode.is_reference()
+                && (self.browser_commands.is_some()
+                    || matches!(&target, Target::Command(Action::CopyDiagnostics)))
                 && match &target {
                     Target::Font(choice) => self.terminal_font.can_choose(choice),
+                    Target::Command(Action::DeveloperMode(_)) => {
+                        self.developer_mode.ready && !self.developer_mode.saving
+                    }
                     _ => true,
                 }
                 && current(&self.browser_state, &target);

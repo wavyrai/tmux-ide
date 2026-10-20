@@ -1,0 +1,1672 @@
+{
+  "passed": false,
+  "anchor": "NR03_LINE_060",
+  "anchorRow": 1,
+  "error": "Error: deadline return-a-busy",
+  "ownedPids": [
+    64675,
+    64676,
+    64681,
+    64686,
+    64712
+  ],
+  "remainingPids": [],
+  "cleanup": true,
+  "protectedCliUnchanged": true,
+  "sourceBefore": {
+    "apps/tmux-gpui/bridge/browser.ts": "678b523e5caec00b2ecc3f4a4c47ff6c9a03fcabd4746bc24f4460f2e6b0e5ca",
+    "apps/tmux-gpui/bridge/live.ts": "bff3266c4a863b49b0081a78ae81a80eb6cb98eec7f19ef5cfa36c0aad324c39",
+    "apps/tmux-gpui/bridge/history.ts": "9f12dc6461052eef1dd58d9db39c7b5867e5aa3f38c469e53ca1ad2ed08c2d5c",
+    "apps/tmux-gpui/bridge/history-restoration.ts": "7f23d8e680f42bb326ae99e229e6ccf2511aa495c495dba5c2acc1401177a572"
+  },
+  "sourceAfter": {
+    "apps/tmux-gpui/bridge/browser.ts": "678b523e5caec00b2ecc3f4a4c47ff6c9a03fcabd4746bc24f4460f2e6b0e5ca",
+    "apps/tmux-gpui/bridge/live.ts": "bff3266c4a863b49b0081a78ae81a80eb6cb98eec7f19ef5cfa36c0aad324c39",
+    "apps/tmux-gpui/bridge/history.ts": "9f12dc6461052eef1dd58d9db39c7b5867e5aa3f38c469e53ca1ad2ed08c2d5c",
+    "apps/tmux-gpui/bridge/history-restoration.ts": "7f23d8e680f42bb326ae99e229e6ccf2511aa495c495dba5c2acc1401177a572"
+  },
+  "sourceStable": true,
+  "trace": [
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 1,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 2,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 3,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 4,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 5,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 6,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 7,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 8,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 9,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 10,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 11,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 12,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 13,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 14,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 15,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 16,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 17,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 18,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 19,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 20,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 21,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 22,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 23,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 24,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 25,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 26,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 27,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 28,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 29,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 30,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 31,
+      "status": "Loading sessions",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "startup",
+      "request": 0,
+      "sequence": 32,
+      "status": "Choose a session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 0,
+      "sequence": 33,
+      "status": "Choose a session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 0,
+      "sequence": 34,
+      "status": "Choose a session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 35,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 36,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 37,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 38,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 39,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 40,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 41,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 42,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 43,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 44,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 45,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 46,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 47,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 1,
+      "sequence": 48,
+      "status": "Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 49,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 50,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 51,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 52,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 53,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 54,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 55,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 56,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 57,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 58,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 59,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 60,
+      "status": "Waiting for input authority",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 63,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 64,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 66,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 67,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 68,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 69,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 70,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 72,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 73,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-a",
+      "request": 2,
+      "sequence": 74,
+      "status": "History: 60 lines above live — Shift-End returns to live",
+      "offset": 60,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 75,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 76,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 77,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 78,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 79,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 80,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 81,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 82,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 83,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 84,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 85,
+      "status": "Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 3,
+      "sequence": 86,
+      "status": "Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 87,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 88,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 89,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 90,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 91,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 92,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 93,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 94,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 95,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 96,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 97,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 98,
+      "status": "Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "open-b",
+      "request": 4,
+      "sequence": 99,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 4,
+      "sequence": 101,
+      "status": "Keyboard ready — click terminal to type",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 108,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 109,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 110,
+      "status": "Restoring terminal… — Loading retained session",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 111,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 113,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 114,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 115,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 116,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 117,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 119,
+      "status": "Restoring terminal… — Loading windows",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 5,
+      "sequence": 120,
+      "status": "Restoring terminal… — Choose a pane or window",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 121,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 124,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 125,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 126,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 127,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 129,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 130,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 131,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 132,
+      "status": "Restoring terminal… — Loading",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 133,
+      "status": "Restoring terminal… — Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": false
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 134,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 140,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 141,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 142,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 143,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 144,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 145,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 146,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 147,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 148,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 149,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 150,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 151,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 152,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 153,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 154,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 155,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 156,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 157,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 158,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 159,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 160,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 161,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 162,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 163,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 164,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 165,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 166,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 167,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 168,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 169,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 170,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 171,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 172,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 173,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 174,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 175,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 176,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 177,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 178,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 179,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 180,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 181,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 182,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 183,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 184,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 185,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 186,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 187,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 188,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 189,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 190,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 191,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 192,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 193,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 194,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 195,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 196,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 197,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 198,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 199,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 200,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 201,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 202,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 203,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 204,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 205,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 206,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 207,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 208,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 209,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 210,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 211,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 212,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 213,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 214,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 215,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 217,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 218,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 219,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 220,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 221,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 222,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 223,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 224,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 225,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 226,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    },
+    {
+      "phase": "return-a-busy",
+      "request": 6,
+      "sequence": 227,
+      "status": "Saved history could not be restored — live terminal shown",
+      "offset": 0,
+      "ready": true
+    }
+  ],
+  "cliSha": "cfc6a6494551c49f2620965ec75fdc71e6a64687d876fb0eb4481189ff69b9cc"
+}

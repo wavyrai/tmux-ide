@@ -1,0 +1,8 @@
+{
+  "tmuxBinary": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/tmux38-compat/tmux-3.8/tmux",
+  "tmuxVersion": "tmux 3.8",
+  "tmuxSha256": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96",
+  "cliBuildInvocation": ".tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node scripts/build-cli.mjs --outfile .tasks/native-reliability-mission/nr03-browser-history/cli.mjs",
+  "prerequisites": "Node24, tsx dependencies, stock tmux 3.8, current private CLI outfile; run from gpui worktree; no active production authority",
+  "finalSession": 50125
+}

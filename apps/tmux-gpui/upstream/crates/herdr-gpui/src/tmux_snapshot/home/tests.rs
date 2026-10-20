@@ -30,6 +30,7 @@ fn make_view(
         decode::frame(include_bytes!("../../../../../../fixtures/snapshot.json")).unwrap(),
     );
     SnapshotView {
+        graphics: Default::default(),
         presence,
         _activation: None,
         _appearance: None,
@@ -55,6 +56,7 @@ fn make_view(
         agent_animation: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
+        developer_mode: Default::default(),
         terminal_font: Default::default(),
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
@@ -67,6 +69,7 @@ fn make_view(
         )),
         input_cell_width: Some(10.),
         painted_frame: Some(frame.clone()),
+        pointer: Default::default(),
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
@@ -183,3 +186,6 @@ mod fleet_layout;
 
 #[path = "tests/columns.rs"]
 mod columns;
+
+#[path = "tests/local_setup.rs"]
+mod local_setup;

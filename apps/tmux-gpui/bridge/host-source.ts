@@ -48,6 +48,7 @@ export function createPreviewHostSource(
     remote = null;
   };
   return {
+    isLocal: () => selection === null || (selection === undefined && argument === "--local"),
     select(sshTarget: string | null, expectedEnvironmentId?: string) {
       const next =
         sshTarget === null

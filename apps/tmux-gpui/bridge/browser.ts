@@ -1,3 +1,10 @@
+import { scopeSelectionIdentity } from "./selection-identity.ts";
+import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
+import { drainHistoryCapture } from "./history-handoff.ts";
+import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
+import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
+import { serializeBrowserPublication } from "./browser-publication.ts";
+import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
 import {
@@ -76,16 +83,35 @@ import {
   type ResizeGesturePublication,
 } from "./resize-gesture.ts";
 import { createSessionOwner, sessionCreateSchema } from "./session-create.ts";
+import {
+  proveLocalSessionCreate,
+  createLocalSession,
+  verifyLocalSessionCreateOwner,
+  type LocalSessionCreateProof,
+} from "./local-session-create.ts";
 import { paneActionSchema, paneActionsSchema } from "./pane-actions.ts";
 import { openEditorSchema, openSelectedPaneEditor } from "./local-editor.ts";
 import { paneResizeSchema, resizePresentationMatches } from "./pane-resize.ts";
 import { CatalogStageError } from "./catalog-errors.ts";
 import { createAppearanceOwner } from "./appearance.ts";
-import { DaemonCompatibilityError, DaemonDiscoveryError } from "./discovery.ts";
+import {
+  discoverPreviewDaemon,
+  DaemonCompatibilityError,
+  DaemonDiscoveryError,
+} from "./discovery.ts";
 import { scrollSchema } from "./history.ts";
+import { mouseSchema } from "./mouse.ts";
 import { wheelSchema } from "./wheel.ts";
 import { surfacesSchema } from "./window-canvas.ts";
 import { createWindowPresentation } from "./window-presentation.ts";
+import {
+  KITTY_KNOWN_ENV,
+  canvasPlacements,
+  createKnownDigests,
+  kittyChunkLineSchema,
+  paneGraphicsSchema,
+} from "./kitty-graphics.ts";
+import type { TerminalGraphicsPlacement } from "../../../packages/contracts/src/terminal-graphics.ts";
 import { paneChoices, preferredPane, topologySchema, type Layout } from "./topology.ts";
 import { resizeSchema } from "./geometry.ts";
 import { previewInputSchema, MAX_INPUT_LINE } from "./input.ts";
@@ -129,6 +155,18 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
+  z
+    .object({
+      type: z.literal("kitty-missing"),
+      digests: z
+        .array(z.string().regex(/^[0-9a-f]{32}$/u))
+        .min(1)
+        .max(64),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal("local-setup"), request: z.number().int().nonnegative().safe() })
+    .strict(),
   fleetPreferenceCommand,
   sessionHistoryCommandSchema,
   sessionTabCommandSchema,
@@ -187,6 +225,9 @@ const commandSchema = z.union([
   homeAgentFilterSchema,
   openAgentSchema,
   sessionCreateSchema,
+  sessionCreateSchema
+    .extend({ type: z.literal("create-local-session"), action: z.uuid() })
+    .strict(),
   paneActionSchema,
   paneResizeSchema,
   resizeGestureSchema,
@@ -205,7 +246,7 @@ const commandSchema = z.union([
       type: z.literal("input"),
       request: z.number().int().positive().safe(),
       id: z.string().min(1).max(512),
-      input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema]),
+      input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema, mouseSchema]),
     })
     .strict(),
   z.object({ type: z.literal("home"), request: z.number().int().positive().safe() }).strict(),
@@ -322,6 +363,12 @@ let snapshot: unknown = null;
 let historyOffset = 0;
 let copyRegion: unknown = null;
 let regions: unknown[] = [];
+let kittyPlacements: TerminalGraphicsPlacement[] = [];
+const kittyKnown = createKnownDigests();
+// Image chunk lines are ordered ahead of publications and never coalesced.
+const orderedLines: string[] = [];
+let orderedBytes = 0;
+const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
 let inputReady = false;
 let foreground = true;
@@ -329,6 +376,7 @@ let sessionCatalogComplete = false;
 let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
+let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | null = null;
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
@@ -339,6 +387,8 @@ let active:
       child: ChildProcess;
       done: Promise<void>;
       catalogOnly: boolean;
+      historyIntent?: number;
+      drainHistory?: () => void;
       presentation: ReturnType<typeof createWindowPresentation>;
     }
   | undefined;
@@ -458,9 +508,288 @@ function recoverTerminal(reason: string) {
   terminalRecovery.start();
   publish();
 }
+const retainedFrames = createRetainedFrameCache();
+const historyDrains = new Map<string, { result: Promise<unknown>; cancel: () => void }>();
+let historyDrainEpoch = 0;
+function cancelHistoryDrains() {
+  historyDrainEpoch++;
+  for (const drain of historyDrains.values()) drain.cancel();
+  historyDrains.clear();
+}
+const retainedHistory = new Map<string, { proof: string; pane: string; token: string | null }>();
+let lastCoherentFrame: {
+  request: number;
+  key: string;
+  proof: string;
+  snapshot: TerminalReplicaSnapshot;
+} | null = null;
+let retainedPreview: {
+  request: number;
+  key: string;
+  proof: string;
+  snapshotJson: RetainedSnapshotJson;
+  expires: number;
+} | null = null;
+let retainedPreviewTimer: ReturnType<typeof setTimeout> | undefined;
+function frameProof(key: string): string | null {
+  const route = fleet?.retainedFrameProof(key);
+  return route ? JSON.stringify([route, appearance.publication()?.theme]) : null;
+}
+function clearRetainedPreview() {
+  retainedPreview = null;
+  if (retainedPreviewTimer) clearTimeout(retainedPreviewTimer);
+  retainedPreviewTimer = undefined;
+}
+function rememberRetainedFrame() {
+  const frame = lastCoherentFrame;
+  if (frame && frame.request === request && frame.proof === frameProof(frame.key))
+    retainedFrames.remember(frame.key, frame.proof, frame.snapshot);
+  lastCoherentFrame = null;
+}
+function beginRetainedPreview(key: string) {
+  clearRetainedPreview();
+  const proof = frameProof(key);
+  const captured = proof ? retainedFrames.preview(key, proof) : null;
+  if (!proof || !captured) return;
+  retainedPreview = { request, key, proof, snapshotJson: captured, expires: Date.now() + 5000 };
+  retainedPreviewTimer = setTimeout(() => {
+    clearRetainedPreview();
+    if (!stopped) publish();
+  }, 5000);
+}
+type LocalSetupPhase =
+  | "available"
+  | "running"
+  | "missing"
+  | "unsupported"
+  | "failed"
+  | "stopped-waiting";
+let localSetup: { phase: LocalSetupPhase } | null = null;
+let setupOperation: AbortController | null = null;
+let setupRevision = 0;
+let localCreateProof: LocalSessionCreateProof | null = null;
+let localCreateProbe: AbortController | null = null;
+let localCreateOperation: AbortController | null = null;
+function revokeLocalCreateOffer() {
+  localCreateProbe?.abort();
+  localCreateProbe = null;
+  localCreateProof = null;
+}
+function cancelLocalCreate() {
+  if (localCreateProof && !catalog) homePhase = "unavailable";
+  revokeLocalCreateOffer();
+  localCreateOperation?.abort();
+  localCreateOperation = null;
+}
+async function offerLocalCreation(token: number) {
+  if (!localSetupContext() || request !== token || localCreateOperation || active) return;
+  revokeLocalCreateOffer();
+  const controller = new AbortController();
+  localCreateProbe = controller;
+  const route = machineRouteRevision,
+    presence = presenceRevision;
+  const current = () =>
+    localCreateProbe === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    machineRouteRevision === route &&
+    presenceRevision === presence &&
+    !active &&
+    !localCreateOperation;
+  const result = await proveLocalSessionCreate({ current, signal: controller.signal });
+  if (!current()) return;
+  localCreateProbe = null;
+  if (result.kind !== "available") return;
+  localCreateProof = result.proof;
+  localSetup = null;
+  sessions = [];
+  selectedSession = null;
+  selectedPane = null;
+  snapshot = null;
+  inputReady = false;
+  homePhase = "live";
+  sessionCreate.reset();
+  status = "No local sessions yet — create a session to get started";
+  publish();
+}
+function startLocalSessionCreation(cmd: { request: number; action: string; name: string }) {
+  const proof = localCreateProof;
+  if (
+    !proof ||
+    cmd.action !== proof.action ||
+    cmd.request !== request ||
+    !localSetupContext() ||
+    active ||
+    homePhase !== "live" ||
+    localCreateOperation ||
+    sessionCreate.publication().phase !== "idle"
+  )
+    return;
+  const controller = new AbortController();
+  localCreateOperation = controller;
+  const token = request,
+    route = machineRouteRevision,
+    presence = presenceRevision;
+  const current = () =>
+    localCreateOperation === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    machineRouteRevision === route &&
+    presenceRevision === presence &&
+    !active;
+  let receipt:
+    | Extract<Awaited<ReturnType<typeof createLocalSession>>, { kind: "created" }>["receipt"]
+    | undefined;
+  const operation = sessionCreate.start({
+    name: cmd.name,
+    current,
+    create: async (_operationId, name) => {
+      // Consume only the displayed capability; the in-flight proof has its own lifetime.
+      revokeLocalCreateOffer();
+      publish();
+      const result = await createLocalSession(
+        proof,
+        { displayName: name },
+        { current, signal: controller.signal },
+      );
+      if (result.kind !== "created") throw new Error("Local creation unconfirmed");
+      receipt = result.receipt;
+    },
+    refresh: async () => {
+      if (!receipt || !current()) return;
+      const ownerCurrent = () =>
+        verifyLocalSessionCreateOwner(proof, { current, signal: controller.signal });
+      if (!(await ownerCurrent())) throw new Error("Creation owner changed");
+      const discovered = await readHost();
+      if (!current()) return;
+      const fresh = createPreviewCatalog(discovered);
+      let admitted = false;
+      try {
+        const list = await fresh.sessions();
+        if (!(await ownerCurrent())) throw new Error("Creation owner changed");
+        if (!current()) return;
+        if (list.length > 512) throw new Error("Too many sessions for preview");
+        const matches = list.filter(
+          (session) =>
+            session.workspaceName === receipt!.workspaceName &&
+            (!receipt!.liveSessionId || session.liveSessionId === receipt!.liveSessionId),
+        );
+        if (matches.length !== 1) throw new Error("Created session is not yet discoverable");
+        catalog?.dispose();
+        catalog = fresh;
+        admitted = true;
+        sessions = list.map(sessionChoice);
+        homePhase = "live";
+        status = "Session created — choose it to open";
+        startAgents();
+      } finally {
+        if (!admitted) fresh.dispose();
+      }
+    },
+    changed: publish,
+  });
+  if (!operation) localCreateOperation = null;
+  else
+    void operation.finally(() => {
+      if (localCreateOperation === controller) {
+        localCreateOperation = null;
+        publish();
+      }
+    });
+}
+function cancelLocalSetup() {
+  cancelLocalCreate();
+  setupRevision++;
+  setupOperation?.abort();
+  setupOperation = null;
+  localSetup = null;
+}
+function localSetupContext() {
+  return (
+    !stopped && foreground && surface === "home" && !selectedFleet && hostSource?.isLocal() === true
+  );
+}
+async function offerLocalSetup(token: number) {
+  if (!localSetupContext() || request !== token || setupOperation) return;
+  const route = machineRouteRevision,
+    revision = setupRevision;
+  const resolution = await resolveLocalSetup();
+  if (
+    !localSetupContext() ||
+    request !== token ||
+    route !== machineRouteRevision ||
+    revision !== setupRevision ||
+    setupOperation
+  )
+    return;
+  localSetup = {
+    phase:
+      resolution.kind === "available"
+        ? "available"
+        : resolution.kind === "missing"
+          ? "missing"
+          : "unsupported",
+  };
+  publish();
+}
+function startLocalSetup() {
+  if (
+    !localSetupContext() ||
+    setupOperation ||
+    !localSetup ||
+    !["available", "failed", "stopped-waiting"].includes(localSetup.phase)
+  )
+    return;
+  const controller = new AbortController();
+  setupRevision++;
+  setupOperation = controller;
+  localSetup = { phase: "running" };
+  const token = request,
+    route = machineRouteRevision;
+  const current = () =>
+    setupOperation === controller &&
+    !controller.signal.aborted &&
+    localSetupContext() &&
+    request === token &&
+    route === machineRouteRevision;
+  publish();
+  void (async () => {
+    const resolution = await resolveLocalSetup();
+    if (!current()) return;
+    if (resolution.kind !== "available") {
+      localSetup = { phase: resolution.kind === "missing" ? "missing" : "unsupported" };
+      return;
+    }
+    const result = await runLocalSetup(resolution.installation, { signal: controller.signal });
+    if (!current()) return;
+    if (result.kind !== "ready") {
+      localSetup = { phase: result.kind === "stopped-waiting" ? "stopped-waiting" : "failed" };
+      return;
+    }
+    await discoverPreviewDaemon();
+    if (!current()) return;
+    localSetup = null;
+    homePhase = "loading";
+    status = "Finding local sessions";
+    launchRefresh(token);
+  })()
+    .catch(() => {
+      if (current()) localSetup = { phase: "failed" };
+    })
+    .finally(() => {
+      if (setupOperation === controller) {
+        setupOperation = null;
+        publish();
+      }
+    });
+}
 let highestNavigationAttempt = 0;
 const admitNavigationAttempt = (attempt: number) => {
   if (attempt <= request || attempt <= highestNavigationAttempt) return false;
+  rememberRetainedFrame();
+  cancelLocalSetup();
   cancelTerminalRecovery();
   highestNavigationAttempt = attempt;
   return true;
@@ -694,6 +1023,15 @@ function launchFleetSelection(
     });
 }
 
+function diagnosticTmuxVersion() {
+  const owner = catalog,
+    token = request;
+  return (
+    owner?.diagnosticTmuxVersion(() => {
+      if (owner === catalog && request === token) publish();
+    }) ?? null
+  );
+}
 function publish() {
   workspaceFleetAgents.sync(
     request,
@@ -736,6 +1074,19 @@ function publish() {
     request,
     !!fleet && !!preferenceState?.state,
   );
+  if (
+    localCreateProof &&
+    fleet
+      ?.publication()
+      .groups.some(
+        (group) =>
+          group.id === "local" && group.servers.some((server) => server.state === "online"),
+      )
+  ) {
+    revokeLocalCreateOffer();
+    homePhase = "unavailable";
+    status = "Local sessions changed — refresh sessions to continue";
+  }
   // A session may remain selectable beyond the server display cap, but Home
   // must not offer creation without a visible exact destination.
   if (surface === "home" && homePhase === "live" && selectedFleet && !fleet?.selectedServer()) {
@@ -757,79 +1108,141 @@ function publish() {
   )
     appliedPresenceRevision = presenceRevision;
   if (stopped) return;
-  const line =
-    JSON.stringify({
-      version: 1,
-      connection,
-      sequence: ++sequence,
-      request,
-      sessions,
-      surface,
-      home: { phase: homePhase },
-      createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
-      selectedServer:
-        surface === "home" && homePhase === "live" && selectedFleet
-          ? (fleet?.selectedServer() ?? null)
-          : null,
-      homeAgents: surface === "home" ? agentPublication : null,
-      homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
-      homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
-      // Protocol support; private hosts publish an explicit unavailable roster.
-      sessionHistory: historyPublication,
-      sessionHistoryRejected,
-      paletteSupported: !!fleet,
-      paletteAgents: palette.publication(),
-      paletteSelectionRejected,
-      attentionSupported: true,
-      attentionAgents: attention.publication(),
-      attentionSelectionRejected,
-      sessionTabs: tabPublication,
-      sessionTabResult,
-      workspaceFleetAgents: workspaceFleetAgents.publication(),
-      workspaceFleetAgentRejected,
-      workspaceAgents:
-        surface === "workspace" && selectedSession && agentPublication
-          ? { ...agentPublication, sessionId: selectedSession }
-          : null,
-      panes: paneChoices(
-        panes.map((p) => p.semanticPaneId),
-        layouts,
-      ),
-      sessionCatalogComplete,
-      preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
-      selectedSession,
-      selectedPane,
-      status: historySaveFailed
+  retainedFrames.retain(sessionTabs.keys());
+  for (const [key, drain] of historyDrains)
+    if (!sessionTabs.keys().includes(key)) {
+      drain.cancel();
+      historyDrains.delete(key);
+    }
+  for (const key of retainedHistory.keys())
+    if (!sessionTabs.keys().includes(key)) retainedHistory.delete(key);
+  if (
+    retainedPreview &&
+    (retainedPreview.request !== request ||
+      surface !== "workspace" ||
+      !foreground ||
+      snapshot !== null ||
+      inputReady ||
+      Date.now() >= retainedPreview.expires ||
+      frameProof(retainedPreview.key) !== retainedPreview.proof)
+  )
+    clearRetainedPreview();
+  const preview = retainedPreview;
+  const prefix = {
+    version: 1,
+    connection,
+    sequence: ++sequence,
+    request,
+    sessions,
+    surface,
+    home: { phase: homePhase },
+    diagnostics:
+      foreground && surface === "workspace" && inputReady && active && snapshot
+        ? {
+            daemonVersion: catalog?.diagnosticVersion() ?? null,
+            tmuxVersion: diagnosticTmuxVersion(),
+          }
+        : null,
+    localSetup: localSetupContext() ? localSetup : null,
+    localSessionCreate:
+      localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
+    createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
+    selectedServer:
+      surface === "home" && homePhase === "live" && selectedFleet
+        ? (fleet?.selectedServer() ?? null)
+        : null,
+    homeAgents: surface === "home" ? agentPublication : null,
+    homeAgentRecovery: surface === "home" && fleet ? homeRecovery.publication() : null,
+    homeAgentFilter: surface === "home" && fleet ? homeAgentFilter : null,
+    // Protocol support; private hosts publish an explicit unavailable roster.
+    sessionHistory: historyPublication,
+    sessionHistoryRejected,
+    paletteSupported: !!fleet,
+    paletteAgents: palette.publication(),
+    paletteSelectionRejected,
+    attentionSupported: true,
+    attentionAgents: attention.publication(),
+    attentionSelectionRejected,
+    sessionTabs: tabPublication,
+    sessionTabResult,
+    workspaceFleetAgents: workspaceFleetAgents.publication(),
+    workspaceFleetAgentRejected,
+    workspaceAgents:
+      surface === "workspace" && selectedSession && agentPublication
+        ? { ...agentPublication, sessionId: selectedSession }
+        : null,
+    panes: paneChoices(
+      panes.map((p) => p.semanticPaneId),
+      layouts,
+    ),
+    sessionCatalogComplete,
+    preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
+    selectedSession,
+    selectedPane: preview ? null : selectedPane,
+  };
+  const suffix = {
+    selectionIdentity:
+      !preview &&
+      foreground &&
+      active &&
+      surface === "workspace" &&
+      selectionIdentity !== null &&
+      snapshot === selectionIdentity.snapshot
+        ? selectionIdentity.value
+        : null,
+    status: preview
+      ? `Restoring terminal… — ${status}`
+      : historySaveFailed
         ? `${status} — Session visit could not be saved; refresh local preferences.`
         : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
           ? editorMessage.text
           : surface === "home" && machineMessage
             ? `${status} · ${machineMessage}`
             : status,
-      snapshot,
-      historyOffset: snapshot && selectedPane ? historyOffset : 0,
-      copyRegion: snapshot ? copyRegion : null,
-      regions: snapshot ? regions : [],
-      inputReady,
-      resizeToken: inputReady && snapshot ? resizeToken : null,
-      splitLayout: inputReady && snapshot ? splitLayout : null,
-      splitGesture,
-      resizeGestureSupported: !!active && resizeGestureSupported,
-      resizeGesture: resizeGesture
+    snapshot,
+    historyOffset: snapshot && selectedPane ? historyOffset : 0,
+    copyRegion: snapshot ? copyRegion : null,
+    regions: snapshot ? regions : [],
+    graphics: snapshot && !preview ? kittyPlacements : [],
+    inputReady,
+    resizeToken: inputReady && snapshot ? resizeToken : null,
+    splitLayout: inputReady && snapshot ? splitLayout : null,
+    splitGesture: preview ? null : splitGesture,
+    resizeGestureSupported: !preview && !!active && resizeGestureSupported,
+    resizeGesture:
+      !preview && resizeGesture
         ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
         : null,
-      paneActions: inputReady && snapshot ? paneActions : null,
-      presenceRevision: appliedPresenceRevision,
-      appearance: appearance.publication(),
-      fleet: fleet?.publication() ?? null,
-      machines: machines ? { ...machines.publication(), message: machineMessage } : null,
-    }) + "\n";
+    paneActions: inputReady && snapshot ? paneActions : null,
+    presenceRevision: appliedPresenceRevision,
+    appearance: appearance.publication(),
+    fleet: fleet?.publication() ?? null,
+    machines: machines ? { ...machines.publication(), message: machineMessage } : null,
+  };
+  const line = serializeBrowserPublication(prefix, suffix, preview?.snapshotJson ?? null);
   if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
   if (blocked) pending = line;
   else blocked = !process.stdout.write(line);
 }
+// A window that cannot keep up loses whole images; it reports the gap and the
+// helper pulls them again (see kitty_graphics.rs).
+function writeOrdered(line: string) {
+  if (!blocked) {
+    blocked = !process.stdout.write(line);
+    return;
+  }
+  if (orderedBytes + line.length > MAX_ORDERED_BYTES) return;
+  orderedLines.push(line);
+  orderedBytes += line.length;
+}
 process.stdout.on("drain", () => {
   blocked = false;
+  while (orderedLines.length > 0 && !blocked) {
+    const line = orderedLines.shift()!;
+    orderedBytes -= line.length;
+    blocked = !process.stdout.write(line);
+  }
+  if (blocked) return;
   if (pending) {
     const line = pending;
     pending = null;
@@ -853,6 +1266,10 @@ async function retire() {
   resizeGesture = null;
   activeGesture = null;
   if (!old) return;
+  if (!stopped && old.historyIntent === historyDrainEpoch && old.drainHistory) {
+    old.drainHistory();
+    return;
+  }
   old.child.kill("SIGTERM");
   const timer = setTimeout(() => old.child.kill("SIGKILL"), 500);
   try {
@@ -863,6 +1280,12 @@ async function retire() {
 }
 function retireMachineRoute() {
   if (stopped) return;
+  cancelLocalSetup();
+  clearRetainedPreview();
+  retainedFrames.clear();
+  cancelHistoryDrains();
+  retainedHistory.clear();
+  lastCoherentFrame = null;
   recoverTerminal("machine-route-retired");
   sessionHistory.cancel();
   sessionTabs.cancel();
@@ -889,6 +1312,7 @@ function retireMachineRoute() {
 }
 async function stop() {
   if (stopped) return;
+  cancelLocalSetup();
   cancelTerminalRecovery();
   sessionHistory.cancel();
   sessionTabs.cancel();
@@ -898,6 +1322,11 @@ async function stop() {
   stopTabObservation = undefined;
   observingTabs = false;
   sessionTabs.dispose();
+  clearRetainedPreview();
+  retainedFrames.clear();
+  cancelHistoryDrains();
+  retainedHistory.clear();
+  lastCoherentFrame = null;
   workspaceFleetAgents.cancel();
   hostSource?.dispose();
   machines?.dispose();
@@ -916,6 +1345,7 @@ process.on("SIGINT", requestShutdown);
 process.on("SIGTERM", requestShutdown);
 process.stdout.on("error", () => void stop());
 async function refresh(token: number, requiredCurrent: () => boolean = () => true) {
+  revokeLocalCreateOffer();
   const routeRevision = machineRouteRevision;
   catalog?.dispose();
   catalog = undefined;
@@ -951,12 +1381,64 @@ async function openPane(
 ) {
   const admissionPresence = presenceRevision;
   const owningCatalog = catalog;
+  const waitingKey = fleet?.attachmentKey(config);
+  const waiting = !catalogOnly && waitingKey ? historyDrains.get(waitingKey) : undefined;
+  if (waiting) {
+    inputReady = false;
+    status = "Restoring saved history";
+    publish();
+    // Do not block command admission: close and another navigation can cancel.
+    void waiting.result
+      .then(() => {
+        if (
+          stopped ||
+          request !== token ||
+          catalog !== owningCatalog ||
+          presenceRevision !== admissionPresence ||
+          (requiredCurrent && !requiredCurrent())
+        )
+          return;
+        return openPane(
+          config,
+          token,
+          catalogOnly,
+          splitConfirmation,
+          requiredCurrent,
+          closeConfirmation,
+          recoveryNotice,
+        );
+      })
+      .catch(() => {
+        if (!stopped && request === token) {
+          inputReady = false;
+          status = "Saved history restoration unavailable";
+          publish();
+        }
+      });
+    return;
+  }
   const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
   let handedOff = false;
   const presentation = createWindowPresentation(config.semanticPaneId);
   try {
     const path = join(directory, "connection.json");
-    await writeFile(path, JSON.stringify(config), { mode: 0o600 });
+    const historyKey = fleet?.attachmentKey(config);
+    const savedHistory = historyKey ? retainedHistory.get(historyKey) : undefined;
+    const restoreToken =
+      !catalogOnly &&
+      savedHistory?.pane === config.semanticPaneId &&
+      savedHistory.proof === fleet?.retainedFrameProof(historyKey!)
+        ? savedHistory.token
+        : undefined;
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...config,
+        ...(restoreToken ? { historyAnchor: restoreToken } : {}),
+        ...(!catalogOnly && savedHistory && !restoreToken ? { historyUnavailable: true } : {}),
+      }),
+      { mode: 0o600 },
+    );
     if (
       stopped ||
       token !== request ||
@@ -978,7 +1460,10 @@ async function openPane(
         path,
         catalogOnly ? "--catalog" : "--interactive",
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, [KITTY_KNOWN_ENV]: kittyKnown.env() },
+      },
     );
     const done = new Promise<void>((resolve) =>
       child.once("close", () => {
@@ -995,7 +1480,51 @@ async function openPane(
       inputReady = false;
       void retire();
     });
-    active = { child, done, catalogOnly, presentation };
+    active = {
+      child,
+      done,
+      catalogOnly,
+      presentation,
+      drainHistory: () => {
+        const key = fleet?.attachmentKey(config);
+        const proof = key ? fleet?.retainedFrameProof(key) : null;
+        if (!key || !proof || !sessionTabs.keys().includes(key)) {
+          child.kill("SIGTERM");
+          const timer = setTimeout(() => child.kill("SIGKILL"), 500);
+          void done.then(() => clearTimeout(timer));
+          return;
+        }
+        historyDrains.get(key)?.cancel();
+        while (historyDrains.size >= 8) {
+          const first = historyDrains.keys().next().value!;
+          historyDrains.get(first)!.cancel();
+          historyDrains.delete(first);
+        }
+        const drainEpoch = historyDrainEpoch;
+        retainedHistory.set(key, { proof, pane: config.semanticPaneId, token: null });
+        const drain = drainHistoryCapture(child, done);
+        const record = { result: Promise.resolve() as Promise<unknown>, cancel: drain.cancel };
+        historyDrains.set(key, record);
+        record.result = drain.result.then((result) => {
+          if (historyDrains.get(key) !== record) return;
+          historyDrains.delete(key);
+          if (
+            stopped ||
+            drainEpoch !== historyDrainEpoch ||
+            !sessionTabs.keys().includes(key) ||
+            fleet?.retainedFrameProof(key) !== proof
+          )
+            return;
+          if (result?.state === "live") retainedHistory.delete(key);
+          else
+            retainedHistory.set(key, {
+              proof,
+              pane: config.semanticPaneId,
+              token: result?.state === "historical" ? result.token : null,
+            });
+        });
+      },
+    };
     if (!catalogOnly)
       child.stdin.write(
         JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
@@ -1009,7 +1538,11 @@ async function openPane(
       if (stopped || request !== token || active?.child !== child) return;
       process.stderr.write(`TMUX_GPUI_DIAGNOSTIC ${JSON.stringify(fault)}\n`);
       unavailable();
-      if (fault.code === "transport-closed" || fault.code === "transport-error")
+      if (
+        fault.code === "transport-closed" ||
+        fault.code === "transport-error" ||
+        fault.code === "topology-changed"
+      )
         recoverTerminal(fault.code);
     });
     const unavailable = () => {
@@ -1054,6 +1587,13 @@ async function openPane(
           publicationStage = "decode";
           const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
           buffer = buffer.subarray(end + 1);
+          if (event && typeof event === "object" && "kittyImageChunk" in event) {
+            publicationStage = "graphics";
+            const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
+            kittyKnown.observe(chunk);
+            writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
+            continue;
+          }
           publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
@@ -1476,6 +2016,35 @@ async function openPane(
             .min(0)
             .max(1000)
             .parse(event.scrollOffset ?? 0);
+          const historyAnchor = z
+            .object({
+              state: z.enum([
+                "live",
+                "historical",
+                "restoring",
+                "lost",
+                "unavailable",
+                "unsupported",
+              ]),
+              token: z.uuid().nullable(),
+            })
+            .strict()
+            .nullable()
+            .parse(event.historyAnchor ?? null);
+          const anchorKey = fleet?.attachmentKey(config);
+          const anchorProof = anchorKey ? fleet?.retainedFrameProof(anchorKey) : null;
+          if (anchorKey && anchorProof && historyAnchor) {
+            if (!["live", "lost", "unavailable", "unsupported"].includes(historyAnchor.state)) {
+              retainedHistory.delete(anchorKey);
+              retainedHistory.set(anchorKey, {
+                proof: anchorProof,
+                pane: config.semanticPaneId,
+                token: historyAnchor.token,
+              });
+              while (retainedHistory.size > 8)
+                retainedHistory.delete(retainedHistory.keys().next().value!);
+            } else if (historyAnchor.state !== "restoring") retainedHistory.delete(anchorKey);
+          }
           appliedPresenceRevision = event.presenceRevision;
           const hasAuthority =
             !pendingClose &&
@@ -1490,9 +2059,49 @@ async function openPane(
             hasAuthority,
           );
           snapshot = coherent?.snapshot ?? null;
+          const childSelectionIdentity = z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .nullable()
+            .parse(event.selectionIdentity ?? null);
+          const selectedSurface = surfaces.find(
+            (surface) => surface.paneId === config.semanticPaneId,
+          )?.snapshot;
+          const selectionValue =
+            coherent &&
+            selectedSurface &&
+            selectedSurface.cols === coherent.copyRegion.width &&
+            selectedSurface.rows === coherent.copyRegion.height &&
+            selectedSurface.grid.every(
+              (row, y) =>
+                row.wrapped === coherent.copyRegion.wrapped[y] &&
+                row.cells.every(
+                  (cell, x) =>
+                    cell ===
+                    coherent.snapshot.grid[coherent.copyRegion.top + y]?.cells[
+                      coherent.copyRegion.left + x
+                    ],
+                ),
+            )
+              ? scopeSelectionIdentity(
+                  childSelectionIdentity,
+                  anchorProof ?? null,
+                  layout?.semanticWindowId ?? undefined,
+                  coherent.copyRegion,
+                  coherent.snapshot,
+                )
+              : null;
+          selectionIdentity =
+            coherent && selectionValue
+              ? { snapshot: coherent.snapshot, value: selectionValue }
+              : null;
           historyOffset = snapshot ? scrollOffset : 0;
           copyRegion = coherent?.copyRegion ?? null;
           regions = coherent?.regions ?? [];
+          publicationStage = "graphics";
+          kittyPlacements = coherent
+            ? canvasPlacements(layout, paneGraphicsSchema.parse(event.graphics ?? []))
+            : [];
           inputReady = hasAuthority && !!snapshot;
           publicationStage = "resize-token";
           resizeToken = resizePresentationMatches(layout, coherent?.regions ?? [])
@@ -1563,7 +2172,8 @@ async function openPane(
           status =
             recoveryNotice && inputReady
               ? recoveryNotice
-              : event.paneActionError === "Pane action unavailable — reselect pane to retry"
+              : event.paneActionError === GENERIC_PANE_ACTION_ERROR ||
+                  event.paneActionError === AGENT_NOT_READY_ERROR
                 ? event.paneActionError
                 : snapshot && scrollOffset > 0
                   ? `History: ${scrollOffset} lines above live — Shift-End returns to live`
@@ -1578,12 +2188,33 @@ async function openPane(
                     : diagnostics.fault
                       ? diagnosticStatus(diagnostics.fault)
                       : "Pane unavailable — select again or refresh";
+          if (historyAnchor?.state === "restoring") status = "Restoring saved history";
+          else if (historyAnchor?.state === "lost")
+            status =
+              scrollOffset > 0
+                ? "History shown but its saved anchor was lost — Shift-End returns to live"
+                : "Saved history is no longer available — live terminal shown";
+          else if (historyAnchor?.state === "unavailable")
+            status =
+              scrollOffset > 0
+                ? "History shown but could not be saved — Shift-End returns to live"
+                : "Saved history could not be restored — live terminal shown";
+          else if (historyAnchor?.state === "unsupported")
+            status =
+              scrollOffset > 0
+                ? "History shown — this daemon cannot retain it across tabs; Shift-End returns to live"
+                : "This daemon cannot restore saved history — live terminal shown";
           if (!catalogOnly)
             acceptSessionVisit = () => {
               if (
-                !inputReady ||
+                (!inputReady &&
+                  !(
+                    historyAnchor?.state === "historical" &&
+                    scrollOffset > 0 &&
+                    event.historyReady === true &&
+                    appliedPresenceRevision === presenceRevision
+                  )) ||
                 !snapshot ||
-                scrollOffset !== 0 ||
                 !foreground ||
                 stopped ||
                 active?.child !== child ||
@@ -1605,6 +2236,9 @@ async function openPane(
                 if (resolve)
                   recoveryTarget = { resolve, key, pane: config.semanticPaneId, request: token };
               }
+              const proof = frameProof(key);
+              if (inputReady && proof && coherent)
+                lastCoherentFrame = { request: token, key, proof, snapshot: coherent.snapshot };
               const tabTarget = fleet?.retainedTarget(key);
               if (tabTarget) sessionTabs.accept(token, tabTarget);
               const visit = sessionHistory.accept(token, key),
@@ -1636,6 +2270,22 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "kitty-missing") {
+    kittyKnown.forget(cmd.digests);
+    if (active && !active.catalogOnly)
+      active.child.stdin?.write(
+        JSON.stringify({ kind: "kitty-missing", digests: cmd.digests }) + "\n",
+      );
+    return;
+  }
+  if (cmd.type === "create-local-session") {
+    startLocalSessionCreation(cmd);
+    return;
+  }
+  if (cmd.type === "local-setup") {
+    if (cmd.request === request) startLocalSetup();
+    return;
+  }
   if (cmd.type === "home-agent-filter") {
     if (stopped || !fleet) return;
     applyHomeAgentFilter(
@@ -1749,6 +2399,11 @@ async function command(value: unknown) {
     return;
   }
   if (cmd.type === "theme" || cmd.type === "appearance") {
+    clearRetainedPreview();
+    retainedFrames.clear();
+    cancelHistoryDrains();
+    retainedHistory.clear();
+    lastCoherentFrame = null;
     if (cmd.type === "theme") appearance.select(cmd.id);
     else appearance.setSystem(cmd.system);
     publish();
@@ -1758,6 +2413,12 @@ async function command(value: unknown) {
     active?.presentation.update(undefined, [], false);
     foreground = cmd.active;
     if (!foreground) {
+      cancelLocalSetup();
+      clearRetainedPreview();
+      retainedFrames.clear();
+      cancelHistoryDrains();
+      retainedHistory.clear();
+      lastCoherentFrame = null;
       workspaceFleetAgents.cancel();
       sessionHistory.cancel();
       sessionTabs.cancel();
@@ -1768,8 +2429,10 @@ async function command(value: unknown) {
       pendingNewWindow = null;
       pendingClose = null;
     }
-    if (foreground) startAgents();
-    else retireAgents();
+    if (foreground) {
+      startAgents();
+      if (localSetupContext() && homePhase === "unavailable") launchRefresh(request);
+    } else retireAgents();
     presenceRevision = cmd.revision;
     inputReady = false;
     paneActions = null;
@@ -1979,8 +2642,9 @@ async function command(value: unknown) {
       !active?.child.stdin
     )
       return; // Discard stale/focus-lost input, never reinterpret it for another pane.
-    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel")
+    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel") {
       active.presentation.update(undefined, [], false);
+    }
     const line = JSON.stringify(cmd.input) + "\n";
     if (
       Buffer.byteLength(line) > MAX_INPUT_LINE ||
@@ -1988,6 +2652,8 @@ async function command(value: unknown) {
     )
       throw new Error("Input queue full");
     active.child.stdin.write(line);
+    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel")
+      active.historyIntent = historyDrainEpoch;
     return;
   }
   if (cmd.type === "open-workspace-fleet-agent") {
@@ -2102,6 +2768,8 @@ async function command(value: unknown) {
       fleet?.clearSelection();
     }
     status = admitted.kind === "close" ? "Loading sessions" : "Loading retained session";
+    if (admitted.kind !== "close") beginRetainedPreview(admitted.key);
+    else clearRetainedPreview();
     publish();
     await retire();
     if (!current()) return;
@@ -2416,6 +3084,8 @@ async function command(value: unknown) {
       : undefined;
   const continuationKey =
     continuationPane && foreground ? fleet?.attachmentKey(continuationPane) : null;
+  if (retainedPreview && continuationKey === retainedPreview.key)
+    retainedPreview.request = cmd.request;
   const historyContinuation = continuationKey
     ? { fromRequest: request, key: continuationKey, catalog: catalog!, presence: presenceRevision }
     : undefined;
@@ -2606,6 +3276,14 @@ function launchRefresh(token: number) {
       error instanceof MachineRegistryError
         ? error.message
         : "Connection unavailable — start the daemon and refresh";
+    if (
+      error instanceof DaemonCompatibilityError ||
+      (error instanceof DaemonDiscoveryError &&
+        ["no-daemon", "unavailable"].includes(error.category))
+    )
+      void offerLocalSetup(token);
+    if (error instanceof DaemonDiscoveryError && error.category === "no-server")
+      void offerLocalCreation(token);
     // Observation can publish synchronously; install the failure guidance first.
     if (fleet && surface === "home") startAgents();
     publish();

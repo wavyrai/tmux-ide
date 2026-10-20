@@ -97,6 +97,7 @@ pub(super) struct Picker {
     mode: Mode,
     pane_scope: Option<super::pane_actions::Target>,
     error: Option<&'static str>,
+    note: Option<&'static str>,
     removal: Option<machine_remove::Confirmation>,
     edit: Option<machine_edit::Form>,
     machine: Option<machine::Form>,
@@ -387,8 +388,48 @@ impl SnapshotView {
             self.open_picker_mode(Mode::Theme, window, cx);
         }
     }
+    pub(super) fn copy_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.marked.is_empty() || self.new_session.is_some() || self.pane_actions.is_some() {
+            return;
+        }
+        let mut state = self.browser_state.clone();
+        if self.browser_commands.is_none()
+            || self.browser_state.request != self.browser_request
+            || !self.presence.ready()
+            || self.frame.is_none()
+            || !state.input_ready
+            || state.retained_preview
+            || state.surface != browser::Surface::Workspace
+        {
+            state.diagnostics = None;
+        }
+        let report = super::diagnostics::build(&state, self.developer_mode.enabled);
+        self.present_diagnostics(report, window, cx);
+    }
+    fn present_diagnostics(
+        &mut self,
+        report: Result<String, super::diagnostics::Error>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_picker_mode(Mode::Commands, window, cx);
+        if let Some(picker) = self.picker.as_mut() {
+            match report {
+                Ok(text) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    picker.note = Some(
+                        "Diagnostics copied. Terminal content and private connection details are excluded.",
+                    );
+                }
+                Err(_) => {
+                    picker.error = Some("Could not prepare diagnostics. Clipboard unchanged.")
+                }
+            }
+        }
+        cx.notify();
+    }
     fn open_picker_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_commands.is_none() {
+        if self.browser_commands.is_none() && mode != Mode::Commands {
             return;
         }
         self.sidebar_keyboard.active = false;
@@ -431,6 +472,7 @@ impl SnapshotView {
             mode,
             pane_scope: None,
             error: None,
+            note: None,
             removal: None,
             edit: None,
             machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
@@ -451,7 +493,12 @@ impl SnapshotView {
             } else if mode == Mode::Machine {
                 Vec::new()
             } else if mode == Mode::Commands {
-                commands::command_rows_with_sidebar(&self.browser_state, "", self.sidebar_hidden)
+                commands::command_rows_with_settings(
+                    &self.browser_state,
+                    "",
+                    self.sidebar_hidden,
+                    self.developer_mode.enabled,
+                )
             } else if mode == Mode::Theme {
                 theme_rows(&self.browser_state, "")
             } else {
@@ -482,7 +529,7 @@ impl SnapshotView {
         picker.search.update(cx, |input, cx| {
             input.set_appearance(crate::config::Config::default().ui, theme, cx)
         });
-        if self.browser_commands.is_none()
+        if (self.browser_commands.is_none() && picker.mode != Mode::Commands)
             || picker.pane_scope.as_ref().is_some_and(|target| {
                 !self.presence.ready() || !target.current(&self.browser_state)
             })
@@ -511,10 +558,11 @@ impl SnapshotView {
         } else if picker.mode == Mode::Machine {
             Vec::new()
         } else if picker.mode == Mode::Commands {
-            commands::command_rows_with_sidebar(
+            commands::command_rows_with_settings(
                 &self.browser_state,
                 picker.search.read(cx).text(),
                 self.sidebar_hidden,
+                self.developer_mode.enabled,
             )
         } else if picker.mode == Mode::Theme {
             theme_rows(&self.browser_state, picker.search.read(cx).text())
@@ -566,7 +614,8 @@ impl SnapshotView {
             .picker
             .as_ref()
             .is_none_or(|p| p.mode != Mode::Theme && p.request != self.browser_request)
-            || self.browser_commands.is_none()
+            || (self.browser_commands.is_none()
+                && !matches!(&target, Target::Command(Action::CopyDiagnostics)))
             || !current(&self.browser_state, &target)
         {
             return;
@@ -647,6 +696,8 @@ impl SnapshotView {
             &target,
             Target::Command(
                 Action::ToggleSidebar
+                    | Action::DeveloperMode(_)
+                    | Action::CopyDiagnostics
                     | Action::Shortcuts
                     | Action::Help
                     | Action::WhatsNew
@@ -664,9 +715,19 @@ impl SnapshotView {
         {
             return;
         }
+        if matches!(&target, Target::Command(Action::DeveloperMode(_)))
+            && (!self.developer_mode.ready || self.developer_mode.saving)
+        {
+            return;
+        }
         if let Target::Command(action) = target {
             self.close_picker(window, cx);
             match action {
+                Action::CopyDiagnostics => self.copy_diagnostics(window, cx),
+                Action::DeveloperMode(enabled) => {
+                    self.set_developer_mode(enabled, cx);
+                    self.open_picker_mode(Mode::Commands, window, cx);
+                }
                 Action::Fonts => self.open_picker_mode(Mode::Font, window, cx),
                 Action::Shortcuts => self.open_picker_mode(Mode::Reference, window, cx),
                 Action::Help => self.open_picker_mode(Mode::Help, window, cx),

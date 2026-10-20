@@ -1,0 +1,37 @@
+
+ RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide
+
+ ❯ packages/daemon/src/command-center/tmux-server-agent-refusal.test.ts (3 tests | 1 failed) 17ms
+     × preserves unavailable classification without raw context or installation claims 15ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/daemon/src/command-center/tmux-server-agent-refusal.test.ts > selected-server agent refusal > preserves unavailable classification without raw context or installation claims
+AssertionError: expected { status: 503, …(2) } to deeply equal { status: 409, …(2) }
+
+- Expected
++ Received
+
+  {
+    "body": {
+      "error": {
+-       "code": "harness_unavailable",
++       "code": "server-unavailable",
+      },
+    },
+    "calls": 1,
+-   "status": 409,
++   "status": 503,
+  }
+
+ ❯ packages/daemon/src/command-center/tmux-server-agent-refusal.test.ts:25:142
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  15:32:25
+   Duration  851ms (transform 505ms, setup 0ms, import 711ms, tests 17ms, environment 0ms)
+

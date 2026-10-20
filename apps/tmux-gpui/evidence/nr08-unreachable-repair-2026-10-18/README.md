@@ -1,0 +1,9 @@
+# NR08 actual refused SSH endpoint repair
+
+Final run `unreachable-repair-final` passed (owned session 89221 exit 0). Source harness: `apps/tmux-gpui/bridge/ssh-onboarding-smoke.mjs`; mode `TMUX_GPUI_TEST_SSH_FAILURE=unreachable`, `TMUX_GPUI_TEST_PUBLIC_DISCOVERY=1`. Node24.21.0 and private stock tmux3.8; explicit source CLI `.tasks/native-reliability-mission/nr07-guidance-runtime/cli.mjs`, SHA recorded in receipt. No builds, GUI or production endpoints.
+
+The fixture reserved then released a fresh loopback port, verified ECONNREFUSED, and changed only the single Port in its owned target SSH config. Actual saved-host Add published unavailable/reconnecting with no frame/input authority. A denied input attempt targeted the known owned pane. Before repair the released port still refused connections and the original sshd PID remained verified alive. Restoring exact original config bytes/hash followed by explicit Retry recovered the same saved machine/pane. Fresh input executed; denied marker was absent. Synthetic handshake requests: zero. All owned cleanup passed.
+
+The released port is not held; a port reuse race fails the refusal assertions. This proves retryable refused reachability via the existing generic unavailable diagnostic, not a dedicated unreachable classification. Public discovery invoked the actual source CLI with a mirrored independently verified private daemon record; installed onboarding and physical native GUI remain outside scope.
+
+First run `unreachable-repair-current` is retained: the generic harness incorrectly required needs-attention for a retryable connection refusal. Source daemon-connection-owner.ts maps retryable failures to reconnecting. Only that expected phase was corrected; first cleanup passed. Final ESLint and diff check passed. No active runtime remains.

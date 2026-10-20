@@ -3,16 +3,19 @@ use super::SnapshotView;
 use gpui::Context;
 impl SnapshotView {
     pub(super) fn terminal_input_ready(&self) -> bool {
-        self.picker.is_none()
+        !self.browser_state.retained_preview
+            && self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
             && self.presence.ready()
+            && self.session_tabs.pending.is_none()
             && self.browser_state.input_ready
             && self.frame.is_some()
             && self.browser_state.selected_pane.is_some()
     }
     pub(super) fn historical_selection_ready(&self) -> bool {
-        self.picker.is_none()
+        !self.browser_state.retained_preview
+            && self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
             && self.presence.ready()
@@ -29,6 +32,7 @@ impl SnapshotView {
             && self.browser_state.selected_pane.is_some()
     }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
+        self.cancel_pointer();
         self.input_interrupted = true;
         self.discard_composition(cx);
         cx.notify();

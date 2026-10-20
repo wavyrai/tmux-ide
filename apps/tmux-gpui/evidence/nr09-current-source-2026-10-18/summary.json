@@ -1,0 +1,232 @@
+{
+  "scope": "five fresh-process runs per variant; three correlated switches per run; pilots excluded",
+  "variants": {
+    "baseline": {
+      "runs": [
+        {
+          "pair": 1,
+          "firstRetainedMs": 8.807124999999814,
+          "firstFreshMs": 359.58158300000014,
+          "firstInputReadyMs": 372.06166600000006,
+          "publications": 14,
+          "bytes": 8084512,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 2,
+          "firstRetainedMs": 8.8415829999999,
+          "firstFreshMs": 366.8097499999999,
+          "firstInputReadyMs": 380.42954199999986,
+          "publications": 14,
+          "bytes": 8084540,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 3,
+          "firstRetainedMs": 8.938959000000068,
+          "firstFreshMs": 358.0371250000003,
+          "firstInputReadyMs": 371.57112499999994,
+          "publications": 14,
+          "bytes": 8084533,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 4,
+          "firstRetainedMs": 9.383833000000322,
+          "firstFreshMs": 373.946958,
+          "firstInputReadyMs": 387.28195800000003,
+          "publications": 14,
+          "bytes": 8084526,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 5,
+          "firstRetainedMs": 9.717916999999943,
+          "firstFreshMs": 366.0740420000002,
+          "firstInputReadyMs": 378.96550000000025,
+          "publications": 14,
+          "bytes": 8084512,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        }
+      ],
+      "aggregate": {
+        "firstRetainedMs": {
+          "medianOfRunMedians": 8.938959000000068,
+          "minRunMedian": 8.807124999999814,
+          "maxRunMedian": 9.717916999999943
+        },
+        "firstFreshMs": {
+          "medianOfRunMedians": 366.0740420000002,
+          "minRunMedian": 358.0371250000003,
+          "maxRunMedian": 373.946958
+        },
+        "firstInputReadyMs": {
+          "medianOfRunMedians": 378.96550000000025,
+          "minRunMedian": 371.57112499999994,
+          "maxRunMedian": 387.28195800000003
+        },
+        "publications": {
+          "medianOfRunMedians": 14,
+          "minRunMedian": 14,
+          "maxRunMedian": 14
+        },
+        "bytes": {
+          "medianOfRunMedians": 8084526,
+          "minRunMedian": 8084512,
+          "maxRunMedian": 8084540
+        },
+        "retainedFrames": {
+          "medianOfRunMedians": 12,
+          "minRunMedian": 12,
+          "maxRunMedian": 12
+        }
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "pair": 1,
+          "firstRetainedMs": 5.495708000000377,
+          "firstFreshMs": 350.922,
+          "firstInputReadyMs": 364.45112500000005,
+          "publications": 14,
+          "bytes": 8084614,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 2,
+          "firstRetainedMs": 8.939374999999927,
+          "firstFreshMs": 344.7511249999998,
+          "firstInputReadyMs": 363.400584,
+          "publications": 14,
+          "bytes": 8084606,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 3,
+          "firstRetainedMs": 5.738624999999956,
+          "firstFreshMs": 352.42212500000005,
+          "firstInputReadyMs": 359.63058299999966,
+          "publications": 14,
+          "bytes": 8084600,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 4,
+          "firstRetainedMs": 5.613166999999976,
+          "firstFreshMs": 369.24858399999994,
+          "firstInputReadyMs": 373.92995900000005,
+          "publications": 14,
+          "bytes": 8084621,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        },
+        {
+          "pair": 5,
+          "firstRetainedMs": 5.791417000000365,
+          "firstFreshMs": 341.73324999999977,
+          "firstInputReadyMs": 356.3476660000001,
+          "publications": 14,
+          "bytes": 8084519,
+          "retainedFrames": 12,
+          "emptyFrames": 0
+        }
+      ],
+      "aggregate": {
+        "firstRetainedMs": {
+          "medianOfRunMedians": 5.738624999999956,
+          "minRunMedian": 5.495708000000377,
+          "maxRunMedian": 8.939374999999927
+        },
+        "firstFreshMs": {
+          "medianOfRunMedians": 350.922,
+          "minRunMedian": 341.73324999999977,
+          "maxRunMedian": 369.24858399999994
+        },
+        "firstInputReadyMs": {
+          "medianOfRunMedians": 363.400584,
+          "minRunMedian": 356.3476660000001,
+          "maxRunMedian": 373.92995900000005
+        },
+        "publications": {
+          "medianOfRunMedians": 14,
+          "minRunMedian": 14,
+          "maxRunMedian": 14
+        },
+        "bytes": {
+          "medianOfRunMedians": 8084606,
+          "minRunMedian": 8084519,
+          "maxRunMedian": 8084621
+        },
+        "retainedFrames": {
+          "medianOfRunMedians": 12,
+          "minRunMedian": 12,
+          "maxRunMedian": 12
+        }
+      }
+    }
+  },
+  "pairedCandidateMinusBaseline": [
+    {
+      "pair": 1,
+      "firstRetainedMs": -3.3114169999994374,
+      "firstFreshMs": -8.659583000000111,
+      "firstInputReadyMs": -7.610541000000012,
+      "publications": 0,
+      "bytes": 102,
+      "retainedFrames": 0
+    },
+    {
+      "pair": 2,
+      "firstRetainedMs": 0.09779200000002675,
+      "firstFreshMs": -22.05862500000012,
+      "firstInputReadyMs": -17.028957999999875,
+      "publications": 0,
+      "bytes": 66,
+      "retainedFrames": 0
+    },
+    {
+      "pair": 3,
+      "firstRetainedMs": -3.2003340000001117,
+      "firstFreshMs": -5.6150000000002365,
+      "firstInputReadyMs": -11.940542000000278,
+      "publications": 0,
+      "bytes": 67,
+      "retainedFrames": 0
+    },
+    {
+      "pair": 4,
+      "firstRetainedMs": -3.7706660000003467,
+      "firstFreshMs": -4.698374000000058,
+      "firstInputReadyMs": -13.351998999999978,
+      "publications": 0,
+      "bytes": 95,
+      "retainedFrames": 0
+    },
+    {
+      "pair": 5,
+      "firstRetainedMs": -3.926499999999578,
+      "firstFreshMs": -24.34079200000042,
+      "firstInputReadyMs": -22.61783400000013,
+      "publications": 0,
+      "bytes": 7,
+      "retainedFrames": 0
+    }
+  ],
+  "pairedMedianDelta": {
+    "firstRetainedMs": -3.3114169999994374,
+    "firstFreshMs": -8.659583000000111,
+    "firstInputReadyMs": -13.351998999999978,
+    "publications": 0,
+    "bytes": 67,
+    "retainedFrames": 0
+  }
+}

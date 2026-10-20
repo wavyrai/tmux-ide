@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                         Local · e2e-nr04-paste-tui-10226-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● node                                                                                                                          ⋯
+▾ Local
+   e2e-nr04-paste-tui-1… 1p
+                                NR04_MAIN_SCREEN
+
+
+
+
+
+
+
+
+                            NR04_ALT_FRESH_INPUT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

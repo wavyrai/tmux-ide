@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.7
+
+- Support stock tmux 3.8 capture output without requiring users to replace or restart their tmux server. Detect its textual raw grid format and use the existing stock capture path instead of repeatedly closing terminal streams.
+- Observe daemon retirement after concurrent shutdown transport failure.
+- Never leave session input authority with a viewer whose connection has gone: a refused controller handoff or a failed release could leave every other viewer waiting for input. A viewer asking for input now reclaims a controller whose holder lost its lease; live holders still hand off normally, so only one client types at a time.
+- Forward kitty graphics protocol images from tmux panes to the native alpha through a separate daemon side channel; the bundled tmux acknowledges them. Disable with `TMUX_IDE_KITTY_GRAPHICS=0`.
+- The installer restarts a running older daemon on the new release and, on macOS, repoints launchd jobs that start an older tmux-ide copy at the managed launcher, keeping a backup. It names a shadowing tmux-ide on PATH with its version and removal command. Opt out with `--no-daemon-upgrade` or `TMUX_IDE_NO_DAEMON_UPGRADE=1`.
+
+The separate native alpha also recovers terminal streams after pane splits. Existing tmux sessions are preserved.
+
 ## 2.9.6
 
 - Drop Intel macOS (darwin-x64) support: no bundled tmux or compiled app runtime is published for Intel Macs, and the installer refuses them. Apple Silicon macOS and glibc Linux x64/ARM64 remain supported.

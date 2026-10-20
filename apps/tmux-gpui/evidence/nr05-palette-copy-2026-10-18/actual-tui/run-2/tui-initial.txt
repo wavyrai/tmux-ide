@@ -1,0 +1,44 @@
+   tmux-ide  F1 Home    F2 Terminals                                                                                           Local · e2e-nr05-palette-92336-0
+ Machines            ? Help ● one   …                                                                                                              + New window
+                              ● rapid-redwood                                                                                                                 ⋯
+▾ Local                     RIG_NR04_LEFT_CONTENT
+   e2e-nr05-palette-923… 1p sh-3.2$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6 Browse all sessions
+ F7 Attention (0)
+ A Add machine               F6 Sessions  F7 Attention  F10 Sidebar                                                                                 F5 Commands

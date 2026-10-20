@@ -1,0 +1,20 @@
+[
+  {
+    "existing": false,
+    "record": true,
+    "exit": null,
+    "elapsedMs": 515,
+    "stdout": "{\"status\":\"ready\",\"pid\":32760,\"port\":50681,\"apiBaseUrl\":\"http://127.0.0.1:50681\"}\n",
+    "stderr": "",
+    "cleanup": true
+  },
+  {
+    "existing": true,
+    "record": true,
+    "exit": null,
+    "elapsedMs": 407,
+    "stdout": "{\"status\":\"ready\",\"pid\":32821,\"port\":50686,\"apiBaseUrl\":\"http://127.0.0.1:50686\"}\n",
+    "stderr": "",
+    "cleanup": true
+  }
+]

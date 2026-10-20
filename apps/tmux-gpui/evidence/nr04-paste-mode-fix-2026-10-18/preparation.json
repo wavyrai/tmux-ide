@@ -1,0 +1,8 @@
+{
+  "baselineCommit": "c513c772",
+  "baselineHarness": "apps/tmux-gpui/evidence/nr04-unicode-paste-2026-10-18/run.mjs",
+  "baselineHarnessSha256": "4b8397ebe2f4c950279eb9b70a21be64fafbbcb11b2351fa5cc5c1fb08edbe28",
+  "preparedHarnessSha256": "34525b4cb969a1ca6ae4ecfaa401aba5fbe81f7584162d98f5dfa3ba5853e001",
+  "change": "Only exclusive output directory changed; no workload or oracle changes",
+  "runtimeStarted": false
+}
