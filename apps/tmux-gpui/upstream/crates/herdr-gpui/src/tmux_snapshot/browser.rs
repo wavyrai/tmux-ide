@@ -187,13 +187,14 @@ struct Publication {
     selected_session: Option<String>,
     selected_pane: Option<String>,
     status: String,
-    snapshot: Option<serde_json::Value>,
+    // Kept raw: the terminal grid is decoded once, straight into the painter frame.
+    snapshot: Option<Box<serde_json::value::RawValue>>,
     retained_preview: Option<RetainedPreview>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetainedPreview {
-    snapshot: serde_json::Value,
+    snapshot: Box<serde_json::value::RawValue>,
 }
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -607,17 +608,17 @@ impl Reader {
         {
             return Err(Error::Invalid("invalid browser state"));
         }
-        let pointer_modes = p
-            .snapshot
-            .as_ref()
-            .map(decode::pointer_modes)
-            .transpose()?
-            .flatten();
-        let frame = p
-            .snapshot
-            .or_else(|| p.retained_preview.map(|preview| preview.snapshot))
-            .map(|s| decode::frame(&serde_json::to_vec(&s)?).map(Arc::new))
-            .transpose()?;
+        let (frame, pointer_modes) = match (&p.snapshot, &p.retained_preview) {
+            (Some(live), _) => {
+                let (frame, modes) = decode::frame_with_pointer_modes(live.get().as_bytes())?;
+                (Some(Arc::new(frame)), modes)
+            }
+            (None, Some(preview)) => (
+                Some(Arc::new(decode::frame(preview.snapshot.get().as_bytes())?)),
+                None,
+            ),
+            (None, None) => (None, None),
+        };
         if !super::hit_regions::valid(&p.regions, frame.as_deref(), &p.panes) {
             return Err(Error::Invalid("invalid pane regions"));
         }

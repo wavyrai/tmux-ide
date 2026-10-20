@@ -117,6 +117,12 @@ impl Color {
 }
 
 pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
+    frame_with_pointer_modes(bytes).map(|(frame, _)| frame)
+}
+/// One parse yields both the painter frame and the live pointer modes.
+pub(super) fn frame_with_pointer_modes(
+    bytes: &[u8],
+) -> Result<(FrameData, Option<PointerModes>), Error> {
     let snapshot: Snapshot = serde_json::from_slice(bytes)?;
     let Snapshot {
         cols,
@@ -156,6 +162,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         mouse_encoding,
         synchronized_output,
     } = modes;
+    let pointer_modes = pointer_modes(alternate_screen, mouse_protocol, mouse_encoding);
     let Bootstrap { kind, hidden_state } = bootstrap;
     let _ = (
         alternate_screen,
@@ -221,7 +228,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         (CursorStyle::Bar, true) => 5,
         (CursorStyle::Bar, false) => 6,
     };
-    Ok(FrameData {
+    let frame = FrameData {
         cells,
         width: cols,
         height: rows,
@@ -233,7 +240,8 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         }),
         hyperlinks: vec![],
         graphics: vec![],
-    })
+    };
+    Ok((frame, pointer_modes))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,18 +250,21 @@ pub(super) struct PointerModes {
     pub encoding: MouseEncoding,
     pub alternate: bool,
 }
-pub(super) fn pointer_modes(value: &serde_json::Value) -> Result<Option<PointerModes>, Error> {
-    let modes: Modes = serde_json::from_value(value["modes"].clone())?;
-    Ok(match (modes.mouse_protocol, modes.mouse_encoding) {
+fn pointer_modes(
+    alternate: bool,
+    protocol: Option<MouseProtocol>,
+    encoding: Option<MouseEncoding>,
+) -> Option<PointerModes> {
+    match (protocol, encoding) {
         (Some(protocol), Some(encoding))
             if protocol != MouseProtocol::None && encoding != MouseEncoding::SgrPixels =>
         {
             Some(PointerModes {
                 protocol,
                 encoding,
-                alternate: modes.alternate_screen,
+                alternate,
             })
         }
         _ => None,
-    })
+    }
 }
