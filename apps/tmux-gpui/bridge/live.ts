@@ -39,6 +39,10 @@ import {
 } from "../../../packages/daemon-client/src/pane-stream-client.ts";
 import { createReplica } from "./replica.ts";
 
+const selectPaneSchema = z
+  .object({ kind: z.literal("select-pane"), id: z.string().min(1).max(512) })
+  .strict();
+
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
 let ready = false;
 let runtime: PaneStreamRuntimeClient | undefined;
@@ -149,6 +153,7 @@ function output(snapshot: typeof latest.snapshot) {
         ? {
             inputReady,
             presentationEpoch,
+            selectedPane: selectedActionPane,
             ...(catalogOnly ? { catalogReady: catalogReceived && !stopped } : {}),
             resizeBlocked,
             splitLayout: splitReader?.current() ?? null,
@@ -255,8 +260,13 @@ try {
     throw new Error("Usage: live.ts CONNECTION.json");
   const path = process.argv[2]!;
   const config = connectionSchema.parse(readPrivateConfig(path));
-  selectedActionPane = config.semanticPaneId;
-  const sourceFaultFence = createSourceFaultFence(config.semanticPaneId, () => layouts);
+  // In-window reselect retargets this helper; every input/history path reads it.
+  let selected = config.semanticPaneId;
+  selectedActionPane = selected;
+  const sourceFaultFence = createSourceFaultFence(
+    () => selected,
+    () => layouts,
+  );
   const stopForVisibleSourceFault = () => {
     const reason = sourceFaultFence.currentFailure();
     if (!reason) return false;
@@ -264,11 +274,8 @@ try {
     stop();
     return true;
   };
-  const visiblePaneIds = config.visiblePaneIds ?? [config.semanticPaneId];
-  if (
-    !visiblePaneIds.includes(config.semanticPaneId) ||
-    new Set(visiblePaneIds).size !== visiblePaneIds.length
-  )
+  const visiblePaneIds = config.visiblePaneIds ?? [selected];
+  if (!visiblePaneIds.includes(selected) || new Set(visiblePaneIds).size !== visiblePaneIds.length)
     throw new Error("Invalid visible pane subscription");
   resizeGesture = createResizeGestureOwner({
     runtime: () => runtime ?? null,
@@ -356,12 +363,12 @@ try {
     restore: (row) => {
       const view = viewport.restoreRow(row);
       if (!view) return false;
-      surfaces.set(config.semanticPaneId, view);
+      surfaces.set(selected, view);
       latest.snapshot = view;
       return true;
     },
     changed: () => {
-      if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+      if (!stopped) output(surfaces.get(selected) ?? null);
     },
   });
 
@@ -501,9 +508,8 @@ try {
         catalogReceived = true;
         if (stopForVisibleSourceFault()) return;
         semanticWindow =
-          frame.layouts.find((layout) =>
-            layout.panes.some((pane) => pane.pane === config.semanticPaneId),
-          )?.semanticWindowId ?? null;
+          frame.layouts.find((layout) => layout.panes.some((pane) => pane.pane === selected))
+            ?.semanticWindowId ?? null;
         if (catalogOnly) output(null);
         else if (latest.snapshot) output(latest.snapshot);
       },
@@ -516,7 +522,7 @@ try {
           else layouts[index] = frame;
         }
         if (stopForVisibleSourceFault()) return;
-        semanticWindow = windowForLayout(semanticWindow, config.semanticPaneId, frame);
+        semanticWindow = windowForLayout(semanticWindow, selected, frame);
         if (latest.snapshot) output(latest.snapshot);
       },
       onNegotiated: (pane, result) => {
@@ -534,7 +540,7 @@ try {
             config.workspaceName,
             pane,
             (snapshot, lifetime) => {
-              const wasHistorical = pane === config.semanticPaneId && viewport.offset > 0;
+              const wasHistorical = pane === selected && viewport.offset > 0;
               if (!lifetimes.has(pane) || lifetimes.get(pane) !== lifetime) {
                 // Saturation terminates the live stream; final retirement may still
                 // clear all surfaces without emitting an unsafe/reused epoch.
@@ -542,28 +548,26 @@ try {
                   if (!stopped) throw new Error("Presentation lifetime limit exceeded");
                 } else presentationEpoch++;
                 lifetimes.set(pane, lifetime);
-                if (pane === config.semanticPaneId) viewport.update(null);
+                if (pane === selected) viewport.update(null);
               }
               if (snapshot)
                 surfaces.set(
                   pane,
-                  pane === config.semanticPaneId
-                    ? viewport.update(snapshot)!
-                    : { ...snapshot, history: [] },
+                  pane === selected ? viewport.update(snapshot)! : { ...snapshot, history: [] },
                 );
               else {
                 surfaces.delete(pane);
-                if (pane === config.semanticPaneId) viewport.update(null);
+                if (pane === selected) viewport.update(null);
               }
               if (wasHistorical && viewport.offset === 0) historyRestoration?.lost();
-              if (pane === config.semanticPaneId) {
+              if (pane === selected) {
                 historyRestoration?.observe(replicas.get(pane)?.current() ?? null);
                 if (restorePending && snapshot) {
                   restorePending = false;
                   historyRestoration?.restore(config.historyAnchor!);
                 }
               }
-              if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+              if (!stopped) output(surfaces.get(selected) ?? null);
             },
             (ack) => {
               if (runtime) runtime.ack(ack);
@@ -660,6 +664,51 @@ try {
           if (latest.snapshot) output(latest.snapshot);
           continue;
         }
+        const reselect = selectPaneSchema.safeParse(value);
+        if (reselect.success) {
+          const id = reselect.data.id;
+          if (id === selected) {
+            output(latest.snapshot);
+            continue;
+          }
+          const frame = replicas.get(id)?.current();
+          const layout = layouts.find((l) => l.semanticWindowId === semanticWindow);
+          if (
+            !frame ||
+            !visiblePaneIds.includes(id) ||
+            !surfaces.has(id) ||
+            !lifetimes.get(id) ||
+            !layout?.panes.some((pane) => pane.pane === id) ||
+            viewport.offset !== 0 ||
+            restorePending ||
+            historyRestoration.publication().state === "restoring" ||
+            actionBusy
+          ) {
+            // Never leave later input addressed to the previous pane; the browser
+            // replaces a refusing helper with a fresh attachment for the target.
+            stop();
+            break inputLoop;
+          }
+          closePaneReady = null;
+          actionFailed = false;
+          actionFence.invalidate();
+          mouseOwner.retire();
+          splitGesture.retire();
+          resizeGesture.retire();
+          selected = id;
+          selectedActionPane = id;
+          viewport.update(null);
+          surfaces.set(id, viewport.update(frame.snapshot)!);
+          historyRestoration.observe(null);
+          historyRestoration.observe(frame);
+          if (historyRestoration.publication().state !== "live") historyRestoration.live();
+          // Rotate resize/mouse/action identities: nothing granted for the old pane carries over.
+          if (presentationEpoch === Number.MAX_SAFE_INTEGER)
+            throw new Error("Presentation lifetime limit exceeded");
+          presentationEpoch++;
+          output(surfaces.get(selected) ?? null);
+          continue;
+        }
         if (restorePending || historyRestoration?.publication().state === "restoring") {
           const returnLive = scrollSchema.safeParse(value);
           if (!returnLive.success || returnLive.data.data !== 0) continue;
@@ -691,24 +740,24 @@ try {
           splitGesture.retire();
           const target = () => {
             const layout = layouts.find((l) => l.semanticWindowId === semanticWindow);
-            const lifetime = lifetimes.get(config.semanticPaneId);
+            const lifetime = lifetimes.get(selected);
             if (
               stopped ||
               !foreground ||
               viewport.offset !== 0 ||
               !latest.snapshot ||
               actionFailed ||
-              paneAction.data.id !== config.semanticPaneId ||
-              !surfaces.has(config.semanticPaneId) ||
+              paneAction.data.id !== selected ||
+              !surfaces.has(selected) ||
               !layout?.semanticWindowId ||
               !lifetime
             )
               return null;
-            const capability = actionFence.current(layout, config.semanticPaneId, lifetime);
+            const capability = actionFence.current(layout, selected, lifetime);
             return capability
               ? {
                   token: capability.token,
-                  id: config.semanticPaneId,
+                  id: selected,
                   generation: config.scope.generation,
                   workspace: config.workspaceName,
                   window: layout.semanticWindowId,
@@ -854,7 +903,7 @@ try {
           const input = mouseOwner.route(latest.snapshot, mouseIdentity(), mouse.data);
           if (input) {
             try {
-              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+              await deliverInput(runtime, config.workspaceName, selected, input);
             } catch (error) {
               mouseOwner.retire();
               throw error;
@@ -871,11 +920,11 @@ try {
           if (!route) continue;
           if (route.kind === "application") {
             for (const input of route.inputs) {
-              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+              await deliverInput(runtime, config.workspaceName, selected, input);
             }
           } else {
             const view = viewport.scroll(route.lines);
-            if (view) surfaces.set(config.semanticPaneId, view);
+            if (view) surfaces.set(selected, view);
             historyRestoration?.capture(viewport.captureIndex());
             output(view);
           }
@@ -887,7 +936,7 @@ try {
           resizeGesture.retire();
           const view = viewport.scroll(scroll.data.data);
           restorePending = false;
-          if (view) surfaces.set(config.semanticPaneId, view);
+          if (view) surfaces.set(selected, view);
           historyRestoration?.capture(viewport.captureIndex());
           output(view);
           continue;
@@ -916,7 +965,7 @@ try {
         await deliverPreviewInput(
           runtime,
           config.workspaceName,
-          config.semanticPaneId,
+          selected,
           value,
           latest.snapshot.modes.bracketedPaste,
         );

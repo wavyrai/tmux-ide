@@ -367,6 +367,8 @@ let active:
       historyIntent?: number;
       drainHistory?: () => void;
       presentation: ReturnType<typeof createWindowPresentation>;
+      /** Retarget this helper to another pane of its subscribed window, without a new attachment. */
+      reselect?: (choice: z.infer<typeof connectionSchema>, request: number) => boolean;
     }
   | undefined;
 
@@ -1378,7 +1380,9 @@ async function openPane(
   }
   const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
   let handedOff = false;
-  const presentation = createWindowPresentation(config.semanticPaneId);
+  let presentation = createWindowPresentation(config.semanticPaneId);
+  // Set between an in-window reselect and the helper's publication for that pane.
+  let reselecting = false;
   try {
     const path = join(directory, "connection.json");
     const historyKey = fleet?.attachmentKey(config);
@@ -1482,6 +1486,42 @@ async function openPane(
       },
     };
     if (!catalogOnly)
+      active.reselect = (choice, next) => {
+        if (
+          active?.child !== child ||
+          child.exitCode !== null ||
+          !child.stdin.writable ||
+          diagnostics.fault ||
+          !foreground ||
+          historyOffset !== 0 ||
+          !snapshot ||
+          pendingClose ||
+          pendingPaneSplit ||
+          pendingNewWindow ||
+          choice.baseUrl !== config.baseUrl ||
+          choice.ownerToken !== config.ownerToken ||
+          choice.remoteSocketOrigin !== config.remoteSocketOrigin ||
+          choice.scope.serverId !== config.scope.serverId ||
+          choice.scope.generation !== config.scope.generation ||
+          choice.workspaceName !== config.workspaceName ||
+          choice.liveSessionId !== config.liveSessionId ||
+          !choice.visiblePaneIds?.includes(choice.semanticPaneId) ||
+          JSON.stringify(choice.visiblePaneIds) !== JSON.stringify(config.visiblePaneIds)
+        )
+          return false;
+        // Same subscription and attachment: only the selected pane and request change.
+        // Input written after this line is ordered behind the helper's retarget.
+        config = choice;
+        token = next;
+        presentation = createWindowPresentation(choice.semanticPaneId);
+        active.presentation = presentation;
+        reselecting = true;
+        child.stdin.write(
+          JSON.stringify({ kind: "select-pane", id: choice.semanticPaneId }) + "\n",
+        );
+        return true;
+      };
+    if (!catalogOnly)
       child.stdin.write(
         JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
       );
@@ -1528,7 +1568,28 @@ async function openPane(
     };
     child.stderr.on("data", (chunk: Buffer) => diagnostics.push(chunk));
     child.on("error", unavailable);
-    child.on("exit", unavailable);
+    child.on("exit", () => {
+      // A helper that refused an in-window reselect exits before addressing the
+      // new pane; attach the target freshly instead of reporting it unavailable.
+      if (
+        reselecting &&
+        !diagnostics.fault &&
+        !stopped &&
+        request === token &&
+        active?.child === child
+      ) {
+        reselecting = false;
+        const target = config,
+          owner = token;
+        void retire()
+          .then(() => {
+            if (!stopped && request === owner) return openPane(target, owner);
+          })
+          .catch(unavailable);
+        return;
+      }
+      unavailable();
+    });
     child.stdout.on("data", (chunk: Buffer) => {
       // Fatal helper diagnostics retire this presentation lifetime. Buffered
       // stdout must not restore a frame or input authority after that fault.
@@ -1554,6 +1615,10 @@ async function openPane(
           publicationStage = "topology";
           childConnection = event.connection;
           childSequence = event.sequence;
+          // Publications emitted before the helper applied a reselect describe the
+          // previous pane's input, history and action identities.
+          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) continue;
+          reselecting = false;
           layouts = topologySchema.parse(event.layouts ?? []);
           if (catalogOnly) {
             if (event.catalogReady !== true) throw new Error("Layout catalog unavailable");
@@ -3038,6 +3103,24 @@ async function command(value: unknown) {
   sessionCatalogComplete = false;
   initialPane = null;
   const token = request;
+  if (cmd.type === "pane" && surface === "workspace" && !retainedPreview) {
+    // Another pane of the displayed window: keep the frame and attachment, and let the
+    // helper confirm the new target before input is admitted again.
+    const pane = panes.find(
+      (p) => p.semanticPaneId === cmd.id && p.liveSessionId === selectedSession,
+    );
+    if (pane && active?.reselect?.(pane, token)) {
+      selectedPane = cmd.id;
+      inputReady = false;
+      paneActions = null;
+      resizeToken = null;
+      splitLayout = null;
+      copyRegion = null;
+      selectionIdentity = null;
+      status = "Loading";
+      return;
+    }
+  }
   snapshot = null;
   inputReady = false;
   selectedPane = null;
