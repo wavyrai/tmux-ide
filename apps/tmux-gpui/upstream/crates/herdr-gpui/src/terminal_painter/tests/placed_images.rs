@@ -95,6 +95,7 @@ fn placed_images_decode_off_thread_then_paint_in_z_order(cx: &mut TestAppContext
                             placements: &placements,
                             images: &images,
                             target: ImageTarget::Main,
+                            cell_pixels: None,
                         }),
                         window,
                         cx,

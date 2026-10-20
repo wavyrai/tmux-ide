@@ -1,3 +1,44 @@
+diff --git a/cmd-refresh-client.c b/cmd-refresh-client.c
+index cb30749e..6d569c74 100644
+--- a/cmd-refresh-client.c
++++ b/cmd-refresh-client.c
+@@ -84,8 +84,26 @@ cmd_refresh_client_control_client_size(struct cmd *self, struct cmdq_item *item)
+ 	struct args		*args = cmd_get_args(self);
+ 	struct client		*tc = cmdq_get_target_client(item);
+ 	const char		*size = args_get(args, 'C');
+-	u_int			 w, x, y;
++	u_int			 w, x, y, xpixel = 0, ypixel = 0;
+ 	struct client_window	*cw;
++	const char		*cell;
++
++	/*
++	 * An optional "/WxH" suffix gives the client's cell size in pixels, so
++	 * applications sizing images by CSI 14t/16t or TIOCGWINSZ match the
++	 * renderer. Older servers ignore the suffix.
++	 */
++	if ((cell = strchr(size, '/')) != NULL &&
++	    (sscanf(cell + 1, "%ux%u", &xpixel, &ypixel) != 2 ||
++	    xpixel == 0 || ypixel == 0 || xpixel > 1024 || ypixel > 1024)) {
++		cmdq_error(item, "bad cell pixel size");
++		return (CMD_RETURN_ERROR);
++	}
++	if (xpixel != 0 && (tc->tty.xpixel != xpixel || tc->tty.ypixel != ypixel)) {
++		tc->tty.xpixel = xpixel;
++		tc->tty.ypixel = ypixel;
++		tc->flags |= CLIENT_SIZECHANGED;
++	}
+ 
+ 	if (sscanf(size, "@%u:%ux%u", &w, &x, &y) == 3) {
+ 		if (x < WINDOW_MINIMUM || x > WINDOW_MAXIMUM ||
+@@ -124,7 +142,7 @@ cmd_refresh_client_control_client_size(struct cmd *self, struct cmdq_item *item)
+ 		cmdq_error(item, "size too small or too big");
+ 		return (CMD_RETURN_ERROR);
+ 	}
+-	tty_set_size(&tc->tty, x, y, 0, 0);
++	tty_set_size(&tc->tty, x, y, tc->tty.xpixel, tc->tty.ypixel);
+ 	tc->flags |= CLIENT_SIZECHANGED;
+ 	recalculate_sizes_now(1);
+ 	return (CMD_RETURN_NORMAL);
 diff --git a/input.c b/input.c
 index 86725fa4..df5e737b 100644
 --- a/input.c
@@ -181,3 +222,34 @@ index d743cdf1..472f9723 100644
  	{ .name = "alternate-screen",
  	  .type = OPTIONS_TABLE_FLAG,
  	  .scope = OPTIONS_TABLE_WINDOW|OPTIONS_TABLE_PANE,
+diff --git a/window.c b/window.c
+index 55a9e59a..76e00910 100644
+--- a/window.c
++++ b/window.c
+@@ -418,6 +418,8 @@ window_set_name(struct window *w, const char *new_name, int untrusted)
+ void
+ window_resize(struct window *w, u_int sx, u_int sy, int xpixel, int ypixel)
+ {
++	struct window_pane	*wp;
++
+ 	if (xpixel == 0)
+ 		xpixel = DEFAULT_XPIXEL;
+ 	if (ypixel == 0)
+@@ -428,6 +430,17 @@ window_resize(struct window *w, u_int sx, u_int sy, int xpixel, int ypixel)
+ 	    ypixel == -1 ? w->ypixel : (u_int)ypixel);
+ 	w->sx = sx;
+ 	w->sy = sy;
++	if ((xpixel != -1 && (u_int)xpixel != w->xpixel) ||
++	    (ypixel != -1 && (u_int)ypixel != w->ypixel)) {
++		if (xpixel != -1)
++			w->xpixel = xpixel;
++		if (ypixel != -1)
++			w->ypixel = ypixel;
++		/* Same cells, new pixels: tell applications (SIGWINCH). */
++		TAILQ_FOREACH(wp, &w->panes, entry)
++			window_pane_send_resize(wp, wp->sx, wp->sy);
++		return;
++	}
+ 	if (xpixel != -1)
+ 		w->xpixel = xpixel;
+ 	if (ypixel != -1)

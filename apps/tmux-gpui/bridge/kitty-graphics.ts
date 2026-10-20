@@ -78,6 +78,7 @@ export function createKittyGraphicsReceiver(options: {
   readonly emit: (line: string) => void;
 }) {
   const states = new Map<string, TerminalGraphicsState>();
+  let takesCellPixels = false;
   // Image ids each pane's last publication showed.
   const visible = new Map<string, Set<number>>();
   // Digests the window holds or that are in flight to it.
@@ -96,6 +97,7 @@ export function createKittyGraphicsReceiver(options: {
      * changed); a redraw of a visible image only needs its bytes.
      */
     state(pane: string, state: TerminalGraphicsState): boolean {
+      if (state.cellPixels) takesCellPixels = true;
       const previous = states.get(pane);
       states.set(pane, state);
       const shown = visible.get(pane);
@@ -149,6 +151,10 @@ export function createKittyGraphicsReceiver(options: {
         placements.map((p) => p.digest),
       );
       return placements;
+    },
+    /** True once the daemon said it accepts the window's cell pixel size. */
+    takesCellPixels(): boolean {
+      return takesCellPixels;
     },
     /** The window evicted or never received these; fetch again when next visible. */
     missing(digests: readonly string[]): void {

@@ -12,6 +12,11 @@ pub(super) enum Input {
     Resize {
         cols: u16,
         rows: u16,
+        /// Cell size in device pixels, so image programs render 1:1.
+        #[serde(rename = "cellWidth", skip_serializing_if = "Option::is_none")]
+        cell_width: Option<u32>,
+        #[serde(rename = "cellHeight", skip_serializing_if = "Option::is_none")]
+        cell_height: Option<u32>,
     },
     Scroll(i16),
     Wheel {

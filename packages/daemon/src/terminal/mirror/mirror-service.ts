@@ -565,6 +565,12 @@ export class MirrorService {
     entry.channel.fitWindowViewport(semanticWindowId, cols, rows);
   }
 
+  setCellPixels(session: string, width: number, height: number): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return;
+    entry.channel.setCellPixels(width, height);
+  }
+
   clearWindowViewports(session: string): void {
     const entry = this.channels.get(session);
     if (entry && !entry.retired) entry.channel.clearWindowViewports();

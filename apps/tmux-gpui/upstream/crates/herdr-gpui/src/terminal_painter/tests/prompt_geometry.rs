@@ -212,6 +212,7 @@ fn separator_caps_use_cell_geometry_without_shaping(cx: &mut TestAppContext) {
                                 placements: &placements,
                                 images: &images,
                                 target: ImageTarget::Main,
+                                cell_pixels: None,
                             }),
                             window,
                             cx,

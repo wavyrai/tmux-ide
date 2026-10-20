@@ -77,6 +77,8 @@ pub(crate) struct PlacedImages<'a> {
     pub(crate) placements: &'a [SurfaceGraphicsPlacement],
     pub(crate) images: &'a SurfaceImages,
     pub(crate) target: ImageTarget<'a>,
+    /// The cell size the program was told in device pixels, when it was.
+    pub(crate) cell_pixels: Option<CellPixels>,
 }
 
 impl<'a> PlacedImages<'a> {
@@ -96,20 +98,39 @@ pub(crate) struct ImageGeometry {
     pub(crate) image: Bounds<Pixels>,
 }
 
+/// The cell size a pane's program was told, in device pixels, with the
+/// window's device pixels per point. Placements sized for those cells paint
+/// 1:1 instead of being stretched over the cells' point size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CellPixels {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale: f32,
+}
+
 /// Maps a placement onto the grid at `origin`, as Herdr's own client does:
 /// the leading pixel offsets shrink the image inside its cells, and the
 /// source rectangle (zero meaning the whole image) is stretched over the
 /// rest. Offsets arrive in the whole-pixel cell size this client reported.
+///
+/// With `pixels`, offsets are in those device pixels, and a source within
+/// half a pixel per cell of its cells (rounding to whole pixels) is drawn 1:1
+/// on device pixels from a pixel-aligned origin. Any other source, such as a
+/// frame drawn for a size a daemon never passed on, is still stretched.
 pub(crate) fn geometry(
     placement: &SurfaceGraphicsPlacement,
     origin: gpui::Point<Pixels>,
     cell: (f32, f32),
     grid: Bounds<Pixels>,
+    pixels: Option<CellPixels>,
 ) -> Option<ImageGeometry> {
     let key = &placement.asset;
     let (cell_width, cell_height) = cell;
-    let span = |start: u16, cells: u32, offset: u32, cell: f32| {
-        let reported = cell.round().max(1.);
+    let reported = pixels.map_or((cell_width.round(), cell_height.round()), |pixels| {
+        (pixels.width as f32, pixels.height as f32)
+    });
+    let span = |start: u16, cells: u32, offset: u32, cell: f32, reported: f32| {
+        let reported = reported.max(1.);
         let length = cells as f32 * cell;
         let offset = (offset as f32).min(cells as f32 * reported - 1.).max(0.) * cell / reported;
         (f32::from(start) * cell + offset, length - offset)
@@ -119,8 +140,20 @@ pub(crate) fn geometry(
         let length = length.min(image.checked_sub(start)?);
         (length > 0).then_some((start as f32, length as f32))
     };
-    let (x, width) = span(placement.x, placement.cols, placement.x_offset, cell_width);
-    let (y, height) = span(placement.y, placement.rows, placement.y_offset, cell_height);
+    let (x, width) = span(
+        placement.x,
+        placement.cols,
+        placement.x_offset,
+        cell_width,
+        reported.0,
+    );
+    let (y, height) = span(
+        placement.y,
+        placement.rows,
+        placement.y_offset,
+        cell_height,
+        reported.1,
+    );
     let (source_x, source_width) =
         source(placement.source_x, placement.source_width, key.image_width)?;
     let (source_y, source_height) = source(
@@ -132,11 +165,30 @@ pub(crate) fn geometry(
         return None;
     }
     let target = Bounds::new(origin + point(px(x), px(y)), size(px(width), px(height)));
+    let stretch = (width / source_width, height / source_height);
+    let (target, (scale_x, scale_y)) = match pixels {
+        Some(pixels) if pixels.scale > 0. => {
+            let scale = pixels.scale;
+            let fits = |length: f32, source: f32, cells: u32| {
+                (length * scale - source).abs() <= cells as f32 / 2. + 1.
+            };
+            if fits(width, source_width, placement.cols)
+                && fits(height, source_height, placement.rows)
+            {
+                let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);
+                let at = point(snap(target.origin.x), snap(target.origin.y));
+                let drawn = size(px(source_width / scale), px(source_height / scale));
+                (Bounds::new(at, drawn), (1. / scale, 1. / scale))
+            } else {
+                (target, stretch)
+            }
+        }
+        _ => (target, stretch),
+    };
     let visible = target.intersect(&grid);
     if visible.size.width <= Pixels::ZERO || visible.size.height <= Pixels::ZERO {
         return None;
     }
-    let (scale_x, scale_y) = (width / source_width, height / source_height);
     let image = Bounds::new(
         target.origin - point(px(source_x * scale_x), px(source_y * scale_y)),
         size(
@@ -377,7 +429,7 @@ impl ImageCache {
         let mut placed = Vec::new();
         let mut slots = Vec::new();
         for (placement, image) in images.resolved() {
-            let Some(geometry) = geometry(placement, origin, cell, grid) else {
+            let Some(geometry) = geometry(placement, origin, cell, grid, images.cell_pixels) else {
                 continue;
             };
             let slot = (placement.x, placement.y, placement.cols, placement.rows);

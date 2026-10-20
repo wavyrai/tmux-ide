@@ -170,6 +170,7 @@ fn paints_real_wire_kitty_images_at_their_cells(cx: &mut gpui::TestAppContext) {
                                 placements: &scene,
                                 images,
                                 target: ImageTarget::Main,
+                                cell_pixels: None,
                             }),
                             window,
                             cx,

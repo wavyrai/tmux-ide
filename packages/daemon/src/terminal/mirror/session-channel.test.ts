@@ -2785,6 +2785,26 @@ describe("window viewport scope", () => {
     await rig.channel.dispose();
   });
 
+  it("reports the renderer's cell pixels with every viewport it fits", async () => {
+    const rig = await startedRig();
+    rig.channel.setGeometryParticipation(true);
+    rig.channel.fitViewport(90, 28);
+    const before = rig.sim.written.length;
+    rig.channel.setCellPixels(16, 34);
+    rig.channel.setCellPixels(16, 34);
+    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    rig.channel.setCellPixels(20, 40);
+    expect(() => rig.channel.setCellPixels(0, 34)).toThrow(RangeError);
+    expect(() => rig.channel.setCellPixels(16, 1025)).toThrow(RangeError);
+    expect(rig.sim.written.slice(before)).toEqual([
+      "refresh-client -C 90x28/16x34",
+      expect.stringContaining("if-shell -F -t '@1'"),
+      "refresh-client -C @1:120x40/16x34",
+      "refresh-client -C @1:120x40/20x40",
+    ]);
+    await rig.channel.dispose();
+  });
+
   it("clears window overrides when participation ends and permits a new fit", async () => {
     const rig = await startedRig();
     rig.channel.setGeometryParticipation(true);

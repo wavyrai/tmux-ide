@@ -360,6 +360,15 @@ export const PaneStreamTerminalGraphicsRequestFrameSchemaZ = z
   })
   .strict();
 
+/** The renderer's terminal cell size in device pixels (see capability 103). */
+export const PaneStreamTerminalCellPixelsFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-cell-pixels"),
+    width: z.number().int().min(1).max(1024),
+    height: z.number().int().min(1).max(1024),
+  })
+  .strict();
+
 export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamInputFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
@@ -374,6 +383,7 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamAuthorityReleaseFrameSchemaZ,
   PaneStreamClockProbeFrameSchemaZ,
   PaneStreamTerminalGraphicsRequestFrameSchemaZ,
+  PaneStreamTerminalCellPixelsFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 

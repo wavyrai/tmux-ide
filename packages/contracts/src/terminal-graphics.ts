@@ -17,6 +17,12 @@ import { z } from "zod";
 export const TERMINAL_GRAPHICS_CAPABILITY_VERSION = 101;
 /** Renderers that inflate `rgba-zlib`/`rgb-zlib` themselves offer this too. */
 export const TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION = 102;
+/**
+ * Renderers that report their cell size in device pixels offer this; the
+ * daemon then marks graphics state with `cellPixels: true` and accepts
+ * `terminal-cell-pixels`, so programs size images 1:1 for the window.
+ */
+export const TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION = 103;
 /** Raw image bytes per blob frame (base64 on the wire stays below 1 MiB). */
 export const TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES = 512 * 1024;
 /** Largest single image a daemon publishes (a 4K RGBA frame is ~33 MB). */
@@ -81,6 +87,8 @@ export const TerminalGraphicsStateSchemaZ = z
     revision: z.number().int().nonnegative(),
     images: z.array(TerminalGraphicsImageSchemaZ).max(TERMINAL_GRAPHICS_MAX_IMAGES),
     placements: z.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS),
+    /** The daemon accepts `terminal-cell-pixels` (only sent to renderers offering 103). */
+    cellPixels: z.literal(true).optional(),
   })
   .strict();
 export type TerminalGraphicsState = z.infer<typeof TerminalGraphicsStateSchemaZ>;

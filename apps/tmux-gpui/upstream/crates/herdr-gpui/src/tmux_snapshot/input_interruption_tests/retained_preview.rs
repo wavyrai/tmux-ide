@@ -53,7 +53,12 @@ fn retained_preview_cannot_reuse_stale_input_geometry_or_capabilities(cx: &mut T
                 Input::Paste("no".into()),
                 Input::Key("Enter".into()),
                 Input::Scroll(0),
-                Input::Resize { cols: 80, rows: 24 },
+                Input::Resize {
+                    cols: 80,
+                    rows: 24,
+                    cell_width: None,
+                    cell_height: None,
+                },
             ] {
                 v.queue_input(input, cx);
             }

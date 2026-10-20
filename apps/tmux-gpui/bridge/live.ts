@@ -47,6 +47,7 @@ import {
 import {
   TERMINAL_GRAPHICS_CAPABILITY_VERSION,
   TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
 } from "../../../packages/contracts/src/terminal-graphics.ts";
 
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
@@ -142,6 +143,20 @@ const kitty = createKittyGraphicsReceiver({
     orderedBytes += line.length;
   },
 });
+// The window's cell size in device pixels, forwarded once the daemon accepts it.
+let cellPixels: { width: number; height: number } | null = null;
+let appliedCellPixels = "";
+function applyCellPixels() {
+  if (!cellPixels || !runtime || !kitty.takesCellPixels()) return;
+  const key = `${cellPixels.width}x${cellPixels.height}`;
+  if (key === appliedCellPixels) return;
+  appliedCellPixels = key;
+  try {
+    runtime.setTerminalCellPixels(cellPixels.width, cellPixels.height);
+  } catch {
+    appliedCellPixels = "";
+  }
+}
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
@@ -480,7 +495,12 @@ try {
     viewerMode: interactive ? ("interactive" as const) : ("read-only" as const),
     terminalDelivery: {
       protocolVersions: interactive
-        ? [1, TERMINAL_GRAPHICS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION]
+        ? [
+            1,
+            TERMINAL_GRAPHICS_CAPABILITY_VERSION,
+            TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+            TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
+          ]
         : [1],
       encodings: ["semantic-compact-v1" as const, "semantic-v1" as const],
       richPlacements: false,
@@ -646,8 +666,9 @@ try {
       },
       onTerminalGraphics: (pane, state) => {
         // Redraws of a visible image need only its bytes, not a publication.
-        if (kitty.state(pane, state) && interactive && latest.snapshot && !stopped)
-          output(latest.snapshot);
+        const relayout = kitty.state(pane, state);
+        if (state.cellPixels) applyCellPixels();
+        if (relayout && interactive && latest.snapshot && !stopped) output(latest.snapshot);
       },
       onTerminalGraphicsBlob: (pane, blob, bytes) => {
         if (!stopped) kitty.blob(pane, blob, bytes);
@@ -660,6 +681,7 @@ try {
     issued.descriptor,
   );
   ready = true;
+  applyCellPixels();
   if (stopped) runtime.close();
   else for (const ack of queuedAcks) runtime.ack(ack);
   if (stopped) disposeClient();
@@ -954,6 +976,10 @@ try {
         }
         const resize = resizeSchema.safeParse(value);
         if (resize.success) {
+          if (resize.data.data.cellWidth && resize.data.data.cellHeight) {
+            cellPixels = { width: resize.data.data.cellWidth, height: resize.data.data.cellHeight };
+            applyCellPixels();
+          }
           mouseOwner.retire();
           resizeGesture.retire();
           if (!resizeBlocked && latest.snapshot) {
