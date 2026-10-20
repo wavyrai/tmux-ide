@@ -110,8 +110,8 @@ import {
   createKnownDigests,
   kittyChunkLineSchema,
   paneGraphicsSchema,
+  type KeyedPlacement,
 } from "./kitty-graphics.ts";
-import type { TerminalGraphicsPlacement } from "../../../packages/contracts/src/terminal-graphics.ts";
 import { paneChoices, preferredPane, topologySchema, type Layout } from "./topology.ts";
 import { resizeSchema } from "./geometry.ts";
 import { previewInputSchema, MAX_INPUT_LINE } from "./input.ts";
@@ -363,7 +363,7 @@ let snapshot: unknown = null;
 let historyOffset = 0;
 let copyRegion: unknown = null;
 let regions: unknown[] = [];
-let kittyPlacements: TerminalGraphicsPlacement[] = [];
+let kittyPlacements: KeyedPlacement[] = [];
 const kittyKnown = createKnownDigests();
 // Image chunk lines are ordered ahead of publications and never coalesced.
 const orderedLines: string[] = [];

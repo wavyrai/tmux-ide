@@ -24,7 +24,7 @@ sync with the text.
 
 | Layer                                               | Responsibility                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native/tmux/kitty-graphics.patch`                  | Window option `kitty-graphics`. Acknowledges `a=q`/`t`/`T`/`p` in stream order, so detection works before tmux answers DA1. Honours `q` and `m=1` chunking, including inside `DCS tmux;`. Kitty APCs never become the pane title.                                                                                                                               |
+| `native/tmux/kitty-graphics.patch`                  | Window option `kitty-graphics`. Acknowledges `a=q`/`t`/`T`/`p`/`f` in stream order, so detection works before tmux answers DA1. Refuses file and shared-memory media with `EINVAL`. Honours `q` and `m=1` chunking, including inside `DCS tmux;`. Kitty APCs never become the pane title.                                                                       |
 | daemon `terminal/mirror/control-channel.ts`         | On attach: `set-option -gq kitty-graphics on` (a no-op on stock tmux) and `set-environment -g TMUX_IDE_GRAPHICS kitty`. Disable with `TMUX_IDE_KITTY_GRAPHICS=0`.                                                                                                                                                                                               |
 | daemon `terminal/graphics/kitty-graphics.ts`        | Scanner and per-pane image store. Accepts `f=100/32/24`, `o=z`, `m=1`, `a=t/T/p/d`, `U=1`. Budgets: 64 MiB per pane and 256 MiB across the daemon, least recently used evicted first. Only `t=d` (direct) transmission; file and shared-memory media cannot cross machines.                                                                                     |
 | daemon `terminal-replica-interpreter.ts`            | Publishes per-pane graphics state: the image registry with each image's placeholder grid, plus cursor placements clipped to the viewport. This sits beside the canonical replica, never inside it, so replica hashes and old clients are unaffected.                                                                                                            |
@@ -38,6 +38,41 @@ Each distinct image crosses the pane stream once per window. Over SSH the
 remote daemon serves the same frames through the existing tunnel. A digest is
 transferred only when a placement needs it and the window does not already
 hold it.
+
+## Full-frame clients
+
+Some kitty-graphics clients draw their whole UI as one image. Under tmux they
+re-transmit one image id every frame as a `U=1` virtual placement: RGBA,
+deflated (`o=z`), in 4096-byte chunks, each chunk wrapped in `DCS tmux;`. They
+print the placeholder grid once, with a 24-bit (`38;2`) colour id. Before
+transmitting, they probe shared-memory and file media with `a=q`.
+
+What keeps them correct and fast:
+
+- **Media probes.** The patch answers `EINVAL` for `t=s`, `t=f` and `t=t`, so
+  clients fall back to direct data on their own. Only direct data reaches the
+  daemon through control mode.
+- **Placeholder cells never paint glyphs.** The window paints U+10EEEE cells
+  blank, resolved or not. Translucent parts of an image (toolbars,
+  scrollbars) used to show the placeholder glyphs through them.
+- **Re-transmitting an id keeps its placements.** It replaces only the pixels.
+  `a=d` with `p` deletes only that placement. `a=f` root-frame edits (`r=1`,
+  replace or blend) are applied.
+- **Deflated pixels stay deflated end to end.** The daemon stores them as
+  `rgba-zlib`/`rgb-zlib` and the window inflates them off its UI thread.
+  Renderers that do not offer capability 102 get raw pixels.
+- **Redraws need no publication.** Placements name the program's image (pane
+  and image id). When an id is redrawn, the daemon pushes the new bytes at once
+  and the window swaps them in as they complete. A superseded frame is
+  abandoned mid-transfer. Until a redraw arrives, the previous image stays up,
+  so there is no flicker.
+- **Image-only output skips the parser.** A `%output` chunk that is entirely
+  inside image payload changes nothing the parser can see, so the daemon does
+  not hand it to the parser at all. Each parser write settles on a later timer
+  turn, so dozens of them per frame used to cap the frame rate.
+
+`bridge/kitty-graphics-perf.mjs` drives `scripts/kitty-spike/emulate-client.py`
+through the product bridge path and times every image against its write.
 
 ## Programs inside panes
 
@@ -60,8 +95,12 @@ hold it.
   daemon restart, after which placeholder cells paint blank.
 - When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet
   know the window's real cell size.
-- Not modelled: animation, relative placements, z-index, and `a=d` beyond all
-  and by-id.
+- Not modelled: animation frames other than root-frame edits, relative
+  placements, z-index, and `a=d` beyond all and by-id (with or without `p`).
+- When one image has several virtual placements, cells resolve to the most
+  recently placed grid. The placement id carried in the underline colour is
+  not read, because the replica does not carry underline colour.
+- File and shared-memory media are refused, even for local sessions.
 - Stock tmux turns every APC into the pane title. The daemon now ignores
   overlong titles instead of dropping the pane from its inventory.
 

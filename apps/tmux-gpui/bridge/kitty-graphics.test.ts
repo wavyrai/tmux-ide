@@ -97,6 +97,7 @@ test("canvas placements move to the pane content origin and drop overflow", () =
     sourceColumn: 0,
     totalRows: 2,
     totalColumns: 2,
+    image: "p#3",
   };
   assert.deepEqual(
     canvasPlacements(layout, [

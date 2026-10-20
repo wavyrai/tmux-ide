@@ -72,3 +72,15 @@ fn bounds_per_cell_shaping_work() {
     v["grid"][0]["cells"][0]["grapheme"] = json!("x".repeat(257));
     assert!(matches!(convert(&v), Err(Error::Invalid(_))));
 }
+#[test]
+fn kitty_placeholder_cells_never_paint_glyphs() {
+    let mut v = fixture();
+    v["grid"][0]["cells"][0]["grapheme"] = json!("\u{10EEEE}\u{0305}\u{030D}");
+    v["grid"][0]["cells"][0]["foreground"] = json!({"kind":"rgb","value":0x0a0b0c});
+    let frame = convert(&v).unwrap();
+    assert_eq!(frame.cells[0].symbol, " ");
+    assert_eq!(
+        frame.cells[0].fg, 0x020a0b0c,
+        "style survives for selection/copy"
+    );
+}

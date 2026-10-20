@@ -44,7 +44,10 @@ import {
   kittyMissingSchema,
   parseKnownDigests,
 } from "./kitty-graphics.ts";
-import { TERMINAL_GRAPHICS_CAPABILITY_VERSION } from "../../../packages/contracts/src/terminal-graphics.ts";
+import {
+  TERMINAL_GRAPHICS_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+} from "../../../packages/contracts/src/terminal-graphics.ts";
 
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
 let ready = false;
@@ -476,7 +479,9 @@ try {
     panes: visiblePaneIds,
     viewerMode: interactive ? ("interactive" as const) : ("read-only" as const),
     terminalDelivery: {
-      protocolVersions: interactive ? [1, TERMINAL_GRAPHICS_CAPABILITY_VERSION] : [1],
+      protocolVersions: interactive
+        ? [1, TERMINAL_GRAPHICS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION]
+        : [1],
       encodings: ["semantic-compact-v1" as const, "semantic-v1" as const],
       richPlacements: false,
     },
@@ -640,11 +645,12 @@ try {
         if (interactive && latest.snapshot) output(latest.snapshot);
       },
       onTerminalGraphics: (pane, state) => {
-        kitty.state(pane, state);
-        if (interactive && latest.snapshot && !stopped) output(latest.snapshot);
+        // Redraws of a visible image need only its bytes, not a publication.
+        if (kitty.state(pane, state) && interactive && latest.snapshot && !stopped)
+          output(latest.snapshot);
       },
-      onTerminalGraphicsBlob: (_pane, blob, bytes) => {
-        if (!stopped) kitty.blob(blob, bytes);
+      onTerminalGraphicsBlob: (pane, blob, bytes) => {
+        if (!stopped) kitty.blob(pane, blob, bytes);
       },
       onFault: (error) => {
         if (!stopped) diagnostics.runtimeFault(error);

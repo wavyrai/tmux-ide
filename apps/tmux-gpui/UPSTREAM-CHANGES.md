@@ -7,7 +7,10 @@
   `kitty-missing` command; `decode.rs` still rejects replica placements;
   `herdr-client` `SurfaceImages` gains `insert`/`remove` for incrementally
   arriving images; `terminal_painter.rs` gains a test-only `painted_images()`
-  accessor. See `KITTY-GRAPHICS.md`.
+  accessor. Kitty placeholder cells paint blank in `decode.rs`; deflated
+  `rgba-zlib`/`rgb-zlib` images are inflated with the existing `flate2`
+  dependency; placements keyed by program image swap in redraws without a
+  publication. See `KITTY-GRAPHICS.md`.
 
 - Native terminal web links: `tmux_snapshot/terminal_links.rs` reuses Herdr
   `terminal::link_at` HTTP(S) parsing and validation. Cmd/Ctrl-click resolves only

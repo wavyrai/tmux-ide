@@ -3,12 +3,33 @@ use super::*;
 const DIGEST: &str = "00000000000000ff00000000000000ff";
 
 fn chunk(digest: &str, total: usize, offset: usize, data: &[u8]) -> Vec<u8> {
+    chunk_as(digest, "rgba", total, offset, data)
+}
+
+fn chunk_as(digest: &str, format: &str, total: usize, offset: usize, data: &[u8]) -> Vec<u8> {
     let encoded = encode(data);
     format!(
-        "{{\"kittyImageChunk\":{{\"digest\":\"{digest}\",\"format\":\"rgba\",\"width\":2,\
+        "{{\"kittyImageChunk\":{{\"digest\":\"{digest}\",\"format\":\"{format}\",\"width\":2,\
          \"height\":2,\"total\":{total},\"offset\":{offset},\"data\":\"{encoded}\"}}}}\n"
     )
     .into_bytes()
+}
+
+fn keyed_chunk(digest: &str, image: &str, data: &[u8]) -> Vec<u8> {
+    let encoded = encode(data);
+    format!(
+        "{{\"kittyImageChunk\":{{\"digest\":\"{digest}\",\"format\":\"rgba\",\"width\":2,\
+         \"height\":2,\"total\":{},\"offset\":0,\"image\":\"{image}\",\"data\":\"{encoded}\"}}}}\n",
+        data.len()
+    )
+    .into_bytes()
+}
+
+fn deflate(data: &[u8]) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(data)?;
+    Ok(encoder.finish()?)
 }
 
 fn encode(data: &[u8]) -> String {
@@ -41,6 +62,7 @@ fn placement(row: u16, source_row: u16) -> Placement {
         source_column: 0,
         total_rows: 2,
         total_columns: 4,
+        image: None,
     }
 }
 
@@ -182,4 +204,73 @@ fn paints_real_wire_kitty_images_at_their_cells(cx: &mut gpui::TestAppContext) {
             cells(0., 13., 4., 2.)
         ]
     );
+}
+
+#[test]
+fn inflates_deflated_pixels_and_rejects_the_wrong_size() -> anyhow::Result<()> {
+    let store = Store::default();
+    let pixels = [9u8; 16];
+    let compressed = deflate(&pixels)?;
+    store.accept_line(&chunk_as(
+        DIGEST,
+        "rgba-zlib",
+        compressed.len(),
+        0,
+        &compressed,
+    ))?;
+    let scene = store.scene(&[placement(0, 0)]);
+    assert_eq!(scene.len(), 1);
+    assert_eq!(scene[0].asset.data_len, 16, "the painter receives raw RGBA");
+    assert_eq!(scene[0].asset.format, SurfaceGraphicsFormat::Rgba);
+
+    let other = "11111111111111111111111111111111";
+    let short = deflate(&pixels[..12])?;
+    store.accept_line(&chunk_as(other, "rgba-zlib", short.len(), 0, &short))?;
+    let mut wrong = placement(1, 0);
+    wrong.digest = other.into();
+    assert!(
+        store.scene(&[wrong]).is_empty(),
+        "inflated size must match width x height"
+    );
+    Ok(())
+}
+
+#[test]
+fn keeps_the_previous_image_while_a_redraw_arrives() -> anyhow::Result<()> {
+    let store = Store::default();
+    store.accept_line(&chunk(DIGEST, 16, 0, &[1u8; 16]))?;
+    assert_eq!(store.scene(&[placement(0, 0)]).len(), 1);
+    let mut redrawn = placement(0, 0);
+    redrawn.digest = "22222222222222222222222222222222".into();
+    let scene = store.scene(std::slice::from_ref(&redrawn));
+    assert_eq!(
+        scene.len(),
+        1,
+        "the old frame stays up in the same rectangle"
+    );
+    assert_eq!(scene[0].asset.data_fingerprint, 0xff);
+    let mut moved = redrawn.clone();
+    moved.row = 1;
+    assert!(
+        store.scene(&[moved]).is_empty(),
+        "a different rectangle has no fallback"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_redrawn_image_replaces_the_published_one_without_a_publication() -> anyhow::Result<()> {
+    let store = Store::default();
+    store.accept_line(&keyed_chunk(DIGEST, "pane#9", &[1u8; 16]))?;
+    let mut published = placement(0, 0);
+    published.image = Some("pane#9".into());
+    let first = store.scene(std::slice::from_ref(&published));
+    assert_eq!(first[0].asset.data_fingerprint, 0xff);
+    assert!(store.take_changed());
+    let redraw = "33333333333333333333333333333333";
+    store.accept_line(&keyed_chunk(redraw, "pane#9", &[2u8; 16]))?;
+    assert!(store.take_changed(), "the window repaints for the redraw");
+    let second = store.scene(std::slice::from_ref(&published));
+    assert_eq!(second[0].asset.data_fingerprint, 0x3333_3333_3333_3333);
+    Ok(())
 }
