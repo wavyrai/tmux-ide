@@ -21,7 +21,7 @@ import {
 } from "node:fs/promises";
 import { join, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { stopFixtureChild } from "./fixture-child.mjs";
@@ -44,7 +44,7 @@ if (packageInput) {
   assert.ok(metadata.byteLength < 65536, "Bounded package manifest required");
   const manifest = JSON.parse(metadata);
   assert.equal(manifest.name, "tmux-ide");
-  assert.ok(["2.9.6", "2.9.7", "2.9.8"].includes(manifest.version));
+  assert.ok(["2.9.6", "2.9.7", "2.9.8", "2.9.9"].includes(manifest.version));
   assert.equal(manifest.bin?.["tmux-ide"], "bin/cli.js");
   packageVersion = manifest.version;
   packageJsonSha256 = createHash("sha256").update(metadata).digest("hex");
@@ -219,8 +219,8 @@ try {
 assert.ok(socketInitiallyAbsent);
 let firstSessionReady = false,
   inputVerified = false,
-  noServerGuidance = false,
-  noCreateAuthority = false,
+  emptySessionOffer = false,
+  noServerCreateAuthority = false,
   localTargetUnavailable = false;
 try {
   await mkdir(canonical, { recursive: true, mode: 0o700 });
@@ -403,24 +403,29 @@ try {
     inputVerified = true;
   } else {
     await until(
-      () =>
-        runningObserved &&
-        latest?.home?.phase === "unavailable" &&
-        /no online tmux server/.test(latest.status),
+      () => runningObserved && latest?.home?.phase === "live" && latest.localSessionCreate,
     );
     assert.ok(await readRecord());
     await verify(record);
-    noServerGuidance = /Open an ordinary tmux session/.test(latest.status);
-    noCreateAuthority = latest.home?.phase !== "live" && latest.selectedServer === null;
+    emptySessionOffer = /No local sessions yet/.test(latest.status);
+    noServerCreateAuthority = latest.selectedServer === null;
     const local = latest.fleet?.groups.find((group) => group.id === "local");
     localTargetUnavailable =
       !local ||
       !local.servers.some(
         (server) => server.state === "online" && server.selection && server.generation,
       );
-    assert.ok(noServerGuidance && noCreateAuthority && localTargetUnavailable);
-    // Idle operation status is not creation authority. A stale/unsupported raw
-    // request must not bootstrap a session behind the unavailable Home state.
+    assert.ok(emptySessionOffer && noServerCreateAuthority && localTargetUnavailable);
+    // An empty local offer is not generic server creation authority. Neither
+    // the generic command nor a forged offer token may bootstrap a session.
+    const forgedAction = randomUUID();
+    assert.notEqual(forgedAction, latest.localSessionCreate.action);
+    send({
+      type: "create-local-session",
+      request: latest.request,
+      action: forgedAction,
+      name: "forged-must-not-create",
+    });
     send({ type: "create-session", request: latest.request, name: "must-not-create" });
     await delay(250);
     let sessionsCreated = false;
@@ -429,7 +434,11 @@ try {
     } catch (error) {
       absentServer(error);
     }
-    assert.equal(sessionsCreated, false, "Unavailable Home must reject session creation");
+    assert.equal(
+      sessionsCreated,
+      false,
+      "Commands without current creation authority must not create sessions",
+    );
     assert.equal(latest.snapshot, null);
     assert.equal(latest.inputReady, false);
     assert.equal(latest.sessions.length, 0);
@@ -498,13 +507,13 @@ try {
     duplicateClicks: 2,
     runningObserved,
     observedDaemonIdentities: identities.size,
-    zeroSessionGapReproduced: !createFirst && preserved,
+    emptySetupGuardVerified: !createFirst && preserved,
     externalServer,
     firstSessionReady,
     inputVerified,
     socketInitiallyAbsent,
-    noServerGuidance,
-    noCreateAuthority,
+    emptySessionOffer,
+    noServerCreateAuthority,
     localTargetUnavailable,
     verifiedDaemonPresent: identities.size === 1,
     cleanupPassed,

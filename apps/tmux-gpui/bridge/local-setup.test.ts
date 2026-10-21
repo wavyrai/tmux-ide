@@ -42,7 +42,7 @@ const ready = (version: string) =>
   });
 
 test("fixed managed lookup and explicit supported update use pinned paths and bounded runner", async () => {
-  for (const version of ["2.9.6", "2.9.7"]) {
+  for (const version of ["2.9.6", "2.9.7", "2.9.8", "2.9.9"]) {
     const f = await fixture(version);
     try {
       const result = await resolveLocalSetup({ home: f.home });
@@ -73,7 +73,7 @@ test("fixed managed lookup and explicit supported update use pinned paths and bo
 });
 
 test("unsupported versions never execute, including newer installs and prereleases", async () => {
-  for (const version of ["2.9.5", "2.9.8", "3.0.0", "2.9.7-beta.1"]) {
+  for (const version of ["2.9.5", "2.9.10", "3.0.0", "2.9.8-beta.1", "2.9.9-beta.1"]) {
     const f = await fixture(version);
     try {
       assert.deepEqual(await resolveLocalSetup({ home: f.home }), { kind: "unsupported-version" });
@@ -236,3 +236,32 @@ test("abort before spawn and after setup begins means stopped waiting, never rol
     await f.close();
   }
 });
+
+for (const version of ["2.9.8", "2.9.9"]) {
+  test(`qualified ${version} still rejects mismatched executable and daemon identities`, async () => {
+    const f = await fixture(version);
+    const previous = version === "2.9.9" ? "2.9.8" : "2.9.7";
+    try {
+      const result = await resolveLocalSetup({ home: f.home });
+      assert.equal(result.kind, "available");
+      if (result.kind !== "available") throw new Error("Unavailable fixture");
+      for (const mismatch of ["executable", "daemon"]) {
+        const calls: string[][] = [];
+        assert.deepEqual(
+          await runLocalSetup(result.installation, {
+            run: async (_executable, args) => {
+              calls.push([...args]);
+              return args[1] === "--version"
+                ? `tmux-ide v${mismatch === "executable" ? previous : version}`
+                : ready(previous);
+            },
+          }),
+          { kind: "invalid-response" },
+        );
+        assert.equal(calls.length, mismatch === "executable" ? 1 : 2);
+      }
+    } finally {
+      await f.close();
+    }
+  });
+}

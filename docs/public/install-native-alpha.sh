@@ -29,16 +29,25 @@ applications_entry() {
   "$node" --input-type=module -e '
     import fs from "node:fs";
     import path from "node:path";
-    const [mode,home,prefix]=process.argv.slice(1);
+    import {spawnSync} from "node:child_process";
+    const [mode,home,prefix,action]=process.argv.slice(1);
     const directory=path.join(home,"Applications");
     const entry=path.join(directory,"Tmux IDE Alpha.app");
     const target=path.join(prefix,"TmuxIDE.app");
     const stat=p=>{try{return fs.lstatSync(p);}catch(e){if(e.code==="ENOENT")return null;throw e;}};
+    const legacy=()=>{
+      if(action!=="install" && action!=="update") return false;
+      const contents=stat(path.join(entry,"Contents"));
+      const plist=path.join(entry,"Contents/Info.plist");
+      if(!contents?.isDirectory() || contents.isSymbolicLink() || !stat(plist)?.isFile() || stat(plist).isSymbolicLink()) return false;
+      const result=spawnSync("/usr/bin/plutil",["-extract","CFBundleIdentifier","raw","-o","-",plist],{encoding:"utf8",timeout:5000,maxBuffer:65536});
+      return !result.error && result.status===0 && result.stdout.trim()==="com.tmux-ide.gpui.alpha";
+    };
     const check=()=>{
       const parent=stat(directory);
       if(parent && (!parent.isDirectory() || parent.isSymbolicLink())) throw new Error("Applications directory is not an ordinary directory");
       const current=stat(entry);
-      if(current && (!current.isSymbolicLink() || fs.readlinkSync(entry)!==target)) throw new Error("Applications entry already belongs to another app or installation");
+      if(current && !(current.isSymbolicLink() && fs.readlinkSync(entry)===target) && !(current.isDirectory() && legacy())) throw new Error("Applications entry already belongs to another app or installation");
       return current;
     };
     try {
@@ -46,15 +55,37 @@ applications_entry() {
       if(mode==="remove") { if(current) fs.unlinkSync(entry); }
       else if(mode==="create") {
         fs.mkdirSync(directory,{recursive:true,mode:0o700});
-        if(!check()) fs.symlinkSync(target,entry);
+        const previous=check();
+        if(previous?.isDirectory()) {
+          const backups=path.join(prefix,"app-backups");
+          fs.mkdirSync(backups,{recursive:true,mode:0o700});
+          const parent=stat(backups);
+          if(!parent.isDirectory() || parent.isSymbolicLink()) throw new Error("App backups must be an ordinary directory");
+          const backup=fs.mkdtempSync(path.join(backups,"legacy-"));
+          const saved=path.join(backup,"Tmux IDE Alpha.app");
+          let moved=false;
+          try {
+            if(!check()?.isDirectory()) throw new Error("Legacy app changed during installation");
+            fs.renameSync(entry,saved);
+            moved=true;
+            fs.symlinkSync(target,entry);
+          } catch(error) {
+            // Do not replace a newly appeared foreign entry during recovery.
+            if(moved && !stat(entry)) fs.renameSync(saved,entry);
+            if(!stat(saved)) fs.rmdirSync(backup);
+            else console.error("Previous app retained at: "+saved);
+            throw error;
+          }
+          console.log("Previous app retained at: "+saved);
+        } else if(!previous) fs.symlinkSync(target,entry);
       }
     } catch { console.error("tmux-ide native alpha: Applications entry conflict or operation failed; no foreign entry was replaced"); process.exit(1); }
-  ' "$1" "$HOME" "$prefix"
+  ' "$1" "$HOME" "$prefix" "$action"
 }
 applications_entry check
-base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102001
+base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102101
 installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4
-archive_sha=a2fa54c380bad79b1864afffde99c7a397af08bffba439a7af5764c70c5cc5df
+archive_sha=e2c8613ca10fb629b0321b20c2c4c0350b242115efca7b62c66177b056a8ab61
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
@@ -69,7 +100,7 @@ case "$action" in
   uninstall) "$node" "$scratch/installer.mjs" uninstall --prefix "$prefix" ;;
   rollback) "$node" "$scratch/installer.mjs" rollback --prefix "$prefix" --policy "$scratch/policy.json" ;;
   install|update)
-    fetch "$base/tmux-ide-gpui-0.1.4-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
+    fetch "$base/tmux-ide-gpui-0.1.5-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
     verify "$scratch/app.tar.gz" "$archive_sha"
     # Only the pinned, checksum-verified archive reaches tar. Bound both reads.
     "$node" --input-type=module -e '
@@ -82,7 +113,7 @@ case "$action" in
       const extraction=spawnSync("/usr/bin/tar",["-xzf",archive,"-C",destination],{stdio:"inherit",timeout:120000});
       if(extraction.error || extraction.status!==0) process.exit(1);
     ' "$scratch/app.tar.gz" "$scratch"
-    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.4-2026102001 ;;
+    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.5-2026102101 ;;
 esac
 case "$action" in
   uninstall) applications_entry remove ;;
