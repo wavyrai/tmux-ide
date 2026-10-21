@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from "node:timers";
 import { spawn } from "node:child_process";
 
 /** Dedicated preview binaries reject unknown flags without opening a window. */

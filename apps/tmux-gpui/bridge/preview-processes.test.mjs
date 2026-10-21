@@ -1,3 +1,6 @@
+import process from "node:process";
+import { setTimeout } from "node:timers";
+const { AbortController, AbortSignal } = globalThis;
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

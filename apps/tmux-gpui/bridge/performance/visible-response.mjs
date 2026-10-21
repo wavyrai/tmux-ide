@@ -1,3 +1,8 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
+import { URL } from "node:url";
+import { Buffer } from "node:buffer";
 // Opt-in physical-window observation. Never substitutes JSON arrival for visible pixels.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
@@ -380,7 +385,9 @@ try {
     try {
       terminalPid = Number(await readFile(join(fleet.root, "tui-env.json.pid"), "utf8"));
       ownPid(terminalPid);
-    } catch {}
+    } catch {
+      // Startup may have failed before the owned terminal PID file was written.
+    }
   }
   // Snapshot descendants before stopping roots; every PID must still have its recorded start time.
   for (const pid of [
@@ -396,7 +403,9 @@ try {
       try {
         process.kill(pid, "SIGTERM");
         cleanup.push(pid);
-      } catch {}
+      } catch {
+        // The owned process may already have exited.
+      }
     }
   for (const child of children) await stopFixtureChild(child).catch(() => {});
   const cleanupDeadline = Date.now() + 3000;
@@ -409,11 +418,15 @@ try {
     if (processStart(pid) === start) {
       try {
         process.kill(pid, "SIGKILL");
-      } catch {}
+      } catch {
+        // The owned process may have exited during the grace period.
+      }
     }
   try {
     receipt.received = (await readFile(received, "utf8")).trim().split("\n").map(JSON.parse);
-  } catch {}
+  } catch {
+    // A failed startup may leave no response observations to collect.
+  }
 
   try {
     receipt.panePidsAfterClientClose = run(

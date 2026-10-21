@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from "node:timers";
 import net from "node:net";
 import { mkdtemp, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";

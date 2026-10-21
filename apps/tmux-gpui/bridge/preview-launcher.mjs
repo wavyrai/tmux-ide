@@ -1,3 +1,7 @@
+import process from "node:process";
+import console from "node:console";
+import { URL } from "node:url";
+const { AbortController } = globalThis;
 import { nativeSnapshotEncoding } from "./native-capabilities.mjs";
 import { fileURLToPath } from "node:url";
 import { runPreview } from "./preview-processes.mjs";

@@ -1,3 +1,6 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
 import { createBinaryFrameParser, decodeBinaryJson, decodeBinaryImage } from "./binary-framing.ts";
 import { decodeBinaryCellPublication } from "./binary-cell-rows.ts";
 import { createCompactDeltaStore } from "./compact-delta.ts";

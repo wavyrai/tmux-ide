@@ -1,3 +1,6 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
 // Opt-in pane switch / resize latency measurement against an owned daemon and tmux socket.
 // Drives the browser bridge exactly as the native app does (stdin commands, stdout
 // publications) and reports milliseconds from command to the first matching publication.

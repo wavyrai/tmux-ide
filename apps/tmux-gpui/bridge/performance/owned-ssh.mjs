@@ -1,3 +1,5 @@
+import { setTimeout } from "node:timers";
+const { AbortSignal, fetch } = globalThis;
 import { spawn, execFileSync } from "node:child_process";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -99,7 +101,9 @@ export async function ownedSsh({ root, environment, node, cli, daemonPort, track
     try {
       await fetch(url + "api/sessions", { signal: AbortSignal.timeout(500) });
       return { url, alias, path: bin, serverPid: server.pid, tunnelPid: tunnel.pid };
-    } catch {}
+    } catch {
+      // The tunnel may not be ready yet; retry until the bounded deadline.
+    }
     await new Promise((r) => setTimeout(r, 100));
   }
   throw Error("owned SSH forwarding deadline");

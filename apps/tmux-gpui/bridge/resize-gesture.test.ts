@@ -34,11 +34,15 @@ function harness(statusRows = 0) {
       ],
     },
   };
-  const submissions: { id: string; intent: any; resolve: (v: unknown) => void }[] = [];
+  const submissions: {
+    id: string;
+    intent: Parameters<PaneStreamRuntimeClient["submitIntent"]>[1];
+    resolve: (v: unknown) => void;
+  }[] = [];
   const runtime = {
     ownsConnectionAuthority: () => target?.geometryOwned ?? false,
     requestAuthority: async () => ({}),
-    submitIntent: (id: string, intent: any) =>
+    submitIntent: (id: string, intent: Parameters<PaneStreamRuntimeClient["submitIntent"]>[1]) =>
       new Promise((resolve) => submissions.push({ id, intent, resolve })),
   } as unknown as PaneStreamRuntimeClient;
   const owner = createResizeGestureOwner({
@@ -109,6 +113,7 @@ test("one pending and latest; receipt alone never settles, final release exact t
     h.owner.command({ ...h.identity, phase: "move", cells: 47 });
     h.owner.command({ ...h.identity, phase: "release", cells: 49 });
     assert.equal(h.submissions.length, 1);
+    assert.ok("cells" in h.submissions[0].intent);
     assert.equal(h.submissions[0].intent.cells, 45);
     h.receipt(0, 44);
     await h.tick();
@@ -116,6 +121,7 @@ test("one pending and latest; receipt alone never settles, final release exact t
     assert.equal(h.owner.publication()?.phase, "pending");
     h.layout(44);
     assert.equal(h.submissions.length, 2);
+    assert.ok("cells" in h.submissions[1].intent);
     assert.equal(h.submissions[1].intent.cells, 49);
     assert.notEqual(h.submissions[0].id, h.submissions[1].id);
     h.layout(48);

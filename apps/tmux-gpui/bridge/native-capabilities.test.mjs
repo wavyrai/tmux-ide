@@ -1,3 +1,5 @@
+import process from "node:process";
+const { AbortController } = globalThis;
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";

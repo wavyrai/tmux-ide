@@ -1,3 +1,5 @@
+import process from "node:process";
+const { AbortController, AbortSignal } = globalThis;
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

@@ -1,3 +1,5 @@
+import process from "node:process";
+import { setTimeout, clearTimeout } from "node:timers";
 import { createPreviewChannel } from "./preview-channel.mjs";
 import { spawn } from "node:child_process";
 

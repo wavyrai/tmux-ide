@@ -122,10 +122,10 @@ test("selection proof retains exact digest bytes while serializing only replaced
   const stringify = JSON.stringify;
   let wholeGrids = 0,
     rows = 0;
-  JSON.stringify = ((value: unknown, ...args: any[]) => {
+  JSON.stringify = ((value: unknown) => {
     if (value === source.grid) wholeGrids++;
     if (value && typeof value === "object" && "cells" in value && "wrapped" in value) rows++;
-    return (stringify as any)(value, ...args);
+    return stringify(value);
   }) as typeof JSON.stringify;
   try {
     assert.equal(f.read(f.frame, source, 1, 3, f.anchor), expected);
