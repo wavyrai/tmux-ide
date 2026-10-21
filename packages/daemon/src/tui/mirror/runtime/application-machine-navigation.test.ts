@@ -85,6 +85,9 @@ vi.mock("./application-fleet-preferences.ts", () => ({
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
 const options = () => ({
+  attachedGeneration: vi.fn(
+    (): import("./open-tui-generation-host.ts").OpenTuiGenerationHostSnapshot | null => null,
+  ),
   attachedTarget: vi.fn(
     (): {
       liveSessionId: string;
@@ -575,6 +578,20 @@ it("retains the exact attached default session for agent jumps but resets a diff
     selectedMachineId: "local",
     groups: [{ id: "local", label: "Local", state: "ready", sessions: [session] }],
   });
+  callbacks.attachedGeneration.mockReturnValue({
+    status: "rebinding",
+    daemonGeneration,
+    connection: { workspaceName: "same", liveSessionId: row.liveSessionId },
+    client: {
+      getSnapshot: () => ({
+        generation: 1,
+        semantic: { sidebar: { agents: [{ id: row.agentId, paneId: row.paneId }] } },
+      }),
+    },
+  } as unknown as import("./open-tui-generation-host.ts").OpenTuiGenerationHostSnapshot);
+  owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
+  expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
+  expect(callbacks.openAgent).toHaveBeenCalledWith(row, "mouse");
   callbacks.attachedTarget.mockReturnValue({ liveSessionId: row.liveSessionId, daemonGeneration });
   owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
   expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
@@ -594,6 +611,11 @@ it("retains the exact attached default session for agent jumps but resets a diff
   });
   owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
   expect(callbacks.resetWorkspace).toHaveBeenCalledOnce();
+  callbacks.resetWorkspace.mockClear();
+  callbacks.attachedTarget.mockReturnValue(null);
+  // Session navigation retains its original live-only attachment contract.
+  owner.sidebar.onOpen("local", "same", "mouse", session.id);
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("local", row.liveSessionId, server);
 });
 
 it("opens Home agents through exact server identity and rejects replaced generations", () => {

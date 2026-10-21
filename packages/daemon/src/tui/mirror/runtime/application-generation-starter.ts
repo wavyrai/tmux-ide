@@ -104,9 +104,25 @@ export function createApplicationAgentNavigator(options: {
   return async (sessionName: string, paneId: string, source: Source = "mouse") => {
     const token = ++navigationToken;
     const currentOwner = options.sessionOwner();
+    const snapshot = currentOwner.snapshot();
+    // A renderer rebind keeps its semantic control connection. Reserve this
+    // exact target synchronously; the controller fences and bounds first send.
+    const retainedControl = (() => {
+      try {
+        return (
+          snapshot?.status === "rebinding" &&
+          snapshot.connection?.workspaceName === sessionName &&
+          snapshot.daemonGeneration &&
+          snapshot.client &&
+          Number.isSafeInteger(snapshot.client.getSnapshot().generation)
+        );
+      } catch {
+        return false;
+      }
+    })();
     if (
       currentOwner.sessionName() === sessionName &&
-      applicationGenerationNavigationKey(currentOwner.snapshot()) !== null
+      (applicationGenerationNavigationKey(snapshot) !== null || retainedControl)
     ) {
       // Sidebar agents belong to the already-live workspace. Select their pane
       // before returning control to OpenTUI so the very next key cannot leak to

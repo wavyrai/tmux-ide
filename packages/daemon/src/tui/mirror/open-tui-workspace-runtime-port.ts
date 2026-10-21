@@ -144,6 +144,8 @@ export const OPEN_TUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 export type OpenTuiWorkspaceLayout = Extract<PaneStreamServerFrame, { type: "layout" }>;
 
 export interface OpenTuiWorkspaceLayoutSnapshot {
+  /** Renderer-local provenance, stamped only by the host presentation adapter. */
+  readonly rendererEpoch?: number;
   /** Live link authority; absent until an atomic stream snapshot arrives. */
   readonly windowLinks?: WindowLinkTopology | null;
   readonly current: OpenTuiWorkspaceLayout | null;

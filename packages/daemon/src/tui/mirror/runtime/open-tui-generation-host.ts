@@ -560,7 +560,7 @@ export function createOpenTuiGenerationHost(
       // desired state against the fresh socket on the following live publish.
       publish({ ...snapshot, status: "rebinding" });
       owner.stopPresentation?.();
-      owner.stopPresentation = runtime ? presentation.adopt(runtime) : null;
+      owner.stopPresentation = runtime ? presentation.adopt(runtime, rendererEpoch + 1) : null;
       owner.runtime = runtime;
       owner.authorityClient = runtime ? runtimeAuthorityClient(owner.bundle, runtime) : null;
       if (!runtime) presentation.clear();
@@ -580,7 +580,7 @@ export function createOpenTuiGenerationHost(
     }
     if (candidate !== owner) return;
     if (runtime) {
-      owner.stopPresentation = presentation.adopt(runtime);
+      owner.stopPresentation = presentation.adopt(runtime, rendererEpoch + 1);
       diagnose?.("host-internal-snapshot-publication", {
         publicationPhase: "presentation-adopted",
         daemonGeneration: owner.bundle.connection.target.daemon.instanceId,

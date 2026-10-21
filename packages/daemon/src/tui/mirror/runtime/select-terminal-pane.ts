@@ -20,6 +20,7 @@ export type PaneSelectionFailure = Readonly<{
     | "generation-replaced"
     | "operation-timeout"
     | "transport-rejected"
+    | "topology-changed"
     | "receipt-invalid";
   backendReason?:
     | "pane_inventory_not_ready"
@@ -42,6 +43,7 @@ export async function selectTerminalPane(
   operationId?: string,
   onFailure?: (failure: PaneSelectionFailure) => void,
   windowLink?: WindowLinkTarget,
+  onDispatch?: () => void,
 ): Promise<PaneSelectionReceipt | null> {
   const fail = (failure: PaneSelectionFailure): null => {
     try {
@@ -62,7 +64,12 @@ export async function selectTerminalPane(
       : undefined;
     return fail({
       stage,
-      reason: code === "operation-timeout" ? "operation-timeout" : "transport-rejected",
+      reason:
+        code === "operation-timeout"
+          ? "operation-timeout"
+          : code === "topology-changed" && stage === "dispatch"
+            ? "topology-changed"
+            : "transport-rejected",
       ...(backendReason ? { backendReason } : {}),
     });
   };
@@ -90,6 +97,7 @@ export async function selectTerminalPane(
     if (!isCurrent()) return fail({ stage: "pre-dispatch", reason: "generation-replaced" });
     let result: unknown;
     try {
+      onDispatch?.();
       result = await expected.client.dispatch({
         kind: "semantic-intent",
         ...(operationId ? { operationId } : {}),
