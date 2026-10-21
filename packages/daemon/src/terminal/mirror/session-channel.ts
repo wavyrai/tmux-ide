@@ -1309,7 +1309,66 @@ export class SessionChannel {
     this.input.flush();
     this.clearWindowViewports();
     this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
-    this.io.send(`refresh-client -C ${cols}x${rows}`);
+    this.io.send(`refresh-client -C ${cols}x${rows}${this.cellPixelSuffix()}`);
+    this.clientViewport = { cols, rows };
+  }
+
+  private clientViewport: { cols: number; rows: number } | null = null;
+  private cellPixels: {
+    width: number;
+    height: number;
+    precise?: { width: number; height: number };
+  } | null = null;
+
+  /** "/WxH" for tmux's refresh-client -C (patched tmux; stock ignores it). */
+  private cellPixelSuffix(): string {
+    if (!this.cellPixels) return "";
+    const { width, height, precise } = this.cellPixels;
+    return `/${width}x${height}` + (precise ? `/${precise.width}x${precise.height}` : "");
+  }
+
+  /**
+   * The renderer's cell size in device pixels. tmux answers CSI 14t/16t and
+   * sets TIOCGWINSZ pixels from it, so image programs render 1:1 for the
+   * window. Re-applies the current viewport when the size changes.
+   */
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
+    if (
+      !Number.isSafeInteger(width) ||
+      !Number.isSafeInteger(height) ||
+      width < 1 ||
+      height < 1 ||
+      width > 1024 ||
+      height > 1024
+    )
+      throw new RangeError("cell pixel size out of range");
+    if (
+      precise &&
+      [precise.width, precise.height].some(
+        (value) => !Number.isSafeInteger(value) || value < 1000 || value > 1024000,
+      )
+    )
+      throw new RangeError("precise cell pixel size out of range");
+    if (
+      this.cellPixels?.width === width &&
+      this.cellPixels.height === height &&
+      this.cellPixels.precise?.width === precise?.width &&
+      this.cellPixels.precise?.height === precise?.height
+    )
+      return;
+    this.cellPixels = { width, height, ...(precise ? { precise } : {}) };
+    if (!this.geometryParticipating) return;
+    this.input.flush();
+    if (this.fittedWindows.size > 0) {
+      for (const [runtimeId, size] of this.fittedWindows)
+        if (this.windowsByRuntime.has(runtimeId))
+          this.io.send(
+            `refresh-client -C ${runtimeId}:${size.cols}x${size.rows}${this.cellPixelSuffix()}`,
+          );
+    } else if (this.clientViewport)
+      this.io.send(
+        `refresh-client -C ${this.clientViewport.cols}x${this.clientViewport.rows}${this.cellPixelSuffix()}`,
+      );
   }
 
   private restoreWindowSizing(target: string): void {
@@ -1359,7 +1418,7 @@ export class SessionChannel {
     if (previous?.cols === cols && previous.rows === rows) return;
     this.input.flush();
     this.restoreWindowSizing(window.runtimeId);
-    this.io.send(`refresh-client -C ${window.runtimeId}:${cols}x${rows}`);
+    this.io.send(`refresh-client -C ${window.runtimeId}:${cols}x${rows}${this.cellPixelSuffix()}`);
     this.fittedWindows.set(window.runtimeId, { cols, rows });
   }
 

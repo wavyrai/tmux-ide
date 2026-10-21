@@ -25,7 +25,11 @@
     },
     {
       "patch": "kitty-graphics.patch",
-      "patchSha256": "4a9a34701f0e31e48fe5ccc27bc31a53cb50b7bf24a871ba99cb1c72a411ea43"
+      "patchSha256": "1ff7b3022aa2a3d7014b7339c0f2ae868292d5d6df3c668cefa403509ecbc1f6"
+    },
+    {
+      "patch": "precise-cell-pixels.patch",
+      "patchSha256": "11b2f09f347d0369a744be5aef14e7be3407f4bfa6cae2047b9477234a01ba24"
     }
   ],
   "experimentalExtensions": ["tmux-ide-interaction-journal-v2"]

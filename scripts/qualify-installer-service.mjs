@@ -169,9 +169,22 @@ function service(action, ...args) {
 }
 function install(name, args, success = true) {
   console.log(`Installer stage: ${name}`);
-  const result = raw("/bin/sh", [installer, "--prefix", prefix, ...args], { timeout: 900_000 });
+  // This journey checks service ownership across an installation, then asks
+  // the public service CLI to restart explicitly. The installer now upgrades
+  // running daemons by default; opt out for version transactions so that the
+  // unchanged-instance assertions continue to test that explicit boundary.
+  // Maintenance actions reject this install-only option.
+  const installerArgs = args.includes("--version") ? ["--no-daemon-upgrade", ...args] : args;
+  const result = raw("/bin/sh", [installer, "--prefix", prefix, ...installerArgs], {
+    timeout: 900_000,
+  });
   writeFileSync(join(evidence, `${name}.log`), (result.stdout ?? "") + (result.stderr ?? ""));
-  receipt.steps.push({ install: name, exitCode: result.status, signal: result.signal });
+  receipt.steps.push({
+    install: name,
+    exitCode: result.status,
+    signal: result.signal,
+    daemonUpgradeSuppressed: installerArgs.includes("--no-daemon-upgrade"),
+  });
   assert(!result.error, `Installer ${name} subprocess did not finish`);
   assert.equal(result.status === 0, success, `Installer ${name} result`);
 }

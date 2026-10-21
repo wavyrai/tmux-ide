@@ -227,6 +227,16 @@ try {
     [join(root, "native/tmux/tests/kitty-graphics.py"), join(scratch, "tmux")],
     scratch,
   );
+  run(
+    "python3",
+    [join(root, "native/tmux/tests/precise-cell-pixels.py"), join(scratch, "tmux")],
+    root,
+  );
+  run(
+    "python3",
+    [join(root, "native/tmux/tests/kitty-cell-pixels.py"), join(scratch, "tmux")],
+    scratch,
+  );
 } catch (error) {
   if (evidence) {
     try {

@@ -1,3 +1,4 @@
+import { deflateSync, inflateSync } from "node:zlib";
 import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -44,6 +45,11 @@ import {
   type PaneStreamMirror,
   type SessionRuntimePaneStreamTransportBinding,
 } from "./pane-stream-websocket.ts";
+
+vi.mock("node:zlib", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:zlib")>();
+  return { ...actual, inflateSync: vi.fn(actual.inflateSync) };
+});
 
 const INSTANCE = "00000000-0000-4000-8000-000000000099";
 const ORIGIN = "tmux-ide://app";
@@ -433,6 +439,7 @@ function harness(
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
     diagnosticAfterFrameParse?: () => void;
@@ -555,6 +562,7 @@ function harness(
                   deliveryNonce: "00000000-0000-4000-8000-000000000098",
                 },
               },
+              graphics: options.graphics,
               ack: deliveryAcks,
               nack: deliveryNacks,
               setVisibility: deliveryVisibility,
@@ -599,6 +607,7 @@ async function connect(
     deliveryAcks?: boolean;
     hostClientId?: string;
     semanticDelivery?: boolean;
+    protocolVersions?: number[];
     allowStartupClose?: boolean;
     diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
   } = {},
@@ -613,7 +622,7 @@ async function connect(
       ...(options.semanticDelivery
         ? {
             terminalDelivery: {
-              protocolVersions: [1],
+              protocolVersions: options.protocolVersions ?? [1],
               encodings: ["semantic-v1"] as const,
               richPlacements: false,
             },
@@ -3127,4 +3136,115 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(h.leaseManager.snapshot().leases).toHaveLength(0);
   });
+});
+
+describe("legacy graphics decompression bounds", () => {
+  it.each([
+    { name: "matching pixels", width: 1, height: 1, length: 4, accepted: true },
+    {
+      name: "oversized inflated payload",
+      width: 1,
+      height: 1,
+      length: 1024 * 1024,
+      accepted: false,
+    },
+    { name: "truncated pixels", width: 1, height: 1, length: 3, accepted: false },
+    {
+      name: "image beyond legacy limit",
+      width: 4096,
+      height: 2049,
+      length: 4096 * 2049 * 4,
+      accepted: false,
+    },
+  ])("serves only exact bounded pixels: $name", async ({ width, height, length, accepted }) => {
+    vi.mocked(inflateSync).mockClear();
+    const digest = "a".repeat(32);
+    const data = deflateSync(Buffer.alloc(length, 1));
+    const image = { imageId: 1, digest, width, height, format: "rgba-zlib" as const, data };
+    const h = harness({
+      openTerminalDelivery: async () => ({
+        negotiation: {
+          accepted: true as const,
+          negotiated: {
+            protocolVersion: 1 as const,
+            encoding: "semantic-v1" as const,
+            richPlacements: false,
+            generation: INSTANCE,
+            deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          },
+        },
+        ack: () => undefined,
+        nack: () => undefined,
+        setVisibility: () => undefined,
+        close: async () => undefined,
+        graphics: {
+          subscribe(listener) {
+            listener({
+              revision: 1,
+              images: [{ ...image, bytes: data.length, placeholder: null }],
+              placements: [],
+            });
+            return () => undefined;
+          },
+          image: () => image,
+        },
+      }),
+    });
+    const { socket } = await connect(h, { panes: ["pane.editor"], semanticDelivery: true });
+    socket.drainAll();
+    socket.message({ type: "terminal-graphics-request", pane: "pane.editor", digests: [digest] });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    h.scheduler.runDue();
+    const blobs = socket.framesOfType("terminal-graphics-blob");
+    socket.close();
+    expect(blobs).toHaveLength(accepted ? 1 : 0);
+    if (width === 1) {
+      // Output rejection alone cannot prove the decoder avoided allocating the oversized data.
+      expect(inflateSync).toHaveBeenCalledWith(data, { maxOutputLength: 4 });
+    } else {
+      expect(inflateSync).not.toHaveBeenCalled();
+    }
+    if (accepted) {
+      expect(blobs[0]).toMatchObject({ blob: { total: 4, format: "rgba" } });
+      expect(Buffer.from(blobs[0]!.data as string, "base64")).toEqual(Buffer.alloc(4, 1));
+    }
+    socket.close();
+  });
+});
+
+describe("graphics geometry capability announcement", () => {
+  for (const announce of [false, true]) {
+    it.each([
+      { versions: [1, 101, 103], precise: false },
+      { versions: [1, 101, 102, 103, 104], precise: true },
+    ])(
+      `announces cell geometry before image delivery (subscription emitted: ${announce}, versions: $versions)`,
+      async ({ versions, precise }) => {
+        const h = harness({
+          graphics: {
+            subscribe(listener) {
+              if (announce) listener({ revision: 1, images: [], placements: [] });
+              return () => undefined;
+            },
+            image: () => null,
+          },
+        });
+        const { socket } = await connect(h, {
+          panes: ["pane.editor"],
+          semanticDelivery: true,
+          protocolVersions: versions,
+        });
+        const frames = socket.framesOfType("terminal-graphics");
+        socket.close();
+        expect(frames).toHaveLength(1);
+        expect(frames[0]!.state).toEqual({
+          revision: announce ? 1 : 0,
+          images: [],
+          placements: [],
+          cellPixels: true,
+          ...(precise ? { preciseCellPixels: true } : {}),
+        });
+      },
+    );
+  }
 });

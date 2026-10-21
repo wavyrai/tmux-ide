@@ -174,10 +174,11 @@ try {
   assert.deepEqual(assembled(first), image);
   const [placeholder, cursor] = placements(first);
   assert.deepEqual(
-    { ...placeholder, row: undefined },
+    { ...placeholder, row: undefined, image: undefined },
     {
       digest,
       row: undefined,
+      image: undefined,
       column: 0,
       rows: 2,
       columns: 4,
@@ -188,6 +189,7 @@ try {
     },
   );
   assert.equal(cursor.digest, digest);
+  assert.match(placeholder.image, /#9$/u, "placements name the program's image");
   assert.equal(cursor.column, "CURSOR ".length);
   assert.equal(cursor.row, placeholder.row + 2);
   const chunksSent = first.chunks.length;

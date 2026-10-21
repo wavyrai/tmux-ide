@@ -420,7 +420,7 @@ fn native_lower_header_preserves_horizontal_drag_and_external_row_excludes_resiz
     .unwrap();
     let commands: Vec<_> = receiver.try_iter().collect();
     assert!(commands.iter().any(|command| matches!(command,
-        browser::Command::Input { input: crate::tmux_snapshot::keys::Input::Resize {cols,rows},.. }
+        browser::Command::Input { input: crate::tmux_snapshot::keys::Input::Resize {cols,rows,..},.. }
         if (*cols,*rows)==expected)));
     let start = grid.origin + point(px(2. * width), px(4.5 * crate::terminal::CELL_HEIGHT));
     cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());

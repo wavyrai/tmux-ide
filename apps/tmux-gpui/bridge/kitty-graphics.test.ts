@@ -75,7 +75,7 @@ test("receiver does not request digests the window already holds", () => {
   assert.deepEqual(requests, []);
 });
 
-test("canvas placements move to the pane content origin and drop overflow", () => {
+test("canvas placements move to the pane content origin and clip overflow", () => {
   const layout: Layout = {
     type: "layout",
     semanticWindowId: "w",
@@ -97,13 +97,17 @@ test("canvas placements move to the pane content origin and drop overflow", () =
     sourceColumn: 0,
     totalRows: 2,
     totalColumns: 2,
+    image: "p#3",
   };
   assert.deepEqual(
     canvasPlacements(layout, [
       { paneId: "p", placements: [placement, { ...placement, row: 2 }] },
       { paneId: "gone", placements: [placement] },
     ]),
-    [{ ...placement, row: 2, column: 6 }],
+    [
+      { ...placement, row: 2, column: 6 },
+      { ...placement, row: 3, column: 6, rows: 1 },
+    ],
   );
 });
 
@@ -126,4 +130,48 @@ test("known digests are recorded on the last chunk and bounded", () => {
   assert.deepEqual(known.env().split(","), ["b".repeat(32), "c".repeat(32)]);
   known.forget(["c".repeat(32)]);
   assert.equal(known.env(), "b".repeat(32));
+});
+
+test("receiver clips oversized cursor placement without losing source coordinates", () => {
+  const receiver = createKittyGraphicsReceiver({ known: [], request: () => {}, emit: () => {} });
+  receiver.state("p", {
+    ...state,
+    images: state.images.map((image) => ({ ...image, placeholder: null })),
+    placements: [
+      {
+        digest,
+        row: 1,
+        column: 2,
+        rows: 4,
+        columns: 5,
+        sourceRow: 1,
+        sourceColumn: 2,
+        totalRows: 7,
+        totalColumns: 9,
+      },
+    ],
+  });
+  assert.deepEqual(receiver.placements("p", blankTerminalReplicaSnapshot(4, 3)), [
+    {
+      digest,
+      row: 1,
+      column: 2,
+      rows: 2,
+      columns: 2,
+      sourceRow: 1,
+      sourceColumn: 2,
+      totalRows: 7,
+      totalColumns: 9,
+      image: "p#3",
+    },
+  ]);
+});
+
+test("precise pixels are negotiated independently of rounded cell pixels", () => {
+  const receiver = createKittyGraphicsReceiver({ known: [], request: () => {}, emit: () => {} });
+  receiver.state("p", { ...state, cellPixels: true });
+  assert.equal(receiver.takesCellPixels(), true);
+  assert.equal(receiver.takesPreciseCellPixels(), false);
+  receiver.state("p", { ...state, cellPixels: true, preciseCellPixels: true });
+  assert.equal(receiver.takesPreciseCellPixels(), true);
 });

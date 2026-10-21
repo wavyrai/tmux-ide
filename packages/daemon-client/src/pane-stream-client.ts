@@ -384,6 +384,12 @@ export interface PaneStreamRuntimeClient {
   ): Promise<WorkspaceMultiplexerMutationResult | null>;
   /** Pull image bytes announced in graphics state; the daemon sends each once per request. */
   requestTerminalGraphics(pane: string, digests: readonly string[]): void;
+  /** Renderer cell size in device pixels; only after state carried `cellPixels`. */
+  setTerminalCellPixels(
+    width: number,
+    height: number,
+    precise?: { width: number; height: number },
+  ): void;
   close(): void;
 }
 
@@ -1605,6 +1611,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
     nack: (nack) => send({ type: "terminal-delivery-nack", nack }),
     setVisibility: (address, visibility) =>
       send({ type: "terminal-delivery-visibility", ...address, visibility }),
+    setTerminalCellPixels: (width, height, precise) =>
+      send({ type: "terminal-cell-pixels", width, height, ...(precise ? { precise } : {}) }),
     requestTerminalGraphics: (pane, digests) => {
       for (let start = 0; start < digests.length; start += TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS)
         send({

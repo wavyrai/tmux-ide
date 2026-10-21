@@ -47,6 +47,18 @@ try:
     wrapped = b'\033Ptmux;' + apc(b'a=q,i=9;AAAA').replace(b'\033', b'\033\033') + b'\033\\'
     got, _ = probe('wrapped', wrapped + DA1, 'on')
     assert got.startswith(ok(b'i=9')), got
+    # File and shared-memory media never reach the renderer: refuse them so
+    # clients fall back to direct data. q=2 silences the refusal too.
+    for medium in (b's', b'f', b't'):
+        got, _ = probe('medium-' + medium.decode(), apc(b'a=q,i=299,t=' + medium + b',f=32,s=1,v=1;L3B4') + DA1, 'on')
+        assert got.startswith(b'\033_Gi=299;EINVAL:') and got.endswith(b'c'), (medium, got)
+    got, _ = probe('medium-quiet', apc(b'a=T,i=4,t=s,f=32,s=1,v=1,q=2;L3B4') + DA1, 'on')
+    assert b'\033_G' not in got, got
+    got, _ = probe('medium-direct', apc(b'a=q,i=300,t=d,f=32,s=1,v=1;AAAA') + DA1, 'on')
+    assert got.startswith(ok(b'i=300')), got
+    # Frame edits are acknowledged, including after chunking.
+    got, _ = probe('frame-edit', apc(b'a=t,f=32,s=1,v=1,i=302,q=1;AAAA') + apc(b'a=f,f=32,i=302,r=1,X=1,x=0,y=0,s=1,v=1,m=1;AA') + apc(b'm=0;AA') + DA1, 'on')
+    assert got.count(b';OK') == 1 and got.startswith(ok(b'i=302')), got
     print('kitty-graphics: ok')
 finally:
     subprocess.run([binary, '-S', socket, 'kill-server'], env=env, capture_output=True)

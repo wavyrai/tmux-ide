@@ -41,7 +41,7 @@ mod tests;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
-use crate::terminal_painter::{ImageTarget, PlacedImages, TerminalPainter};
+use crate::terminal_painter::{CellPixels, ImageTarget, PlacedImages, TerminalPainter};
 use gpui::{prelude::*, *};
 use herdr_client::protocol::FrameData;
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
@@ -307,12 +307,17 @@ fn show(
     Ok(())
 }
 
+/// Rounded width/height followed by precise width/height in thousandths of a pixel.
+type CellPixelDimensions = (u32, u32, u32, u32);
+
 /// Kitty graphics owned by one window: the image store (shared with the
 /// publication reader) and, for static snapshots, their fixed placements.
 #[derive(Clone, Default)]
 struct KittyView {
     store: kitty_graphics::Store,
     placements: Rc<RefCell<Vec<kitty_graphics::Placement>>>,
+    /// Cell size in device pixels last reported with a resize.
+    cell_pixels: Rc<std::cell::Cell<Option<CellPixelDimensions>>>,
 }
 
 struct SnapshotView {
@@ -411,6 +416,7 @@ impl SnapshotView {
                 .scene(&self.graphics.placements.borrow())
         };
         let kitty_store = self.graphics.store.clone();
+        let kitty_cell_pixels = self.graphics.cell_pixels.clone();
         let Some(frame) = self.frame.clone() else {
             let guidance = if self.browsing && self.browser_commands.is_some() {
                 "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
@@ -471,6 +477,15 @@ impl SnapshotView {
                                 height,
                             ) {
                                 let desired = (view.browser_request, cols, rows);
+                                let scale = window.scale_factor();
+                                let cell_pixels = (
+                                    (width * scale).round().max(1.) as u32,
+                                    (height * scale).round().max(1.) as u32,
+                                    (width * scale * 1000.).round().clamp(1000., 1024000.) as u32,
+                                    (height * scale * 1000.).round().clamp(1000., 1024000.) as u32,
+                                );
+                                let pixels_changed =
+                                    view.graphics.cell_pixels.get() != Some(cell_pixels);
                                 if view.browsing
                                     && view.presence.ready()
                                     && view.browser_state.input_ready
@@ -480,17 +495,25 @@ impl SnapshotView {
                                     && view.picker.is_none()
                                     && view.pane_actions.is_none()
                                     && view.new_session.is_none()
-                                    && view.last_resize != Some(desired)
+                                    && (view.last_resize != Some(desired) || pixels_changed)
                                     && let (Some(sender), Some(id)) =
                                         (&view.browser_commands, &view.browser_state.selected_pane)
                                 {
                                     let command = browser::Command::Input {
                                         request: view.browser_request,
                                         id: id.clone(),
-                                        input: keys::Input::Resize { cols, rows },
+                                        input: keys::Input::Resize {
+                                            cols,
+                                            rows,
+                                            cell_width: Some(cell_pixels.0),
+                                            cell_height: Some(cell_pixels.1),
+                                            cell_width_milli: Some(cell_pixels.2),
+                                            cell_height_milli: Some(cell_pixels.3),
+                                        },
                                     };
                                     if sender.try_send(command).is_ok() {
                                         view.last_resize = Some(desired);
+                                        view.graphics.cell_pixels.set(Some(cell_pixels));
                                     }
                                 }
                             }
@@ -534,6 +557,13 @@ impl SnapshotView {
                                     placements: &kitty_scene,
                                     images,
                                     target: ImageTarget::Main,
+                                    cell_pixels: kitty_cell_pixels.get().map(
+                                        |(width, height, _, _)| CellPixels {
+                                            width,
+                                            height,
+                                            scale: window.scale_factor(),
+                                        },
+                                    ),
                                 }),
                                 window,
                                 cx,
