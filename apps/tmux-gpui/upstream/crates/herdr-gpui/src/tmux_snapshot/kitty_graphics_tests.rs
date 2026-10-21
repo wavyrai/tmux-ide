@@ -377,6 +377,18 @@ fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
     let queue = store.1.queue.lock().unwrap();
     assert_eq!(queue.len(), 1);
     assert_eq!(queue.front().unwrap().0, "newest");
+    drop(queue);
+    store.inflate_later(
+        "maximum".into(),
+        queued_partial(None, MAX_IMAGE_BYTES as usize),
+    );
+    let queue = store.1.queue.lock().unwrap();
+    assert_eq!(
+        queue.len(),
+        1,
+        "one maximum-sized image must remain admissible"
+    );
+    assert_eq!(queue.front().unwrap().0, "maximum");
 }
 
 #[test]
@@ -443,6 +455,29 @@ fn cached_image_revisit_advances_latest_and_redraws() -> anyhow::Result<()> {
     assert!(
         store.take_changed(),
         "cached redraw must wake the window painter"
+    );
+    Ok(())
+}
+
+#[test]
+fn cached_revisit_retires_an_older_inflight_redraw() -> anyhow::Result<()> {
+    let store = Store::default();
+    let a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    let compressed = deflate(&vec![7; 16 * 1024 * 1024])?;
+    let mut line: serde_json::Value =
+        serde_json::from_slice(&chunk_as(b, "rgba-zlib", compressed.len(), 0, &compressed))?;
+    line["kittyImageChunk"]["image"] = "%1#1".into();
+    line["kittyImageChunk"]["width"] = 2048.into();
+    line["kittyImageChunk"]["height"] = 2048.into();
+    store.accept_line(&serde_json::to_vec(&line)?)?;
+    store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    store.settle();
+    assert_eq!(
+        store.lock().latest.get("%1#1").map(String::as_str),
+        Some(a),
+        "cached revisit must retire older in-flight images too"
     );
     Ok(())
 }
