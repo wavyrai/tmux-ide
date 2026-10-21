@@ -22,6 +22,10 @@ for (const name of ["cli", "tui", "app", "probe", "output"])
 assert.ok(["local", "ssh"].includes(options.route), "--route local|ssh required");
 assert.equal(options.run, "yes", "Explicit --run yes required; do not benchmark during builds");
 assert.ok(["output", "physical"].includes(options.trigger), "--trigger output|physical required");
+assert.ok(
+  ["debug", "release"].includes(options.profile),
+  "--profile debug|release required (caller-declared native build profile)",
+);
 const probe = (...args) =>
   JSON.parse(execFileSync(options.probe, args.map(String), { encoding: "utf8", timeout: 15000 }));
 await mkdir(options.output, { mode: 0o700 }); // exclusive evidence directory
@@ -124,6 +128,14 @@ try {
   panes.push(run("split-window", "-h", "-P", "-F", "#{pane_id}", "-t", pane, "sh -i"));
   panes.push(run("split-window", "-v", "-P", "-F", "#{pane_id}", "-t", pane, "sh -i"));
   const pids = panes.map((id) => run("display-message", "-p", "-t", id, "#{pane_pid}"));
+  receipt.fixture = {
+    session: fleet.sessionNames[0],
+    intendedPane: pane,
+    panes,
+    programPanePid: pids[0],
+  };
+  receipt.panePidsBeforeClose = pids;
+  await save("receipt.json", receipt);
   const program = join(fleet.root, "marker.py");
   await writeFile(
     program,
@@ -170,6 +182,13 @@ try {
     }),
     { mode: 0o600 },
   );
+  const fontDirectory = join(environment.XDG_CONFIG_HOME, "tmux-ide");
+  await mkdir(fontDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(fontDirectory, "gpui-fonts.json"),
+    JSON.stringify({ version: 1, family: "Menlo", size: 14 }),
+    { mode: 0o600 },
+  );
   app = track(
     spawn(join(options.app, "Contents/MacOS/tmux-ide-launcher"), [host], {
       env: environment,
@@ -212,6 +231,13 @@ try {
   receipt.identity = {
     cli: await hash(options.cli),
     tui: await hash(options.tui),
+    native: await hash(join(options.app, "Contents/MacOS/tmux-ide-gpui")),
+    live: await hash(join(options.app, "Contents/Resources/bridge/live.bundle.mjs")),
+    bridgeManifest: await hash(join(options.app, "Contents/Resources/bridge/bridge-manifest.json")),
+    embeddedNode: await hash(join(options.app, "Contents/Resources/node")),
+    nativeBuildProfile: options.profile,
+    nativeBuildProfileSource: "caller-declared",
+    configuredFont: { family: "Menlo", size: 14, scope: "both owned clients" },
     launcher: await hash(join(options.app, "Contents/MacOS/tmux-ide-launcher")),
     browser: await hash(join(options.app, "Contents/Resources/bridge/browser.bundle.mjs")),
     node: process.version,
@@ -280,6 +306,8 @@ try {
     );
     matchedPanes ??= paneGrids;
     assert.deepEqual(paneGrids, matchedPanes, "all pane grids must match across clients");
+    const windowInfo = probe("windows", target[0]).windows.find((row) => row.window === target[1]);
+    assert.ok(windowInfo, "owned foreground window remains observable");
     const load = execFileSync("/usr/bin/uptime", [], { encoding: "utf8" }).trim();
     let negative = probe(
       "capture",
@@ -321,6 +349,8 @@ try {
       marker: mark.text,
       correct: true,
       load,
+      display: windowInfo.display,
+      windowBounds: windowInfo.bounds,
       grid: grid(),
       ...observation(input, negative, positive),
       triggerTiming: input,
@@ -330,6 +360,15 @@ try {
     await save("receipt.json", receipt);
   }
   receipt.summary = summarize(receipt.samples);
+  receipt.displayMatched = receipt.samples.every(
+    (sample) =>
+      sample.display.refreshHz !== "unknown" &&
+      sample.display.scale !== "unknown" &&
+      JSON.stringify(sample.display) === JSON.stringify(receipt.samples[0].display),
+  );
+  if (!receipt.displayMatched)
+    receipt.comparisonLimit =
+      "Display refresh/scale was unknown or differed; do not claim fully matched visible timing";
   receipt.passed = true;
   receipt.panePidsBeforeClose = pids;
 } catch (error) {

@@ -18,7 +18,8 @@ transport implementation difference when interpreting results.
 ## Prepare, without running samples
 
 Use Node24 and put the desired bundled tmux on PATH. Use an already-built CLI,
-matching compiled TUI and matching native app; there are no implicit builds or
+matching compiled TUI and matching native app; explicitly declare `--profile debug`
+or `--profile release` (recorded as caller-declared, not inferred). There are no implicit builds or
 downloads. Compile the small macOS probe outside the repository:
 
 ```sh
@@ -43,7 +44,7 @@ node --import tsx apps/tmux-gpui/bridge/performance/visible-response.mjs \
   --app /absolute/matching/TmuxIDE.app \
   --probe /tmp/tmux-gui-window-probe \
   --output /absolute/new/evidence-directory \
-  --route local --trigger output --run yes
+  --route local --trigger output --profile release --run yes
 ```
 
 Repeat with a fresh output directory and `--route ssh`. Each run is bounded to
@@ -76,10 +77,15 @@ only after both marker OCR and color are observed in the owned window screenshot
 Failures and timeouts stay in the receipt; incomplete work is not counted as fast.
 
 `receipt.json` records exact build hashes, route, terminal version, tmux version,
-CPU-load snapshots, marker witnesses, screenshots, per-sample intervals and
-five-sample median/range of the conservative upper bounds. It also checks pane
+CPU-load snapshots, configured Menlo14 font, per-window display refresh/scale
+(where the OS reports them), marker witnesses, screenshots, per-sample intervals and
+five-sample median/range of the conservative upper bounds. Native executable,
+live/browser bundles, bridge manifest, embedded Node, launcher, CLI and TUI
+hashes identify the exact artifacts. Unknown or differing display metadata is
+marked explicitly and prevents a fully matched comparison claim. It also checks pane
 PIDs survive closing both clients before disposing the private daemon/socket.
-Input logs are synthetic fixture data, not user terminal contents.
+Input logs are synthetic fixture data, not user terminal contents. Intended-pane
+and PID witnesses are persisted before marker setup so failures retain them.
 
 ## Limits and remaining instrumentation
 

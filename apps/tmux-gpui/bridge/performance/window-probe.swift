@@ -17,13 +17,23 @@ func ownedWindow(_ pid: pid_t, _ id: CGWindowID) -> Bool {
     return rows.contains { ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid)
         && ($0[kCGWindowNumber as String] as? UInt32) == id }
 }
+func displayInfo(_ row: [String: Any]) -> [String: Any] {
+    guard let raw = row[kCGWindowBounds as String] as? [String: Any],
+          let rect = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return ["refreshHz": "unknown", "scale": "unknown"] }
+    var displays = [CGDirectDisplayID](repeating: 0, count: 16)
+    var count: UInt32 = 0
+    guard CGGetDisplaysWithRect(rect, 16, &displays, &count) == .success, count == 1 else { return ["refreshHz": "unknown", "scale": "unknown", "reason": "window spans or lacks a display"] }
+    let id = displays[0], bounds = CGDisplayBounds(id)
+    let hz = CGDisplayCopyDisplayMode(id)?.refreshRate ?? 0
+    return ["id": id, "refreshHz": hz > 0 ? hz as Any : "unknown", "scale": bounds.width > 0 ? Double(CGDisplayPixelsWide(id)) / bounds.width as Any : "unknown"]
+}
 func windows(_ pids: Set<Int>) -> [[String: Any]] {
     let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     return rows.compactMap { row in
         guard let pid = row[kCGWindowOwnerPID as String] as? Int, pids.contains(pid),
               let id = row[kCGWindowNumber as String] as? Int,
               (row[kCGWindowLayer as String] as? Int) == 0 else { return nil }
-        return ["pid": pid, "window": id, "bounds": row[kCGWindowBounds as String] ?? [:]]
+        return ["pid": pid, "window": id, "bounds": row[kCGWindowBounds as String] ?? [:], "display": displayInfo(row)]
     }
 }
 guard let operation = args.first else { fail("operation required") }
@@ -40,7 +50,7 @@ if operation == "preflight" {
     config.createsNewApplicationInstance = true
     config.activates = false
     config.environment = env
-    config.arguments = ["--config-default-files=false", "--window-width=140", "--window-height=45", "--quit-after-last-window-closed=true", "-e", args[3]]
+    config.arguments = ["--config-default-files=false", "--font-family=Menlo", "--font-size=14", "--window-width=140", "--window-height=45", "--quit-after-last-window-closed=true", "-e", args[3]]
     let before = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
     NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: args[1]), configuration: config) { app, error in
         guard let app = app, error == nil, !before.contains(app.processIdentifier) else { fail("terminal did not create an independent process") }
