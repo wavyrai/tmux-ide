@@ -21,7 +21,7 @@ import {
 } from "node:fs/promises";
 import { join, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { stopFixtureChild } from "./fixture-child.mjs";
@@ -418,10 +418,12 @@ try {
     assert.ok(emptySessionOffer && noServerCreateAuthority && localTargetUnavailable);
     // An empty local offer is not generic server creation authority. Neither
     // the generic command nor a forged offer token may bootstrap a session.
+    const forgedAction = randomUUID();
+    assert.notEqual(forgedAction, latest.localSessionCreate.action);
     send({
       type: "create-local-session",
       request: latest.request,
-      action: `${latest.localSessionCreate.action}-forged`,
+      action: forgedAction,
       name: "forged-must-not-create",
     });
     send({ type: "create-session", request: latest.request, name: "must-not-create" });
