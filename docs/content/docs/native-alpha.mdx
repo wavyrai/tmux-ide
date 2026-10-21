@@ -148,6 +148,38 @@ Commands to change the terminal font or theme. Report clipped controls with the
 window dimensions and macOS display scaling. Include whether scrolling, resizing
 or switching sessions caused it.
 
+## Images after an upgrade
+
+Updating the CLI or daemon leaves existing tmux servers and their shells running.
+A server started by an older tmux binary continues using that binary, even after
+its file on disk has been replaced. Image support therefore depends on the
+running server as well as the installed CLI.
+
+Open the session in the native app before starting an image-capable program.
+The daemon enables graphics on supported servers and sets
+`TMUX_IDE_GRAPHICS=kitty` for new shells. A shell that was already running does
+not inherit that environment change; in that shell, run:
+
+```bash
+export TMUX_IDE_GRAPHICS=kitty
+```
+
+This advertises support to the program; it does not add graphics support to an
+older or stock tmux server. From a shell inside the affected session, check the
+server's graphics option with `tmux show-options -gv kitty-graphics`. If `tmux`
+is not on PATH, the managed Apple Silicon installation includes it at:
+
+```bash
+~/.local/share/tmux-ide/current/npm/lib/node_modules/tmux-ide/packages/daemon/dist/native/tmux/darwin-arm64/tmux show-options -gv kitty-graphics
+```
+
+An unknown-option error means that server does not have the graphics extension.
+An `on` result confirms the extension is enabled, but does not identify its patch
+version. Older patched servers can still lack newer media-query and sizing fixes.
+Use a newly created server with the updated bundled tmux for those fixes. Plan
+any retirement of an old server around its running work: killing a tmux server
+ends its shells and agents. The installer does not restart it automatically.
+
 ## Report a bug
 
 Open an issue in the [tmux-ide issue tracker](https://github.com/wavyrai/tmux-ide/issues)

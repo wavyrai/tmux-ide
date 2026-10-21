@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.8
+
+- Let pane discovery settle across a concurrent window creation or split instead of rejecting a valid new pane after one changing inventory read.
+- Answer kitty graphics file and shared-memory probes with an unsupported-media response so clients fall back to inline images. Preserve placements across image redraws and apply root-frame edits.
+- Keep deflated image frames compressed until the native app decodes them off its UI thread, discard superseded redraws, and retain the last decoded frame while its replacement loads. Placeholder cells paint blank beneath transparent image pixels.
+- Report native cell dimensions to supported tmux servers so graphics clients can size their images for the display.
+- Document graphics setup for existing shells and the distinction between an updated CLI and an older running tmux server.
+
+The native app is distributed separately. Existing tmux sessions are preserved.
+
 ## 2.9.7
 
 - Support stock tmux 3.8 capture output without requiring users to replace or restart their tmux server. Detect its textual raw grid format and use the existing stock capture path instead of repeatedly closing terminal streams.
