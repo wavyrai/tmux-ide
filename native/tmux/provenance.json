@@ -32,7 +32,5 @@
       "patchSha256": "11b2f09f347d0369a744be5aef14e7be3407f4bfa6cae2047b9477234a01ba24"
     }
   ],
-  "experimentalExtensions": [
-    "tmux-ide-interaction-journal-v2"
-  ]
+  "experimentalExtensions": ["tmux-ide-interaction-journal-v2"]
 }
