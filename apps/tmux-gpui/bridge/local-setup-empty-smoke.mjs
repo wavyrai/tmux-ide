@@ -219,8 +219,8 @@ try {
 assert.ok(socketInitiallyAbsent);
 let firstSessionReady = false,
   inputVerified = false,
-  noServerGuidance = false,
-  noCreateAuthority = false,
+  emptySessionOffer = false,
+  noServerCreateAuthority = false,
   localTargetUnavailable = false;
 try {
   await mkdir(canonical, { recursive: true, mode: 0o700 });
@@ -405,22 +405,28 @@ try {
     await until(
       () =>
         runningObserved &&
-        latest?.home?.phase === "unavailable" &&
-        /no online tmux server/.test(latest.status),
+        latest?.home?.phase === "live" &&
+        latest.localSessionCreate,
     );
     assert.ok(await readRecord());
     await verify(record);
-    noServerGuidance = /Open an ordinary tmux session/.test(latest.status);
-    noCreateAuthority = latest.home?.phase !== "live" && latest.selectedServer === null;
+    emptySessionOffer = /No local sessions yet/.test(latest.status);
+    noServerCreateAuthority = latest.selectedServer === null;
     const local = latest.fleet?.groups.find((group) => group.id === "local");
     localTargetUnavailable =
       !local ||
       !local.servers.some(
         (server) => server.state === "online" && server.selection && server.generation,
       );
-    assert.ok(noServerGuidance && noCreateAuthority && localTargetUnavailable);
-    // Idle operation status is not creation authority. A stale/unsupported raw
-    // request must not bootstrap a session behind the unavailable Home state.
+    assert.ok(emptySessionOffer && noServerCreateAuthority && localTargetUnavailable);
+    // An empty local offer is not generic server creation authority. Neither
+    // the generic command nor a forged offer token may bootstrap a session.
+    send({
+      type: "create-local-session",
+      request: latest.request,
+      action: `${latest.localSessionCreate.action}-forged`,
+      name: "forged-must-not-create",
+    });
     send({ type: "create-session", request: latest.request, name: "must-not-create" });
     await delay(250);
     let sessionsCreated = false;
@@ -429,7 +435,11 @@ try {
     } catch (error) {
       absentServer(error);
     }
-    assert.equal(sessionsCreated, false, "Unavailable Home must reject session creation");
+    assert.equal(
+      sessionsCreated,
+      false,
+      "Commands without current creation authority must not create sessions",
+    );
     assert.equal(latest.snapshot, null);
     assert.equal(latest.inputReady, false);
     assert.equal(latest.sessions.length, 0);
@@ -498,13 +508,13 @@ try {
     duplicateClicks: 2,
     runningObserved,
     observedDaemonIdentities: identities.size,
-    zeroSessionGapReproduced: !createFirst && preserved,
+    emptySetupGuardVerified: !createFirst && preserved,
     externalServer,
     firstSessionReady,
     inputVerified,
     socketInitiallyAbsent,
-    noServerGuidance,
-    noCreateAuthority,
+    emptySessionOffer,
+    noServerCreateAuthority,
     localTargetUnavailable,
     verifiedDaemonPresent: identities.size === 1,
     cleanupPassed,
