@@ -85,7 +85,7 @@ applications_entry() {
 applications_entry check
 base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102101
 installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4
-archive_sha=45c57982ee86604e0c6295e20c4046d258602d8354a3ea2fca312df7bf151e9d
+archive_sha=e2c8613ca10fb629b0321b20c2c4c0350b242115efca7b62c66177b056a8ab61
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT

@@ -104,7 +104,7 @@ test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
   );
   assert.match(
     source,
-    /archive_sha=45c57982ee86604e0c6295e20c4046d258602d8354a3ea2fca312df7bf151e9d/,
+    /archive_sha=e2c8613ca10fb629b0321b20c2c4c0350b242115efca7b62c66177b056a8ab61/,
   );
   assert.match(source, /--proto '=https' --proto-redir '=https'/);
 });
