@@ -1793,7 +1793,6 @@ export class PaneStreamLiveConnection {
     const cellPixels =
       this.#descriptor.terminalDelivery?.protocolVersions.includes(
         TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
-        TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
       ) === true;
     const preciseCellPixels =
       this.#descriptor.terminalDelivery?.protocolVersions.includes(
