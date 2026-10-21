@@ -20,6 +20,7 @@ fn agent_form_keyboard_pointer_cancel_and_narrow_geometry(cx: &mut TestAppContex
     });
     cx.simulate_resize(size(px(640.), px(400.)));
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     cx.simulate_keystrokes("f5");
     cx.simulate_input("new agent");
     cx.simulate_keystrokes("enter");

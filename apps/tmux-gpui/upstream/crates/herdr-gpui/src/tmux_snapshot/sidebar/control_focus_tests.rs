@@ -92,13 +92,49 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
             assert!(view.input_interrupted);
         });
     });
+    assert!(
+        receiver.try_recv().is_err(),
+        "sidebar geometry must wait for the same-window quiet interval"
+    );
+    let expected = view.update(cx, |view, _| {
+        use crate::tmux_snapshot::geometry;
+        let canvas = view.input_geometry.unwrap().0;
+        let (cols, rows) = geometry::cell_grid(
+            f32::from(canvas.size.width),
+            f32::from(canvas.size.height),
+            view.input_cell_width.unwrap(),
+            view.terminal_height(),
+        )
+        .unwrap();
+        let fit = geometry::Fit {
+            request: view.browser_request,
+            cols,
+            rows,
+            pixels: view.graphics.cell_pixels.get().unwrap(),
+        };
+        view.fit_settle.clear();
+        assert!(!view.fit_settle.ready(
+            fit,
+            view.last_resize,
+            false,
+            std::time::Instant::now() - std::time::Duration::from_millis(151),
+        ));
+        assert!(view.fit_settle.due(std::time::Instant::now()));
+        (cols, rows)
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let commands: Vec<_> = receiver.try_iter().collect();
     assert_eq!(commands.len(), 1);
     assert!(
         matches!(&commands[0], browser::Command::Input {
         request: 7, id, input: crate::tmux_snapshot::keys::Input::Resize { cols, rows, .. },
-    } if id == "pane-a" && *cols > 0 && *rows > 0),
+    } if id == "pane-a" && (*cols, *rows) == expected),
         "hiding the sidebar may resize the same pane, never send a key or select a session"
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        receiver.try_recv().is_err(),
+        "settled geometry is sent only once"
     );
 }
 

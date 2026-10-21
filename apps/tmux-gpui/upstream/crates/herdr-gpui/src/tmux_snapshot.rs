@@ -648,3 +648,6 @@ impl SnapshotView {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+mod fit_test_support;

@@ -90,7 +90,7 @@ fn workspace_roster_scope_and_wire_are_strict() {
 #[gpui::test]
 fn long_workspace_roster_keeps_last_row_in_scrollable_content(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
-    let (_view, cx) = cx.add_window_view(|window, cx| {
+    let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
         view.browser_state.request = 7;
         let mut roster = workspace_roster();
@@ -114,6 +114,7 @@ fn long_workspace_roster_keeps_last_row_in_scrollable_content(cx: &mut TestAppCo
         "last row {last:?} escapes clipped section {section:?}"
     );
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     for _ in 0..10 {
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(100.), px(200.)),
