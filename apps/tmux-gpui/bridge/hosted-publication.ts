@@ -1,8 +1,11 @@
+import { isOwnedTerminalReplicaRow } from "../../../packages/core/src/terminal-replica-owned-row.ts";
 import { MAX_COMPACT_CELLS, MAX_COMPACT_GRAPHEME_BYTES } from "./compact-snapshot.ts";
 import type { HostedLiveEvent } from "./hosted-live-types.ts";
 import { z } from "zod";
 import {
   TerminalReplicaSnapshotSchemaZ,
+  TerminalReplicaRowSchemaZ,
+  type TerminalReplicaRow,
   type TerminalReplicaSnapshot,
 } from "../../../packages/contracts/src/terminal-replica.ts";
 import {
@@ -20,15 +23,10 @@ const imageMetadata = TerminalGraphicsBlobSchemaZ.extend({
 /** Keep the existing snapshot validation while retaining immutable replica row identity. */
 export function createHostedSurfaceValidator() {
   const bounds = createSnapshotBounds();
-  const validated = new WeakSet<object>();
   return (value: unknown) => {
     return envelope.parse(value).map(({ paneId, snapshot }) => {
       if (!snapshot || typeof snapshot !== "object") throw Error("Invalid hosted snapshot");
-      if (!validated.has(snapshot)) {
-        bounds(snapshot as TerminalReplicaSnapshot);
-        TerminalReplicaSnapshotSchemaZ.parse(snapshot);
-        validated.add(snapshot);
-      }
+      bounds(snapshot as TerminalReplicaSnapshot);
       return { paneId, snapshot: snapshot as TerminalReplicaSnapshot };
     });
   };
@@ -45,11 +43,38 @@ export function validateHostedImage(value: KittyImageBytes) {
   return { metadata, bytes };
 }
 
-// Preserve the compact helper's per-snapshot limits before retaining typed state.
+const snapshotMetadata = TerminalReplicaSnapshotSchemaZ.omit({ grid: true, history: true });
+type RowBounds = Readonly<{ width: number; graphemeBytes: number }>;
+
+// Only core-owned immutable data rows earn cache reuse. Object.freeze on a foreign
+// object does not prove ownership (it may contain getters or mutable nested cells).
+// Public mutable snapshots/rows are checked again on every call; snapshot identity
+// never bypasses current metadata, row widths, or aggregate history budgets.
 function createSnapshotBounds() {
-  const known = new WeakSet<object>();
+  const knownRows = new WeakMap<TerminalReplicaRow, RowBounds>();
+  function rowBounds(row: TerminalReplicaRow): RowBounds {
+    const owned = isOwnedTerminalReplicaRow(row);
+    const cached = owned ? knownRows.get(row) : undefined;
+    if (cached) return cached;
+    if (!row || !Array.isArray(row.cells) || row.cells.length > MAX_COMPACT_CELLS)
+      throw Error("Hosted snapshot row exceeds bounds");
+    // Parse only a changed/untrusted row, never clone the whole grid/history.
+    const parsed = TerminalReplicaRowSchemaZ.parse(row);
+    let graphemeBytes = 0;
+    for (const cell of parsed.cells) {
+      graphemeBytes += Buffer.byteLength(cell.grapheme);
+      if (graphemeBytes > MAX_COMPACT_GRAPHEME_BYTES)
+        throw Error("Hosted snapshot text exceeds bounds");
+    }
+    const result = { width: parsed.cells.length, graphemeBytes };
+    if (owned) knownRows.set(row, result);
+    return result;
+  }
   return (snapshot: TerminalReplicaSnapshot) => {
-    if (known.has(snapshot)) return;
+    const metadata = Object.fromEntries(
+      Object.entries(snapshot).filter(([key]) => key !== "grid" && key !== "history"),
+    );
+    snapshotMetadata.parse(metadata);
     if (
       !Number.isSafeInteger(snapshot.cols) ||
       !Number.isSafeInteger(snapshot.rows) ||
@@ -64,19 +89,17 @@ function createSnapshotBounds() {
     )
       throw Error("Hosted snapshot dimensions exceed bounds");
     let bytes = 0;
-    for (const row of [...snapshot.grid, ...snapshot.history]) {
-      if (row.cells.length !== snapshot.cols) throw Error("Hosted snapshot row width mismatch");
-      for (const cell of row.cells) {
-        bytes += Buffer.byteLength(cell.grapheme);
+    for (const rows of [snapshot.grid, snapshot.history]) {
+      for (const row of rows) {
+        const measured = rowBounds(row);
+        if (measured.width !== snapshot.cols) throw Error("Hosted snapshot row width mismatch");
+        // Count occurrences, not distinct identities: history may repeat a cached row.
+        bytes += measured.graphemeBytes;
         if (bytes > MAX_COMPACT_GRAPHEME_BYTES) throw Error("Hosted snapshot text exceeds bounds");
       }
     }
-    const { grid: _, history: __, ...metadata } = snapshot;
-    void _;
-    void __;
     if (Buffer.byteLength(JSON.stringify(metadata)) > 8 * 1024 * 1024)
       throw Error("Hosted snapshot metadata exceeds bounds");
-    known.add(snapshot);
   };
 }
 export function createHostedPublicationBounds() {
