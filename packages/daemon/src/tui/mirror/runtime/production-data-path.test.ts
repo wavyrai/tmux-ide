@@ -474,13 +474,26 @@ describe("production OpenTUI v2 data path", () => {
         /from\s*["'][^"']*(?:tui\/|application-machine-authority)/u,
       );
     }
+    // Retained agent admission is a pure identity check; the selection waiter
+    // owns only a bounded observation deadline, never transport or input.
+    const selectionRecoveryHelpers = [
+      "application-retained-agent.ts",
+      "terminal-selection-waiter.ts",
+    ].map((name) => `packages/daemon/src/tui/mirror/runtime/${name}`);
+    for (const path of selectionRecoveryHelpers) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /node:|\b(?:fetch|dispatch|sendInput|requestAuthority|createWorkspaceClient|createTerminalFastLane|openSshDaemonTransport|setInterval)\s*\(/u,
+      );
+    }
     expect(authorityDataPathFiles.length).toBeLessThanOrEqual(
       154 +
         sharedFleetOwners.length +
         learningModules.length +
         inputHelpers.length +
         teamPresentationHelpers.length +
-        remoteCommandHelpers.length,
+        remoteCommandHelpers.length +
+        selectionRecoveryHelpers.length,
     );
   });
 });
