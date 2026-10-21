@@ -267,6 +267,24 @@ legacyTest("refuses redirected backup directory and retains original app", (t) =
   assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   assert.deepEqual(readdirSync(elsewhere), []);
 });
+legacyTest("rechecks legacy identity immediately before moving the bundle", (t) => {
+  const boundary = 'const backup=fs.mkdtempSync(path.join(backups,"legacy-"));';
+  const foreignPlist =
+    '<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.foreign</string></dict></plist>';
+  const fault = source.replace(
+    boundary,
+    boundary +
+      `fs.writeFileSync(path.join(entry,"Contents/Info.plist"),${JSON.stringify(foreignPlist)});`,
+  );
+  assert.notEqual(fault, source);
+  const f = fixture(t, undefined, fault);
+  oldApp(f);
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.equal(readFileSync(join(entry(f), "Contents/Info.plist"), "utf8"), foreignPlist);
+  assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
+  assert.deepEqual(readdirSync(backups(f)), []);
+});
 legacyTest("failed backend leaves legacy bundle untouched", (t) => {
   const f = fixture(t);
   oldApp(f);
