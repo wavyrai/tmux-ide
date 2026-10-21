@@ -72,6 +72,8 @@ function createSnapshotBounds() {
       }
     }
     const { grid: _, history: __, ...metadata } = snapshot;
+    void _;
+    void __;
     if (Buffer.byteLength(JSON.stringify(metadata)) > 8 * 1024 * 1024)
       throw Error("Hosted snapshot metadata exceeds bounds");
     known.add(snapshot);

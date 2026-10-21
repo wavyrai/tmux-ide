@@ -1712,7 +1712,7 @@ async function openPane(
     });
     const validateSurfaces = createHostedSurfaceValidator();
     // Both transports enter the same envelope/authority/presentation validation.
-    function applyChildPublication(event: any, sameTail = false, typed = false): boolean {
+    function applyChildPublication(value: unknown, sameTail = false, typed = false): boolean {
       if (
         stopped ||
         request !== token ||
@@ -1723,10 +1723,15 @@ async function openPane(
         return false;
       let publicationStage = "envelope";
       try {
-        do {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          throw new Error("Invalid child publication");
+        const event = value as Record<string, unknown>;
+        publication: {
           if (typed && "rawKittyImage" in event) {
             publicationStage = "graphics";
-            const { metadata, bytes } = validateHostedImage(event.rawKittyImage);
+            const { metadata, bytes } = validateHostedImage(
+              event.rawKittyImage as Parameters<typeof validateHostedImage>[0],
+            );
             kittyKnown.observeBytes(metadata, bytes.byteLength);
             if (nativeEncoding === "binary-rle-v1")
               writeOrdered(encodeBinaryImage(metadata, bytes));
@@ -1736,7 +1741,7 @@ async function openPane(
                   kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
                 }) + "\n",
               );
-            continue;
+            break publication;
           }
           if (event && typeof event === "object" && "kittyImageChunk" in event) {
             publicationStage = "graphics";
@@ -1746,11 +1751,12 @@ async function openPane(
               const { data, ...metadata } = chunk;
               writeOrdered(encodeBinaryImage(metadata, Buffer.from(data, "base64")));
             } else writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
-            continue;
+            break publication;
           }
           publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
+            typeof event.sequence !== "number" ||
             !Number.isSafeInteger(event.sequence) ||
             event.sequence <= childSequence ||
             (childConnection && event.connection !== childConnection)
@@ -1761,7 +1767,7 @@ async function openPane(
           childSequence = event.sequence;
           // Publications emitted before the helper applied a reselect describe the
           // previous pane's input, history and action identities.
-          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) continue;
+          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) break publication;
           reselecting = false;
           layouts = topologySchema.parse(event.layouts ?? []);
           if (catalogOnly) {
@@ -1996,6 +2002,8 @@ async function openPane(
           if (
             event.newWindowReceipt &&
             pendingNewWindow &&
+            typeof event.newWindowReceipt === "object" &&
+            "token" in event.newWindowReceipt &&
             event.newWindowReceipt.token === pendingNewWindow.token
           ) {
             const captured = pendingNewWindow;
@@ -2085,6 +2093,8 @@ async function openPane(
           if (
             event.paneSplitReceipt &&
             pendingPaneSplit &&
+            typeof event.paneSplitReceipt === "object" &&
+            "token" in event.paneSplitReceipt &&
             event.paneSplitReceipt.token === pendingPaneSplit.token
           ) {
             const split = pendingPaneSplit;
@@ -2208,7 +2218,12 @@ async function openPane(
                 retainedHistory.delete(retainedHistory.keys().next().value!);
             } else if (historyAnchor.state !== "restoring") retainedHistory.delete(anchorKey);
           }
-          appliedPresenceRevision = event.presenceRevision;
+          appliedPresenceRevision = z
+            .number()
+            .int()
+            .nonnegative()
+            .safe()
+            .parse(event.presenceRevision);
           const hasAuthority =
             !pendingClose &&
             foreground &&
@@ -2423,7 +2438,7 @@ async function openPane(
             };
           publicationStage = "publish";
           publish();
-        } while (false);
+        }
         return true;
       } catch {
         console.error(
