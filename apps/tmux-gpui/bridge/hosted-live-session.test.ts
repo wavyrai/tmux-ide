@@ -117,3 +117,32 @@ test("pre-aborted sessions do not connect; throw in publication is contained", a
   await other.done;
   assert.equal(other.failed, false);
 });
+
+test("command queue owns content before queued and capacity-waiting admission", async () => {
+  const queue = createHostedCommandQueue(1, 100);
+  const first = { kind: "key", data: { text: "a" } };
+  queue.send(first);
+  first.data.text = "mutated".repeat(1000);
+  const second = { kind: "key", data: { text: "b" } };
+  const waiting = queue.admit(second);
+  second.data.text = "changed";
+  const it = queue[Symbol.asyncIterator]();
+  assert.deepEqual((await it.next()).value, { kind: "key", data: { text: "a" } });
+  await waiting;
+  queue.end();
+  assert.deepEqual((await it.next()).value, { kind: "key", data: { text: "b" } });
+  assert.equal((await it.next()).done, true);
+  for (const value of [
+    undefined,
+    NaN,
+    new Date(),
+    { f: () => {} },
+    {
+      get key() {
+        return "x";
+      },
+    },
+  ]) {
+    assert.throws(() => createHostedCommandQueue().send(value), /Invalid/);
+  }
+});
