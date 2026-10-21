@@ -74,6 +74,16 @@ What keeps them correct and fast:
 `bridge/kitty-graphics-perf.mjs` drives `scripts/kitty-spike/emulate-client.py`
 through the product bridge path and times every image against its write.
 
+## Pixel geometry
+
+The native window reports rounded cell pixels with capability 103. Capability
+104 adds thousandths of a device pixel, so the patched tmux derives each pane's
+pixel dimensions without accumulating whole-cell rounding error. The pane's
+winsize and CSI 14t response use the precise dimensions; CSI 16t keeps integer
+cell dimensions. Older clients and servers retain the rounded fallback.
+Fractional cell metrics can still produce a one-pixel difference at a snapped
+pane edge; they avoid the multi-pixel drift from rounding every cell first.
+
 ## Programs inside panes
 
 - The patched tmux answers queries in order, so ordinary detection (`a=q`
@@ -88,9 +98,10 @@ through the product bridge path and times every image against its write.
 ## Limits
 
 - Cursor-anchored placements do not move the cursor, because tmux ignores
-  them, so following text can overlap the image. They drift after scrollback
-  trimming and are dropped by any capture reseed, including when a new window
-  attaches (verified by the smoke test).
+  them, so following text can overlap the image. Capture reseeds retain anchors
+  only while dimensions, buffer and history coordinates remain unchanged.
+  Resizes, history changes and actual terminal resets discard those anchors.
+  Placements extending beyond the visible pane are clipped.
 - Images live only in the daemon. They survive window reattach but not a
   daemon restart, after which placeholder cells paint blank.
 - When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet

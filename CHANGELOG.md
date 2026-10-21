@@ -7,7 +7,8 @@ All notable changes to this project will be documented in this file.
 - Let pane discovery settle across a concurrent window creation or split instead of rejecting a valid new pane after one changing inventory read.
 - Answer kitty graphics file and shared-memory probes with an unsupported-media response so clients fall back to inline images. Preserve placements across image redraws and apply root-frame edits.
 - Keep deflated image frames compressed until the native app decodes them off its UI thread, discard superseded redraws, and retain the last decoded frame while its replacement loads. Placeholder cells paint blank beneath transparent image pixels.
-- Report native cell dimensions to supported tmux servers so graphics clients can size their images for the display.
+- Report fractional native cell dimensions to supported tmux servers so graphics clients size their images without accumulated rounding error. Clip partially visible cursor images and retain anchors across capture reseeds only when their coordinates remain valid.
+- Bound legacy image decompression and enforce image-memory and placement limits after redraws.
 - Document graphics setup for existing shells and the distinction between an updated CLI and an older running tmux server.
 
 The native app is distributed separately. Existing tmux sessions are preserved.

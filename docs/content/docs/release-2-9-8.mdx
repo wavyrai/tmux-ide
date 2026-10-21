@@ -25,6 +25,11 @@ worker. Superseded frames are discarded, and the previous decoded image remains
 visible while the next frame loads. Transparent image regions no longer reveal
 placeholder glyphs underneath.
 
+Fractional cell dimensions reach the bundled tmux so graphics clients avoid
+accumulated rounding error on scaled displays. Cursor images are clipped at pane
+edges; capture reseeds keep their anchors only when dimensions and history
+coordinates are unchanged.
+
 These changes require the matching native app as well as the updated daemon.
 The terminal app does not display images. See [native alpha setup](/docs/native-alpha)
 for the supported build and installation command.
