@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -3126,5 +3127,72 @@ describe("PaneStreamAdmissionCoordinator", () => {
       shuttingDown: true,
     });
     expect(h.leaseManager.snapshot().leases).toHaveLength(0);
+  });
+});
+
+describe("legacy graphics decompression bounds", () => {
+  it.each([
+    { name: "matching pixels", width: 1, height: 1, length: 4, accepted: true },
+    {
+      name: "oversized inflated payload",
+      width: 1,
+      height: 1,
+      length: 1024 * 1024,
+      accepted: false,
+    },
+    { name: "truncated pixels", width: 1, height: 1, length: 3, accepted: false },
+    {
+      name: "image beyond legacy limit",
+      width: 4096,
+      height: 2049,
+      length: 4096 * 2049 * 4,
+      accepted: false,
+    },
+  ])("serves only exact bounded pixels: $name", async ({ width, height, length, accepted }) => {
+    const digest = "a".repeat(32);
+    const data = deflateSync(Buffer.alloc(length, 1));
+    const image = { imageId: 1, digest, width, height, format: "rgba-zlib" as const, data };
+    const h = harness({
+      openTerminalDelivery: async () => ({
+        negotiation: {
+          accepted: true as const,
+          negotiated: {
+            protocolVersion: 1 as const,
+            encoding: "semantic-v1" as const,
+            richPlacements: false,
+            generation: INSTANCE,
+            deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          },
+        },
+        ack: () => undefined,
+        nack: () => undefined,
+        setVisibility: () => undefined,
+        close: async () => undefined,
+        graphics: {
+          subscribe(listener) {
+            listener({
+              revision: 1,
+              images: [{ ...image, bytes: data.length, placeholder: null }],
+              placements: [],
+            });
+            return () => undefined;
+          },
+          image: () => image,
+        },
+      }),
+    });
+    const { socket } = await connect(h, { panes: ["pane.editor"], semanticDelivery: true });
+    socket.drainAll();
+    socket.message({ type: "terminal-graphics-request", pane: "pane.editor", digests: [digest] });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    h.scheduler.runDue();
+    const blobs = socket.framesOfType("terminal-graphics-blob");
+    socket.close();
+    expect(blobs).toHaveLength(accepted ? 1 : 0);
+    if (accepted) {
+      expect(blobs[0]).toMatchObject({ blob: { total: 4, format: "rgba" } });
+      expect(Buffer.from(blobs[0]!.data as string, "base64")).toEqual(Buffer.alloc(4, 1));
+    }
+    socket.close();
   });
 });

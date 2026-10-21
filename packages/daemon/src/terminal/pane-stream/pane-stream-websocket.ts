@@ -1861,12 +1861,18 @@ export class PaneStreamLiveConnection {
           if (entry.digest === digest) channel.graphicsServed.set(entry.imageId, digest);
         const raw = !channel.graphicsZlib && image.format.endsWith("-zlib");
         let data: Uint8Array = image.data;
-        if (raw)
+        if (raw) {
+          const expected = image.width * image.height * (image.format === "rgba-zlib" ? 4 : 3);
+          if (expected < 1 || expected > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES) continue;
           try {
-            data = inflateSync(image.data);
+            data = inflateSync(image.data, { maxOutputLength: expected });
           } catch {
             continue;
           }
+          if (data.byteLength !== expected) continue;
+        }
+        if (!channel.graphicsZlib && data.byteLength > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES)
+          continue;
         const format = raw ? (image.format === "rgba-zlib" ? "rgba" : "rgb") : image.format;
         const total = data.byteLength;
         for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
