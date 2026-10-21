@@ -7,6 +7,7 @@ import {
   createKittyGraphicsReceiver,
   createKnownDigests,
   parseKnownDigests,
+  MAX_HELD_DIGESTS,
 } from "./kitty-graphics.ts";
 
 const digest = "a".repeat(32);
@@ -174,4 +175,38 @@ test("precise pixels are negotiated independently of rounded cell pixels", () =>
   assert.equal(receiver.takesPreciseCellPixels(), false);
   receiver.state("p", { ...state, cellPixels: true, preciseCellPixels: true });
   assert.equal(receiver.takesPreciseCellPixels(), true);
+});
+
+test("live held digests stay bounded across redraws and forgotten images can recover", () => {
+  const requests: string[][] = [];
+  const receiver = createKittyGraphicsReceiver({
+    known: [digest],
+    request: (_pane, digests) => requests.push(digests),
+    emit: () => {},
+  });
+  receiver.state("p", state);
+  const snapshot = snapshotWithPlaceholder();
+  receiver.placements("p", snapshot);
+  assert.equal(requests.length, 0);
+  for (let index = 0; index < MAX_HELD_DIGESTS; index++) {
+    receiver.blob(
+      "p",
+      {
+        digest: index.toString(16).padStart(32, "0"),
+        format: "png",
+        width: 1,
+        height: 1,
+        total: 1,
+        offset: 0,
+      },
+      new Uint8Array([0]),
+    );
+  }
+  receiver.placements("p", snapshot);
+  assert.deepEqual(requests, [[digest]]);
+  receiver.placements("p", snapshot);
+  assert.equal(requests.length, 1);
+  receiver.missing([digest]);
+  receiver.placements("p", snapshot);
+  assert.deepEqual(requests, [[digest], [digest]]);
 });

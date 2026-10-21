@@ -21,6 +21,8 @@ import { contentRect } from "./window-canvas.ts";
 /** Digests the native window already holds, handed to each new pane helper. */
 export const KITTY_KNOWN_ENV = "TMUX_IDE_KITTY_KNOWN";
 export const MAX_KNOWN_DIGESTS = 2048;
+// Covers 24 panes × 256 visible placements plus the inherited native cache.
+export const MAX_HELD_DIGESTS = 8192;
 
 /**
  * A placement as the window sees it. `image` names the program's image (pane
@@ -83,11 +85,17 @@ export function createKittyGraphicsReceiver(options: {
   // Image ids each pane's last publication showed.
   const visible = new Map<string, Set<number>>();
   // Digests the window holds or that are in flight to it.
-  const held = new Set(options.known);
+  const held = new Set<string>();
+  const remember = (digest: string) => {
+    held.delete(digest);
+    held.add(digest);
+    while (held.size > MAX_HELD_DIGESTS) held.delete(held.values().next().value!);
+  };
+  for (const digest of options.known) remember(digest);
   const pull = (pane: string, digests: Iterable<string>) => {
     const missing = [...new Set(digests)].filter((digest) => !held.has(digest));
     if (missing.length === 0) return;
-    for (const digest of missing) held.add(digest);
+    for (const digest of missing) remember(digest);
     options.request(pane, missing);
   };
   const imageKey = (pane: string, imageId: number) => `${pane}#${imageId}`;
@@ -120,7 +128,7 @@ export function createKittyGraphicsReceiver(options: {
     },
     blob(pane: string, blob: TerminalGraphicsBlob, bytes: Uint8Array): void {
       // The daemon pushes redrawn images unasked; never request them again.
-      held.add(blob.digest);
+      remember(blob.digest);
       const image = states.get(pane)?.images.find((entry) => entry.digest === blob.digest);
       options.emit(
         JSON.stringify({
@@ -168,6 +176,8 @@ export function createKittyGraphicsReceiver(options: {
     },
     retire(): void {
       states.clear();
+      visible.clear();
+      held.clear();
     },
   };
 }
