@@ -149,6 +149,7 @@ export interface PaneStreamMirror {
   describeSession(session: string): Promise<MirrorSessionDescription>;
   describeSessionAuthority?(
     session: string,
+    expectedSemanticPaneIds?: readonly string[],
   ): Promise<{ readonly description: MirrorSessionDescription; readonly runtimeSessionId: string }>;
   subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
   subscribeLayout?(
@@ -493,7 +494,10 @@ export class PaneStreamAdmissionCoordinator {
       try {
         const describeStartedAtMicros = trace ? this.#observability!.nowMicros() : 0;
         if (this.#mirror.describeSessionAuthority) {
-          const authority = await this.#mirror.describeSessionAuthority(context.sessionName);
+          const authority = await this.#mirror.describeSessionAuthority(
+            context.sessionName,
+            request.panes,
+          );
           described = authority.description;
           runtimeSessionId = authority.runtimeSessionId;
         } else {

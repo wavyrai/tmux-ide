@@ -237,14 +237,31 @@ export class MirrorService {
     }
   }
 
-  async describeSessionAuthority(session: string): Promise<{
+  async describeSessionAuthority(
+    session: string,
+    expectedSemanticPaneIds?: readonly string[],
+  ): Promise<{
     readonly description: MirrorSessionDescription;
     readonly runtimeSessionId: string;
   }> {
     const entry = await this.acquire(session);
     try {
       const identity = await entry.channel.attachedSessionIdentity();
-      return { description: entry.channel.describe(), runtimeSessionId: identity.runtimeSessionId };
+      let description = entry.channel.describe();
+      if (
+        expectedSemanticPaneIds?.some(
+          (id) => !description.panes.some((pane) => pane.semanticPaneId === id),
+        )
+      ) {
+        // A mutation receipt and fresh catalog can precede debounced mirror
+        // discovery. Join the verified native inventory before declaring a
+        // requested pane absent; never substitute receipt IDs for tmux truth.
+        await entry.channel.describeTrustedInventory(identity.runtimeSessionId, true);
+        description = entry.channel.describe();
+      }
+      if (this.disposed || entry.retired || this.channels.get(session) !== entry)
+        throw new Error("Mirror authority retired during description");
+      return { description, runtimeSessionId: identity.runtimeSessionId };
     } finally {
       this.release(session, entry);
     }

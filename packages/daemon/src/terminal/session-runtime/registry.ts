@@ -896,13 +896,16 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return result;
   }
 
-  async describeSessionAuthority(session: string): Promise<{
+  async describeSessionAuthority(
+    session: string,
+    expectedSemanticPaneIds?: readonly string[],
+  ): Promise<{
     readonly description: MirrorSessionDescription;
     readonly runtimeSessionId: string;
   }> {
     const runtime = this.#runtime(session);
     await runtime.whenReady();
-    const authority = await this.#mirror.describeSessionAuthority(session);
+    const authority = await this.#mirror.describeSessionAuthority(session, expectedSemanticPaneIds);
     if (this.#disposed || this.#sessions.get(session) !== runtime) {
       const error = new Error(`session runtime ${session} changed topology`);
       error.name = "MirrorTopologyChangedError";
