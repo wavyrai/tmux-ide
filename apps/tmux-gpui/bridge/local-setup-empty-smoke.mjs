@@ -403,10 +403,7 @@ try {
     inputVerified = true;
   } else {
     await until(
-      () =>
-        runningObserved &&
-        latest?.home?.phase === "live" &&
-        latest.localSessionCreate,
+      () => runningObserved && latest?.home?.phase === "live" && latest.localSessionCreate,
     );
     assert.ok(await readRecord());
     await verify(record);
