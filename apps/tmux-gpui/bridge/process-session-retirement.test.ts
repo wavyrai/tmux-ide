@@ -16,9 +16,12 @@ test("retirement revokes immediately then flushes pending final state through re
   });
   let blocked = !output.write("old");
   let pending = "";
+  const ordered = ["image"];
   // Same ordering as live.ts: its queue listener runs before retirement's drain listener.
   output.on("drain", () => {
     blocked = false;
+    while (ordered.length && !blocked) blocked = !output.write(ordered.shift()!);
+    if (blocked) return;
     if (pending) {
       const value = pending;
       pending = "";
@@ -44,7 +47,10 @@ test("retirement revokes immediately then flushes pending final state through re
   assert.deepEqual(events, ["revoke", "unavailable"]);
   await new Promise((resolve) => setImmediate(resolve));
   writes.shift()!();
-  assert.deepEqual(chunks, ["old", "unavailable"]);
+  assert.deepEqual(chunks, ["old", "image"]);
+  assert.equal(output.writableEnded, false);
+  writes.shift()!();
+  assert.deepEqual(chunks, ["old", "image", "unavailable"]);
   assert.equal(output.writableEnded, false);
   writes.shift()!();
   await done;
