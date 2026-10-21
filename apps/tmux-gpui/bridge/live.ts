@@ -1,4 +1,5 @@
 import { COMPACT_HELPER_ENV, createSnapshotSerializer } from "./snapshot-wire.ts";
+import { createProcessSessionRetirement } from "./process-session-retirement.ts";
 import { createSelectionIdentity } from "./selection-identity.ts";
 import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { z } from "zod";
@@ -363,29 +364,51 @@ process.stdout.on("drain", () => {
     blocked = !process.stdout.write(line);
   }
 });
+const retirement = createProcessSessionRetirement({
+  output: process.stdout,
+  blocked: () => blocked,
+  unavailable: () => output(null),
+  revoke: () => {
+    stopped = true;
+    // A faulty disposer must not leave a later authority/resource alive.
+    const failures: unknown[] = [];
+    for (const release of [
+      () => inputPipeline.retire(),
+      () => resizeGesture?.retire(),
+      () => splitReader?.dispose(),
+      () => splitGesture?.retire(),
+      () => historyRestoration?.dispose(),
+      () => disposeClient?.(),
+      () => runtime?.close(),
+      () => {
+        if (interactive) process.stdin.destroy();
+      },
+      ...[...replicas.values()].map((replica) => () => replica.retire()),
+    ]) {
+      try {
+        release();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    surfaces.clear();
+    lifetimes.clear();
+    if (failures.length) throw new AggregateError(failures, "Session revocation failed");
+  },
+  close: () => {
+    process.off("SIGTERM", stop);
+    process.off("SIGINT", stop);
+  },
+  failed: () => {
+    process.exitCode = 1;
+  },
+});
 function stop() {
-  if (stopped) return;
-  stopped = true;
-  inputPipeline.retire();
-  resizeGesture?.retire();
-  splitReader?.dispose();
-  splitGesture?.retire();
-  historyRestoration?.dispose();
-  disposeClient?.();
-  runtime?.close();
-  if (interactive) process.stdin.destroy();
-  for (const replica of replicas.values()) replica.retire();
-  surfaces.clear();
-  lifetimes.clear();
-  output(null);
-  // Flush the final unavailable state even if the native reader was slow.
-  const finish = () => process.stdout.end();
-  if (blocked) process.stdout.once("drain", finish);
-  else finish();
+  void retirement.dispose();
 }
 process.stdout.on("error", () => {
-  runtime?.close();
   process.exitCode = 1;
+  void retirement.dispose("output-failed");
 });
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
