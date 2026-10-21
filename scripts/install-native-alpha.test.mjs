@@ -173,6 +173,8 @@ function entry(f) {
 function target(f) {
   return join(f.home, "Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app");
 }
+// Legacy bundle ownership is read by the macOS system plist parser.
+const legacyTest = process.platform === "darwin" ? test : test.skip;
 function oldApp(f, id = "com.tmux-ide.gpui.alpha") {
   mkdirSync(join(entry(f), "Contents"), { recursive: true });
   writeFileSync(
@@ -185,30 +187,33 @@ function backups(f) {
   return join(f.home, "Library/Application Support/tmux-ide/native-alpha/app-backups");
 }
 for (const args of [[], ["--update"]]) {
-  test(`migrates owned legacy bundle on ${args[0] || "install"} and retains a unique backup`, (t) => {
-    const f = fixture(t);
-    oldApp(f);
-    mkdirSync(join(backups(f), "existing"), { recursive: true });
-    writeFileSync(join(backups(f), "existing/marker"), "previous backup");
-    const result = f.run(args);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(readlinkSync(entry(f)), target(f));
-    const saved = readdirSync(backups(f)).filter((name) => name !== "existing");
-    assert.equal(saved.length, 1);
-    assert.equal(
-      readFileSync(join(backups(f), saved[0], "Tmux IDE Alpha.app/marker"), "utf8"),
-      "old app retained",
-    );
-    assert.equal(readFileSync(join(backups(f), "existing/marker"), "utf8"), "previous backup");
-    assert.match(result.stdout, /Previous app retained at:/);
-  });
+  legacyTest(
+    `migrates owned legacy bundle on ${args[0] || "install"} and retains a unique backup`,
+    (t) => {
+      const f = fixture(t);
+      oldApp(f);
+      mkdirSync(join(backups(f), "existing"), { recursive: true });
+      writeFileSync(join(backups(f), "existing/marker"), "previous backup");
+      const result = f.run(args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readlinkSync(entry(f)), target(f));
+      const saved = readdirSync(backups(f)).filter((name) => name !== "existing");
+      assert.equal(saved.length, 1);
+      assert.equal(
+        readFileSync(join(backups(f), saved[0], "Tmux IDE Alpha.app/marker"), "utf8"),
+        "old app retained",
+      );
+      assert.equal(readFileSync(join(backups(f), "existing/marker"), "utf8"), "previous backup");
+      assert.match(result.stdout, /Previous app retained at:/);
+    },
+  );
 }
 for (const id of [
   "xom.tmux-ide.gpui.alpha",
   "com.tmux-ide.Xpui.alpha",
   "com.tmux-ide.gpui.alphX",
 ]) {
-  test(`refuses legacy bundle with foreign identifier ${id}`, (t) => {
+  legacyTest(`refuses legacy bundle with foreign identifier ${id}`, (t) => {
     const f = fixture(t);
     oldApp(f, id);
     assert.notEqual(f.run().status, 0);
@@ -216,7 +221,7 @@ for (const id of [
     assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   });
 }
-test("migrates an owned legacy bundle with a binary plist", (t) => {
+legacyTest("migrates an owned legacy bundle with a binary plist", (t) => {
   const f = fixture(t);
   oldApp(f);
   assert.equal(
@@ -227,7 +232,7 @@ test("migrates an owned legacy bundle with a binary plist", (t) => {
   assert.equal(f.run().status, 0);
   assert.equal(readlinkSync(entry(f)), target(f));
 });
-test("refuses redirected legacy metadata", (t) => {
+legacyTest("refuses redirected legacy metadata", (t) => {
   const f = fixture(t);
   oldApp(f);
   const plist = join(entry(f), "Contents/Info.plist");
@@ -238,7 +243,7 @@ test("refuses redirected legacy metadata", (t) => {
   assert.notEqual(f.run().status, 0);
   assert.ok(!existsSync(f.downloads));
 });
-test("refuses redirected backup directory and retains original app", (t) => {
+legacyTest("refuses redirected backup directory and retains original app", (t) => {
   const f = fixture(t);
   oldApp(f);
   const elsewhere = join(f.root, "foreign-backups");
@@ -249,7 +254,7 @@ test("refuses redirected backup directory and retains original app", (t) => {
   assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   assert.deepEqual(readdirSync(elsewhere), []);
 });
-test("failed backend leaves legacy bundle untouched", (t) => {
+legacyTest("failed backend leaves legacy bundle untouched", (t) => {
   const f = fixture(t);
   oldApp(f);
   assert.notEqual(f.run([], { TEST_INSTALL_EXIT: "9" }).status, 0);
@@ -257,7 +262,7 @@ test("failed backend leaves legacy bundle untouched", (t) => {
   assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   assert.ok(!existsSync(backups(f)));
 });
-test("failed Applications link creation restores legacy bundle", (t) => {
+legacyTest("failed Applications link creation restores legacy bundle", (t) => {
   // Inject only the filesystem failure at the final link creation boundary.
   const fault = source.replaceAll(
     "fs.symlinkSync(target,entry)",
@@ -271,27 +276,30 @@ test("failed Applications link creation restores legacy bundle", (t) => {
   assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   assert.deepEqual(readdirSync(backups(f)), []);
 });
-test("failed link creation preserves a newly appeared foreign entry and reports the backup", (t) => {
-  const fault = source.replaceAll(
-    "fs.symlinkSync(target,entry)",
-    '(()=>{fs.mkdirSync(entry);throw new Error("entry appeared")})()',
-  );
-  assert.notEqual(fault, source);
-  const f = fixture(t, undefined, fault);
-  oldApp(f);
-  const result = f.run();
-  assert.notEqual(result.status, 0);
-  assert.deepEqual(readdirSync(entry(f)), []);
-  const saved = readdirSync(backups(f));
-  assert.equal(saved.length, 1);
-  assert.equal(
-    readFileSync(join(backups(f), saved[0], "Tmux IDE Alpha.app/marker"), "utf8"),
-    "old app retained",
-  );
-  assert.match(result.stderr, /Previous app retained at:/);
-});
+legacyTest(
+  "failed link creation preserves a newly appeared foreign entry and reports the backup",
+  (t) => {
+    const fault = source.replaceAll(
+      "fs.symlinkSync(target,entry)",
+      '(()=>{fs.mkdirSync(entry);throw new Error("entry appeared")})()',
+    );
+    assert.notEqual(fault, source);
+    const f = fixture(t, undefined, fault);
+    oldApp(f);
+    const result = f.run();
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(readdirSync(entry(f)), []);
+    const saved = readdirSync(backups(f));
+    assert.equal(saved.length, 1);
+    assert.equal(
+      readFileSync(join(backups(f), saved[0], "Tmux IDE Alpha.app/marker"), "utf8"),
+      "old app retained",
+    );
+    assert.match(result.stderr, /Previous app retained at:/);
+  },
+);
 for (const args of [["--rollback"], ["--uninstall"]]) {
-  test(`does not migrate a legacy bundle during ${args[0]}`, (t) => {
+  legacyTest(`does not migrate a legacy bundle during ${args[0]}`, (t) => {
     const f = fixture(t);
     oldApp(f);
     assert.notEqual(f.run(args).status, 0);
