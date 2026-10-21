@@ -4,14 +4,14 @@ use super::*;
 const MAX_CELLS: usize = 262_144;
 const MAX_GRAPHEMES: usize = 8 * 1024 * 1024;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(untagged)]
-enum WireRow {
+pub(super) enum WireRow {
     Compact((bool, Vec<Run>)),
     Legacy(Row),
 }
-#[derive(Deserialize)]
-struct Run(u32, String, u8, u32, u32, u8);
+#[derive(Clone, Deserialize)]
+pub(super) struct Run(u32, String, u8, u32, u32, u8);
 
 fn color(value: u32) -> Result<Color, Error> {
     match value {
@@ -26,6 +26,10 @@ fn color(value: u32) -> Result<Color, Error> {
 
 pub(super) fn frame(bytes: &[u8]) -> Result<(FrameData, Option<PointerModes>), Error> {
     let snapshot: Snapshot<WireRow> = serde_json::from_slice(bytes)?;
+    convert(expand_snapshot(snapshot)?)
+}
+
+pub(super) fn expand_snapshot(snapshot: Snapshot<WireRow>) -> Result<Snapshot, Error> {
     let compact = matches!(snapshot.encoding, Encoding::RleV1);
     let cols = usize::from(snapshot.cols);
     let total_rows = snapshot
@@ -99,7 +103,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<(FrameData, Option<PointerModes>), E
             })
             .collect()
     }
-    convert(Snapshot {
+    Ok(Snapshot {
         encoding: Encoding::Legacy,
         cols: snapshot.cols,
         rows: snapshot.rows,
@@ -115,3 +119,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<(FrameData, Option<PointerModes>), E
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn empty_row(cols: u16) -> WireRow {
+    WireRow::Compact((false, vec![Run(u32::from(cols), String::new(), 1, 0, 0, 0)]))
+}

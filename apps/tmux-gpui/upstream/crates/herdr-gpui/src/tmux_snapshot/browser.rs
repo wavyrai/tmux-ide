@@ -203,6 +203,14 @@ struct RetainedPreview {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(super) enum Command {
+    #[serde(rename = "frame-resync")]
+    FrameResync {
+        connection: String,
+        request: u64,
+        epoch: String,
+        #[serde(rename = "baseSeq")]
+        base_seq: u64,
+    },
     #[serde(rename = "open-workspace-fleet-agent", rename_all = "camelCase")]
     OpenWorkspaceFleetAgent {
         request: u64,
@@ -419,6 +427,11 @@ pub(super) struct Bridge {
 }
 #[derive(Default)]
 struct Reader {
+    delta: bool,
+    frames: decode::delta::Store,
+    frame_identity: Option<(u64, Option<String>, Option<String>, u32)>,
+    resync_epoch: Option<String>,
+    resync: Option<Command>,
     connection: Option<String>,
     sequence: u64,
     request: u64,
@@ -616,10 +629,53 @@ impl Reader {
         {
             return Err(Error::Invalid("invalid browser state"));
         }
+        if p.history_offset > 1000
+            || (p.history_offset > 0
+                && (p.snapshot.is_none()
+                    || p.selected_pane.is_none()
+                    || p.input_ready
+                    || surface != Surface::Workspace))
+        {
+            return Err(Error::Invalid("invalid history offset"));
+        }
+        let delta = self.delta;
+        let identity = (
+            p.request,
+            p.selected_session.clone(),
+            p.selected_pane.clone(),
+            p.history_offset,
+        );
+        let mut prepared = None;
+        let mut recovery = None;
+        let empty_store = decode::delta::Store::default();
+        let frame_store = if self.frame_identity.as_ref() == Some(&identity) {
+            &self.frames
+        } else {
+            &empty_store
+        };
         let (frame, pointer_modes) = match (&p.snapshot, &p.retained_preview) {
             (Some(live), _) => {
-                let (frame, modes) = decode::live_frame(live.get().as_bytes())?;
-                (Some(Arc::new(frame)), modes)
+                if delta {
+                    match frame_store.prepare(live.get().as_bytes())? {
+                        decode::delta::Outcome::Ready(next) => {
+                            let frame = next.frame.clone();
+                            let modes = next.modes;
+                            prepared = Some(next);
+                            (Some(frame), modes)
+                        }
+                        decode::delta::Outcome::Resync {
+                            epoch,
+                            base_seq,
+                            frame,
+                        } => {
+                            recovery = Some((epoch, base_seq));
+                            (Some(Arc::new(frame)), None)
+                        }
+                    }
+                } else {
+                    let (frame, modes) = decode::live_frame(live.get().as_bytes())?;
+                    (Some(Arc::new(frame)), modes)
+                }
             }
             (None, Some(preview)) => (
                 Some(Arc::new(decode::frame(preview.snapshot.get().as_bytes())?)),
@@ -644,15 +700,6 @@ impl Reader {
         }) {
             return Err(Error::Invalid("invalid copy region"));
         }
-        if p.history_offset > 1000
-            || (p.history_offset > 0
-                && (frame.is_none()
-                    || p.selected_pane.is_none()
-                    || p.input_ready
-                    || surface != Surface::Workspace))
-        {
-            return Err(Error::Invalid("invalid history offset"));
-        }
         if p.split_layout.as_ref().is_some_and(|layout| {
             !p.input_ready
                 || !layout.matches(
@@ -665,6 +712,17 @@ impl Reader {
         }) {
             return Err(Error::Invalid("Invalid split layout presentation"));
         }
+        if let Some((epoch, base_seq)) = recovery {
+            return Ok(self.recover(&p, epoch, base_seq));
+        }
+        if let Some(next) = prepared {
+            self.frames.commit(next);
+            self.resync_epoch = None;
+        } else {
+            self.frames.reset();
+            self.resync_epoch = None;
+        }
+        self.frame_identity = Some(identity);
         self.connection = Some(p.connection);
         self.sequence = p.sequence;
         self.request = p.request;
@@ -755,9 +813,14 @@ fn rejection_reason(error: &Error) -> &'static str {
 pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
+    let (commands, receiver) = mpsc::sync_channel::<Command>(32);
+    let recovery_commands = commands.clone();
     std::thread::spawn(move || {
         let mut input = BufReader::new(std::io::stdin().lock());
-        let mut reader = Reader::default();
+        let mut reader = Reader {
+            delta: std::env::var("TMUX_IDE_GUI_NATIVE_ENCODING").as_deref() == Ok("rle-delta-v1"),
+            ..Reader::default()
+        };
         loop {
             let mut line = Vec::new();
             let count = input
@@ -781,7 +844,21 @@ pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
             let state = match count {
                 Ok(n) if n > 0 && n <= 8 * 1024 * 1024 && line.last() == Some(&b'\n') => {
                     match reader.accept(&line) {
-                        Ok(state) => Some(state),
+                        Ok(state) => {
+                            if let Some(command) = reader.resync.take() {
+                                // Revoke authority before a backpressured command enqueue can wait.
+                                if let Ok(mut slot) = incoming.lock() {
+                                    *slot = Some(Some(state.clone()));
+                                }
+                                if recovery_commands.send(command).is_err() {
+                                    if let Ok(mut slot) = incoming.lock() {
+                                        *slot = Some(None);
+                                    }
+                                    break;
+                                }
+                            }
+                            Some(state)
+                        }
                         Err(error) => {
                             // JSON errors can contain terminal content or identifiers.
                             // Only static validation reasons are safe to report.
@@ -822,7 +899,6 @@ pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
             }
         }
     });
-    let (commands, receiver) = mpsc::sync_channel::<Command>(32);
     std::thread::spawn(move || {
         let mut output = std::io::stdout().lock();
         for command in receiver {
@@ -909,3 +985,10 @@ mod selection_identity_tests;
 pub(super) fn fixture_state(bytes: &[u8]) -> Result<State, Error> {
     Reader::default().accept(bytes)
 }
+
+#[path = "browser_frame_recovery.rs"]
+mod frame_recovery;
+
+#[cfg(test)]
+#[path = "browser_frame_tests.rs"]
+mod frame_tests;

@@ -1,10 +1,10 @@
 //! Converts a tmux-ide TerminalReplicaSnapshot to the existing GPUI painter.
-//! Full snapshots only: this is NOT a replica protocol, authority, or patch owner.
+//! The worker codec validates complete frames; browser publication validation owns authority.
 use super::Error;
 use herdr_client::protocol::{CellData, CursorState, FrameData};
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Snapshot<R = Row> {
     #[serde(default)]
@@ -21,7 +21,7 @@ struct Snapshot<R = Row> {
     #[serde(default, rename = "kittyGraphics")]
     _kitty_graphics: Option<serde::de::IgnoredAny>,
 }
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 enum Encoding {
     #[default]
     #[serde(skip)]
@@ -31,14 +31,15 @@ enum Encoding {
 }
 
 mod compact;
+pub(super) mod delta;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Row {
     cells: Vec<Cell>,
     wrapped: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cell {
     grapheme: String,
@@ -47,14 +48,14 @@ struct Cell {
     background: Color,
     attributes: u8,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Color {
     Default,
     Indexed { index: u8 },
     Rgb { value: u32 },
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
     x: u16,
@@ -63,14 +64,14 @@ struct Cursor {
     style: CursorStyle,
     blink: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum CursorStyle {
     Block,
     Underline,
     Bar,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Modes {
     alternate_screen: bool,
@@ -102,19 +103,19 @@ pub(super) enum MouseEncoding {
     Sgr,
     SgrPixels,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Bootstrap {
     kind: BootstrapKind,
     hidden_state: HiddenState,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum BootstrapKind {
     PaintedCapture,
     AuthoritativeStream,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum HiddenState {
     Unknown,

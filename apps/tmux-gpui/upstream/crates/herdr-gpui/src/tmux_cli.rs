@@ -15,7 +15,7 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Some("--tmux-bridge-capabilities") if args.len() == 1 => {
-            println!(r#"{{"version":1,"snapshotEncodings":["rle-v1"]}}"#);
+            println!(r#"{{"version":1,"snapshotEncodings":["rle-v1","rle-delta-v1"]}}"#);
             return ExitCode::SUCCESS;
         }
         Some("--version") if args.len() == 1 => {
