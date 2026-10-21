@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.9
+
+- Preserve terminal pane dimensions when the native GUI loses focus or a viewer releases control. Background viewers still release input authority, and other attached tmux clients can take over sizing.
+
+Existing tmux sessions are preserved. Update the running daemon to use the fix; the native app is distributed separately.
+
 ## 2.9.8
 
 - Let pane discovery settle across a concurrent window creation or split instead of rejecting a valid new pane after one changing inventory read.

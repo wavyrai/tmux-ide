@@ -1422,7 +1422,7 @@ export class SessionChannel {
     this.fittedWindows.set(window.runtimeId, { cols, rows });
   }
 
-  /** Must also run on geometry-owner handoff, before the next owner fits. */
+  /** Remove scoped overrides when a fresh global viewport supersedes them. */
   clearWindowViewports(): void {
     if (!this.fittedWindows.size) return;
     this.input.flush();
@@ -1435,7 +1435,9 @@ export class SessionChannel {
 
   /** Toggle whether the retained control client participates in tmux sizing. */
   setGeometryParticipation(active: boolean): void {
-    if (!active) this.clearWindowViewports();
+    // Keep dormant per-window sizes while excluded. Even an ignored client's
+    // refresh-client -C window: clear can shrink a detached window to 80x24.
+    // Fresh viewport fits replace these sizes; a global fit clears them.
     if (this.geometryParticipating === active) return;
     this.geometryParticipating = active;
     this.input.flush();

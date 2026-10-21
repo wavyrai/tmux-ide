@@ -1304,7 +1304,6 @@ class SessionRuntime {
       scheduler,
       nativeGeometryHysteresisMs,
       onGeometryAuthorityChanged: (clientId) => {
-        this.#mirror.clearWindowViewports(this.session);
         this.#mirror.setGeometryParticipation(this.session, clientId !== null);
       },
       onNativeGeometryYieldExpired: () => this.#publishAuthority(),

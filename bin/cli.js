@@ -12665,7 +12665,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.8",
+      version: "2.9.9",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -30879,7 +30879,7 @@ var init_session_channel = __esm({
         this.io.send(`refresh-client -C ${window2.runtimeId}:${cols}x${rows}${this.cellPixelSuffix()}`);
         this.fittedWindows.set(window2.runtimeId, { cols, rows });
       }
-      /** Must also run on geometry-owner handoff, before the next owner fits. */
+      /** Remove scoped overrides when a fresh global viewport supersedes them. */
       clearWindowViewports() {
         if (!this.fittedWindows.size) return;
         this.input.flush();
@@ -30890,7 +30890,6 @@ var init_session_channel = __esm({
       }
       /** Toggle whether the retained control client participates in tmux sizing. */
       setGeometryParticipation(active2) {
-        if (!active2) this.clearWindowViewports();
         if (this.geometryParticipating === active2) return;
         this.geometryParticipating = active2;
         this.input.flush();
@@ -62558,7 +62557,6 @@ var init_registry2 = __esm({
           scheduler,
           nativeGeometryHysteresisMs,
           onGeometryAuthorityChanged: (clientId) => {
-            this.#mirror.clearWindowViewports(this.session);
             this.#mirror.setGeometryParticipation(this.session, clientId !== null);
           },
           onNativeGeometryYieldExpired: () => this.#publishAuthority()

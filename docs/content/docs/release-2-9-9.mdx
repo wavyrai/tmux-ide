@@ -1,0 +1,24 @@
+---
+title: tmux-ide 2.9.9
+metaTitle: "What's new in 2.9.9"
+description: "Keep terminal pane dimensions stable when the native app loses focus."
+---
+
+`2.9.9` fixes terminal panes shrinking when the native macOS app loses focus.
+
+## Stable terminal dimensions
+
+Switching to another app could reset a terminal to 80 columns by 24 rows. The
+daemon now retains the last accepted viewport while the viewer is inactive.
+Returning to the app preserves those dimensions, and resizing the window applies
+the new viewport normally.
+
+Background viewers still release input control. Another attached tmux client can
+take over sizing, and a new viewer can resize the terminal after taking control.
+
+## Updating
+
+Update the CLI and its running daemon to use the fix. Existing tmux sessions and
+the programs in their panes are preserved. The native app remains a separate
+installation. Use a [native build qualified for CLI 2.9.9](/docs/native-alpha):
+older builds may reject this CLI version during local setup.
