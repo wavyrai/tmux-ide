@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import type { Layout } from "./topology.ts";
-import { contentRect, surfacesSchema, windowCanvas } from "./window-canvas.ts";
+import { contentRect, surfacesSchema, createWindowCanvasComposer } from "./window-canvas.ts";
 
 type Surfaces = z.infer<typeof surfacesSchema>;
 type Region = { id: string; left: number; top: number; width: number; height: number };
@@ -69,6 +69,7 @@ function inspect(layout: Layout | undefined, selected: string, surfaces: Surface
 
 /** One instance per selected-pane helper lifetime; never carries state across reselect. */
 export function createWindowPresentation(selectedPaneId: string) {
+  const composer = createWindowCanvasComposer();
   let cached: { window: string; membership: string; value: WindowPresentation } | undefined;
   // Identical inputs (a status- or gesture-only publication) present the same frame object.
   let last:
@@ -105,6 +106,7 @@ export function createWindowPresentation(selectedPaneId: string) {
     if (!allowRetention) cached = undefined;
     const checked = inspect(layout, selectedPaneId, surfaces);
     if (!checked) {
+      composer.reset();
       cached = undefined;
       return null;
     }
@@ -113,7 +115,7 @@ export function createWindowPresentation(selectedPaneId: string) {
       cached.membership === checked.membership;
     if (!sameScope) cached = undefined;
     if (checked.skew) return allowRetention && sameScope ? cached!.value : null;
-    const snapshot = windowCanvas(checked.layout, selectedPaneId, surfaces);
+    const snapshot = composer.compose(checked.layout, selectedPaneId, surfaces);
     if (!snapshot) {
       cached = undefined;
       return null;

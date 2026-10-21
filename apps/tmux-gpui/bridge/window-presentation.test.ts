@@ -135,3 +135,24 @@ test("another instance and an initial skew cannot borrow an earlier coherent fra
   assert.ok(createWindowPresentation("right").update(layout(), surfaces(), true));
   assert.equal(createWindowPresentation("right").update(layout(3), surfaces(), true), null);
 });
+
+test("presentation reuses composed cells for cursor-only updates and fences invalid source", () => {
+  const owner = createWindowPresentation("right");
+  const firstSurfaces = surfaces();
+  const first = owner.update(layout(), firstSurfaces, true)!;
+  const nextSurfaces = firstSurfaces.map((surface) =>
+    surface.paneId === "right"
+      ? {
+          ...surface,
+          snapshot: { ...surface.snapshot, cursor: { ...surface.snapshot.cursor, x: 1 } },
+        }
+      : surface,
+  );
+  const next = owner.update(layout(), nextSurfaces, true)!;
+  assert.equal(next.snapshot.grid, first.snapshot.grid);
+  assert.equal(next.snapshot.cursor.x, 4);
+  assert.equal(owner.update(undefined, [], false), null);
+  const reset = owner.update(layout(), nextSurfaces, true)!;
+  assert.notEqual(reset.snapshot.grid, next.snapshot.grid);
+  assert.deepEqual(reset.snapshot, next.snapshot);
+});
