@@ -322,3 +322,6 @@ mod retained_preview;
 
 #[path = "terminal_links/native_fixture_tests.rs"]
 mod native_link_fixture_tests;
+
+#[path = "history_page_tests.rs"]
+mod history_page_tests;

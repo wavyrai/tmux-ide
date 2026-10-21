@@ -218,13 +218,27 @@ impl SnapshotView {
             && !key.modifiers.alt
             && !key.modifiers.platform
         {
-            let rows = self
-                .frame
-                .as_ref()
-                .map_or(1, |f| f.height.saturating_sub(1).min(1000)) as i16;
             let scroll = match key.key.as_str() {
-                "pageup" => Some(rows),
-                "pagedown" => Some(-rows),
+                "pageup" | "pagedown" => {
+                    // A page is the selected pane's painted content, excluding
+                    // sibling panes and status rows in the composed canvas.
+                    let region = self.browser_state.copy_region.as_ref().filter(|region| {
+                        self.browser_state.request == self.browser_request
+                            && super::hit_regions::is_painted(
+                                self.frame.as_ref(),
+                                self.painted_frame.as_ref(),
+                            )
+                            && self.frame.as_ref().is_some_and(|frame| {
+                                region.valid(frame, self.browser_state.selected_pane.as_deref())
+                            })
+                    });
+                    let Some(region) = region else {
+                        cx.stop_propagation();
+                        return;
+                    };
+                    let rows = region.height.saturating_sub(1).clamp(1, 1000) as i16;
+                    Some(if key.key == "pageup" { rows } else { -rows })
+                }
                 "end" => Some(0),
                 _ => None,
             };
