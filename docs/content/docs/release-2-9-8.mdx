@@ -1,0 +1,45 @@
+---
+title: tmux-ide 2.9.8
+metaTitle: "What's new in 2.9.8"
+description: "Reliable pane discovery and improved kitty graphics compatibility for the native macOS alpha."
+---
+
+`2.9.8` improves pane discovery after window creation and splitting, and updates
+the graphics path used by the separately distributed native macOS alpha.
+
+## New windows and splits
+
+A new window could appear in tmux while the native app reported that its pane was
+unavailable. Pane discovery now waits briefly for the new window's identity to
+settle, accepting it only after two consecutive inventory reads agree. A topology
+that keeps changing still fails safely.
+
+## Images in terminal panes
+
+The bundled tmux now refuses unsupported file and shared-memory graphics probes,
+allowing clients to choose inline image data. Redrawing an image keeps its
+placements, and root-frame edits update the displayed pixels.
+
+Compressed image frames stay compressed until the native app decodes them on a
+worker. Superseded frames are discarded, and the previous decoded image remains
+visible while the next frame loads. Transparent image regions no longer reveal
+placeholder glyphs underneath.
+
+These changes require the matching native app as well as the updated daemon.
+The terminal app does not display images. See [native alpha setup](/docs/native-alpha)
+for the supported build and installation command.
+
+## Updating
+
+Update through your existing installation method. For the managed installation:
+
+```bash
+curl -fsSL https://tmux-ide.com/install.sh | sh
+```
+
+Updating the CLI does not replace a running tmux server or update environment
+variables in existing shells. See [images after an upgrade](/docs/native-alpha#images-after-an-upgrade)
+for graphics setup without interrupting running sessions.
+
+The native app has a [separate update path](/docs/native-alpha#update-roll-back-or-uninstall).
+Existing tmux sessions are preserved.
