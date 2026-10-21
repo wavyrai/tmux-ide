@@ -187,6 +187,8 @@ fn new_window_strip_click_is_bounded_and_consumes_only_captured_capability(
     cx.simulate_resize(size(px(640.), px(400.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
+    // Finish the fixture resize before testing one-use capability dispatch.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let bounds = cx.debug_bounds("workspace-new-window").unwrap();
     assert!(bounds.left() >= px(0.) && bounds.right() <= px(640.) && bounds.bottom() <= px(400.));
     let geometry = view.read_with(cx, |view, _| view.input_geometry.unwrap().0);
