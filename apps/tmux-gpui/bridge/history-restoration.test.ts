@@ -178,3 +178,15 @@ test("return-live handoff does not wait for an obsolete capture", async () => {
   assert.deepEqual(f.owner.publication(), { state: "live", token: null });
   f.owner.dispose();
 });
+
+test("new proofs sharing owned history rows avoid repeated serialization", async (t) => {
+  const { freezeOwnedTerminalReplicaRow } =
+    await import("../../../packages/core/src/terminal-replica-owned-row.ts");
+  const f = fixture();
+  const owned = freezeOwnedTerminalReplicaRow(row());
+  const stringify = t.mock.method(JSON, "stringify");
+  for (let revision = 2; revision < 12; revision++) f.update([owned], revision);
+  // One admission each for viewport and restoration, independent weak caches.
+  assert.equal(stringify.mock.calls.filter((call) => call.arguments[0] === owned).length, 2);
+  f.owner.dispose();
+});
