@@ -1140,7 +1140,7 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
   });
 
-  it("clears window overrides on handoff and rejects the retired controller", async () => {
+  it("retains window overrides until a fresh global fit and rejects the retired controller", async () => {
     const { registry, sims } = controllerRig();
     const first = registry.connect("alpha-session", "web", "client:first");
     const second = registry.connect("alpha-session", "opentui", "client:second");
@@ -1166,9 +1166,9 @@ describe("SessionRuntimeRegistry", () => {
     ).toEqual([
       "refresh-client -f !ignore-size",
       "refresh-client -C @1:120x40",
-      "refresh-client -C @1:",
       "refresh-client -f ignore-size",
       "refresh-client -f !ignore-size",
+      "refresh-client -C @1:",
       "refresh-client -C 132x44",
     ]);
     expect(

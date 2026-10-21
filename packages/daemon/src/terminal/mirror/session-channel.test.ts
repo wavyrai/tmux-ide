@@ -2824,20 +2824,22 @@ describe("window viewport scope", () => {
     await rig.channel.dispose();
   });
 
-  it("clears window overrides when participation ends and permits a new fit", async () => {
+  it("retains dormant overrides across participation changes and permits a new fit", async () => {
     const rig = await startedRig();
     rig.channel.setGeometryParticipation(true);
     const before = rig.sim.written.length;
     rig.channel.fitWindowViewport("window.test.one", 120, 40);
     rig.channel.setGeometryParticipation(false);
     rig.channel.setGeometryParticipation(false);
-    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    rig.channel.setGeometryParticipation(true);
+    rig.channel.fitWindowViewport("window.test.one", 121, 41);
     expect(rig.sim.written.slice(before)).toEqual([
       expect.stringContaining("if-shell -F -t '@1'"),
       "refresh-client -C @1:120x40",
-      "refresh-client -C @1:",
       "refresh-client -f ignore-size",
-      "refresh-client -C @1:120x40",
+      "refresh-client -f !ignore-size",
+      expect.stringContaining("if-shell -F -t '@1'"),
+      "refresh-client -C @1:121x41",
     ]);
     await rig.channel.dispose();
   });

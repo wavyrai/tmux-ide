@@ -1,7 +1,11 @@
 // Real isolated browser helpers, not GUI. Explicit input takeover hands off the
-// controller and releases old geometry; sticky geometry applies within eligibility.
+// controller and retires old authority while retaining the last accepted grid.
 // See daemon session-runtime/authority-arbiter.ts. No personal daemon/session is used.
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import console from "node:console";
+import process from "node:process";
+import { setTimeout } from "node:timers";
 import { spawn } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
@@ -143,7 +147,6 @@ async function sized(cols, rows) {
   });
 }
 try {
-  const natural = grid();
   const original = fleet.captureWindowPanes(fleet.sessionNames[0]);
   daemon = await startDaemon(fleet);
   const a = launch();
@@ -159,39 +162,38 @@ try {
   assert.equal(a.pane, b.pane);
   assert.notEqual(connectionA, b.latest.connection);
   // Explicit input takeover hands off the compatibility controller, which
-  // releases the former owner's geometry and backgrounds it daemon-side.
+  // releases the former owner's authority and backgrounds it daemon-side.
   stage = "controller handoff retires former owner";
   await until(() => !a.latest?.inputReady);
-  await until(() => JSON.stringify(grid()) === JSON.stringify(natural));
+  assert.deepEqual(grid(), { cols: 93, rows: 29 });
   resize(a, 64, 21);
-  // This ACK releases claims and may restore geometry itself; it proves final
-  // restoration, not absence of a transient resize from the preceding attempt.
+  // The ACK fences the retired owner's attempt without changing the last grid.
   await presence(a, false);
-  assert.deepEqual(grid(), natural);
+  assert.deepEqual(grid(), { cols: 93, rows: 29 });
   stage = "new controller receives viewport authority";
   resize(b, 101, 32);
   await sized(101, 32);
   resize(b, 65, 22, b.request - 1);
   await presence(b, true); // Same-channel ACK fences the stale request.
   assert.deepEqual(grid(), { cols: 101, rows: 32 });
-  stage = "background restores natural geometry";
+  stage = "background preserves accepted geometry";
   await presence(b, false);
-  await until(() => JSON.stringify(grid()) === JSON.stringify(natural));
+  assert.deepEqual(grid(), { cols: 101, rows: 32 });
   stage = "former viewer reacquires with fresh presence and viewport";
   await presence(a, true);
   resize(a, 97, 31);
   await sized(97, 31);
-  stage = "close geometry owner restores natural size";
+  stage = "close geometry owner preserves accepted size";
   a.closed = true;
   await stopFixtureChild(a.child);
-  await until(() => JSON.stringify(grid()) === JSON.stringify(natural));
+  assert.deepEqual(grid(), { cols: 97, rows: 31 });
   stage = "remaining viewer reacquires after close";
   await presence(b, true);
   resize(b, 99, 33);
   await sized(99, 33);
   assert.equal(a.latest.connection, connectionA);
   await presence(b, false);
-  await until(() => JSON.stringify(grid()) === JSON.stringify(natural));
+  assert.deepEqual(grid(), { cols: 99, rows: 33 });
   // No terminal input is sent by this fixture. Resize may reflow the initial screen.
   assert.ok(
     fleet.captureWindowPanes(fleet.sessionNames[0]).includes("RIG_GPUI_PRIVATE_COMPETITION"),
@@ -201,8 +203,9 @@ try {
   result = {
     passed: true,
     runtime: app ? "packaged" : "source",
-    controllerHandoffReleasesPriorGeometry: true,
-    backgroundRestoresNatural: true,
+    controllerHandoffRetiresPriorAuthority: true,
+    backgroundPreservesAcceptedGrid: true,
+    ownerClosePreservesAcceptedGrid: true,
     staleRequestViewportIgnored: true,
     remainingViewerReacquiresAfterClose: true,
     distinctConnections: true,

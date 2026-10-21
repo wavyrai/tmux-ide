@@ -357,7 +357,6 @@ try {
       throw error;
     });
     const untouched = fleet.windowGrid(fleet.sessionNames[0]);
-    const naturalGrid = fleet.windowGrid(fleet.sessionNames[1]);
     send({
       type: "input",
       request: 2,
@@ -408,6 +407,10 @@ try {
     recordResume(resumePublication(events.at(-1)));
     send({ type: "presence", active: false, revision: 1 });
     await until(() => events.at(-1)?.presenceRevision === 1 && events.at(-1)?.inputReady === false);
+    const backgroundGrid = fleet.windowGrid(fleet.sessionNames[1]);
+    recordResume({ kind: "background-grid", ...backgroundGrid });
+    assert.equal(backgroundGrid.cols, 111, "focus loss preserves terminal columns");
+    assert.equal(backgroundGrid.rows, 47, "focus loss preserves terminal rows");
     send({
       type: "input",
       request: 6,
@@ -424,7 +427,7 @@ try {
     await until(() => events.at(-1)?.presenceRevision === 2 && events.at(-1)?.inputReady === true);
     const restoredGrid = fleet.windowGrid(fleet.sessionNames[1]);
     recordResume({ kind: "restored-grid", ...restoredGrid });
-    assert.deepEqual(restoredGrid, naturalGrid);
+    assert.deepEqual(restoredGrid, backgroundGrid);
     send({
       type: "input",
       request: 6,
