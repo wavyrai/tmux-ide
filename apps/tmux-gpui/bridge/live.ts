@@ -1,3 +1,4 @@
+import { COMPACT_HELPER_ENV, createSnapshotSerializer } from "./snapshot-wire.ts";
 import { createSelectionIdentity } from "./selection-identity.ts";
 import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { z } from "zod";
@@ -173,14 +174,9 @@ function applyCellPixels() {
     appliedCellPixels = "";
   }
 }
-// Surface snapshots are replaced, never mutated, so each object serializes once.
-const serialized = new WeakMap<object, string>();
-function snapshotJson(snapshot: object | null) {
-  if (!snapshot) return "null";
-  let text = serialized.get(snapshot);
-  if (text === undefined) serialized.set(snapshot, (text = JSON.stringify(snapshot)));
-  return text;
-}
+const snapshotJson = createSnapshotSerializer(
+  process.env[COMPACT_HELPER_ENV] === "rle-v1" ? "rle-v1" : "legacy",
+);
 // After a resize tmux reflows the window's panes one by one. A mix of old and new
 // sizes cannot be presented, so it is withheld briefly instead of published.
 const SKEW_HOLD_MS = 100;

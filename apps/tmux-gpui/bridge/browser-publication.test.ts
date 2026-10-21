@@ -103,3 +103,18 @@ test("full fixed envelope bytes match through escaping, omitted fields and metad
     assert.equal(nrSerialize(p, s, null), baseline(p, s, null));
   }
 });
+
+test("negotiated compact publication preserves metadata and leaves retained previews legacy", async () => {
+  const { decodeCompactSnapshot } = await import("./compact-snapshot.ts");
+  const snapshot = blankTerminalReplicaSnapshot(80, 24);
+  const cache = createRetainedFrameCache();
+  assert.ok(cache.remember("pane", "proof", snapshot));
+  const retained = cache.preview("pane", "proof");
+  const prefix = { version: 1, selectedPane: "%1", request: 4 };
+  const suffix = { selectionIdentity: "identity", machines: null, snapshot, inputReady: true };
+  const legacy = JSON.parse(nrSerialize(prefix, suffix, retained));
+  const compact = JSON.parse(nrSerialize(prefix, suffix, retained, "rle-v1"));
+  assert.equal(compact.snapshot.encoding, "rle-v1");
+  assert.deepEqual({ ...compact, snapshot: decodeCompactSnapshot(compact.snapshot) }, legacy);
+  assert.equal(compact.retainedPreview.snapshot.encoding, undefined);
+});

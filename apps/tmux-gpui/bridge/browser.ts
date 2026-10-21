@@ -1,3 +1,8 @@
+import {
+  COMPACT_HELPER_ENV,
+  COMPACT_NATIVE_ENV,
+  decodeSurfacePublication,
+} from "./snapshot-wire.ts";
 import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
@@ -1221,7 +1226,12 @@ function publish() {
     fleet: fleet?.publication() ?? null,
     machines: machines ? { ...machines.publication(), message: machineMessage } : null,
   };
-  const line = serializeBrowserPublication(prefix, suffix, preview?.snapshotJson ?? null);
+  const line = serializeBrowserPublication(
+    prefix,
+    suffix,
+    preview?.snapshotJson ?? null,
+    process.env[COMPACT_NATIVE_ENV] === "rle-v1" ? "rle-v1" : "legacy",
+  );
   if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
   if (blocked) pending = line;
   else blocked = !process.stdout.write(line);
@@ -1466,7 +1476,11 @@ async function openPane(
       ],
       {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, [KITTY_KNOWN_ENV]: kittyKnown.env() },
+        env: {
+          ...process.env,
+          [KITTY_KNOWN_ENV]: kittyKnown.env(),
+          [COMPACT_HELPER_ENV]: "rle-v1",
+        },
       },
     );
     const done = new Promise<void>((resolve) =>
@@ -2103,7 +2117,7 @@ async function openPane(
           const surfaces =
             sameTail && content!.surfaces
               ? content!.surfaces
-              : surfacesSchema.parse(event.surfaces ?? []);
+              : decodeSurfacePublication(event.surfaces ?? [], "rle-v1");
           if (content) content.surfaces = surfaces;
           const scrollOffset = z
             .number()
