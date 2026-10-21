@@ -220,14 +220,10 @@ impl SnapshotView {
         {
             let scroll = match key.key.as_str() {
                 "pageup" | "pagedown" => {
-                    // A page is the selected pane's painted content, excluding
+                    // A page is the selected pane's current content, excluding
                     // sibling panes and status rows in the composed canvas.
                     let region = self.browser_state.copy_region.as_ref().filter(|region| {
                         self.browser_state.request == self.browser_request
-                            && super::hit_regions::is_painted(
-                                self.frame.as_ref(),
-                                self.painted_frame.as_ref(),
-                            )
                             && self.frame.as_ref().is_some_and(|frame| {
                                 region.valid(frame, self.browser_state.selected_pane.as_deref())
                             })

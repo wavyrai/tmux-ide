@@ -1,4 +1,4 @@
-//! Page keys use the selected terminal's painted content viewport, not the canvas.
+//! Page keys use the selected terminal's current content viewport, not the canvas.
 use super::*;
 use core::prelude::v1::test;
 use herdr_client::protocol::{CellData, FrameData};
@@ -60,22 +60,22 @@ fn history_page_keys_use_selected_content_height_without_rearming_input(cx: &mut
 }
 
 #[gpui::test]
-fn history_page_keys_refuse_missing_stale_unpainted_or_invalid_geometry(cx: &mut TestAppContext) {
+fn history_page_keys_refuse_missing_stale_or_invalid_geometry(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(32);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            for invalid in 0..6 {
+            for invalid in 0..5 {
                 prepare(view, 20);
                 match invalid {
                     0 => view.browser_state.copy_region = None,
                     1 => view.browser_state.selected_pane = Some("pane-b".into()),
                     2 => view.browser_state.request = view.browser_request - 1,
-                    3 => view.painted_frame = None,
-                    4 => {
+                    3 => {
                         if let Some(region) = &mut view.browser_state.copy_region {
                             region.height = 51;
+                            region.wrapped.resize(51, false);
                         }
                     }
                     _ => {
@@ -107,4 +107,33 @@ fn history_page_keys_refuse_missing_stale_unpainted_or_invalid_geometry(cx: &mut
             assert!(view.input_interrupted);
         })
     });
+}
+
+#[gpui::test]
+fn history_page_keys_accept_newer_same_geometry_publications_before_paint(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| view.update(cx, |view, cx| {
+        prepare(view, 20);
+        let painted = view.painted_frame.clone();
+        for (index, (key_name, expected)) in [("shift-pageup", 19), ("shift-pageup", 19), ("shift-pagedown", -19)].into_iter().enumerate() {
+            let mut publication = view.browser_state.clone();
+            let Some(frame) = publication.frame.as_ref() else { panic!("fixture frame missing") };
+            let mut updated = (**frame).clone();
+            updated.cells[0].symbol = index.to_string();
+            publication.frame = Some(Arc::new(updated));
+            publication.presence_revision = 1;
+            view.apply_browser_state(Some(publication), cx);
+            // UI publication and key dispatch happen before the next canvas paint.
+            assert!(!crate::tmux_snapshot::hit_regions::is_painted(view.frame.as_ref(), view.painted_frame.as_ref()));
+            assert!(crate::tmux_snapshot::hit_regions::is_painted(painted.as_ref(), view.painted_frame.as_ref()));
+            view.terminal_key(&key(key_name), window, cx);
+            assert!(matches!(receiver.try_recv(), Ok(browser::Command::Input { request: 7, id, input: Input::Scroll(lines) }) if id == "pane-a" && lines == expected));
+            view.terminal_key(&key("enter"), window, cx);
+            assert!(receiver.try_recv().is_err(), "paging must not re-arm or forward raw input");
+            assert!(view.input_interrupted);
+            assert!(!view.browser_state.input_ready);
+        }
+    }));
 }
