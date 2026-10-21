@@ -43,27 +43,35 @@ const deltaEnvelope = z
 /** A recoverable missing/stale baseline; malformed frames are ordinary errors. */
 export class CompactBaselineError extends Error {}
 
-type Baseline = { wire: CompactFullFrame; snapshot: TerminalReplicaSnapshot };
-function equalRow(a: CompactRow, b: CompactRow): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
+// The encoder owns row/run arrays; these small metadata copies complete ownership.
+function ownedCompact(snapshot: TerminalReplicaSnapshot): CompactSnapshot {
+  const compact = encodeCompactSnapshot(snapshot);
+  return {
+    ...compact,
+    cursor: { ...compact.cursor },
+    modes: { ...compact.modes },
+    bootstrap: { ...compact.bootstrap },
+    placements: compact.placements.map((placement) => ({ ...placement })),
+  };
 }
 
 /** One emitted baseline. Call commit only after write accepts the candidate bytes. */
 export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INTEGER } = {}) {
   sequence.parse(sequenceLimit);
   let baseline: CompactFullFrame | null = null;
+  let baselineRowKeys: string[] = [];
   let identity: string | null = null;
   let generation = 0;
   return {
     reset() {
       baseline = null;
       identity = null;
+      baselineRowKeys = [];
       generation++;
     },
     prepare(snapshot: TerminalReplicaSnapshot, nextIdentity: string) {
-      const compact = encodeCompactSnapshot(snapshot);
-      // Own the candidate data independently of caller mutation before admission.
-      const owned = JSON.parse(JSON.stringify(compact)) as CompactSnapshot;
+      const owned = ownedCompact(snapshot);
+      const rowKeys = owned.grid.map((row) => JSON.stringify(row));
       const compatible =
         baseline !== null &&
         identity === nextIdentity &&
@@ -77,12 +85,13 @@ export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INT
         seq: compatible ? baseline!.seq + 1 : 1,
       };
       let json = JSON.stringify(full);
+      let encoding: CompactFrame["encoding"] = "rle-v1";
       if (compatible) {
         const { grid, encoding: _, ...metadata } = full;
         void _;
         const changedRows: CompactDeltaFrame["changedRows"] = [];
         for (const [index, row] of grid.entries())
-          if (!equalRow(row, baseline!.grid[index]!)) changedRows.push([index, row]);
+          if (rowKeys[index] !== baselineRowKeys[index]) changedRows.push([index, row]);
         const delta: CompactDeltaFrame = {
           ...metadata,
           encoding: COMPACT_DELTA_ENCODING,
@@ -92,18 +101,31 @@ export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INT
         const deltaJson = JSON.stringify(delta);
         if (Buffer.byteLength(deltaJson, "utf8") < Buffer.byteLength(json, "utf8")) {
           json = deltaJson;
+          encoding = COMPACT_DELTA_ENCODING;
         }
       }
       const preparedAt = generation;
       let committed = false;
       return {
-        wire: JSON.parse(json) as CompactFrame,
+        get epoch() {
+          return full.epoch;
+        },
+        get seq() {
+          return full.seq;
+        },
+        get encoding() {
+          return encoding;
+        },
+        get wire() {
+          return JSON.parse(json) as CompactFrame;
+        },
         json,
         commit() {
           if (committed || generation !== preparedAt)
             throw new Error("Stale compact producer candidate");
           // Do not retain the public candidate object: a consumer may mutate it.
-          baseline = JSON.parse(JSON.stringify(full)) as CompactFullFrame;
+          baseline = full;
+          baselineRowKeys = rowKeys;
           identity = nextIdentity;
           generation++;
           committed = true;
@@ -115,7 +137,7 @@ export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INT
 
 /** One validated baseline. Outer publication validation must precede commit. */
 export function createCompactDeltaStore() {
-  let baseline: Baseline | null = null;
+  let baseline: CompactFullFrame | null = null;
   let generation = 0;
   return {
     reset() {
@@ -127,29 +149,28 @@ export function createCompactDeltaStore() {
         throw new Error("Invalid compact frame");
       const outline = value as Record<string, unknown>;
       const { epoch, seq } = identitySchema.parse(outline);
-      let full: CompactFullFrame;
+      let snapshot: TerminalReplicaSnapshot;
       if (outline.encoding === "rle-v1") {
         const { epoch: _, seq: __, ...compact } = outline;
         void _;
         void __;
         // Full frames can establish a new epoch; same-epoch stale frames cannot rewind.
-        const snapshot = decodeCompactSnapshot(compact);
-        if (baseline?.wire.epoch === epoch && seq <= baseline.wire.seq)
+        snapshot = decodeCompactSnapshot(compact);
+        if (baseline?.epoch === epoch && seq <= baseline.seq)
           throw new CompactBaselineError("Stale compact full frame");
-        full = { ...encodeCompactSnapshot(snapshot), epoch, seq };
       } else {
         const delta = deltaEnvelope.parse(value);
         if (delta.seq !== delta.baseSeq + 1) throw new Error("Invalid compact delta sequence");
         if (
           !baseline ||
-          baseline.wire.epoch !== delta.epoch ||
-          baseline.wire.seq !== delta.baseSeq ||
-          baseline.wire.cols !== delta.cols ||
-          baseline.wire.rows !== delta.rows
+          baseline.epoch !== delta.epoch ||
+          baseline.seq !== delta.baseSeq ||
+          baseline.cols !== delta.cols ||
+          baseline.rows !== delta.rows
         )
           throw new CompactBaselineError("Missing compact delta baseline");
         if (delta.changedRows.length > delta.rows) throw new Error("Too many compact changed rows");
-        const grid = [...baseline.wire.grid];
+        const grid = [...baseline.grid];
         let previous = -1;
         for (const [index, row] of delta.changedRows) {
           if (index <= previous || index >= delta.rows)
@@ -162,17 +183,13 @@ export function createCompactDeltaStore() {
         void __;
         void ___;
         void ____;
-        const snapshot = decodeCompactSnapshot({ ...metadata, encoding: "rle-v1", grid });
-        full = { ...encodeCompactSnapshot(snapshot), epoch, seq };
+        snapshot = decodeCompactSnapshot({ ...metadata, encoding: "rle-v1", grid });
       }
-      const { epoch: _, seq: __, ...compact } = full;
-      void _;
-      void __;
-      const snapshot = decodeCompactSnapshot(compact);
+      const full = { ...ownedCompact(snapshot), epoch, seq };
       if (
         baseline &&
         outline.encoding === COMPACT_DELTA_ENCODING &&
-        baseline.snapshot.modes.alternateScreen !== snapshot.modes.alternateScreen
+        baseline.modes.alternateScreen !== snapshot.modes.alternateScreen
       )
         throw new Error("Compact delta changed screen basis");
       const preparedAt = generation;
@@ -182,7 +199,7 @@ export function createCompactDeltaStore() {
         commit() {
           if (committed || generation !== preparedAt)
             throw new Error("Stale compact store candidate");
-          baseline = { wire: full, snapshot: decodeCompactSnapshot(compact) };
+          baseline = full;
           generation++;
           committed = true;
         },

@@ -301,3 +301,55 @@ test("receiver candidate mutation and reset cannot corrupt committed cells", () 
   store.reset();
   assert.throws(() => pending.commit(), /Stale/);
 });
+
+test("production prepare/commit avoids JSON parsing and serializes each row key once", (t) => {
+  const parse = JSON.parse;
+  const stringify = JSON.stringify;
+  let parses = 0;
+  let rowKeys = 0;
+  t.mock.method(JSON, "parse", (...args: Parameters<typeof JSON.parse>) => {
+    parses++;
+    return parse(...args);
+  });
+  t.mock.method(JSON, "stringify", (value: unknown) => {
+    if (Array.isArray(value) && typeof value[0] === "boolean") rowKeys++;
+    return stringify(value);
+  });
+  const producer = createCompactDeltaProducer();
+  const first = producer.prepare(frame(), "a");
+  first.commit();
+  const second = producer.prepare(frame(), "a");
+  second.commit();
+  assert.equal(second.seq, 2);
+  assert.equal(second.epoch, first.epoch);
+  assert.equal(second.encoding, "rle-delta-v1");
+  assert.equal(parses, 0);
+  assert.equal(rowKeys, 48);
+  assert.equal(second.wire.encoding, "rle-delta-v1");
+  assert.equal(parses, 1);
+});
+
+test("small metadata is owned before caller changes it or returned candidate metadata", () => {
+  const producer = createCompactDeltaProducer(),
+    store = createCompactDeltaStore();
+  const source = frame();
+  source.placements = [
+    { id: "image", kind: "kitty", row: 0, column: 0, columns: 1, rows: 1, contentDigest: "digest" },
+  ];
+  const first = producer.prepare(source, "a");
+  const expected = structuredClone(source);
+  source.cursor.x = 79;
+  source.modes.alternateScreen = true;
+  source.bootstrap.hiddenState = "unknown";
+  source.placements[0]!.id = "changed";
+  first.commit();
+  const received = store.prepare(first.wire);
+  received.snapshot.cursor.x = 79;
+  received.snapshot.modes.alternateScreen = true;
+  received.snapshot.bootstrap.hiddenState = "unknown";
+  received.snapshot.placements[0]!.id = "changed";
+  received.commit();
+  const second = producer.prepare(expected, "a");
+  assert.equal(second.wire.encoding, "rle-delta-v1");
+  assert.deepEqual(admitted(store, second.wire), expected);
+});
