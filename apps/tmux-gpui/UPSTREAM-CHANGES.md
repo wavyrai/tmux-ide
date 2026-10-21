@@ -231,3 +231,14 @@ as an additional reference for layering.
   to address the canonical pane while old content is clipped at its actual cell
   size; pointer/copy hit testing uses the painted frame rather than speculative
   scaled cells.
+
+- The browser transport negotiates bounded run-length snapshots and incremental
+  rows, including binary cell records and raw image chunks. Native decoding
+  validates the complete frame before changing its baseline; sequence gaps
+  request an explicit full snapshot. Delta application precedes display-mailbox
+  coalescing so dropping an intermediate paint cannot break the next delta.
+  Legacy JSON remains available for callers without negotiated capabilities.
+
+- Incomplete image assemblies share a 64 MiB reservation limit in addition to
+  their existing count limit. Replacing or retiring an assembly releases its
+  reservation; completed image-cache limits remain separate.
