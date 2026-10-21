@@ -70,55 +70,80 @@ function inspect(layout: Layout | undefined, selected: string, surfaces: Surface
 /** One instance per selected-pane helper lifetime; never carries state across reselect. */
 export function createWindowPresentation(selectedPaneId: string) {
   let cached: { window: string; membership: string; value: WindowPresentation } | undefined;
+  // Identical inputs (a status- or gesture-only publication) present the same frame object.
+  let last:
+    | {
+        layout: string;
+        surfaces: Surfaces;
+        allowRetention: boolean;
+        value: WindowPresentation | null;
+      }
+    | undefined;
   return {
     update(
       layout: Layout | undefined,
       surfaces: Surfaces,
       allowRetention: boolean,
     ): WindowPresentation | null {
-      if (!allowRetention) cached = undefined;
-      const checked = inspect(layout, selectedPaneId, surfaces);
-      if (!checked) {
-        cached = undefined;
-        return null;
-      }
-      const sameScope =
-        cached?.window === checked.layout.semanticWindowId &&
-        cached.membership === checked.membership;
-      if (!sameScope) cached = undefined;
-      if (checked.skew) return allowRetention && sameScope ? cached!.value : null;
-      const snapshot = windowCanvas(checked.layout, selectedPaneId, surfaces);
-      if (!snapshot) {
-        cached = undefined;
-        return null;
-      }
-      const focus = checked.layout.panes.find((p) => p.pane === selectedPaneId)!;
-      const surface = checked.snapshots.get(selectedPaneId)!;
-      const value: WindowPresentation = {
-        snapshot,
-        copyRegion: {
-          id: selectedPaneId,
-          left: focus.left,
-          top: contentRect(checked.layout, focus).top,
-          width: surface.cols,
-          height: surface.rows,
-          wrapped: surface.grid.map((row) => row.wrapped),
-        },
-        regions: checked.layout.panes.map((p) => ({
-          id: p.pane!,
-          left: p.left,
-          top: p.top,
-          width: p.width,
-          height: p.height,
-        })),
-      };
-      if (allowRetention)
-        cached = {
-          window: checked.layout.semanticWindowId!,
-          membership: checked.membership,
-          value,
-        };
+      const key = JSON.stringify(layout ?? null);
+      if (
+        last?.surfaces === surfaces &&
+        last.layout === key &&
+        last.allowRetention === allowRetention
+      )
+        return last.value;
+      const value = present(layout, surfaces, allowRetention);
+      last = { layout: key, surfaces, allowRetention, value };
       return value;
     },
   };
+  function present(
+    layout: Layout | undefined,
+    surfaces: Surfaces,
+    allowRetention: boolean,
+  ): WindowPresentation | null {
+    if (!allowRetention) cached = undefined;
+    const checked = inspect(layout, selectedPaneId, surfaces);
+    if (!checked) {
+      cached = undefined;
+      return null;
+    }
+    const sameScope =
+      cached?.window === checked.layout.semanticWindowId &&
+      cached.membership === checked.membership;
+    if (!sameScope) cached = undefined;
+    if (checked.skew) return allowRetention && sameScope ? cached!.value : null;
+    const snapshot = windowCanvas(checked.layout, selectedPaneId, surfaces);
+    if (!snapshot) {
+      cached = undefined;
+      return null;
+    }
+    const focus = checked.layout.panes.find((p) => p.pane === selectedPaneId)!;
+    const surface = checked.snapshots.get(selectedPaneId)!;
+    const value: WindowPresentation = {
+      snapshot,
+      copyRegion: {
+        id: selectedPaneId,
+        left: focus.left,
+        top: contentRect(checked.layout, focus).top,
+        width: surface.cols,
+        height: surface.rows,
+        wrapped: surface.grid.map((row) => row.wrapped),
+      },
+      regions: checked.layout.panes.map((p) => ({
+        id: p.pane!,
+        left: p.left,
+        top: p.top,
+        width: p.width,
+        height: p.height,
+      })),
+    };
+    if (allowRetention)
+      cached = {
+        window: checked.layout.semanticWindowId!,
+        membership: checked.membership,
+        value,
+      };
+    return value;
+  }
 }

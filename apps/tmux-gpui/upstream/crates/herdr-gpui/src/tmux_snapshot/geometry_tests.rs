@@ -13,3 +13,12 @@ fn floors_fractional_cells_and_ignores_minimized_or_invalid_bounds() {
         assert_eq!(cell_grid(w, h, cw, ch), None);
     }
 }
+
+#[test]
+fn same_window_reselect_preserves_exact_fit_without_borrowing_stale_lifetimes() {
+    assert_eq!(reselect_fit(Some((4, 111, 37)), 4, 5), Some((5, 111, 37)));
+    assert_eq!(reselect_fit(Some((3, 111, 37)), 4, 5), None);
+    assert_eq!(reselect_fit(None, 4, 5), None);
+    // A real drawable resize still differs from the transferred fit.
+    assert_ne!(reselect_fit(Some((4, 111, 37)), 4, 5), Some((5, 112, 37)));
+}

@@ -52,6 +52,10 @@ import {
 } from "../../../packages/contracts/src/terminal-graphics.ts";
 import { createInputPipeline } from "./input-pipeline.ts";
 
+const selectPaneSchema = z
+  .object({ kind: z.literal("select-pane"), id: z.string().min(1).max(512) })
+  .strict();
+
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
 const inputPipeline = createInputPipeline(() => {
   if (!stopped) diagnostics.report("runtime-failure");
@@ -169,6 +173,43 @@ function applyCellPixels() {
     appliedCellPixels = "";
   }
 }
+// Surface snapshots are replaced, never mutated, so each object serializes once.
+const serialized = new WeakMap<object, string>();
+function snapshotJson(snapshot: object | null) {
+  if (!snapshot) return "null";
+  let text = serialized.get(snapshot);
+  if (text === undefined) serialized.set(snapshot, (text = JSON.stringify(snapshot)));
+  return text;
+}
+// After a resize tmux reflows the window's panes one by one. A mix of old and new
+// sizes cannot be presented, so it is withheld briefly instead of published.
+const SKEW_HOLD_MS = 100;
+let skewSince: number | null = null;
+let skewTimer: ReturnType<typeof setTimeout> | undefined;
+function holdSkewedWindow(layout: Layout | undefined) {
+  const skewed =
+    !stopped &&
+    !!layout &&
+    layout.panes.every((p) => !!p.pane && surfaces.has(p.pane)) &&
+    layout.panes.some((p) => {
+      const frame = surfaces.get(p.pane!)!;
+      return frame.cols !== p.width || frame.rows !== contentRect(layout, p).rows;
+    });
+  if (!skewed) {
+    skewSince = null;
+    clearTimeout(skewTimer);
+    skewTimer = undefined;
+    return false;
+  }
+  skewSince ??= performance.now();
+  const remaining = SKEW_HOLD_MS - (performance.now() - skewSince);
+  if (remaining <= 0) return false;
+  skewTimer ??= setTimeout(() => {
+    skewTimer = undefined;
+    if (!stopped) publish();
+  }, remaining);
+  return true;
+}
 function output(snapshot: typeof latest.snapshot) {
   if (catalogOnly && !catalogReceived && !stopped) return;
   latest.snapshot = snapshot;
@@ -201,80 +242,110 @@ function output(snapshot: typeof latest.snapshot) {
   mouseOwner.observe(inputReady ? snapshot : null, mouseIdentity());
   resizeGesture?.observe();
   splitGesture?.observe();
-  const line =
-    JSON.stringify({
-      connection,
-      sequence: ++sequence,
-      snapshot: catalogOnly ? null : snapshot,
-      ...(interactive || catalogOnly
-        ? {
-            inputReady,
-            presentationEpoch,
-            ...(catalogOnly ? { catalogReady: catalogReceived && !stopped } : {}),
-            resizeBlocked,
-            splitLayout: splitReader?.current() ?? null,
-            splitGesture: splitGesture?.publication() ?? null,
-            resizeGestureSupported: true,
-            resizeGesture: resizeGesture?.publication() ?? null,
-            paneActions:
-              inputReady && !actionBusy && !actionFailed && selectedActionPane
-                ? actionFence.current(
-                    resizeLayout,
-                    selectedActionPane,
-                    lifetimes.get(selectedActionPane),
-                  )
-                : null,
-            paneSplitReceipt,
-            newWindowReceipt,
-            closePaneReady:
-              inputReady &&
-              runtime?.ownsConnectionAuthority("geometry") &&
-              !!closePaneReady &&
-              closePaneReady.token ===
-                actionFence.current(
+  // State changes within one event-loop turn (a frame and the gesture it settles)
+  // share one publication; the final publication is never deferred.
+  unpublished = true;
+  if (stopped) publish();
+  else if (!publicationQueued) {
+    publicationQueued = true;
+    setImmediate(() => {
+      publicationQueued = false;
+      publish();
+    });
+  }
+}
+let unpublished = false;
+let publicationQueued = false;
+function publish() {
+  if (!unpublished) return;
+  const snapshot = latest.snapshot;
+  const inputReady =
+    foreground &&
+    !stopped &&
+    !restorePending &&
+    historyRestoration?.publication().state !== "restoring" &&
+    viewport.offset === 0 &&
+    !!runtime?.ownsConnectionAuthority("input");
+  const resizeLayout = layouts.find((l) => l.semanticWindowId === semanticWindow);
+  if (holdSkewedWindow(resizeLayout)) return;
+  unpublished = false;
+  const { surfaces: published = [], ...fields } =
+    interactive || catalogOnly
+      ? {
+          inputReady,
+          presentationEpoch,
+          selectedPane: selectedActionPane,
+          ...(catalogOnly ? { catalogReady: catalogReceived && !stopped } : {}),
+          resizeBlocked,
+          splitLayout: splitReader?.current() ?? null,
+          splitGesture: splitGesture?.publication() ?? null,
+          resizeGestureSupported: true,
+          resizeGesture: resizeGesture?.publication() ?? null,
+          paneActions:
+            inputReady && !actionBusy && !actionFailed && selectedActionPane
+              ? actionFence.current(
                   resizeLayout,
-                  closePaneReady.id,
-                  lifetimes.get(closePaneReady.id),
-                )?.token
-                ? closePaneReady
-                : null,
-            paneActionError: actionFailed ? actionFailureMessage : null,
-            resizeToken: currentResizeToken,
-            selectionIdentity: selectionIdentity(
-              stopped || catalogOnly
-                ? null
-                : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ??
-                    null),
-              snapshot,
-              viewport.offset,
-              viewport.captureIndex(),
-              restorePending
-                ? { state: "restoring", token: null }
-                : (historyRestoration?.publication() ?? null),
-            ),
-            scrollOffset: viewport.offset,
-            historyReady:
-              foreground &&
-              !stopped &&
-              !restorePending &&
-              historyRestoration?.publication().state !== "restoring" &&
-              viewport.offset > 0 &&
-              !!runtime?.ownsConnectionAuthority("input"),
-            historyAnchor: restorePending
+                  selectedActionPane,
+                  lifetimes.get(selectedActionPane),
+                )
+              : null,
+          paneSplitReceipt,
+          newWindowReceipt,
+          closePaneReady:
+            inputReady &&
+            runtime?.ownsConnectionAuthority("geometry") &&
+            !!closePaneReady &&
+            closePaneReady.token ===
+              actionFence.current(resizeLayout, closePaneReady.id, lifetimes.get(closePaneReady.id))
+                ?.token
+              ? closePaneReady
+              : null,
+          paneActionError: actionFailed ? actionFailureMessage : null,
+          resizeToken: currentResizeToken,
+          selectionIdentity: selectionIdentity(
+            stopped || catalogOnly
+              ? null
+              : ((selectedActionPane ? replicas.get(selectedActionPane)?.current() : null) ?? null),
+            snapshot,
+            viewport.offset,
+            viewport.captureIndex(),
+            restorePending
               ? { state: "restoring", token: null }
               : (historyRestoration?.publication() ?? null),
-            presenceRevision,
-            layouts,
-            ...((published) => ({
-              surfaces: published,
-              graphics: published.flatMap(({ paneId, snapshot }) => {
-                const placements = kitty.placements(paneId, snapshot);
-                return placements.length > 0 ? [{ paneId, placements }] : [];
-              }),
-            }))(catalogOnly ? [] : selectedWindowSurfaces(layouts, selectedActionPane, surfaces)),
-          }
-        : {}),
-    }) + "\n";
+          ),
+          scrollOffset: viewport.offset,
+          historyReady:
+            foreground &&
+            !stopped &&
+            !restorePending &&
+            historyRestoration?.publication().state !== "restoring" &&
+            viewport.offset > 0 &&
+            !!runtime?.ownsConnectionAuthority("input"),
+          historyAnchor: restorePending
+            ? { state: "restoring", token: null }
+            : (historyRestoration?.publication() ?? null),
+          presenceRevision,
+          layouts,
+          surfaces: catalogOnly
+            ? []
+            : selectedWindowSurfaces(layouts, selectedActionPane, surfaces),
+        }
+      : {};
+  const graphics = published.flatMap(({ paneId, snapshot }) => {
+    const placements = kitty.placements(paneId, snapshot);
+    return placements.length > 0 ? [{ paneId, placements }] : [];
+  });
+  // Same JSON as one stringify, but unchanged panes reuse their text. Terminal content
+  // goes last behind its byte length so the browser can skip decoding an unchanged tail.
+  const head = `"connection":${JSON.stringify(connection)},"sequence":${++sequence}`;
+  const content = `"snapshot":${catalogOnly ? "null" : snapshotJson(snapshot)}`;
+  let line: string;
+  if (interactive || catalogOnly) {
+    const tail = `,${content},"surfaces":[${published
+      .map((s) => `{"paneId":${JSON.stringify(s.paneId)},"snapshot":${snapshotJson(s.snapshot)}}`)
+      .join(",")}]}`;
+    line = `{"surfaceBytes":${Buffer.byteLength(tail)},${head},${JSON.stringify({ ...fields, graphics }).slice(1, -1)}${tail}\n`;
+  } else line = `{${head},${content}}\n`;
   diagnostics.publication(line);
   if (blocked) {
     pending = line;
@@ -327,8 +398,13 @@ try {
     throw new Error("Usage: live.ts CONNECTION.json");
   const path = process.argv[2]!;
   const config = connectionSchema.parse(readPrivateConfig(path));
-  selectedActionPane = config.semanticPaneId;
-  const sourceFaultFence = createSourceFaultFence(config.semanticPaneId, () => layouts);
+  // In-window reselect retargets this helper; every input/history path reads it.
+  let selected = config.semanticPaneId;
+  selectedActionPane = selected;
+  const sourceFaultFence = createSourceFaultFence(
+    () => selected,
+    () => layouts,
+  );
   const stopForVisibleSourceFault = () => {
     const reason = sourceFaultFence.currentFailure();
     if (!reason) return false;
@@ -336,11 +412,8 @@ try {
     stop();
     return true;
   };
-  const visiblePaneIds = config.visiblePaneIds ?? [config.semanticPaneId];
-  if (
-    !visiblePaneIds.includes(config.semanticPaneId) ||
-    new Set(visiblePaneIds).size !== visiblePaneIds.length
-  )
+  const visiblePaneIds = config.visiblePaneIds ?? [selected];
+  if (!visiblePaneIds.includes(selected) || new Set(visiblePaneIds).size !== visiblePaneIds.length)
     throw new Error("Invalid visible pane subscription");
   resizeGesture = createResizeGestureOwner({
     runtime: () => runtime ?? null,
@@ -428,12 +501,12 @@ try {
     restore: (row) => {
       const view = viewport.restoreRow(row);
       if (!view) return false;
-      surfaces.set(config.semanticPaneId, view);
+      surfaces.set(selected, view);
       latest.snapshot = view;
       return true;
     },
     changed: () => {
-      if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+      if (!stopped) output(surfaces.get(selected) ?? null);
     },
   });
 
@@ -581,9 +654,8 @@ try {
         catalogReceived = true;
         if (stopForVisibleSourceFault()) return;
         semanticWindow =
-          frame.layouts.find((layout) =>
-            layout.panes.some((pane) => pane.pane === config.semanticPaneId),
-          )?.semanticWindowId ?? null;
+          frame.layouts.find((layout) => layout.panes.some((pane) => pane.pane === selected))
+            ?.semanticWindowId ?? null;
         if (catalogOnly) output(null);
         else if (latest.snapshot) output(latest.snapshot);
       },
@@ -596,7 +668,7 @@ try {
           else layouts[index] = frame;
         }
         if (stopForVisibleSourceFault()) return;
-        semanticWindow = windowForLayout(semanticWindow, config.semanticPaneId, frame);
+        semanticWindow = windowForLayout(semanticWindow, selected, frame);
         if (latest.snapshot) output(latest.snapshot);
       },
       onNegotiated: (pane, result) => {
@@ -614,7 +686,7 @@ try {
             config.workspaceName,
             pane,
             (snapshot, lifetime) => {
-              const wasHistorical = pane === config.semanticPaneId && viewport.offset > 0;
+              const wasHistorical = pane === selected && viewport.offset > 0;
               if (!lifetimes.has(pane) || lifetimes.get(pane) !== lifetime) {
                 // Saturation terminates the live stream; final retirement may still
                 // clear all surfaces without emitting an unsafe/reused epoch.
@@ -622,28 +694,26 @@ try {
                   if (!stopped) throw new Error("Presentation lifetime limit exceeded");
                 } else presentationEpoch++;
                 lifetimes.set(pane, lifetime);
-                if (pane === config.semanticPaneId) viewport.update(null);
+                if (pane === selected) viewport.update(null);
               }
               if (snapshot)
                 surfaces.set(
                   pane,
-                  pane === config.semanticPaneId
-                    ? viewport.update(snapshot)!
-                    : { ...snapshot, history: [] },
+                  pane === selected ? viewport.update(snapshot)! : { ...snapshot, history: [] },
                 );
               else {
                 surfaces.delete(pane);
-                if (pane === config.semanticPaneId) viewport.update(null);
+                if (pane === selected) viewport.update(null);
               }
               if (wasHistorical && viewport.offset === 0) historyRestoration?.lost();
-              if (pane === config.semanticPaneId) {
+              if (pane === selected) {
                 historyRestoration?.observe(replicas.get(pane)?.current() ?? null);
                 if (restorePending && snapshot) {
                   restorePending = false;
                   historyRestoration?.restore(config.historyAnchor!);
                 }
               }
-              if (!stopped) output(surfaces.get(config.semanticPaneId) ?? null);
+              if (!stopped) output(surfaces.get(selected) ?? null);
             },
             (ack) => {
               if (runtime) runtime.ack(ack);
@@ -728,6 +798,7 @@ try {
           resizeGesture.retire();
           await applyPresence(runtime, false);
           const captured = await historyRestoration?.settleCapture();
+          publish();
           if (!stopped)
             process.stdout.write(
               JSON.stringify({
@@ -758,6 +829,51 @@ try {
           presenceRevision = presence.data.revision;
           if (foreground) resizeBlocked = false;
           if (latest.snapshot) output(latest.snapshot);
+          continue;
+        }
+        const reselect = selectPaneSchema.safeParse(value);
+        if (reselect.success) {
+          const id = reselect.data.id;
+          if (id === selected) {
+            output(latest.snapshot);
+            continue;
+          }
+          const frame = replicas.get(id)?.current();
+          const layout = layouts.find((l) => l.semanticWindowId === semanticWindow);
+          if (
+            !frame ||
+            !visiblePaneIds.includes(id) ||
+            !surfaces.has(id) ||
+            !lifetimes.get(id) ||
+            !layout?.panes.some((pane) => pane.pane === id) ||
+            viewport.offset !== 0 ||
+            restorePending ||
+            historyRestoration.publication().state === "restoring" ||
+            actionBusy
+          ) {
+            // Never leave later input addressed to the previous pane; the browser
+            // replaces a refusing helper with a fresh attachment for the target.
+            stop();
+            break inputLoop;
+          }
+          closePaneReady = null;
+          actionFailed = false;
+          actionFence.invalidate();
+          mouseOwner.retire();
+          splitGesture.retire();
+          resizeGesture.retire();
+          selected = id;
+          selectedActionPane = id;
+          viewport.update(null);
+          surfaces.set(id, viewport.update(frame.snapshot)!);
+          historyRestoration.observe(null);
+          historyRestoration.observe(frame);
+          if (historyRestoration.publication().state !== "live") historyRestoration.live();
+          // Rotate resize/mouse/action identities: nothing granted for the old pane carries over.
+          if (presentationEpoch === Number.MAX_SAFE_INTEGER)
+            throw new Error("Presentation lifetime limit exceeded");
+          presentationEpoch++;
+          output(surfaces.get(selected) ?? null);
           continue;
         }
         if (restorePending || historyRestoration?.publication().state === "restoring") {
@@ -791,24 +907,24 @@ try {
           splitGesture.retire();
           const target = () => {
             const layout = layouts.find((l) => l.semanticWindowId === semanticWindow);
-            const lifetime = lifetimes.get(config.semanticPaneId);
+            const lifetime = lifetimes.get(selected);
             if (
               stopped ||
               !foreground ||
               viewport.offset !== 0 ||
               !latest.snapshot ||
               actionFailed ||
-              paneAction.data.id !== config.semanticPaneId ||
-              !surfaces.has(config.semanticPaneId) ||
+              paneAction.data.id !== selected ||
+              !surfaces.has(selected) ||
               !layout?.semanticWindowId ||
               !lifetime
             )
               return null;
-            const capability = actionFence.current(layout, config.semanticPaneId, lifetime);
+            const capability = actionFence.current(layout, selected, lifetime);
             return capability
               ? {
                   token: capability.token,
-                  id: config.semanticPaneId,
+                  id: selected,
                   generation: config.scope.generation,
                   workspace: config.workspaceName,
                   window: layout.semanticWindowId,
@@ -954,7 +1070,7 @@ try {
           const input = mouseOwner.route(latest.snapshot, mouseIdentity(), mouse.data);
           if (input) {
             try {
-              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+              await deliverInput(runtime, config.workspaceName, selected, input);
             } catch (error) {
               mouseOwner.retire();
               throw error;
@@ -971,11 +1087,11 @@ try {
           if (!route) continue;
           if (route.kind === "application") {
             for (const input of route.inputs) {
-              await deliverInput(runtime, config.workspaceName, config.semanticPaneId, input);
+              await deliverInput(runtime, config.workspaceName, selected, input);
             }
           } else {
             const view = viewport.scroll(route.lines);
-            if (view) surfaces.set(config.semanticPaneId, view);
+            if (view) surfaces.set(selected, view);
             historyRestoration?.capture(viewport.captureIndex());
             output(view);
           }
@@ -987,7 +1103,7 @@ try {
           resizeGesture.retire();
           const view = viewport.scroll(scroll.data.data);
           restorePending = false;
-          if (view) surfaces.set(config.semanticPaneId, view);
+          if (view) surfaces.set(selected, view);
           historyRestoration?.capture(viewport.captureIndex());
           output(view);
           continue;
@@ -1028,7 +1144,8 @@ try {
         )
           continue; // Never type into a historical view.
         if (!latest.snapshot) throw new Error("No verified input target");
-        const inputLifetime = lifetimes.get(config.semanticPaneId);
+        const inputPane = selected;
+        const inputLifetime = lifetimes.get(inputPane);
         const deliver = async () => {
           // Recheck after waiting for capacity; a disconnect or authority loss can
           // arrive independently of stdin while earlier acknowledgements settle.
@@ -1036,7 +1153,8 @@ try {
             stopped ||
             !foreground ||
             !latest.snapshot ||
-            lifetimes.get(config.semanticPaneId) !== inputLifetime ||
+            selected !== inputPane ||
+            lifetimes.get(inputPane) !== inputLifetime ||
             restorePending ||
             historyRestoration?.publication().state === "restoring" ||
             viewport.offset > 0
@@ -1045,7 +1163,7 @@ try {
           await deliverPreviewInput(
             inputRuntime,
             config.workspaceName,
-            config.semanticPaneId,
+            inputPane,
             value,
             latest.snapshot.modes.bracketedPaste,
           );

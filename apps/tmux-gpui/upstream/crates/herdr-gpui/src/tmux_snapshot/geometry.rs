@@ -21,3 +21,14 @@ pub(super) fn cell_grid(
 #[cfg(test)]
 #[path = "geometry_tests.rs"]
 mod tests;
+
+/// Navigation within the painted window does not change its drawable viewport.
+/// Transfer only a fit belonging to the exact previous navigation lifetime.
+pub(super) fn reselect_fit(
+    fit: Option<(u64, u16, u16)>,
+    previous_request: u64,
+    request: u64,
+) -> Option<(u64, u16, u16)> {
+    fit.filter(|(owner, _, _)| *owner == previous_request)
+        .map(|(_, cols, rows)| (request, cols, rows))
+}

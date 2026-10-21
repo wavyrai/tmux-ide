@@ -52,7 +52,10 @@ import { createSourceFaultFence } from "./offscreen-source-fault.ts";
 
 test("retained source fault becomes fatal if topology brings it into view", () => {
   let layouts = [layout("one", ["selected", "sibling"]), layout("two", ["offscreen"])];
-  const fence = createSourceFaultFence("selected", () => layouts);
+  const fence = createSourceFaultFence(
+    () => "selected",
+    () => layouts,
+  );
   assert.equal(fence.isolate("offscreen", "protocol-violation"), false);
   assert.equal(fence.currentFailure(), null);
   assert.equal(fence.isolate("sibling", "source-closed"), false);
@@ -64,9 +67,15 @@ test("retained source fault becomes fatal if topology brings it into view", () =
 
 test("retained fault cannot silently survive uncertain membership or resurrect on fresh selection", () => {
   let layouts = [layout("one", ["selected"]), layout("two", ["offscreen"])];
-  const fence = createSourceFaultFence("selected", () => layouts);
+  const fence = createSourceFaultFence(
+    () => "selected",
+    () => layouts,
+  );
   assert.equal(fence.isolate("offscreen", "source-closed"), true);
-  const newlySelected = createSourceFaultFence("offscreen", () => layouts);
+  const newlySelected = createSourceFaultFence(
+    () => "offscreen",
+    () => layouts,
+  );
   assert.equal(newlySelected.isolate("offscreen", "source-closed"), false);
   layouts = [layout("one", ["selected"])];
   assert.equal(fence.currentFailure(), "source-closed");
@@ -148,7 +157,10 @@ function realReceiver(pane: string) {
 test("real retained replicas keep selected patches flowing while offscreen retirement stops publication and ACK", () => {
   for (const seededOffscreen of [false, true]) {
     const layouts = [layout("one", ["selected", "sibling"]), layout("two", ["offscreen"])];
-    const fence = createSourceFaultFence("selected", () => layouts);
+    const fence = createSourceFaultFence(
+      () => "selected",
+      () => layouts,
+    );
     const selected = realReceiver("selected"),
       sibling = realReceiver("sibling"),
       offscreen = realReceiver("offscreen");
@@ -181,7 +193,10 @@ test("real retained replicas keep selected patches flowing while offscreen retir
 test("selected and visible sibling source faults remain fatal to real replicas without ACK", () => {
   const layouts = [layout("one", ["selected", "sibling"]), layout("two", ["offscreen"])];
   for (const pane of ["selected", "sibling"]) {
-    const fence = createSourceFaultFence("selected", () => layouts);
+    const fence = createSourceFaultFence(
+      () => "selected",
+      () => layouts,
+    );
     const target = realReceiver(pane);
     target.deliver();
     assert.equal(fence.isolate(pane, "state-too-large"), false);

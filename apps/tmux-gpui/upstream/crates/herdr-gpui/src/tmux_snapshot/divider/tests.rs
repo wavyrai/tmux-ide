@@ -105,6 +105,39 @@ fn both_axes_commit_exact_outer_cells_only_after_motion_and_clamp_both_panes() {
     }
 }
 #[test]
+fn preview_follows_the_pointer_target_on_both_axes_without_leaving_the_frame() {
+    for axis in [Axis::Cols, Axis::Rows] {
+        let s = state(axis);
+        let start = if axis == Axis::Cols {
+            (5.5, 2.)
+        } else {
+            (2., 4.5)
+        };
+        let mut drag = Drag::begin(
+            &s,
+            bounds(),
+            10.,
+            crate::terminal::CELL_HEIGHT,
+            point_at(start.0, start.1),
+        )
+        .unwrap();
+        let extent = if axis == Axis::Cols { 11 } else { 9 };
+        assert_eq!(preview_edge(&drag.split, drag.cells, extent), None);
+        let end = if axis == Axis::Cols {
+            (7.5, 2.)
+        } else {
+            (2., 5.5)
+        };
+        assert!(drag.update(point_at(end.0, end.1)));
+        let expected = if axis == Axis::Cols { 7 } else { 5 };
+        assert_eq!(
+            preview_edge(&drag.split, drag.cells, extent),
+            Some(expected)
+        );
+        assert_eq!(preview_edge(&drag.split, drag.cells, expected), None);
+    }
+}
+#[test]
 fn content_only_updates_survive_but_topology_lifetime_selection_and_presence_do_not() {
     let original = state(Axis::Cols);
     let drag = Drag::begin(

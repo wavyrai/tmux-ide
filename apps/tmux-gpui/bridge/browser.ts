@@ -390,6 +390,8 @@ let active:
       historyIntent?: number;
       drainHistory?: () => void;
       presentation: ReturnType<typeof createWindowPresentation>;
+      /** Retarget this helper to another pane of its subscribed window, without a new attachment. */
+      reselect?: (choice: z.infer<typeof connectionSchema>, request: number) => boolean;
     }
   | undefined;
 
@@ -1419,7 +1421,9 @@ async function openPane(
   }
   const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
   let handedOff = false;
-  const presentation = createWindowPresentation(config.semanticPaneId);
+  let presentation = createWindowPresentation(config.semanticPaneId);
+  // Set between an in-window reselect and the helper's publication for that pane.
+  let reselecting = false;
   try {
     const path = join(directory, "connection.json");
     const historyKey = fleet?.attachmentKey(config);
@@ -1526,6 +1530,42 @@ async function openPane(
       },
     };
     if (!catalogOnly)
+      active.reselect = (choice, next) => {
+        if (
+          active?.child !== child ||
+          child.exitCode !== null ||
+          !child.stdin.writable ||
+          diagnostics.fault ||
+          !foreground ||
+          historyOffset !== 0 ||
+          !snapshot ||
+          pendingClose ||
+          pendingPaneSplit ||
+          pendingNewWindow ||
+          choice.baseUrl !== config.baseUrl ||
+          choice.ownerToken !== config.ownerToken ||
+          choice.remoteSocketOrigin !== config.remoteSocketOrigin ||
+          choice.scope.serverId !== config.scope.serverId ||
+          choice.scope.generation !== config.scope.generation ||
+          choice.workspaceName !== config.workspaceName ||
+          choice.liveSessionId !== config.liveSessionId ||
+          !choice.visiblePaneIds?.includes(choice.semanticPaneId) ||
+          JSON.stringify(choice.visiblePaneIds) !== JSON.stringify(config.visiblePaneIds)
+        )
+          return false;
+        // Same subscription and attachment: only the selected pane and request change.
+        // Input written after this line is ordered behind the helper's retarget.
+        config = choice;
+        token = next;
+        presentation = createWindowPresentation(choice.semanticPaneId);
+        active.presentation = presentation;
+        reselecting = true;
+        child.stdin.write(
+          JSON.stringify({ kind: "select-pane", id: choice.semanticPaneId }) + "\n",
+        );
+        return true;
+      };
+    if (!catalogOnly)
       child.stdin.write(
         JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
       );
@@ -1533,6 +1573,11 @@ async function openPane(
     let buffer = Buffer.alloc(0),
       childConnection: string | undefined,
       childSequence = 0;
+    let content: {
+      bytes: Buffer;
+      value: { snapshot: unknown; surfaces: unknown };
+      surfaces: z.infer<typeof surfacesSchema> | null;
+    } | null = null;
     let childPresentationEpoch: number | undefined;
     const diagnostics = createDiagnosticChannel((fault) => {
       if (stopped || request !== token || active?.child !== child) return;
@@ -1572,7 +1617,28 @@ async function openPane(
     };
     child.stderr.on("data", (chunk: Buffer) => diagnostics.push(chunk));
     child.on("error", unavailable);
-    child.on("exit", unavailable);
+    child.on("exit", () => {
+      // A helper that refused an in-window reselect exits before addressing the
+      // new pane; attach the target freshly instead of reporting it unavailable.
+      if (
+        reselecting &&
+        !diagnostics.fault &&
+        !stopped &&
+        request === token &&
+        active?.child === child
+      ) {
+        reselecting = false;
+        const target = config,
+          owner = token;
+        void retire()
+          .then(() => {
+            if (!stopped && request === owner) return openPane(target, owner);
+          })
+          .catch(unavailable);
+        return;
+      }
+      unavailable();
+    });
     child.stdout.on("data", (chunk: Buffer) => {
       // Fatal helper diagnostics retire this presentation lifetime. Buffered
       // stdout must not restore a frame or input authority after that fault.
@@ -1585,8 +1651,29 @@ async function openPane(
           publicationStage = "framing";
           if (end > MAX_FRAME) throw new Error("Oversized child publication");
           publicationStage = "decode";
-          const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
+          const line = buffer.subarray(0, end);
           buffer = buffer.subarray(end + 1);
+          // The helper puts terminal content last behind its byte length. An unchanged
+          // tail (gesture, presence or status-only publications) is not decoded again.
+          const tailBytes = Number(
+            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
+          );
+          const tailStart = line.length - tailBytes;
+          const sameTail =
+            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
+          const event = JSON.parse(
+            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
+          );
+          if (sameTail) Object.assign(event, content!.value);
+          else
+            content =
+              tailStart > 0
+                ? {
+                    bytes: Buffer.from(line.subarray(tailStart)),
+                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
+                    surfaces: null,
+                  }
+                : null;
           if (event && typeof event === "object" && "kittyImageChunk" in event) {
             publicationStage = "graphics";
             const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
@@ -1605,6 +1692,10 @@ async function openPane(
           publicationStage = "topology";
           childConnection = event.connection;
           childSequence = event.sequence;
+          // Publications emitted before the helper applied a reselect describe the
+          // previous pane's input, history and action identities.
+          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) continue;
+          reselecting = false;
           layouts = topologySchema.parse(event.layouts ?? []);
           if (catalogOnly) {
             if (event.catalogReady !== true) throw new Error("Layout catalog unavailable");
@@ -2009,7 +2100,11 @@ async function openPane(
           childPresentationEpoch = epoch;
           const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
           publicationStage = "surfaces";
-          const surfaces = surfacesSchema.parse(event.surfaces ?? []);
+          const surfaces =
+            sameTail && content!.surfaces
+              ? content!.surfaces
+              : surfacesSchema.parse(event.surfaces ?? []);
+          if (content) content.surfaces = surfaces;
           const scrollOffset = z
             .number()
             .int()
@@ -3101,6 +3196,24 @@ async function command(value: unknown) {
   sessionCatalogComplete = false;
   initialPane = null;
   const token = request;
+  if (cmd.type === "pane" && surface === "workspace" && !retainedPreview) {
+    // Another pane of the displayed window: keep the frame and attachment, and let the
+    // helper confirm the new target before input is admitted again.
+    const pane = panes.find(
+      (p) => p.semanticPaneId === cmd.id && p.liveSessionId === selectedSession,
+    );
+    if (pane && active?.reselect?.(pane, token)) {
+      selectedPane = cmd.id;
+      inputReady = false;
+      paneActions = null;
+      resizeToken = null;
+      splitLayout = null;
+      copyRegion = null;
+      selectionIdentity = null;
+      status = "Loading";
+      return;
+    }
+  }
   snapshot = null;
   inputReady = false;
   selectedPane = null;

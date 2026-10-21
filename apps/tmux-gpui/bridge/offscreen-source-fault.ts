@@ -25,18 +25,25 @@ export function isOffscreenSourceFault(
 
 export type SourceFaultReason = "state-too-large" | "source-closed" | "protocol-violation";
 
-export function createSourceFaultFence(selectedPane: string, layouts: () => readonly Layout[]) {
+/** The selected pane is read at decision time: an in-window reselect retargets the helper. */
+export function createSourceFaultFence(
+  selectedPane: () => string,
+  layouts: () => readonly Layout[],
+) {
   const retired = new Map<string, SourceFaultReason>();
   return {
     isolate(pane: string, reason: SourceFaultReason): boolean {
-      if (reason === "protocol-violation" || !isOffscreenSourceFault(layouts(), selectedPane, pane))
+      if (
+        reason === "protocol-violation" ||
+        !isOffscreenSourceFault(layouts(), selectedPane(), pane)
+      )
         return false;
       retired.set(pane, reason);
       return true;
     },
     currentFailure(): SourceFaultReason | null {
       for (const [pane, reason] of retired) {
-        if (!isOffscreenSourceFault(layouts(), selectedPane, pane)) return reason;
+        if (!isOffscreenSourceFault(layouts(), selectedPane(), pane)) return reason;
       }
       return null;
     },
