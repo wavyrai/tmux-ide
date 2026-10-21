@@ -579,6 +579,8 @@ describe("cursor placement reseed coordinate safety", () => {
         bootstrap: change === "reset" ? "authoritative-stream" : "painted-capture",
       });
       expect(interpreter.currentGraphics()!.placements).toEqual([]);
+      // Hidden stale anchors must not reappear when scrolling or switching buffers back.
+      expect(interpreter.kittyImages().cursorPlacements()).toEqual([]);
       await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
     },
   );
