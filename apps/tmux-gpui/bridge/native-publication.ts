@@ -40,7 +40,7 @@ export function createNativePublicationWriter<E extends NativePublicationEncodin
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw new Error("Invalid publication byte limit");
   const binary = encoding === "binary-rle-v1";
-  const producer = createCompactDeltaProducer({ binary });
+  const producer = createCompactDeltaProducer({ binary, immutableRows: true });
   const serialize = createSnapshotSerializer(encoding === "legacy" ? "legacy" : "rle-v1");
   let accepted: Readonly<AcceptedFrame> | null = null;
   let retired = false;

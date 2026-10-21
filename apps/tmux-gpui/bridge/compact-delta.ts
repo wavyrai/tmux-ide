@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import {
   MAX_COMPACT_CELLS,
+  createCompactSnapshotEncoder,
   decodeCompactSnapshot,
   encodeCompactSnapshot,
   type CompactRow,
@@ -46,8 +47,11 @@ const deltaEnvelope = z
 export class CompactBaselineError extends Error {}
 
 // The encoder owns row/run arrays; these small metadata copies complete ownership.
-function ownedCompact(snapshot: TerminalReplicaSnapshot): CompactSnapshot {
-  const compact = encodeCompactSnapshot(snapshot);
+function ownedCompact(
+  snapshot: TerminalReplicaSnapshot,
+  encode = encodeCompactSnapshot,
+): CompactSnapshot {
+  const compact = encode(snapshot);
   return {
     ...compact,
     cursor: { ...compact.cursor },
@@ -69,19 +73,23 @@ function sameCompactRow(a: CompactRow, b: CompactRow): boolean {
 export function createCompactDeltaProducer({
   sequenceLimit = Number.MAX_SAFE_INTEGER,
   binary = false,
+  immutableRows = false,
 } = {}) {
   sequence.parse(sequenceLimit);
+  const encoder = immutableRows ? createCompactSnapshotEncoder() : null;
   let baseline: CompactFullFrame | null = null;
   let identity: string | null = null;
   let generation = 0;
   return {
     reset() {
       baseline = null;
+      encoder?.reset();
       identity = null;
       generation++;
     },
     prepare(snapshot: TerminalReplicaSnapshot, nextIdentity: string) {
-      const owned = ownedCompact(snapshot);
+      if (identity !== nextIdentity) encoder?.reset();
+      const owned = ownedCompact(snapshot, encoder?.encode);
       const compatible =
         baseline !== null &&
         identity === nextIdentity &&

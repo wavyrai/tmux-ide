@@ -248,3 +248,25 @@ test("binary production serialization never stringifies cell rows", (t) => {
   // One identity tuple per write is small control metadata; cells are binary only.
   assert.equal(cellArrays, 2);
 });
+
+test("native writer does not reread immutable cells for cursor-only publications", () => {
+  const source = frame();
+  let reads = 0;
+  source.grid = source.grid.map((row) => ({
+    ...row,
+    cells: new Proxy(row.cells, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+        return Reflect.get(target, key, receiver);
+      },
+    }),
+  }));
+  const writer = createNativePublicationWriter("binary-rle-v1", () => true);
+  writer.write(publication(source), context);
+  assert.ok(reads > 0);
+  reads = 0;
+  writer.write(publication({ ...source, cursor: { ...source.cursor, x: 1 } }), context);
+  assert.equal(reads, 0);
+  writer.write(publication(source), { ...context, identity: "replacement" });
+  assert.ok(reads > 0, "source identity change resets cached encodings");
+});
