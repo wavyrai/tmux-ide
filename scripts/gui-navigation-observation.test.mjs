@@ -132,3 +132,31 @@ for (const [name, mutate] of [
     mutate(e);
     assert.throws(() => classifyPageResponse(e));
   });
+
+function insertBeforeTrigger(evidence, changed) {
+  const sample = structuredClone(evidence.samples[changed ? 1 : 0]);
+  sample.startNs = "12";
+  sample.endNs = "18";
+  evidence.samples.splice(1, 0, sample);
+  evidence.samples.forEach((entry, sequence) => {
+    entry.sequence = sequence;
+  });
+  return evidence;
+}
+for (const [name, fixture, classify] of [
+  ["selection", selection, classifyPaneSelection],
+  ["page", page, classifyPageResponse],
+]) {
+  test(`${name} rejects a second pretrigger changed capture`, () => {
+    assert.throws(() => classify(insertBeforeTrigger(fixture(), true)));
+  });
+  test(`${name} accepts repeated unchanged pretrigger captures`, () => {
+    assert.doesNotThrow(() => classify(insertBeforeTrigger(fixture(), false)));
+  });
+  test(`${name} does not treat an action-overlapping capture as response timing`, () => {
+    const evidence = insertBeforeTrigger(fixture(), true);
+    evidence.samples[1].startNs = "19";
+    evidence.samples[1].endNs = "26";
+    assert.equal(classify(evidence).positiveSequence, 2);
+  });
+}

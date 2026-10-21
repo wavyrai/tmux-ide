@@ -88,7 +88,7 @@ export function classifyPaneSelection(evidence) {
   for (const sample of clock.samples) {
     witness(sample.source, source);
     witness(sample.target, target);
-    if (sample === clock.samples[0]) {
+    if (ns(sample.endNs) <= clock.start) {
       assert.equal(sample.source.selected, true);
       assert.equal(sample.target.selected, false, "target cannot be selected before input");
     }
@@ -155,7 +155,7 @@ export function classifyPageResponse(evidence) {
     assert.deepEqual(sample.rowPositions, evidence.rowPositions);
     assert.equal(sample.pane, evidence.pane);
     assert.deepEqual(sample.roi, evidence.roi);
-    if (sample === clock.samples[0]) assert.deepEqual(sample.rows, evidence.beforeRows);
+    if (ns(sample.endNs) <= clock.start) assert.deepEqual(sample.rows, evidence.beforeRows);
     if (ns(sample.startNs) < clock.end) continue;
     const matches = JSON.stringify(sample.rows) === JSON.stringify(evidence.expectedRows);
     if (matches) positive ??= sample;
