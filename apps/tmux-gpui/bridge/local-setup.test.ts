@@ -42,7 +42,7 @@ const ready = (version: string) =>
   });
 
 test("fixed managed lookup and explicit supported update use pinned paths and bounded runner", async () => {
-  for (const version of ["2.9.6", "2.9.7", "2.9.8", "2.9.9"]) {
+  for (const version of ["2.9.6", "2.9.7", "2.9.8", "2.9.9", "2.9.10"]) {
     const f = await fixture(version);
     try {
       const result = await resolveLocalSetup({ home: f.home });
@@ -73,7 +73,14 @@ test("fixed managed lookup and explicit supported update use pinned paths and bo
 });
 
 test("unsupported versions never execute, including newer installs and prereleases", async () => {
-  for (const version of ["2.9.5", "2.9.10", "3.0.0", "2.9.8-beta.1", "2.9.9-beta.1"]) {
+  for (const version of [
+    "2.9.5",
+    "2.9.11",
+    "3.0.0",
+    "2.9.8-beta.1",
+    "2.9.9-beta.1",
+    "2.9.10-beta.1",
+  ]) {
     const f = await fixture(version);
     try {
       assert.deepEqual(await resolveLocalSetup({ home: f.home }), { kind: "unsupported-version" });
@@ -237,10 +244,10 @@ test("abort before spawn and after setup begins means stopped waiting, never rol
   }
 });
 
-for (const version of ["2.9.8", "2.9.9"]) {
+for (const version of ["2.9.8", "2.9.9", "2.9.10"]) {
   test(`qualified ${version} still rejects mismatched executable and daemon identities`, async () => {
     const f = await fixture(version);
-    const previous = version === "2.9.9" ? "2.9.8" : "2.9.7";
+    const previous = `2.9.${Number(version.split(".")[2]) - 1}`;
     try {
       const result = await resolveLocalSetup({ home: f.home });
       assert.equal(result.kind, "available");

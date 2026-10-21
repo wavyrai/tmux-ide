@@ -1,0 +1,19 @@
+---
+title: tmux-ide 2.9.10
+metaTitle: "What's new in 2.9.10"
+description: "Improve native GUI typing over SSH."
+---
+
+`2.9.10` prepares compatibility for native macOS alpha `0.1.6`, distributed
+separately, which improves typing over SSH.
+The native app can send subsequent terminal input while earlier input is still
+in flight, reducing pauses caused by waiting on each request.
+
+## Updating
+
+Update the CLI and its running daemon. For the typing improvement, install
+native alpha `0.1.6` when it is available from the
+[native release page](/docs/native-alpha). The CLI and native app are separate
+installations; publishing this CLI release does not publish the native app, and
+updating the CLI alone does not update the native input handling.
+Existing tmux sessions and the programs in their panes are preserved.

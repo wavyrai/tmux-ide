@@ -24,7 +24,7 @@ import { routeWheel, wheelSchema } from "./wheel.ts";
 import type { Layout } from "./topology.ts";
 import { applyPresence, presenceSchema } from "./presence.ts";
 import { resizeSchema, resizeWindow, windowForLayout } from "./geometry.ts";
-import { deliverInput, deliverPreviewInput, MAX_INPUT_LINE } from "./input.ts";
+import { deliverInput, deliverPreviewInput, isPipelineInput, MAX_INPUT_LINE } from "./input.ts";
 import { connectionSchema, readPrivateConfig, paneStreamSocketUrl } from "./config.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
@@ -50,8 +50,14 @@ import {
   TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
   TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
 } from "../../../packages/contracts/src/terminal-graphics.ts";
+import { createInputPipeline } from "./input-pipeline.ts";
 
 const diagnostics = createLiveDiagnostics((line) => process.stderr.write(line));
+const inputPipeline = createInputPipeline(() => {
+  if (!stopped) diagnostics.report("runtime-failure");
+  process.exitCode = 1;
+  stop();
+});
 let ready = false;
 let runtime: PaneStreamRuntimeClient | undefined;
 let disposeClient: (() => void) | undefined;
@@ -293,6 +299,7 @@ process.stdout.on("drain", () => {
 function stop() {
   if (stopped) return;
   stopped = true;
+  inputPipeline.retire();
   resizeGesture?.retire();
   splitReader?.dispose();
   splitGesture?.retire();
@@ -693,6 +700,7 @@ try {
   else for (const ack of queuedAcks) runtime.ack(ack);
   if (stopped) disposeClient();
   if (interactive && !stopped) {
+    const inputRuntime = runtime;
     if (latest.snapshot) output(latest.snapshot);
     let buffer = Buffer.alloc(0);
     inputLoop: for await (const chunk of process.stdin) {
@@ -703,6 +711,9 @@ try {
         const line = buffer.subarray(0, end).toString("utf8");
         buffer = buffer.subarray(end + 1);
         const value: unknown = JSON.parse(line);
+        const pipelined = isPipelineInput(value);
+        // Other commands are barriers, including presence, history, paste and control keys.
+        if (!pipelined) await inputPipeline.barrier();
         const handoff = z
           .object({ kind: z.literal("history-handoff"), intent: z.uuid() })
           .strict()
@@ -1017,16 +1028,34 @@ try {
         )
           continue; // Never type into a historical view.
         if (!latest.snapshot) throw new Error("No verified input target");
-        await deliverPreviewInput(
-          runtime,
-          config.workspaceName,
-          config.semanticPaneId,
-          value,
-          latest.snapshot.modes.bracketedPaste,
-        );
+        const inputLifetime = lifetimes.get(config.semanticPaneId);
+        const deliver = async () => {
+          // Recheck after waiting for capacity; a disconnect or authority loss can
+          // arrive independently of stdin while earlier acknowledgements settle.
+          if (
+            stopped ||
+            !foreground ||
+            !latest.snapshot ||
+            lifetimes.get(config.semanticPaneId) !== inputLifetime ||
+            restorePending ||
+            historyRestoration?.publication().state === "restoring" ||
+            viewport.offset > 0
+          )
+            throw new Error("Input target retired");
+          await deliverPreviewInput(
+            inputRuntime,
+            config.workspaceName,
+            config.semanticPaneId,
+            value,
+            latest.snapshot.modes.bracketedPaste,
+          );
+        };
+        if (pipelined) await inputPipeline.submit(deliver);
+        else await deliver();
       }
       if (buffer.length > MAX_INPUT_LINE) throw new Error("Input command too large");
     }
+    await inputPipeline.barrier();
     stop();
   }
 } catch {
