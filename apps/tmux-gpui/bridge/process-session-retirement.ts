@@ -21,51 +21,7 @@ export function createProcessSessionRetirement(options: {
     unavailable: () => undefined,
     emit: () => options.unavailable(),
     revoke: options.revoke,
-    drain: (signal) =>
-      new Promise<void>((resolve, reject) => {
-        let ending = false;
-        const cleanup = () => {
-          output.off("drain", drain);
-          output.off("error", error);
-          output.off("close", closed);
-          signal.removeEventListener("abort", aborted);
-        };
-        const error = () => {
-          cleanup();
-          reject(new Error("Session output failed"));
-        };
-        const closed = () => {
-          if (!output.writableFinished) error();
-        };
-        const aborted = () => {
-          cleanup();
-          reject(new Error("Session output drain expired"));
-        };
-        const drain = () => {
-          if (ending || signal.aborted) return;
-          if (output.destroyed) {
-            error();
-            return;
-          }
-          try {
-            if (options.blocked()) return;
-            ending = true;
-            output.end((failure?: Error | null) => {
-              cleanup();
-              if (failure) reject(failure);
-              else resolve();
-            });
-          } catch {
-            error();
-          }
-        };
-        output.on("drain", drain);
-        output.once("error", error);
-        output.once("close", closed);
-        signal.addEventListener("abort", aborted, { once: true });
-        if (signal.aborted) aborted();
-        else drain();
-      }),
+    drain: (signal) => drainProcessOutput(output, options.blocked, signal),
     close: () => {
       try {
         options.close();
@@ -76,5 +32,52 @@ export function createProcessSessionRetirement(options: {
     onRetired: (result) => {
       if (result.timedOut || result.failures.length) options.failed();
     },
+  });
+}
+
+export function drainProcessOutput(output: Writable, blocked: () => boolean, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    let ending = false;
+    const cleanup = () => {
+      output.off("drain", drain);
+      output.off("error", error);
+      output.off("close", closed);
+      signal.removeEventListener("abort", aborted);
+    };
+    const error = () => {
+      cleanup();
+      reject(new Error("Session output failed"));
+    };
+    const closed = () => {
+      if (!output.writableFinished) error();
+    };
+    const aborted = () => {
+      cleanup();
+      reject(new Error("Session output drain expired"));
+    };
+    const drain = () => {
+      if (ending || signal.aborted) return;
+      if (output.destroyed) {
+        error();
+        return;
+      }
+      try {
+        if (blocked()) return;
+        ending = true;
+        output.end((failure?: Error | null) => {
+          cleanup();
+          if (failure) reject(failure);
+          else resolve();
+        });
+      } catch {
+        error();
+      }
+    };
+    output.on("drain", drain);
+    output.once("error", error);
+    output.once("close", closed);
+    signal.addEventListener("abort", aborted, { once: true });
+    if (signal.aborted) aborted();
+    else drain();
   });
 }

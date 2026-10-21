@@ -73,11 +73,17 @@ export function parseKnownDigests(value: string | undefined): string[] {
     .slice(0, MAX_KNOWN_DIGESTS);
 }
 
+export type KittyImageBytes = {
+  metadata: TerminalGraphicsBlob & { image?: string };
+  bytes: Uint8Array;
+};
+
 /** Live helper side: one instance per pane-stream connection. */
 export function createKittyGraphicsReceiver(options: {
   readonly known: Iterable<string>;
   readonly request: (pane: string, digests: string[]) => void;
   readonly emit: (line: string) => void;
+  readonly emitChunk?: (chunk: KittyImageBytes) => boolean | void;
 }) {
   const states = new Map<string, TerminalGraphicsState>();
   let takesCellPixels = false;
@@ -130,15 +136,16 @@ export function createKittyGraphicsReceiver(options: {
       // The daemon pushes redrawn images unasked; never request them again.
       remember(blob.digest);
       const image = states.get(pane)?.images.find((entry) => entry.digest === blob.digest);
-      options.emit(
-        JSON.stringify({
-          kittyImageChunk: {
-            ...blob,
-            ...(image ? { image: imageKey(pane, image.imageId) } : {}),
-            data: Buffer.from(bytes).toString("base64"),
-          },
-        }) + "\n",
-      );
+      const metadata = { ...blob, ...(image ? { image: imageKey(pane, image.imageId) } : {}) };
+      if (options.emitChunk) {
+        if (options.emitChunk({ metadata, bytes }) === false) held.delete(blob.digest);
+      } else {
+        options.emit(
+          JSON.stringify({
+            kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
+          }) + "\n",
+        );
+      }
     },
     /** Placements for one published pane snapshot; pulls missing bytes. */
     placements(pane: string, snapshot: TerminalReplicaSnapshot): KeyedPlacement[] {
