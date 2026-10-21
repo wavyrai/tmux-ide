@@ -81,3 +81,52 @@ test("resume smoke waits for the current presence acknowledgement before sending
   );
   assert.equal(commands.filter((command) => command.input?.data?.cols === 95).length, 1);
 });
+
+const focusStart = source.indexOf("    if (process.env.TMUX_GPUI_TEST_FOCUS_ONLY) {");
+const focusEnd = source.indexOf("    } else {", focusStart);
+const nativeFocusJourney = source.slice(source.indexOf("\n", focusStart) + 1, focusEnd);
+async function nativeFocusFixture(shrink = false) {
+  const events = [{ request: 4, presenceRevision: 2, inputReady: true }];
+  let calls = 0,
+    grid = { cols: 89, rows: 26 };
+  const context = vm.createContext({
+    events,
+    assert,
+    console: { log() {} },
+    fleet: { sessionNames: ["a", "b"], windowGrid: () => ({ ...grid }) },
+    async until(predicate) {
+      calls++;
+      if (calls === 1) {
+        assert.equal(predicate(), true);
+        return;
+      }
+      if (calls === 2) {
+        events.push({ request: 4, presenceRevision: 2, inputReady: false });
+        assert.equal(
+          predicate(),
+          false,
+          "local focus publication is not a background acknowledgement",
+        );
+        events.push({ request: 4, presenceRevision: 3, inputReady: false });
+        if (shrink === true) grid = { cols: 80, rows: 24 };
+      } else {
+        events.push({ request: 4, presenceRevision: 3, inputReady: true });
+        assert.equal(predicate(), false, "old presence revision cannot qualify foreground return");
+        events.push({ request: 4, presenceRevision: 4, inputReady: true });
+        if (shrink === "foreground") grid = { cols: 80, rows: 24 };
+      }
+      assert.equal(predicate(), true);
+    },
+  });
+  await vm.runInContext("(async()=>{" + nativeFocusJourney + "})()", context);
+  assert.equal(calls, 3);
+}
+test("physical-focus journey requires fresh blur/refocus acknowledgements and preserves exact grid", async () => {
+  await nativeFocusFixture();
+});
+test("physical-focus journey rejects the original shrink to80x24", async () => {
+  await assert.rejects(nativeFocusFixture(true), /physical focus loss preserves/);
+});
+test("physical-focus journey rejects geometry loss on foreground return", async () => {
+  await assert.rejects(nativeFocusFixture("foreground"), /physical focus return preserves/);
+});
