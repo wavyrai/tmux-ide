@@ -297,7 +297,7 @@ describe("interpreter integration", () => {
       },
     ]);
     expect(interpreter.kittyImages().imageByDigest(digest)?.format).toBe("png");
-    // A capture reseed keeps placeholder images and drops cursor placements.
+    // A capture reseed with the same coordinate basis keeps cursor placements.
     await interpreter.enqueue({
       type: "reseed",
       cols: 20,
@@ -307,9 +307,12 @@ describe("interpreter integration", () => {
       bootstrap: "painted-capture",
     });
     const after = interpreter.currentGraphics()!;
-    expect(after.placements).toEqual([]);
+    expect(after.placements).toEqual([
+      expect.objectContaining({ digest, row: 0, column: 2, rows: 1, columns: 2 }),
+    ]);
     expect(resolveKittyPlacements(interpreter.currentSnapshot().grid, after)).toEqual([
       expect.objectContaining({ digest, row: 1, column: 2, rows: 2, columns: 3 }),
+      expect.objectContaining({ digest, row: 0, column: 2, rows: 1, columns: 2 }),
     ]);
   });
 });
@@ -536,5 +539,83 @@ describe("full-frame kitty-graphics client under tmux (real client recording)", 
       .map((row) => row.cells.map((cell) => cell.grapheme).join(""))
       .join("");
     expect(text).not.toMatch(/[A-Za-z0-9+/]{16}/u);
+  });
+});
+
+describe("cursor placement reseed coordinate safety", () => {
+  it.each(["resize", "resize-rows", "live-resize", "history", "alternate", "reset"] as const)(
+    "drops cursor anchors on %s",
+    async (change) => {
+      const interpreter = new TerminalReplicaInterpreter({
+        generation: "00000000-0000-4000-8000-000000000001",
+        workspaceName: "workspace",
+        semanticPaneId: "p",
+        incarnation: "00000000-0000-4000-8000-000000000001:0",
+        cols: 20,
+        rows: 6,
+        kittyImageBudget: budget(),
+      });
+      await interpreter.enqueue({
+        type: "write",
+        data: bytes(apc("a=T,f=100,i=3,c=2,r=1", PNG.toString("base64"))),
+      });
+      expect(interpreter.currentGraphics()!.placements).toHaveLength(1);
+      if (change === "live-resize")
+        await interpreter.enqueue({ type: "resize", cols: 21, rows: 6 });
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: change === "resize" || change === "live-resize" ? 21 : 20,
+        rows: change === "resize-rows" ? 7 : 6,
+        chunks: [
+          bytes(
+            change === "history"
+              ? "line\r\n".repeat(9)
+              : change === "alternate"
+                ? "\x1b[?1049h"
+                : "",
+          ),
+        ],
+        cursor: { x: 0, y: 0 },
+        bootstrap: change === "reset" ? "authoritative-stream" : "painted-capture",
+      });
+      expect(interpreter.currentGraphics()!.placements).toEqual([]);
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    },
+  );
+});
+
+describe("graphics retained resource bounds", () => {
+  it("enforces byte quotas after an incompressible root-frame edit", () => {
+    const quota = new KittyImageBudget({ perPaneBytes: 1024, globalBytes: 2048 });
+    const store = new KittyImageStore({ budget: quota });
+    const base = deflateSync(Buffer.alloc(128 * 128 * 4));
+    store.apply(
+      parseKittyCommand(`Ga=t,i=9,f=32,s=128,v=128,o=z;${base.toString("base64")}`)!,
+      null,
+    );
+    expect(store.images().size).toBe(1);
+    let seed = 123456789;
+    const patch = Buffer.from(
+      Array.from({ length: 128 * 128 * 4 }, () => {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        return seed & 255;
+      }),
+    );
+    store.apply(
+      parseKittyCommand(`Ga=f,i=9,r=1,X=1,f=32,s=128,v=128;${patch.toString("base64")}`)!,
+      null,
+    );
+    expect(store.bytes).toBeLessThanOrEqual(1024);
+    expect(quota.totalBytes).toBeLessThanOrEqual(2048);
+  });
+  it("bounds retained virtual placements and forgets the oldest id", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    store.apply(parseKittyCommand(`Ga=t,f=100,i=1;${PNG.toString("base64")}`)!, null);
+    for (let id = 1; id <= 257; id++)
+      store.apply(parseKittyCommand(`Ga=p,U=1,i=1,p=${id},c=2,r=1`)!, null);
+    for (let id = 2; id <= 257; id++) store.apply(parseKittyCommand(`Ga=d,d=i,i=1,p=${id}`)!, null);
+    expect(store.state(0, 2, 2, false).images[0]!.placeholder).toBeNull();
   });
 });

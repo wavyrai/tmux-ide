@@ -2805,6 +2805,25 @@ describe("window viewport scope", () => {
     await rig.channel.dispose();
   });
 
+  it("retains precise metrics across fits and forwards precision-only changes", async () => {
+    const rig = await startedRig();
+    rig.channel.setGeometryParticipation(true);
+    rig.channel.fitViewport(110, 34);
+    const before = rig.sim.written.length;
+    rig.channel.setCellPixels(17, 40, { width: 16860, height: 40000 });
+    rig.channel.setCellPixels(17, 40, { width: 16861, height: 40000 });
+    rig.channel.fitViewport(80, 24);
+    expect(rig.sim.written.slice(before)).toEqual([
+      "refresh-client -C 110x34/17x40/16860x40000",
+      "refresh-client -C 110x34/17x40/16861x40000",
+      expect.stringContaining("if-shell -F -t '$1'"),
+      "refresh-client -C 80x24/17x40/16861x40000",
+    ]);
+    for (const width of [0, 999, 1024001, Infinity, 16000.5])
+      expect(() => rig.channel.setCellPixels(17, 40, { width, height: 40000 })).toThrow(RangeError);
+    await rig.channel.dispose();
+  });
+
   it("clears window overrides when participation ends and permits a new fit", async () => {
     const rig = await startedRig();
     rig.channel.setGeometryParticipation(true);

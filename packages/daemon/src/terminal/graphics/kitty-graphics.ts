@@ -18,7 +18,7 @@
  *    marker OSC the scanner substitutes in place of the APC, so the VT parser
  *    reports the cursor at the exact byte position. tmux never sees these
  *    placements: they do not move the cursor, do not follow reflow, and are
- *    dropped by a capture reseed.
+ *    kept across capture reseeds only when the coordinate basis is unchanged.
  *
  * Limits: direct transmission (`t=d`) only — file and shared-memory media
  * cannot cross machines; `a=d` handles all and by-id; animation, relative
@@ -356,7 +356,7 @@ export interface KittyImageStoreOptions {
   readonly budget?: KittyImageBudget;
 }
 
-/** Per-pane image store. Survives reseeds; cursor placements do not. */
+/** Per-pane image store. Survives reseeds; the interpreter validates cursor placement coordinates. */
 export class KittyImageStore {
   readonly #images = new Map<number, KittyImage>();
   readonly #used = new Map<number, number>();
@@ -408,7 +408,7 @@ export class KittyImageStore {
     this.#bytes = 0;
   }
 
-  /** A capture reseed replaced the grid: tmux holds no record of cursor placements. */
+  /** The coordinate basis changed: tmux holds no record to restore cursor anchors. */
   dropCursorPlacements(): void {
     if (this.#cursorPlacements.length === 0) return;
     this.#cursorPlacements.length = 0;
@@ -503,12 +503,7 @@ export class KittyImageStore {
       this.#bytes += image.data.byteLength;
       this.#used.set(imageId, this.#budget.nextTick());
       this.#revision += 1;
-      while (
-        (this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) &&
-        this.#images.size > 1
-      )
-        this.evictOldest();
-      this.#budget.enforce();
+      this.#enforceBudget();
       if (action === "t" || !this.#images.has(imageId)) return;
     }
     if (action === "f") return this.#editFrame(imageId, control, payload);
@@ -523,6 +518,17 @@ export class KittyImageStore {
       const placements = this.#virtual.get(imageId) ?? new Map();
       placements.set(placementId, { columns, rows });
       this.#virtual.set(imageId, placements);
+      let count = 0;
+      for (const entries of this.#virtual.values()) count += entries.size;
+      for (const [id, entries] of this.#virtual) {
+        for (const placement of entries.keys()) {
+          if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+          entries.delete(placement);
+          count -= 1;
+        }
+        if (entries.size === 0) this.#virtual.delete(id);
+        if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+      }
     } else if (cursor) {
       const existing = this.#cursorPlacements.findIndex(
         (p) => p.imageId === imageId && placementId !== 0 && p.placementId === placementId,
@@ -645,6 +651,16 @@ export class KittyImageStore {
     this.#bytes += data.byteLength;
     this.#used.set(imageId, this.#budget.nextTick());
     this.#revision += 1;
+    this.#enforceBudget();
+  }
+
+  #enforceBudget(): void {
+    while (
+      (this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) &&
+      this.#images.size > 0
+    )
+      this.evictOldest();
+    this.#budget.enforce();
   }
 
   #delete(control: ReadonlyMap<string, string>): void {

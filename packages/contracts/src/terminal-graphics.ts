@@ -23,6 +23,8 @@ export const TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION = 102;
  * `terminal-cell-pixels`, so programs size images 1:1 for the window.
  */
 export const TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION = 103;
+/** Thousandths of a device pixel, avoiding accumulated per-cell rounding. */
+export const TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION = 104;
 /** Raw image bytes per blob frame (base64 on the wire stays below 1 MiB). */
 export const TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES = 512 * 1024;
 /** Largest single image a daemon publishes (a 4K RGBA frame is ~33 MB). */
@@ -89,6 +91,7 @@ export const TerminalGraphicsStateSchemaZ = z
     placements: z.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS),
     /** The daemon accepts `terminal-cell-pixels` (only sent to renderers offering 103). */
     cellPixels: z.literal(true).optional(),
+    preciseCellPixels: z.literal(true).optional(),
   })
   .strict();
 export type TerminalGraphicsState = z.infer<typeof TerminalGraphicsStateSchemaZ>;

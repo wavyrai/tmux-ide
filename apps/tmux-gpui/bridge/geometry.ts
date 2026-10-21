@@ -11,6 +11,8 @@ export const resizeSchema = z
         /** The window's cell size in device pixels (image programs size by it). */
         cellWidth: z.number().int().min(1).max(1024).optional(),
         cellHeight: z.number().int().min(1).max(1024).optional(),
+        cellWidthMilli: z.number().int().min(1000).max(1024000).optional(),
+        cellHeightMilli: z.number().int().min(1000).max(1024000).optional(),
       })
       .strict(),
   })

@@ -1314,11 +1314,17 @@ export class SessionChannel {
   }
 
   private clientViewport: { cols: number; rows: number } | null = null;
-  private cellPixels: { width: number; height: number } | null = null;
+  private cellPixels: {
+    width: number;
+    height: number;
+    precise?: { width: number; height: number };
+  } | null = null;
 
   /** "/WxH" for tmux's refresh-client -C (patched tmux; stock ignores it). */
   private cellPixelSuffix(): string {
-    return this.cellPixels ? `/${this.cellPixels.width}x${this.cellPixels.height}` : "";
+    if (!this.cellPixels) return "";
+    const { width, height, precise } = this.cellPixels;
+    return `/${width}x${height}` + (precise ? `/${precise.width}x${precise.height}` : "");
   }
 
   /**
@@ -1326,7 +1332,7 @@ export class SessionChannel {
    * sets TIOCGWINSZ pixels from it, so image programs render 1:1 for the
    * window. Re-applies the current viewport when the size changes.
    */
-  setCellPixels(width: number, height: number): void {
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
     if (
       !Number.isSafeInteger(width) ||
       !Number.isSafeInteger(height) ||
@@ -1336,8 +1342,21 @@ export class SessionChannel {
       height > 1024
     )
       throw new RangeError("cell pixel size out of range");
-    if (this.cellPixels?.width === width && this.cellPixels.height === height) return;
-    this.cellPixels = { width, height };
+    if (
+      precise &&
+      [precise.width, precise.height].some(
+        (value) => !Number.isSafeInteger(value) || value < 1000 || value > 1024000,
+      )
+    )
+      throw new RangeError("precise cell pixel size out of range");
+    if (
+      this.cellPixels?.width === width &&
+      this.cellPixels.height === height &&
+      this.cellPixels.precise?.width === precise?.width &&
+      this.cellPixels.precise?.height === precise?.height
+    )
+      return;
+    this.cellPixels = { width, height, ...(precise ? { precise } : {}) };
     if (!this.geometryParticipating) return;
     this.input.flush();
     if (this.fittedWindows.size > 0) {

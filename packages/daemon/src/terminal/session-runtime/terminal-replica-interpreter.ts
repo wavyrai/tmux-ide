@@ -422,8 +422,17 @@ export class TerminalReplicaInterpreter {
       const previous = this.#backend;
       this.#backend = replacement;
       this.#attachKitty(replacement);
-      // tmux never saw cursor-anchored placements; a capture cannot restore them.
-      this.#kitty.dropCursorPlacements();
+      // A capture replay does not erase graphics already observed by this owner.
+      // Keep anchors only when both backends agree on their coordinate basis;
+      // reflow, history replacement and authoritative stream resets are ambiguous.
+      const sameGraphicsBasis =
+        operation.bootstrap === "painted-capture" &&
+        previous.cols === replacement.cols &&
+        previous.rows === replacement.rows &&
+        previous.graphicsViewportTop?.() !== undefined &&
+        previous.graphicsViewportTop?.() === replacement.graphicsViewportTop?.() &&
+        previous.modes().alternateScreen === replacement.modes().alternateScreen;
+      if (!sameGraphicsBasis) this.#kitty.dropCursorPlacements();
       this.#nativeReseedRequested = false;
       this.#scrollback = scrollback;
       this.#bootstrap = {
@@ -459,6 +468,8 @@ export class TerminalReplicaInterpreter {
       return;
     }
     if (operation.type === "resize") {
+      if (operation.cols !== this.#backend.cols || operation.rows !== this.#backend.rows)
+        this.#kitty.dropCursorPlacements();
       this.#causalCell?.fail("geometry-drift");
       if (this.#backend.modes().synchronizedOutput) {
         // Geometry is part of the admitted FIFO even while publication is

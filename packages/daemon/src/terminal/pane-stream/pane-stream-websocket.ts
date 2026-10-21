@@ -12,6 +12,7 @@ import {
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES,
   TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
   TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES,
   TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
   type TerminalGraphicsState,
@@ -310,7 +311,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     rows: number,
     semanticWindowId?: string,
   ): void;
-  setCellPixels?(width: number, height: number): void;
+  setCellPixels?(width: number, height: number, precise?: { width: number; height: number }): void;
   close(): Promise<void>;
 }
 
@@ -1792,6 +1793,11 @@ export class PaneStreamLiveConnection {
     const cellPixels =
       this.#descriptor.terminalDelivery?.protocolVersions.includes(
         TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
+        TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
+      ) === true;
+    const preciseCellPixels =
+      this.#descriptor.terminalDelivery?.protocolVersions.includes(
+        TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
       ) === true;
     let announced = false;
     graphics.subscribe((state) => {
@@ -1813,6 +1819,7 @@ export class PaneStreamLiveConnection {
         state: {
           ...(zlib ? state : rawGraphicsState(state)),
           ...(cellPixels ? { cellPixels: true as const } : {}),
+          ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
         },
       });
       if (pushed.length > 0) this.#queueGraphics(channel, pushed);
@@ -1822,7 +1829,13 @@ export class PaneStreamLiveConnection {
       this.#sendFrame(null, {
         type: "terminal-graphics",
         pane: channel.semanticPaneId,
-        state: { revision: 0, images: [], placements: [], cellPixels: true },
+        state: {
+          revision: 0,
+          images: [],
+          placements: [],
+          cellPixels: true,
+          ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
+        },
       });
     }
   }
@@ -2482,7 +2495,7 @@ export class PaneStreamLiveConnection {
     }
     if (frame.type === "terminal-cell-pixels") {
       try {
-        this.#sessionRuntimeBinding?.setCellPixels?.(frame.width, frame.height);
+        this.#sessionRuntimeBinding?.setCellPixels?.(frame.width, frame.height, frame.precise);
       } catch {
         // A retired runtime simply keeps tmux's default cell size.
       }

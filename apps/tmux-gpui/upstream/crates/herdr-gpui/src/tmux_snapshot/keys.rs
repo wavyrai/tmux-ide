@@ -17,6 +17,10 @@ pub(super) enum Input {
         cell_width: Option<u32>,
         #[serde(rename = "cellHeight", skip_serializing_if = "Option::is_none")]
         cell_height: Option<u32>,
+        #[serde(rename = "cellWidthMilli", skip_serializing_if = "Option::is_none")]
+        cell_width_milli: Option<u32>,
+        #[serde(rename = "cellHeightMilli", skip_serializing_if = "Option::is_none")]
+        cell_height_milli: Option<u32>,
     },
     Scroll(i16),
     Wheel {

@@ -314,7 +314,7 @@ struct KittyView {
     store: kitty_graphics::Store,
     placements: Rc<RefCell<Vec<kitty_graphics::Placement>>>,
     /// Cell size in device pixels last reported with a resize.
-    cell_pixels: Rc<std::cell::Cell<Option<(u32, u32)>>>,
+    cell_pixels: Rc<std::cell::Cell<Option<(u32, u32, u32, u32)>>>,
 }
 
 struct SnapshotView {
@@ -478,6 +478,8 @@ impl SnapshotView {
                                 let cell_pixels = (
                                     (width * scale).round().max(1.) as u32,
                                     (height * scale).round().max(1.) as u32,
+                                    (width * scale * 1000.).round().clamp(1000., 1024000.) as u32,
+                                    (height * scale * 1000.).round().clamp(1000., 1024000.) as u32,
                                 );
                                 let pixels_changed =
                                     view.graphics.cell_pixels.get() != Some(cell_pixels);
@@ -502,6 +504,8 @@ impl SnapshotView {
                                             rows,
                                             cell_width: Some(cell_pixels.0),
                                             cell_height: Some(cell_pixels.1),
+                                            cell_width_milli: Some(cell_pixels.2),
+                                            cell_height_milli: Some(cell_pixels.3),
                                         },
                                     };
                                     if sender.try_send(command).is_ok() {
@@ -550,13 +554,13 @@ impl SnapshotView {
                                     placements: &kitty_scene,
                                     images,
                                     target: ImageTarget::Main,
-                                    cell_pixels: kitty_cell_pixels.get().map(|(width, height)| {
-                                        CellPixels {
+                                    cell_pixels: kitty_cell_pixels.get().map(
+                                        |(width, height, _, _)| CellPixels {
                                             width,
                                             height,
                                             scale: window.scale_factor(),
-                                        }
-                                    }),
+                                        },
+                                    ),
                                 }),
                                 window,
                                 cx,

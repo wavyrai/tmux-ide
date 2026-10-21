@@ -58,6 +58,8 @@ fn retained_preview_cannot_reuse_stale_input_geometry_or_capabilities(cx: &mut T
                     rows: 24,
                     cell_width: None,
                     cell_height: None,
+                    cell_width_milli: None,
+                    cell_height_milli: None,
                 },
             ] {
                 v.queue_input(input, cx);

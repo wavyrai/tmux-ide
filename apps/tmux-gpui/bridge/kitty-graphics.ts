@@ -79,6 +79,7 @@ export function createKittyGraphicsReceiver(options: {
 }) {
   const states = new Map<string, TerminalGraphicsState>();
   let takesCellPixels = false;
+  let takesPreciseCellPixels = false;
   // Image ids each pane's last publication showed.
   const visible = new Map<string, Set<number>>();
   // Digests the window holds or that are in flight to it.
@@ -98,6 +99,7 @@ export function createKittyGraphicsReceiver(options: {
      */
     state(pane: string, state: TerminalGraphicsState): boolean {
       if (state.cellPixels) takesCellPixels = true;
+      if (state.preciseCellPixels) takesPreciseCellPixels = true;
       const previous = states.get(pane);
       states.set(pane, state);
       const shown = visible.get(pane);
@@ -140,9 +142,10 @@ export function createKittyGraphicsReceiver(options: {
       const shown = new Set<number>();
       const placements = resolveKittyImagePlacements(snapshot.grid, state).flatMap(
         ({ placement: p, imageId }) => {
-          if (p.row + p.rows > snapshot.rows || p.column + p.columns > snapshot.cols) return [];
+          const clipped = clipPlacement(p, snapshot.rows, snapshot.cols);
+          if (!clipped) return [];
           shown.add(imageId);
-          return [{ ...p, image: imageKey(pane, imageId) }];
+          return [{ ...clipped, image: imageKey(pane, imageId) }];
         },
       );
       visible.set(pane, shown);
@@ -153,6 +156,9 @@ export function createKittyGraphicsReceiver(options: {
       return placements;
     },
     /** True once the daemon said it accepts the window's cell pixel size. */
+    takesPreciseCellPixels(): boolean {
+      return takesPreciseCellPixels;
+    },
     takesCellPixels(): boolean {
       return takesCellPixels;
     },
@@ -164,6 +170,18 @@ export function createKittyGraphicsReceiver(options: {
       states.clear();
     },
   };
+}
+
+/** Clip the target cells while retaining the original source grid. */
+function clipPlacement<T extends { row: number; column: number; rows: number; columns: number }>(
+  placement: T,
+  rows: number,
+  columns: number,
+): T | null {
+  const height = Math.min(placement.rows, rows - placement.row);
+  const width = Math.min(placement.columns, columns - placement.column);
+  if (height <= 0 || width <= 0) return null;
+  return { ...placement, rows: height, columns: width };
 }
 
 /** Canvas placements: pane-local placements moved to each pane's content origin. */
@@ -178,13 +196,10 @@ export function canvasPlacements(
     if (!pane) continue;
     const content = contentRect(layout, pane);
     for (const placement of local) {
-      if (
-        placement.row + placement.rows > content.rows ||
-        placement.column + placement.columns > pane.width
-      )
-        continue;
+      const clipped = clipPlacement(placement, content.rows, pane.width);
+      if (!clipped) continue;
       placements.push({
-        ...placement,
+        ...clipped,
         row: placement.row + content.top,
         column: placement.column + pane.left,
       });

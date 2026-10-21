@@ -366,6 +366,13 @@ export const PaneStreamTerminalCellPixelsFrameSchemaZ = z
     type: z.literal("terminal-cell-pixels"),
     width: z.number().int().min(1).max(1024),
     height: z.number().int().min(1).max(1024),
+    precise: z
+      .object({
+        width: z.number().int().min(1000).max(1024000),
+        height: z.number().int().min(1000).max(1024000),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
