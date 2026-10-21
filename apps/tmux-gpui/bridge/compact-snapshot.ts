@@ -78,10 +78,46 @@ function validPairs(row: TerminalReplicaRow): void {
     throw new Error("Invalid compact wide-cell pair");
   }
 }
+type EncodedRow = { row: CompactRow; bytes: number; cols: number };
+type RowCache = WeakMap<TerminalReplicaRow, EncodedRow>;
+
+/** Mutable callers always revalidate and encode their current cells. */
 export function encodeCompactSnapshot(snapshot: TerminalReplicaSnapshot): CompactSnapshot {
+  return encodeSnapshot(snapshot);
+}
+
+/** Session-owned encoder for immutable canonical rows. Never mutate a row after admission. */
+export function createCompactSnapshotEncoder() {
+  let cache: RowCache = new WeakMap();
+  let basis = "";
+  return {
+    reset() {
+      cache = new WeakMap();
+      basis = "";
+    },
+    encode(snapshot: TerminalReplicaSnapshot): CompactSnapshot {
+      const next = `${snapshot.cols}:${snapshot.rows}`;
+      if (next !== basis) {
+        cache = new WeakMap();
+        basis = next;
+      }
+      return encodeSnapshot(snapshot, cache);
+    },
+  };
+}
+
+function encodeSnapshot(snapshot: TerminalReplicaSnapshot, cache?: RowCache): CompactSnapshot {
   dimensions(snapshot.cols, snapshot.rows, snapshot.grid.length, snapshot.history.length);
   let graphemeBytes = 0;
   const encodeRow = (row: TerminalReplicaRow): CompactRow => {
+    const cached = cache?.get(row);
+    if (cached && cached.cols === snapshot.cols) {
+      graphemeBytes += cached.bytes;
+      if (graphemeBytes > MAX_COMPACT_GRAPHEME_BYTES)
+        throw new Error("Compact grapheme budget exceeded");
+      return cached.row;
+    }
+    const before = graphemeBytes;
     if (row.cells.length !== snapshot.cols) throw new Error("Compact row width mismatch");
     validPairs(row);
     const runs: CompactRun[] = [];
@@ -104,7 +140,14 @@ export function encodeCompactSnapshot(snapshot: TerminalReplicaSnapshot): Compac
         prior[0]++;
       else runs.push([1, cell.grapheme, cell.width, fg, bg, cell.attributes]);
     }
-    return [row.wrapped, runs];
+    const encoded: CompactRow = [row.wrapped, runs];
+    if (cache) {
+      for (const run of runs) Object.freeze(run);
+      Object.freeze(runs);
+      Object.freeze(encoded);
+      cache.set(row, { row: encoded, bytes: graphemeBytes - before, cols: snapshot.cols });
+    }
+    return encoded;
   };
   return {
     ...snapshot,

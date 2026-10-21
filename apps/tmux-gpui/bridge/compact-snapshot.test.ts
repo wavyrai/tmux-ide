@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { blankTerminalReplicaSnapshot } from "../../../packages/core/src/terminal-replica.ts";
 import {
+  createCompactSnapshotEncoder,
   decodeCompactSnapshot,
   encodeCompactSnapshot,
   MAX_COMPACT_CELLS,
@@ -189,4 +190,71 @@ test("compact decoder rejects excess runs before expanding cells", () => {
   const compact = structuredClone(encodeCompactSnapshot(blankTerminalReplicaSnapshot(1, 1)));
   compact.grid[0]![1].push(compact.grid[0]![1][0]!);
   assert.throws(() => decodeCompactSnapshot(compact), /run count/);
+});
+
+test("immutable encoder reuses rows without rereading cells and encodes only replacements", () => {
+  const source = structuredClone(blankTerminalReplicaSnapshot(4, 2));
+  let reads = 0;
+  const row = source.grid[0]!;
+  const cells = row.cells;
+  Object.defineProperty(row, "cells", {
+    get() {
+      reads++;
+      return cells;
+    },
+  });
+  const encoder = createCompactSnapshotEncoder();
+  const first = encoder.encode(source);
+  const after = reads;
+  const second = encoder.encode({ ...source, cursor: { ...source.cursor, x: 2 } });
+  assert.equal(reads, after);
+  assert.equal(second.grid[0], first.grid[0]);
+  assert.equal(second.cursor.x, 2);
+  const replacement = structuredClone(source.grid[1]!);
+  replacement.cells[0]!.grapheme = "👩‍💻";
+  const changed = encoder.encode({ ...source, grid: [row, replacement] });
+  assert.equal(reads, after);
+  assert.equal(changed.grid[0], first.grid[0]);
+  assert.notEqual(changed.grid[1], first.grid[1]);
+  assert.equal(changed.grid[1]![1][0]![1], "👩‍💻");
+  assert.throws(() => {
+    first.grid[0]![1][0]![1] = "poison";
+  }, TypeError);
+  assert.throws(() => {
+    first.grid[0]![1].push([1, "x", 1, 0, 0, 0]);
+  }, TypeError);
+  first.grid[0] = [true, []];
+  assert.equal(encoder.encode(source).grid[0], second.grid[0]);
+  encoder.reset();
+  assert.notEqual(encoder.encode(source).grid[0], second.grid[0]);
+  assert.ok(reads > after);
+});
+
+test("immutable encoder recalculates repeated history bytes and cell budgets on cache hits", () => {
+  const source = structuredClone(blankTerminalReplicaSnapshot(32768, 1));
+  for (const cell of source.grid[0]!.cells) cell.grapheme = "x".repeat(256);
+  const encoder = createCompactSnapshotEncoder();
+  encoder.encode(source); // Exactly 8 MiB.
+  assert.throws(() => encoder.encode({ ...source, history: [source.grid[0]!] }), /grapheme budget/);
+  assert.throws(
+    () => encoder.encode({ ...source, history: Array(8).fill(source.grid[0]) }),
+    /dimensions/,
+  );
+  assert.equal(encoder.encode(source).history.length, 0);
+});
+
+test("immutable encoder resets dimension basis and validates new rows; mutable encoder stays uncached", () => {
+  const source = structuredClone(blankTerminalReplicaSnapshot(4, 1));
+  const encoder = createCompactSnapshotEncoder();
+  const first = encoder.encode(source);
+  const taller = encoder.encode({ ...source, rows: 2, grid: [source.grid[0]!, source.grid[0]!] });
+  assert.notEqual(taller.grid[0], first.grid[0]);
+  assert.throws(() => encoder.encode({ ...source, cols: 3 }), /width mismatch/);
+  const bad = structuredClone(source);
+  bad.grid[0]!.cells[0]!.grapheme = "\u0000";
+  assert.throws(() => encoder.encode(bad), /grapheme/);
+  const mutable = encodeCompactSnapshot(source);
+  mutable.grid[0]![1][0]![1] = "caller edit";
+  source.grid[0]!.cells[0]!.grapheme = "new";
+  assert.notDeepEqual(encodeCompactSnapshot(source).grid, mutable.grid);
 });
