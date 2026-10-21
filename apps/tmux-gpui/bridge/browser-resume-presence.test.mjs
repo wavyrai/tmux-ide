@@ -26,11 +26,10 @@ test("resume smoke waits for the current presence acknowledgement before sending
     recordResume() {},
     resumePublication: (event) => event,
     second: "pane-b",
-    naturalGrid: { cols: 80, rows: 24 },
     untouched: { cols: 80, rows: 24 },
     fleet: {
       sessionNames: ["a", "b"],
-      windowGrid: () => ({ cols: 80, rows: 24 }),
+      windowGrid: (session) => (session === "b" ? { cols: 111, rows: 47 } : { cols: 80, rows: 24 }),
       captureWindowPanes: () => "",
     },
     observedGrid: () => ({ cols: 95, rows: 30 }),
