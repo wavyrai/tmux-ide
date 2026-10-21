@@ -55,3 +55,31 @@ test("owned row extras with custom serialization or mutable nested data never ca
   extra.text = "much longer";
   assert.ok(size(other) > first);
 });
+
+test("owned foreign Proxy extras cannot poison sizes or introduce inspection errors", () => {
+  let text = "a";
+  const extra = new Proxy(Object.freeze({}), {
+    get(target, key) {
+      return key === "toJSON" ? () => ({ text }) : Reflect.get(target, key);
+    },
+  });
+  const owned = createOwnedTerminalReplicaRowBuilder().finish(
+    Object.assign(row(), { extra }),
+    false,
+  );
+  const size = createHistoryRowByteSizer();
+  const first = size(owned);
+  text = "much longer";
+  assert.ok(size(owned) > first);
+  assert.equal(size(owned), Buffer.byteLength(JSON.stringify(owned)));
+  const opaque = new Proxy(Object.freeze({}), {
+    getPrototypeOf() {
+      throw Error("must not inspect foreign extra prototype");
+    },
+  });
+  const other = createOwnedTerminalReplicaRowBuilder().finish(
+    Object.assign(row(), { opaque }),
+    false,
+  );
+  assert.equal(size(other), Buffer.byteLength(JSON.stringify(other)));
+});
