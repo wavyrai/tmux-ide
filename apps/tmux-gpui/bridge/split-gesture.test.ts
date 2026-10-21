@@ -299,3 +299,16 @@ test("well-formed stale target or lost lease begins receive a failure ACK and fr
     f.owner.retire();
   }
 });
+
+test("staged native begin and unchanged release leave canonical split untouched", () => {
+  const f = fixture();
+  try {
+    assert.equal(f.owner.command(f.begin), true);
+    assert.equal(f.pending.length, 0, "begin only captures the target");
+    assert.equal(f.command("release", f.begin.target.boundary), true);
+    assert.equal(f.pending.length, 0, "returning to the initial boundary does not reflow");
+    assert.equal(f.owner.publication()?.phase, "settled");
+  } finally {
+    f.owner.retire();
+  }
+});

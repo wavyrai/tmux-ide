@@ -299,3 +299,18 @@ test("neighbor-only lifetime epoch replacement rejects pending receipt despite i
     h.owner.retire();
   }
 });
+
+test("staged native begin and unchanged release never mutate terminal geometry", () => {
+  const h = harness();
+  try {
+    h.owner.command(h.begin);
+    assert.equal(h.submissions.length, 0, "begin only captures the target");
+    // Native previews, including a drag away and back, remain local.
+    h.owner.command({ ...h.identity, phase: "release", cells: h.begin.cells });
+    assert.equal(h.submissions.length, 0, "unchanged final cells need no mutation");
+    assert.equal(h.owner.publication()?.phase, "settled");
+    assert.equal(h.owner.publication()?.cells, h.begin.cells);
+  } finally {
+    h.owner.retire();
+  }
+});

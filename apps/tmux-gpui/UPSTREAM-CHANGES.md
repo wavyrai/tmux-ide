@@ -216,6 +216,9 @@ as an additional reference for layering.
   once into the painter frame and pointer modes, instead of a value tree that
   was re-serialized and decoded again.
 
-- A divider drag draws its pointer target boundary locally while tmux reflows.
-  The gesture protocol, its confirmed geometry and the painted frame are
-  unchanged.
+- A divider drag draws its pointer target boundary locally and preserves the
+  terminal grid during motion. Begin captures the fenced target; release sends
+  one final boundary through the existing canonical-settlement protocol.
+  Cancellation and unchanged final boundaries do not mutate terminal geometry.
+  Same-window pane navigation carries its exact fitted viewport forward rather
+  than sending another fit solely because the navigation request changed.
