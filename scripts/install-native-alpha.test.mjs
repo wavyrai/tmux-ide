@@ -271,6 +271,25 @@ test("failed Applications link creation restores legacy bundle", (t) => {
   assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
   assert.deepEqual(readdirSync(backups(f)), []);
 });
+test("failed link creation preserves a newly appeared foreign entry and reports the backup", (t) => {
+  const fault = source.replaceAll(
+    "fs.symlinkSync(target,entry)",
+    '(()=>{fs.mkdirSync(entry);throw new Error("entry appeared")})()',
+  );
+  assert.notEqual(fault, source);
+  const f = fixture(t, undefined, fault);
+  oldApp(f);
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(readdirSync(entry(f)), []);
+  const saved = readdirSync(backups(f));
+  assert.equal(saved.length, 1);
+  assert.equal(
+    readFileSync(join(backups(f), saved[0], "Tmux IDE Alpha.app/marker"), "utf8"),
+    "old app retained",
+  );
+  assert.match(result.stderr, /Previous app retained at:/);
+});
 for (const args of [["--rollback"], ["--uninstall"]]) {
   test(`does not migrate a legacy bundle during ${args[0]}`, (t) => {
     const f = fixture(t);
