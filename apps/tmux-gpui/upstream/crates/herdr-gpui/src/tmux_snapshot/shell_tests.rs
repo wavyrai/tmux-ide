@@ -108,6 +108,7 @@ fn browser_fixture(
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
+        fit_settle: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: None,

@@ -322,6 +322,7 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) {
         self.cancel_tab_focus_restore();
+        self.fit_settle.clear();
         self.sidebar_keyboard.active = false;
         self.attention.pending = None;
         self.cancel_attention();

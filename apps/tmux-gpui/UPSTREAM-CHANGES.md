@@ -222,3 +222,12 @@ as an additional reference for layering.
   Cancellation and unchanged final boundaries do not mutate terminal geometry.
   Same-window pane navigation carries its exact fitted viewport forward rather
   than sending another fit solely because the navigation request changed.
+
+- Whole-window viewport fits retain one latest grid and physical cell size,
+  settling after 150 ms without geometry changes (the existing sibling window
+  policy). Initial fits remain immediate. The existing browser tick wakes the
+  final paint, so idle terminal output does not leave a resize pending. Focus,
+  navigation and invalid geometry discard pending fits. Keyboard input continues
+  to address the canonical pane while old content is clipped at its actual cell
+  size; pointer/copy hit testing uses the painted frame rather than speculative
+  scaled cells.
