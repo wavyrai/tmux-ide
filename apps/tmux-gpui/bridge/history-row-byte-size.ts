@@ -1,3 +1,4 @@
+import { isDecodedTerminalReplicaRow } from "../../../packages/core/src/terminal-replica-hash-cache.ts";
 import type {
   TerminalReplicaRow,
   TerminalReplicaColor,
@@ -42,7 +43,8 @@ export function createHistoryRowByteSizer() {
     const cached = sizes.get(row);
     if (cached !== undefined) return cached;
     const bytes = Buffer.byteLength(JSON.stringify(row));
-    if (isOwnedTerminalReplicaRow(row) && canonicalShape(row)) sizes.set(row, bytes);
+    if ((isOwnedTerminalReplicaRow(row) || isDecodedTerminalReplicaRow(row)) && canonicalShape(row))
+      sizes.set(row, bytes);
     return bytes;
   };
 }

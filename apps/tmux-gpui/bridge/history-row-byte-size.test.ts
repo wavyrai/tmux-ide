@@ -83,3 +83,42 @@ test("owned foreign Proxy extras cannot poison sizes or introduce inspection err
   );
   assert.equal(size(other), Buffer.byteLength(JSON.stringify(other)));
 });
+
+test("verified compact receiver history retains cache provenance across cursor patches", async (t) => {
+  const { encodeCompactSemanticTerminalUpdate, decodeVerifiedCompactSemanticTerminalUpdate } =
+    await import("../../../packages/core/src/terminal-delivery.ts");
+  const { hashTerminalReplicaSnapshot } =
+    await import("../../../packages/core/src/terminal-replica.ts");
+  const { isDecodedTerminalReplicaRow, isTerminalReplicaRowDeeplyFrozen } =
+    await import("../../../packages/core/src/terminal-replica-hash-cache.ts");
+  const { createHistoryViewport } = await import("./history.ts");
+  const source = { ...blankTerminalReplicaSnapshot(2, 2), history: [row()] };
+  const first = decodeVerifiedCompactSemanticTerminalUpdate(
+    encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot: source }),
+    null,
+    hashTerminalReplicaSnapshot(source),
+  ).canonicalSnapshot!;
+  const retained = first.history[0]!;
+  assert.equal(isDecodedTerminalReplicaRow(retained), true);
+  const foreign = freezeOwnedTerminalReplicaRow(row());
+  assert.equal(isTerminalReplicaRowDeeplyFrozen(foreign), true);
+  assert.equal(isDecodedTerminalReplicaRow(foreign), false);
+  const target = { ...first, cursor: { ...first.cursor, x: 1 } };
+  const second = decodeVerifiedCompactSemanticTerminalUpdate(
+    encodeCompactSemanticTerminalUpdate({
+      frame: "patch",
+      baseRevision: 0,
+      revision: 1,
+      patch: { rows: [], cursor: target.cursor },
+    }),
+    first,
+    hashTerminalReplicaSnapshot(target),
+  ).canonicalSnapshot!;
+  assert.equal(second.history[0], retained);
+  const stringify = t.mock.method(JSON, "stringify");
+  const viewport = createHistoryViewport();
+  viewport.update(first);
+  viewport.scroll(1);
+  for (let i = 0; i < 20; i++) assert.equal(viewport.update(second)!.grid[0], retained);
+  assert.equal(stringify.mock.calls.filter((call) => call.arguments[0] === retained).length, 1);
+});
