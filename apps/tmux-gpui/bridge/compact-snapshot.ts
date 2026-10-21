@@ -62,8 +62,12 @@ function dimensions(cols: number, rows: number, grid: number, history: number): 
     throw new Error("Compact snapshot dimensions exceed bounds");
 }
 function validGrapheme(value: string): void {
-  if (Buffer.byteLength(value, "utf8") > 256 || /[\u0000-\u001f\u007f-\u009f]/u.test(value))
-    throw new Error("Invalid compact grapheme");
+  if (Buffer.byteLength(value, "utf8") > 256) throw new Error("Invalid compact grapheme");
+  // Control scalars are forbidden terminal cell content, including C1 controls.
+  for (const scalar of value) {
+    const code = scalar.codePointAt(0)!;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) throw new Error("Invalid compact grapheme");
+  }
   // JSON permits lone surrogates, but the Rust consumer requires Unicode scalars.
   if (/[\uD800-\uDFFF]/u.test(value)) throw new Error("Invalid compact Unicode");
 }
@@ -200,6 +204,7 @@ export function decodeCompactSnapshot(value: unknown): TerminalReplicaSnapshot {
     return row;
   };
   const { encoding: _, grid, history, ...metadata } = compact;
+  void _;
   if (
     !compact.cursor.hidden &&
     (compact.cursor.x >= compact.cols || compact.cursor.y >= compact.rows)

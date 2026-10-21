@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { blankTerminalReplicaSnapshot } from "../../../packages/core/src/terminal-replica.ts";
 import {
+  type CompactSnapshot,
   createCompactSnapshotEncoder,
   decodeCompactSnapshot,
   encodeCompactSnapshot,
@@ -52,108 +53,113 @@ test("sparse large frames compress repeated cells without changing the canonical
   assert.equal(JSON.stringify(source), before);
 });
 
+type MalformedCompactSnapshot = Omit<CompactSnapshot, "encoding"> & {
+  encoding: string;
+  authority?: boolean;
+};
+
 for (const [name, mutate] of [
   [
     "zero run",
-    (s: any) => {
-      s.grid[0][1][0][0] = 0;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![0] = 0;
     },
   ],
   [
     "fractional run",
-    (s: any) => {
-      s.grid[0][1][0][0] = 1.5;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![0] = 1.5;
     },
   ],
   [
     "expansion bomb",
-    (s: any) => {
-      s.grid[0][1][0][0] = MAX_COMPACT_CELLS;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![0] = MAX_COMPACT_CELLS;
     },
   ],
   [
     "short row",
-    (s: any) => {
-      s.grid[0][1][0][0] = 1;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![0] = 1;
     },
   ],
   [
     "wrong rows",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.rows = 2;
     },
   ],
   [
     "oversized geometry",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.cols = 65536;
     },
   ],
   [
     "history cell budget",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.history = Array(70000).fill(s.grid[0]);
     },
   ],
   [
     "unknown encoding",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.encoding = "other";
     },
   ],
   [
     "unknown metadata",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.authority = true;
     },
   ],
   [
     "invalid indexed color",
-    (s: any) => {
-      s.grid[0][1][0][3] = 0x01000100;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![3] = 0x01000100;
     },
   ],
   [
     "invalid RGB color",
-    (s: any) => {
-      s.grid[0][1][0][4] = 0x03000000;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![4] = 0x03000000;
     },
   ],
   [
     "out of bounds cursor",
-    (s: any) => {
+    (s: MalformedCompactSnapshot) => {
       s.cursor.x = 4;
       s.cursor.hidden = false;
     },
   ],
   [
     "orphan continuation",
-    (s: any) => {
-      s.grid[0][1][0][2] = 0;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![2] = 0;
     },
   ],
   [
     "unpaired wide cell",
-    (s: any) => {
-      s.grid[0][1][0][2] = 2;
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![2] = 2;
     },
   ],
   [
     "control character",
-    (s: any) => {
-      s.grid[0][1][0][1] = "\x1b";
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![1] = "\x1b";
     },
   ],
   [
     "lone surrogate",
-    (s: any) => {
-      s.grid[0][1][0][1] = "\ud800";
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![1] = "\ud800";
     },
   ],
   [
     "grapheme byte bound",
-    (s: any) => {
-      s.grid[0][1][0][1] = "😀".repeat(65);
+    (s: MalformedCompactSnapshot) => {
+      s.grid[0]![1][0]![1] = "😀".repeat(65);
     },
   ],
 ] as const) {
@@ -257,4 +263,18 @@ test("immutable encoder resets dimension basis and validates new rows; mutable e
   mutable.grid[0]![1][0]![1] = "caller edit";
   source.grid[0]!.cells[0]!.grapheme = "new";
   assert.notDeepEqual(encodeCompactSnapshot(source).grid, mutable.grid);
+});
+
+test("compact encoder rejects all control scalars while preserving adjacent Unicode", () => {
+  const source = structuredClone(blankTerminalReplicaSnapshot(1, 1));
+  for (let code = 0; code <= 0x9f; code++) {
+    source.grid[0]!.cells[0]!.grapheme = String.fromCodePoint(code);
+    if (code <= 0x1f || code >= 0x7f)
+      assert.throws(() => encodeCompactSnapshot(source), /grapheme/);
+    else assert.doesNotThrow(() => encodeCompactSnapshot(source));
+  }
+  for (const grapheme of ["\u00a0", "😀", "\ufeff"]) {
+    source.grid[0]!.cells[0]!.grapheme = grapheme;
+    assert.deepEqual(decodeCompactSnapshot(encodeCompactSnapshot(source)), source);
+  }
 });
