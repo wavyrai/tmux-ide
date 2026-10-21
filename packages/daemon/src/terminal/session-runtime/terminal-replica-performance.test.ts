@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+} from "./runtime-scheduler.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
-function interpreter(updates: CanonicalTerminalReplicaUpdate[], scrollback = 5000) {
+function interpreter(
+  updates: CanonicalTerminalReplicaUpdate[],
+  scrollback = 5000,
+  scheduler?: SessionRuntimeScheduler,
+) {
   return new TerminalReplicaInterpreter({
     generation,
     workspaceName: "workspace",
@@ -13,8 +21,38 @@ function interpreter(updates: CanonicalTerminalReplicaUpdate[], scrollback = 500
     cols: 80,
     rows: 24,
     scrollback,
+    scheduler,
     onUpdate: (update) => updates.push(update),
   });
+}
+
+function recoveryClock() {
+  let now = 0;
+  const timers = new Set<{ at: number; task: () => void }>();
+  return {
+    scheduler: {
+      ...SYSTEM_SESSION_RUNTIME_SCHEDULER,
+      nowMs: () => now,
+      timer(task: () => void, delayMs: number) {
+        const timer = { at: now + delayMs, task };
+        timers.add(timer);
+        return {
+          cancel: () => {
+            timers.delete(timer);
+          },
+        };
+      },
+    },
+    advance(ms: number) {
+      now += ms;
+      for (const timer of [...timers])
+        if (timer.at <= now) {
+          timers.delete(timer);
+          timer.task();
+        }
+    },
+    pending: () => timers.size,
+  };
 }
 
 describe("terminal replica performance invariants", () => {
@@ -206,30 +244,71 @@ describe("terminal replica performance invariants", () => {
 
   it("never leaks a resize or byte frame while DEC synchronized-output is open", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
-    const replica = interpreter(updates);
-    await replica.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?2026h") });
-    const flood = new TextEncoder().encode("A\b".repeat(550_000));
-    await replica.enqueue({ type: "write", data: flood });
-    await replica.enqueue({ type: "resize", cols: 100, rows: 30 });
-    expect(updates).toHaveLength(0);
-    await replica.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?2026l") });
-    expect(updates).toHaveLength(1);
-    expect(replica.currentSnapshot()).toMatchObject({ cols: 100, rows: 30 });
+    const clock = recoveryClock();
+    const replica = interpreter(updates, 5000, clock.scheduler);
+    try {
+      await replica.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?2026h") });
+      const flood = new TextEncoder().encode("A\b".repeat(550_000));
+      await replica.enqueue({ type: "write", data: flood });
+      await replica.enqueue({ type: "resize", cols: 100, rows: 30 });
+      // Coverage changes parse duration, not this test's recovery deadline.
+      clock.advance(249);
+      await replica.whenIdle();
+      expect(updates).toHaveLength(0);
+      expect(clock.pending()).toBe(1);
+      await replica.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?2026l") });
+      expect(updates).toHaveLength(1);
+      expect(replica.currentSnapshot()).toMatchObject({ cols: 100, rows: 30 });
+      expect(clock.pending()).toBe(0);
+    } finally {
+      await replica.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
   }, 20_000);
 
-  it("recovers an unterminated synchronized-output block without permanent staleness", async () => {
+  it("recovers an unterminated synchronized-output block at its deadline", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
-    const replica = interpreter(updates);
-    await replica.enqueue({
-      type: "write",
-      data: new TextEncoder().encode("\u001b[?2026hwaiting"),
-    });
-    await replica.enqueue({ type: "resize", cols: 100, rows: 30 });
-    expect(updates).toHaveLength(0);
-    await new Promise((resolve) => setTimeout(resolve, 325));
-    await replica.whenIdle();
-    expect(updates).toHaveLength(1);
-    expect(replica.currentSnapshot()).toMatchObject({ cols: 100, rows: 30 });
-    expect(replica.currentSnapshot().modes.synchronizedOutput).toBe(false);
+    const clock = recoveryClock();
+    const replica = interpreter(updates, 5000, clock.scheduler);
+    try {
+      await replica.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("\u001b[?2026hwaiting"),
+      });
+      await replica.enqueue({ type: "resize", cols: 100, rows: 30 });
+      clock.advance(249);
+      await replica.whenIdle();
+      expect(updates).toHaveLength(0);
+      clock.advance(1);
+      await replica.whenIdle();
+      expect(updates).toHaveLength(1);
+      expect(replica.currentSnapshot()).toMatchObject({ cols: 100, rows: 30 });
+      expect(replica.currentSnapshot().modes.synchronizedOutput).toBe(false);
+    } finally {
+      await replica.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
   });
+
+  it("queues expired synchronized-output recovery after in-flight flood before subsequent resize", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const clock = recoveryClock();
+    const replica = interpreter(updates, 5000, clock.scheduler);
+    try {
+      await replica.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?2026h") });
+      const pending = replica.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("A\b".repeat(550_000)),
+      });
+      clock.advance(250);
+      await pending;
+      await replica.whenIdle();
+      expect(updates).toHaveLength(1);
+      expect(replica.currentSnapshot().modes.synchronizedOutput).toBe(false);
+      expect(replica.currentSnapshot().grid[0]?.cells[0]?.grapheme).toBe("A");
+      await replica.enqueue({ type: "resize", cols: 100, rows: 30 });
+      expect(updates).toHaveLength(2);
+      expect(replica.currentSnapshot()).toMatchObject({ cols: 100, rows: 30 });
+    } finally {
+      await replica.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  }, 20_000);
 });
