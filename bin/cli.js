@@ -30222,6 +30222,8 @@ var init_session_channel = __esm({
       fittedWindows = /* @__PURE__ */ new Map();
       cancelSync = null;
       syncOrdinal = 0;
+      identityJoinOrdinal = 0;
+      trustedInventoryJoinsMissing = false;
       completedSyncOrdinal = 0;
       lastDisplayNameSyncAtMs = 0;
       disposed = false;
@@ -30445,18 +30447,25 @@ var init_session_channel = __esm({
       }
       /**
        * Strict daemon-internal inventory from this channel's current tmux truth.
-       * Unlike the background discovery path, this query awaits descriptor
-       * reconciliation before projecting and rejects incomplete identity rather
-       * than returning the previous descriptor snapshot.
+       * Unlike background discovery, this query verifies current native membership
+       * before projecting and rejects incomplete identity. Stream admission may
+       * explicitly join missing pane records after that verification; ordinary
+       * inventory readers retain their existing fail-closed no-join contract.
        */
-      describeTrustedInventory(expectedRuntimeSessionId) {
+      describeTrustedInventory(expectedRuntimeSessionId, joinMissingPanes = false) {
         if (this.disposed) {
           return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
         }
         if (this.trustedInventoryFlight) {
+          if (joinMissingPanes && !this.trustedInventoryJoinsMissing && this.trustedInventoryFlightSessionId === expectedRuntimeSessionId)
+            return this.trustedInventoryFlight.then(
+              () => this.describeTrustedInventory(expectedRuntimeSessionId, true),
+              () => this.describeTrustedInventory(expectedRuntimeSessionId, true)
+            );
           return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId ? this.trustedInventoryFlight : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
         }
-        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).catch((error) => {
+        this.trustedInventoryJoinsMissing = joinMissingPanes;
+        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId, 0, joinMissingPanes).catch((error) => {
           this.windowLinkAuthority?.invalidate();
           this.latestWindowStage = null;
           throw error;
@@ -32455,7 +32464,7 @@ var init_session_channel = __esm({
         }
         return { listed, movedWindowRuntimeIds };
       }
-      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
+      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0, joinMissingPanes = false) {
         const authorityOrdinal = this.windowIdentityOrdinal;
         const beforeLines = await this.io.request(
           `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
@@ -32523,7 +32532,11 @@ var init_session_channel = __esm({
         if (windowStage.repairedIdentity || confirmedWindowStage.repairedIdentity || repairedPanes || !coherent || !this.windowStageIdentitiesEqual(windowStage, confirmedWindowStage) || authorityOrdinal !== this.windowIdentityOrdinal) {
           if (attempt >= 1)
             throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
-          return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+          return await this.refreshTrustedInventory(
+            expectedRuntimeSessionId,
+            attempt + 1,
+            joinMissingPanes
+          );
         }
         if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
         const activeWindowId = activeWindowIds.values().next().value;
@@ -32551,7 +32564,22 @@ var init_session_channel = __esm({
         }
         if (confirmedWindowStage.currentWindow !== activeWindowId || confirmedWindowStage.links.length !== descriptors[0].sessionWindowCount || confirmedWindowStage.windows.size !== computedWindowCounts.size || !stagedPaneMembershipExact || stagedPaneCount !== descriptors.length || stagedPaneIds.size !== descriptors.length || [...computedWindowCounts.keys()].some(
           (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId)
-        ) || descriptors.some((descriptor) => {
+        ))
+          throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+        if (joinMissingPanes && descriptors.some(
+          (pane) => this.panesByRuntime.get(pane.runtimePaneId)?.semanticId !== pane.semanticPaneId
+        )) {
+          this.discovery.invalidate();
+          await this.reconcileIdentity(
+            descriptors,
+            runtimePaneIds,
+            () => authorityOrdinal === this.windowIdentityOrdinal,
+            false
+          );
+        }
+        if (this.disposed || authorityOrdinal !== this.windowIdentityOrdinal)
+          throw new Error(`trusted inventory for ${this.opts.session} changed during identity join`);
+        if (descriptors.some((descriptor) => {
           const pane = this.panesByRuntime.get(descriptor.runtimePaneId);
           const window2 = confirmedWindowStage.windows.get(descriptor.windowId);
           return !pane || !window2?.semanticId || descriptor.semanticPaneId !== pane.semanticId || descriptor.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(pane.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success;
@@ -32846,7 +32874,8 @@ var init_session_channel = __esm({
           }))
         };
       }
-      async reconcileIdentity(descriptors, listed) {
+      async reconcileIdentity(descriptors, listed, current = () => true, publish = true) {
+        const joinOrdinal = ++this.identityJoinOrdinal;
         if (this.disposed) return false;
         if (this.opts.hasSharedWindowConflict?.()) {
           this.settleFirstJoin();
@@ -32881,7 +32910,8 @@ var init_session_channel = __esm({
             )
           )
         );
-        if (this.disposed) return plan.stampEffects.length > 0;
+        if (this.disposed || !current() || joinOrdinal !== this.identityJoinOrdinal)
+          return plan.stampEffects.length > 0;
         const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
         const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
         for (const verified of reconciliation.panes) {
@@ -32968,8 +32998,10 @@ var init_session_channel = __esm({
           degraded: diagnostic4.degraded
         }));
         this.degraded = reconciliation.degraded;
-        for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
-        this.emitLayoutAuthority();
+        if (publish) {
+          for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
+          this.emitLayoutAuthority();
+        }
         this.settleFirstJoin();
         return plan.stampEffects.length > 0;
       }
@@ -39938,11 +39970,20 @@ var init_mirror_service = __esm({
           this.release(session, entry);
         }
       }
-      async describeSessionAuthority(session) {
+      async describeSessionAuthority(session, expectedSemanticPaneIds) {
         const entry = await this.acquire(session);
         try {
           const identity2 = await entry.channel.attachedSessionIdentity();
-          return { description: entry.channel.describe(), runtimeSessionId: identity2.runtimeSessionId };
+          let description = entry.channel.describe();
+          if (expectedSemanticPaneIds?.some(
+            (id2) => !description.panes.some((pane) => pane.semanticPaneId === id2)
+          )) {
+            await entry.channel.describeTrustedInventory(identity2.runtimeSessionId, true);
+            description = entry.channel.describe();
+          }
+          if (this.disposed || entry.retired || this.channels.get(session) !== entry)
+            throw new Error("Mirror authority retired during description");
+          return { description, runtimeSessionId: identity2.runtimeSessionId };
         } finally {
           this.release(session, entry);
         }
@@ -62311,10 +62352,10 @@ var init_registry2 = __esm({
         if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
         return result2;
       }
-      async describeSessionAuthority(session) {
+      async describeSessionAuthority(session, expectedSemanticPaneIds) {
         const runtime = this.#runtime(session);
         await runtime.whenReady();
-        const authority2 = await this.#mirror.describeSessionAuthority(session);
+        const authority2 = await this.#mirror.describeSessionAuthority(session, expectedSemanticPaneIds);
         if (this.#disposed || this.#sessions.get(session) !== runtime) {
           const error = new Error(`session runtime ${session} changed topology`);
           error.name = "MirrorTopologyChangedError";
@@ -70299,7 +70340,10 @@ var init_pane_stream_websocket = __esm({
           try {
             const describeStartedAtMicros = trace ? this.#observability.nowMicros() : 0;
             if (this.#mirror.describeSessionAuthority) {
-              const authority2 = await this.#mirror.describeSessionAuthority(context.sessionName);
+              const authority2 = await this.#mirror.describeSessionAuthority(
+                context.sessionName,
+                request3.panes
+              );
               described = authority2.description;
               runtimeSessionId = authority2.runtimeSessionId;
             } else {
