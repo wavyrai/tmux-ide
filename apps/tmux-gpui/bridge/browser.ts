@@ -2,13 +2,18 @@ import {
   COMPACT_HELPER_ENV,
   COMPACT_NATIVE_ENV,
   decodeSurfacePublication,
+  createSnapshotSerializer,
 } from "./snapshot-wire.ts";
 import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
-import { serializeBrowserPublication } from "./browser-publication.ts";
+import {
+  preparePublication,
+  renderPreparedPublication,
+  type PreparedPublication,
+} from "./prepared-publication.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
@@ -385,7 +390,10 @@ let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | nu
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
-let pending: string | null = null,
+const serializeNativeSnapshot = createSnapshotSerializer(
+  process.env[COMPACT_NATIVE_ENV] === "rle-v1" ? "rle-v1" : "legacy",
+);
+let pending: PreparedPublication | null = null,
   blocked = false;
 let active:
   | {
@@ -1206,7 +1214,7 @@ function publish() {
           : surface === "home" && machineMessage
             ? `${status} · ${machineMessage}`
             : status,
-    snapshot,
+    snapshot: snapshot as TerminalReplicaSnapshot | null,
     historyOffset: snapshot && selectedPane ? historyOffset : 0,
     copyRegion: snapshot ? copyRegion : null,
     regions: snapshot ? regions : [],
@@ -1226,15 +1234,19 @@ function publish() {
     fleet: fleet?.publication() ?? null,
     machines: machines ? { ...machines.publication(), message: machineMessage } : null,
   };
-  const line = serializeBrowserPublication(
-    prefix,
-    suffix,
-    preview?.snapshotJson ?? null,
-    process.env[COMPACT_NATIVE_ENV] === "rle-v1" ? "rle-v1" : "legacy",
+  const publication = preparePublication(prefix, suffix, preview?.snapshotJson ?? null);
+  if (Buffer.byteLength(publication.before) + Buffer.byteLength(publication.after) > MAX_FRAME)
+    throw new Error("Browser publication metadata too large");
+  if (blocked) pending = publication;
+  else writePublication(publication);
+}
+function writePublication(publication: PreparedPublication) {
+  const line = renderPreparedPublication(
+    publication,
+    serializeNativeSnapshot(publication.snapshot),
   );
   if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
-  if (blocked) pending = line;
-  else blocked = !process.stdout.write(line);
+  blocked = !process.stdout.write(line);
 }
 // A window that cannot keep up loses whole images; it reports the gap and the
 // helper pulls them again (see kitty_graphics.rs).
@@ -1256,9 +1268,9 @@ process.stdout.on("drain", () => {
   }
   if (blocked) return;
   if (pending) {
-    const line = pending;
+    const publication = pending;
     pending = null;
-    blocked = !process.stdout.write(line);
+    writePublication(publication);
   }
 });
 async function retire() {
