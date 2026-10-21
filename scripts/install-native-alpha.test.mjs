@@ -96,15 +96,15 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
 }
 
 test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
-  assert.match(source, /releases\/download\/native-alpha-2026102101/);
-  assert.ok(source.includes("tmux-ide-gpui-0.1.5-macos-arm64.app.tar.gz"));
+  assert.match(source, /releases\/download\/native-alpha-2026102102/);
+  assert.ok(source.includes("tmux-ide-gpui-0.1.6-macos-arm64.app.tar.gz"));
   assert.match(
     source,
     /installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4/,
   );
   assert.match(
     source,
-    /archive_sha=e2c8613ca10fb629b0321b20c2c4c0350b242115efca7b62c66177b056a8ab61/,
+    /archive_sha=1573f884418e0033c8d7f09c58d372e09501a7dab77ceac8c7851bc31b4e3ed7/,
   );
   assert.match(source, /--proto '=https' --proto-redir '=https'/);
 });
@@ -127,7 +127,7 @@ for (const action of [[], ["--update"], ["--rollback"], ["--uninstall"]]) {
     const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
     assert.equal(receipt.args[0], action[0]?.slice(2) || "install");
     if (!action.length || action[0] === "--update")
-      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], "0.1.5-2026102101");
+      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], "0.1.6-2026102102");
     assert.equal(
       receipt.args[2],
       join(f.home, "Library/Application Support/tmux-ide/native-alpha"),

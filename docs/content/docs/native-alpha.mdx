@@ -8,15 +8,18 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.5, build 2026102101.** The app is Developer ID
+**Public alpha — version 0.1.6, build 2026102102.** The app is Developer ID
 signed and Apple notarized, and its packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
 
-With a 2.9.9 daemon, this build shows images that programs in tmux panes send
+With a 2.9.10 daemon, this build shows images that programs in tmux panes send
 with the kitty graphics protocol (Unicode placeholder images; cursor-placed images
 are best effort). It also refreshes the selected pane after pane splits.
 Terminal dimensions remain stable when the app loses focus; another attached
 tmux client can still take over sizing.
+
+This build improves typing over SSH by allowing subsequent input to proceed
+while earlier input is still in flight.
 
 The app automatically reconnects an already-open terminal after a transient
 connection loss when the same machine, tmux server, session and pane can be
@@ -29,7 +32,7 @@ remains under investigation.
 - **Apple Silicon and macOS 26 or later** for the complete one-Mac setup below,
   including the CLI/daemon. The native app itself declares macOS 14.2 as its
   minimum; that alone does not establish full setup support on older macOS.
-- **tmux-ide CLI/daemon 2.9.9** for the current managed installation.
+- **tmux-ide CLI/daemon 2.9.10** for the current managed installation.
   A separate fresh-machine compatibility check remains outstanding. The app bundles its own
   Node.js runtime. The installer requires the managed Node 24 supplied by the
   [universal CLI installer](/docs/getting-started#install).
@@ -40,13 +43,13 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026102101)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102101/tmux-ide-gpui-0.1.5-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026102102)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102102/tmux-ide-gpui-0.1.6-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
-Install the native alpha with one command. This also installs CLI 2.9.9 at
+Install the native alpha with one command. This also installs CLI 2.9.10 at
 `~/.local` when the managed CLI is missing, or upgrades an older stable version.
-An existing 2.9.9 installation is preserved. Newer or unrecognized CLI versions
+An existing 2.9.10 installation is preserved. Newer or unrecognized CLI versions
 are left untouched and require explicit review before native installation:
 
 ```bash
