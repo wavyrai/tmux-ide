@@ -13,7 +13,7 @@ pub(super) fn settle(
         receiver.try_recv().is_err(),
         "no command before viewport quiet interval"
     );
-    let (expected, request, pane, already_fitted) = view.update(cx, |view, _| {
+    let (expected, pixels, request, pane, already_fitted) = view.update(cx, |view, _| {
         let canvas = view.input_geometry.unwrap().0;
         let (cols, rows) = geometry::cell_grid(
             f32::from(canvas.size.width),
@@ -22,6 +22,7 @@ pub(super) fn settle(
             view.terminal_height(),
         )
         .unwrap();
+        let pixels = view.graphics.cell_pixels.get().unwrap();
         let request = view.browser_request;
         let pane = view.browser_state.selected_pane.clone().unwrap();
         let already_fitted = view.last_resize == Some((request, cols, rows));
@@ -30,8 +31,17 @@ pub(super) fn settle(
                 request,
                 cols,
                 rows,
-                pixels: view.graphics.cell_pixels.get().unwrap(),
+                pixels,
             };
+            assert!(
+                view.fit_settle.ready(
+                    fit,
+                    view.last_resize,
+                    false,
+                    std::time::Instant::now() + std::time::Duration::from_millis(151),
+                ),
+                "renderer must already have scheduled this exact pending fit"
+            );
             view.fit_settle.clear();
             assert!(!view.fit_settle.ready(
                 fit,
@@ -41,15 +51,17 @@ pub(super) fn settle(
             ));
             assert!(view.fit_settle.due(std::time::Instant::now()));
         }
-        ((cols, rows), request, pane, already_fitted)
+        ((cols, rows), pixels, request, pane, already_fitted)
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     if !already_fitted {
         let command = receiver.try_recv().unwrap();
         assert!(
             matches!(command, browser::Command::Input {
-            request: owner, id, input: keys::Input::Resize { cols, rows, .. }
-        } if owner == request && id == pane && (cols, rows) == expected),
+            request: owner, id, input: keys::Input::Resize { cols, rows, cell_width, cell_height, cell_width_milli, cell_height_milli }
+        } if owner == request && id == pane && (cols, rows) == expected
+            && (cell_width, cell_height, cell_width_milli, cell_height_milli)
+                == (Some(pixels.0), Some(pixels.1), Some(pixels.2), Some(pixels.3))),
             "only exact current viewport geometry may settle"
         );
     }

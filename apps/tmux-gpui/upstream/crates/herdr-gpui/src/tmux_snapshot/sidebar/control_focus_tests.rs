@@ -112,6 +112,15 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
             rows,
             pixels: view.graphics.cell_pixels.get().unwrap(),
         };
+        assert!(
+            view.fit_settle.ready(
+                fit,
+                view.last_resize,
+                false,
+                std::time::Instant::now() + std::time::Duration::from_millis(151),
+            ),
+            "renderer must already have scheduled this exact pending fit"
+        );
         view.fit_settle.clear();
         assert!(!view.fit_settle.ready(
             fit,
