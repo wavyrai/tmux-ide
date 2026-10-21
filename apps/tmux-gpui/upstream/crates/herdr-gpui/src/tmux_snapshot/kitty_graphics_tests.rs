@@ -331,43 +331,58 @@ fn queued_partial(image: Option<String>, bytes: usize) -> Partial {
 }
 
 #[test]
-fn inflate_queue_bounds_distinct_and_unkeyed_images() {
+fn inflate_queue_bounds_distinct_and_unkeyed_images() -> anyhow::Result<()> {
     for keyed in [false, true] {
         let store = Store::default();
         // Hold the worker at admission to inspect a burst without scheduling races.
-        store.1.started.set(()).expect("new store has no worker");
+        assert!(store.1.started.set(()).is_ok(), "new store has no worker");
         for index in 0..MAX_PARTIALS + 5 {
             store.inflate_later(
                 format!("{index:032x}"),
                 queued_partial(keyed.then(|| index.to_string()), 1),
             );
         }
-        let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
+        let queue = store
+            .1
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("inflate queue is poisoned"))?;
         assert_eq!(
             queue.len(),
             MAX_PARTIALS,
             "pending inflates must have a count bound"
         );
         assert_eq!(
-            queue.front().expect("admitted images remain queued").0,
+            queue
+                .front()
+                .ok_or_else(|| anyhow::anyhow!("admitted images missing from queue"))?
+                .0,
             format!("{:032x}", 5)
         );
         assert_eq!(
-            queue.back().expect("newest image remains queued").0,
+            queue
+                .back()
+                .ok_or_else(|| anyhow::anyhow!("newest image missing from queue"))?
+                .0,
             format!("{:032x}", MAX_PARTIALS + 4)
         );
     }
+    Ok(())
 }
 
 #[test]
-fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
+fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() -> anyhow::Result<()> {
     let store = Store::default();
-    store.1.started.set(()).expect("new store has no worker");
+    assert!(store.1.started.set(()).is_ok(), "new store has no worker");
     let size = MAX_IMAGE_BYTES as usize / 2 + 1;
     store.inflate_later("old".into(), queued_partial(Some("one".into()), size));
     store.inflate_later("new".into(), queued_partial(Some("two".into()), size));
     {
-        let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
+        let queue = store
+            .1
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("inflate queue is poisoned"))?;
         assert!(
             queue.iter().map(|(_, part)| part.data.len()).sum::<usize>()
                 <= MAX_IMAGE_BYTES as usize,
@@ -375,15 +390,25 @@ fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
         );
         assert_eq!(queue.len(), 1);
         assert_eq!(
-            queue.front().expect("admitted images remain queued").0,
+            queue
+                .front()
+                .ok_or_else(|| anyhow::anyhow!("admitted images missing from queue"))?
+                .0,
             "new"
         );
     }
     store.inflate_later("newest".into(), queued_partial(Some("two".into()), 16));
-    let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
+    let queue = store
+        .1
+        .queue
+        .lock()
+        .map_err(|_| anyhow::anyhow!("inflate queue is poisoned"))?;
     assert_eq!(queue.len(), 1);
     assert_eq!(
-        queue.front().expect("admitted images remain queued").0,
+        queue
+            .front()
+            .ok_or_else(|| anyhow::anyhow!("admitted images missing from queue"))?
+            .0,
         "newest"
     );
     drop(queue);
@@ -391,16 +416,24 @@ fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
         "maximum".into(),
         queued_partial(None, MAX_IMAGE_BYTES as usize),
     );
-    let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
+    let queue = store
+        .1
+        .queue
+        .lock()
+        .map_err(|_| anyhow::anyhow!("inflate queue is poisoned"))?;
     assert_eq!(
         queue.len(),
         1,
         "one maximum-sized image must remain admissible"
     );
     assert_eq!(
-        queue.front().expect("admitted images remain queued").0,
+        queue
+            .front()
+            .ok_or_else(|| anyhow::anyhow!("admitted images missing from queue"))?
+            .0,
         "maximum"
     );
+    Ok(())
 }
 
 #[test]
