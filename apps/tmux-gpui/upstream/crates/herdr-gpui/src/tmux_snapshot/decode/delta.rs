@@ -128,8 +128,7 @@ impl Store {
                 if e.base_seq.is_some() || e.changed_rows.is_some() {
                     return Err(Error::Invalid("invalid compact full envelope"));
                 }
-                let grid = e.grid.ok_or(Error::Invalid("missing compact full grid"))?;
-                grid
+                e.grid.ok_or(Error::Invalid("missing compact full grid"))?
             }
             Kind::Delta => {
                 let base_seq = e
