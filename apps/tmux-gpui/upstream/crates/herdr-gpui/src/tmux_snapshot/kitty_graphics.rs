@@ -26,6 +26,8 @@ const MAX_IMAGES: usize = 512;
 /// Largest image the daemon publishes, and largest inflated raw image.
 const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PARTIALS: usize = 16;
+/// Bound reserved transfer buffers, not merely the bytes received so far.
+const MAX_PARTIAL_BYTES: usize = MAX_IMAGE_BYTES as usize;
 /// A partial transfer with no progress for this long was dropped upstream.
 const STALLED: Duration = Duration::from_secs(10);
 /// A referenced image that never started arriving is reported after this.
@@ -174,6 +176,7 @@ struct Chunk {
     offset: u64,
     #[serde(default)]
     image: Option<String>,
+    #[serde(default)]
     data: String,
 }
 
@@ -251,6 +254,30 @@ impl Store {
     pub(super) fn accept_line(&self, line: &[u8]) -> Result<(), Error> {
         let ChunkLine { chunk } = serde_json::from_slice(line)?;
         let data = base64(&chunk.data).ok_or(Error::Invalid("kitty image data is not base64"))?;
+        self.accept_chunk(chunk, data)
+    }
+    pub(super) fn accept_binary(&self, metadata: &[u8], data: &[u8]) -> Result<(), Error> {
+        if metadata.len() > 4096 || data.is_empty() || data.len() > 512 * 1024 {
+            return Err(Error::Invalid("invalid binary image sizes"));
+        }
+        let value: serde_json::Value = serde_json::from_slice(metadata)?;
+        if value
+            .as_object()
+            .is_none_or(|object| object.contains_key("data"))
+        {
+            return Err(Error::Invalid("binary image metadata contains data"));
+        }
+        let chunk: Chunk = serde_json::from_value(value)?;
+        if chunk
+            .image
+            .as_ref()
+            .is_some_and(|image| image.len() > 600 || image.chars().any(char::is_control))
+        {
+            return Err(Error::Invalid("invalid binary image identity"));
+        }
+        self.accept_chunk(chunk, data.to_vec())
+    }
+    fn accept_chunk(&self, chunk: Chunk, data: Vec<u8>) -> Result<(), Error> {
         if !valid_digest(&chunk.digest)
             || chunk.total == 0
             || chunk.total > MAX_IMAGE_BYTES
@@ -274,14 +301,21 @@ impl Store {
         }
         let total = chunk.total as usize;
         if chunk.offset == 0 {
-            if inner.partials.len() >= MAX_PARTIALS
-                && let Some(oldest) = inner
+            // A restart replaces its own reservation before evicting other transfers.
+            inner.partials.remove(&chunk.digest);
+            let mut reserved = inner.partials.values().map(|p| p.total).sum::<usize>();
+            while inner.partials.len() >= MAX_PARTIALS || reserved + total > MAX_PARTIAL_BYTES {
+                let Some(oldest) = inner
                     .partials
                     .iter()
                     .min_by_key(|(_, p)| p.updated)
                     .map(|(d, _)| d.clone())
-            {
-                inner.partials.remove(&oldest);
+                else {
+                    break;
+                };
+                if let Some(removed) = inner.partials.remove(&oldest) {
+                    reserved -= removed.total;
+                }
             }
             inner.partials.insert(
                 chunk.digest.clone(),
@@ -697,3 +731,7 @@ pub(super) fn load_static(
 #[cfg(test)]
 #[path = "kitty_graphics_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "kitty_graphics_partial_tests.rs"]
+mod partial_budget_tests;

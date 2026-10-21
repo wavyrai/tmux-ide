@@ -11,7 +11,14 @@ pub(super) enum WireRow {
     Legacy(Row),
 }
 #[derive(Clone, Deserialize)]
-pub(super) struct Run(u32, String, u8, u32, u32, u8);
+pub(super) struct Run(
+    pub(super) u32,
+    pub(super) String,
+    pub(super) u8,
+    pub(super) u32,
+    pub(super) u32,
+    pub(super) u8,
+);
 
 fn color(value: u32) -> Result<Color, Error> {
     match value {

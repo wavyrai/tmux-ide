@@ -71,7 +71,29 @@ impl Store {
         self.baseline = Some(prepared.baseline);
     }
     pub fn prepare(&self, bytes: &[u8]) -> Result<Outcome, Error> {
-        let e: Envelope = serde_json::from_slice(bytes)?;
+        self.prepare_envelope(serde_json::from_slice(bytes)?)
+    }
+    pub fn prepare_binary(&self, cells: &binary::cells::CellFrame) -> Result<Outcome, Error> {
+        let mut metadata = cells.metadata.clone();
+        metadata["history"] = serde_json::Value::Array(Vec::new());
+        metadata[if cells.full { "grid" } else { "changedRows" }] =
+            serde_json::Value::Array(Vec::new());
+        let mut envelope: Envelope = serde_json::from_value(metadata)?;
+        if cells.full {
+            envelope.grid = Some(
+                cells
+                    .changed_rows
+                    .iter()
+                    .map(|(_, row)| row.clone())
+                    .collect(),
+            );
+        } else {
+            envelope.changed_rows = Some(cells.changed_rows.clone());
+        }
+        envelope.history = cells.history.clone();
+        self.prepare_envelope(envelope)
+    }
+    fn prepare_envelope(&self, e: Envelope) -> Result<Outcome, Error> {
         if e.epoch.is_empty()
             || e.epoch.len() > 128
             || !e.epoch.bytes().all(|b| (0x21..=0x7e).contains(&b))

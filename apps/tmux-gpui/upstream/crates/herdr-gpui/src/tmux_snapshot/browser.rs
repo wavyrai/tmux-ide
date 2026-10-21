@@ -190,7 +190,7 @@ struct Publication {
     selected_pane: Option<String>,
     status: String,
     // Kept raw: the terminal grid is decoded once, straight into the painter frame.
-    snapshot: Option<Box<serde_json::value::RawValue>>,
+    snapshot: Option<transport::SnapshotPayload>,
     retained_preview: Option<RetainedPreview>,
     #[serde(default)]
     graphics: Vec<super::kitty_graphics::Placement>,
@@ -438,7 +438,9 @@ struct Reader {
 }
 impl Reader {
     fn accept(&mut self, line: &[u8]) -> Result<State, Error> {
-        let p: Publication = serde_json::from_slice(line)?;
+        self.accept_publication(serde_json::from_slice(line)?)
+    }
+    fn accept_publication(&mut self, p: Publication) -> Result<State, Error> {
         let surface = p.surface.unwrap_or(if p.selected_session.is_some() {
             Surface::Workspace
         } else {
@@ -656,7 +658,7 @@ impl Reader {
         let (frame, pointer_modes) = match (&p.snapshot, &p.retained_preview) {
             (Some(live), _) => {
                 if delta {
-                    match frame_store.prepare(live.get().as_bytes())? {
+                    match live.prepare(frame_store)? {
                         decode::delta::Outcome::Ready(next) => {
                             let frame = next.frame.clone();
                             let modes = next.modes;
@@ -673,7 +675,7 @@ impl Reader {
                         }
                     }
                 } else {
-                    let (frame, modes) = decode::live_frame(live.get().as_bytes())?;
+                    let (frame, modes) = decode::live_frame(live.json()?)?;
                     (Some(Arc::new(frame)), modes)
                 }
             }
@@ -810,113 +812,10 @@ fn rejection_reason(error: &Error) -> &'static str {
     }
 }
 
-pub(super) fn start(kitty: super::kitty_graphics::Store) -> Bridge {
-    let mailbox = Arc::new(Mutex::new(None));
-    let incoming = mailbox.clone();
-    let (commands, receiver) = mpsc::sync_channel::<Command>(32);
-    let recovery_commands = commands.clone();
-    std::thread::spawn(move || {
-        let mut input = BufReader::new(std::io::stdin().lock());
-        let mut reader = Reader {
-            delta: std::env::var("TMUX_IDE_GUI_NATIVE_ENCODING").as_deref() == Ok("rle-delta-v1"),
-            ..Reader::default()
-        };
-        loop {
-            let mut line = Vec::new();
-            let count = input
-                .by_ref()
-                .take(8 * 1024 * 1024 + 1)
-                .read_until(b'\n', &mut line);
-            if matches!(count, Ok(n) if n > 0 && n <= 8 * 1024 * 1024)
-                && line.last() == Some(&b'\n')
-                && super::kitty_graphics::is_chunk_line(&line)
-            {
-                // Image bytes ride beside publications; a bad chunk only loses
-                // that image, which the window reports missing.
-                if let Err(error) = kitty.accept_line(&line) {
-                    eprintln!(
-                        "tmux-preview: kitty image chunk rejected: {}",
-                        rejection_reason(&error)
-                    );
-                }
-                continue;
-            }
-            let state = match count {
-                Ok(n) if n > 0 && n <= 8 * 1024 * 1024 && line.last() == Some(&b'\n') => {
-                    match reader.accept(&line) {
-                        Ok(state) => {
-                            if let Some(command) = reader.resync.take() {
-                                // Revoke authority before a backpressured command enqueue can wait.
-                                if let Ok(mut slot) = incoming.lock() {
-                                    *slot = Some(Some(state.clone()));
-                                }
-                                if recovery_commands.send(command).is_err() {
-                                    if let Ok(mut slot) = incoming.lock() {
-                                        *slot = Some(None);
-                                    }
-                                    break;
-                                }
-                            }
-                            Some(state)
-                        }
-                        Err(error) => {
-                            // JSON errors can contain terminal content or identifiers.
-                            // Only static validation reasons are safe to report.
-                            eprintln!(
-                                "tmux-preview: browser publication rejected: {}",
-                                rejection_reason(&error)
-                            );
-                            None
-                        }
-                    }
-                }
-                Ok(0) => {
-                    eprintln!("tmux-preview: browser publication stream ended");
-                    None
-                }
-                Ok(n) if n > 8 * 1024 * 1024 => {
-                    eprintln!("tmux-preview: browser publication exceeds size limit");
-                    None
-                }
-                Ok(_) => {
-                    eprintln!("tmux-preview: browser publication missing newline");
-                    None
-                }
-                Err(error) => {
-                    eprintln!(
-                        "tmux-preview: browser publication read failed: {:?}",
-                        error.kind()
-                    );
-                    None
-                }
-            };
-            let done = state.is_none();
-            if let Ok(mut slot) = incoming.lock() {
-                *slot = Some(state);
-            }
-            if done {
-                break;
-            }
-        }
-    });
-    std::thread::spawn(move || {
-        let mut output = std::io::stdout().lock();
-        for command in receiver {
-            let Ok(mut line) = serde_json::to_vec(&command) else {
-                break;
-            };
-            line.push(b'\n');
-            if output
-                .write_all(&line)
-                .and_then(|_| output.flush())
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
-    Bridge { mailbox, commands }
-}
+#[path = "browser_transport.rs"]
+mod transport;
+pub(super) use transport::start;
+
 #[cfg(test)]
 #[path = "browser_tests.rs"]
 mod tests;

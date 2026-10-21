@@ -311,3 +311,5 @@ fn pointer_modes(
         _ => None,
     }
 }
+
+pub(super) mod binary;
