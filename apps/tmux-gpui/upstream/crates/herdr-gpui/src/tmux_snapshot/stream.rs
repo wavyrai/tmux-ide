@@ -41,7 +41,9 @@ impl Reader {
         }
         let frame = event
             .snapshot
-            .map(|snapshot| decode::frame(snapshot.get().as_bytes()).map(Arc::new))
+            .map(|snapshot| {
+                decode::live_frame(snapshot.get().as_bytes()).map(|(frame, _)| Arc::new(frame))
+            })
             .transpose()?;
         self.connection = Some(event.connection);
         self.sequence = event.sequence;

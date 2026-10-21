@@ -618,7 +618,7 @@ impl Reader {
         }
         let (frame, pointer_modes) = match (&p.snapshot, &p.retained_preview) {
             (Some(live), _) => {
-                let (frame, modes) = decode::frame_with_pointer_modes(live.get().as_bytes())?;
+                let (frame, modes) = decode::live_frame(live.get().as_bytes())?;
                 (Some(Arc::new(frame)), modes)
             }
             (None, Some(preview)) => (

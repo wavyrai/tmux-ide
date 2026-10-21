@@ -6,11 +6,13 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Snapshot {
+struct Snapshot<R = Row> {
+    #[serde(default)]
+    encoding: Encoding,
     cols: u16,
     rows: u16,
-    grid: Vec<Row>,
-    history: Vec<Row>,
+    grid: Vec<R>,
+    history: Vec<R>,
     cursor: Cursor,
     modes: Modes,
     placements: Vec<serde_json::Value>,
@@ -19,6 +21,17 @@ struct Snapshot {
     #[serde(default, rename = "kittyGraphics")]
     _kitty_graphics: Option<serde::de::IgnoredAny>,
 }
+#[derive(Default, Deserialize)]
+enum Encoding {
+    #[default]
+    #[serde(skip)]
+    Legacy,
+    #[serde(rename = "rle-v1")]
+    RleV1,
+}
+
+mod compact;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Row {
@@ -129,7 +142,23 @@ pub(super) fn frame_with_pointer_modes(
     bytes: &[u8],
 ) -> Result<(FrameData, Option<PointerModes>), Error> {
     let snapshot: Snapshot = serde_json::from_slice(bytes)?;
+    if matches!(snapshot.encoding, Encoding::RleV1) {
+        return Err(Error::Invalid("compact snapshot was not negotiated"));
+    }
+    convert(snapshot)
+}
+
+pub(super) fn live_frame(bytes: &[u8]) -> Result<(FrameData, Option<PointerModes>), Error> {
+    if std::env::var("TMUX_IDE_GUI_NATIVE_ENCODING").as_deref() == Ok("rle-v1") {
+        compact::frame(bytes)
+    } else {
+        frame_with_pointer_modes(bytes)
+    }
+}
+
+fn convert(snapshot: Snapshot) -> Result<(FrameData, Option<PointerModes>), Error> {
     let Snapshot {
+        encoding: _,
         cols,
         rows,
         grid,
