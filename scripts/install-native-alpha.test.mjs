@@ -243,6 +243,19 @@ legacyTest("refuses redirected legacy metadata", (t) => {
   assert.notEqual(f.run().status, 0);
   assert.ok(!existsSync(f.downloads));
 });
+legacyTest("refuses redirected legacy Contents directory", (t) => {
+  const f = fixture(t);
+  oldApp(f);
+  const contents = join(entry(f), "Contents");
+  const elsewhere = join(f.root, "foreign-contents");
+  mkdirSync(elsewhere);
+  writeFileSync(join(elsewhere, "Info.plist"), readFileSync(join(contents, "Info.plist")));
+  rmSync(contents, { recursive: true });
+  symlinkSync(elsewhere, contents);
+  assert.notEqual(f.run().status, 0);
+  assert.ok(!existsSync(f.downloads));
+  assert.equal(readFileSync(join(entry(f), "marker"), "utf8"), "old app retained");
+});
 legacyTest("refuses redirected backup directory and retains original app", (t) => {
   const f = fixture(t);
   oldApp(f);
