@@ -7177,18 +7177,28 @@ var init_causal_cell = __esm({
 
 // packages/contracts/src/terminal-graphics.ts
 import { z as z45 } from "zod";
-var TERMINAL_GRAPHICS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES, TERMINAL_GRAPHICS_MAX_IMAGE_BYTES, TERMINAL_GRAPHICS_MAX_IMAGES, TERMINAL_GRAPHICS_MAX_PLACEMENTS, TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS, TerminalGraphicsDigestSchemaZ, TerminalGraphicsFormatSchemaZ, Dimension, Cells, CellIndex, TerminalGraphicsImageSchemaZ, TerminalGraphicsPlacementSchemaZ, TerminalGraphicsStateSchemaZ, TerminalGraphicsBlobSchemaZ;
+var TERMINAL_GRAPHICS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION, TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION, TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES, TERMINAL_GRAPHICS_MAX_IMAGE_BYTES, TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES, TERMINAL_GRAPHICS_MAX_IMAGES, TERMINAL_GRAPHICS_MAX_PLACEMENTS, TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS, TerminalGraphicsDigestSchemaZ, TerminalGraphicsFormatSchemaZ, Dimension, Cells, CellIndex, TerminalGraphicsImageSchemaZ, TerminalGraphicsPlacementSchemaZ, TerminalGraphicsStateSchemaZ, TerminalGraphicsBlobSchemaZ;
 var init_terminal_graphics = __esm({
   "packages/contracts/src/terminal-graphics.ts"() {
     "use strict";
     TERMINAL_GRAPHICS_CAPABILITY_VERSION = /* @__PURE__ */ (() => 101)();
+    TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION = /* @__PURE__ */ (() => 102)();
+    TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION = /* @__PURE__ */ (() => 103)();
+    TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION = /* @__PURE__ */ (() => 104)();
     TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
-    TERMINAL_GRAPHICS_MAX_IMAGE_BYTES = /* @__PURE__ */ (() => 32 * 1024 * 1024)();
+    TERMINAL_GRAPHICS_MAX_IMAGE_BYTES = /* @__PURE__ */ (() => 64 * 1024 * 1024)();
+    TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES = /* @__PURE__ */ (() => 32 * 1024 * 1024)();
     TERMINAL_GRAPHICS_MAX_IMAGES = /* @__PURE__ */ (() => 256)();
     TERMINAL_GRAPHICS_MAX_PLACEMENTS = /* @__PURE__ */ (() => 256)();
     TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS = /* @__PURE__ */ (() => 64)();
     TerminalGraphicsDigestSchemaZ = /* @__PURE__ */ (() => z45.string().regex(/^[0-9a-f]{32}$/u))();
-    TerminalGraphicsFormatSchemaZ = /* @__PURE__ */ (() => z45.enum(["png", "rgba", "rgb"]))();
+    TerminalGraphicsFormatSchemaZ = /* @__PURE__ */ (() => z45.enum([
+      "png",
+      "rgba",
+      "rgb",
+      "rgba-zlib",
+      "rgb-zlib"
+    ]))();
     Dimension = /* @__PURE__ */ (() => z45.number().int().min(1).max(1e4))();
     Cells = /* @__PURE__ */ (() => z45.number().int().min(1).max(1e3))();
     CellIndex = /* @__PURE__ */ (() => z45.number().int().min(0).max(1e3))();
@@ -7217,7 +7227,10 @@ var init_terminal_graphics = __esm({
     TerminalGraphicsStateSchemaZ = /* @__PURE__ */ (() => z45.object({
       revision: z45.number().int().nonnegative(),
       images: z45.array(TerminalGraphicsImageSchemaZ).max(TERMINAL_GRAPHICS_MAX_IMAGES),
-      placements: z45.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS)
+      placements: z45.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS),
+      /** The daemon accepts `terminal-cell-pixels` (only sent to renderers offering 103). */
+      cellPixels: z45.literal(true).optional(),
+      preciseCellPixels: z45.literal(true).optional()
     }).strict())();
     TerminalGraphicsBlobSchemaZ = /* @__PURE__ */ (() => z45.object({
       digest: TerminalGraphicsDigestSchemaZ,
@@ -7405,7 +7418,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z47 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7579,6 +7592,15 @@ var init_pane_stream = __esm({
       pane: PaneStreamSemanticPaneIdSchemaZ,
       digests: z47.array(TerminalGraphicsDigestSchemaZ).min(1).max(TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS)
     }).strict())();
+    PaneStreamTerminalCellPixelsFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
+      type: z47.literal("terminal-cell-pixels"),
+      width: z47.number().int().min(1).max(1024),
+      height: z47.number().int().min(1).max(1024),
+      precise: z47.object({
+        width: z47.number().int().min(1e3).max(1024e3),
+        height: z47.number().int().min(1e3).max(1024e3)
+      }).strict().optional()
+    }).strict())();
     PaneStreamClientFrameSchemaZ = /* @__PURE__ */ (() => z47.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ,
@@ -7592,7 +7614,8 @@ var init_pane_stream = __esm({
       PaneStreamAuthorityRequestFrameSchemaZ,
       PaneStreamAuthorityReleaseFrameSchemaZ,
       PaneStreamClockProbeFrameSchemaZ,
-      PaneStreamTerminalGraphicsRequestFrameSchemaZ
+      PaneStreamTerminalGraphicsRequestFrameSchemaZ,
+      PaneStreamTerminalCellPixelsFrameSchemaZ
     ]))();
     Base64SchemaZ = (maxChars) => z47.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
     ServerSeqSchemaZ = /* @__PURE__ */ (() => z47.number().int().positive())();
@@ -12642,7 +12665,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.7",
+      version: "2.9.8",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -30784,7 +30807,44 @@ var init_session_channel = __esm({
         this.input.flush();
         this.clearWindowViewports();
         this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
-        this.io.send(`refresh-client -C ${cols}x${rows}`);
+        this.io.send(`refresh-client -C ${cols}x${rows}${this.cellPixelSuffix()}`);
+        this.clientViewport = { cols, rows };
+      }
+      clientViewport = null;
+      cellPixels = null;
+      /** "/WxH" for tmux's refresh-client -C (patched tmux; stock ignores it). */
+      cellPixelSuffix() {
+        if (!this.cellPixels) return "";
+        const { width, height, precise } = this.cellPixels;
+        return `/${width}x${height}` + (precise ? `/${precise.width}x${precise.height}` : "");
+      }
+      /**
+       * The renderer's cell size in device pixels. tmux answers CSI 14t/16t and
+       * sets TIOCGWINSZ pixels from it, so image programs render 1:1 for the
+       * window. Re-applies the current viewport when the size changes.
+       */
+      setCellPixels(width, height, precise) {
+        if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 1024 || height > 1024)
+          throw new RangeError("cell pixel size out of range");
+        if (precise && [precise.width, precise.height].some(
+          (value) => !Number.isSafeInteger(value) || value < 1e3 || value > 1024e3
+        ))
+          throw new RangeError("precise cell pixel size out of range");
+        if (this.cellPixels?.width === width && this.cellPixels.height === height && this.cellPixels.precise?.width === precise?.width && this.cellPixels.precise?.height === precise?.height)
+          return;
+        this.cellPixels = { width, height, ...precise ? { precise } : {} };
+        if (!this.geometryParticipating) return;
+        this.input.flush();
+        if (this.fittedWindows.size > 0) {
+          for (const [runtimeId, size] of this.fittedWindows)
+            if (this.windowsByRuntime.has(runtimeId))
+              this.io.send(
+                `refresh-client -C ${runtimeId}:${size.cols}x${size.rows}${this.cellPixelSuffix()}`
+              );
+        } else if (this.clientViewport)
+          this.io.send(
+            `refresh-client -C ${this.clientViewport.cols}x${this.clientViewport.rows}${this.cellPixelSuffix()}`
+          );
       }
       restoreWindowSizing(target) {
         if (!this.geometryParticipating) return;
@@ -30816,7 +30876,7 @@ var init_session_channel = __esm({
         if (previous?.cols === cols && previous.rows === rows) return;
         this.input.flush();
         this.restoreWindowSizing(window2.runtimeId);
-        this.io.send(`refresh-client -C ${window2.runtimeId}:${cols}x${rows}`);
+        this.io.send(`refresh-client -C ${window2.runtimeId}:${cols}x${rows}${this.cellPixelSuffix()}`);
         this.fittedWindows.set(window2.runtimeId, { cols, rows });
       }
       /** Must also run on geometry-owner handoff, before the next owner fits. */
@@ -40129,6 +40189,11 @@ var init_mirror_service = __esm({
         if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
         this.assertWindowOwnership(session);
         entry.channel.fitWindowViewport(semanticWindowId, cols, rows);
+      }
+      setCellPixels(session, width, height, precise) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return;
+        entry.channel.setCellPixels(width, height, precise);
       }
       clearWindowViewports(session) {
         const entry = this.channels.get(session);
@@ -57836,7 +57901,7 @@ var init_causal_cell_ledger = __esm({
 
 // packages/daemon/src/terminal/graphics/kitty-graphics.ts
 import { createHash as createHash19 } from "node:crypto";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 function parseKittyCommand(body) {
   if (!body.startsWith("G")) return null;
   const separator = body.indexOf(";");
@@ -57863,7 +57928,11 @@ function pngDimensions(data) {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   return { width: view.getUint32(16), height: view.getUint32(20) };
 }
-var KITTY_PLACEMENT_OSC, ESC, MAX_COMMAND_BYTES2, PASSTHROUGH_PREFIX, KittyApcScanner, KittyImageBudget, DEFAULT_KITTY_IMAGE_BUDGET, KittyImageStore, MAX_IMAGES_PER_PANE, MAX_IMAGE_SIDE, clampCells;
+function virtualGrid(placements) {
+  if (!placements || placements.size === 0) return null;
+  return [...placements.values()].at(-1);
+}
+var KITTY_PLACEMENT_OSC, ESC, MAX_COMMAND_BYTES2, PASSTHROUGH_PREFIX, KittyApcScanner, KittyImageBudget, DEFAULT_KITTY_IMAGE_BUDGET, KittyImageStore, MAX_IMAGES_PER_PANE, MAX_RAW_IMAGE_BYTES, MAX_IMAGE_SIDE, clampCells;
 var init_kitty_graphics = __esm({
   "packages/daemon/src/terminal/graphics/kitty-graphics.ts"() {
     "use strict";
@@ -58068,6 +58137,7 @@ var init_kitty_graphics = __esm({
       #images = /* @__PURE__ */ new Map();
       #used = /* @__PURE__ */ new Map();
       #cursorPlacements = [];
+      /** `U=1` virtual placements per image, by placement id (0 when unnamed). */
       #virtual = /* @__PURE__ */ new Map();
       #pending = null;
       #nextAnonymous = 2130706432;
@@ -58105,7 +58175,7 @@ var init_kitty_graphics = __esm({
         this.#used.clear();
         this.#bytes = 0;
       }
-      /** A capture reseed replaced the grid: tmux holds no record of cursor placements. */
+      /** The coordinate basis changed: tmux holds no record to restore cursor anchors. */
       dropCursorPlacements() {
         if (this.#cursorPlacements.length === 0) return;
         this.#cursorPlacements.length = 0;
@@ -58128,11 +58198,16 @@ var init_kitty_graphics = __esm({
         if (victim === null) return 0;
         return this.#remove(victim);
       }
-      #remove(imageId) {
+      #remove(imageId, keepPlacements = false) {
         const image = this.#images.get(imageId);
         if (!image) return 0;
         this.#images.delete(imageId);
         this.#used.delete(imageId);
+        if (keepPlacements) {
+          this.#bytes -= image.data.byteLength;
+          this.#revision += 1;
+          return image.data.byteLength;
+        }
         this.#virtual.delete(imageId);
         this.#bytes -= image.data.byteLength;
         const kept = this.#cursorPlacements.filter((p) => p.imageId !== imageId);
@@ -58163,7 +58238,7 @@ var init_kitty_graphics = __esm({
           return;
         }
         const action = control.get("a") ?? "t";
-        if ((action === "t" || action === "T") && more) {
+        if ((action === "t" || action === "T" || action === "f") && more) {
           this.#pending = { control, payload: [command3.payload], bytes: command3.payload.length };
           return;
         }
@@ -58179,16 +58254,15 @@ var init_kitty_graphics = __esm({
           if (imageId === 0) imageId = this.#nextAnonymous++;
           const image2 = this.#decode(imageId, control, payload);
           if (!image2) return;
-          this.#remove(imageId);
+          this.#remove(imageId, true);
           this.#images.set(imageId, image2);
           this.#bytes += image2.data.byteLength;
           this.#used.set(imageId, this.#budget.nextTick());
           this.#revision += 1;
-          while ((this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) && this.#images.size > 1)
-            this.evictOldest();
-          this.#budget.enforce();
+          this.#enforceBudget();
           if (action === "t" || !this.#images.has(imageId)) return;
         }
+        if (action === "f") return this.#editFrame(imageId, control, payload);
         if (action !== "T" && action !== "p") return;
         const image = this.#images.get(imageId);
         if (!image) return;
@@ -58197,7 +58271,20 @@ var init_kitty_graphics = __esm({
         const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
         const placementId = int(control, "p");
         if (control.get("U") === "1") {
-          this.#virtual.set(imageId, { columns, rows });
+          const placements = this.#virtual.get(imageId) ?? /* @__PURE__ */ new Map();
+          placements.set(placementId, { columns, rows });
+          this.#virtual.set(imageId, placements);
+          let count = 0;
+          for (const entries of this.#virtual.values()) count += entries.size;
+          for (const [id2, entries] of this.#virtual) {
+            for (const placement of entries.keys()) {
+              if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+              entries.delete(placement);
+              count -= 1;
+            }
+            if (entries.size === 0) this.#virtual.delete(id2);
+            if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+          }
         } else if (cursor2) {
           const existing = this.#cursorPlacements.findIndex(
             (p) => p.imageId === imageId && placementId !== 0 && p.placementId === placementId
@@ -58219,7 +58306,10 @@ var init_kitty_graphics = __esm({
       }
       #decode(imageId, control, payload) {
         let data = Buffer.from(payload, "base64");
-        if (control.get("o") === "z") {
+        const f = int(control, "f", 32);
+        const zlib = control.get("o") === "z";
+        const keepCompressed = zlib && (f === 32 || f === 24);
+        if (zlib && !keepCompressed) {
           try {
             data = inflateSync(data, { maxOutputLength: TERMINAL_GRAPHICS_MAX_IMAGE_BYTES });
           } catch {
@@ -58227,7 +58317,6 @@ var init_kitty_graphics = __esm({
           }
         }
         if (data.byteLength === 0 || data.byteLength > TERMINAL_GRAPHICS_MAX_IMAGE_BYTES) return null;
-        const f = int(control, "f", 32);
         let format;
         let width;
         let height;
@@ -58239,12 +58328,76 @@ var init_kitty_graphics = __esm({
         } else if (f === 32 || f === 24) {
           width = int(control, "s");
           height = int(control, "v");
-          format = f === 32 ? "rgba" : "rgb";
-          if (!width || !height || data.length !== width * height * (f === 32 ? 4 : 3)) return null;
+          const bytes = width * height * (f === 32 ? 4 : 3);
+          if (!width || !height || bytes > MAX_RAW_IMAGE_BYTES) return null;
+          if (keepCompressed) format = f === 32 ? "rgba-zlib" : "rgb-zlib";
+          else {
+            format = f === 32 ? "rgba" : "rgb";
+            if (data.length !== bytes) return null;
+          }
         } else return null;
         if (width < 1 || height < 1 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE) return null;
         const digest3 = createHash19("sha256").update(data).digest("hex").slice(0, 32);
         return { imageId, format, width, height, data, digest: digest3 };
+      }
+      /**
+       * `a=f` edits of the root frame (`r=1`): RGBA/RGB rectangles written at
+       * `x,y`, replacing (`X=1`) or alpha-blending the existing pixels. New
+       * animation frames, `c` base frames and PNG data are not modelled.
+       */
+      #editFrame(imageId, control, payload) {
+        const image = this.#images.get(imageId);
+        if (!image || int(control, "r") !== 1 || (control.get("t") ?? "d") !== "d") return;
+        const source = image.format === "rgba" || image.format === "rgba-zlib" ? 4 : 3;
+        if (image.format === "png") return;
+        let pixels;
+        let patch = Buffer.from(payload, "base64");
+        try {
+          pixels = image.format === "rgba-zlib" || image.format === "rgb-zlib" ? inflateSync(image.data, { maxOutputLength: MAX_RAW_IMAGE_BYTES }) : Uint8Array.from(image.data);
+          if (control.get("o") === "z")
+            patch = inflateSync(patch, { maxOutputLength: MAX_RAW_IMAGE_BYTES });
+        } catch {
+          return;
+        }
+        const f = int(control, "f", 32);
+        const depth = f === 24 ? 3 : 4;
+        const width = int(control, "s") || image.width;
+        const height = int(control, "v") || image.height;
+        const x0 = int(control, "x");
+        const y0 = int(control, "y");
+        if (f !== 32 && f !== 24 || patch.length !== width * height * depth) return;
+        if (pixels.length !== image.width * image.height * source) return;
+        const replace = control.get("X") === "1";
+        for (let row = 0; row < height && y0 + row < image.height; row += 1)
+          for (let col = 0; col < width && x0 + col < image.width; col += 1) {
+            const from = (row * width + col) * depth;
+            const to = ((y0 + row) * image.width + x0 + col) * source;
+            const alpha = depth === 4 && !replace ? patch[from + 3] / 255 : 1;
+            for (let channel = 0; channel < 3; channel += 1)
+              pixels[to + channel] = Math.round(
+                patch[from + channel] * alpha + pixels[to + channel] * (1 - alpha)
+              );
+            if (source === 4)
+              pixels[to + 3] = depth === 4 && replace ? patch[from + 3] : Math.round(255 * alpha + pixels[to + 3] * (1 - alpha));
+          }
+        const data = deflateSync(pixels, { level: 1 });
+        const format = source === 4 ? "rgba-zlib" : "rgb-zlib";
+        this.#remove(imageId, true);
+        this.#images.set(imageId, {
+          ...image,
+          format,
+          data,
+          digest: createHash19("sha256").update(data).digest("hex").slice(0, 32)
+        });
+        this.#bytes += data.byteLength;
+        this.#used.set(imageId, this.#budget.nextTick());
+        this.#revision += 1;
+        this.#enforceBudget();
+      }
+      #enforceBudget() {
+        while ((this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) && this.#images.size > 0)
+          this.evictOldest();
+        this.#budget.enforce();
       }
       #delete(control) {
         const what = control.get("d") ?? "a";
@@ -58252,20 +58405,23 @@ var init_kitty_graphics = __esm({
         const all = what === "a" || what === "A";
         const byId = (what === "i" || what === "I") && id2 !== 0;
         if (!all && !byId) return;
-        const keep = (imageId) => !all && imageId !== id2;
-        const kept = this.#cursorPlacements.filter((p) => keep(p.imageId));
+        const placementId = control.has("p") ? int(control, "p") : null;
+        const doomed = (imageId, placement) => all || imageId === id2 && (placementId === null || placement === placementId);
+        const kept = this.#cursorPlacements.filter((p) => !doomed(p.imageId, p.placementId));
         if (kept.length !== this.#cursorPlacements.length) {
           this.#cursorPlacements.length = 0;
           this.#cursorPlacements.push(...kept);
           this.#revision += 1;
         }
-        for (const key2 of [...this.#virtual.keys()])
-          if (!keep(key2)) {
-            this.#virtual.delete(key2);
-            this.#revision += 1;
-          }
+        for (const [imageId, placements] of [...this.#virtual])
+          for (const placement of [...placements.keys()])
+            if (doomed(imageId, placement)) {
+              placements.delete(placement);
+              if (placements.size === 0) this.#virtual.delete(imageId);
+              this.#revision += 1;
+            }
         if (what === "A") for (const key2 of [...this.#images.keys()]) this.#remove(key2);
-        if (what === "I") this.#remove(id2);
+        if (what === "I" && placementId === null) this.#remove(id2);
       }
       /**
        * The pane's graphics state for renderers: the image registry (with each
@@ -58280,7 +58436,7 @@ var init_kitty_graphics = __esm({
           width: image.width,
           height: image.height,
           bytes: image.data.byteLength,
-          placeholder: this.#virtual.get(image.imageId) ?? null
+          placeholder: virtualGrid(this.#virtual.get(image.imageId))
         }));
         const placements = [];
         for (const placement of this.#cursorPlacements) {
@@ -58308,6 +58464,7 @@ var init_kitty_graphics = __esm({
       }
     };
     MAX_IMAGES_PER_PANE = TERMINAL_GRAPHICS_MAX_IMAGES;
+    MAX_RAW_IMAGE_BYTES = 64 * 1024 * 1024;
     MAX_IMAGE_SIDE = 1e4;
     clampCells = (cells) => Math.max(1, Math.min(1e3, cells));
   }
@@ -58579,7 +58736,8 @@ var init_terminal_replica_interpreter = __esm({
           const previous = this.#backend;
           this.#backend = replacement;
           this.#attachKitty(replacement);
-          this.#kitty.dropCursorPlacements();
+          const sameGraphicsBasis = operation.bootstrap === "painted-capture" && previous.cols === replacement.cols && previous.rows === replacement.rows && previous.graphicsViewportTop?.() !== void 0 && previous.graphicsViewportTop?.() === replacement.graphicsViewportTop?.() && previous.modes().alternateScreen === replacement.modes().alternateScreen;
+          if (!sameGraphicsBasis) this.#kitty.dropCursorPlacements();
           this.#nativeReseedRequested = false;
           this.#scrollback = scrollback;
           this.#bootstrap = {
@@ -58611,6 +58769,8 @@ var init_terminal_replica_interpreter = __esm({
           return;
         }
         if (operation.type === "resize") {
+          if (operation.cols !== this.#backend.cols || operation.rows !== this.#backend.rows)
+            this.#kitty.dropCursorPlacements();
           this.#causalCell?.fail("geometry-drift");
           if (this.#backend.modes().synchronizedOutput) {
             this.#backend.resize(operation.cols, operation.rows);
@@ -58655,6 +58815,7 @@ var init_terminal_replica_interpreter = __esm({
         const scanned = this.#kittyScanner.scan(data);
         for (const command3 of scanned.commands) this.#kittyPending.set(command3.marker, command3);
         const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        if (scanned.forward.byteLength === 0) return;
         await this.#writeToBackend(this.#backend, scanned.forward);
         if (this.#observability.enabled)
           this.#observability.recordSpan(
@@ -62791,6 +62952,11 @@ var init_registry2 = __esm({
           );
         }
       }
+      /** Renderer cell size in device pixels; benign, so any connected client may set it. */
+      setCellPixels(clientId, width, height, precise) {
+        this.#assertConnected(clientId);
+        this.#mirror.setCellPixels?.(this.session, width, height, precise);
+      }
       fitViewportWithAuthority(clientId, lease, cols, rows, semanticWindowId) {
         this.assertGeometryAuthority(clientId, lease);
         this.#mirror.setGeometryParticipation(this.session, true);
@@ -63243,6 +63409,10 @@ var init_registry2 = __esm({
         this.#assertOpen();
         this.#runtime.fitViewport(this.clientId, lease, cols, rows, semanticWindowId);
       }
+      setCellPixels(width, height, precise) {
+        this.#assertOpen();
+        this.#runtime.setCellPixels(this.clientId, width, height, precise);
+      }
       fitViewportWithAuthority(lease, cols, rows, semanticWindowId) {
         this.#assertOpen();
         this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows, semanticWindowId);
@@ -63676,6 +63846,10 @@ var init_transport_binding = __esm({
           if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);
           throw error;
         }
+      }
+      setCellPixels(width, height, precise) {
+        this.#assertOpen();
+        this.#shared.consumer.setCellPixels?.(width, height, precise);
       }
       fitViewport(expectedLease, cols, rows, semanticWindowId) {
         this.#assertOpen();
@@ -69857,6 +70031,7 @@ var init_wire_ledger = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
+import { inflateSync as inflateSync2 } from "node:zlib";
 import { z as z108 } from "zod";
 function semanticBackendRefusal(error) {
   let candidate = error;
@@ -69913,6 +70088,22 @@ function errorFrameCode(error) {
     }
   }
   return "stream-unavailable";
+}
+function rawGraphicsState(state) {
+  const legacy = state.images.map(
+    (image) => image.format === "rgba-zlib" || image.format === "rgb-zlib" ? {
+      ...image,
+      format: image.format === "rgba-zlib" ? "rgba" : "rgb",
+      bytes: image.width * image.height * (image.format === "rgba-zlib" ? 4 : 3)
+    } : image
+  );
+  const images = legacy.filter((image) => image.bytes <= TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES);
+  const kept = new Set(images.map((image) => image.digest));
+  return {
+    ...state,
+    images,
+    placements: state.placements.filter((placement) => kept.has(placement.digest))
+  };
 }
 function concatBytes(chunks) {
   if (chunks.length === 0) return new Uint8Array(0);
@@ -70630,7 +70821,9 @@ var init_pane_stream_websocket = __esm({
             batch: null,
             graphicsAnnounced: false,
             graphicsQueue: [],
-            graphicsSending: false
+            graphicsSending: false,
+            graphicsServed: /* @__PURE__ */ new Map(),
+            graphicsState: null
           });
         }
       }
@@ -71052,15 +71245,59 @@ var init_pane_stream_websocket = __esm({
       #startGraphics(channel) {
         const graphics = channel.delivery?.graphics;
         if (!graphics) return;
+        const zlib = this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION
+        ) === true;
+        channel.graphicsZlib = zlib;
+        const cellPixels = this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION
+        ) === true;
+        const preciseCellPixels = this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION
+        ) === true;
+        let announced = false;
         graphics.subscribe((state) => {
+          announced = true;
           if (this.#closed || channel.closed) return;
           channel.graphicsAnnounced = true;
-          this.#sendFrame(null, { type: "terminal-graphics", pane: channel.semanticPaneId, state });
+          channel.graphicsState = state;
+          const pushed = [];
+          for (const image of state.images) {
+            const served = channel.graphicsServed.get(image.imageId);
+            if (served !== void 0 && served !== image.digest) pushed.push(image.digest);
+          }
+          this.#sendFrame(null, {
+            type: "terminal-graphics",
+            pane: channel.semanticPaneId,
+            state: {
+              ...zlib ? state : rawGraphicsState(state),
+              ...cellPixels ? { cellPixels: true } : {},
+              ...preciseCellPixels ? { preciseCellPixels: true } : {}
+            }
+          });
+          if (pushed.length > 0) this.#queueGraphics(channel, pushed);
         });
+        if (cellPixels && !announced && !this.#closed && !channel.closed) {
+          channel.graphicsAnnounced = true;
+          this.#sendFrame(null, {
+            type: "terminal-graphics",
+            pane: channel.semanticPaneId,
+            state: {
+              revision: 0,
+              images: [],
+              placements: [],
+              cellPixels: true,
+              ...preciseCellPixels ? { preciseCellPixels: true } : {}
+            }
+          });
+        }
       }
       #requestGraphics(pane, digests) {
         const channel = this.#panes.get(pane);
         if (!channel || channel.closed || !channel.graphicsAnnounced) return;
+        this.#queueGraphics(channel, digests);
+      }
+      #queueGraphics(channel, digests) {
         for (const digest3 of digests)
           if (!channel.graphicsQueue.includes(digest3) && channel.graphicsQueue.length < GRAPHICS_MAX_QUEUED_DIGESTS)
             channel.graphicsQueue.push(digest3);
@@ -71076,28 +71313,47 @@ var init_pane_stream_websocket = __esm({
         try {
           while (!this.#closed && !channel.closed && channel.graphicsQueue.length > 0) {
             const digest3 = channel.graphicsQueue.shift();
-            const image = channel.delivery?.graphics?.image(digest3);
-            if (!image) continue;
-            const total = image.data.byteLength;
+            const graphics = channel.delivery?.graphics;
+            const image = graphics?.image(digest3);
+            if (!graphics || !image) continue;
+            for (const entry of channel.graphicsState?.images ?? [])
+              if (entry.digest === digest3) channel.graphicsServed.set(entry.imageId, digest3);
+            const raw = !channel.graphicsZlib && image.format.endsWith("-zlib");
+            let data = image.data;
+            if (raw) {
+              const expected = image.width * image.height * (image.format === "rgba-zlib" ? 4 : 3);
+              if (expected < 1 || expected > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES) continue;
+              try {
+                data = inflateSync2(image.data, { maxOutputLength: expected });
+              } catch {
+                continue;
+              }
+              if (data.byteLength !== expected) continue;
+            }
+            if (!channel.graphicsZlib && data.byteLength > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES)
+              continue;
+            const format = raw ? image.format === "rgba-zlib" ? "rgba" : "rgb" : image.format;
+            const total = data.byteLength;
             for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
               while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
                 if (this.#closed || channel.closed) return;
                 await new Promise((resolve44) => setTimeout(resolve44, 5));
               }
               if (this.#closed || channel.closed) return;
+              if (offset > 0 && graphics.image(digest3) !== image) break;
               const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
               this.#sendFrame(null, {
                 type: "terminal-graphics-blob",
                 pane: channel.semanticPaneId,
                 blob: {
                   digest: digest3,
-                  format: image.format,
+                  format,
                   width: image.width,
                   height: image.height,
                   total,
                   offset
                 },
-                data: Buffer.from(image.data.subarray(offset, end)).toString("base64")
+                data: Buffer.from(data.subarray(offset, end)).toString("base64")
               });
             }
           }
@@ -71582,6 +71838,13 @@ var init_pane_stream_websocket = __esm({
         }
         if (frame.type === "terminal-graphics-request") {
           this.#requestGraphics(frame.pane, frame.digests);
+          return;
+        }
+        if (frame.type === "terminal-cell-pixels") {
+          try {
+            this.#sessionRuntimeBinding?.setCellPixels?.(frame.width, frame.height, frame.precise);
+          } catch {
+          }
           return;
         }
         if (frame.type === "viewport") {
