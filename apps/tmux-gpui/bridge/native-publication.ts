@@ -15,9 +15,9 @@ const contextSchema = z.object({
   connection: z.string().min(1).max(128),
   request: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
-const resyncSchema = z
+export const nativeFrameResyncSchema = z
   .object({
-    type: z.literal("frame-resync").optional(),
+    type: z.literal("frame-resync"),
     connection: z.string().min(1).max(128),
     request: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     epoch: z
@@ -88,7 +88,7 @@ export function createNativePublicationWriter(
     },
     resync(command: unknown, current: NativePublicationContext): boolean {
       if (retired || encoding !== "rle-delta-v1" || accepted === null) return false;
-      const parsed = resyncSchema.safeParse(command);
+      const parsed = nativeFrameResyncSchema.safeParse(command);
       const context = contextSchema.safeParse(current);
       if (!parsed.success || !context.success) return false;
       const value = parsed.data;

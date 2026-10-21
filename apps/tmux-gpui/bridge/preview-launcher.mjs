@@ -12,7 +12,10 @@ if (process.argv.length !== (browse ? 5 : 4)) {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   try {
-    const encoding = await nativeSnapshotEncoding(process.argv[2], { signal: controller.signal });
+    const encoding = await nativeSnapshotEncoding(process.argv[2], {
+      signal: controller.signal,
+      damage: browse,
+    });
     process.exitCode = await runPreview({
       native: {
         env: { ...process.env, TMUX_IDE_GUI_NATIVE_ENCODING: encoding },

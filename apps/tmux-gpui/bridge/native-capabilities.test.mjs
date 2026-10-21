@@ -41,3 +41,19 @@ test("missing and cancelled native capability queries fall back", async () => {
     "legacy",
   );
 });
+
+test("damage is selected only for a browser connection that supports full fallback", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tmux-native-capabilities-"));
+  try {
+    const path = join(dir, "native");
+    await writeFile(
+      path,
+      `#!${process.execPath}\nconsole.log(JSON.stringify({version:1,snapshotEncodings:["rle-v1","rle-delta-v1"]}));\n`,
+      { mode: 0o700 },
+    );
+    assert.equal(await nativeSnapshotEncoding(path), "rle-v1");
+    assert.equal(await nativeSnapshotEncoding(path, { damage: true }), "rle-delta-v1");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

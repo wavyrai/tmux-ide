@@ -1,8 +1,12 @@
 import {
+  createNativePublicationWriter,
+  nativeFrameResyncSchema,
+  type NativePublicationContext,
+} from "./native-publication.ts";
+import {
   COMPACT_HELPER_ENV,
   COMPACT_NATIVE_ENV,
   decodeSurfacePublication,
-  createSnapshotSerializer,
 } from "./snapshot-wire.ts";
 import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
@@ -12,7 +16,6 @@ import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-
 import {
   preparePublication,
   createPublicationDeduplicator,
-  renderPreparedPublication,
   type PreparedPublication,
 } from "./prepared-publication.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
@@ -166,6 +169,7 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
+  nativeFrameResyncSchema,
   z
     .object({
       type: z.literal("kitty-missing"),
@@ -391,11 +395,25 @@ let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | nu
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
-const serializeNativeSnapshot = createSnapshotSerializer(
-  process.env[COMPACT_NATIVE_ENV] === "rle-v1" ? "rle-v1" : "legacy",
+const nativeEncoding = process.env[COMPACT_NATIVE_ENV];
+const nativeWriter = createNativePublicationWriter(
+  nativeEncoding === "rle-delta-v1" || nativeEncoding === "rle-v1" ? nativeEncoding : "legacy",
+  (line) => process.stdout.write(line),
+  MAX_FRAME,
 );
+process.stdout.on("error", () => nativeWriter.retire());
+let nativeFrameBasis = "unavailable";
+let forceNativePublication = false;
+function nativeFrameContext(): NativePublicationContext {
+  return {
+    connection,
+    request,
+    identity: JSON.stringify([nativeFrameBasis, surface, foreground, historyOffset]),
+  };
+}
+type QueuedPublication = PreparedPublication & { context: NativePublicationContext };
 const admitPublication = createPublicationDeduplicator();
-let pending: PreparedPublication | null = null,
+let pending: QueuedPublication | null = null,
   blocked = false;
 let active:
   | {
@@ -1236,20 +1254,20 @@ function publish() {
     fleet: fleet?.publication() ?? null,
     machines: machines ? { ...machines.publication(), message: machineMessage } : null,
   };
-  const publication = preparePublication(prefix, suffix, preview?.snapshotJson ?? null);
+  const publication = {
+    ...preparePublication(prefix, suffix, preview?.snapshotJson ?? null),
+    context: nativeFrameContext(),
+  };
   if (Buffer.byteLength(publication.before) + Buffer.byteLength(publication.after) > MAX_FRAME)
     throw new Error("Browser publication metadata too large");
-  if (!admitPublication(publication)) return;
+  const changed = admitPublication(publication);
+  if (!changed && !forceNativePublication) return;
+  forceNativePublication = false;
   if (blocked) pending = publication;
   else writePublication(publication);
 }
-function writePublication(publication: PreparedPublication) {
-  const line = renderPreparedPublication(
-    publication,
-    serializeNativeSnapshot(publication.snapshot),
-  );
-  if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
-  blocked = !process.stdout.write(line);
+function writePublication(publication: QueuedPublication) {
+  blocked = !nativeWriter.write(publication, publication.context);
 }
 // A window that cannot keep up loses whole images; it reports the gap and the
 // helper pulls them again (see kitty_graphics.rs).
@@ -2183,6 +2201,14 @@ async function openPane(
             hasAuthority,
           );
           snapshot = coherent?.snapshot ?? null;
+          nativeFrameBasis = JSON.stringify([
+            childConnection,
+            epoch,
+            layout,
+            scrollOffset,
+            historyAnchor?.state ?? null,
+            historyAnchor?.token ?? null,
+          ]);
           const childSelectionIdentity = z
             .string()
             .regex(/^[a-f0-9]{64}$/)
@@ -2394,6 +2420,13 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "frame-resync") {
+    if (nativeWriter.resync(cmd, nativeFrameContext())) {
+      forceNativePublication = true;
+      publish();
+    }
+    return;
+  }
   if (cmd.type === "kitty-missing") {
     kittyKnown.forget(cmd.digests);
     if (active && !active.catalogOnly)

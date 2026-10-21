@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
 
 /** Dedicated preview binaries reject unknown flags without opening a window. */
-export async function nativeSnapshotEncoding(command, { timeoutMs = 1500, signal } = {}) {
+export async function nativeSnapshotEncoding(
+  command,
+  { timeoutMs = 1500, signal, damage = false } = {},
+) {
   if (signal?.aborted) return "legacy";
   return new Promise((resolve) => {
     let output = "",
@@ -36,7 +39,10 @@ export async function nativeSnapshotEncoding(command, { timeoutMs = 1500, signal
             Array.isArray(value.snapshotEncodings) &&
             value.snapshotEncodings.includes("rle-v1")
           )
-            encoding = "rle-v1";
+            encoding =
+              damage && value.snapshotEncodings.includes("rle-delta-v1")
+                ? "rle-delta-v1"
+                : "rle-v1";
         } catch {
           /* An older or incompatible binary keeps its existing wire format. */
         }

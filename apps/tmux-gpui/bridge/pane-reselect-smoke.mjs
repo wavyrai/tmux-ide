@@ -1,3 +1,4 @@
+import { createCompactDeltaStore } from "./compact-delta.ts";
 // Opt-in in-window pane reselect proof against an owned daemon and tmux socket:
 // the frame stays painted, input is gated until the helper confirms the new
 // target, and every admitted keystroke lands in exactly the selected pane.
@@ -18,6 +19,14 @@ const fleet = await createScratchFleet({
 let daemon, browser;
 let stderr = "";
 const events = [];
+const damage = process.env.TMUX_IDE_GUI_NATIVE_ENCODING === "rle-delta-v1";
+const frameStore = createCompactDeltaStore();
+let lastWire = null,
+  recoveringEpoch = null,
+  protocolFailure = null;
+let fullFrames = 0,
+  deltaFrames = 0,
+  resyncPassed = false;
 const tmux = (...args) =>
   execFileSync(fleet.environment.TMUX_IDE_TMUX_BIN, ["-S", fleet.socketPath, ...args], {
     encoding: "utf8",
@@ -26,6 +35,7 @@ const tmux = (...args) =>
 const until = async (predicate, label) => {
   const end = Date.now() + 20000;
   while (!predicate()) {
+    if (protocolFailure) throw protocolFailure;
     if (browser?.exitCode != null) throw new Error("Browser exited: " + stderr);
     if (Date.now() > end) throw new Error(`Reselect deadline (${label}): ` + stderr.slice(-2000));
     await new Promise((r) => setTimeout(r, 10));
@@ -81,8 +91,27 @@ try {
     buffer += b.toString();
     let end;
     while ((end = buffer.indexOf("\n")) >= 0) {
-      events.push(JSON.parse(buffer.slice(0, end)));
+      const event = JSON.parse(buffer.slice(0, end));
       buffer = buffer.slice(end + 1);
+      try {
+        if (damage && event.snapshot) {
+          const wire = event.snapshot;
+          if (recoveringEpoch === wire.epoch) continue;
+          const candidate = frameStore.prepare(wire);
+          candidate.commit();
+          if (wire.encoding === "rle-delta-v1") deltaFrames++;
+          else fullFrames++;
+          lastWire = { ...wire, connection: event.connection, request: event.request };
+          event.snapshot = candidate.snapshot;
+          if (recoveringEpoch !== null) {
+            recoveringEpoch = null;
+            resyncPassed = true;
+          }
+        } else if (damage && !event.kittyImageChunk) frameStore.reset();
+        events.push(event);
+      } catch (error) {
+        protocolFailure = error;
+      }
     }
   });
   await until(() => events.at(-1)?.sessions?.length === 1, "catalog");
@@ -108,6 +137,25 @@ try {
   const grid = () =>
     tmux("display-message", "-p", "-t", tmuxPanes[0], "#{window_width}x#{window_height}");
   await until(() => grid() === "111x37", "initial fitted window");
+  if (damage) {
+    await until(
+      () => events.at(-1)?.snapshot?.cols === 111 && events.at(-1)?.snapshot?.rows === 37,
+      "coherent fit",
+    );
+    assert.ok(lastWire);
+    recoveringEpoch = lastWire.epoch;
+    frameStore.reset(); // exercise receiver state loss without replaying input
+    const resync = {
+      type: "frame-resync",
+      connection: lastWire.connection,
+      request,
+      epoch: lastWire.epoch,
+      baseSeq: 0,
+    };
+    send(resync);
+    send(resync); // stale duplicate must not create a second recovery operation
+    await until(() => resyncPassed, "fresh full frame after resync");
+  }
   const fitted = tmuxPanes.map((pane) =>
     tmux("display-message", "-p", "-t", pane, "#{pane_width}x#{pane_height}"),
   );
@@ -168,8 +216,21 @@ try {
     if (id !== panes[1]) assert.ok(!text.includes("BURST_OK"), "burst input stayed in its pane");
   }
   assert.equal(blanked, 0, "in-window reselect never drops the painted frame");
+  if (protocolFailure) throw protocolFailure;
+  if (damage) {
+    assert.ok(fullFrames > 0);
+    assert.ok(deltaFrames > 0);
+    assert.ok(resyncPassed);
+  }
   console.log(
-    JSON.stringify({ passed: true, panes: 3, exactTargets: true, gatedEarlyInput: true, blanked }),
+    JSON.stringify({
+      passed: true,
+      panes: 3,
+      exactTargets: true,
+      gatedEarlyInput: true,
+      blanked,
+      ...(damage ? { fullFrames, deltaFrames, resyncPassed } : {}),
+    }),
   );
 } finally {
   if (browser && browser.exitCode === null) {
