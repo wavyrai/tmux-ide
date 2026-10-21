@@ -7,12 +7,17 @@ export function createHostedCommandQueue(capacity = 64, maxBytes = 128 * 1024) {
   let waiting: ((value: IteratorResult<unknown>) => void) | undefined;
   let capacityWaiter: (() => void) | undefined;
   function own(value: unknown) {
-    let nodes = 0;
+    let nodes = 0,
+      lowerBytes = 0;
+    const countBytes = (text: string) => {
+      lowerBytes += Buffer.byteLength(text);
+      if (lowerBytes > maxBytes) throw Error("Hosted input capacity exceeded");
+    };
     const validate = (entry: unknown, depth = 0): void => {
       if (++nodes > 10000 || depth > 20) throw Error("Invalid hosted command");
       if (entry === null || typeof entry === "boolean") return;
       if (typeof entry === "string") {
-        if (Buffer.byteLength(entry) > maxBytes) throw Error("Hosted input capacity exceeded");
+        countBytes(entry);
         return;
       }
       if (typeof entry === "number" && Number.isFinite(entry)) return;
@@ -23,11 +28,13 @@ export function createHostedCommandQueue(capacity = 64, maxBytes = 128 * 1024) {
           Object.getPrototypeOf(entry) !== null)
       )
         throw Error("Invalid hosted command");
+      if (Array.isArray(entry) && entry.length > 10000) throw Error("Invalid hosted command");
       for (const key of Reflect.ownKeys(entry)) {
         if (Array.isArray(entry) && key === "length") continue;
         const property = Object.getOwnPropertyDescriptor(entry, key)!;
         if (typeof key !== "string" || !("value" in property) || !property.enumerable)
           throw Error("Invalid hosted command");
+        countBytes(key);
         validate(property.value, depth + 1);
       }
     };

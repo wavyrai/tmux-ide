@@ -146,3 +146,10 @@ test("command queue owns content before queued and capacity-waiting admission", 
     assert.throws(() => createHostedCommandQueue().send(value), /Invalid/);
   }
 });
+
+test("command ownership rejects sparse array length and aggregate bytes before serialization", () => {
+  const queue = createHostedCommandQueue(2, 100);
+  assert.throws(() => queue.send(new Array(2 ** 32 - 1)), /Invalid/);
+  assert.throws(() => queue.send({ ["k".repeat(70)]: "v".repeat(70) }), /capacity/);
+  assert.throws(() => queue.send(Array.from({ length: 20 }, () => "x".repeat(10))), /capacity/);
+});
