@@ -335,22 +335,25 @@ fn inflate_queue_bounds_distinct_and_unkeyed_images() {
     for keyed in [false, true] {
         let store = Store::default();
         // Hold the worker at admission to inspect a burst without scheduling races.
-        store.1.started.set(()).unwrap();
+        store.1.started.set(()).expect("new store has no worker");
         for index in 0..MAX_PARTIALS + 5 {
             store.inflate_later(
                 format!("{index:032x}"),
                 queued_partial(keyed.then(|| index.to_string()), 1),
             );
         }
-        let queue = store.1.queue.lock().unwrap();
+        let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
         assert_eq!(
             queue.len(),
             MAX_PARTIALS,
             "pending inflates must have a count bound"
         );
-        assert_eq!(queue.front().unwrap().0, format!("{:032x}", 5));
         assert_eq!(
-            queue.back().unwrap().0,
+            queue.front().expect("admitted images remain queued").0,
+            format!("{:032x}", 5)
+        );
+        assert_eq!(
+            queue.back().expect("newest image remains queued").0,
             format!("{:032x}", MAX_PARTIALS + 4)
         );
     }
@@ -359,36 +362,45 @@ fn inflate_queue_bounds_distinct_and_unkeyed_images() {
 #[test]
 fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
     let store = Store::default();
-    store.1.started.set(()).unwrap();
+    store.1.started.set(()).expect("new store has no worker");
     let size = MAX_IMAGE_BYTES as usize / 2 + 1;
     store.inflate_later("old".into(), queued_partial(Some("one".into()), size));
     store.inflate_later("new".into(), queued_partial(Some("two".into()), size));
     {
-        let queue = store.1.queue.lock().unwrap();
+        let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
         assert!(
             queue.iter().map(|(_, part)| part.data.len()).sum::<usize>()
                 <= MAX_IMAGE_BYTES as usize,
             "pending encoded bytes must stay within one maximum-image budget"
         );
         assert_eq!(queue.len(), 1);
-        assert_eq!(queue.front().unwrap().0, "new");
+        assert_eq!(
+            queue.front().expect("admitted images remain queued").0,
+            "new"
+        );
     }
     store.inflate_later("newest".into(), queued_partial(Some("two".into()), 16));
-    let queue = store.1.queue.lock().unwrap();
+    let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
     assert_eq!(queue.len(), 1);
-    assert_eq!(queue.front().unwrap().0, "newest");
+    assert_eq!(
+        queue.front().expect("admitted images remain queued").0,
+        "newest"
+    );
     drop(queue);
     store.inflate_later(
         "maximum".into(),
         queued_partial(None, MAX_IMAGE_BYTES as usize),
     );
-    let queue = store.1.queue.lock().unwrap();
+    let queue = store.1.queue.lock().expect("inflate queue is not poisoned");
     assert_eq!(
         queue.len(),
         1,
         "one maximum-sized image must remain admissible"
     );
-    assert_eq!(queue.front().unwrap().0, "maximum");
+    assert_eq!(
+        queue.front().expect("admitted images remain queued").0,
+        "maximum"
+    );
 }
 
 #[test]
