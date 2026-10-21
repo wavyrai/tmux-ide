@@ -353,3 +353,25 @@ test("small metadata is owned before caller changes it or returned candidate met
   assert.equal(second.wire.encoding, "rle-delta-v1");
   assert.deepEqual(admitted(store, second.wire), expected);
 });
+
+test("missing baseline recovers only after malformed row and metadata rejection", () => {
+  const producer = createCompactDeltaProducer();
+  producer.prepare(frame(), "a").commit();
+  const delta = producer.prepare(frame(), "a").wire;
+  assert.equal(delta.encoding, "rle-delta-v1");
+  const store = createCompactDeltaStore();
+  assert.throws(() => store.prepare(delta), CompactBaselineError);
+  for (const malformed of [
+    { ...delta, changedRows: [[0, [false, [[0, "x", 1, 0, 0, 0]]]]] },
+    { ...delta, changedRows: [[24, [false, [[80, "x", 1, 0, 0, 0]]]]] },
+    { ...delta, cursor: { ...delta.cursor, x: 80, hidden: false } },
+    { ...delta, history: [[false, [[80, "\u0001", 1, 0, 0, 0]]]] },
+    { ...delta, rows: 65535, cols: 65535 },
+  ]) {
+    assert.throws(
+      () => store.prepare(malformed),
+      (error: unknown) => error instanceof Error && !(error instanceof CompactBaselineError),
+    );
+  }
+  assert.throws(() => store.prepare(delta), CompactBaselineError);
+});

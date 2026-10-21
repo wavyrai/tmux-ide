@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import {
+  MAX_COMPACT_CELLS,
   decodeCompactSnapshot,
   encodeCompactSnapshot,
   type CompactRow,
@@ -161,16 +162,23 @@ export function createCompactDeltaStore() {
       } else {
         const delta = deltaEnvelope.parse(value);
         if (delta.seq !== delta.baseSeq + 1) throw new Error("Invalid compact delta sequence");
+        const matching =
+          baseline !== null &&
+          baseline.epoch === delta.epoch &&
+          baseline.seq === delta.baseSeq &&
+          baseline.cols === delta.cols &&
+          baseline.rows === delta.rows;
         if (
-          !baseline ||
-          baseline.epoch !== delta.epoch ||
-          baseline.seq !== delta.baseSeq ||
-          baseline.cols !== delta.cols ||
-          baseline.rows !== delta.rows
+          !Array.isArray(delta.history) ||
+          delta.cols * (delta.rows + delta.history.length) > MAX_COMPACT_CELLS
         )
-          throw new CompactBaselineError("Missing compact delta baseline");
+          throw new Error("Compact snapshot dimensions exceed bounds");
         if (delta.changedRows.length > delta.rows) throw new Error("Too many compact changed rows");
-        const grid = [...baseline.grid];
+        // Missing baselines are recoverable only after validating all intrinsic data.
+        // These bounded placeholders never escape as a displayable snapshot.
+        const grid: CompactRow[] = matching
+          ? [...baseline!.grid]
+          : Array.from({ length: delta.rows }, () => [false, [[delta.cols, "", 1, 0, 0, 0]]]);
         let previous = -1;
         for (const [index, row] of delta.changedRows) {
           if (index <= previous || index >= delta.rows)
@@ -184,6 +192,7 @@ export function createCompactDeltaStore() {
         void ___;
         void ____;
         snapshot = decodeCompactSnapshot({ ...metadata, encoding: "rle-v1", grid });
+        if (!matching) throw new CompactBaselineError("Missing compact delta baseline");
       }
       const full = { ...ownedCompact(snapshot), epoch, seq };
       if (
