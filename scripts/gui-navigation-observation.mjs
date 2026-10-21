@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 
 // Pure validation of capture-adapter evidence. This module does not inspect pixels,
 // post input, establish input authority, or establish display presentation times.
+// Adapters must use one monotonic clock domain for input and capture timestamps,
+// derive classifications from captured pixels, and derive expected history rows
+// independently from the known fixture. This validator cannot prove those inputs.
 const ns = (value) => {
   assert.match(value, /^(0|[1-9][0-9]{0,24})$/, "canonical monotonic nanoseconds required");
   return BigInt(value);
