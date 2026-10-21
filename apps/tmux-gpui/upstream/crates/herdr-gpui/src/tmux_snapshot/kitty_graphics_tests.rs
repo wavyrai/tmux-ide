@@ -277,3 +277,172 @@ fn a_redrawn_image_replaces_the_published_one_without_a_publication() -> anyhow:
     assert_eq!(second[0].asset.data_fingerprint, 0x3333_3333_3333_3333);
     Ok(())
 }
+
+#[test]
+fn dropping_last_store_owner_releases_inflated_images() -> anyhow::Result<()> {
+    let store = Store::default();
+    let remaining = store.clone();
+    let images = Arc::downgrade(&store.0);
+    let inflater = Arc::downgrade(&store.1);
+    let data = deflate(&[7; 16])?;
+    store.accept_line(&chunk_as(DIGEST, "rgba-zlib", data.len(), 0, &data))?;
+    store.settle();
+    assert_eq!(store.lock().bytes, 16);
+    drop(store);
+    assert!(
+        images.upgrade().is_some(),
+        "another window reader still owns the store"
+    );
+    assert!(remaining.lock().keys.contains_key(DIGEST));
+    let second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    remaining.accept_line(&chunk_as(second, "rgba-zlib", data.len(), 0, &data))?;
+    remaining.settle();
+    assert!(
+        remaining.lock().keys.contains_key(second),
+        "remaining reader must still decode images"
+    );
+    drop(remaining);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while (images.upgrade().is_some() || inflater.upgrade().is_some()) && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        images.upgrade().is_none(),
+        "closing all owners must release image memory"
+    );
+    assert!(
+        inflater.upgrade().is_none(),
+        "the worker must not retain its owning inflater"
+    );
+    Ok(())
+}
+
+fn queued_partial(image: Option<String>, bytes: usize) -> Partial {
+    Partial {
+        image,
+        format: Format::RgbaZlib,
+        width: 2,
+        height: 2,
+        total: bytes,
+        data: vec![0; bytes],
+        updated: Instant::now(),
+    }
+}
+
+#[test]
+fn inflate_queue_bounds_distinct_and_unkeyed_images() {
+    for keyed in [false, true] {
+        let store = Store::default();
+        // Hold the worker at admission to inspect a burst without scheduling races.
+        store.1.started.set(()).unwrap();
+        for index in 0..MAX_PARTIALS + 5 {
+            store.inflate_later(
+                format!("{index:032x}"),
+                queued_partial(keyed.then(|| index.to_string()), 1),
+            );
+        }
+        let queue = store.1.queue.lock().unwrap();
+        assert_eq!(
+            queue.len(),
+            MAX_PARTIALS,
+            "pending inflates must have a count bound"
+        );
+        assert_eq!(queue.front().unwrap().0, format!("{:032x}", 5));
+        assert_eq!(
+            queue.back().unwrap().0,
+            format!("{:032x}", MAX_PARTIALS + 4)
+        );
+    }
+}
+
+#[test]
+fn inflate_queue_bounds_bytes_and_coalesces_latest_frame() {
+    let store = Store::default();
+    store.1.started.set(()).unwrap();
+    let size = MAX_IMAGE_BYTES as usize / 2 + 1;
+    store.inflate_later("old".into(), queued_partial(Some("one".into()), size));
+    store.inflate_later("new".into(), queued_partial(Some("two".into()), size));
+    {
+        let queue = store.1.queue.lock().unwrap();
+        assert!(
+            queue.iter().map(|(_, part)| part.data.len()).sum::<usize>()
+                <= MAX_IMAGE_BYTES as usize,
+            "pending encoded bytes must stay within one maximum-image budget"
+        );
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.front().unwrap().0, "new");
+    }
+    store.inflate_later("newest".into(), queued_partial(Some("two".into()), 16));
+    let queue = store.1.queue.lock().unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue.front().unwrap().0, "newest");
+}
+
+#[test]
+fn older_queued_image_cannot_replace_newer_raw_image() -> anyhow::Result<()> {
+    let store = Store::default();
+    let compressed = deflate(&vec![7; 16 * 1024 * 1024])?;
+    let old = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let new = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let mut line: serde_json::Value = serde_json::from_slice(&chunk_as(
+        old,
+        "rgba-zlib",
+        compressed.len(),
+        0,
+        &compressed,
+    ))?;
+    line["kittyImageChunk"]["image"] = "%1#1".into();
+    line["kittyImageChunk"]["width"] = 2048.into();
+    line["kittyImageChunk"]["height"] = 2048.into();
+    store.accept_line(&serde_json::to_vec(&line)?)?;
+    store.accept_line(&keyed_chunk(new, "%1#1", &[9; 16]))?;
+    store.settle();
+    let inner = store.lock();
+    assert_eq!(
+        inner.latest.get("%1#1").map(String::as_str),
+        Some(new),
+        "older queued image must not replace the newer raw image"
+    );
+    assert!(
+        !inner.keys.contains_key(old),
+        "stale decode must not consume image cache space"
+    );
+    Ok(())
+}
+
+#[test]
+fn closing_store_wakes_and_releases_idle_worker() -> anyhow::Result<()> {
+    let store = Store::default();
+    let worker = Arc::downgrade(&store.1.wake);
+    let data = deflate(&[7; 16])?;
+    store.accept_line(&chunk_as(DIGEST, "rgba-zlib", data.len(), 0, &data))?;
+    store.settle();
+    drop(store);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while worker.upgrade().is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        worker.upgrade().is_none(),
+        "idle worker must exit, releasing its queue and wake handle"
+    );
+    Ok(())
+}
+
+#[test]
+fn cached_image_revisit_advances_latest_and_redraws() -> anyhow::Result<()> {
+    let store = Store::default();
+    let a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    store.accept_line(&keyed_chunk(b, "%1#1", &[2; 16]))?;
+    assert!(store.take_changed());
+    store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    assert_eq!(store.lock().latest.get("%1#1").map(String::as_str), Some(a));
+    assert!(
+        store.take_changed(),
+        "cached redraw must wake the window painter"
+    );
+    Ok(())
+}

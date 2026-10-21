@@ -206,6 +206,8 @@ struct Inner {
     painted: HashMap<(u16, u16, u16, u16), String>,
     /// Newest complete digest per program image.
     latest: HashMap<String, String>,
+    /// Latest received digest, including work still inflating.
+    arrivals: HashMap<String, String>,
     changed: bool,
 }
 
@@ -218,10 +220,25 @@ pub(super) struct Store(Arc<Mutex<Inner>>, Arc<Inflater>);
 /// a queued older one: only the newest is worth inflating.
 #[derive(Default)]
 struct Inflater {
-    queue: Mutex<VecDeque<(String, Partial)>>,
-    wake: std::sync::Condvar,
-    busy: std::sync::atomic::AtomicBool,
+    queue: Arc<Mutex<VecDeque<(String, Partial)>>>,
+    wake: Arc<std::sync::Condvar>,
+    busy: Arc<std::sync::atomic::AtomicBool>,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
     started: std::sync::OnceLock<()>,
+}
+
+impl Drop for Inflater {
+    fn drop(&mut self) {
+        // The worker owns only these shared primitives, never the Store or
+        // Inflater owner. Close and wake under the queue lock to avoid a lost
+        // notification. An in-flight bounded decode may finish; never join it
+        // on the window thread, and discard queued work immediately.
+        let mut queue = self.queue.lock().unwrap_or_else(PoisonError::into_inner);
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        queue.clear();
+        self.wake.notify_one();
+    }
 }
 
 impl Store {
@@ -246,6 +263,13 @@ impl Store {
         let mut inner = self.lock();
         let now = Instant::now();
         if inner.keys.contains_key(&chunk.digest) {
+            if chunk.offset == 0
+                && let Some(image) = &chunk.image
+            {
+                inner.note_arrival(image, &chunk.digest);
+                inner.mark_latest(image.clone(), chunk.digest.clone());
+                inner.changed = true;
+            }
             return Ok(());
         }
         let total = chunk.total as usize;
@@ -302,23 +326,38 @@ impl Store {
     }
 
     fn complete(&self, digest: String, partial: Partial) {
+        self.note_arrival(&digest, &partial);
         let image = partial.image.clone();
         let Some(ready) = Ready::from(partial) else {
             return;
         };
-        let mut inner = self.lock();
+        Self::insert_ready(&self.0, digest, image, ready);
+    }
+
+    fn insert_ready(inner: &Mutex<Inner>, digest: String, image: Option<String>, ready: Ready) {
+        let mut inner = inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(image) = &image
+            && inner.arrivals.get(image) != Some(&digest)
+        {
+            return;
+        }
         inner.insert(digest.clone(), ready);
         if let Some(image) = image
             && inner.keys.contains_key(&digest)
         {
-            if inner.latest.len() >= MAX_IMAGES && !inner.latest.contains_key(&image) {
-                inner.latest.clear();
-            }
-            inner.latest.insert(image, digest);
+            inner.mark_latest(image, digest);
+        }
+    }
+
+    fn note_arrival(&self, digest: &str, partial: &Partial) {
+        if let Some(image) = &partial.image {
+            let mut inner = self.lock();
+            inner.note_arrival(image, digest);
         }
     }
 
     fn inflate_later(&self, digest: String, partial: Partial) {
+        self.note_arrival(&digest, &partial);
         let inflater = &self.1;
         {
             let mut queue = inflater
@@ -328,36 +367,48 @@ impl Store {
             if partial.image.is_some() {
                 queue.retain(|(_, queued)| queued.image != partial.image);
             }
+            let mut bytes = queue
+                .iter()
+                .map(|(_, queued)| queued.data.len())
+                .sum::<usize>();
+            while queue.len() >= MAX_PARTIALS
+                || bytes + partial.data.len() > MAX_IMAGE_BYTES as usize
+            {
+                let Some((_, oldest)) = queue.pop_front() else {
+                    return;
+                };
+                bytes -= oldest.data.len();
+            }
             queue.push_back((digest, partial));
         }
         inflater.wake.notify_one();
         inflater.started.get_or_init(|| {
-            let store = self.clone();
+            let inner = Arc::downgrade(&self.0);
+            let queue = inflater.queue.clone();
+            let wake = inflater.wake.clone();
+            let busy = inflater.busy.clone();
+            let stopped = inflater.stopped.clone();
             std::thread::spawn(move || {
-                let inflater = store.1.clone();
                 loop {
                     let next = {
-                        let mut queue = inflater
-                            .queue
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner);
+                        let mut queue = queue.lock().unwrap_or_else(PoisonError::into_inner);
                         loop {
+                            if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                                return;
+                            }
                             if let Some(next) = queue.pop_front() {
-                                inflater
-                                    .busy
-                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                busy.store(true, std::sync::atomic::Ordering::SeqCst);
                                 break next;
                             }
-                            queue = inflater
-                                .wake
-                                .wait(queue)
-                                .unwrap_or_else(PoisonError::into_inner);
+                            queue = wake.wait(queue).unwrap_or_else(PoisonError::into_inner);
                         }
                     };
-                    store.complete(next.0, next.1);
-                    inflater
-                        .busy
-                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                    let image = next.1.image.clone();
+                    let ready = Ready::from(next.1);
+                    if let (Some(inner), Some(ready)) = (inner.upgrade(), ready) {
+                        Self::insert_ready(&inner, next.0, image, ready);
+                    }
+                    busy.store(false, std::sync::atomic::Ordering::SeqCst);
                 }
             });
         });
@@ -493,6 +544,20 @@ impl Ready {
 }
 
 impl Inner {
+    fn note_arrival(&mut self, image: &str, digest: &str) {
+        if self.arrivals.len() >= MAX_IMAGES && !self.arrivals.contains_key(image) {
+            self.arrivals.clear();
+        }
+        self.arrivals.insert(image.to_owned(), digest.to_owned());
+    }
+
+    fn mark_latest(&mut self, image: String, digest: String) {
+        if self.latest.len() >= MAX_IMAGES && !self.latest.contains_key(&image) {
+            self.latest.clear();
+        }
+        self.latest.insert(image, digest);
+    }
+
     fn insert(&mut self, digest: String, ready: Ready) {
         let Ready {
             format,
