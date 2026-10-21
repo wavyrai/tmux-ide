@@ -1,0 +1,149 @@
+diff --git a/cmd-refresh-client.c b/cmd-refresh-client.c
+index 6d569c74..b3ab6ae6 100644
+--- a/cmd-refresh-client.c
++++ b/cmd-refresh-client.c
+@@ -85,6 +85,7 @@ cmd_refresh_client_control_client_size(struct cmd *self, struct cmdq_item *item)
+ 	struct client		*tc = cmdq_get_target_client(item);
+ 	const char		*size = args_get(args, 'C');
+ 	u_int			 w, x, y, xpixel = 0, ypixel = 0;
++	u_int			 xmilli = 0, ymilli = 0;
+ 	struct client_window	*cw;
+ 	const char		*cell;
+ 
+@@ -99,6 +100,16 @@ cmd_refresh_client_control_client_size(struct cmd *self, struct cmdq_item *item)
+ 		cmdq_error(item, "bad cell pixel size");
+ 		return (CMD_RETURN_ERROR);
+ 	}
++	/* Optional thousandths of a device pixel avoid cumulative cell rounding. */
++	if (cell != NULL && (cell = strchr(cell + 1, '/')) != NULL &&
++	    (sscanf(cell + 1, "%ux%u", &xmilli, &ymilli) != 2 ||
++	    xmilli < 1000 || ymilli < 1000 ||
++	    xmilli > 1024000 || ymilli > 1024000)) {
++		cmdq_error(item, "bad precise cell pixel size");
++		return (CMD_RETURN_ERROR);
++	}
++	tc->tty.xmilli = xmilli;
++	tc->tty.ymilli = ymilli;
+ 	if (xpixel != 0 && (tc->tty.xpixel != xpixel || tc->tty.ypixel != ypixel)) {
+ 		tc->tty.xpixel = xpixel;
+ 		tc->tty.ypixel = ypixel;
+diff --git a/input.c b/input.c
+index df5e737b..89620081 100644
+--- a/input.c
++++ b/input.c
+@@ -2166,14 +2166,14 @@ input_csi_dispatch_winops(struct input_ctx *ictx)
+ 		case 14:
+ 			if (w == NULL)
+ 				break;
+-			input_reply(ictx, 1, "\033[4;%u;%ut", y * w->ypixel,
+-			    x * w->xpixel);
++			input_reply(ictx, 1, "\033[4;%u;%ut", window_pixel_size(w->ymilli, w->ypixel, y),
++			    window_pixel_size(w->xmilli, w->xpixel, x));
+ 			break;
+ 		case 15:
+ 			if (w == NULL)
+ 				break;
+-			input_reply(ictx, 1, "\033[5;%u;%ut", y * w->ypixel,
+-			    x * w->xpixel);
++			input_reply(ictx, 1, "\033[5;%u;%ut", window_pixel_size(w->ymilli, w->ypixel, y),
++			    window_pixel_size(w->xmilli, w->xpixel, x));
+ 			break;
+ 		case 16:
+ 			if (w == NULL)
+diff --git a/resize.c b/resize.c
+index 6cbc938d..49b2076b 100644
+--- a/resize.c
++++ b/resize.c
+@@ -136,6 +136,8 @@ clients_calculate_size(int type, int current, struct client *c,
+ 		*sy = UINT_MAX;
+ 	}
+ 	*xpixel = *ypixel = 0;
++	if (w != NULL)
++		w->xmilli = w->ymilli = 0;
+ 
+ 	/*
+ 	 * For latest, count the number of clients with this window. We only
+@@ -205,6 +207,10 @@ clients_calculate_size(int type, int current, struct client *c,
+ 		if (loop->tty.xpixel > *xpixel && loop->tty.ypixel > *ypixel) {
+ 			*xpixel = loop->tty.xpixel;
+ 			*ypixel = loop->tty.ypixel;
++			if (w != NULL) {
++				w->xmilli = loop->tty.xmilli;
++				w->ymilli = loop->tty.ymilli;
++			}
+ 		}
+ 		log_debug("%s: after %s (%ux%u), size is %ux%u", __func__,
+ 		    loop->name, cx, cy, *sx, *sy);
+@@ -353,6 +359,8 @@ void
+ recalculate_size(struct window *w, int now)
+ {
+ 	u_int	sx, sy, xpixel = 0, ypixel = 0;
++	u_int	xmilli = w->xmilli, ymilli = w->ymilli;
++	struct window_pane *wp;
+ 	int	type, current, changed;
+ 
+ 	/*
+@@ -374,6 +382,9 @@ recalculate_size(struct window *w, int now)
+ 	/* Look for a suitable client and get the new size. */
+ 	changed = clients_calculate_size(type, current, NULL, NULL, w,
+ 	    recalculate_size_skip_client, &sx, &sy, &xpixel, &ypixel);
++	if (xmilli != w->xmilli || ymilli != w->ymilli)
++		TAILQ_FOREACH(wp, &w->panes, entry)
++			window_pane_send_resize(wp, wp->sx, wp->sy);
+ 
+ 	/*
+ 	 * Make sure the size has actually changed. If the window has already
+diff --git a/tmux.h b/tmux.h
+index 5b03e858..3f5d3386 100644
+--- a/tmux.h
++++ b/tmux.h
+@@ -1381,6 +1381,7 @@ struct window {
+ 	u_int			 manual_sx;
+ 	u_int			 manual_sy;
+ 	u_int			 xpixel;
++	u_int			 xmilli, ymilli;
+ 	u_int			 ypixel;
+ 
+ 	u_int			 new_sx;
+@@ -1656,6 +1657,7 @@ struct tty {
+ 	u_int		 sy;
+         /* Cell size in pixels. */
+ 	u_int		 xpixel;
++	u_int		 xmilli, ymilli;
+ 	u_int		 ypixel;
+ 
+ 	u_int		 cx;
+@@ -3926,3 +3928,5 @@ void			 hyperlinks_reset(struct hyperlinks *);
+ void			 hyperlinks_free(struct hyperlinks *);
+ 
+ #endif /* TMUX_H */
++
++u_int window_pixel_size(u_int, u_int, u_int);
+diff --git a/window.c b/window.c
+index 76e00910..e2289e46 100644
+--- a/window.c
++++ b/window.c
+@@ -461,8 +461,8 @@ window_pane_send_resize(struct window_pane *wp, u_int sx, u_int sy)
+ 	memset(&ws, 0, sizeof ws);
+ 	ws.ws_col = sx;
+ 	ws.ws_row = sy;
+-	ws.ws_xpixel = w->xpixel * ws.ws_col;
+-	ws.ws_ypixel = w->ypixel * ws.ws_row;
++	ws.ws_xpixel = window_pixel_size(w->xmilli, w->xpixel, ws.ws_col);
++	ws.ws_ypixel = window_pixel_size(w->ymilli, w->ypixel, ws.ws_row);
+ 	if (ioctl(wp->fd, TIOCSWINSZ, &ws) == -1)
+ #ifdef __sun
+ 		/*
+@@ -2140,3 +2140,12 @@ window_pane_is_floating(struct window_pane *wp)
+ 		return (0);
+ 	return (1);
+ }
++
++/* winsize pixel dimensions are unsigned shorts; avoid overflow and wrapping. */
++u_int
++window_pixel_size(u_int milli, u_int cell, u_int cells)
++{
++	uint64_t pixels = milli == 0 ? (uint64_t)cell * cells :
++	    ((uint64_t)milli * cells + 500) / 1000;
++	return (pixels > USHRT_MAX ? USHRT_MAX : pixels);
++}

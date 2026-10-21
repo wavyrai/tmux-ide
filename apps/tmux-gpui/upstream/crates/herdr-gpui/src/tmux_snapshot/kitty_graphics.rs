@@ -23,8 +23,8 @@ use std::{
 /// Encoded image bytes kept per window.
 const MAX_BYTES: usize = 256 * 1024 * 1024;
 const MAX_IMAGES: usize = 512;
-/// Largest image the daemon publishes.
-const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+/// Largest image the daemon publishes, and largest inflated raw image.
+const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PARTIALS: usize = 16;
 /// A partial transfer with no progress for this long was dropped upstream.
 const STALLED: Duration = Duration::from_secs(10);
@@ -40,16 +40,40 @@ enum Format {
     Png,
     Rgba,
     Rgb,
+    /// Raw pixels still deflated as the program sent them (`o=z`).
+    #[serde(rename = "rgba-zlib")]
+    RgbaZlib,
+    #[serde(rename = "rgb-zlib")]
+    RgbZlib,
 }
 
-impl From<Format> for SurfaceGraphicsFormat {
-    fn from(format: Format) -> Self {
-        match format {
-            Format::Png => Self::Png,
-            Format::Rgba => Self::Rgba,
-            Format::Rgb => Self::Rgb,
+impl Format {
+    /// The painter's format once any deflate layer is removed, and the raw
+    /// byte count a deflated image must inflate to.
+    fn painted(self, width: u32, height: u32) -> (SurfaceGraphicsFormat, Option<u64>) {
+        let pixels = u64::from(width) * u64::from(height);
+        match self {
+            Self::Png => (SurfaceGraphicsFormat::Png, None),
+            Self::Rgba => (SurfaceGraphicsFormat::Rgba, None),
+            Self::Rgb => (SurfaceGraphicsFormat::Rgb, None),
+            Self::RgbaZlib => (SurfaceGraphicsFormat::Rgba, Some(pixels * 4)),
+            Self::RgbZlib => (SurfaceGraphicsFormat::Rgb, Some(pixels * 3)),
         }
     }
+}
+
+/// Inflates exactly `expected` bytes, refusing anything larger.
+fn inflate(data: &[u8], expected: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    if expected > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let mut out = Vec::with_capacity(usize::try_from(expected).ok()?);
+    flate2::read::ZlibDecoder::new(data)
+        .take(expected + 1)
+        .read_to_end(&mut out)
+        .ok()?;
+    (out.len() as u64 == expected).then_some(out)
 }
 
 /// One placement in canvas cells: the visible rectangle shows the
@@ -66,9 +90,39 @@ pub(super) struct Placement {
     pub source_column: u16,
     pub total_rows: u16,
     pub total_columns: u16,
+    /// The program's image (pane and image id); its newest complete bytes are
+    /// painted even before a publication names them.
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 impl Placement {
+    fn slot(&self) -> (u16, u16, u16, u16) {
+        (self.row, self.column, self.rows, self.columns)
+    }
+
+    fn painted(&self, index: usize, key: SurfaceGraphicsAssetKey) -> SurfaceGraphicsPlacement {
+        let scale = |cells: u16, total: u16, side: u32| {
+            (u64::from(cells) * u64::from(side) / u64::from(total)) as u32
+        };
+        SurfaceGraphicsPlacement {
+            logical_placement_id: u32::try_from(index).unwrap_or(u32::MAX),
+            x: self.column,
+            y: self.row,
+            cols: u32::from(self.columns),
+            rows: u32::from(self.rows),
+            source_x: scale(self.source_column, self.total_columns, key.image_width),
+            source_y: scale(self.source_row, self.total_rows, key.image_height),
+            source_width: scale(self.columns, self.total_columns, key.image_width).max(1),
+            source_height: scale(self.rows, self.total_rows, key.image_height).max(1),
+            x_offset: 0,
+            y_offset: 0,
+            z: 0,
+            scrollback_offset: 0,
+            asset: key,
+        }
+    }
+
     fn valid(&self) -> bool {
         valid_digest(&self.digest)
             && self.rows >= 1
@@ -118,6 +172,8 @@ struct Chunk {
     height: u32,
     total: u64,
     offset: u64,
+    #[serde(default)]
+    image: Option<String>,
     data: String,
 }
 
@@ -127,6 +183,7 @@ pub(super) fn is_chunk_line(line: &[u8]) -> bool {
 }
 
 struct Partial {
+    image: Option<String>,
     format: Format,
     width: u32,
     height: u32,
@@ -144,12 +201,45 @@ struct Inner {
     partials: HashMap<String, Partial>,
     referenced: HashMap<String, Instant>,
     reported: HashMap<String, Instant>,
+    /// Last image painted in each placement rectangle: while a redrawn image
+    /// is still arriving, the previous one stays up instead of flickering.
+    painted: HashMap<(u16, u16, u16, u16), String>,
+    /// Newest complete digest per program image.
+    latest: HashMap<String, String>,
+    /// Latest received digest, including work still inflating.
+    arrivals: HashMap<String, String>,
     changed: bool,
 }
 
 /// Shared between the publication reader thread and the window.
 #[derive(Clone, Default)]
-pub(super) struct Store(Arc<Mutex<Inner>>);
+pub(super) struct Store(Arc<Mutex<Inner>>, Arc<Inflater>);
+
+/// Deflated images inflate on one worker thread, so the publication reader
+/// keeps draining its pipe. A newer frame of the same program image replaces
+/// a queued older one: only the newest is worth inflating.
+#[derive(Default)]
+struct Inflater {
+    queue: Arc<Mutex<VecDeque<(String, Partial)>>>,
+    wake: Arc<std::sync::Condvar>,
+    busy: Arc<std::sync::atomic::AtomicBool>,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
+    started: std::sync::OnceLock<()>,
+}
+
+impl Drop for Inflater {
+    fn drop(&mut self) {
+        // The worker owns only these shared primitives, never the Store or
+        // Inflater owner. Close and wake under the queue lock to avoid a lost
+        // notification. An in-flight bounded decode may finish; never join it
+        // on the window thread, and discard queued work immediately.
+        let mut queue = self.queue.lock().unwrap_or_else(PoisonError::into_inner);
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        queue.clear();
+        self.wake.notify_one();
+    }
+}
 
 impl Store {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -173,6 +263,13 @@ impl Store {
         let mut inner = self.lock();
         let now = Instant::now();
         if inner.keys.contains_key(&chunk.digest) {
+            if chunk.offset == 0
+                && let Some(image) = &chunk.image
+            {
+                inner.note_arrival(image, &chunk.digest);
+                inner.mark_latest(image.clone(), chunk.digest.clone());
+                inner.changed = true;
+            }
             return Ok(());
         }
         let total = chunk.total as usize;
@@ -189,6 +286,7 @@ impl Store {
             inner.partials.insert(
                 chunk.digest.clone(),
                 Partial {
+                    image: chunk.image.clone(),
                     format: chunk.format,
                     width: chunk.width,
                     height: chunk.height,
@@ -217,8 +315,121 @@ impl Store {
         let Some(partial) = inner.partials.remove(&chunk.digest) else {
             return Ok(());
         };
-        inner.insert(chunk.digest, partial);
+        // Inflate without the lock: the window keeps painting meanwhile.
+        drop(inner);
+        if matches!(partial.format, Format::RgbaZlib | Format::RgbZlib) {
+            self.inflate_later(chunk.digest, partial);
+        } else {
+            self.complete(chunk.digest, partial);
+        }
         Ok(())
+    }
+
+    fn complete(&self, digest: String, partial: Partial) {
+        self.note_arrival(&digest, &partial);
+        let image = partial.image.clone();
+        let Some(ready) = Ready::from(partial) else {
+            return;
+        };
+        Self::insert_ready(&self.0, digest, image, ready);
+    }
+
+    fn insert_ready(inner: &Mutex<Inner>, digest: String, image: Option<String>, ready: Ready) {
+        let mut inner = inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(image) = &image
+            && inner.arrivals.get(image) != Some(&digest)
+        {
+            return;
+        }
+        inner.insert(digest.clone(), ready);
+        if let Some(image) = image
+            && inner.keys.contains_key(&digest)
+        {
+            inner.mark_latest(image, digest);
+        }
+    }
+
+    fn note_arrival(&self, digest: &str, partial: &Partial) {
+        if let Some(image) = &partial.image {
+            let mut inner = self.lock();
+            inner.note_arrival(image, digest);
+        }
+    }
+
+    fn inflate_later(&self, digest: String, partial: Partial) {
+        self.note_arrival(&digest, &partial);
+        let inflater = &self.1;
+        {
+            let mut queue = inflater
+                .queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if partial.image.is_some() {
+                queue.retain(|(_, queued)| queued.image != partial.image);
+            }
+            let mut bytes = queue
+                .iter()
+                .map(|(_, queued)| queued.data.len())
+                .sum::<usize>();
+            while queue.len() >= MAX_PARTIALS
+                || bytes + partial.data.len() > MAX_IMAGE_BYTES as usize
+            {
+                let Some((_, oldest)) = queue.pop_front() else {
+                    return;
+                };
+                bytes -= oldest.data.len();
+            }
+            queue.push_back((digest, partial));
+        }
+        inflater.wake.notify_one();
+        inflater.started.get_or_init(|| {
+            let inner = Arc::downgrade(&self.0);
+            let queue = inflater.queue.clone();
+            let wake = inflater.wake.clone();
+            let busy = inflater.busy.clone();
+            let stopped = inflater.stopped.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let next = {
+                        let mut queue = queue.lock().unwrap_or_else(PoisonError::into_inner);
+                        loop {
+                            if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                                return;
+                            }
+                            if let Some(next) = queue.pop_front() {
+                                busy.store(true, std::sync::atomic::Ordering::SeqCst);
+                                break next;
+                            }
+                            queue = wake.wait(queue).unwrap_or_else(PoisonError::into_inner);
+                        }
+                    };
+                    let image = next.1.image.clone();
+                    let ready = Ready::from(next.1);
+                    if let (Some(inner), Some(ready)) = (inner.upgrade(), ready) {
+                        Self::insert_ready(&inner, next.0, image, ready);
+                    }
+                    busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+        });
+    }
+
+    /// Test seam: wait until queued images are inflated.
+    #[cfg(test)]
+    pub(super) fn settle(&self) {
+        for _ in 0..500 {
+            let idle = self
+                .1
+                .queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+                && !self.1.busy.load(std::sync::atomic::Ordering::SeqCst);
+            if idle {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     /// Placements whose images are present, as the painter's scene; records
@@ -229,40 +440,40 @@ impl Store {
         inner
             .referenced
             .retain(|digest, _| placements.iter().any(|p| &p.digest == digest));
+        let slots: Vec<_> = placements.iter().map(Placement::slot).collect();
+        inner.painted.retain(|slot, _| slots.contains(slot));
         let mut scene = Vec::with_capacity(placements.len());
         for (index, placement) in placements.iter().enumerate() {
-            let Some(key) = inner.keys.get(&placement.digest).cloned() else {
+            let slot = placement.slot();
+            // A redraw that completed after this publication wins; then the
+            // published image; then, while that is still arriving, whatever
+            // this rectangle showed last (no flicker between frames).
+            let newest = placement
+                .image
+                .as_ref()
+                .and_then(|image| inner.latest.get(image))
+                .filter(|digest| inner.keys.contains_key(*digest))
+                .cloned();
+            let digest = if let Some(newest) = newest {
+                newest
+            } else if inner.keys.contains_key(&placement.digest) {
+                placement.digest.clone()
+            } else {
                 inner
                     .referenced
                     .entry(placement.digest.clone())
                     .or_insert(now);
+                match inner.painted.get(&slot) {
+                    Some(previous) if inner.keys.contains_key(previous) => previous.clone(),
+                    _ => continue,
+                }
+            };
+            let Some(key) = inner.keys.get(&digest).cloned() else {
                 continue;
             };
-            inner.touch(&placement.digest);
-            let scale = |cells: u16, total: u16, side: u32| {
-                (u64::from(cells) * u64::from(side) / u64::from(total)) as u32
-            };
-            scene.push(SurfaceGraphicsPlacement {
-                logical_placement_id: u32::try_from(index).unwrap_or(u32::MAX),
-                x: placement.column,
-                y: placement.row,
-                cols: u32::from(placement.columns),
-                rows: u32::from(placement.rows),
-                source_x: scale(
-                    placement.source_column,
-                    placement.total_columns,
-                    key.image_width,
-                ),
-                source_y: scale(placement.source_row, placement.total_rows, key.image_height),
-                source_width: scale(placement.columns, placement.total_columns, key.image_width)
-                    .max(1),
-                source_height: scale(placement.rows, placement.total_rows, key.image_height).max(1),
-                x_offset: 0,
-                y_offset: 0,
-                z: 0,
-                scrollback_offset: 0,
-                asset: key,
-            });
+            inner.painted.insert(slot, digest.clone());
+            inner.touch(&digest);
+            scene.push(placement.painted(index, key));
         }
         scene
     }
@@ -308,8 +519,52 @@ impl Store {
     }
 }
 
+/// A complete image in the painter's format.
+struct Ready {
+    format: SurfaceGraphicsFormat,
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+impl Ready {
+    fn from(partial: Partial) -> Option<Self> {
+        let (format, raw) = partial.format.painted(partial.width, partial.height);
+        let data = match raw {
+            Some(expected) => inflate(&partial.data, expected)?,
+            None => partial.data,
+        };
+        Some(Self {
+            format,
+            width: partial.width,
+            height: partial.height,
+            data,
+        })
+    }
+}
+
 impl Inner {
-    fn insert(&mut self, digest: String, partial: Partial) {
+    fn note_arrival(&mut self, image: &str, digest: &str) {
+        if self.arrivals.len() >= MAX_IMAGES && !self.arrivals.contains_key(image) {
+            self.arrivals.clear();
+        }
+        self.arrivals.insert(image.to_owned(), digest.to_owned());
+    }
+
+    fn mark_latest(&mut self, image: String, digest: String) {
+        if self.latest.len() >= MAX_IMAGES && !self.latest.contains_key(&image) {
+            self.latest.clear();
+        }
+        self.latest.insert(image, digest);
+    }
+
+    fn insert(&mut self, digest: String, ready: Ready) {
+        let Ready {
+            format,
+            width,
+            height,
+            data,
+        } = ready;
         let key = SurfaceGraphicsAssetKey {
             source: SurfaceGraphicsSource::Terminal {
                 target: SurfaceGraphicsTarget::Pane {
@@ -317,16 +572,16 @@ impl Inner {
                 },
                 image_id: 0,
             },
-            image_width: partial.width,
-            image_height: partial.height,
-            format: partial.format.into(),
-            data_len: partial.data.len() as u64,
+            image_width: width,
+            image_height: height,
+            format,
+            data_len: data.len() as u64,
             data_fingerprint: u64::from_str_radix(&digest[..16], 16).unwrap_or(0),
         };
-        let bytes = partial.data.len();
+        let bytes = data.len();
         if !self.images.insert(SurfaceGraphicsAsset {
             key: key.clone(),
-            data: partial.data,
+            data,
         }) {
             return;
         }
@@ -424,17 +679,17 @@ pub(super) fn load_static(
             return Err(Error::Invalid("invalid kitty image"));
         }
         let total = data.len();
-        store.lock().insert(
-            image.digest,
-            Partial {
-                format: image.format,
-                width: image.width,
-                height: image.height,
-                total,
-                data,
-                updated: Instant::now(),
-            },
-        );
+        let ready = Ready::from(Partial {
+            image: None,
+            format: image.format,
+            width: image.width,
+            height: image.height,
+            total,
+            data,
+            updated: Instant::now(),
+        })
+        .ok_or(Error::Invalid("invalid kitty image"))?;
+        store.lock().insert(image.digest, ready);
     }
     Ok(graphics.placements)
 }

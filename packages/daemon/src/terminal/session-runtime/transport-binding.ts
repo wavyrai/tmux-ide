@@ -458,6 +458,11 @@ export class SessionRuntimeTransportBinding {
     }
   }
 
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
+    this.#assertOpen();
+    this.#shared.consumer.setCellPixels?.(width, height, precise);
+  }
+
   fitViewport(
     expectedLease: SessionRuntimeAuthorityLease,
     cols: number,

@@ -256,6 +256,8 @@ export interface SessionRuntimeConsumer {
     rows: number,
     semanticWindowId?: string,
   ): void;
+  /** Renderer cell size in device pixels, forwarded to tmux. */
+  setCellPixels?(width: number, height: number, precise?: { width: number; height: number }): void;
   fitViewportWithAuthority(
     lease: SessionRuntimeAuthorityLease,
     cols: number,
@@ -1767,6 +1769,17 @@ class SessionRuntime {
     }
   }
 
+  /** Renderer cell size in device pixels; benign, so any connected client may set it. */
+  setCellPixels(
+    clientId: string,
+    width: number,
+    height: number,
+    precise?: { width: number; height: number },
+  ): void {
+    this.#assertConnected(clientId);
+    this.#mirror.setCellPixels?.(this.session, width, height, precise);
+  }
+
   fitViewportWithAuthority(
     clientId: string,
     lease: SessionRuntimeAuthorityLease,
@@ -2340,6 +2353,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   ): void {
     this.#assertOpen();
     this.#runtime.fitViewport(this.clientId, lease, cols, rows, semanticWindowId);
+  }
+
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
+    this.#assertOpen();
+    this.#runtime.setCellPixels(this.clientId, width, height, precise);
   }
 
   fitViewportWithAuthority(

@@ -119,6 +119,8 @@ impl Color {
     }
 }
 
+const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
+
 pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
     let snapshot: Snapshot = serde_json::from_slice(bytes)?;
     let Snapshot {
@@ -208,7 +210,14 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
                 | (u16::from(a & 0x40) << 1)
                 | (u16::from(a & 0x80) << 1);
             cells.push(CellData {
-                symbol: cell.grapheme,
+                // Kitty graphics placeholder cells are image positions, never
+                // text: the image layer paints them, and an unresolved one
+                // stays blank rather than showing a glyph.
+                symbol: if cell.grapheme.starts_with(KITTY_PLACEHOLDER) {
+                    String::from(" ")
+                } else {
+                    cell.grapheme
+                },
                 fg: cell.foreground.encoded()?,
                 bg: cell.background.encoded()?,
                 modifier,

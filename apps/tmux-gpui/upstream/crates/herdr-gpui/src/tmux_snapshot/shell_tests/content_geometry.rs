@@ -65,7 +65,7 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
         for command in receiver.try_iter() {
             match command {
                 browser::Command::Input {
-                    input: keys::Input::Resize { cols, rows },
+                    input: keys::Input::Resize { cols, rows, .. },
                     ..
                 } => last = Some((cols, rows)),
                 _ => panic!("layout must not change selection or send keys"),

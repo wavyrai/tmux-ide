@@ -914,3 +914,20 @@ See [SIGNING.md](SIGNING.md) for the explicit existing-identity notarization com
 Node entitlement review, pre/post-signing provenance, and remaining release gates.
 The producer does not import credentials or publish artifacts. Its tool-injected
 checks do not establish successful Developer ID signing or clean-machine installation.
+
+### Precise graphics dimensions
+
+Graphics capability 104 extends capability 103's rounded device-pixel cell
+metrics with optional `precise: { width, height }` thousandths of a device pixel
+in `terminal-cell-pixels`. The daemon advertises `preciseCellPixels: true` before
+the bridge sends this extension. Older daemons continue receiving rounded
+metrics only. Patched tmux accepts `refresh-client -C COLSxROWS/WxH/MWxMH`;
+older patched servers ignore the second suffix. CSI 14t and PTY pixel dimensions
+round the full pane span once, avoiding accumulated cell rounding, while CSI 16t
+keeps its integer cell size. Fractional origins may differ from snapped endpoint
+spans by one device pixel. The reported PTY dimensions saturate at 65535 pixels.
+
+Cursor image placements clip at pane edges and survive capture replay when cell
+dimensions, history origin and active buffer remain unchanged. Reflow, changed
+history origins, buffer switches and authoritative stream resets drop these
+best-effort anchors; Unicode placeholder placements remain the durable option.

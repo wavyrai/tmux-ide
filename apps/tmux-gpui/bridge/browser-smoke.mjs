@@ -406,8 +406,8 @@ try {
     });
     resumeEvidence = { started: Date.now(), dropped: 0, timeline: [] };
     recordResume(resumePublication(events.at(-1)));
-    send({ type: "presence", active: false });
-    await until(() => events.at(-1)?.inputReady === false);
+    send({ type: "presence", active: false, revision: 1 });
+    await until(() => events.at(-1)?.presenceRevision === 1 && events.at(-1)?.inputReady === false);
     send({
       type: "input",
       request: 6,
@@ -420,8 +420,8 @@ try {
       id: second,
       input: { kind: "resize", data: { cols: 60, rows: 20 } },
     });
-    send({ type: "presence", active: true });
-    await until(() => events.at(-1)?.inputReady === true);
+    send({ type: "presence", active: true, revision: 2 });
+    await until(() => events.at(-1)?.presenceRevision === 2 && events.at(-1)?.inputReady === true);
     const restoredGrid = fleet.windowGrid(fleet.sessionNames[1]);
     recordResume({ kind: "restored-grid", ...restoredGrid });
     assert.deepEqual(restoredGrid, naturalGrid);
@@ -443,13 +443,18 @@ try {
     assert.deepEqual(fleet.windowGrid(fleet.sessionNames[0]), untouched);
     for (const name of fleet.sessionNames)
       assert.ok(!fleet.captureWindowPanes(name).includes("STALE_INPUT_MUST_NOT_ARRIVE"));
-    send({ type: "presence", active: false });
+    send({ type: "presence", active: false, revision: 3 });
     send({ type: "pane", request: 7, id: second });
     await until(() => events.at(-1)?.request === 7 && !!events.at(-1)?.snapshot);
     assert.equal(events.at(-1).inputReady, false);
     assert.equal(events.at(-1).status, "Window inactive — activate tmux-ide to type");
-    send({ type: "presence", active: true });
-    await until(() => events.at(-1)?.request === 7 && events.at(-1)?.inputReady === true);
+    send({ type: "presence", active: true, revision: 4 });
+    await until(
+      () =>
+        events.at(-1)?.request === 7 &&
+        events.at(-1)?.presenceRevision === 4 &&
+        events.at(-1)?.inputReady === true,
+    );
     let last = 0;
     for (const event of events) {
       assert.ok(event.request >= last);

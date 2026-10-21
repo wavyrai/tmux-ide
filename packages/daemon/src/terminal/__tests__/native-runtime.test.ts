@@ -407,7 +407,7 @@ describe("workspace-registry semantic pane discovery", () => {
     expect(second.source).toEqual(first.source);
   });
 
-  it("rejects a pane topology race between exact before/after snapshots", async () => {
+  it("rejects pane topology that never settles between consecutive snapshots", async () => {
     const { registry } = createRegistry();
     let paneReads = 0;
     const base = inventoryRunner("runtime-session", "");
@@ -417,13 +417,37 @@ describe("workspace-registry semantic pane discovery", () => {
         paneReads += 1;
         return {
           status: "ok",
-          stdout: `${paneWire("runtime-session", { paneId: paneReads === 1 ? "%3" : "%4" })}\n`,
+          stdout: `${paneWire("runtime-session", { paneId: paneReads % 2 ? "%3" : "%4" })}\n`,
         };
       },
     };
     await expect(discoverWorkspaceRegistrySemanticPanes(registry, runner)).rejects.toMatchObject({
       code: "discovery-failed",
     });
+    // One initial read plus a bounded number of settle re-reads.
+    expect(paneReads).toBe(5);
+  });
+
+  it("publishes topology that settles after a just-created window is stamped", async () => {
+    const { registry } = createRegistry();
+    let paneReads = 0;
+    const base = inventoryRunner("runtime-session", "");
+    const runner: TmuxAttachmentCommandRunner = {
+      run(command) {
+        if (command.argv[0] === "list-sessions") return base.runner.run(command);
+        paneReads += 1;
+        // The first read predates the stamp; every later read sees the settled window.
+        const settled = paneReads > 1;
+        return {
+          status: "ok",
+          stdout: `${paneWire("runtime-session", settled ? {} : { stamp: "" })}\n`,
+        };
+      },
+    };
+    const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+    expect(paneReads).toBe(3);
+    expect(inventory.panes).toHaveLength(1);
+    expect(inventory.catalog.missingSemanticStamp).toBe(false);
   });
 
   it("deduplicates consistent backing panes across distinct window links and retains active-link focus", async () => {
@@ -479,7 +503,7 @@ describe("workspace-registry semantic pane discovery", () => {
         reads++;
         return {
           status: "ok",
-          stdout: paneWire("session-a", { windowIndex: reads === 1 ? 0 : 3 }),
+          stdout: paneWire("session-a", { windowIndex: reads % 2 ? 0 : 3 }),
         };
       },
     };

@@ -18,7 +18,7 @@
  *    marker OSC the scanner substitutes in place of the APC, so the VT parser
  *    reports the cursor at the exact byte position. tmux never sees these
  *    placements: they do not move the cursor, do not follow reflow, and are
- *    dropped by a capture reseed.
+ *    kept across capture reseeds only when the coordinate basis is unchanged.
  *
  * Limits: direct transmission (`t=d`) only — file and shared-memory media
  * cannot cross machines; `a=d` handles all and by-id; animation, relative
@@ -26,7 +26,7 @@
  * from the patched tmux, in stream order (native/tmux/kitty-graphics.patch).
  */
 import { createHash } from "node:crypto";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 import {
   TERMINAL_GRAPHICS_MAX_IMAGE_BYTES,
   TERMINAL_GRAPHICS_MAX_IMAGES,
@@ -356,12 +356,13 @@ export interface KittyImageStoreOptions {
   readonly budget?: KittyImageBudget;
 }
 
-/** Per-pane image store. Survives reseeds; cursor placements do not. */
+/** Per-pane image store. Survives reseeds; the interpreter validates cursor placement coordinates. */
 export class KittyImageStore {
   readonly #images = new Map<number, KittyImage>();
   readonly #used = new Map<number, number>();
   readonly #cursorPlacements: KittyCursorPlacement[] = [];
-  readonly #virtual = new Map<number, { columns: number; rows: number }>();
+  /** `U=1` virtual placements per image, by placement id (0 when unnamed). */
+  readonly #virtual = new Map<number, Map<number, { columns: number; rows: number }>>();
   #pending: { control: ReadonlyMap<string, string>; payload: string[]; bytes: number } | null =
     null;
   #nextAnonymous = 0x7f000000;
@@ -407,7 +408,7 @@ export class KittyImageStore {
     this.#bytes = 0;
   }
 
-  /** A capture reseed replaced the grid: tmux holds no record of cursor placements. */
+  /** The coordinate basis changed: tmux holds no record to restore cursor anchors. */
   dropCursorPlacements(): void {
     if (this.#cursorPlacements.length === 0) return;
     this.#cursorPlacements.length = 0;
@@ -433,11 +434,16 @@ export class KittyImageStore {
     return this.#remove(victim);
   }
 
-  #remove(imageId: number): number {
+  #remove(imageId: number, keepPlacements = false): number {
     const image = this.#images.get(imageId);
     if (!image) return 0;
     this.#images.delete(imageId);
     this.#used.delete(imageId);
+    if (keepPlacements) {
+      this.#bytes -= image.data.byteLength;
+      this.#revision += 1;
+      return image.data.byteLength;
+    }
     this.#virtual.delete(imageId);
     this.#bytes -= image.data.byteLength;
     const kept = this.#cursorPlacements.filter((p) => p.imageId !== imageId);
@@ -470,7 +476,7 @@ export class KittyImageStore {
       return;
     }
     const action = control.get("a") ?? "t";
-    if ((action === "t" || action === "T") && more) {
+    if ((action === "t" || action === "T" || action === "f") && more) {
       this.#pending = { control, payload: [command.payload], bytes: command.payload.length };
       return;
     }
@@ -491,19 +497,16 @@ export class KittyImageStore {
       if (imageId === 0) imageId = this.#nextAnonymous++;
       const image = this.#decode(imageId, control, payload);
       if (!image) return;
-      this.#remove(imageId);
+      // Re-transmitting an id replaces its pixels; its placements keep showing it.
+      this.#remove(imageId, true);
       this.#images.set(imageId, image);
       this.#bytes += image.data.byteLength;
       this.#used.set(imageId, this.#budget.nextTick());
       this.#revision += 1;
-      while (
-        (this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) &&
-        this.#images.size > 1
-      )
-        this.evictOldest();
-      this.#budget.enforce();
+      this.#enforceBudget();
       if (action === "t" || !this.#images.has(imageId)) return;
     }
+    if (action === "f") return this.#editFrame(imageId, control, payload);
     if (action !== "T" && action !== "p") return;
     const image = this.#images.get(imageId);
     if (!image) return;
@@ -512,7 +515,20 @@ export class KittyImageStore {
     const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
     const placementId = int(control, "p");
     if (control.get("U") === "1") {
-      this.#virtual.set(imageId, { columns, rows });
+      const placements = this.#virtual.get(imageId) ?? new Map();
+      placements.set(placementId, { columns, rows });
+      this.#virtual.set(imageId, placements);
+      let count = 0;
+      for (const entries of this.#virtual.values()) count += entries.size;
+      for (const [id, entries] of this.#virtual) {
+        for (const placement of entries.keys()) {
+          if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+          entries.delete(placement);
+          count -= 1;
+        }
+        if (entries.size === 0) this.#virtual.delete(id);
+        if (count <= TERMINAL_GRAPHICS_MAX_PLACEMENTS) break;
+      }
     } else if (cursor) {
       const existing = this.#cursorPlacements.findIndex(
         (p) => p.imageId === imageId && placementId !== 0 && p.placementId === placementId,
@@ -539,7 +555,13 @@ export class KittyImageStore {
     payload: string,
   ): KittyImage | null {
     let data: Uint8Array = Buffer.from(payload, "base64");
-    if (control.get("o") === "z") {
+    const f = int(control, "f", 32);
+    const zlib = control.get("o") === "z";
+    // Raw pixels stay compressed end to end: renderers inflate off their UI
+    // thread, and the stream carries a fraction of the bytes. PNG and other
+    // compressed payloads are inflated here.
+    const keepCompressed = zlib && (f === 32 || f === 24);
+    if (zlib && !keepCompressed) {
       try {
         data = inflateSync(data, { maxOutputLength: TERMINAL_GRAPHICS_MAX_IMAGE_BYTES });
       } catch {
@@ -547,7 +569,6 @@ export class KittyImageStore {
       }
     }
     if (data.byteLength === 0 || data.byteLength > TERMINAL_GRAPHICS_MAX_IMAGE_BYTES) return null;
-    const f = int(control, "f", 32);
     let format: KittyImageFormat;
     let width: number;
     let height: number;
@@ -559,12 +580,87 @@ export class KittyImageStore {
     } else if (f === 32 || f === 24) {
       width = int(control, "s");
       height = int(control, "v");
-      format = f === 32 ? "rgba" : "rgb";
-      if (!width || !height || data.length !== width * height * (f === 32 ? 4 : 3)) return null;
+      const bytes = width * height * (f === 32 ? 4 : 3);
+      if (!width || !height || bytes > MAX_RAW_IMAGE_BYTES) return null;
+      if (keepCompressed) format = f === 32 ? "rgba-zlib" : "rgb-zlib";
+      else {
+        format = f === 32 ? "rgba" : "rgb";
+        if (data.length !== bytes) return null;
+      }
     } else return null;
     if (width < 1 || height < 1 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE) return null;
     const digest = createHash("sha256").update(data).digest("hex").slice(0, 32);
     return { imageId, format, width, height, data, digest };
+  }
+
+  /**
+   * `a=f` edits of the root frame (`r=1`): RGBA/RGB rectangles written at
+   * `x,y`, replacing (`X=1`) or alpha-blending the existing pixels. New
+   * animation frames, `c` base frames and PNG data are not modelled.
+   */
+  #editFrame(imageId: number, control: ReadonlyMap<string, string>, payload: string): void {
+    const image = this.#images.get(imageId);
+    if (!image || int(control, "r") !== 1 || (control.get("t") ?? "d") !== "d") return;
+    const source = image.format === "rgba" || image.format === "rgba-zlib" ? 4 : 3;
+    if (image.format === "png") return;
+    let pixels: Uint8Array;
+    let patch: Uint8Array = Buffer.from(payload, "base64");
+    try {
+      pixels =
+        image.format === "rgba-zlib" || image.format === "rgb-zlib"
+          ? inflateSync(image.data, { maxOutputLength: MAX_RAW_IMAGE_BYTES })
+          : Uint8Array.from(image.data);
+      if (control.get("o") === "z")
+        patch = inflateSync(patch, { maxOutputLength: MAX_RAW_IMAGE_BYTES });
+    } catch {
+      return;
+    }
+    const f = int(control, "f", 32);
+    const depth = f === 24 ? 3 : 4;
+    const width = int(control, "s") || image.width;
+    const height = int(control, "v") || image.height;
+    const x0 = int(control, "x");
+    const y0 = int(control, "y");
+    if ((f !== 32 && f !== 24) || patch.length !== width * height * depth) return;
+    if (pixels.length !== image.width * image.height * source) return;
+    const replace = control.get("X") === "1";
+    for (let row = 0; row < height && y0 + row < image.height; row += 1)
+      for (let col = 0; col < width && x0 + col < image.width; col += 1) {
+        const from = (row * width + col) * depth;
+        const to = ((y0 + row) * image.width + x0 + col) * source;
+        const alpha = depth === 4 && !replace ? patch[from + 3]! / 255 : 1;
+        for (let channel = 0; channel < 3; channel += 1)
+          pixels[to + channel] = Math.round(
+            patch[from + channel]! * alpha + pixels[to + channel]! * (1 - alpha),
+          );
+        if (source === 4)
+          pixels[to + 3] =
+            depth === 4 && replace
+              ? patch[from + 3]!
+              : Math.round(255 * alpha + pixels[to + 3]! * (1 - alpha));
+      }
+    const data = deflateSync(pixels, { level: 1 });
+    const format = source === 4 ? "rgba-zlib" : "rgb-zlib";
+    this.#remove(imageId, true);
+    this.#images.set(imageId, {
+      ...image,
+      format,
+      data,
+      digest: createHash("sha256").update(data).digest("hex").slice(0, 32),
+    });
+    this.#bytes += data.byteLength;
+    this.#used.set(imageId, this.#budget.nextTick());
+    this.#revision += 1;
+    this.#enforceBudget();
+  }
+
+  #enforceBudget(): void {
+    while (
+      (this.#bytes > this.#budget.perPaneBytes || this.#images.size > MAX_IMAGES_PER_PANE) &&
+      this.#images.size > 0
+    )
+      this.evictOldest();
+    this.#budget.enforce();
   }
 
   #delete(control: ReadonlyMap<string, string>): void {
@@ -573,21 +669,26 @@ export class KittyImageStore {
     const all = what === "a" || what === "A";
     const byId = (what === "i" || what === "I") && id !== 0;
     if (!all && !byId) return;
-    const keep = (imageId: number) => !all && imageId !== id;
-    const kept = this.#cursorPlacements.filter((p) => keep(p.imageId));
+    // With `p`, only that placement of the image goes (spec: d=i/I with p).
+    const placementId = control.has("p") ? int(control, "p") : null;
+    const doomed = (imageId: number, placement: number) =>
+      all || (imageId === id && (placementId === null || placement === placementId));
+    const kept = this.#cursorPlacements.filter((p) => !doomed(p.imageId, p.placementId));
     if (kept.length !== this.#cursorPlacements.length) {
       this.#cursorPlacements.length = 0;
       this.#cursorPlacements.push(...kept);
       this.#revision += 1;
     }
-    for (const key of [...this.#virtual.keys()])
-      if (!keep(key)) {
-        this.#virtual.delete(key);
-        this.#revision += 1;
-      }
+    for (const [imageId, placements] of [...this.#virtual])
+      for (const placement of [...placements.keys()])
+        if (doomed(imageId, placement)) {
+          placements.delete(placement);
+          if (placements.size === 0) this.#virtual.delete(imageId);
+          this.#revision += 1;
+        }
     // Upper-case variants also free the image data.
     if (what === "A") for (const key of [...this.#images.keys()]) this.#remove(key);
-    if (what === "I") this.#remove(id);
+    if (what === "I" && placementId === null) this.#remove(id);
   }
 
   /**
@@ -608,7 +709,7 @@ export class KittyImageStore {
       width: image.width,
       height: image.height,
       bytes: image.data.byteLength,
-      placeholder: this.#virtual.get(image.imageId) ?? null,
+      placeholder: virtualGrid(this.#virtual.get(image.imageId)),
     }));
     const placements: TerminalGraphicsPlacement[] = [];
     for (const placement of this.#cursorPlacements) {
@@ -637,5 +738,19 @@ export class KittyImageStore {
 }
 
 const MAX_IMAGES_PER_PANE = TERMINAL_GRAPHICS_MAX_IMAGES;
+/** Largest decoded raw image (a 4K RGBA frame is ~33 MB). */
+const MAX_RAW_IMAGE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Placeholder cells carry the image id; with several virtual placements the
+ * protocol picks one by the placement id in the underline colour. Renderers
+ * resolve cells by image id, so publish the most recently placed grid.
+ */
+function virtualGrid(
+  placements: ReadonlyMap<number, { columns: number; rows: number }> | undefined,
+): { columns: number; rows: number } | null {
+  if (!placements || placements.size === 0) return null;
+  return [...placements.values()].at(-1)!;
+}
 const MAX_IMAGE_SIDE = 10_000;
 const clampCells = (cells: number) => Math.max(1, Math.min(1_000, cells));

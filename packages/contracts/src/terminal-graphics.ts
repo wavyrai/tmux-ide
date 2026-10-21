@@ -15,16 +15,39 @@ import { z } from "zod";
  * version; daemons that know it send graphics frames only to such renderers.
  */
 export const TERMINAL_GRAPHICS_CAPABILITY_VERSION = 101;
+/** Renderers that inflate `rgba-zlib`/`rgb-zlib` themselves offer this too. */
+export const TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION = 102;
+/**
+ * Renderers that report their cell size in device pixels offer this; the
+ * daemon then marks graphics state with `cellPixels: true` and accepts
+ * `terminal-cell-pixels`, so programs size images 1:1 for the window.
+ */
+export const TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION = 103;
+/** Thousandths of a device pixel, avoiding accumulated per-cell rounding. */
+export const TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION = 104;
 /** Raw image bytes per blob frame (base64 on the wire stays below 1 MiB). */
 export const TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES = 512 * 1024;
-/** Largest single image a daemon publishes. */
-export const TERMINAL_GRAPHICS_MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+/** Largest single image a daemon publishes (a 4K RGBA frame is ~33 MB). */
+export const TERMINAL_GRAPHICS_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+/** What renderers without the zlib capability accept. */
+export const TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 export const TERMINAL_GRAPHICS_MAX_IMAGES = 256;
 export const TERMINAL_GRAPHICS_MAX_PLACEMENTS = 256;
 export const TERMINAL_GRAPHICS_MAX_REQUEST_DIGESTS = 64;
 
 export const TerminalGraphicsDigestSchemaZ = z.string().regex(/^[0-9a-f]{32}$/u);
-export const TerminalGraphicsFormatSchemaZ = z.enum(["png", "rgba", "rgb"]);
+/**
+ * `*-zlib` carry raw pixels still deflated as the program sent them (`o=z`);
+ * only renderers that offered {@link TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION}
+ * receive them.
+ */
+export const TerminalGraphicsFormatSchemaZ = z.enum([
+  "png",
+  "rgba",
+  "rgb",
+  "rgba-zlib",
+  "rgb-zlib",
+]);
 export type TerminalGraphicsFormat = z.infer<typeof TerminalGraphicsFormatSchemaZ>;
 const Dimension = z.number().int().min(1).max(10_000);
 const Cells = z.number().int().min(1).max(1_000);
@@ -66,6 +89,9 @@ export const TerminalGraphicsStateSchemaZ = z
     revision: z.number().int().nonnegative(),
     images: z.array(TerminalGraphicsImageSchemaZ).max(TERMINAL_GRAPHICS_MAX_IMAGES),
     placements: z.array(TerminalGraphicsPlacementSchemaZ).max(TERMINAL_GRAPHICS_MAX_PLACEMENTS),
+    /** The daemon accepts `terminal-cell-pixels` (only sent to renderers offering 103). */
+    cellPixels: z.literal(true).optional(),
+    preciseCellPixels: z.literal(true).optional(),
   })
   .strict();
 export type TerminalGraphicsState = z.infer<typeof TerminalGraphicsStateSchemaZ>;

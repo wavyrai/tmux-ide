@@ -422,8 +422,17 @@ export class TerminalReplicaInterpreter {
       const previous = this.#backend;
       this.#backend = replacement;
       this.#attachKitty(replacement);
-      // tmux never saw cursor-anchored placements; a capture cannot restore them.
-      this.#kitty.dropCursorPlacements();
+      // A capture replay does not erase graphics already observed by this owner.
+      // Keep anchors only when both backends agree on their coordinate basis;
+      // reflow, history replacement and authoritative stream resets are ambiguous.
+      const sameGraphicsBasis =
+        operation.bootstrap === "painted-capture" &&
+        previous.cols === replacement.cols &&
+        previous.rows === replacement.rows &&
+        previous.graphicsViewportTop?.() !== undefined &&
+        previous.graphicsViewportTop?.() === replacement.graphicsViewportTop?.() &&
+        previous.modes().alternateScreen === replacement.modes().alternateScreen;
+      if (!sameGraphicsBasis) this.#kitty.dropCursorPlacements();
       this.#nativeReseedRequested = false;
       this.#scrollback = scrollback;
       this.#bootstrap = {
@@ -459,6 +468,8 @@ export class TerminalReplicaInterpreter {
       return;
     }
     if (operation.type === "resize") {
+      if (operation.cols !== this.#backend.cols || operation.rows !== this.#backend.rows)
+        this.#kitty.dropCursorPlacements();
       this.#causalCell?.fail("geometry-drift");
       if (this.#backend.modes().synchronizedOutput) {
         // Geometry is part of the admitted FIFO even while publication is
@@ -512,6 +523,11 @@ export class TerminalReplicaInterpreter {
     // Always forward the scanner's output: tmux splits %output (~2 KiB) inside
     // kitty APCs (~4 KiB chunks), so a chunk with no completed command can still
     // be all image payload that must never reach the VT parser as text.
+    // A chunk entirely inside image payload changes nothing the parser can
+    // see. Skipping it matters: every parser write settles on a later timer
+    // turn, so a frame split into dozens of %output chunks would otherwise
+    // serialize dozens of turns and fall behind a 30 fps image stream.
+    if (scanned.forward.byteLength === 0) return;
     await this.#writeToBackend(this.#backend, scanned.forward);
     if (this.#observability.enabled)
       this.#observability.recordSpan(

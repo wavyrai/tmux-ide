@@ -88,7 +88,7 @@ fn oversized_images_are_scaled_to_the_texture_limit() {
 fn placements_cover_their_cells_on_the_text_grid() {
     let placed = placement(key(SurfaceGraphicsFormat::Rgba, 40, 20));
     let origin = point(px(100.), px(50.));
-    let found = geometry(&placed, origin, (10., 20.), grid(1000., 1000.)).unwrap();
+    let found = geometry(&placed, origin, (10., 20.), grid(1000., 1000.), None).unwrap();
     let expected = Bounds::new(point(px(120.), px(70.)), size(px(40.), px(40.)));
     assert_eq!(found.visible, expected);
     assert_eq!(found.image, expected);
@@ -103,7 +103,7 @@ fn source_rectangles_and_offsets_map_like_herdr() {
     placed.source_height = 10;
     placed.x_offset = 4;
     let origin = point(px(100.), px(50.));
-    let found = geometry(&placed, origin, (7.5, 20.), grid(1000., 1000.)).unwrap();
+    let found = geometry(&placed, origin, (7.5, 20.), grid(1000., 1000.), None).unwrap();
     let left = 100. + 2. * 7.5 + 4. * 7.5 / 8.;
     let width = 4. * 7.5 - 4. * 7.5 / 8.;
     assert_eq!(
@@ -119,21 +119,70 @@ fn source_rectangles_and_offsets_map_like_herdr() {
 }
 
 #[test]
+fn images_sized_for_reported_device_pixels_paint_one_to_one() {
+    // 7.8pt cells at 2x were reported as 16px: a 4x2-cell frame is 64x68
+    // pixels, drawn 32x34 points from a pixel-aligned origin, not
+    // stretched over the 31.2-point cells.
+    let placed = placement(key(SurfaceGraphicsFormat::Rgba, 64, 68));
+    let pixels = CellPixels {
+        width: 16,
+        height: 34,
+        scale: 2.,
+    };
+    let origin = point(px(100.3), px(50.));
+    let found = geometry(
+        &placed,
+        origin,
+        (7.8, 17.),
+        grid(1000., 1000.),
+        Some(pixels),
+    )
+    .unwrap();
+    let at = point(px(116.), px(67.));
+    assert_eq!(found.image, Bounds::new(at, size(px(32.), px(34.))));
+    assert_eq!(found.visible, found.image);
+}
+
+#[test]
+fn images_sized_for_other_cells_still_fill_them() {
+    // A frame drawn for tmux's 16x32 default (an older daemon never passed
+    // the reported size on) stretches over the cells as before.
+    let placed = placement(key(SurfaceGraphicsFormat::Rgba, 64, 64));
+    let pixels = CellPixels {
+        width: 20,
+        height: 40,
+        scale: 2.,
+    };
+    let origin = point(px(100.), px(50.));
+    let found = geometry(
+        &placed,
+        origin,
+        (10., 20.),
+        grid(1000., 1000.),
+        Some(pixels),
+    )
+    .unwrap();
+    let expected = Bounds::new(point(px(120.), px(70.)), size(px(40.), px(40.)));
+    assert_eq!(found.image, expected);
+    assert_eq!(found.visible, expected);
+}
+
+#[test]
 fn placements_are_clipped_to_their_grid_and_bad_sources_skipped() {
     let mut placed = placement(key(SurfaceGraphicsFormat::Rgba, 40, 20));
     placed.cols = 1_000_000;
     let origin = point(px(100.), px(50.));
-    let found = geometry(&placed, origin, (10., 20.), grid(100., 100.)).unwrap();
+    let found = geometry(&placed, origin, (10., 20.), grid(100., 100.), None).unwrap();
     assert_eq!(found.visible.right(), px(200.));
     placed.cols = 4;
     placed.x = 50;
-    assert!(geometry(&placed, origin, (10., 20.), grid(100., 100.)).is_none());
+    assert!(geometry(&placed, origin, (10., 20.), grid(100., 100.), None).is_none());
     let mut outside = placement(key(SurfaceGraphicsFormat::Rgba, 40, 20));
     outside.source_x = 40;
-    assert!(geometry(&outside, origin, (10., 20.), grid(1000., 1000.)).is_none());
+    assert!(geometry(&outside, origin, (10., 20.), grid(1000., 1000.), None).is_none());
     outside.source_x = 0;
     outside.rows = 0;
-    assert!(geometry(&outside, origin, (10., 20.), grid(1000., 1000.)).is_none());
+    assert!(geometry(&outside, origin, (10., 20.), grid(1000., 1000.), None).is_none());
 }
 
 #[test]

@@ -1,3 +1,4 @@
+import { inflateSync } from "node:zlib";
 import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
@@ -10,6 +11,11 @@ import {
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES,
+  TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES,
+  TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+  type TerminalGraphicsState,
   PaneStreamClientFrameSchemaZ,
   PaneStreamLoopbackWebSocketUrlSchemaZ,
   PaneStreamRedeemFrameSchemaZ,
@@ -305,6 +311,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     rows: number,
     semanticWindowId?: string,
   ): void;
+  setCellPixels?(width: number, height: number, precise?: { width: number; height: number }): void;
   close(): Promise<void>;
 }
 
@@ -1046,6 +1053,10 @@ interface PaneChannel {
   graphicsAnnounced: boolean;
   graphicsQueue: string[];
   graphicsSending: boolean;
+  /** Image id → digest last served; a replacement for the same id is pushed. */
+  graphicsServed: Map<number, string>;
+  graphicsState: TerminalGraphicsState | null;
+  graphicsZlib?: boolean;
 }
 
 interface QueuedSend {
@@ -1054,6 +1065,26 @@ interface QueuedSend {
 }
 
 const GRAPHICS_MAX_QUEUED_DIGESTS = 256;
+
+/** Graphics state as renderers without zlib support must see it. */
+export function rawGraphicsState(state: TerminalGraphicsState): TerminalGraphicsState {
+  const legacy = state.images.map((image): TerminalGraphicsState["images"][number] =>
+    image.format === "rgba-zlib" || image.format === "rgb-zlib"
+      ? {
+          ...image,
+          format: image.format === "rgba-zlib" ? "rgba" : "rgb",
+          bytes: image.width * image.height * (image.format === "rgba-zlib" ? 4 : 3),
+        }
+      : image,
+  );
+  const images = legacy.filter((image) => image.bytes <= TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES);
+  const kept = new Set(images.map((image) => image.digest));
+  return {
+    ...state,
+    images,
+    placements: state.placements.filter((placement) => kept.has(placement.digest)),
+  };
+}
 const GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export class PaneStreamLiveConnection {
@@ -1227,6 +1258,8 @@ export class PaneStreamLiveConnection {
         graphicsAnnounced: false,
         graphicsQueue: [],
         graphicsSending: false,
+        graphicsServed: new Map(),
+        graphicsState: null,
       });
     }
   }
@@ -1748,17 +1781,72 @@ export class PaneStreamLiveConnection {
   #startGraphics(channel: PaneChannel): void {
     const graphics = channel.delivery?.graphics;
     if (!graphics) return;
+    // Renderers that cannot inflate see raw formats; their bytes are inflated
+    // when served.
+    const zlib =
+      this.#descriptor.terminalDelivery?.protocolVersions.includes(
+        TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+      ) === true;
+    channel.graphicsZlib = zlib;
+    // Renderers that report cell pixels learn up front that this daemon
+    // accepts them, before any image exists.
+    const cellPixels =
+      this.#descriptor.terminalDelivery?.protocolVersions.includes(
+        TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
+      ) === true;
+    const preciseCellPixels =
+      this.#descriptor.terminalDelivery?.protocolVersions.includes(
+        TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
+      ) === true;
+    let announced = false;
     graphics.subscribe((state) => {
+      announced = true;
       if (this.#closed || channel.closed) return;
       channel.graphicsAnnounced = true;
-      this.#sendFrame(null, { type: "terminal-graphics", pane: channel.semanticPaneId, state });
+      channel.graphicsState = state;
+      // A program redrawing one image id (every frame of an animation or a
+      // page) needs the new bytes at once: push them instead of waiting for
+      // the renderer's round trip.
+      const pushed: string[] = [];
+      for (const image of state.images) {
+        const served = channel.graphicsServed.get(image.imageId);
+        if (served !== undefined && served !== image.digest) pushed.push(image.digest);
+      }
+      this.#sendFrame(null, {
+        type: "terminal-graphics",
+        pane: channel.semanticPaneId,
+        state: {
+          ...(zlib ? state : rawGraphicsState(state)),
+          ...(cellPixels ? { cellPixels: true as const } : {}),
+          ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
+        },
+      });
+      if (pushed.length > 0) this.#queueGraphics(channel, pushed);
     });
+    if (cellPixels && !announced && !this.#closed && !channel.closed) {
+      channel.graphicsAnnounced = true;
+      this.#sendFrame(null, {
+        type: "terminal-graphics",
+        pane: channel.semanticPaneId,
+        state: {
+          revision: 0,
+          images: [],
+          placements: [],
+          cellPixels: true,
+          ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
+        },
+      });
+    }
   }
 
   #requestGraphics(pane: string, digests: readonly string[]): void {
     const channel = this.#panes.get(pane);
     // Requests are only meaningful after an announcement; ignore stray ones.
     if (!channel || channel.closed || !channel.graphicsAnnounced) return;
+    this.#queueGraphics(channel, digests);
+  }
+
+  #queueGraphics(channel: PaneChannel, digests: readonly string[]): void {
     for (const digest of digests)
       if (
         !channel.graphicsQueue.includes(digest) &&
@@ -1778,28 +1866,49 @@ export class PaneStreamLiveConnection {
     try {
       while (!this.#closed && !channel.closed && channel.graphicsQueue.length > 0) {
         const digest = channel.graphicsQueue.shift()!;
-        const image = channel.delivery?.graphics?.image(digest);
-        if (!image) continue;
-        const total = image.data.byteLength;
+        const graphics = channel.delivery?.graphics;
+        const image = graphics?.image(digest);
+        if (!graphics || !image) continue;
+        for (const entry of channel.graphicsState?.images ?? [])
+          if (entry.digest === digest) channel.graphicsServed.set(entry.imageId, digest);
+        const raw = !channel.graphicsZlib && image.format.endsWith("-zlib");
+        let data: Uint8Array = image.data;
+        if (raw) {
+          const expected = image.width * image.height * (image.format === "rgba-zlib" ? 4 : 3);
+          if (expected < 1 || expected > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES) continue;
+          try {
+            data = inflateSync(image.data, { maxOutputLength: expected });
+          } catch {
+            continue;
+          }
+          if (data.byteLength !== expected) continue;
+        }
+        if (!channel.graphicsZlib && data.byteLength > TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES)
+          continue;
+        const format = raw ? (image.format === "rgba-zlib" ? "rgba" : "rgb") : image.format;
+        const total = data.byteLength;
         for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
           while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
             if (this.#closed || channel.closed) return;
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
           if (this.#closed || channel.closed) return;
+          // A superseded frame (the id was redrawn) is abandoned mid-transfer;
+          // the renderer drops the partial image and shows the newer one.
+          if (offset > 0 && graphics.image(digest) !== image) break;
           const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
           this.#sendFrame(null, {
             type: "terminal-graphics-blob",
             pane: channel.semanticPaneId,
             blob: {
               digest,
-              format: image.format,
+              format,
               width: image.width,
               height: image.height,
               total,
               offset,
             },
-            data: Buffer.from(image.data.subarray(offset, end)).toString("base64"),
+            data: Buffer.from(data.subarray(offset, end)).toString("base64"),
           });
         }
       }
@@ -2381,6 +2490,14 @@ export class PaneStreamLiveConnection {
     }
     if (frame.type === "terminal-graphics-request") {
       this.#requestGraphics(frame.pane, frame.digests);
+      return;
+    }
+    if (frame.type === "terminal-cell-pixels") {
+      try {
+        this.#sessionRuntimeBinding?.setCellPixels?.(frame.width, frame.height, frame.precise);
+      } catch {
+        // A retired runtime simply keeps tmux's default cell size.
+      }
       return;
     }
     if (frame.type === "viewport") {
