@@ -40,9 +40,11 @@ export async function nativeSnapshotEncoding(
             value.snapshotEncodings.includes("rle-v1")
           )
             encoding =
-              damage && value.snapshotEncodings.includes("rle-delta-v1")
-                ? "rle-delta-v1"
-                : "rle-v1";
+              damage && value.snapshotEncodings.includes("binary-rle-v1")
+                ? "binary-rle-v1"
+                : damage && value.snapshotEncodings.includes("rle-delta-v1")
+                  ? "rle-delta-v1"
+                  : "rle-v1";
         } catch {
           /* An older or incompatible binary keeps its existing wire format. */
         }

@@ -302,7 +302,7 @@ test("receiver candidate mutation and reset cannot corrupt committed cells", () 
   assert.throws(() => pending.commit(), /Stale/);
 });
 
-test("production prepare/commit avoids JSON parsing and serializes each row key once", (t) => {
+test("production prepare/commit avoids JSON parsing and row-key serialization", (t) => {
   const parse = JSON.parse;
   const stringify = JSON.stringify;
   let parses = 0;
@@ -324,7 +324,7 @@ test("production prepare/commit avoids JSON parsing and serializes each row key 
   assert.equal(second.epoch, first.epoch);
   assert.equal(second.encoding, "rle-delta-v1");
   assert.equal(parses, 0);
-  assert.equal(rowKeys, 48);
+  assert.equal(rowKeys, 0);
   assert.equal(second.wire.encoding, "rle-delta-v1");
   assert.equal(parses, 1);
 });

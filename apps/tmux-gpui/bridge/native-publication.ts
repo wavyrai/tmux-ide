@@ -1,9 +1,11 @@
+import { encodeBinaryCellPublication } from "./binary-cell-rows.ts";
+import { encodeBinaryJson } from "./binary-framing.ts";
 import { z } from "zod";
 import { createCompactDeltaProducer } from "./compact-delta.ts";
 import { createSnapshotSerializer } from "./snapshot-wire.ts";
 import { renderPreparedPublication, type PreparedPublication } from "./prepared-publication.ts";
 
-export type NativePublicationEncoding = "legacy" | "rle-v1" | "rle-delta-v1";
+export type NativePublicationEncoding = "legacy" | "rle-v1" | "rle-delta-v1" | "binary-rle-v1";
 export type NativePublicationContext = {
   readonly identity: string;
   readonly connection: string;
@@ -30,14 +32,15 @@ export const nativeFrameResyncSchema = z
   .strict();
 
 /** Owns the emitted frame baseline, never an unsent or overwritten pending state. */
-export function createNativePublicationWriter(
-  encoding: NativePublicationEncoding,
-  write: (line: string) => boolean,
+export function createNativePublicationWriter<E extends NativePublicationEncoding>(
+  encoding: E,
+  write: (line: E extends "binary-rle-v1" ? Buffer : string) => boolean,
   maxBytes = 8 * 1024 * 1024,
 ) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw new Error("Invalid publication byte limit");
-  const producer = createCompactDeltaProducer();
+  const binary = encoding === "binary-rle-v1";
+  const producer = createCompactDeltaProducer({ binary });
   const serialize = createSnapshotSerializer(encoding === "legacy" ? "legacy" : "rle-v1");
   let accepted: Readonly<AcceptedFrame> | null = null;
   let retired = false;
@@ -61,18 +64,26 @@ export function createNativePublicationWriter(
         ownedContext.request,
       ]);
       const candidate =
-        encoding === "rle-delta-v1" && publication.snapshot !== null
+        (binary || encoding === "rle-delta-v1") && publication.snapshot !== null
           ? producer.prepare(publication.snapshot, identity)
           : null;
-      const line = renderPreparedPublication(
-        publication,
-        candidate?.json ?? serialize(publication.snapshot),
-      );
+      let line: string | Buffer;
+      if (binary) {
+        const outer = JSON.parse(renderPreparedPublication(publication, "null"));
+        if (candidate) {
+          delete outer.snapshot;
+          line = encodeBinaryCellPublication(outer, candidate.bytes!);
+        } else line = encodeBinaryJson(outer);
+      } else
+        line = renderPreparedPublication(
+          publication,
+          candidate?.json ?? serialize(publication.snapshot),
+        );
       if (Buffer.byteLength(line, "utf8") > maxBytes)
         throw new Error("Native publication exceeds byte limit");
       let ready: boolean;
       try {
-        ready = write(line);
+        ready = write(line as E extends "binary-rle-v1" ? Buffer : string);
       } catch (error) {
         retire();
         throw error;
@@ -87,7 +98,7 @@ export function createNativePublicationWriter(
       return ready;
     },
     resync(command: unknown, current: NativePublicationContext): boolean {
-      if (retired || encoding !== "rle-delta-v1" || accepted === null) return false;
+      if (retired || (!binary && encoding !== "rle-delta-v1") || accepted === null) return false;
       const parsed = nativeFrameResyncSchema.safeParse(command);
       const context = contextSchema.safeParse(current);
       if (!parsed.success || !context.success) return false;

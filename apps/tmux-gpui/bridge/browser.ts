@@ -1,3 +1,4 @@
+import { encodeBinaryImage } from "./binary-framing.ts";
 import {
   createNativePublicationWriter,
   nativeFrameResyncSchema,
@@ -381,7 +382,7 @@ let regions: unknown[] = [];
 let kittyPlacements: KeyedPlacement[] = [];
 const kittyKnown = createKnownDigests();
 // Image chunk lines are ordered ahead of publications and never coalesced.
-const orderedLines: string[] = [];
+const orderedLines: (string | Buffer)[] = [];
 let orderedBytes = 0;
 const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
@@ -397,7 +398,11 @@ let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
 const nativeEncoding = process.env[COMPACT_NATIVE_ENV];
 const nativeWriter = createNativePublicationWriter(
-  nativeEncoding === "rle-delta-v1" || nativeEncoding === "rle-v1" ? nativeEncoding : "legacy",
+  nativeEncoding === "binary-rle-v1" ||
+    nativeEncoding === "rle-delta-v1" ||
+    nativeEncoding === "rle-v1"
+    ? nativeEncoding
+    : "legacy",
   (line) => process.stdout.write(line),
   MAX_FRAME,
 );
@@ -1271,7 +1276,7 @@ function writePublication(publication: QueuedPublication) {
 }
 // A window that cannot keep up loses whole images; it reports the gap and the
 // helper pulls them again (see kitty_graphics.rs).
-function writeOrdered(line: string) {
+function writeOrdered(line: string | Buffer) {
   if (!blocked) {
     blocked = !process.stdout.write(line);
     return;
@@ -1725,7 +1730,10 @@ async function openPane(
             publicationStage = "graphics";
             const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
             kittyKnown.observe(chunk);
-            writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
+            if (nativeEncoding === "binary-rle-v1") {
+              const { data, ...metadata } = chunk;
+              writeOrdered(encodeBinaryImage(metadata, Buffer.from(data, "base64")));
+            } else writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
             continue;
           }
           publicationStage = "envelope";

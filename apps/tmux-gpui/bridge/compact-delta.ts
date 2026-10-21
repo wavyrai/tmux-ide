@@ -1,3 +1,4 @@
+import { encodeBinaryCellFrame } from "./binary-cell-rows.ts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
@@ -56,23 +57,31 @@ function ownedCompact(snapshot: TerminalReplicaSnapshot): CompactSnapshot {
   };
 }
 
+function sameCompactRow(a: CompactRow, b: CompactRow): boolean {
+  return (
+    a[0] === b[0] &&
+    a[1].length === b[1].length &&
+    a[1].every((run, index) => run.every((value, field) => value === b[1][index]![field]))
+  );
+}
+
 /** One emitted baseline. Call commit only after write accepts the candidate bytes. */
-export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INTEGER } = {}) {
+export function createCompactDeltaProducer({
+  sequenceLimit = Number.MAX_SAFE_INTEGER,
+  binary = false,
+} = {}) {
   sequence.parse(sequenceLimit);
   let baseline: CompactFullFrame | null = null;
-  let baselineRowKeys: string[] = [];
   let identity: string | null = null;
   let generation = 0;
   return {
     reset() {
       baseline = null;
       identity = null;
-      baselineRowKeys = [];
       generation++;
     },
     prepare(snapshot: TerminalReplicaSnapshot, nextIdentity: string) {
       const owned = ownedCompact(snapshot);
-      const rowKeys = owned.grid.map((row) => JSON.stringify(row));
       const compatible =
         baseline !== null &&
         identity === nextIdentity &&
@@ -85,23 +94,32 @@ export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INT
         epoch: compatible ? baseline!.epoch : randomUUID(),
         seq: compatible ? baseline!.seq + 1 : 1,
       };
-      let json = JSON.stringify(full);
+      let chosen: CompactFrame = full;
+      let json = binary ? undefined : JSON.stringify(full);
+      let bytes = binary ? encodeBinaryCellFrame(full) : undefined;
       let encoding: CompactFrame["encoding"] = "rle-v1";
       if (compatible) {
         const { grid, encoding: _, ...metadata } = full;
         void _;
         const changedRows: CompactDeltaFrame["changedRows"] = [];
         for (const [index, row] of grid.entries())
-          if (rowKeys[index] !== baselineRowKeys[index]) changedRows.push([index, row]);
+          if (!sameCompactRow(row, baseline!.grid[index]!)) changedRows.push([index, row]);
         const delta: CompactDeltaFrame = {
           ...metadata,
           encoding: COMPACT_DELTA_ENCODING,
           baseSeq: baseline!.seq,
           changedRows,
         };
-        const deltaJson = JSON.stringify(delta);
-        if (Buffer.byteLength(deltaJson, "utf8") < Buffer.byteLength(json, "utf8")) {
+        const deltaJson = binary ? undefined : JSON.stringify(delta);
+        const deltaBytes = binary ? encodeBinaryCellFrame(delta) : undefined;
+        if (
+          binary
+            ? deltaBytes!.length < bytes!.length
+            : Buffer.byteLength(deltaJson!, "utf8") < Buffer.byteLength(json!, "utf8")
+        ) {
+          chosen = delta;
           json = deltaJson;
+          bytes = deltaBytes;
           encoding = COMPACT_DELTA_ENCODING;
         }
       }
@@ -118,15 +136,19 @@ export function createCompactDeltaProducer({ sequenceLimit = Number.MAX_SAFE_INT
           return encoding;
         },
         get wire() {
-          return JSON.parse(json) as CompactFrame;
+          return JSON.parse((json ??= JSON.stringify(chosen))) as CompactFrame;
         },
-        json,
+        get json() {
+          return (json ??= JSON.stringify(chosen));
+        },
+        get bytes() {
+          return bytes;
+        },
         commit() {
           if (committed || generation !== preparedAt)
             throw new Error("Stale compact producer candidate");
           // Do not retain the public candidate object: a consumer may mutate it.
           baseline = full;
-          baselineRowKeys = rowKeys;
           identity = nextIdentity;
           generation++;
           committed = true;

@@ -175,3 +175,76 @@ test("thrown or asynchronous failed writes retire ownership permanently", () => 
   assert.equal(asyncWriter.lastAccepted, null);
   assert.throws(() => asyncWriter.write(publication(frame()), context), /retired/);
 });
+
+test("binary publications bind authority to exact full/delta cells and retain resync fencing", async () => {
+  const { createBinaryFrameParser, decodeBinaryJson } = await import("./binary-framing.ts");
+  const { decodeBinaryCellPublication } = await import("./binary-cell-rows.ts");
+  const frames: Buffer[] = [];
+  const writer = createNativePublicationWriter("binary-rle-v1", (bytes) => {
+    frames.push(bytes);
+    return false;
+  });
+  const first = frame(),
+    second = frame();
+  second.grid[1]!.cells[2]!.grapheme = "👩‍💻";
+  assert.equal(writer.write(publication(first), context), false);
+  writer.write(publication(second, false), context);
+  const store = createCompactDeltaStore();
+  const decoded: ReturnType<typeof decodeBinaryCellPublication>[] = [];
+  const parser = createBinaryFrameParser(({ type, payload }) => {
+    assert.equal(type, 2);
+    decoded.push(decodeBinaryCellPublication(payload));
+    return true;
+  });
+  for (const bytes of frames) parser.push(bytes);
+  parser.end();
+  assert.equal(decoded[0]!.publication.inputReady, true);
+  assert.equal(decoded[1]!.publication.inputReady, false);
+  assert.equal(decoded[1]!.publication.connection, context.connection);
+  assert.equal(decoded[1]!.frame.encoding, "rle-delta-v1");
+  const base = store.prepare(decoded[0]!.frame);
+  base.commit();
+  assert.deepEqual(store.prepare(decoded[1]!.frame).snapshot, second);
+  const accepted = writer.lastAccepted!;
+  assert.equal(
+    writer.resync(
+      {
+        type: "frame-resync",
+        connection: context.connection,
+        request: context.request,
+        epoch: accepted.epoch,
+        baseSeq: 0,
+      },
+      context,
+    ),
+    true,
+  );
+  writer.write(publication(second), context);
+  const recovered = decodeBinaryCellPublication(frames[2]!.subarray(12));
+  assert.equal(recovered.frame.encoding, "rle-v1");
+  assert.notEqual(recovered.frame.epoch, accepted.epoch);
+  writer.write(publication(null, false), context);
+  assert.equal(frames[3]![5], 1);
+  assert.equal((decodeBinaryJson(frames[3]!.subarray(12)) as { snapshot: null }).snapshot, null);
+  assert.equal(writer.lastAccepted, null);
+});
+
+test("binary production serialization never stringifies cell rows", (t) => {
+  const stringify = JSON.stringify;
+  let cellArrays = 0;
+  t.mock.method(JSON, "stringify", (value: unknown) => {
+    if (
+      Array.isArray(value) ||
+      (value &&
+        typeof value === "object" &&
+        (Object.hasOwn(value, "grid") || Object.hasOwn(value, "changedRows")))
+    )
+      cellArrays++;
+    return stringify(value);
+  });
+  const writer = createNativePublicationWriter("binary-rle-v1", () => true);
+  writer.write(publication(frame()), context);
+  writer.write(publication(frame()), context);
+  // One identity tuple per write is small control metadata; cells are binary only.
+  assert.equal(cellArrays, 2);
+});

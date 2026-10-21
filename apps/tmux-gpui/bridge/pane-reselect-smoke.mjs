@@ -1,3 +1,5 @@
+import { createBinaryFrameParser, decodeBinaryJson, decodeBinaryImage } from "./binary-framing.ts";
+import { decodeBinaryCellPublication } from "./binary-cell-rows.ts";
 import { createCompactDeltaStore } from "./compact-delta.ts";
 // Opt-in in-window pane reselect proof against an owned daemon and tmux socket:
 // the frame stays painted, input is gated until the helper confirms the new
@@ -19,7 +21,8 @@ const fleet = await createScratchFleet({
 let daemon, browser;
 let stderr = "";
 const events = [];
-const damage = process.env.TMUX_IDE_GUI_NATIVE_ENCODING === "rle-delta-v1";
+const binary = process.env.TMUX_IDE_GUI_NATIVE_ENCODING === "binary-rle-v1";
+const damage = binary || process.env.TMUX_IDE_GUI_NATIVE_ENCODING === "rle-delta-v1";
 const frameStore = createCompactDeltaStore();
 let lastWire = null,
   recoveringEpoch = null,
@@ -86,34 +89,67 @@ try {
     { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...fleet.environment } },
   );
   browser.stderr.on("data", (b) => (stderr += b.toString()));
-  let buffer = "";
-  browser.stdout.on("data", (b) => {
-    buffer += b.toString();
-    let end;
-    while ((end = buffer.indexOf("\n")) >= 0) {
-      const event = JSON.parse(buffer.slice(0, end));
-      buffer = buffer.slice(end + 1);
+  const acceptEvent = (event) => {
+    try {
+      if (damage && event.snapshot) {
+        const wire = event.snapshot;
+        if (recoveringEpoch === wire.epoch) return;
+        const candidate = frameStore.prepare(wire);
+        candidate.commit();
+        if (wire.encoding === "rle-delta-v1") deltaFrames++;
+        else fullFrames++;
+        lastWire = { ...wire, connection: event.connection, request: event.request };
+        event.snapshot = candidate.snapshot;
+        if (recoveringEpoch !== null) {
+          recoveringEpoch = null;
+          resyncPassed = true;
+        }
+      } else if (damage && !event.kittyImageChunk) frameStore.reset();
+      events.push(event);
+    } catch (error) {
+      protocolFailure = error;
+    }
+  };
+  if (binary) {
+    const parser = createBinaryFrameParser(({ type, payload }) => {
+      if (type === 1) acceptEvent(decodeBinaryJson(payload));
+      else if (type === 2) {
+        const { publication, frame } = decodeBinaryCellPublication(payload);
+        acceptEvent({ ...publication, snapshot: frame });
+      } else {
+        decodeBinaryImage(payload);
+      }
+      return true;
+    });
+    browser.stdout.on("data", (bytes) => {
       try {
-        if (damage && event.snapshot) {
-          const wire = event.snapshot;
-          if (recoveringEpoch === wire.epoch) continue;
-          const candidate = frameStore.prepare(wire);
-          candidate.commit();
-          if (wire.encoding === "rle-delta-v1") deltaFrames++;
-          else fullFrames++;
-          lastWire = { ...wire, connection: event.connection, request: event.request };
-          event.snapshot = candidate.snapshot;
-          if (recoveringEpoch !== null) {
-            recoveringEpoch = null;
-            resyncPassed = true;
-          }
-        } else if (damage && !event.kittyImageChunk) frameStore.reset();
-        events.push(event);
+        parser.push(bytes);
       } catch (error) {
         protocolFailure = error;
       }
-    }
-  });
+    });
+    browser.stdout.on("end", () => {
+      try {
+        parser.end();
+      } catch (error) {
+        protocolFailure = error;
+      }
+    });
+  } else {
+    let buffer = "";
+    browser.stdout.on("data", (bytes) => {
+      buffer += bytes.toString();
+      let end;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        try {
+          acceptEvent(JSON.parse(buffer.slice(0, end)));
+        } catch (error) {
+          protocolFailure = error;
+        }
+        buffer = buffer.slice(end + 1);
+      }
+    });
+  }
   await until(() => events.at(-1)?.sessions?.length === 1, "catalog");
   let request = 1;
   send({ type: "session", request, id: events.at(-1).sessions[0].id });
