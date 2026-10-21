@@ -29,3 +29,20 @@ test("deferred null frame preserves exact legacy envelope order and escaping", (
     serializeBrowserPublication(prefix, suffix, null),
   );
 });
+
+test("idle suppression ignores sequence only and preserves pending reverts and authority changes", async () => {
+  const { createPublicationDeduplicator } = await import("./prepared-publication.ts");
+  const admit = createPublicationDeduplicator();
+  const snapshot = blankTerminalReplicaSnapshot(2, 1);
+  const state = (sequence: number, ready: boolean, frame = snapshot) =>
+    preparePublication(
+      { version: 1, sequence, request: 1, selectedPane: "%1" },
+      { snapshot: frame, inputReady: ready },
+      null,
+    );
+  assert.equal(admit(state(1, true)), true);
+  assert.equal(admit(state(2, true)), false);
+  assert.equal(admit(state(3, false)), true);
+  assert.equal(admit(state(4, true)), true); // replaces unsent unavailable state
+  assert.equal(admit(state(5, true, blankTerminalReplicaSnapshot(2, 1))), true);
+});

@@ -11,6 +11,7 @@ import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
 import {
   preparePublication,
+  createPublicationDeduplicator,
   renderPreparedPublication,
   type PreparedPublication,
 } from "./prepared-publication.ts";
@@ -393,6 +394,7 @@ let status = "Loading sessions";
 const serializeNativeSnapshot = createSnapshotSerializer(
   process.env[COMPACT_NATIVE_ENV] === "rle-v1" ? "rle-v1" : "legacy",
 );
+const admitPublication = createPublicationDeduplicator();
 let pending: PreparedPublication | null = null,
   blocked = false;
 let active:
@@ -1237,6 +1239,7 @@ function publish() {
   const publication = preparePublication(prefix, suffix, preview?.snapshotJson ?? null);
   if (Buffer.byteLength(publication.before) + Buffer.byteLength(publication.after) > MAX_FRAME)
     throw new Error("Browser publication metadata too large");
+  if (!admitPublication(publication)) return;
   if (blocked) pending = publication;
   else writePublication(publication);
 }
