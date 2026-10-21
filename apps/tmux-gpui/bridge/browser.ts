@@ -1,3 +1,5 @@
+import { HostedPreviewSession, type PreviewSession } from "./preview-session.ts";
+import { createHostedSurfaceValidator, validateHostedImage } from "./hosted-publication.ts";
 import { encodeBinaryImage } from "./binary-framing.ts";
 import {
   createNativePublicationWriter,
@@ -135,7 +137,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import { createPreviewCatalog, sessionChoice } from "./catalog.ts";
 import { connectionSchema } from "./config.ts";
@@ -422,7 +424,7 @@ let pending: QueuedPublication | null = null,
   blocked = false;
 let active:
   | {
-      child: ChildProcess;
+      child: PreviewSession;
       done: Promise<void>;
       catalogOnly: boolean;
       historyIntent?: number;
@@ -1499,28 +1501,45 @@ async function openPane(
       (requiredCurrent && !requiredCurrent())
     )
       return;
-    const child = spawn(
-      process.execPath,
-      [
-        ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
-        fileURLToPath(
-          new URL(
-            import.meta.url.endsWith(".bundle.mjs") ? "live.bundle.mjs" : "live.ts",
-            import.meta.url,
-          ),
-        ),
-        path,
-        catalogOnly ? "--catalog" : "--interactive",
-      ],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          [KITTY_KNOWN_ENV]: kittyKnown.env(),
-          [COMPACT_HELPER_ENV]: "rle-v1",
-        },
-      },
-    );
+    const child: PreviewSession & {
+      stdin: import("node:stream").Writable;
+      stdout: import("node:stream").Readable;
+      stderr: import("node:stream").Readable;
+    } =
+      process.env.TMUX_IDE_GUI_LIVE_MODE !== "process"
+        ? new HostedPreviewSession({
+            config: {
+              ...config,
+              ...(restoreToken ? { historyAnchor: restoreToken } : {}),
+              ...(!catalogOnly && savedHistory && !restoreToken
+                ? { historyUnavailable: true }
+                : {}),
+            },
+            mode: catalogOnly ? "catalog" : "interactive",
+            knownDigests: kittyKnown.env().split(",").filter(Boolean),
+          })
+        : spawn(
+            process.execPath,
+            [
+              ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
+              fileURLToPath(
+                new URL(
+                  import.meta.url.endsWith(".bundle.mjs") ? "live.bundle.mjs" : "live.ts",
+                  import.meta.url,
+                ),
+              ),
+              path,
+              catalogOnly ? "--catalog" : "--interactive",
+            ],
+            {
+              stdio: ["pipe", "pipe", "pipe"],
+              env: {
+                ...process.env,
+                [KITTY_KNOWN_ENV]: kittyKnown.env(),
+                [COMPACT_HELPER_ENV]: "rle-v1",
+              },
+            },
+          );
     const done = new Promise<void>((resolve) =>
       child.once("close", () => {
         void rm(directory, { recursive: true, force: true })
@@ -1691,41 +1710,34 @@ async function openPane(
       }
       unavailable();
     });
-    child.stdout.on("data", (chunk: Buffer) => {
-      // Fatal helper diagnostics retire this presentation lifetime. Buffered
-      // stdout must not restore a frame or input authority after that fault.
-      if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
-      let publicationStage = "framing";
+    const validateSurfaces = createHostedSurfaceValidator();
+    // Both transports enter the same envelope/authority/presentation validation.
+    function applyChildPublication(event: any, sameTail = false, typed = false): boolean {
+      if (
+        stopped ||
+        request !== token ||
+        active?.child !== child ||
+        diagnostics.fault ||
+        !owningCatalog
+      )
+        return false;
+      let publicationStage = "envelope";
       try {
-        buffer = Buffer.concat([buffer, chunk]);
-        let end;
-        while ((end = buffer.indexOf(10)) >= 0) {
-          publicationStage = "framing";
-          if (end > MAX_FRAME) throw new Error("Oversized child publication");
-          publicationStage = "decode";
-          const line = buffer.subarray(0, end);
-          buffer = buffer.subarray(end + 1);
-          // The helper puts terminal content last behind its byte length. An unchanged
-          // tail (gesture, presence or status-only publications) is not decoded again.
-          const tailBytes = Number(
-            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
-          );
-          const tailStart = line.length - tailBytes;
-          const sameTail =
-            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
-          const event = JSON.parse(
-            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
-          );
-          if (sameTail) Object.assign(event, content!.value);
-          else
-            content =
-              tailStart > 0
-                ? {
-                    bytes: Buffer.from(line.subarray(tailStart)),
-                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
-                    surfaces: null,
-                  }
-                : null;
+        do {
+          if (typed && "rawKittyImage" in event) {
+            publicationStage = "graphics";
+            const { metadata, bytes } = validateHostedImage(event.rawKittyImage);
+            kittyKnown.observeBytes(metadata, bytes.byteLength);
+            if (nativeEncoding === "binary-rle-v1")
+              writeOrdered(encodeBinaryImage(metadata, bytes));
+            else
+              writeOrdered(
+                JSON.stringify({
+                  kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
+                }) + "\n",
+              );
+            continue;
+          }
           if (event && typeof event === "object" && "kittyImageChunk" in event) {
             publicationStage = "graphics";
             const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
@@ -1785,7 +1797,7 @@ async function openPane(
                       publish();
                     }
                   });
-                return;
+                return false;
               }
             }
             if (splitConfirmation) {
@@ -1818,7 +1830,7 @@ async function openPane(
                     publish();
                   }
                 });
-              return;
+              return false;
             }
             snapshot = null;
             inputReady = false;
@@ -1840,7 +1852,7 @@ async function openPane(
             // helper releases ACK ownership, without waiting for process reaping.
             void retire();
             publish();
-            return;
+            return false;
           }
           if (event.closePaneReady && pendingClose && !pendingClose.submitted) {
             const ready = z
@@ -1979,7 +1991,7 @@ async function openPane(
                 // Keep the explicit unavailable state if exact requalification fails.
               }
             });
-            return;
+            return false;
           }
           if (
             event.newWindowReceipt &&
@@ -2068,7 +2080,7 @@ async function openPane(
                 publish();
               }
             });
-            return;
+            return false;
           }
           if (
             event.paneSplitReceipt &&
@@ -2147,7 +2159,7 @@ async function openPane(
                 publish();
               }
             });
-            return;
+            return false;
           }
           publicationStage = "epoch";
           const epoch = z.number().int().nonnegative().safe().parse(event.presentationEpoch);
@@ -2155,8 +2167,9 @@ async function openPane(
           childPresentationEpoch = epoch;
           const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
           publicationStage = "surfaces";
-          const surfaces =
-            sameTail && content!.surfaces
+          const surfaces = typed
+            ? validateSurfaces(event.surfaces ?? [])
+            : sameTail && content!.surfaces
               ? content!.surfaces
               : decodeSurfacePublication(event.surfaces ?? [], "rle-v1");
           if (content) content.surfaces = surfaces;
@@ -2410,6 +2423,55 @@ async function openPane(
             };
           publicationStage = "publish";
           publish();
+        } while (false);
+        return true;
+      } catch {
+        console.error(
+          JSON.stringify({ diagnostic: "child-publication-rejected", stage: publicationStage }),
+        );
+        unavailable();
+        void retire();
+        return false;
+      }
+    }
+    if (child instanceof HostedPreviewSession)
+      child.on("publication", (event) => applyChildPublication(event, false, true));
+    child.stdout.on("data", (chunk: Buffer) => {
+      // Fatal helper diagnostics retire this presentation lifetime. Buffered
+      // stdout must not restore a frame or input authority after that fault.
+      if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
+      let publicationStage = "framing";
+      try {
+        buffer = Buffer.concat([buffer, chunk]);
+        let end;
+        while ((end = buffer.indexOf(10)) >= 0) {
+          publicationStage = "framing";
+          if (end > MAX_FRAME) throw new Error("Oversized child publication");
+          publicationStage = "decode";
+          const line = buffer.subarray(0, end);
+          buffer = buffer.subarray(end + 1);
+          // The helper puts terminal content last behind its byte length. An unchanged
+          // tail (gesture, presence or status-only publications) is not decoded again.
+          const tailBytes = Number(
+            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
+          );
+          const tailStart = line.length - tailBytes;
+          const sameTail =
+            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
+          const event = JSON.parse(
+            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
+          );
+          if (sameTail) Object.assign(event, content!.value);
+          else
+            content =
+              tailStart > 0
+                ? {
+                    bytes: Buffer.from(line.subarray(tailStart)),
+                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
+                    surfaces: null,
+                  }
+                : null;
+          if (!applyChildPublication(event, sameTail, false)) return;
         }
         publicationStage = "framing";
         if (buffer.length > MAX_FRAME) throw new Error("Oversized child publication");

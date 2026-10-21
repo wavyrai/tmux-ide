@@ -228,13 +228,16 @@ export function canvasPlacements(
 /** Browser side: which digests the window holds (bounded, oldest forgotten first). */
 export function createKnownDigests(limit = MAX_KNOWN_DIGESTS) {
   const known = new Set<string>();
+  const observeBytes = (chunk: TerminalGraphicsBlob, length: number) => {
+    if (chunk.offset + length < chunk.total) return;
+    known.delete(chunk.digest);
+    known.add(chunk.digest);
+    while (known.size > limit) known.delete(known.values().next().value!);
+  };
   return {
+    observeBytes,
     observe(chunk: TerminalGraphicsBlob & { data: string }): void {
-      const length = Buffer.byteLength(chunk.data, "base64");
-      if (chunk.offset + length < chunk.total) return;
-      known.delete(chunk.digest);
-      known.add(chunk.digest);
-      while (known.size > limit) known.delete(known.values().next().value!);
+      observeBytes(chunk, Buffer.byteLength(chunk.data, "base64"));
     },
     forget(digests: readonly string[]): void {
       for (const digest of digests) known.delete(digest);
