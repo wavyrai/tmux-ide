@@ -55,3 +55,30 @@ export async function deliverPreviewInput(
   }
   if (chunk) await deliverInput(runtime, workspace, pane, { kind: "text", data: chunk });
 }
+
+// Control characters, modified keys, bytes and paste remain ordered barriers.
+// Only bounded printable text and navigation/edit keys use acknowledgement pipelining.
+export function isPipelineInput(value: unknown): boolean {
+  const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(value);
+  if (!parsed.success) return false;
+  const input = parsed.data;
+  if (input.kind === "text") return !/[\p{Cc}]/u.test(input.data);
+  return (
+    input.kind === "key" &&
+    [
+      "BSpace",
+      "DC",
+      "Left",
+      "Right",
+      "Up",
+      "Down",
+      "Home",
+      "End",
+      "NPage",
+      "PPage",
+      "PgUp",
+      "PgDn",
+      "Space",
+    ].includes(input.data)
+  );
+}

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.10
+
+- Improve native GUI typing over SSH by keeping terminal input responsive while earlier input is still in flight.
+
+The typing fix requires native app 0.1.6, distributed separately, and CLI/daemon 2.9.10. Check the native release page for availability. Existing tmux sessions are preserved.
+
 ## 2.9.9
 
 - Preserve terminal pane dimensions when the native GUI loses focus or a viewer releases control. Background viewers still release input authority, and other attached tmux clients can take over sizing.

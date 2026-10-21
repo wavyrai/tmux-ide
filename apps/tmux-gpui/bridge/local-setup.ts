@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 // Explicitly qualified managed CLI releases; unknown/newer installs are never downgraded.
-const supportedVersions = new Set(["2.9.6", "2.9.7", "2.9.8", "2.9.9"]);
+const supportedVersions = new Set(["2.9.6", "2.9.7", "2.9.8", "2.9.9", "2.9.10"]);
 export type LocalSetupInstallation = Readonly<{
   node: string;
   cli: string;
