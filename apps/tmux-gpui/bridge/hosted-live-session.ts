@@ -1,3 +1,4 @@
+import { releaseLiveSessionResources } from "./live-session-resources.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import { z } from "zod";
@@ -324,7 +325,7 @@ export function createHostedLiveSession(options: HostedLiveOptions) {
         () => historyRestoration?.dispose(),
         () => disposeClient?.(),
         () => runtime?.close(),
-        ...[...replicas.values()].map((replica) => () => replica.retire()),
+        () => releaseLiveSessionResources({ replicas, kitty, viewport, surfaces, lifetimes }),
       ]) {
         try {
           release();
@@ -332,8 +333,7 @@ export function createHostedLiveSession(options: HostedLiveOptions) {
           failures.push(error);
         }
       }
-      surfaces.clear();
-      lifetimes.clear();
+
       if (failures.length) throw new AggregateError(failures, "Session revocation failed");
     },
     close: () => {
