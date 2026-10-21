@@ -307,6 +307,9 @@ fn show(
     Ok(())
 }
 
+/// Rounded width/height followed by precise width/height in thousandths of a pixel.
+type CellPixelDimensions = (u32, u32, u32, u32);
+
 /// Kitty graphics owned by one window: the image store (shared with the
 /// publication reader) and, for static snapshots, their fixed placements.
 #[derive(Clone, Default)]
@@ -314,7 +317,7 @@ struct KittyView {
     store: kitty_graphics::Store,
     placements: Rc<RefCell<Vec<kitty_graphics::Placement>>>,
     /// Cell size in device pixels last reported with a resize.
-    cell_pixels: Rc<std::cell::Cell<Option<(u32, u32, u32, u32)>>>,
+    cell_pixels: Rc<std::cell::Cell<Option<CellPixelDimensions>>>,
 }
 
 struct SnapshotView {
