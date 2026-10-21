@@ -20,4 +20,5 @@ take over sizing, and a new viewer can resize the terminal after taking control.
 
 Update the CLI and its running daemon to use the fix. Existing tmux sessions and
 the programs in their panes are preserved. The native app remains a separate
-installation; this daemon fix does not require replacing the native app.
+installation. Use a [native build qualified for CLI 2.9.9](/docs/native-alpha):
+older builds may reject this CLI version during local setup.
