@@ -461,7 +461,9 @@ impl SnapshotView {
                         entity.update(cx, |view, cx| {
                             if view.browsing
                                 && view.presence.ready()
-                                && view.browser_state.input_ready
+                                // AppKit must keep delivering text while a verified
+                                // pane selection holds never-dispatched input.
+                                && (view.browser_state.input_ready || view.pending_input_ready())
                                 && !view.browser_state.retained_preview
                                 && view.selection.is_none()
                                 && view.divider.is_none()

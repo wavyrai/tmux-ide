@@ -216,3 +216,32 @@ fn helper_rejection_latches_until_explicit_reselect_without_replaying(cx: &mut T
         assert!(receiver.try_recv().is_err());
     }));
 }
+
+#[gpui::test]
+fn rendered_text_handler_survives_pending_pane_selection(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            prepare(view);
+            view.select(Selection::Pane("pane-b".into()), window, cx);
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                browser::Command::Pane { .. }
+            ));
+        });
+        window.draw(cx).clear(cx);
+    });
+    cx.simulate_input("P000");
+    cx.update(|window, cx| view.update(cx, |view, cx| {
+        view.terminal_key(&key("enter"), window, cx);
+        assert!(receiver.try_recv().is_err());
+        let state = confirmation(view);
+        view.apply_browser_state(Some(state), cx);
+        for expected in [Input::Text("P".into()), Input::Text("0".into()), Input::Text("0".into()), Input::Text("0".into()), Input::Key("Enter".into())] {
+            assert!(matches!(receiver.try_recv().unwrap(), browser::Command::Input { input, .. } if input == expected));
+        }
+        assert!(receiver.try_recv().is_err());
+    }));
+}
