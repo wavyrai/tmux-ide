@@ -140,6 +140,8 @@ test("malformed private config stays recoverable without leaking its contents", 
         "localSessionCreate",
         "retainedPreview",
         "selectionIdentity",
+        "inputTargetRejected",
+        "inputTargets",
         "graphics",
       ].sort(),
     );
@@ -152,6 +154,8 @@ test("malformed private config stays recoverable without leaking its contents", 
     assert.equal(child.exitCode, null);
     assert.equal(event.snapshot, null);
     assert.equal(event.inputReady, false);
+    assert.equal(event.inputTargetRejected, false);
+    assert.deepEqual(event.inputTargets, []);
     assert.match(event.status, /unavailable/);
     assert.ok(!line.includes("PRIVATE_TEST_SENTINEL"));
     assert.equal(event.machines, null);
@@ -209,6 +213,8 @@ test("malformed private config stays recoverable without leaking its contents", 
         "retainedPreview",
         "selectionIdentity",
         "graphics",
+        "inputTargetRejected",
+        "inputTargets",
       ].sort(),
     );
     assert.equal(registryEvent.homeAgentRecovery, null);
