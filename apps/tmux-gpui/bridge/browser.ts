@@ -1,3 +1,9 @@
+import {
+  visibleInputTargets,
+  inputTargetsSchema,
+  resolveInputTarget,
+  type InputTarget,
+} from "./input-targets.ts";
 import { HostedPreviewSession, type PreviewSession } from "./preview-session.ts";
 import { createHostedSurfaceValidator, validateHostedImage } from "./hosted-publication.ts";
 import { encodeBinaryImage } from "./binary-framing.ts";
@@ -265,6 +271,10 @@ const commandSchema = z.union([
       request: z.number().int().positive().safe(),
       id: z.string().min(1).max(512),
       input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema, mouseSchema]),
+      inputTarget: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
     })
     .strict(),
   z.object({ type: z.literal("home"), request: z.number().int().positive().safe() }).strict(),
@@ -389,11 +399,18 @@ let orderedBytes = 0;
 const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
 let inputReady = false;
+let inputTargetRejected = false;
 let foreground = true;
 let sessionCatalogComplete = false;
 let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
+let inputTargets: {
+  snapshot: TerminalReplicaSnapshot;
+  owner: unknown;
+  value: InputTarget[];
+  raw: InputTarget[];
+} | null = null;
 let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | null = null;
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
@@ -1223,6 +1240,18 @@ function publish() {
     selectedPane: preview ? null : selectedPane,
   };
   const suffix = {
+    inputTargetRejected,
+    inputTargets:
+      !stopped &&
+      !preview &&
+      foreground &&
+      active &&
+      surface === "workspace" &&
+      historyOffset === 0 &&
+      inputTargets?.snapshot === snapshot &&
+      inputTargets?.owner === active.child
+        ? inputTargets.value
+        : [],
     selectionIdentity:
       !preview &&
       foreground &&
@@ -1555,6 +1584,7 @@ async function openPane(
       inputReady = false;
       void retire();
     });
+    inputTargetRejected = false;
     active = {
       child,
       done,
@@ -1718,6 +1748,7 @@ async function openPane(
         request !== token ||
         active?.child !== child ||
         diagnostics.fault ||
+        inputTargetRejected ||
         !owningCatalog
       )
         return false;
@@ -1751,6 +1782,15 @@ async function openPane(
               const { data, ...metadata } = chunk;
               writeOrdered(encodeBinaryImage(metadata, Buffer.from(data, "base64")));
             } else writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
+            break publication;
+          }
+          if (event.kind === "input-target-rejected") {
+            inputTargetRejected = true;
+            inputReady = false;
+            inputTargets = null;
+            status = "Input interrupted — reselect the pane, then retype";
+            process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
+            publish();
             break publication;
           }
           publicationStage = "envelope";
@@ -2237,6 +2277,21 @@ async function openPane(
             hasAuthority,
           );
           snapshot = coherent?.snapshot ?? null;
+          const childInputTargets = visibleInputTargets(
+            event.inputTargets,
+            connection,
+            surfaces,
+            coherent,
+          );
+          inputTargets =
+            coherent && hasAuthority
+              ? {
+                  snapshot: coherent.snapshot,
+                  owner: child,
+                  value: childInputTargets,
+                  raw: inputTargetsSchema.parse(event.inputTargets ?? []),
+                }
+              : null;
           nativeFrameBasis = JSON.stringify([
             childConnection,
             epoch,
@@ -2740,6 +2795,7 @@ async function command(value: unknown) {
     editorMessage = null;
     if (
       surface !== "workspace" ||
+      inputTargetRejected ||
       cmd.request !== request ||
       cmd.id !== selectedPane ||
       cmd.id !== paneActions?.id ||
@@ -2887,7 +2943,25 @@ async function command(value: unknown) {
     if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel") {
       active.presentation.update(undefined, [], false);
     }
-    const line = JSON.stringify(cmd.input) + "\n";
+    let outgoing: unknown = cmd.input;
+    if (cmd.inputTarget !== undefined) {
+      const raw =
+        inputTargets?.snapshot === snapshot && inputTargets?.owner === active.child
+          ? resolveInputTarget(cmd.inputTarget, cmd.id, inputTargets.value, inputTargets.raw)
+          : null;
+      if (!raw || !previewInputSchema.safeParse(cmd.input).success) {
+        process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
+        inputTargetRejected = true;
+        inputReady = false;
+        inputTargets = null;
+        active.child.stdin.end();
+        status = "Input interrupted — reselect the pane, then retype";
+        publish();
+        return;
+      }
+      outgoing = { kind: "fenced-input", id: cmd.id, inputTarget: raw, input: cmd.input };
+    }
+    const line = JSON.stringify(outgoing) + "\n";
     if (
       Buffer.byteLength(line) > MAX_INPUT_LINE ||
       active.child.stdin.writableLength > MAX_INPUT_LINE * 2
@@ -3349,7 +3423,7 @@ async function command(value: unknown) {
     const pane = panes.find(
       (p) => p.semanticPaneId === cmd.id && p.liveSessionId === selectedSession,
     );
-    if (pane && active?.reselect?.(pane, token)) {
+    if (!inputTargetRejected && pane && active?.reselect?.(pane, token)) {
       selectedPane = cmd.id;
       inputReady = false;
       paneActions = null;

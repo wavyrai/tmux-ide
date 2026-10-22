@@ -24,6 +24,7 @@ mod navigation;
 mod new_session;
 mod pane_actions;
 mod pane_chrome;
+mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
@@ -181,6 +182,7 @@ fn show(
                                             view.presence.flush(sender);
                                         }
                                         view.flush_resize_gesture(cx);
+                                        view.expire_pending_input(cx);
                                         if !view.terminal_input_ready()
                                             || view.selection.is_some()
                                             || view.divider.is_some()
@@ -264,6 +266,7 @@ fn show(
                         browsing: browser.is_some(),
                         terminal_focus: cx.focus_handle(),
                         input_interrupted: false,
+                        pending_input: None,
                         picker: None,
                         attention: Default::default(),
                         palette: Default::default(),
@@ -345,6 +348,7 @@ struct SnapshotView {
     header_controls: pane_chrome::Controls,
     terminal_focus: FocusHandle,
     input_interrupted: bool,
+    pending_input: Option<pending_input::Pending>,
     picker: Option<picker::Picker>,
     attention: picker::attention::Owner,
     palette: picker::palette::Owner,
@@ -521,6 +525,7 @@ impl SnapshotView {
                                         (&view.browser_commands, &view.browser_state.selected_pane)
                                 {
                                     let command = browser::Command::Input {
+                                        input_target: None,
                                         request: view.browser_request,
                                         id: id.clone(),
                                         input: keys::Input::Resize {

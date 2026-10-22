@@ -259,6 +259,13 @@ export class SessionRuntimeTerminalReplicaOwner {
     return this.#disposed ? null : this.#publishedIncarnation;
   }
 
+  /** Scalar admission fence; unavailable while canonical replacement is pending. */
+  inputAdmissionIncarnation(): string | null {
+    return this.#disposed || this.#reseed || this.#waitingForGeometryCapture
+      ? null
+      : this.#publishedIncarnation;
+  }
+
   qualificationSnapshot(): TerminalReplicaQualificationSnapshot {
     const seed = this.#interpreter.currentSeed();
     return Object.freeze({

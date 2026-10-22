@@ -34,6 +34,7 @@ fn make_view(
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),
@@ -325,3 +326,6 @@ mod native_link_fixture_tests;
 
 #[path = "history_page_tests.rs"]
 mod history_page_tests;
+
+#[path = "input_interruption_tests/pending_selection.rs"]
+mod pending_selection;

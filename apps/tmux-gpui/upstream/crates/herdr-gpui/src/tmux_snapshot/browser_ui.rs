@@ -245,7 +245,7 @@ impl SnapshotView {
                 return;
             }
         }
-        if !self.browser_state.input_ready {
+        if !self.browser_state.input_ready && !self.pending_input_ready() {
             return;
         }
         if !self.marked.is_empty() {
@@ -303,10 +303,15 @@ impl SnapshotView {
         if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
             return;
         }
+        if terminal && self.pending_input.is_some() {
+            self.hold_pending_input(input, cx);
+            return;
+        }
         let Some(id) = self.browser_state.selected_pane.clone() else {
             return;
         };
         let command = browser::Command::Input {
+            input_target: None,
             request: self.browser_request,
             id,
             input,
@@ -331,6 +336,9 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let recovering_rejected_input = self.browser_state.input_target_rejected
+            && matches!(&selection, Selection::Pane(id) if self.browser_state.selected_pane.as_ref() == Some(id));
+        self.cancel_pending_input(cx);
         self.cancel_tab_focus_restore();
         self.fit_settle.clear();
         self.sidebar_keyboard.active = false;
@@ -389,6 +397,9 @@ impl SnapshotView {
             }
             _ => None,
         };
+        let held_input = same_window_pane
+            .as_deref()
+            .and_then(|id| super::pending_input::Pending::capture(self, request, id));
         let command = match selection {
             Selection::WorkspaceAgent {
                 from_request,
@@ -442,6 +453,15 @@ impl SnapshotView {
                     super::geometry::reselect_fit(self.last_resize, self.browser_request, request);
             }
             self.browser_request = request;
+            self.pending_input = held_input;
+            if recovering_rejected_input {
+                // Explicit recovery starts a new attachment; no failed input is retained.
+                self.input_interrupted = false;
+                self.terminal_focus.focus(window, cx);
+            }
+            if self.pending_input.is_some() {
+                self.terminal_focus.focus(window, cx);
+            }
             self.pending_session_open =
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
             if let Some(id) = same_window_pane {
@@ -714,6 +734,8 @@ impl SnapshotView {
             }
         } else if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
+        } else if self.browser_state.input_target_rejected {
+            "Input interrupted — reselect pane, then retype".into()
         } else if self.input_interrupted {
             format!(
                 "Input interrupted; click terminal when ready, then retype — {}",
@@ -750,6 +772,7 @@ impl SnapshotView {
         // imposing the upstream status bar's fixed single-line height.
         let context = super::design::palette(&theme)
             .status_bar()
+            .occlude()
             .h_auto()
             .px_0()
             .gap_0()
@@ -794,6 +817,7 @@ impl SnapshotView {
             theme.background
         };
         let content = super::shell::content_panel(content_background)
+            .relative()
             .when(is_home && glass, |panel| {
                 panel.bg(rgba((content_background << 8) | 0x99))
             })
@@ -814,6 +838,11 @@ impl SnapshotView {
                             .relative()
                             .flex_none()
                             .w_full()
+                            // Transient authority/error guidance must not resize
+                            // the terminal and trigger another geometry handoff.
+                            .when(!self.developer_mode.enabled, |footer| {
+                                footer.absolute().bottom_0().left_0()
+                            })
                             .when(show_status, |footer| footer.child(context))
                             .children(
                                 self.pane_actions_panel(window, cx)

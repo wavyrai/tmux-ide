@@ -1,3 +1,7 @@
+import {
+  PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
+  type PaneStreamInputLifetime,
+} from "@tmux-ide/contracts";
 import { inflateSync } from "node:zlib";
 import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
@@ -305,6 +309,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void;
   fitViewport(
     lease: SessionRuntimeAuthorityLease,
@@ -1283,6 +1288,12 @@ export class PaneStreamLiveConnection {
     try {
       sendControl(this.#socket, {
         type: "ready",
+        ...(this.#sessionRuntimeBinding &&
+        this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
+        )
+          ? { inputLifetime: true as const }
+          : {}),
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         daemonInstanceId: this.#binding.daemonInstanceId,
         requestId: this.#binding.requestId,
@@ -2564,6 +2575,7 @@ export class PaneStreamLiveConnection {
       ingressAtMicros,
       callbackAtSharedMicros,
       ingressAtSharedMicros,
+      frame.expectedLifetime,
     );
   };
 
@@ -2716,7 +2728,18 @@ export class PaneStreamLiveConnection {
     ingressAtMicros: number | null = null,
     callbackAtSharedMicros: number | null = null,
     ingressAtSharedMicros: number | null = null,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void {
+    if (
+      expectedLifetime &&
+      (!this.#sessionRuntimeBinding ||
+        !this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
+        ))
+    ) {
+      this.#failProtocol("input-rejected");
+      return;
+    }
     if (this.#descriptor.viewerMode !== "interactive") {
       this.#failProtocol("input-rejected");
       return;
@@ -2836,6 +2859,7 @@ export class PaneStreamLiveConnection {
                 }
               }
             : undefined,
+          expectedLifetime,
         );
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);

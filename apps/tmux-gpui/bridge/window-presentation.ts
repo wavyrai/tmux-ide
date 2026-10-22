@@ -7,6 +7,7 @@ type Surfaces = z.infer<typeof surfacesSchema>;
 type Region = { id: string; left: number; top: number; width: number; height: number };
 export type WindowPresentation = {
   snapshot: TerminalReplicaSnapshot;
+  representedSurfaces: ReadonlyMap<string, TerminalReplicaSnapshot>;
   copyRegion: Region & { wrapped: boolean[] };
   regions: Region[];
 };
@@ -124,6 +125,7 @@ export function createWindowPresentation(selectedPaneId: string) {
     const surface = checked.snapshots.get(selectedPaneId)!;
     const value: WindowPresentation = {
       snapshot,
+      representedSurfaces: checked.snapshots,
       copyRegion: {
         id: selectedPaneId,
         left: focus.left,

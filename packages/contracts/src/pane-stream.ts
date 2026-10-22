@@ -230,6 +230,16 @@ export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>
 /** @deprecated Import SessionRuntimeTerminalKeyNameSchemaZ for new code. */
 export const PaneStreamKeyNameSchemaZ = SessionRuntimeTerminalKeyNameSchemaZ;
 
+/** Negotiated only with callers offering this additive delivery capability. */
+export const PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION = 105;
+export const PaneStreamInputLifetimeSchemaZ = z
+  .object({
+    generation: z.string().min(1).max(256),
+    incarnation: z.string().min(1).max(256),
+  })
+  .strict();
+export type PaneStreamInputLifetime = z.infer<typeof PaneStreamInputLifetimeSchemaZ>;
+
 const PaneStreamInputFrameMetadataShape = {
   type: z.literal("input"),
   pane: PaneStreamSemanticPaneIdSchemaZ,
@@ -237,6 +247,7 @@ const PaneStreamInputFrameMetadataShape = {
   /** Opt-in controlled next-output probe; not a general causal assertion. */
   performanceTraceId: z.uuid().optional(),
   causalProbe: CausalCellProbeV1SchemaZ.optional(),
+  expectedLifetime: PaneStreamInputLifetimeSchemaZ.optional(),
 } as const;
 
 export const PaneStreamInputFrameSchemaZ = z
@@ -409,6 +420,7 @@ const CellCoordinateSchemaZ = z.number().int().min(0).max(PANE_STREAM_MAX_GRID_C
 export const PaneStreamReadyFrameSchemaZ = z
   .object({
     type: z.literal("ready"),
+    inputLifetime: z.literal(true).optional(),
     protocolVersion: z.literal(PANE_STREAM_PROTOCOL_VERSION),
     daemonInstanceId: BoundedIdentitySchemaZ,
     requestId: z.uuid(),

@@ -58,6 +58,7 @@ pub(super) fn make_view(
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),

@@ -2,6 +2,8 @@
 use super::{frame, options};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
+#[path = "shell_tests/status_geometry.rs"]
+mod status_geometry;
 struct Fixture;
 impl Render for Fixture {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -90,6 +92,7 @@ fn browser_fixture(
         browsing: true,
         terminal_focus: cx.focus_handle(),
         input_interrupted: true,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),

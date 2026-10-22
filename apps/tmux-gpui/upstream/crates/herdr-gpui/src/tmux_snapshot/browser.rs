@@ -109,6 +109,8 @@ pub(super) struct State {
     pub home_phase: HomePhase,
     pub appearance: Option<super::appearance::Appearance>,
     pub selection_identity: Option<String>,
+    pub input_targets: Vec<super::pending_input::Target>,
+    pub input_target_rejected: bool,
     pub copy_region: Option<super::copy::Region>,
     pub regions: Vec<super::hit_regions::Region>,
     pub request: u64,
@@ -170,6 +172,9 @@ struct Publication {
     copy_region: Option<super::copy::Region>,
     #[serde(default)]
     selection_identity: Option<String>,
+    input_targets: Option<Vec<super::pending_input::Target>>,
+    #[serde(default)]
+    input_target_rejected: bool,
     #[serde(default)]
     regions: Vec<super::hit_regions::Region>,
     version: u8,
@@ -388,6 +393,8 @@ pub(super) enum Command {
         revision: u64,
     },
     Input {
+        #[serde(rename = "inputTarget", skip_serializing_if = "Option::is_none")]
+        input_target: Option<String>,
         request: u64,
         id: String,
         input: super::keys::Input,
@@ -451,6 +458,7 @@ impl Reader {
         }
         local_session::validate(&p, surface)?;
         let retained_preview = p.retained_preview.is_some();
+        super::pending_input::validate_targets(p.input_targets.as_deref().unwrap_or(&[]))?;
         if p.selection_identity.as_ref().is_some_and(|identity| {
             identity.len() != 64
                 || !identity
@@ -763,6 +771,8 @@ impl Reader {
             home_phase: p.home.map_or(HomePhase::Live, |home| home.phase),
             appearance: p.appearance,
             selection_identity: p.selection_identity,
+            input_targets: p.input_targets.unwrap_or_default(),
+            input_target_rejected: p.input_target_rejected,
             copy_region: p.copy_region,
             regions: p.regions,
             request: p.request,

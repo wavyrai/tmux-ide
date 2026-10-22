@@ -57,7 +57,7 @@ pub(super) fn settle(
     if !already_fitted {
         let command = receiver.try_recv().unwrap();
         assert!(
-            matches!(command, browser::Command::Input {
+            matches!(command, browser::Command::Input { input_target: None,
             request: owner, id, input: keys::Input::Resize { cols, rows, cell_width, cell_height, cell_width_milli, cell_height_milli }
         } if owner == request && id == pane && (cols, rows) == expected
             && (cell_width, cell_height, cell_width_milli, cell_height_milli)

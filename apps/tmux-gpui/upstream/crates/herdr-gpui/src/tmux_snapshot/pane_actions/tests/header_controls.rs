@@ -93,7 +93,7 @@ fn header_history_mode_has_priority_and_restore_uses_absolute_current_target(
     let point = cx.debug_bounds("pane-mode:pane-a").unwrap().center();
     cx.simulate_click(point, Modifiers::default());
     assert!(
-        matches!(receiver.try_recv().unwrap(),browser::Command::Input{request:7,id,input:crate::tmux_snapshot::keys::Input::Scroll(0)} if id=="pane-a")
+        matches!(receiver.try_recv().unwrap(),browser::Command::Input{input_target:None,request:7,id,input:crate::tmux_snapshot::keys::Input::Scroll(0)} if id=="pane-a")
     );
     cx.update(|window, cx| {
         view.update(cx, |v, _| {

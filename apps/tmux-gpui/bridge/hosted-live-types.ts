@@ -11,6 +11,7 @@ export type HostedLiveEvent =
       surfaces?: readonly { paneId: string; snapshot: TerminalReplicaSnapshot }[];
       [field: string]: unknown;
     }
+  | { kind: "input-target-rejected" }
   | { kittyImageChunk: unknown }
   | { rawKittyImage: import("./kitty-graphics.ts").KittyImageBytes }
   | { kind: "history-handoff"; intent: string; state: string; token: string | null };

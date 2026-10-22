@@ -7418,7 +7418,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z47 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7504,13 +7504,19 @@ var init_pane_stream = __esm({
       deliveryAcks: z47.boolean().optional(),
       diagnosticCapabilities: z47.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict())();
+    PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION = /* @__PURE__ */ (() => 105)();
+    PaneStreamInputLifetimeSchemaZ = /* @__PURE__ */ (() => z47.object({
+      generation: z47.string().min(1).max(256),
+      incarnation: z47.string().min(1).max(256)
+    }).strict())();
     PaneStreamInputFrameMetadataShape = /* @__PURE__ */ (() => ({
       type: z47.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       /** Opt-in controlled next-output probe; not a general causal assertion. */
       performanceTraceId: z47.uuid().optional(),
-      causalProbe: CausalCellProbeV1SchemaZ.optional()
+      causalProbe: CausalCellProbeV1SchemaZ.optional(),
+      expectedLifetime: PaneStreamInputLifetimeSchemaZ.optional()
     }))();
     PaneStreamInputFrameSchemaZ = /* @__PURE__ */ (() => z47.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
@@ -7623,6 +7629,7 @@ var init_pane_stream = __esm({
     CellCoordinateSchemaZ = /* @__PURE__ */ (() => z47.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS))();
     PaneStreamReadyFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
       type: z47.literal("ready"),
+      inputLifetime: z47.literal(true).optional(),
       protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
       requestId: z47.uuid(),
@@ -59372,6 +59379,10 @@ var init_terminal_replica_owner = __esm({
       inputDispatchIncarnation() {
         return this.#disposed ? null : this.#publishedIncarnation;
       }
+      /** Scalar admission fence; unavailable while canonical replacement is pending. */
+      inputAdmissionIncarnation() {
+        return this.#disposed || this.#reseed || this.#waitingForGeometryCapture ? null : this.#publishedIncarnation;
+      }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();
         return Object.freeze({
@@ -62886,7 +62897,7 @@ var init_registry2 = __esm({
           return Promise.reject(error);
         }
       }
-      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId, rawCausalProbe, onCausalResult) {
+      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId, rawCausalProbe, onCausalResult, expectedLifetime) {
         this.assertController(lease, clientId);
         const inputLease = this.#authority.leaseFor(clientId, "input");
         if (!inputLease) {
@@ -62913,7 +62924,8 @@ var init_registry2 = __esm({
           incarnation: null
         }) : null;
         const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        const replicaOwner = this.#terminalReplicaOwner(semanticPaneId3);
+        const replicaOwner = expectedLifetime ? this.#terminalReplicas.get(semanticPaneId3) : this.#terminalReplicaOwner(semanticPaneId3);
+        if (!replicaOwner) throw new Error("Input target lifetime unavailable");
         if (causalProbe) {
           this.#activeCausalCellProbes += 1;
           let settled = false;
@@ -62936,6 +62948,8 @@ var init_registry2 = __esm({
           this.#outputTraces.arm(semanticPaneId3, trace);
         }
         try {
+          if (expectedLifetime && (expectedLifetime.generation !== this.generation || this.#terminalReplicas.get(semanticPaneId3) !== replicaOwner || replicaOwner.inputAdmissionIncarnation() !== expectedLifetime.incarnation))
+            throw new Error("Input target lifetime changed");
           if (input.kind === "text")
             this.#mirror.sendText(
               this.session,
@@ -63469,7 +63483,7 @@ var init_registry2 = __esm({
         this.#assertOpen();
         return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
       }
-      sendInput(lease, semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
+      sendInput(lease, semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult, expectedLifetime) {
         this.#assertOpen();
         this.#runtime.sendInput(
           this.clientId,
@@ -63478,7 +63492,8 @@ var init_registry2 = __esm({
           input,
           performanceTraceId,
           causalProbe,
-          onCausalResult
+          onCausalResult,
+          expectedLifetime
         );
       }
       failCausalCellProbe(semanticPaneId3, traceId, reason) {
@@ -63899,7 +63914,7 @@ var init_transport_binding = __esm({
         authorize();
         return authorize;
       }
-      sendInput(semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
+      sendInput(semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult, expectedLifetime) {
         this.assertController(semanticPaneId3);
         const lease = this.#shared.lease;
         if (!lease) {
@@ -63919,7 +63934,8 @@ var init_transport_binding = __esm({
             causalProbe ? (result2) => {
               this.#causalCellProbes.delete(causalProbe.traceId);
               onCausalResult?.(result2);
-            } : onCausalResult
+            } : onCausalResult,
+            expectedLifetime
           );
         } catch (error) {
           if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);
@@ -70212,6 +70228,7 @@ var init_pane_stream_websocket = __esm({
     "use strict";
     init_src2();
     init_src2();
+    init_src2();
     init_admission_util();
     init_registry2();
     init_terminal_delivery_observation_identity();
@@ -70923,6 +70940,9 @@ var init_pane_stream_websocket = __esm({
         try {
           sendControl2(this.#socket, {
             type: "ready",
+            ...this.#sessionRuntimeBinding && this.#descriptor.terminalDelivery?.protocolVersions.includes(
+              PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION
+            ) ? { inputLifetime: true } : {},
             protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             daemonInstanceId: this.#binding.daemonInstanceId,
             requestId: this.#binding.requestId,
@@ -71980,7 +72000,8 @@ var init_pane_stream_websocket = __esm({
           frame.causalProbe,
           ingressAtMicros,
           callbackAtSharedMicros,
-          ingressAtSharedMicros
+          ingressAtSharedMicros,
+          frame.expectedLifetime
         );
       };
       #acceptAuthorityGeneration(generation) {
@@ -72073,7 +72094,13 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.give(this.#clientId, pane, "renderer-backlog", returned);
         this.#evaluateResume(pane);
       }
-      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null, callbackAtSharedMicros = null, ingressAtSharedMicros = null) {
+      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null, callbackAtSharedMicros = null, ingressAtSharedMicros = null, expectedLifetime) {
+        if (expectedLifetime && (!this.#sessionRuntimeBinding || !this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION
+        ))) {
+          this.#failProtocol("input-rejected");
+          return;
+        }
         if (this.#descriptor.viewerMode !== "interactive") {
           this.#failProtocol("input-rejected");
           return;
@@ -72165,7 +72192,8 @@ var init_pane_stream_websocket = __esm({
                     }
                   });
                 }
-              } : void 0
+              } : void 0,
+              expectedLifetime
             );
           else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);

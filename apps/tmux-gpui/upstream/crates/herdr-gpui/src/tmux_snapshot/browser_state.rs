@@ -25,9 +25,7 @@ impl SnapshotView {
                     self.divider = None;
                 }
                 self.presence.acknowledge(state.presence_revision);
-                if !state.input_ready {
-                    self.discard_composition(cx);
-                }
+
                 if self
                     .selection
                     .as_ref()
@@ -41,9 +39,18 @@ impl SnapshotView {
                     .map(|selection| selection.frame.clone())
                     .or_else(|| state.frame.clone());
                 self.browser_state = state;
+                if self.browser_state.input_target_rejected {
+                    self.interrupt_input(cx);
+                }
+                self.expire_pending_input(cx);
+                if !self.browser_state.input_ready && !self.pending_input_ready() {
+                    self.discard_composition(cx);
+                }
+                self.flush_pending_input(cx);
                 self.observe_pointer();
             }
             None => {
+                self.cancel_pending_input(cx);
                 self.session_tabs.selections = Default::default();
                 self.workspace_fleet_agents.pending = None;
                 self.session_history.pending = None;

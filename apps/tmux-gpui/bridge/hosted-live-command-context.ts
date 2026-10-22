@@ -21,6 +21,9 @@ import type { HostedLiveEvent } from "./hosted-live-types.ts";
 /** Instance-local live getters retain authority checks across awaited operations. */
 export type HostedLiveCommandContext = {
   commands: AsyncIterable<unknown>;
+  currentInputTarget(id: string): string | null;
+  currentInputProof(id: string): { generation: string; incarnation: string } | null;
+  rejectInputTarget(): void;
   hostClientId: string;
   stopped: boolean;
   inputPipeline: ReturnType<typeof createInputPipeline>;

@@ -135,7 +135,7 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
     let commands: Vec<_> = receiver.try_iter().collect();
     assert_eq!(commands.len(), 1);
     assert!(
-        matches!(&commands[0], browser::Command::Input {
+        matches!(&commands[0], browser::Command::Input { input_target: None,
         request: 7, id, input: crate::tmux_snapshot::keys::Input::Resize { cols, rows, .. },
     } if id == "pane-a" && (*cols, *rows) == expected),
         "hiding the sidebar may resize the same pane, never send a key or select a session"

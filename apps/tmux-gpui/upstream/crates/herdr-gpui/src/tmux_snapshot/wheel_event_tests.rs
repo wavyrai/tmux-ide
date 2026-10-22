@@ -52,7 +52,7 @@ fn event(position: Point<Pixels>, fraction: f32) -> ScrollWheelEvent {
 }
 fn assert_scroll(receiver: &mpsc::Receiver<browser::Command>, request: u64, lines: i16) {
     assert!(
-        matches!(receiver.try_recv().unwrap(), browser::Command::Input { request:r, id, input:Input::Wheel { lines:n, row:2, col:2, shift:false, alt:false, control:false } } if r == request && id == "pane-a" && n == lines)
+        matches!(receiver.try_recv().unwrap(), browser::Command::Input { input_target: None, request:r, id, input:Input::Wheel { lines:n, row:2, col:2, shift:false, alt:false, control:false } } if r == request && id == "pane-a" && n == lines)
     );
     assert!(
         receiver.try_recv().is_err(),
@@ -209,10 +209,12 @@ fn wheel_preserves_pane_local_position_modifiers_and_live_input_gate(cx: &mut Te
     });
     let actual = receiver.try_recv().unwrap();
     eprintln!("wheel command: {}", serde_json::to_string(&actual).unwrap());
-    assert!(matches!(actual, browser::Command::Input {
+    assert!(
+        matches!(actual, browser::Command::Input { input_target: None,
         request: 7, id, input: Input::Wheel { lines: 3, row: 3, col: 1,
         shift: false, alt: true, control: true }
-    } if id == "pane-b"));
+    } if id == "pane-b")
+    );
     assert!(receiver.try_recv().is_err());
     view.update(cx, |view, _| view.input_interrupted = true);
     cx.simulate_event(ScrollWheelEvent {

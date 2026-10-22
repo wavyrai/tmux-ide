@@ -13,6 +13,7 @@ import {
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
   type CausalCellProbeV1,
+  type PaneStreamInputLifetime,
   type TerminalDeliveryOffer,
   type TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
@@ -428,6 +429,7 @@ export class SessionRuntimeTransportBinding {
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void {
     this.assertController(semanticPaneId);
     const lease = this.#shared.lease;
@@ -451,6 +453,7 @@ export class SessionRuntimeTransportBinding {
               onCausalResult?.(result);
             }
           : onCausalResult,
+        expectedLifetime,
       );
     } catch (error) {
       if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);

@@ -65,7 +65,7 @@ fn sidebar_reorder_retains_id_but_removal_or_request_change_cannot_choose_replac
     });
     cx.simulate_keystrokes("enter");
     let commands: Vec<_> = receiver.try_iter().collect();
-    assert!(commands.iter().all(|command| matches!(command, browser::Command::Input { request: 8, id, input: crate::tmux_snapshot::keys::Input::Resize { .. } } if id == "pane-a")), "request redraw may only refresh geometry, never send a key or select a replacement");
+    assert!(commands.iter().all(|command| matches!(command, browser::Command::Input { input_target: None, request: 8, id, input: crate::tmux_snapshot::keys::Input::Resize { .. } } if id == "pane-a")), "request redraw may only refresh geometry, never send a key or select a replacement");
     view.read_with(cx, |view, _| {
         assert!(!view.sidebar_keyboard.active);
         assert!(view.input_interrupted);

@@ -1,3 +1,4 @@
+import { fencedInputSchema, inputTargetMatches, createInputTargetGuard } from "./input-targets.ts";
 import { z } from "zod";
 import { agentLaunchGuidance, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { resizeSchema, resizeWindow } from "./geometry.ts";
@@ -15,8 +16,22 @@ import { contentRect } from "./window-canvas.ts";
 
 import type { HostedLiveCommandContext } from "./hosted-live-command-context.ts";
 export async function runHostedLiveCommands(c: HostedLiveCommandContext) {
-  inputLoop: for await (const value of c.commands) {
+  inputLoop: for await (let value of c.commands) {
     if (c.stopped) break;
+    const fenced = fencedInputSchema.safeParse(value);
+    if (fenced.success) value = fenced.data.input;
+    const validTarget = createInputTargetGuard(
+      () =>
+        !fenced.success ||
+        inputTargetMatches(fenced.data.id, fenced.data.inputTarget, c.selected, (id) =>
+          c.currentInputTarget(id),
+        ),
+      () => {
+        c.rejectInputTarget();
+        c.stop();
+      },
+    );
+    if (!validTarget()) continue;
     const pipelined = isPipelineInput(value);
     // Other commands are barriers, including presence, history, paste and control keys.
     if (!pipelined) await c.inputPipeline.barrier();
@@ -384,6 +399,7 @@ export async function runHostedLiveCommands(c: HostedLiveCommandContext) {
     const inputPane = c.selected;
     const inputLifetime = c.lifetimes.get(inputPane);
     const deliver = async () => {
+      if (!validTarget()) return;
       // Recheck after waiting for capacity; a disconnect or authority loss can
       // arrive independently of stdin while earlier acknowledgements settle.
       if (
@@ -398,7 +414,38 @@ export async function runHostedLiveCommands(c: HostedLiveCommandContext) {
       )
         throw new Error("Input target retired");
       await deliverPreviewInput(
-        c.inputRuntime,
+        fenced.success
+          ? {
+              ownsConnectionAuthority: (kind) => c.inputRuntime.ownsConnectionAuthority(kind),
+              sendTerminalInput: async (target, input) => {
+                if (!validTarget()) return "ok";
+                const proof = c.currentInputProof(inputPane);
+                if (!proof) {
+                  c.rejectInputTarget();
+                  c.stop();
+                  return "ok";
+                }
+                try {
+                  const result = await c.inputRuntime.sendTerminalInput(
+                    target,
+                    input,
+                    undefined,
+                    undefined,
+                    proof,
+                  );
+                  if (result !== "ok") {
+                    c.rejectInputTarget();
+                    c.stop();
+                  }
+                  return result;
+                } catch (error) {
+                  c.rejectInputTarget();
+                  c.stop();
+                  throw error;
+                }
+              },
+            }
+          : c.inputRuntime,
         c.config.workspaceName,
         inputPane,
         value,

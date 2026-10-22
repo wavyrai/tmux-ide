@@ -1,3 +1,5 @@
+import { PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION } from "../../../packages/contracts/src/pane-stream.ts";
+import { publishInputTargets } from "./input-targets.ts";
 import { releaseLiveSessionResources } from "./live-session-resources.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
@@ -290,6 +292,15 @@ export function createHostedLiveSession(options: HostedLiveOptions) {
       connection,
       sequence: ++sequence,
       ...fields,
+      inputTargets: publishInputTargets({
+        enabled:
+          inputReady && interactive && !catalogOnly && runtime?.supportsInputLifetime === true,
+        connection,
+        liveSessionId: options.config.liveSessionId,
+        workspaceName: options.config.workspaceName,
+        surfaces: published,
+        current: (paneId) => replicas.get(paneId)?.current() ?? null,
+      }),
       graphics,
       snapshot: catalogOnly ? null : snapshot,
       ...(interactive || catalogOnly ? { surfaces: published } : {}),
@@ -558,6 +569,7 @@ export function createHostedLiveSession(options: HostedLiveOptions) {
                 TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
                 TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
                 TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
+                PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
               ]
             : [1],
           encodings: ["semantic-compact-v1" as const, "semantic-v1" as const],
@@ -748,6 +760,35 @@ export function createHostedLiveSession(options: HostedLiveOptions) {
         const inputRuntime = runtime;
         if (latest.snapshot) output(latest.snapshot);
         await runHostedLiveCommands({
+          currentInputProof(id) {
+            const proof = replicas.get(id)?.current()?.proof;
+            return proof ? { generation: proof.generation, incarnation: proof.incarnation } : null;
+          },
+          currentInputTarget(id) {
+            const frame = replicas.get(id)?.current();
+            if (
+              !frame ||
+              stopped ||
+              !foreground ||
+              runtime?.supportsInputLifetime !== true ||
+              !runtime?.ownsConnectionAuthority("input")
+            )
+              return null;
+            return (
+              publishInputTargets({
+                enabled: true,
+                connection,
+                liveSessionId: config.liveSessionId,
+                workspaceName: config.workspaceName,
+                surfaces: [{ paneId: id, snapshot: frame.snapshot }],
+                current: () => frame,
+              })[0]?.token ?? null
+            );
+          },
+          rejectInputTarget() {
+            options.diagnostic?.("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
+            emit({ kind: "input-target-rejected" });
+          },
           hostClientId,
           get commands() {
             return commands;

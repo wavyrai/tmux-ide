@@ -50,7 +50,7 @@ fn history_page_keys_use_selected_content_height_without_rearming_input(cx: &mut
             prepare(view, rows);
             for (key_name, expected) in [("shift-pageup", step), ("shift-pagedown", -step)] {
                 view.terminal_key(&key(key_name), window, cx);
-                assert!(matches!(receiver.try_recv(), Ok(browser::Command::Input { request: 7, id, input: Input::Scroll(lines) }) if id == "pane-a" && lines == expected));
+                assert!(matches!(receiver.try_recv(), Ok(browser::Command::Input { input_target: None, request: 7, id, input: Input::Scroll(lines) }) if id == "pane-a" && lines == expected));
                 assert!(receiver.try_recv().is_err());
                 assert!(view.input_interrupted);
                 assert!(!view.browser_state.input_ready);
@@ -129,7 +129,7 @@ fn history_page_keys_accept_newer_same_geometry_publications_before_paint(cx: &m
             assert!(!crate::tmux_snapshot::hit_regions::is_painted(view.frame.as_ref(), view.painted_frame.as_ref()));
             assert!(crate::tmux_snapshot::hit_regions::is_painted(painted.as_ref(), view.painted_frame.as_ref()));
             view.terminal_key(&key(key_name), window, cx);
-            assert!(matches!(receiver.try_recv(), Ok(browser::Command::Input { request: 7, id, input: Input::Scroll(lines) }) if id == "pane-a" && lines == expected));
+            assert!(matches!(receiver.try_recv(), Ok(browser::Command::Input { input_target: None, request: 7, id, input: Input::Scroll(lines) }) if id == "pane-a" && lines == expected));
             view.terminal_key(&key("enter"), window, cx);
             assert!(receiver.try_recv().is_err(), "paging must not re-arm or forward raw input");
             assert!(view.input_interrupted);

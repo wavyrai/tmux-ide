@@ -111,6 +111,7 @@ impl SnapshotView {
             && let Some(sender) = &self.browser_commands
         {
             let _ = sender.try_send(browser::Command::Input {
+                input_target: None,
                 request: lease.request,
                 id: lease.pane,
                 input: super::keys::Input::Mouse(Command::Cancel { gesture }),

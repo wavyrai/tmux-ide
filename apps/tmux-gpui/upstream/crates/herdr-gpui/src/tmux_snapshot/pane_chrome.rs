@@ -417,7 +417,9 @@ impl SnapshotView {
                         .cursor_pointer()
                         .on_click(cx.listener(move |view, _, window, cx| {
                             if current_header(view, request, &frame, &regions, &id) {
-                                if view.browser_state.selected_pane.as_ref() != Some(&id) {
+                                if view.browser_state.selected_pane.as_ref() != Some(&id)
+                                    || view.browser_state.input_target_rejected
+                                {
                                     view.select(Selection::Pane(id.clone()), window, cx);
                                 } else {
                                     // Focus alone never restores interrupted input authority.
