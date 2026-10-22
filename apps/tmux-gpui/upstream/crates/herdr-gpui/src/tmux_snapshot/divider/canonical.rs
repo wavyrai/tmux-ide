@@ -179,7 +179,6 @@ impl Ack {
 #[serde(tag = "phase", rename_all = "lowercase")]
 pub(in crate::tmux_snapshot) enum Update {
     Begin { target: Target, axis: Axis },
-    Move { boundary: u16 },
     Release { boundary: u16 },
     Cancel,
 }

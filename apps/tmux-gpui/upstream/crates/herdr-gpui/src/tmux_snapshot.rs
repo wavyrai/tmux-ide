@@ -24,6 +24,7 @@ mod navigation;
 mod new_session;
 mod pane_actions;
 mod pane_chrome;
+mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
@@ -181,6 +182,15 @@ fn show(
                                             view.presence.flush(sender);
                                         }
                                         view.flush_resize_gesture(cx);
+                                        view.expire_pending_input(cx);
+                                        if !view.terminal_input_ready()
+                                            || view.selection.is_some()
+                                            || view.divider.is_some()
+                                        {
+                                            view.fit_settle.clear();
+                                        } else if view.fit_settle.due(std::time::Instant::now()) {
+                                            cx.notify();
+                                        }
                                         view.flush_attention();
                                         view.flush_palette(cx);
                                         view.flush_kitty_graphics(cx);
@@ -228,6 +238,7 @@ fn show(
                         view.presence.set_active(window.is_window_active());
                         view.clear_selection(cx);
                         view.last_resize = None;
+                        view.fit_settle.clear();
                         view.wheel = Default::default();
                         view.discard_composition(cx);
                         if let Some(sender) = &view.browser_commands {
@@ -255,6 +266,7 @@ fn show(
                         browsing: browser.is_some(),
                         terminal_focus: cx.focus_handle(),
                         input_interrupted: false,
+                        pending_input: None,
                         picker: None,
                         attention: Default::default(),
                         palette: Default::default(),
@@ -273,6 +285,7 @@ fn show(
                         window_reveal: Default::default(),
                         resize_gesture: Default::default(),
                         last_resize: None,
+                        fit_settle: Default::default(),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -335,6 +348,7 @@ struct SnapshotView {
     header_controls: pane_chrome::Controls,
     terminal_focus: FocusHandle,
     input_interrupted: bool,
+    pending_input: Option<pending_input::Pending>,
     picker: Option<picker::Picker>,
     attention: picker::attention::Owner,
     palette: picker::palette::Owner,
@@ -353,6 +367,7 @@ struct SnapshotView {
     window_reveal: workspace_chrome::WindowReveal,
     resize_gesture: divider::Owner,
     last_resize: Option<(u64, u16, u16)>,
+    fit_settle: geometry::FitSettle,
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
@@ -446,7 +461,9 @@ impl SnapshotView {
                         entity.update(cx, |view, cx| {
                             if view.browsing
                                 && view.presence.ready()
-                                && view.browser_state.input_ready
+                                // AppKit must keep delivering text while a verified
+                                // pane selection holds never-dispatched input.
+                                && (view.browser_state.input_ready || view.pending_input_ready())
                                 && !view.browser_state.retained_preview
                                 && view.selection.is_none()
                                 && view.divider.is_none()
@@ -495,11 +512,22 @@ impl SnapshotView {
                                     && view.picker.is_none()
                                     && view.pane_actions.is_none()
                                     && view.new_session.is_none()
-                                    && (view.last_resize != Some(desired) || pixels_changed)
+                                    && view.fit_settle.ready(
+                                        geometry::Fit {
+                                            request: desired.0,
+                                            cols,
+                                            rows,
+                                            pixels: cell_pixels,
+                                        },
+                                        view.last_resize,
+                                        pixels_changed,
+                                        std::time::Instant::now(),
+                                    )
                                     && let (Some(sender), Some(id)) =
                                         (&view.browser_commands, &view.browser_state.selected_pane)
                                 {
                                     let command = browser::Command::Input {
+                                        input_target: None,
                                         request: view.browser_request,
                                         id: id.clone(),
                                         input: keys::Input::Resize {
@@ -513,9 +541,12 @@ impl SnapshotView {
                                     };
                                     if sender.try_send(command).is_ok() {
                                         view.last_resize = Some(desired);
+                                        view.fit_settle.clear();
                                         view.graphics.cell_pixels.set(Some(cell_pixels));
                                     }
                                 }
+                            } else {
+                                view.fit_settle.clear();
                             }
                         });
                         let rails = entity.update(cx, |view, _| {
@@ -624,3 +655,6 @@ impl SnapshotView {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+mod fit_test_support;

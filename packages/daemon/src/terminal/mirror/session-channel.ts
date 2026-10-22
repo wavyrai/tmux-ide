@@ -507,6 +507,8 @@ export class SessionChannel {
   private readonly fittedWindows = new Map<string, { cols: number; rows: number }>();
   private cancelSync: (() => void) | null = null;
   private syncOrdinal = 0;
+  private identityJoinOrdinal = 0;
+  private trustedInventoryJoinsMissing = false;
   private completedSyncOrdinal = 0;
   private lastDisplayNameSyncAtMs = 0;
   private disposed = false;
@@ -799,22 +801,36 @@ export class SessionChannel {
 
   /**
    * Strict daemon-internal inventory from this channel's current tmux truth.
-   * Unlike the background discovery path, this query awaits descriptor
-   * reconciliation before projecting and rejects incomplete identity rather
-   * than returning the previous descriptor snapshot.
+   * Unlike background discovery, this query verifies current native membership
+   * before projecting and rejects incomplete identity. Stream admission may
+   * explicitly join missing pane records after that verification; ordinary
+   * inventory readers retain their existing fail-closed no-join contract.
    */
   describeTrustedInventory(
     expectedRuntimeSessionId: string,
+    joinMissingPanes = false,
   ): Promise<TrustedMirrorSessionInventory> {
     if (this.disposed) {
       return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
     }
     if (this.trustedInventoryFlight) {
+      // A default read can fail precisely because it does not join new panes.
+      // Preserve that failure for its caller, then qualify admission separately.
+      if (
+        joinMissingPanes &&
+        !this.trustedInventoryJoinsMissing &&
+        this.trustedInventoryFlightSessionId === expectedRuntimeSessionId
+      )
+        return this.trustedInventoryFlight.then(
+          () => this.describeTrustedInventory(expectedRuntimeSessionId, true),
+          () => this.describeTrustedInventory(expectedRuntimeSessionId, true),
+        );
       return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId
         ? this.trustedInventoryFlight
         : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
     }
-    const flight = this.refreshTrustedInventory(expectedRuntimeSessionId)
+    this.trustedInventoryJoinsMissing = joinMissingPanes;
+    const flight = this.refreshTrustedInventory(expectedRuntimeSessionId, 0, joinMissingPanes)
       .catch((error) => {
         this.windowLinkAuthority?.invalidate();
         this.latestWindowStage = null;
@@ -3387,6 +3403,7 @@ export class SessionChannel {
   private async refreshTrustedInventory(
     expectedRuntimeSessionId: string,
     attempt = 0,
+    joinMissingPanes = false,
   ): Promise<TrustedMirrorSessionInventory> {
     const authorityOrdinal = this.windowIdentityOrdinal;
     const beforeLines = await this.io.request(
@@ -3486,7 +3503,11 @@ export class SessionChannel {
     ) {
       if (attempt >= 1)
         throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
-      return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+      return await this.refreshTrustedInventory(
+        expectedRuntimeSessionId,
+        attempt + 1,
+        joinMissingPanes,
+      );
     }
     if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
     const activeWindowId = activeWindowIds.values().next().value;
@@ -3521,7 +3542,28 @@ export class SessionChannel {
       stagedPaneIds.size !== descriptors.length ||
       [...computedWindowCounts.keys()].some(
         (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId),
-      ) ||
+      )
+    )
+      throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+    // Fresh native inventory can beat background discovery after window creation.
+    // Join verified stable membership before projecting semantic records.
+    if (
+      joinMissingPanes &&
+      descriptors.some(
+        (pane) => this.panesByRuntime.get(pane.runtimePaneId)?.semanticId !== pane.semanticPaneId,
+      )
+    ) {
+      this.discovery.invalidate();
+      await this.reconcileIdentity(
+        descriptors,
+        runtimePaneIds,
+        () => authorityOrdinal === this.windowIdentityOrdinal,
+        false,
+      );
+    }
+    if (this.disposed || authorityOrdinal !== this.windowIdentityOrdinal)
+      throw new Error(`trusted inventory for ${this.opts.session} changed during identity join`);
+    if (
       descriptors.some((descriptor) => {
         const pane = this.panesByRuntime.get(descriptor.runtimePaneId);
         const window = confirmedWindowStage.windows.get(descriptor.windowId!);
@@ -3934,7 +3976,10 @@ export class SessionChannel {
   private async reconcileIdentity(
     descriptors: readonly SessionPaneDescriptor[],
     listed: ReadonlySet<string>,
+    current: () => boolean = () => true,
+    publish = true,
   ): Promise<boolean> {
+    const joinOrdinal = ++this.identityJoinOrdinal;
     if (this.disposed) return false;
     if (this.opts.hasSharedWindowConflict?.()) {
       this.settleFirstJoin();
@@ -3973,7 +4018,8 @@ export class SessionChannel {
           ),
       ),
     );
-    if (this.disposed) return plan.stampEffects.length > 0;
+    if (this.disposed || !current() || joinOrdinal !== this.identityJoinOrdinal)
+      return plan.stampEffects.length > 0;
     const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
     const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
     for (const verified of reconciliation.panes) {
@@ -4080,8 +4126,10 @@ export class SessionChannel {
      * without this the new pane stays invisible until something else happens to
      * move a layout, and a split looks like it did not reach the view.
      */
-    for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
-    this.emitLayoutAuthority();
+    if (publish) {
+      for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
+      this.emitLayoutAuthority();
+    }
     this.settleFirstJoin();
     return plan.stampEffects.length > 0;
   }

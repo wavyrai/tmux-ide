@@ -1,9 +1,32 @@
+import {
+  visibleInputTargets,
+  inputTargetsSchema,
+  resolveInputTarget,
+  type InputTarget,
+} from "./input-targets.ts";
+import { HostedPreviewSession, type PreviewSession } from "./preview-session.ts";
+import { createHostedSurfaceValidator, validateHostedImage } from "./hosted-publication.ts";
+import { encodeBinaryImage } from "./binary-framing.ts";
+import {
+  createNativePublicationWriter,
+  nativeFrameResyncSchema,
+  type NativePublicationContext,
+} from "./native-publication.ts";
+import {
+  COMPACT_HELPER_ENV,
+  COMPACT_NATIVE_ENV,
+  decodeSurfacePublication,
+} from "./snapshot-wire.ts";
 import { scopeSelectionIdentity } from "./selection-identity.ts";
 import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
 import { drainHistoryCapture } from "./history-handoff.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
 import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
-import { serializeBrowserPublication } from "./browser-publication.ts";
+import {
+  preparePublication,
+  createPublicationDeduplicator,
+  type PreparedPublication,
+} from "./prepared-publication.ts";
 import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
@@ -120,7 +143,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import { createPreviewCatalog, sessionChoice } from "./catalog.ts";
 import { connectionSchema } from "./config.ts";
@@ -155,6 +178,7 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
+  nativeFrameResyncSchema,
   z
     .object({
       type: z.literal("kitty-missing"),
@@ -247,6 +271,10 @@ const commandSchema = z.union([
       request: z.number().int().positive().safe(),
       id: z.string().min(1).max(512),
       input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema, mouseSchema]),
+      inputTarget: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
     })
     .strict(),
   z.object({ type: z.literal("home"), request: z.number().int().positive().safe() }).strict(),
@@ -366,30 +394,61 @@ let regions: unknown[] = [];
 let kittyPlacements: KeyedPlacement[] = [];
 const kittyKnown = createKnownDigests();
 // Image chunk lines are ordered ahead of publications and never coalesced.
-const orderedLines: string[] = [];
+const orderedLines: (string | Buffer)[] = [];
 let orderedBytes = 0;
 const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
 let inputReady = false;
+let inputTargetRejected = false;
 let foreground = true;
 let sessionCatalogComplete = false;
 let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
+let inputTargets: {
+  snapshot: TerminalReplicaSnapshot;
+  owner: unknown;
+  value: InputTarget[];
+  raw: InputTarget[];
+} | null = null;
 let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | null = null;
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
-let pending: string | null = null,
+const nativeEncoding = process.env[COMPACT_NATIVE_ENV];
+const nativeWriter = createNativePublicationWriter(
+  nativeEncoding === "binary-rle-v1" ||
+    nativeEncoding === "rle-delta-v1" ||
+    nativeEncoding === "rle-v1"
+    ? nativeEncoding
+    : "legacy",
+  (line) => process.stdout.write(line),
+  MAX_FRAME,
+);
+process.stdout.on("error", () => nativeWriter.retire());
+let nativeFrameBasis = "unavailable";
+let forceNativePublication = false;
+function nativeFrameContext(): NativePublicationContext {
+  return {
+    connection,
+    request,
+    identity: JSON.stringify([nativeFrameBasis, surface, foreground, historyOffset]),
+  };
+}
+type QueuedPublication = PreparedPublication & { context: NativePublicationContext };
+const admitPublication = createPublicationDeduplicator();
+let pending: QueuedPublication | null = null,
   blocked = false;
 let active:
   | {
-      child: ChildProcess;
+      child: PreviewSession;
       done: Promise<void>;
       catalogOnly: boolean;
       historyIntent?: number;
       drainHistory?: () => void;
       presentation: ReturnType<typeof createWindowPresentation>;
+      /** Retarget this helper to another pane of its subscribed window, without a new attachment. */
+      reselect?: (choice: z.infer<typeof connectionSchema>, request: number) => boolean;
     }
   | undefined;
 
@@ -1181,6 +1240,18 @@ function publish() {
     selectedPane: preview ? null : selectedPane,
   };
   const suffix = {
+    inputTargetRejected,
+    inputTargets:
+      !stopped &&
+      !preview &&
+      foreground &&
+      active &&
+      surface === "workspace" &&
+      historyOffset === 0 &&
+      inputTargets?.snapshot === snapshot &&
+      inputTargets?.owner === active.child
+        ? inputTargets.value
+        : [],
     selectionIdentity:
       !preview &&
       foreground &&
@@ -1199,7 +1270,7 @@ function publish() {
           : surface === "home" && machineMessage
             ? `${status} · ${machineMessage}`
             : status,
-    snapshot,
+    snapshot: snapshot as TerminalReplicaSnapshot | null,
     historyOffset: snapshot && selectedPane ? historyOffset : 0,
     copyRegion: snapshot ? copyRegion : null,
     regions: snapshot ? regions : [],
@@ -1219,14 +1290,24 @@ function publish() {
     fleet: fleet?.publication() ?? null,
     machines: machines ? { ...machines.publication(), message: machineMessage } : null,
   };
-  const line = serializeBrowserPublication(prefix, suffix, preview?.snapshotJson ?? null);
-  if (Buffer.byteLength(line) > MAX_FRAME) throw new Error("Browser publication too large");
-  if (blocked) pending = line;
-  else blocked = !process.stdout.write(line);
+  const publication = {
+    ...preparePublication(prefix, suffix, preview?.snapshotJson ?? null),
+    context: nativeFrameContext(),
+  };
+  if (Buffer.byteLength(publication.before) + Buffer.byteLength(publication.after) > MAX_FRAME)
+    throw new Error("Browser publication metadata too large");
+  const changed = admitPublication(publication);
+  if (!changed && !forceNativePublication) return;
+  forceNativePublication = false;
+  if (blocked) pending = publication;
+  else writePublication(publication);
+}
+function writePublication(publication: QueuedPublication) {
+  blocked = !nativeWriter.write(publication, publication.context);
 }
 // A window that cannot keep up loses whole images; it reports the gap and the
 // helper pulls them again (see kitty_graphics.rs).
-function writeOrdered(line: string) {
+function writeOrdered(line: string | Buffer) {
   if (!blocked) {
     blocked = !process.stdout.write(line);
     return;
@@ -1244,9 +1325,9 @@ process.stdout.on("drain", () => {
   }
   if (blocked) return;
   if (pending) {
-    const line = pending;
+    const publication = pending;
     pending = null;
-    blocked = !process.stdout.write(line);
+    writePublication(publication);
   }
 });
 async function retire() {
@@ -1419,7 +1500,9 @@ async function openPane(
   }
   const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
   let handedOff = false;
-  const presentation = createWindowPresentation(config.semanticPaneId);
+  let presentation = createWindowPresentation(config.semanticPaneId);
+  // Set between an in-window reselect and the helper's publication for that pane.
+  let reselecting = false;
   try {
     const path = join(directory, "connection.json");
     const historyKey = fleet?.attachmentKey(config);
@@ -1447,24 +1530,45 @@ async function openPane(
       (requiredCurrent && !requiredCurrent())
     )
       return;
-    const child = spawn(
-      process.execPath,
-      [
-        ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
-        fileURLToPath(
-          new URL(
-            import.meta.url.endsWith(".bundle.mjs") ? "live.bundle.mjs" : "live.ts",
-            import.meta.url,
-          ),
-        ),
-        path,
-        catalogOnly ? "--catalog" : "--interactive",
-      ],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, [KITTY_KNOWN_ENV]: kittyKnown.env() },
-      },
-    );
+    const child: PreviewSession & {
+      stdin: import("node:stream").Writable;
+      stdout: import("node:stream").Readable;
+      stderr: import("node:stream").Readable;
+    } =
+      process.env.TMUX_IDE_GUI_LIVE_MODE !== "process"
+        ? new HostedPreviewSession({
+            config: {
+              ...config,
+              ...(restoreToken ? { historyAnchor: restoreToken } : {}),
+              ...(!catalogOnly && savedHistory && !restoreToken
+                ? { historyUnavailable: true }
+                : {}),
+            },
+            mode: catalogOnly ? "catalog" : "interactive",
+            knownDigests: kittyKnown.env().split(",").filter(Boolean),
+          })
+        : spawn(
+            process.execPath,
+            [
+              ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
+              fileURLToPath(
+                new URL(
+                  import.meta.url.endsWith(".bundle.mjs") ? "live.bundle.mjs" : "live.ts",
+                  import.meta.url,
+                ),
+              ),
+              path,
+              catalogOnly ? "--catalog" : "--interactive",
+            ],
+            {
+              stdio: ["pipe", "pipe", "pipe"],
+              env: {
+                ...process.env,
+                [KITTY_KNOWN_ENV]: kittyKnown.env(),
+                [COMPACT_HELPER_ENV]: "rle-v1",
+              },
+            },
+          );
     const done = new Promise<void>((resolve) =>
       child.once("close", () => {
         void rm(directory, { recursive: true, force: true })
@@ -1480,6 +1584,7 @@ async function openPane(
       inputReady = false;
       void retire();
     });
+    inputTargetRejected = false;
     active = {
       child,
       done,
@@ -1526,6 +1631,42 @@ async function openPane(
       },
     };
     if (!catalogOnly)
+      active.reselect = (choice, next) => {
+        if (
+          active?.child !== child ||
+          child.exitCode !== null ||
+          !child.stdin.writable ||
+          diagnostics.fault ||
+          !foreground ||
+          historyOffset !== 0 ||
+          !snapshot ||
+          pendingClose ||
+          pendingPaneSplit ||
+          pendingNewWindow ||
+          choice.baseUrl !== config.baseUrl ||
+          choice.ownerToken !== config.ownerToken ||
+          choice.remoteSocketOrigin !== config.remoteSocketOrigin ||
+          choice.scope.serverId !== config.scope.serverId ||
+          choice.scope.generation !== config.scope.generation ||
+          choice.workspaceName !== config.workspaceName ||
+          choice.liveSessionId !== config.liveSessionId ||
+          !choice.visiblePaneIds?.includes(choice.semanticPaneId) ||
+          JSON.stringify(choice.visiblePaneIds) !== JSON.stringify(config.visiblePaneIds)
+        )
+          return false;
+        // Same subscription and attachment: only the selected pane and request change.
+        // Input written after this line is ordered behind the helper's retarget.
+        config = choice;
+        token = next;
+        presentation = createWindowPresentation(choice.semanticPaneId);
+        active.presentation = presentation;
+        reselecting = true;
+        child.stdin.write(
+          JSON.stringify({ kind: "select-pane", id: choice.semanticPaneId }) + "\n",
+        );
+        return true;
+      };
+    if (!catalogOnly)
       child.stdin.write(
         JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
       );
@@ -1533,6 +1674,11 @@ async function openPane(
     let buffer = Buffer.alloc(0),
       childConnection: string | undefined,
       childSequence = 0;
+    let content: {
+      bytes: Buffer;
+      value: { snapshot: unknown; surfaces: unknown };
+      surfaces: z.infer<typeof surfacesSchema> | null;
+    } | null = null;
     let childPresentationEpoch: number | undefined;
     const diagnostics = createDiagnosticChannel((fault) => {
       if (stopped || request !== token || active?.child !== child) return;
@@ -1572,31 +1718,85 @@ async function openPane(
     };
     child.stderr.on("data", (chunk: Buffer) => diagnostics.push(chunk));
     child.on("error", unavailable);
-    child.on("exit", unavailable);
-    child.stdout.on("data", (chunk: Buffer) => {
-      // Fatal helper diagnostics retire this presentation lifetime. Buffered
-      // stdout must not restore a frame or input authority after that fault.
-      if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
-      let publicationStage = "framing";
+    child.on("exit", () => {
+      // A helper that refused an in-window reselect exits before addressing the
+      // new pane; attach the target freshly instead of reporting it unavailable.
+      if (
+        reselecting &&
+        !diagnostics.fault &&
+        !stopped &&
+        request === token &&
+        active?.child === child
+      ) {
+        reselecting = false;
+        const target = config,
+          owner = token;
+        void retire()
+          .then(() => {
+            if (!stopped && request === owner) return openPane(target, owner);
+          })
+          .catch(unavailable);
+        return;
+      }
+      unavailable();
+    });
+    const validateSurfaces = createHostedSurfaceValidator();
+    // Both transports enter the same envelope/authority/presentation validation.
+    function applyChildPublication(value: unknown, sameTail = false, typed = false): boolean {
+      if (
+        stopped ||
+        request !== token ||
+        active?.child !== child ||
+        diagnostics.fault ||
+        inputTargetRejected ||
+        !owningCatalog
+      )
+        return false;
+      let publicationStage = "envelope";
       try {
-        buffer = Buffer.concat([buffer, chunk]);
-        let end;
-        while ((end = buffer.indexOf(10)) >= 0) {
-          publicationStage = "framing";
-          if (end > MAX_FRAME) throw new Error("Oversized child publication");
-          publicationStage = "decode";
-          const event = JSON.parse(buffer.subarray(0, end).toString("utf8"));
-          buffer = buffer.subarray(end + 1);
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          throw new Error("Invalid child publication");
+        const event = value as Record<string, unknown>;
+        publication: {
+          if (typed && "rawKittyImage" in event) {
+            publicationStage = "graphics";
+            const { metadata, bytes } = validateHostedImage(
+              event.rawKittyImage as Parameters<typeof validateHostedImage>[0],
+            );
+            kittyKnown.observeBytes(metadata, bytes.byteLength);
+            if (nativeEncoding === "binary-rle-v1")
+              writeOrdered(encodeBinaryImage(metadata, bytes));
+            else
+              writeOrdered(
+                JSON.stringify({
+                  kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
+                }) + "\n",
+              );
+            break publication;
+          }
           if (event && typeof event === "object" && "kittyImageChunk" in event) {
             publicationStage = "graphics";
             const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
             kittyKnown.observe(chunk);
-            writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
-            continue;
+            if (nativeEncoding === "binary-rle-v1") {
+              const { data, ...metadata } = chunk;
+              writeOrdered(encodeBinaryImage(metadata, Buffer.from(data, "base64")));
+            } else writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
+            break publication;
+          }
+          if (event.kind === "input-target-rejected") {
+            inputTargetRejected = true;
+            inputReady = false;
+            inputTargets = null;
+            status = "Input interrupted — reselect the pane, then retype";
+            process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
+            publish();
+            break publication;
           }
           publicationStage = "envelope";
           if (
             typeof event.connection !== "string" ||
+            typeof event.sequence !== "number" ||
             !Number.isSafeInteger(event.sequence) ||
             event.sequence <= childSequence ||
             (childConnection && event.connection !== childConnection)
@@ -1605,6 +1805,10 @@ async function openPane(
           publicationStage = "topology";
           childConnection = event.connection;
           childSequence = event.sequence;
+          // Publications emitted before the helper applied a reselect describe the
+          // previous pane's input, history and action identities.
+          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) break publication;
+          reselecting = false;
           layouts = topologySchema.parse(event.layouts ?? []);
           if (catalogOnly) {
             if (event.catalogReady !== true) throw new Error("Layout catalog unavailable");
@@ -1639,7 +1843,7 @@ async function openPane(
                       publish();
                     }
                   });
-                return;
+                return false;
               }
             }
             if (splitConfirmation) {
@@ -1672,7 +1876,7 @@ async function openPane(
                     publish();
                   }
                 });
-              return;
+              return false;
             }
             snapshot = null;
             inputReady = false;
@@ -1694,7 +1898,7 @@ async function openPane(
             // helper releases ACK ownership, without waiting for process reaping.
             void retire();
             publish();
-            return;
+            return false;
           }
           if (event.closePaneReady && pendingClose && !pendingClose.submitted) {
             const ready = z
@@ -1833,11 +2037,13 @@ async function openPane(
                 // Keep the explicit unavailable state if exact requalification fails.
               }
             });
-            return;
+            return false;
           }
           if (
             event.newWindowReceipt &&
             pendingNewWindow &&
+            typeof event.newWindowReceipt === "object" &&
+            "token" in event.newWindowReceipt &&
             event.newWindowReceipt.token === pendingNewWindow.token
           ) {
             const captured = pendingNewWindow;
@@ -1922,11 +2128,13 @@ async function openPane(
                 publish();
               }
             });
-            return;
+            return false;
           }
           if (
             event.paneSplitReceipt &&
             pendingPaneSplit &&
+            typeof event.paneSplitReceipt === "object" &&
+            "token" in event.paneSplitReceipt &&
             event.paneSplitReceipt.token === pendingPaneSplit.token
           ) {
             const split = pendingPaneSplit;
@@ -2001,7 +2209,7 @@ async function openPane(
                 publish();
               }
             });
-            return;
+            return false;
           }
           publicationStage = "epoch";
           const epoch = z.number().int().nonnegative().safe().parse(event.presentationEpoch);
@@ -2009,7 +2217,12 @@ async function openPane(
           childPresentationEpoch = epoch;
           const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
           publicationStage = "surfaces";
-          const surfaces = surfacesSchema.parse(event.surfaces ?? []);
+          const surfaces = typed
+            ? validateSurfaces(event.surfaces ?? [])
+            : sameTail && content!.surfaces
+              ? content!.surfaces
+              : decodeSurfacePublication(event.surfaces ?? [], "rle-v1");
+          if (content) content.surfaces = surfaces;
           const scrollOffset = z
             .number()
             .int()
@@ -2045,7 +2258,12 @@ async function openPane(
                 retainedHistory.delete(retainedHistory.keys().next().value!);
             } else if (historyAnchor.state !== "restoring") retainedHistory.delete(anchorKey);
           }
-          appliedPresenceRevision = event.presenceRevision;
+          appliedPresenceRevision = z
+            .number()
+            .int()
+            .nonnegative()
+            .safe()
+            .parse(event.presenceRevision);
           const hasAuthority =
             !pendingClose &&
             foreground &&
@@ -2059,6 +2277,29 @@ async function openPane(
             hasAuthority,
           );
           snapshot = coherent?.snapshot ?? null;
+          const childInputTargets = visibleInputTargets(
+            event.inputTargets,
+            connection,
+            surfaces,
+            coherent,
+          );
+          inputTargets =
+            coherent && hasAuthority
+              ? {
+                  snapshot: coherent.snapshot,
+                  owner: child,
+                  value: childInputTargets,
+                  raw: inputTargetsSchema.parse(event.inputTargets ?? []),
+                }
+              : null;
+          nativeFrameBasis = JSON.stringify([
+            childConnection,
+            epoch,
+            layout,
+            scrollOffset,
+            historyAnchor?.state ?? null,
+            historyAnchor?.token ?? null,
+          ]);
           const childSelectionIdentity = z
             .string()
             .regex(/^[a-f0-9]{64}$/)
@@ -2253,6 +2494,55 @@ async function openPane(
           publicationStage = "publish";
           publish();
         }
+        return true;
+      } catch {
+        console.error(
+          JSON.stringify({ diagnostic: "child-publication-rejected", stage: publicationStage }),
+        );
+        unavailable();
+        void retire();
+        return false;
+      }
+    }
+    if (child instanceof HostedPreviewSession)
+      child.on("publication", (event) => applyChildPublication(event, false, true));
+    child.stdout.on("data", (chunk: Buffer) => {
+      // Fatal helper diagnostics retire this presentation lifetime. Buffered
+      // stdout must not restore a frame or input authority after that fault.
+      if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
+      let publicationStage = "framing";
+      try {
+        buffer = Buffer.concat([buffer, chunk]);
+        let end;
+        while ((end = buffer.indexOf(10)) >= 0) {
+          publicationStage = "framing";
+          if (end > MAX_FRAME) throw new Error("Oversized child publication");
+          publicationStage = "decode";
+          const line = buffer.subarray(0, end);
+          buffer = buffer.subarray(end + 1);
+          // The helper puts terminal content last behind its byte length. An unchanged
+          // tail (gesture, presence or status-only publications) is not decoded again.
+          const tailBytes = Number(
+            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
+          );
+          const tailStart = line.length - tailBytes;
+          const sameTail =
+            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
+          const event = JSON.parse(
+            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
+          );
+          if (sameTail) Object.assign(event, content!.value);
+          else
+            content =
+              tailStart > 0
+                ? {
+                    bytes: Buffer.from(line.subarray(tailStart)),
+                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
+                    surfaces: null,
+                  }
+                : null;
+          if (!applyChildPublication(event, sameTail, false)) return;
+        }
         publicationStage = "framing";
         if (buffer.length > MAX_FRAME) throw new Error("Oversized child publication");
       } catch {
@@ -2270,6 +2560,13 @@ async function openPane(
 }
 async function command(value: unknown) {
   const cmd = commandSchema.parse(value);
+  if (cmd.type === "frame-resync") {
+    if (nativeWriter.resync(cmd, nativeFrameContext())) {
+      forceNativePublication = true;
+      publish();
+    }
+    return;
+  }
   if (cmd.type === "kitty-missing") {
     kittyKnown.forget(cmd.digests);
     if (active && !active.catalogOnly)
@@ -2498,6 +2795,7 @@ async function command(value: unknown) {
     editorMessage = null;
     if (
       surface !== "workspace" ||
+      inputTargetRejected ||
       cmd.request !== request ||
       cmd.id !== selectedPane ||
       cmd.id !== paneActions?.id ||
@@ -2645,7 +2943,25 @@ async function command(value: unknown) {
     if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel") {
       active.presentation.update(undefined, [], false);
     }
-    const line = JSON.stringify(cmd.input) + "\n";
+    let outgoing: unknown = cmd.input;
+    if (cmd.inputTarget !== undefined) {
+      const raw =
+        inputTargets?.snapshot === snapshot && inputTargets?.owner === active.child
+          ? resolveInputTarget(cmd.inputTarget, cmd.id, inputTargets.value, inputTargets.raw)
+          : null;
+      if (!raw || !previewInputSchema.safeParse(cmd.input).success) {
+        process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
+        inputTargetRejected = true;
+        inputReady = false;
+        inputTargets = null;
+        active.child.stdin.end();
+        status = "Input interrupted — reselect the pane, then retype";
+        publish();
+        return;
+      }
+      outgoing = { kind: "fenced-input", id: cmd.id, inputTarget: raw, input: cmd.input };
+    }
+    const line = JSON.stringify(outgoing) + "\n";
     if (
       Buffer.byteLength(line) > MAX_INPUT_LINE ||
       active.child.stdin.writableLength > MAX_INPUT_LINE * 2
@@ -3101,6 +3417,24 @@ async function command(value: unknown) {
   sessionCatalogComplete = false;
   initialPane = null;
   const token = request;
+  if (cmd.type === "pane" && surface === "workspace" && !retainedPreview) {
+    // Another pane of the displayed window: keep the frame and attachment, and let the
+    // helper confirm the new target before input is admitted again.
+    const pane = panes.find(
+      (p) => p.semanticPaneId === cmd.id && p.liveSessionId === selectedSession,
+    );
+    if (!inputTargetRejected && pane && active?.reselect?.(pane, token)) {
+      selectedPane = cmd.id;
+      inputReady = false;
+      paneActions = null;
+      resizeToken = null;
+      splitLayout = null;
+      copyRegion = null;
+      selectionIdentity = null;
+      status = "Loading";
+      return;
+    }
+  }
   snapshot = null;
   inputReady = false;
   selectedPane = null;

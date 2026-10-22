@@ -11,7 +11,7 @@ export interface OpenTuiRuntimeLayoutPresentation {
   getWindowSnapshot(): OpenTuiWorkspaceLayoutSnapshot;
   subscribe(listener: (layout: OpenTuiTerminalLayout | null) => void): () => void;
   subscribeWindows(listener: (layout: OpenTuiWorkspaceLayoutSnapshot) => void): () => void;
-  adopt(port: OpenTuiLayoutPort): () => void;
+  adopt(port: OpenTuiLayoutPort, rendererEpoch: number): () => void;
   clear(): void;
   dispose(): void;
 }
@@ -66,21 +66,24 @@ export function createOpenTuiRuntimeLayoutPresentation(): OpenTuiRuntimeLayoutPr
       listener(windows);
       return () => windowListeners.delete(listener);
     },
-    adopt(port) {
+    adopt(port, rendererEpoch) {
       if (disposed) return () => undefined;
       let candidate = true;
       let candidateStop: (() => void) | null = null;
       candidateStop = port.onLayout((layout) => {
         if (disposed || !candidate || !layout.current) return;
+        // A port may reuse its snapshot object. Own the provenance wrapper so
+        // a preparing runtime cannot relabel the retained coherent frame.
+        const presented = Object.freeze({ ...layout, rendererEpoch });
         if (currentPort !== port) {
           const previousStop = stopLayout;
           currentPort = port;
           stopLayout = candidateStop;
-          publish(layout);
+          publish(presented);
           previousStop?.();
           return;
         }
-        publish(layout);
+        publish(presented);
       });
       // `onLayout` intentionally seeds synchronously. Capture the disposer
       // after that first callback has promoted this candidate.

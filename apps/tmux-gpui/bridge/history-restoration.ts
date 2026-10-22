@@ -1,3 +1,4 @@
+import { createHistoryRowByteSizer } from "./history-row-byte-size.ts";
 import type {
   TerminalReplicaSnapshot,
   TerminalReplicaRow,
@@ -45,6 +46,7 @@ export function createHistoryRestoration(options: {
     token: string | null = null,
     serial = 0,
     pending: AbortController | undefined;
+  const rowByteSize = createHistoryRowByteSizer();
   let frames: {
       proof: HistoryProof;
       cols: number;
@@ -113,7 +115,7 @@ export function createHistoryRestoration(options: {
           index--
         ) {
           const row = frame.snapshot.history[index]!;
-          const rowBytes = Buffer.byteLength(JSON.stringify(row));
+          const rowBytes = rowByteSize(row);
           if (size + rowBytes > 2 * 1024 * 1024) break;
           size += rowBytes;
           history.push(row);

@@ -16,7 +16,7 @@ notices. `upstream-provenance.json` records the source commit and SHA-256 digest
 of every imported file. Upstream crate names are retained for comparison.
 The adapter renders snapshots and the selected live window’s pane arrangement
 through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. A local TypeScript helper reuses the existing daemon delivery validator;
-Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry restoration on background/close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
+Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry preservation on background and authority release on close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
 implemented with further IME qualification pending. If you click or type before
 keyboard input is ready, the preview keeps input interrupted until you click the
 ready terminal again and retype. It never replays discarded input. This also
@@ -336,10 +336,21 @@ Physical editor-launch qualification is still pending.
 Project presentation remains future work. Other catalog updates are explicit through Refresh. After a daemon replacement, select Refresh sessions,
 then choose a session and pane again. For explicit files, update connection details
 first. The browser process stays open. Recovery is explicit through Refresh and
-reselection for private host-file connections; verified fleet terminals use the bounded recovery described below. Switching clears the displayed
-frame immediately, retires the previous pane connection, and only admits responses
-for the new selection. Each pane uses the canonical delivery helper with an interactive capability and
+reselection for private host-file connections; verified fleet terminals use the bounded recovery described below. Selecting another pane in the same window retains its painted
+frame and live session, while gating input until the new selection is qualified.
+Switching windows retires the previous presentation and only admits responses
+for the new selection. Each pane uses canonical delivery with an interactive capability and
 explicit daemon input authority. The GUI receives display state, never the daemon owner token.
+
+The browser hosts live sessions in its own process by default. Typed immutable
+rows and raw image chunks cross a bounded asynchronous mailbox; unchanged rows
+are reused during composition and compact encoding. Native capability negotiation
+selects binary full/delta frames with explicit baseline recovery. The launcher
+supervises inherited duplex endpoints without relaying their payload bytes.
+Set `TMUX_IDE_GUI_LIVE_MODE=process` to exercise the separate live-helper fallback.
+See [binary protocol](bridge/binary-protocol.md) for bounds and
+[visible-response qualification](bridge/performance/README.md) for measurement
+requirements. These mechanisms alone do not establish GUI/TUI latency parity.
 
 The native browser is local-only. If it says Window inactive, activate the app
 through macOS first. Once its status says Keyboard ready, click the terminal to

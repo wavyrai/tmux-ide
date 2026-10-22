@@ -68,6 +68,8 @@ fn canonical_both_axes_emit_only_absolute_split_commands_and_latest_release() {
         );
         assert!(drag.update(point_at(x + 2., y + 2.)));
         owner.offer(drag.cells, false);
+        owner.flush(&tx, true, true);
+        assert!(rx.try_recv().is_err(), "canonical split motion stays local");
         assert!(drag.update(point_at(x + 3., y + 3.)));
         owner.offer(drag.cells, true);
         owner.flush(&tx, false, true);

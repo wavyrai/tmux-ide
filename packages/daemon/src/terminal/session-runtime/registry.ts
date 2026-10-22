@@ -30,6 +30,7 @@ import {
   type CanonicalTerminalReplicaUpdate,
   type CausalCellFailureReasonV1,
   type CausalCellProbeV1,
+  type PaneStreamInputLifetime,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryOffer,
@@ -244,6 +245,7 @@ export interface SessionRuntimeConsumer {
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void;
   failCausalCellProbe(
     semanticPaneId: string,
@@ -896,13 +898,16 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return result;
   }
 
-  async describeSessionAuthority(session: string): Promise<{
+  async describeSessionAuthority(
+    session: string,
+    expectedSemanticPaneIds?: readonly string[],
+  ): Promise<{
     readonly description: MirrorSessionDescription;
     readonly runtimeSessionId: string;
   }> {
     const runtime = this.#runtime(session);
     await runtime.whenReady();
-    const authority = await this.#mirror.describeSessionAuthority(session);
+    const authority = await this.#mirror.describeSessionAuthority(session, expectedSemanticPaneIds);
     if (this.#disposed || this.#sessions.get(session) !== runtime) {
       const error = new Error(`session runtime ${session} changed topology`);
       error.name = "MirrorTopologyChangedError";
@@ -1589,6 +1594,7 @@ class SessionRuntime {
     performanceTraceId?: string,
     rawCausalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void {
     this.assertController(lease, clientId);
     const inputLease = this.#authority.leaseFor(clientId, "input");
@@ -1626,7 +1632,10 @@ class SessionRuntime {
           })
         : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    const replicaOwner = this.#terminalReplicaOwner(semanticPaneId);
+    const replicaOwner = expectedLifetime
+      ? this.#terminalReplicas.get(semanticPaneId)
+      : this.#terminalReplicaOwner(semanticPaneId);
+    if (!replicaOwner) throw new Error("Input target lifetime unavailable");
     if (causalProbe) {
       this.#activeCausalCellProbes += 1;
       let settled = false;
@@ -1649,6 +1658,15 @@ class SessionRuntime {
       this.#outputTraces.arm(semanticPaneId, trace);
     }
     try {
+      // Synchronous final admission: never create a new owner to satisfy a stale
+      // held-input fence, and never await between this check and mirror dispatch.
+      if (
+        expectedLifetime &&
+        (expectedLifetime.generation !== this.generation ||
+          this.#terminalReplicas.get(semanticPaneId) !== replicaOwner ||
+          replicaOwner.inputAdmissionIncarnation() !== expectedLifetime.incarnation)
+      )
+        throw new Error("Input target lifetime changed");
       if (input.kind === "text")
         this.#mirror.sendText(
           this.session,
@@ -2323,6 +2341,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): void {
     this.#assertOpen();
     this.#runtime.sendInput(
@@ -2333,6 +2352,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
       performanceTraceId,
       causalProbe,
       onCausalResult,
+      expectedLifetime,
     );
   }
 

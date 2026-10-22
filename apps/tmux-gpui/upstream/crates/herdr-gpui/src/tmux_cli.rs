@@ -14,6 +14,12 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
             println!("{HELP}");
             return ExitCode::SUCCESS;
         }
+        Some("--tmux-bridge-capabilities") if args.len() == 1 => {
+            println!(
+                r#"{{"version":1,"snapshotEncodings":["rle-v1","rle-delta-v1","binary-rle-v1"]}}"#
+            );
+            return ExitCode::SUCCESS;
+        }
         Some("--version") if args.len() == 1 => {
             // Upstream's package version is not a tmux-ide release version.
             println!("tmux-ide-gpui development preview (unreleased)");

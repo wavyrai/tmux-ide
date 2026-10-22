@@ -22,6 +22,7 @@ fn close_requires_confirmation_cancel_is_inert_and_pointer_dispatches_once(
     });
     cx.simulate_resize(size(px(640.), px(400.)));
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     cx.simulate_keystrokes("f5");
     cx.simulate_input("close pane");
     cx.simulate_keystrokes("enter");

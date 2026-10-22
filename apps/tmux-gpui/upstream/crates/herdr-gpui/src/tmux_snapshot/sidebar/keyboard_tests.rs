@@ -65,7 +65,7 @@ fn sidebar_reorder_retains_id_but_removal_or_request_change_cannot_choose_replac
     });
     cx.simulate_keystrokes("enter");
     let commands: Vec<_> = receiver.try_iter().collect();
-    assert!(commands.iter().all(|command| matches!(command, browser::Command::Input { request: 8, id, input: crate::tmux_snapshot::keys::Input::Resize { .. } } if id == "pane-a")), "request redraw may only refresh geometry, never send a key or select a replacement");
+    assert!(commands.iter().all(|command| matches!(command, browser::Command::Input { input_target: None, request: 8, id, input: crate::tmux_snapshot::keys::Input::Resize { .. } } if id == "pane-a")), "request redraw may only refresh geometry, never send a key or select a replacement");
     view.read_with(cx, |view, _| {
         assert!(!view.sidebar_keyboard.active);
         assert!(view.input_interrupted);
@@ -88,6 +88,7 @@ fn sidebar_end_reveals_long_roster_and_hidden_ctrl_g_uses_picker(cx: &mut TestAp
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     cx.simulate_keystrokes("ctrl-g end");
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let list = cx.debug_bounds("session-list").unwrap();
@@ -99,18 +100,7 @@ fn sidebar_end_reveals_long_roster_and_hidden_ctrl_g_uses_picker(cx: &mut TestAp
         view.update(cx, |view, _| view.sidebar_hidden = true);
         window.draw(cx).clear(cx);
     });
-    let resize_commands: Vec<_> = receiver.try_iter().collect();
-    assert!(!resize_commands.is_empty());
-    assert!(
-        resize_commands.iter().all(|command| matches!(
-            command,
-            browser::Command::Input {
-                input: crate::tmux_snapshot::keys::Input::Resize { .. },
-                ..
-            }
-        )),
-        "hide may only resize the existing terminal"
-    );
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     cx.simulate_keystrokes("ctrl-g");
     view.read_with(cx, |view, _| assert!(view.picker.is_some()));
     assert!(receiver.try_recv().is_err());

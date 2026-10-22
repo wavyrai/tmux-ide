@@ -21,6 +21,7 @@ fn sidebar_reveals_new_selection_once_and_respects_manual_scroll(cx: &mut TestAp
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let list = cx.debug_bounds("session-list").unwrap();
     let selected = cx.debug_bounds("tmux-sidebar-row-35").unwrap();
     assert!(selected.top() >= list.top() && selected.bottom() <= list.bottom());
@@ -78,6 +79,7 @@ fn sidebar_keyboard_reveal_is_not_undone_on_escape_or_row_reorder(cx: &mut TestA
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     cx.simulate_keystrokes("ctrl-g end escape");
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let offset = view.read_with(cx, |view, _| view.sidebar_keyboard.scroll.offset());

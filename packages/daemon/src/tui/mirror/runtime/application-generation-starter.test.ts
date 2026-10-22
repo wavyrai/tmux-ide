@@ -268,3 +268,50 @@ describe("application agent navigation", () => {
     expect(selectPane).not.toHaveBeenCalled();
   });
 });
+
+describe("sidebar selection during same-session renderer rebind", () => {
+  it.each([
+    "retained",
+    "other-workspace",
+    "missing-client",
+    "invalid-generation",
+    "disposed-client",
+  ])("reserves only retained control (%s)", async (condition) => {
+    const snapshot = {
+      ...generation("daemon", 1),
+      status: "rebinding",
+      connection: { workspaceName: condition === "other-workspace" ? "other" : "session" },
+      client:
+        condition === "missing-client"
+          ? null
+          : {
+              getSnapshot: () => {
+                if (condition === "disposed-client") throw new Error("disposed");
+                return { generation: condition === "invalid-generation" ? NaN : 1 };
+              },
+            },
+    } as unknown as OpenTuiGenerationHostSnapshot;
+    const owner = sessionOwner({ sessionName: "session", snapshot });
+    const startGeneration = vi.fn(async (sessionName: string) => ({
+      opened: false,
+      sessionName,
+      generationKey: null,
+    }));
+    const selectPane = vi.fn();
+    const navigate = createApplicationAgentNavigator({
+      startGeneration,
+      sessionOwner: () => owner,
+      selectPane,
+    });
+    const opened = navigate("session", "pane.agent");
+    expect(applicationGenerationNavigationKey(snapshot)).toBeNull();
+    if (condition === "retained") {
+      expect(selectPane).toHaveBeenCalledExactlyOnceWith("pane.agent");
+      expect(startGeneration).not.toHaveBeenCalled();
+      await expect(opened).resolves.toBe(true);
+    } else {
+      expect(selectPane).not.toHaveBeenCalled();
+      await expect(opened).resolves.toBe(false);
+    }
+  });
+});

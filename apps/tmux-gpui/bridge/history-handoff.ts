@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import type { PreviewSession } from "./preview-session.ts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 const resultSchema = z
@@ -11,7 +11,7 @@ const resultSchema = z
   .strict();
 export type HistoryHandoffResult = Pick<z.infer<typeof resultSchema>, "state" | "token">;
 /** Detached helper may finish only its already-issued capture. No display or authority is consumed. */
-export function drainHistoryCapture(child: ChildProcess, done: Promise<void>, timeoutMs = 2000) {
+export function drainHistoryCapture(child: PreviewSession, done: Promise<void>, timeoutMs = 2000) {
   const intent = randomUUID();
   let finish!: (value: HistoryHandoffResult | null) => void;
   let settled = false;

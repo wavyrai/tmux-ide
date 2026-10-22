@@ -1487,6 +1487,48 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(readOnly.socket.closed).not.toBeNull();
   });
 
+  it("advertises held lifetime admission only to offered capability and rejects unnegotiated fences", async () => {
+    const h = harness();
+    for (const offered of [false, true]) {
+      const { socket } = await connect(h, {
+        viewerMode: "interactive",
+        semanticDelivery: true,
+        protocolVersions: offered ? [1, 105] : [1],
+      });
+      expect(socket.framesOfType("ready")[0]?.inputLifetime).toBe(offered ? true : undefined);
+      if (!offered) {
+        socket.message({
+          type: "input",
+          kind: "key",
+          pane: "pane.editor",
+          seq: 1,
+          data: "Enter",
+          expectedLifetime: { generation: INSTANCE, incarnation: `${INSTANCE}:0` },
+        });
+        expect(socket.framesOfType("input-ack")).toHaveLength(0);
+        expect(socket.framesOfType("error")[0]?.code).toBe("input-rejected");
+      } else {
+        const expectedLifetime = { generation: INSTANCE, incarnation: `${INSTANCE}:0` };
+        socket.message({
+          type: "input",
+          kind: "key",
+          pane: "pane.editor",
+          seq: 1,
+          data: "Enter",
+          expectedLifetime,
+        });
+        expect(h.sendInput).toHaveBeenLastCalledWith(
+          "pane.editor",
+          { kind: "key", data: "Enter" },
+          undefined,
+          undefined,
+          undefined,
+          expectedLifetime,
+        );
+      }
+    }
+  });
+
   it("does not sample the observability clock for input when diagnostics are disabled", async () => {
     const nowMicros = vi.fn(() => {
       throw new Error("disabled observability clock was sampled");
@@ -1947,8 +1989,15 @@ describe("PaneStreamAdmissionCoordinator", () => {
       performanceTraceId: pasteTrace,
     });
     expect(h.sendInput.mock.calls).toEqual([
-      ["pane.editor", { kind: "key", data: "Enter" }, keyTrace, undefined, undefined],
-      ["pane.editor", { kind: "text", data: bracketedPaste }, pasteTrace, undefined, undefined],
+      ["pane.editor", { kind: "key", data: "Enter" }, keyTrace, undefined, undefined, undefined],
+      [
+        "pane.editor",
+        { kind: "text", data: bracketedPaste },
+        pasteTrace,
+        undefined,
+        undefined,
+        undefined,
+      ],
     ]);
     expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
     for (const traceId of [keyTrace, pasteTrace]) {

@@ -206,3 +206,39 @@ as an additional reference for layering.
   height within the existing titlebar. Inactive tabs inherit the continuous
   chrome instead of painting a separate surface, including on hover. Only the
   selected tab receives a theme-derived highlight. Navigation and drag-region ownership are unchanged.
+
+- Selecting another pane of the painted window keeps that window's frame and
+  moves pane chrome to the clicked pane immediately; input stays gated until the
+  bridge publishes the new request. Selections outside the painted window still
+  clear and reload.
+
+- Bridge snapshots are kept as raw JSON (`serde_json` `raw_value`) and decoded
+  once into the painter frame and pointer modes, instead of a value tree that
+  was re-serialized and decoded again.
+
+- A divider drag draws its pointer target boundary locally and preserves the
+  terminal grid during motion. Begin captures the fenced target; release sends
+  one final boundary through the existing canonical-settlement protocol.
+  Cancellation and unchanged final boundaries do not mutate terminal geometry.
+  Same-window pane navigation carries its exact fitted viewport forward rather
+  than sending another fit solely because the navigation request changed.
+
+- Whole-window viewport fits retain one latest grid and physical cell size,
+  settling after 150 ms without geometry changes (the existing sibling window
+  policy). Initial fits remain immediate. The existing browser tick wakes the
+  final paint, so idle terminal output does not leave a resize pending. Focus,
+  navigation and invalid geometry discard pending fits. Keyboard input continues
+  to address the canonical pane while old content is clipped at its actual cell
+  size; pointer/copy hit testing uses the painted frame rather than speculative
+  scaled cells.
+
+- The browser transport negotiates bounded run-length snapshots and incremental
+  rows, including binary cell records and raw image chunks. Native decoding
+  validates the complete frame before changing its baseline; sequence gaps
+  request an explicit full snapshot. Delta application precedes display-mailbox
+  coalescing so dropping an intermediate paint cannot break the next delta.
+  Legacy JSON remains available for callers without negotiated capabilities.
+
+- Incomplete image assemblies share a 64 MiB reservation limit in addition to
+  their existing count limit. Replacing or retiring an assembly releases its
+  reservation; completed image-cache limits remain separate.

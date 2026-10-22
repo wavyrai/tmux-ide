@@ -7,6 +7,8 @@ import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.t
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
+// Provenance from scalar construction only, never generic frozen-object checks.
+const DECODED_ROWS = new WeakSet<object>();
 const UTF8_ENCODER = new TextEncoder();
 // Fixed ASCII headers cover common terminal strings without retaining values.
 const SHORT_ASCII_HEADERS = Array.from({ length: 33 }, (_, length) => `s${length}:`);
@@ -600,14 +602,19 @@ class DecodedTerminalReplicaRowBuilder {
       cells: Object.freeze(cells),
       wrapped,
     }) as unknown as TerminalReplicaRow;
-    // Earn only deep immutability. Existing row hashing remains lazy and unchanged.
+    // Existing row hashing remains lazy and unchanged.
     DEEPLY_FROZEN_ROWS.add(row);
+    DECODED_ROWS.add(row);
     return row;
   }
 
   #assertOpen(): void {
     if (this.#finished) throw new Error("Decoded terminal row already finished");
   }
+}
+
+export function isDecodedTerminalReplicaRow(row: unknown): row is TerminalReplicaRow {
+  return typeof row === "object" && row !== null && DECODED_ROWS.has(row);
 }
 
 export function createDecodedTerminalReplicaRowBuilder() {

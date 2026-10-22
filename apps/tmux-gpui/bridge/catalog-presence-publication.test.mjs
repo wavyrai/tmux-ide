@@ -8,7 +8,8 @@ import { URL } from "node:url";
 import { Buffer } from "node:buffer";
 import { setTimeout, clearTimeout } from "node:timers";
 import ts from "typescript";
-import { serializeBrowserPublication } from "./browser-publication.ts";
+import { preparePublication, createPublicationDeduplicator } from "./prepared-publication.ts";
+import { createNativePublicationWriter } from "./native-publication.ts";
 
 const source = await readFile(new URL("./browser.ts", import.meta.url), "utf8");
 const parsed = ts.createSourceFile("browser.ts", source, ts.ScriptTarget.Latest, true);
@@ -23,6 +24,10 @@ const executable = ts.transpileModule(owner.getText(parsed), {
 function fixture(overrides = {}) {
   const empty = { publication: () => null, cancel() {} };
   const events = [];
+  const writer = createNativePublicationWriter("legacy", (line) => {
+    events.push(JSON.parse(line));
+    return true;
+  });
   const context = vm.createContext({
     Buffer,
     setTimeout,
@@ -74,7 +79,10 @@ function fixture(overrides = {}) {
     sessionCatalogComplete: true,
     initialPane: "pane-a",
     historySaveFailed: false,
+    historyOffset: 0,
     inputReady: false,
+    inputTargetRejected: false,
+    inputTargets: null,
     snapshot: null,
     splitGesture: null,
     resizeGesture: null,
@@ -82,7 +90,15 @@ function fixture(overrides = {}) {
     machines: null,
     machineMessage: null,
     MAX_FRAME: 8 * 1024 * 1024,
-    serializeBrowserPublication,
+    preparePublication,
+    admitPublication: createPublicationDeduplicator(),
+    forceNativePublication: false,
+    nativeFrameContext: () => ({
+      identity: "fixture",
+      connection: context.connection,
+      request: context.request,
+    }),
+    writePublication: (publication) => writer.write(publication, publication.context),
     localCreateProof: null,
     revokeLocalCreateOffer() {},
     localSetup: null,

@@ -218,13 +218,23 @@ impl SnapshotView {
             && !key.modifiers.alt
             && !key.modifiers.platform
         {
-            let rows = self
-                .frame
-                .as_ref()
-                .map_or(1, |f| f.height.saturating_sub(1).min(1000)) as i16;
             let scroll = match key.key.as_str() {
-                "pageup" => Some(rows),
-                "pagedown" => Some(-rows),
+                "pageup" | "pagedown" => {
+                    // A page is the selected pane's current content, excluding
+                    // sibling panes and status rows in the composed canvas.
+                    let region = self.browser_state.copy_region.as_ref().filter(|region| {
+                        self.browser_state.request == self.browser_request
+                            && self.frame.as_ref().is_some_and(|frame| {
+                                region.valid(frame, self.browser_state.selected_pane.as_deref())
+                            })
+                    });
+                    let Some(region) = region else {
+                        cx.stop_propagation();
+                        return;
+                    };
+                    let rows = region.height.saturating_sub(1).clamp(1, 1000) as i16;
+                    Some(if key.key == "pageup" { rows } else { -rows })
+                }
                 "end" => Some(0),
                 _ => None,
             };
@@ -235,7 +245,7 @@ impl SnapshotView {
                 return;
             }
         }
-        if !self.browser_state.input_ready {
+        if !self.browser_state.input_ready && !self.pending_input_ready() {
             return;
         }
         if !self.marked.is_empty() {
@@ -293,10 +303,15 @@ impl SnapshotView {
         if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
             return;
         }
+        if terminal && self.pending_input.is_some() {
+            self.hold_pending_input(input, cx);
+            return;
+        }
         let Some(id) = self.browser_state.selected_pane.clone() else {
             return;
         };
         let command = browser::Command::Input {
+            input_target: None,
             request: self.browser_request,
             id,
             input,
@@ -321,7 +336,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let recovering_rejected_input = self.browser_state.input_target_rejected
+            && matches!(&selection, Selection::Pane(id) if self.browser_state.selected_pane.as_ref() == Some(id));
+        self.cancel_pending_input(cx);
         self.cancel_tab_focus_restore();
+        self.fit_settle.clear();
         self.sidebar_keyboard.active = false;
         self.attention.pending = None;
         self.cancel_attention();
@@ -365,6 +384,22 @@ impl SnapshotView {
                 | Selection::FleetServer(_)
         );
         let selecting_pane = matches!(selection, Selection::Pane(_));
+        // Another pane of the painted window: the bridge retargets its existing
+        // attachment, so the window's frame stays valid while input is re-gated.
+        let same_window_pane = match &selection {
+            Selection::Pane(id)
+                if self.frame.is_some()
+                    && !self.browser_state.retained_preview
+                    && self.browser_state.surface == browser::Surface::Workspace
+                    && self.browser_state.regions.iter().any(|r| &r.id == id) =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        };
+        let held_input = same_window_pane
+            .as_deref()
+            .and_then(|id| super::pending_input::Pending::capture(self, request, id));
         let command = match selection {
             Selection::WorkspaceAgent {
                 from_request,
@@ -413,10 +448,25 @@ impl SnapshotView {
             .as_ref()
             .is_some_and(|s| s.try_send(command).is_ok())
         {
+            if same_window_pane.is_some() {
+                self.last_resize =
+                    super::geometry::reselect_fit(self.last_resize, self.browser_request, request);
+            }
             self.browser_request = request;
+            self.pending_input = held_input;
+            if recovering_rejected_input {
+                // Explicit recovery starts a new attachment; no failed input is retained.
+                self.input_interrupted = false;
+                self.terminal_focus.focus(window, cx);
+            }
+            if self.pending_input.is_some() {
+                self.terminal_focus.focus(window, cx);
+            }
             self.pending_session_open =
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
-            if !selecting_pane || !self.browser_state.retained_preview {
+            if let Some(id) = same_window_pane {
+                self.browser_state.selected_pane = Some(id);
+            } else if !selecting_pane || !self.browser_state.retained_preview {
                 self.frame = None;
                 self.browser_state.retained_preview = false;
             }
@@ -684,6 +734,8 @@ impl SnapshotView {
             }
         } else if self.selection.is_some() {
             "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
+        } else if self.browser_state.input_target_rejected {
+            "Input interrupted — reselect pane, then retype".into()
         } else if self.input_interrupted {
             format!(
                 "Input interrupted; click terminal when ready, then retype — {}",
@@ -720,6 +772,7 @@ impl SnapshotView {
         // imposing the upstream status bar's fixed single-line height.
         let context = super::design::palette(&theme)
             .status_bar()
+            .occlude()
             .h_auto()
             .px_0()
             .gap_0()
@@ -764,6 +817,7 @@ impl SnapshotView {
             theme.background
         };
         let content = super::shell::content_panel(content_background)
+            .relative()
             .when(is_home && glass, |panel| {
                 panel.bg(rgba((content_background << 8) | 0x99))
             })
@@ -784,6 +838,11 @@ impl SnapshotView {
                             .relative()
                             .flex_none()
                             .w_full()
+                            // Transient authority/error guidance must not resize
+                            // the terminal and trigger another geometry handoff.
+                            .when(!self.developer_mode.enabled, |footer| {
+                                footer.absolute().bottom_0().left_0()
+                            })
                             .when(show_status, |footer| footer.child(context))
                             .children(
                                 self.pane_actions_panel(window, cx)

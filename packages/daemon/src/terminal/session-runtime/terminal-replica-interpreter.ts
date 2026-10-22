@@ -53,6 +53,23 @@ import {
 } from "../graphics/kitty-graphics.ts";
 import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 
+// Bound parser work per turn without changing byte-stream semantics. This is a
+// batch bound, not a producer queue cap: upstream pressure must preserve bytes.
+const MAX_INGEST_BATCH_BYTES = 256 * 1024;
+type PendingWrite = {
+  data: Uint8Array;
+  offset: number;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
+type WriteGroup = {
+  entries: PendingWrite[];
+  bytes: number;
+  scheduled: boolean;
+  flushQueued: boolean;
+  trace: SessionRuntimeTraceContext | null;
+};
+
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
   | {
@@ -167,13 +184,7 @@ export class TerminalReplicaInterpreter {
   #needsSeed = true;
   #closed = false;
   #walkCount = 0;
-  #pendingWrites: Array<{
-    data: Uint8Array;
-    trace: SessionRuntimeTraceContext | null;
-    resolve: () => void;
-    reject: (error: unknown) => void;
-  }> = [];
-  #writeFlushScheduled = false;
+  #pendingWrites: WriteGroup | null = null;
   #widgetGate = false;
   // kitty graphics: images outlive reseeds; the scanner owns split APCs.
   readonly #kittyScanner = new KittyApcScanner();
@@ -252,18 +263,27 @@ export class TerminalReplicaInterpreter {
     if (operation.type === "write") {
       const data = operation.data.slice();
       const trace = operation.trace ?? null;
-      const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
       if (
-        this.#pendingWrites.length > 0 &&
-        (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null)
+        this.#pendingWrites &&
+        (this.#pendingWrites.trace?.traceId ?? null) !== (trace?.traceId ?? null)
       )
         this.#flushWrites();
-      const promise = new Promise<void>((resolve, reject) => {
-        this.#pendingWrites.push({ data, trace, resolve, reject });
+      const group = (this.#pendingWrites ??= {
+        entries: [],
+        bytes: 0,
+        scheduled: false,
+        flushQueued: false,
+        trace,
       });
-      if (!this.#writeFlushScheduled) {
-        this.#writeFlushScheduled = true;
-        this.#scheduler.microtask(() => this.#flushWrites());
+      const promise = new Promise<void>((resolve, reject) => {
+        group.entries.push({ data, offset: 0, resolve, reject });
+        group.bytes += data.length;
+      });
+      // Leave this group open while the parser awaits its callback. Scheduling
+      // it once on the FIFO lets later arrivals join the next bounded batch.
+      if (!group.scheduled && !group.flushQueued) {
+        group.flushQueued = true;
+        this.#scheduler.microtask(() => this.#scheduleWriteGroup(group));
       }
       return promise;
     }
@@ -528,7 +548,27 @@ export class TerminalReplicaInterpreter {
     // turn, so a frame split into dozens of %output chunks would otherwise
     // serialize dozens of turns and fall behind a 30 fps image stream.
     if (scanned.forward.byteLength === 0) return;
-    await this.#writeToBackend(this.#backend, scanned.forward);
+    // Scanning can prepend an escape retained from the previous chunk. Bound
+    // the actual parser calls too, and union damage across every fragment.
+    for (let offset = 0; offset < scanned.forward.length; offset += MAX_INGEST_BATCH_BYTES) {
+      await this.#writeToBackend(
+        this.#backend,
+        scanned.forward.subarray(offset, offset + MAX_INGEST_BATCH_BYTES),
+      );
+      // The parser resets its dirty tracker per write. Synchronized output and
+      // bounded fragments can both span writes before canonical publication.
+      const dirty = this.#backend.dirtyRange();
+      const pending = this.#pendingWriteDirty;
+      this.#pendingWriteDirty =
+        pending === null
+          ? dirty
+          : pending === undefined || dirty === undefined
+            ? undefined
+            : {
+                start: Math.min(pending.start, dirty.start),
+                end: Math.max(pending.end, dirty.end),
+              };
+    }
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
@@ -537,19 +577,6 @@ export class TerminalReplicaInterpreter {
         this.#observability.nowMicros(),
         trace,
       );
-    // The parser resets its dirty tracker per write. Synchronized output may
-    // span many writes before publication, so retain their union until commit.
-    const dirty = this.#backend.dirtyRange();
-    const pending = this.#pendingWriteDirty;
-    this.#pendingWriteDirty =
-      pending === null
-        ? dirty
-        : pending === undefined || dirty === undefined
-          ? undefined
-          : {
-              start: Math.min(pending.start, dirty.start),
-              end: Math.max(pending.end, dirty.end),
-            };
     // DEC synchronized-output is atomic: no intermediate frame leaks.
     if (this.#backend.requiresNativeReseed()) {
       this.#commit(false);
@@ -574,6 +601,7 @@ export class TerminalReplicaInterpreter {
     if (this.#syncRecovery || this.#closed) return;
     this.#syncRecovery = this.#scheduler.timer(() => {
       this.#syncRecovery = null;
+      this.#flushWrites();
       const run = this.#tail.then(async () => {
         if (this.#closed || !this.#backend.modes().synchronizedOutput) return;
         // Recovery is synthetic parser maintenance, not pane output caused by
@@ -859,24 +887,54 @@ export class TerminalReplicaInterpreter {
     }
   }
 
+  /** Seal the current group at every trace, control and idle barrier. */
   #flushWrites(): void {
-    this.#writeFlushScheduled = false;
-    if (this.#pendingWrites.length === 0) return;
-    const pending = this.#pendingWrites.splice(0);
-    const length = pending.reduce((total, entry) => total + entry.data.length, 0);
-    const data = new Uint8Array(length);
-    let offset = 0;
-    for (const entry of pending) {
-      data.set(entry.data, offset);
-      offset += entry.data.length;
-    }
-    const trace = pending.find(({ trace }) => trace !== null)?.trace ?? null;
-    const run = this.#tail.then(() => this.#write(data, trace));
+    const group = this.#pendingWrites;
+    this.#pendingWrites = null;
+    if (group) this.#scheduleWriteGroup(group);
+  }
+
+  #scheduleWriteGroup(group: WriteGroup): void {
+    if (group.scheduled) return;
+    group.scheduled = true;
+    const run = this.#tail.then(async () => {
+      try {
+        while (group.entries.length > 0) {
+          const length = Math.min(group.bytes, MAX_INGEST_BATCH_BYTES);
+          const data = new Uint8Array(length);
+          const completed: PendingWrite[] = [];
+          let offset = 0;
+          for (const entry of group.entries) {
+            const take = Math.min(entry.data.length - entry.offset, length - offset);
+            data.set(entry.data.subarray(entry.offset, entry.offset + take), offset);
+            offset += take;
+            entry.offset += take;
+            if (entry.offset === entry.data.length) completed.push(entry);
+            else break;
+            if (offset === length && length > 0) break;
+          }
+          group.entries.splice(0, completed.length);
+          group.bytes -= length;
+          try {
+            await this.#write(data, group.trace);
+          } catch (error) {
+            for (const entry of completed) entry.reject(error);
+            throw error;
+          }
+          for (const entry of completed) entry.resolve();
+        }
+      } catch (error) {
+        // Reject every remaining fragment in the failed group; later FIFO
+        // controls (including recovery reseeds and close) still execute.
+        for (const entry of group.entries) entry.reject(error);
+        group.entries.length = 0;
+        group.bytes = 0;
+        throw error;
+      } finally {
+        if (this.#pendingWrites === group) this.#pendingWrites = null;
+      }
+    });
     this.#tail = run.catch(() => undefined);
-    void run.then(
-      () => pending.forEach((entry) => entry.resolve()),
-      (error) => pending.forEach((entry) => entry.reject(error)),
-    );
   }
 
   #observeMarkerBytes(data: Uint8Array): void {

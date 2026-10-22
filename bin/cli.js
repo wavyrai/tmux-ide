@@ -7418,7 +7418,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z47 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7504,13 +7504,19 @@ var init_pane_stream = __esm({
       deliveryAcks: z47.boolean().optional(),
       diagnosticCapabilities: z47.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict())();
+    PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION = /* @__PURE__ */ (() => 105)();
+    PaneStreamInputLifetimeSchemaZ = /* @__PURE__ */ (() => z47.object({
+      generation: z47.string().min(1).max(256),
+      incarnation: z47.string().min(1).max(256)
+    }).strict())();
     PaneStreamInputFrameMetadataShape = /* @__PURE__ */ (() => ({
       type: z47.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z47.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       /** Opt-in controlled next-output probe; not a general causal assertion. */
       performanceTraceId: z47.uuid().optional(),
-      causalProbe: CausalCellProbeV1SchemaZ.optional()
+      causalProbe: CausalCellProbeV1SchemaZ.optional(),
+      expectedLifetime: PaneStreamInputLifetimeSchemaZ.optional()
     }))();
     PaneStreamInputFrameSchemaZ = /* @__PURE__ */ (() => z47.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
@@ -7623,6 +7629,7 @@ var init_pane_stream = __esm({
     CellCoordinateSchemaZ = /* @__PURE__ */ (() => z47.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS))();
     PaneStreamReadyFrameSchemaZ = /* @__PURE__ */ (() => z47.object({
       type: z47.literal("ready"),
+      inputLifetime: z47.literal(true).optional(),
       protocolVersion: z47.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
       requestId: z47.uuid(),
@@ -12665,7 +12672,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.10",
+      version: "2.9.11",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -30222,6 +30229,8 @@ var init_session_channel = __esm({
       fittedWindows = /* @__PURE__ */ new Map();
       cancelSync = null;
       syncOrdinal = 0;
+      identityJoinOrdinal = 0;
+      trustedInventoryJoinsMissing = false;
       completedSyncOrdinal = 0;
       lastDisplayNameSyncAtMs = 0;
       disposed = false;
@@ -30445,18 +30454,25 @@ var init_session_channel = __esm({
       }
       /**
        * Strict daemon-internal inventory from this channel's current tmux truth.
-       * Unlike the background discovery path, this query awaits descriptor
-       * reconciliation before projecting and rejects incomplete identity rather
-       * than returning the previous descriptor snapshot.
+       * Unlike background discovery, this query verifies current native membership
+       * before projecting and rejects incomplete identity. Stream admission may
+       * explicitly join missing pane records after that verification; ordinary
+       * inventory readers retain their existing fail-closed no-join contract.
        */
-      describeTrustedInventory(expectedRuntimeSessionId) {
+      describeTrustedInventory(expectedRuntimeSessionId, joinMissingPanes = false) {
         if (this.disposed) {
           return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
         }
         if (this.trustedInventoryFlight) {
+          if (joinMissingPanes && !this.trustedInventoryJoinsMissing && this.trustedInventoryFlightSessionId === expectedRuntimeSessionId)
+            return this.trustedInventoryFlight.then(
+              () => this.describeTrustedInventory(expectedRuntimeSessionId, true),
+              () => this.describeTrustedInventory(expectedRuntimeSessionId, true)
+            );
           return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId ? this.trustedInventoryFlight : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
         }
-        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).catch((error) => {
+        this.trustedInventoryJoinsMissing = joinMissingPanes;
+        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId, 0, joinMissingPanes).catch((error) => {
           this.windowLinkAuthority?.invalidate();
           this.latestWindowStage = null;
           throw error;
@@ -32455,7 +32471,7 @@ var init_session_channel = __esm({
         }
         return { listed, movedWindowRuntimeIds };
       }
-      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
+      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0, joinMissingPanes = false) {
         const authorityOrdinal = this.windowIdentityOrdinal;
         const beforeLines = await this.io.request(
           `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
@@ -32523,7 +32539,11 @@ var init_session_channel = __esm({
         if (windowStage.repairedIdentity || confirmedWindowStage.repairedIdentity || repairedPanes || !coherent || !this.windowStageIdentitiesEqual(windowStage, confirmedWindowStage) || authorityOrdinal !== this.windowIdentityOrdinal) {
           if (attempt >= 1)
             throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
-          return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+          return await this.refreshTrustedInventory(
+            expectedRuntimeSessionId,
+            attempt + 1,
+            joinMissingPanes
+          );
         }
         if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
         const activeWindowId = activeWindowIds.values().next().value;
@@ -32551,7 +32571,22 @@ var init_session_channel = __esm({
         }
         if (confirmedWindowStage.currentWindow !== activeWindowId || confirmedWindowStage.links.length !== descriptors[0].sessionWindowCount || confirmedWindowStage.windows.size !== computedWindowCounts.size || !stagedPaneMembershipExact || stagedPaneCount !== descriptors.length || stagedPaneIds.size !== descriptors.length || [...computedWindowCounts.keys()].some(
           (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId)
-        ) || descriptors.some((descriptor) => {
+        ))
+          throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+        if (joinMissingPanes && descriptors.some(
+          (pane) => this.panesByRuntime.get(pane.runtimePaneId)?.semanticId !== pane.semanticPaneId
+        )) {
+          this.discovery.invalidate();
+          await this.reconcileIdentity(
+            descriptors,
+            runtimePaneIds,
+            () => authorityOrdinal === this.windowIdentityOrdinal,
+            false
+          );
+        }
+        if (this.disposed || authorityOrdinal !== this.windowIdentityOrdinal)
+          throw new Error(`trusted inventory for ${this.opts.session} changed during identity join`);
+        if (descriptors.some((descriptor) => {
           const pane = this.panesByRuntime.get(descriptor.runtimePaneId);
           const window2 = confirmedWindowStage.windows.get(descriptor.windowId);
           return !pane || !window2?.semanticId || descriptor.semanticPaneId !== pane.semanticId || descriptor.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(pane.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success;
@@ -32846,7 +32881,8 @@ var init_session_channel = __esm({
           }))
         };
       }
-      async reconcileIdentity(descriptors, listed) {
+      async reconcileIdentity(descriptors, listed, current = () => true, publish = true) {
+        const joinOrdinal = ++this.identityJoinOrdinal;
         if (this.disposed) return false;
         if (this.opts.hasSharedWindowConflict?.()) {
           this.settleFirstJoin();
@@ -32881,7 +32917,8 @@ var init_session_channel = __esm({
             )
           )
         );
-        if (this.disposed) return plan.stampEffects.length > 0;
+        if (this.disposed || !current() || joinOrdinal !== this.identityJoinOrdinal)
+          return plan.stampEffects.length > 0;
         const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
         const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
         for (const verified of reconciliation.panes) {
@@ -32968,8 +33005,10 @@ var init_session_channel = __esm({
           degraded: diagnostic4.degraded
         }));
         this.degraded = reconciliation.degraded;
-        for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
-        this.emitLayoutAuthority();
+        if (publish) {
+          for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
+          this.emitLayoutAuthority();
+        }
         this.settleFirstJoin();
         return plan.stampEffects.length > 0;
       }
@@ -39938,11 +39977,20 @@ var init_mirror_service = __esm({
           this.release(session, entry);
         }
       }
-      async describeSessionAuthority(session) {
+      async describeSessionAuthority(session, expectedSemanticPaneIds) {
         const entry = await this.acquire(session);
         try {
           const identity2 = await entry.channel.attachedSessionIdentity();
-          return { description: entry.channel.describe(), runtimeSessionId: identity2.runtimeSessionId };
+          let description = entry.channel.describe();
+          if (expectedSemanticPaneIds?.some(
+            (id2) => !description.panes.some((pane) => pane.semanticPaneId === id2)
+          )) {
+            await entry.channel.describeTrustedInventory(identity2.runtimeSessionId, true);
+            description = entry.channel.describe();
+          }
+          if (this.disposed || entry.retired || this.channels.get(session) !== entry)
+            throw new Error("Mirror authority retired during description");
+          return { description, runtimeSessionId: identity2.runtimeSessionId };
         } finally {
           this.release(session, entry);
         }
@@ -58489,7 +58537,7 @@ function projectPlacements(rows, viewportRows, cols) {
     }
   ];
 }
-var TerminalReplicaInterpreter;
+var MAX_INGEST_BATCH_BYTES, TerminalReplicaInterpreter;
 var init_terminal_replica_interpreter = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts"() {
     "use strict";
@@ -58502,6 +58550,7 @@ var init_terminal_replica_interpreter = __esm({
     init_xterm_terminal_interpreter_backend();
     init_causal_cell_ledger();
     init_kitty_graphics();
+    MAX_INGEST_BATCH_BYTES = 256 * 1024;
     TerminalReplicaInterpreter = class {
       #nativeSeedBackingCandidate;
       #generation;
@@ -58529,8 +58578,7 @@ var init_terminal_replica_interpreter = __esm({
       #needsSeed = true;
       #closed = false;
       #walkCount = 0;
-      #pendingWrites = [];
-      #writeFlushScheduled = false;
+      #pendingWrites = null;
       #widgetGate = false;
       // kitty graphics: images outlive reseeds; the scanner owns split APCs.
       #kittyScanner = new KittyApcScanner();
@@ -58601,15 +58649,22 @@ var init_terminal_replica_interpreter = __esm({
         if (operation.type === "write") {
           const data = operation.data.slice();
           const trace = operation.trace ?? null;
-          const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
-          if (this.#pendingWrites.length > 0 && (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null))
+          if (this.#pendingWrites && (this.#pendingWrites.trace?.traceId ?? null) !== (trace?.traceId ?? null))
             this.#flushWrites();
+          const group = this.#pendingWrites ??= {
+            entries: [],
+            bytes: 0,
+            scheduled: false,
+            flushQueued: false,
+            trace
+          };
           const promise = new Promise((resolve44, reject) => {
-            this.#pendingWrites.push({ data, trace, resolve: resolve44, reject });
+            group.entries.push({ data, offset: 0, resolve: resolve44, reject });
+            group.bytes += data.length;
           });
-          if (!this.#writeFlushScheduled) {
-            this.#writeFlushScheduled = true;
-            this.#scheduler.microtask(() => this.#flushWrites());
+          if (!group.scheduled && !group.flushQueued) {
+            group.flushQueued = true;
+            this.#scheduler.microtask(() => this.#scheduleWriteGroup(group));
           }
           return promise;
         }
@@ -58815,7 +58870,18 @@ var init_terminal_replica_interpreter = __esm({
         for (const command3 of scanned.commands) this.#kittyPending.set(command3.marker, command3);
         const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
         if (scanned.forward.byteLength === 0) return;
-        await this.#writeToBackend(this.#backend, scanned.forward);
+        for (let offset = 0; offset < scanned.forward.length; offset += MAX_INGEST_BATCH_BYTES) {
+          await this.#writeToBackend(
+            this.#backend,
+            scanned.forward.subarray(offset, offset + MAX_INGEST_BATCH_BYTES)
+          );
+          const dirty = this.#backend.dirtyRange();
+          const pending = this.#pendingWriteDirty;
+          this.#pendingWriteDirty = pending === null ? dirty : pending === void 0 || dirty === void 0 ? void 0 : {
+            start: Math.min(pending.start, dirty.start),
+            end: Math.max(pending.end, dirty.end)
+          };
+        }
         if (this.#observability.enabled)
           this.#observability.recordSpan(
             "parse",
@@ -58824,12 +58890,6 @@ var init_terminal_replica_interpreter = __esm({
             this.#observability.nowMicros(),
             trace
           );
-        const dirty = this.#backend.dirtyRange();
-        const pending = this.#pendingWriteDirty;
-        this.#pendingWriteDirty = pending === null ? dirty : pending === void 0 || dirty === void 0 ? void 0 : {
-          start: Math.min(pending.start, dirty.start),
-          end: Math.max(pending.end, dirty.end)
-        };
         if (this.#backend.requiresNativeReseed()) {
           this.#commit(false);
           return;
@@ -58852,6 +58912,7 @@ var init_terminal_replica_interpreter = __esm({
         if (this.#syncRecovery || this.#closed) return;
         this.#syncRecovery = this.#scheduler.timer(() => {
           this.#syncRecovery = null;
+          this.#flushWrites();
           const run = this.#tail.then(async () => {
             if (this.#closed || !this.#backend.modes().synchronizedOutput) return;
             await this.#backend.write("\x1B[?2026l");
@@ -59093,24 +59154,51 @@ var init_terminal_replica_interpreter = __esm({
           }
         }
       }
+      /** Seal the current group at every trace, control and idle barrier. */
       #flushWrites() {
-        this.#writeFlushScheduled = false;
-        if (this.#pendingWrites.length === 0) return;
-        const pending = this.#pendingWrites.splice(0);
-        const length = pending.reduce((total, entry) => total + entry.data.length, 0);
-        const data = new Uint8Array(length);
-        let offset = 0;
-        for (const entry of pending) {
-          data.set(entry.data, offset);
-          offset += entry.data.length;
-        }
-        const trace = pending.find(({ trace: trace2 }) => trace2 !== null)?.trace ?? null;
-        const run = this.#tail.then(() => this.#write(data, trace));
+        const group = this.#pendingWrites;
+        this.#pendingWrites = null;
+        if (group) this.#scheduleWriteGroup(group);
+      }
+      #scheduleWriteGroup(group) {
+        if (group.scheduled) return;
+        group.scheduled = true;
+        const run = this.#tail.then(async () => {
+          try {
+            while (group.entries.length > 0) {
+              const length = Math.min(group.bytes, MAX_INGEST_BATCH_BYTES);
+              const data = new Uint8Array(length);
+              const completed = [];
+              let offset = 0;
+              for (const entry of group.entries) {
+                const take = Math.min(entry.data.length - entry.offset, length - offset);
+                data.set(entry.data.subarray(entry.offset, entry.offset + take), offset);
+                offset += take;
+                entry.offset += take;
+                if (entry.offset === entry.data.length) completed.push(entry);
+                else break;
+                if (offset === length && length > 0) break;
+              }
+              group.entries.splice(0, completed.length);
+              group.bytes -= length;
+              try {
+                await this.#write(data, group.trace);
+              } catch (error) {
+                for (const entry of completed) entry.reject(error);
+                throw error;
+              }
+              for (const entry of completed) entry.resolve();
+            }
+          } catch (error) {
+            for (const entry of group.entries) entry.reject(error);
+            group.entries.length = 0;
+            group.bytes = 0;
+            throw error;
+          } finally {
+            if (this.#pendingWrites === group) this.#pendingWrites = null;
+          }
+        });
         this.#tail = run.catch(() => void 0);
-        void run.then(
-          () => pending.forEach((entry) => entry.resolve()),
-          (error) => pending.forEach((entry) => entry.reject(error))
-        );
       }
       #observeMarkerBytes(data) {
         if (this.#widgetGate) return;
@@ -59290,6 +59378,10 @@ var init_terminal_replica_owner = __esm({
       /** Scalar diagnostic only: no seed construction, hashing, or owner creation. */
       inputDispatchIncarnation() {
         return this.#disposed ? null : this.#publishedIncarnation;
+      }
+      /** Scalar admission fence; unavailable while canonical replacement is pending. */
+      inputAdmissionIncarnation() {
+        return this.#disposed || this.#reseed || this.#waitingForGeometryCapture ? null : this.#publishedIncarnation;
       }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();
@@ -62271,10 +62363,10 @@ var init_registry2 = __esm({
         if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
         return result2;
       }
-      async describeSessionAuthority(session) {
+      async describeSessionAuthority(session, expectedSemanticPaneIds) {
         const runtime = this.#runtime(session);
         await runtime.whenReady();
-        const authority2 = await this.#mirror.describeSessionAuthority(session);
+        const authority2 = await this.#mirror.describeSessionAuthority(session, expectedSemanticPaneIds);
         if (this.#disposed || this.#sessions.get(session) !== runtime) {
           const error = new Error(`session runtime ${session} changed topology`);
           error.name = "MirrorTopologyChangedError";
@@ -62805,7 +62897,7 @@ var init_registry2 = __esm({
           return Promise.reject(error);
         }
       }
-      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId, rawCausalProbe, onCausalResult) {
+      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId, rawCausalProbe, onCausalResult, expectedLifetime) {
         this.assertController(lease, clientId);
         const inputLease = this.#authority.leaseFor(clientId, "input");
         if (!inputLease) {
@@ -62832,7 +62924,8 @@ var init_registry2 = __esm({
           incarnation: null
         }) : null;
         const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        const replicaOwner = this.#terminalReplicaOwner(semanticPaneId3);
+        const replicaOwner = expectedLifetime ? this.#terminalReplicas.get(semanticPaneId3) : this.#terminalReplicaOwner(semanticPaneId3);
+        if (!replicaOwner) throw new Error("Input target lifetime unavailable");
         if (causalProbe) {
           this.#activeCausalCellProbes += 1;
           let settled = false;
@@ -62855,6 +62948,8 @@ var init_registry2 = __esm({
           this.#outputTraces.arm(semanticPaneId3, trace);
         }
         try {
+          if (expectedLifetime && (expectedLifetime.generation !== this.generation || this.#terminalReplicas.get(semanticPaneId3) !== replicaOwner || replicaOwner.inputAdmissionIncarnation() !== expectedLifetime.incarnation))
+            throw new Error("Input target lifetime changed");
           if (input.kind === "text")
             this.#mirror.sendText(
               this.session,
@@ -63388,7 +63483,7 @@ var init_registry2 = __esm({
         this.#assertOpen();
         return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
       }
-      sendInput(lease, semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
+      sendInput(lease, semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult, expectedLifetime) {
         this.#assertOpen();
         this.#runtime.sendInput(
           this.clientId,
@@ -63397,7 +63492,8 @@ var init_registry2 = __esm({
           input,
           performanceTraceId,
           causalProbe,
-          onCausalResult
+          onCausalResult,
+          expectedLifetime
         );
       }
       failCausalCellProbe(semanticPaneId3, traceId, reason) {
@@ -63818,7 +63914,7 @@ var init_transport_binding = __esm({
         authorize();
         return authorize;
       }
-      sendInput(semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
+      sendInput(semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult, expectedLifetime) {
         this.assertController(semanticPaneId3);
         const lease = this.#shared.lease;
         if (!lease) {
@@ -63838,7 +63934,8 @@ var init_transport_binding = __esm({
             causalProbe ? (result2) => {
               this.#causalCellProbes.delete(causalProbe.traceId);
               onCausalResult?.(result2);
-            } : onCausalResult
+            } : onCausalResult,
+            expectedLifetime
           );
         } catch (error) {
           if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);
@@ -70131,6 +70228,7 @@ var init_pane_stream_websocket = __esm({
     "use strict";
     init_src2();
     init_src2();
+    init_src2();
     init_admission_util();
     init_registry2();
     init_terminal_delivery_observation_identity();
@@ -70259,7 +70357,10 @@ var init_pane_stream_websocket = __esm({
           try {
             const describeStartedAtMicros = trace ? this.#observability.nowMicros() : 0;
             if (this.#mirror.describeSessionAuthority) {
-              const authority2 = await this.#mirror.describeSessionAuthority(context.sessionName);
+              const authority2 = await this.#mirror.describeSessionAuthority(
+                context.sessionName,
+                request3.panes
+              );
               described = authority2.description;
               runtimeSessionId = authority2.runtimeSessionId;
             } else {
@@ -70839,6 +70940,9 @@ var init_pane_stream_websocket = __esm({
         try {
           sendControl2(this.#socket, {
             type: "ready",
+            ...this.#sessionRuntimeBinding && this.#descriptor.terminalDelivery?.protocolVersions.includes(
+              PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION
+            ) ? { inputLifetime: true } : {},
             protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             daemonInstanceId: this.#binding.daemonInstanceId,
             requestId: this.#binding.requestId,
@@ -71896,7 +72000,8 @@ var init_pane_stream_websocket = __esm({
           frame.causalProbe,
           ingressAtMicros,
           callbackAtSharedMicros,
-          ingressAtSharedMicros
+          ingressAtSharedMicros,
+          frame.expectedLifetime
         );
       };
       #acceptAuthorityGeneration(generation) {
@@ -71989,7 +72094,13 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.give(this.#clientId, pane, "renderer-backlog", returned);
         this.#evaluateResume(pane);
       }
-      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null, callbackAtSharedMicros = null, ingressAtSharedMicros = null) {
+      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null, callbackAtSharedMicros = null, ingressAtSharedMicros = null, expectedLifetime) {
+        if (expectedLifetime && (!this.#sessionRuntimeBinding || !this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION
+        ))) {
+          this.#failProtocol("input-rejected");
+          return;
+        }
         if (this.#descriptor.viewerMode !== "interactive") {
           this.#failProtocol("input-rejected");
           return;
@@ -72081,7 +72192,8 @@ var init_pane_stream_websocket = __esm({
                     }
                   });
                 }
-              } : void 0
+              } : void 0,
+              expectedLifetime
             );
           else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);

@@ -214,3 +214,25 @@ describe("selectTerminalPane", () => {
     }
   });
 });
+
+it.each(["topology-changed", "authority-denied", "operation-timeout"])(
+  "classifies the exact dispatch refusal %s without retry or receipt fabrication",
+  async (code) => {
+    const active = target(
+      async () => ({}),
+      () => true,
+    );
+    active.client.dispatch = vi.fn(async () => {
+      throw Object.assign(new Error("refused"), { code });
+    });
+    const failure = vi.fn();
+    expect(
+      await selectTerminalPane(active, () => active, "pane.agent", undefined, failure),
+    ).toBeNull();
+    expect(active.client.dispatch).toHaveBeenCalledTimes(1);
+    expect(failure).toHaveBeenCalledWith({
+      stage: "dispatch",
+      reason: code === "authority-denied" ? "transport-rejected" : code,
+    });
+  },
+);

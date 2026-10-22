@@ -105,6 +105,39 @@ fn both_axes_commit_exact_outer_cells_only_after_motion_and_clamp_both_panes() {
     }
 }
 #[test]
+fn preview_follows_the_pointer_target_on_both_axes_without_leaving_the_frame() {
+    for axis in [Axis::Cols, Axis::Rows] {
+        let s = state(axis);
+        let start = if axis == Axis::Cols {
+            (5.5, 2.)
+        } else {
+            (2., 4.5)
+        };
+        let mut drag = Drag::begin(
+            &s,
+            bounds(),
+            10.,
+            crate::terminal::CELL_HEIGHT,
+            point_at(start.0, start.1),
+        )
+        .unwrap();
+        let extent = if axis == Axis::Cols { 11 } else { 9 };
+        assert_eq!(preview_edge(&drag.split, drag.cells, extent), None);
+        let end = if axis == Axis::Cols {
+            (7.5, 2.)
+        } else {
+            (2., 5.5)
+        };
+        assert!(drag.update(point_at(end.0, end.1)));
+        let expected = if axis == Axis::Cols { 7 } else { 5 };
+        assert_eq!(
+            preview_edge(&drag.split, drag.cells, extent),
+            Some(expected)
+        );
+        assert_eq!(preview_edge(&drag.split, drag.cells, expected), None);
+    }
+}
+#[test]
 fn content_only_updates_survive_but_topology_lifetime_selection_and_presence_do_not() {
     let original = state(Axis::Cols);
     let drag = Drag::begin(
@@ -292,6 +325,7 @@ fn make_view(
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),
@@ -310,6 +344,7 @@ fn make_view(
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
+        fit_settle: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: Some((
@@ -418,10 +453,10 @@ fn native_lower_header_preserves_horizontal_drag_and_external_row_excludes_resiz
         crate::terminal::CELL_HEIGHT,
     )
     .unwrap();
-    let commands: Vec<_> = receiver.try_iter().collect();
-    assert!(commands.iter().any(|command| matches!(command,
-        browser::Command::Input { input: crate::tmux_snapshot::keys::Input::Resize {cols,rows,..},.. }
-        if (*cols,*rows)==expected)));
+    assert_eq!(
+        crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver),
+        expected
+    );
     let start = grid.origin + point(px(2. * width), px(4.5 * crate::terminal::CELL_HEIGHT));
     cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
     view.read_with(cx, |view, _| assert!(view.divider.is_some()));
@@ -439,7 +474,7 @@ fn native_lower_header_preserves_horizontal_drag_and_external_row_excludes_resiz
 }
 
 #[test]
-fn continuous_owner_coalesces_motion_retains_release_and_orders_cancel_under_backpressure() {
+fn staged_owner_keeps_motion_local_retains_release_and_orders_cancel_under_backpressure() {
     let mut s = state(Axis::Cols);
     s.resize_gesture_supported = true;
     let drag = Drag::begin(
@@ -466,13 +501,10 @@ fn continuous_owner_coalesces_motion_retains_release_and_orders_cancel_under_bac
         }
     ));
     owner.flush(&sender, true, true);
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        browser::Command::ResizeGesture {
-            update: gesture::Update::Move { cells: 8 },
-            ..
-        }
-    ));
+    assert!(
+        receiver.try_recv().is_err(),
+        "pointer motion must not reflow the terminal"
+    );
     owner.offer(7, true);
     owner.flush(&sender, false, true);
     assert!(matches!(
@@ -567,9 +599,7 @@ fn continuous_ack_preserves_pending_but_requires_same_settled_split_and_identity
     assert!(!drag.compatible(&s));
 }
 #[gpui::test]
-fn rendered_continuous_drag_sends_during_motion_and_final_cells_on_release(
-    cx: &mut TestAppContext,
-) {
+fn rendered_staged_drag_previews_motion_and_sends_final_cells_on_release(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -601,13 +631,10 @@ fn rendered_continuous_drag_sends_during_motion_and_final_cells_on_release(
     let moved = start + point(px(2. * width), px(0.));
     cx.simulate_mouse_move(moved, Some(MouseButton::Left), Modifiers::default());
     view.update(cx, |view, cx| view.flush_resize_gesture(cx));
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        browser::Command::ResizeGesture {
-            update: gesture::Update::Move { cells: 7 },
-            ..
-        }
-    ));
+    assert!(
+        receiver.try_recv().is_err(),
+        "pointer motion must not reflow the terminal"
+    );
     view.read_with(cx, |view, _| assert!(view.divider.is_some()));
     cx.simulate_mouse_up(moved, MouseButton::Left, Modifiers::default());
     view.update(cx, |view, cx| view.flush_resize_gesture(cx));
@@ -649,6 +676,7 @@ fn healthy_idle_gesture_outlives_ten_seconds_but_stalled_transport_is_bounded() 
         cells: 5,
     });
     owner.observe(&s);
+    owner.offer(8, false); // A healthy local preview is not a stalled transport.
     assert!(!owner.flush_at(
         &sender,
         true,

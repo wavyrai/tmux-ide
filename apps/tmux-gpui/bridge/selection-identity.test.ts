@@ -108,3 +108,38 @@ test("browser scope binds verified route/window/copy and canvas geometry", () =>
   );
   assert.equal(scopeSelectionIdentity(proof, null, "window", region, canvas), null);
 });
+
+test("selection proof retains exact digest bytes while serializing only replaced rows", async () => {
+  const { createHash } = await import("node:crypto");
+  const f = fixture();
+  const source = structuredClone(f.viewport);
+  source.grid[0].cells[0].grapheme = '"\\😀é\n';
+  const scope = JSON.stringify(["w", "p", "g", "i", 2, 2, false]);
+  const key = JSON.stringify(["canonical-v1", scope, 1, "h1", 1]);
+  const expected = createHash("sha256")
+    .update(JSON.stringify([key, JSON.stringify(source.grid)]))
+    .digest("hex");
+  const stringify = JSON.stringify;
+  let wholeGrids = 0,
+    rows = 0;
+  JSON.stringify = ((value: unknown) => {
+    if (value === source.grid) wholeGrids++;
+    if (value && typeof value === "object" && "cells" in value && "wrapped" in value) rows++;
+    return stringify(value);
+  }) as typeof JSON.stringify;
+  try {
+    assert.equal(f.read(f.frame, source, 1, 3, f.anchor), expected);
+    assert.equal(rows, 2);
+    assert.equal(wholeGrids, 0);
+    const updated = { ...f.frame, proof: { ...f.frame.proof, revision: 2, stateHash: "h2" } };
+    assert.ok(f.read(updated, source, 1, 3, f.anchor));
+    assert.equal(rows, 2, "new proof with unchanged rows does not serialize cells");
+    const next = { ...source, grid: [...source.grid] };
+    next.grid[1] = structuredClone(next.grid[1]);
+    next.grid[1].wrapped = true;
+    assert.ok(f.read(updated, next, 1, 3, f.anchor));
+    assert.equal(rows, 3, "one replaced row serializes once");
+  } finally {
+    JSON.stringify = stringify;
+  }
+});

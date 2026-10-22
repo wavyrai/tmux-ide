@@ -1,3 +1,6 @@
+import process from "node:process";
+import { setTimeout } from "node:timers";
+const { AbortController, AbortSignal } = globalThis;
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -129,3 +132,36 @@ test(
     );
   },
 );
+
+for (const direct of [false, true]) {
+  test(
+    `duplex ${direct ? "inherited" : "relay"} helper EOF propagates exact failure`,
+    { timeout: 5000 },
+    async () => {
+      assert.equal(
+        await runPreview({
+          duplex: true,
+          direct,
+          helper: command("process.stdout.write('frame'); process.exitCode=7;"),
+          native: command("process.stdin.resume(); process.stdin.once('end',()=>process.exit(0));"),
+        }),
+        7,
+      );
+    },
+  );
+  test(
+    `duplex ${direct ? "inherited" : "relay"} missing helper reaps viewer`,
+    { timeout: 5000 },
+    async () => {
+      assert.equal(
+        await runPreview({
+          duplex: true,
+          direct,
+          helper: { command: "/nonexistent/tmux-gpui-test-helper", args: [] },
+          native: command(live),
+        }),
+        1,
+      );
+    },
+  );
+}

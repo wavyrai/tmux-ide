@@ -506,6 +506,7 @@ describe("OpenTUI generation host", () => {
       rendererEpoch: rendererEpoch + 1,
     });
     expect(view.adopt).toHaveBeenCalledTimes(2);
+    expect(view.adopt.mock.calls.map((call) => (call as unknown[])[1])).toEqual([1, 2]);
     expect(view.clear).not.toHaveBeenCalled();
     expect(replacementStates).toEqual(["rebinding", "live"]);
     expect(replacementAuthorityClients).toEqual([
@@ -1100,6 +1101,7 @@ describe("OpenTUI generation host", () => {
     });
     expect(bundles[0]!.disposeSpy).toHaveBeenCalledOnce();
     expect(view.adopt).toHaveBeenCalledTimes(2);
+    expect(view.adopt.mock.calls.map((call) => (call as unknown[])[1])).toEqual([1, 2]);
   });
 
   it("ignores unrelated degradation and clears through runtime retirement", async () => {

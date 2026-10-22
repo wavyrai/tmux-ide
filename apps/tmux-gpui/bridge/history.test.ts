@@ -75,3 +75,30 @@ test("serialized history budget and width changes cannot retain stale views", ()
   h.update(blankTerminalReplicaSnapshot(3, 2));
   assert.equal(h.offset, 0);
 });
+
+test("repeated owned history rows avoid serialization across viewport updates", async (t) => {
+  const { freezeOwnedTerminalReplicaRow } =
+    await import("../../../packages/core/src/terminal-replica-owned-row.ts");
+  const owned = freezeOwnedTerminalReplicaRow(row("界"));
+  const snapshot = { ...blankTerminalReplicaSnapshot(2, 2), history: [owned] };
+  const stringify = t.mock.method(JSON, "stringify");
+  const h = createHistoryViewport();
+  h.update(snapshot);
+  h.scroll(1);
+  for (let i = 0; i < 20; i++) assert.equal(h.update(snapshot)!.grid[0], owned);
+  assert.equal(stringify.mock.calls.filter((call) => call.arguments[0] === owned).length, 1);
+});
+test("exact JSON byte boundary admits equality and rejects one extra byte", () => {
+  const h = createHistoryViewport();
+  const source = row("");
+  const overhead = Buffer.byteLength(JSON.stringify(source));
+  source.cells[0]!.grapheme = "x".repeat(2 * 1024 * 1024 - overhead);
+  const snapshot = { ...blankTerminalReplicaSnapshot(2, 2), history: [source] };
+  h.update(snapshot);
+  h.scroll(1);
+  assert.equal(h.offset, 1);
+  source.cells[0]!.grapheme += "x";
+  h.update(snapshot);
+  h.scroll(1);
+  assert.equal(h.offset, 0);
+});

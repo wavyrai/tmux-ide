@@ -15,6 +15,7 @@ fn narrow_sidebar_keeps_controls_visible_while_end_reveals_exact_session(cx: &mu
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     for selector in ["open-picker", "open-theme-picker", "refresh-sessions"] {
         let control = cx.debug_bounds(selector).unwrap();
         assert!(

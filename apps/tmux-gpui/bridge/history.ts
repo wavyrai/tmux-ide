@@ -1,3 +1,4 @@
+import { createHistoryRowByteSizer } from "./history-row-byte-size.ts";
 import { z } from "zod";
 import type {
   TerminalReplicaSnapshot,
@@ -10,6 +11,7 @@ const MAX_ROWS = 1000;
 const MAX_BYTES = 2 * 1024 * 1024;
 /** Retain canonical row identity locally; never infer identity from matching text. */
 export function createHistoryViewport() {
+  const rowByteSize = createHistoryRowByteSizer();
   let current: TerminalReplicaSnapshot | null = null;
   let history: TerminalReplicaRow[] = [];
   let anchor: TerminalReplicaRow | null = null;
@@ -31,7 +33,7 @@ export function createHistoryViewport() {
         i--
       ) {
         const row = snapshot.history[i]!;
-        bytes += Buffer.byteLength(JSON.stringify(row));
+        bytes += rowByteSize(row);
         if (bytes > MAX_BYTES) break;
         history.push(row);
       }

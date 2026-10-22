@@ -13,6 +13,9 @@ const target: HomeAgentNavigationTarget = {
 };
 function harness() {
   const state = {
+    status: "live",
+    clientGeneration: 1,
+    disposed: false,
     selected: "remote",
     attached: "remote",
     valid: true,
@@ -24,12 +27,15 @@ function harness() {
   };
   const listeners = new Set<() => void>();
   const client = {
-    getSnapshot: () => ({
-      generation: 1,
-      semantic: state.semantic
-        ? { sidebar: { agents: [{ id: "agent", paneId: state.pane }] } }
-        : null,
-    }),
+    getSnapshot: () => {
+      if (state.disposed) throw new Error("disposed");
+      return {
+        generation: state.clientGeneration,
+        semantic: state.semantic
+          ? { sidebar: { agents: [{ id: "agent", paneId: state.pane }] } }
+          : null,
+      };
+    },
     subscribe: (_scope: string, listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -61,10 +67,10 @@ function harness() {
     isCurrentTarget: (machine, row) => machine === "remote" && row === target && state.valid,
     generation: () =>
       ({
-        status: "live",
+        status: state.status,
         daemonGeneration: state.daemon,
         rendererEpoch: 1,
-        connection: { liveSessionId: state.live },
+        connection: { liveSessionId: state.live, workspaceName: state.session },
         client,
       }) as unknown as OpenTuiGenerationHostSnapshot,
     sessionName: () => state.session,
@@ -159,4 +165,40 @@ describe("machine agent navigation", () => {
       expect(h.events).toEqual([]);
     },
   );
+});
+
+describe("retained machine agent control", () => {
+  it("reserves exact same-machine rebind intent synchronously without reopening", async () => {
+    const h = harness();
+    h.state.status = "rebinding";
+    const pending = h.owner.open("remote", target);
+    expect(h.events).toEqual(["select:%7", "show"]);
+    expect(h.start).not.toHaveBeenCalled();
+    expect(await pending).toEqual({ opened: true });
+  });
+  it.each([
+    "live",
+    "daemon",
+    "pane",
+    "session",
+    "client-generation",
+    "disposed",
+    "machine",
+    "selected-machine",
+    "catalog",
+  ])("does not reuse conflicting %s", async (field) => {
+    const h = harness();
+    h.state.status = "rebinding";
+    if (field === "client-generation") h.state.clientGeneration = NaN;
+    else if (field === "disposed") h.state.disposed = true;
+    else if (field === "machine") h.state.attached = "other";
+    else if (field === "selected-machine") h.state.selected = "other";
+    else if (field === "catalog") h.state.valid = false;
+    else h.state[field as "live" | "daemon" | "pane" | "session"] = "different";
+    const pending = h.owner.open("remote", target);
+    expect(h.events).toEqual([]);
+    h.owner.cancel();
+    await pending;
+    expect(h.events).toEqual([]);
+  });
 });

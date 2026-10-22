@@ -41,14 +41,16 @@ describe("OpenTUI runtime layout presentation", () => {
     const seen: Array<string | null> = [];
     presentation.subscribe((value) => seen.push(value?.windowName ?? null));
 
-    presentation.adopt(first);
-    presentation.adopt(candidate);
+    presentation.adopt(first, 1);
+    presentation.adopt(candidate, 2);
     expect(presentation.getSnapshot()?.windowName).toBe("first");
     expect(seen).toEqual([null, "first"]);
+    expect(presentation.getWindowSnapshot().rendererEpoch).toBe(1);
 
     candidate.publish({ current: secondLayout, windows: [secondLayout] });
     expect(presentation.getSnapshot()?.windowName).toBe("second");
     expect(seen).toEqual([null, "first", "second"]);
+    expect(presentation.getWindowSnapshot().rendererEpoch).toBe(2);
   });
 
   test("fences layouts arriving from a retired port", () => {
@@ -59,10 +61,29 @@ describe("OpenTUI runtime layout presentation", () => {
     const first = port({ current: firstLayout, windows: [firstLayout] });
     const second = port({ current: secondLayout, windows: [secondLayout] });
 
-    presentation.adopt(first);
-    presentation.adopt(second);
+    presentation.adopt(first, 1);
+    presentation.adopt(second, 2);
     first.publish({ current: lateLayout, windows: [lateLayout] });
 
     expect(presentation.getSnapshot()?.windowName).toBe("second");
+    expect(presentation.getWindowSnapshot().rendererEpoch).toBe(2);
+    presentation.clear();
+    expect(presentation.getWindowSnapshot().rendererEpoch).toBeUndefined();
   });
+});
+
+test("stamps synchronous seeds without mutating or relabeling reused snapshots", () => {
+  const presentation = createOpenTuiRuntimeLayoutPresentation();
+  const frame = layout("shared");
+  const shared = { current: frame, windows: [frame] };
+  const seen: OpenTuiWorkspaceLayoutSnapshot[] = [];
+  presentation.subscribeWindows((snapshot) => seen.push(snapshot));
+  presentation.adopt(port(shared), 4);
+  const retained = presentation.getWindowSnapshot();
+  presentation.adopt(port(shared), 5);
+  expect(retained.rendererEpoch).toBe(4);
+  expect(presentation.getWindowSnapshot().rendererEpoch).toBe(5);
+  expect(presentation.getWindowSnapshot()).not.toBe(retained);
+  expect(shared).not.toHaveProperty("rendererEpoch");
+  expect(seen.map((snapshot) => snapshot.rendererEpoch)).toEqual([undefined, 4, 5]);
 });

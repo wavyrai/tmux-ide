@@ -34,6 +34,7 @@ fn make_view(
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),
@@ -52,6 +53,7 @@ fn make_view(
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
+        fit_settle: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: Some((
@@ -321,3 +323,9 @@ mod retained_preview;
 
 #[path = "terminal_links/native_fixture_tests.rs"]
 mod native_link_fixture_tests;
+
+#[path = "history_page_tests.rs"]
+mod history_page_tests;
+
+#[path = "input_interruption_tests/pending_selection.rs"]
+mod pending_selection;

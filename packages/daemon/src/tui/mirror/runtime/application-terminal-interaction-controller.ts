@@ -1,3 +1,4 @@
+import { createTerminalSelectionWaiter } from "./terminal-selection-waiter.ts";
 import { WorkspaceWindowLinkSelectResultSchemaZ } from "@tmux-ide/contracts";
 import { windowLinkForPane, windowLinkTarget } from "./application-terminal-workspace-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -350,6 +351,10 @@ export function createApplicationTerminalInteractionController(
     left.generation === right.generation &&
     left.workspace === right.workspace;
   let selectedControl: ControlIdentity | null = null;
+  const selectionWaiter = createTerminalSelectionWaiter();
+  let observedLayoutEpoch: number | null = null;
+  let selectionGeneration: OpenTuiGenerationHostSnapshot | null = null;
+  let selectionLayout = options.layout();
   const waitingInput = new Set<{
     control: ControlIdentity;
     weight: number;
@@ -823,10 +828,30 @@ export function createApplicationTerminalInteractionController(
       "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
     >;
   }>({
-    select: async (paneId) => {
+    select: async (paneId): Promise<boolean> => {
       finishLinkSelection(false);
+      const initial = options.generation();
+      const selectionControl = controlIdentity(initial);
+      const selectionVersion = paneInput.selectionVersion;
+      const selectionCurrent = (): boolean =>
+        paneInput.selectionVersion === selectionVersion &&
+        sameControl(selectionControl, controlIdentity(selectionGeneration));
+      const panePresent = () =>
+        selectionLayout.windows.some((window) => window.panes.some((pane) => pane.pane === paneId));
+      if (initial?.status === "rebinding") {
+        // Reserve the optimistic target now, but send its FIRST mutation only
+        // after this same control connection has a coherent terminal runtime.
+        const ready = await selectionWaiter.wait(() => {
+          if (!selectionCurrent()) return false;
+          const active = selectionGeneration;
+          if (active?.status !== "live" || observedLayoutEpoch !== active.rendererEpoch)
+            return "pending";
+          return panePresent();
+        });
+        if (!ready || !selectionCurrent()) return false;
+      }
       const expected = liveSelectionTarget();
-      const selectionControl = controlIdentity(options.generation());
+      let dispatchedRendererEpoch: number | undefined;
       const selecting = pendingWindowSwitch;
       const operationId = selecting?.traceId;
       const selectionFailure: { current: PaneSelectionFailure | null } = { current: null };
@@ -845,8 +870,37 @@ export function createApplicationTerminalInteractionController(
               selectionFailure.current = failure;
             },
             windowLinkForPane(options.layout(), paneId) ?? undefined,
+            () => {
+              dispatchedRendererEpoch = options.generation()?.rendererEpoch;
+            },
           )
         : null;
+      if (
+        receipt === null &&
+        selectionFailure.current?.reason === "topology-changed" &&
+        selectionCurrent()
+      ) {
+        // The daemon may have selected the pane before retiring its stream.
+        // Observe the replacement runtime; never resubmit an uncertain command
+        // or manufacture an operation receipt. Input still waits on this promise.
+        const confirmed = await selectionWaiter.wait(() => {
+          if (!selectionCurrent()) return false;
+          const active = selectionGeneration;
+          if (
+            active?.status !== "live" ||
+            active.rendererEpoch === dispatchedRendererEpoch ||
+            observedLayoutEpoch !== active.rendererEpoch
+          )
+            return "pending";
+          if (!panePresent()) return false;
+          const current = selectionLayout.current;
+          const activePanes = current?.panes.filter((pane) => pane.active) ?? [];
+          if (!current?.currentWindow || activePanes.length !== 1) return "pending";
+          return activePanes[0]?.pane === paneId ? true : "pending";
+        });
+        if (selecting && pendingWindowSwitch === selecting) pendingWindowSwitch = null;
+        return confirmed && selectionCurrent();
+      }
       if (selecting && pendingWindowSwitch === selecting) {
         const receiptAtMicros = options.detailedWindowSwitchTiming ? diagnosticNowMicros() : null;
         if (selecting.timing) selecting.timing.receiptAtMicros = receiptAtMicros;
@@ -1001,17 +1055,20 @@ export function createApplicationTerminalInteractionController(
 
   return {
     cancelPendingInput() {
+      selectionWaiter.cancel();
       finishLinkSelection(false);
       paneInput.invalidateSelection();
       for (const entry of waitingInput) entry.settle(false);
     },
     adoptGeneration(snapshot) {
+      selectionGeneration = snapshot;
       const control = controlIdentity(snapshot);
       if (!sameControl(selectedControl, control)) {
         finishLinkSelection(false);
         paneInput.invalidateSelection();
       }
       selectedControl = control;
+      selectionWaiter.reconcile();
       if (waitingInput.size > 0 && snapshot?.status === "live" && snapshot.fastLane) {
         // Old waiters resume first; input admitted synchronously by the next
         // layout publication must not overtake them in this microtask turn.
@@ -1074,6 +1131,9 @@ export function createApplicationTerminalInteractionController(
       inputAuthorityIdentity = next;
     },
     adoptLayout(snapshot) {
+      selectionLayout = snapshot;
+      observedLayoutEpoch = snapshot.rendererEpoch ?? null;
+      selectionWaiter.reconcile();
       reconcileLinkSelection(snapshot);
       paneInput.adoptCanonicalPane(snapshot.current ? paneForWindow(snapshot.current) : null);
       const currentWindow = snapshot.current?.semanticWindowId ?? snapshot.current?.windowName;
@@ -1165,6 +1225,7 @@ export function createApplicationTerminalInteractionController(
     selectPane: (paneId) => {
       finishLinkSelection(false);
       paneInput.selectPane(paneId);
+      selectionWaiter.reconcile();
     },
     async unlinkWindowLink(target) {
       const expected = liveSelectionTarget();

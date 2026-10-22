@@ -19,6 +19,31 @@ const identity = (frame: HistoryFrame) =>
   ]);
 /** Display proof only. Retain at most one viewport's immutable row references, never a terminal capability. */
 export function createSelectionIdentity() {
+  // Canonical rows are immutable. Cache their escaped bytes rather than stringify
+  // the entire viewport again for every committed revision/cursor change.
+  const rowText = new WeakMap<TerminalReplicaRow, { bytes: number; escaped: string }>();
+  const contentDigest = (key: string, rows: TerminalReplicaRow[]): string | null => {
+    let bytes = 2 + Math.max(0, rows.length - 1);
+    const parts = rows.map((row) => {
+      let text = rowText.get(row);
+      if (!text) {
+        const json = JSON.stringify(row);
+        text = { bytes: Buffer.byteLength(json), escaped: JSON.stringify(json).slice(1, -1) };
+        rowText.set(row, text);
+      }
+      bytes += text.bytes;
+      return text.escaped;
+    });
+    if (bytes > 2 * 1024 * 1024) return null;
+    // Exactly the previous digest([key, JSON.stringify(rows)]) byte sequence,
+    // streamed without allocating/escaping a multi-megabyte grid string.
+    const hash = createHash("sha256").update("[" + JSON.stringify(key) + ',"[');
+    for (const [index, part] of parts.entries()) {
+      if (index > 0) hash.update(",");
+      hash.update(part);
+    }
+    return hash.update(']"]').digest("hex");
+  };
   let lineage:
     | { token: string; identity: string; rows: TerminalReplicaRow[]; valid: boolean }
     | undefined;
@@ -84,13 +109,12 @@ export function createSelectionIdentity() {
       ]);
     }
     if (cached?.key === key && sameRows(cached.rows, viewport.grid)) return cached.value;
-    const serialized = JSON.stringify(viewport.grid);
-    if (Buffer.byteLength(serialized) > 2 * 1024 * 1024) {
+    const value = contentDigest(key, viewport.grid);
+    if (value === null) {
       lineage = undefined;
       cached = undefined;
       return null;
     }
-    const value = digest([key, serialized]);
     cached = { key, rows: [...viewport.grid], value };
     return value;
   };

@@ -1,4 +1,4 @@
-//! Bounded latest-target transport on the existing 16ms browser tick.
+//! Local pointer preview with one canonical mutation on release.
 use super::*;
 use std::{
     sync::mpsc::TrySendError,
@@ -42,7 +42,6 @@ impl Ack {
 #[serde(tag = "phase", rename_all = "lowercase")]
 pub(in crate::tmux_snapshot) enum Update {
     Begin { token: String, cells: u16 },
-    Move { cells: u16 },
     Release { cells: u16 },
     Cancel,
 }
@@ -201,12 +200,7 @@ impl Owner {
         let Some(a) = self.active.as_mut() else {
             return false;
         };
-        let waiting = !a.begun
-            || a.cancel
-            || a.terminal_sent
-            || a.awaiting_ack
-            || a.desired != a.sent
-            || a.released;
+        let waiting = !a.begun || a.cancel || a.terminal_sent || a.awaiting_ack || a.released;
         let stalled =
             waiting && now.saturating_duration_since(a.progress) > Duration::from_secs(10);
         if stalled && now.saturating_duration_since(a.progress) > Duration::from_secs(12) {
@@ -234,8 +228,6 @@ impl Owner {
             return false;
         } else if a.released {
             Update::Release { cells: a.desired }
-        } else if a.desired != a.sent {
-            Update::Move { cells: a.desired }
         } else {
             return false;
         };
@@ -245,7 +237,6 @@ impl Owner {
                     target: target.clone(),
                     axis: a.axis,
                 },
-                Update::Move { cells } => canonical::Update::Move { boundary: cells },
                 Update::Release { cells } => canonical::Update::Release { boundary: cells },
                 Update::Cancel => canonical::Update::Cancel,
             };

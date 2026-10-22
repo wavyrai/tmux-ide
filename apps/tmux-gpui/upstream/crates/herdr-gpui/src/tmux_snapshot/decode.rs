@@ -1,16 +1,18 @@
 //! Converts a tmux-ide TerminalReplicaSnapshot to the existing GPUI painter.
-//! Full snapshots only: this is NOT a replica protocol, authority, or patch owner.
+//! The worker codec validates complete frames; browser publication validation owns authority.
 use super::Error;
 use herdr_client::protocol::{CellData, CursorState, FrameData};
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Snapshot {
+struct Snapshot<R = Row> {
+    #[serde(default)]
+    encoding: Encoding,
     cols: u16,
     rows: u16,
-    grid: Vec<Row>,
-    history: Vec<Row>,
+    grid: Vec<R>,
+    history: Vec<R>,
     cursor: Cursor,
     modes: Modes,
     placements: Vec<serde_json::Value>,
@@ -19,13 +21,25 @@ struct Snapshot {
     #[serde(default, rename = "kittyGraphics")]
     _kitty_graphics: Option<serde::de::IgnoredAny>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Default, Deserialize)]
+enum Encoding {
+    #[default]
+    #[serde(skip)]
+    Legacy,
+    #[serde(rename = "rle-v1")]
+    RleV1,
+}
+
+mod compact;
+pub(super) mod delta;
+
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Row {
     cells: Vec<Cell>,
     wrapped: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cell {
     grapheme: String,
@@ -34,14 +48,14 @@ struct Cell {
     background: Color,
     attributes: u8,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Color {
     Default,
     Indexed { index: u8 },
     Rgb { value: u32 },
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
     x: u16,
@@ -50,14 +64,14 @@ struct Cursor {
     style: CursorStyle,
     blink: bool,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum CursorStyle {
     Block,
     Underline,
     Bar,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Modes {
     alternate_screen: bool,
@@ -89,19 +103,19 @@ pub(super) enum MouseEncoding {
     Sgr,
     SgrPixels,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Bootstrap {
     kind: BootstrapKind,
     hidden_state: HiddenState,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum BootstrapKind {
     PaintedCapture,
     AuthoritativeStream,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum HiddenState {
     Unknown,
@@ -122,8 +136,30 @@ impl Color {
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
+    frame_with_pointer_modes(bytes).map(|(frame, _)| frame)
+}
+/// One parse yields both the painter frame and the live pointer modes.
+pub(super) fn frame_with_pointer_modes(
+    bytes: &[u8],
+) -> Result<(FrameData, Option<PointerModes>), Error> {
     let snapshot: Snapshot = serde_json::from_slice(bytes)?;
+    if matches!(snapshot.encoding, Encoding::RleV1) {
+        return Err(Error::Invalid("compact snapshot was not negotiated"));
+    }
+    convert(snapshot)
+}
+
+pub(super) fn live_frame(bytes: &[u8]) -> Result<(FrameData, Option<PointerModes>), Error> {
+    if std::env::var("TMUX_IDE_GUI_NATIVE_ENCODING").as_deref() == Ok("rle-v1") {
+        compact::frame(bytes)
+    } else {
+        frame_with_pointer_modes(bytes)
+    }
+}
+
+fn convert(snapshot: Snapshot) -> Result<(FrameData, Option<PointerModes>), Error> {
     let Snapshot {
+        encoding: _,
         cols,
         rows,
         grid,
@@ -162,6 +198,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         mouse_encoding,
         synchronized_output,
     } = modes;
+    let pointer_modes = pointer_modes(alternate_screen, mouse_protocol, mouse_encoding);
     let Bootstrap { kind, hidden_state } = bootstrap;
     let _ = (
         alternate_screen,
@@ -234,7 +271,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         (CursorStyle::Bar, true) => 5,
         (CursorStyle::Bar, false) => 6,
     };
-    Ok(FrameData {
+    let frame = FrameData {
         cells,
         width: cols,
         height: rows,
@@ -246,7 +283,8 @@ pub(super) fn frame(bytes: &[u8]) -> Result<FrameData, Error> {
         }),
         hyperlinks: vec![],
         graphics: vec![],
-    })
+    };
+    Ok((frame, pointer_modes))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,18 +293,23 @@ pub(super) struct PointerModes {
     pub encoding: MouseEncoding,
     pub alternate: bool,
 }
-pub(super) fn pointer_modes(value: &serde_json::Value) -> Result<Option<PointerModes>, Error> {
-    let modes: Modes = serde_json::from_value(value["modes"].clone())?;
-    Ok(match (modes.mouse_protocol, modes.mouse_encoding) {
+fn pointer_modes(
+    alternate: bool,
+    protocol: Option<MouseProtocol>,
+    encoding: Option<MouseEncoding>,
+) -> Option<PointerModes> {
+    match (protocol, encoding) {
         (Some(protocol), Some(encoding))
             if protocol != MouseProtocol::None && encoding != MouseEncoding::SgrPixels =>
         {
             Some(PointerModes {
                 protocol,
                 encoding,
-                alternate: modes.alternate_screen,
+                alternate,
             })
         }
         _ => None,
-    })
+    }
 }
+
+pub(super) mod binary;

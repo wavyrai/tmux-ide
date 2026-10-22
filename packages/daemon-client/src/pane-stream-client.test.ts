@@ -108,12 +108,13 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function acceptInteractiveHandshake(socket: FakeSocket): void {
+function acceptInteractiveHandshake(socket: FakeSocket, inputLifetime = false): void {
   socket.onSend = (frame) => {
     if (frame.type === "redeem") {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
+          ...(inputLifetime ? { inputLifetime: true } : {}),
           protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
@@ -2839,3 +2840,29 @@ describe("semantic pane-stream runtime client", () => {
     });
   });
 });
+
+for (const supported of [false, true]) {
+  it(`negotiates held input lifetime support=${supported}`, async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket, supported);
+    const client = await openPaneStreamRuntimeClient(options(socket));
+    expect(client.supportsInputLifetime).toBe(supported);
+    const expectedLifetime = { generation: INSTANCE, incarnation: `${INSTANCE}:1` };
+    const sending = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      undefined,
+      undefined,
+      expectedLifetime,
+    );
+    if (!supported) {
+      await expect(sending).rejects.toThrow("capability unavailable");
+      expect(socket.sent.filter((f) => (f as { type?: string }).type === "input")).toHaveLength(0);
+    } else {
+      expect(socket.sent.at(-1)).toMatchObject({ type: "input", expectedLifetime });
+      socket.message({ type: "input-ack", pane: "pane.editor", seq: 1 });
+      expect(await sending).toBe("ok");
+    }
+    client.close();
+  });
+}

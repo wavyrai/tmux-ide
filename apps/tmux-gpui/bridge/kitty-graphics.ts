@@ -21,6 +21,8 @@ import { contentRect } from "./window-canvas.ts";
 /** Digests the native window already holds, handed to each new pane helper. */
 export const KITTY_KNOWN_ENV = "TMUX_IDE_KITTY_KNOWN";
 export const MAX_KNOWN_DIGESTS = 2048;
+// Covers 24 panes × 256 visible placements plus the inherited native cache.
+export const MAX_HELD_DIGESTS = 8192;
 
 /**
  * A placement as the window sees it. `image` names the program's image (pane
@@ -71,11 +73,17 @@ export function parseKnownDigests(value: string | undefined): string[] {
     .slice(0, MAX_KNOWN_DIGESTS);
 }
 
+export type KittyImageBytes = {
+  metadata: TerminalGraphicsBlob & { image?: string };
+  bytes: Uint8Array;
+};
+
 /** Live helper side: one instance per pane-stream connection. */
 export function createKittyGraphicsReceiver(options: {
   readonly known: Iterable<string>;
   readonly request: (pane: string, digests: string[]) => void;
   readonly emit: (line: string) => void;
+  readonly emitChunk?: (chunk: KittyImageBytes) => boolean | void;
 }) {
   const states = new Map<string, TerminalGraphicsState>();
   let takesCellPixels = false;
@@ -83,11 +91,17 @@ export function createKittyGraphicsReceiver(options: {
   // Image ids each pane's last publication showed.
   const visible = new Map<string, Set<number>>();
   // Digests the window holds or that are in flight to it.
-  const held = new Set(options.known);
+  const held = new Set<string>();
+  const remember = (digest: string) => {
+    held.delete(digest);
+    held.add(digest);
+    while (held.size > MAX_HELD_DIGESTS) held.delete(held.values().next().value!);
+  };
+  for (const digest of options.known) remember(digest);
   const pull = (pane: string, digests: Iterable<string>) => {
     const missing = [...new Set(digests)].filter((digest) => !held.has(digest));
     if (missing.length === 0) return;
-    for (const digest of missing) held.add(digest);
+    for (const digest of missing) remember(digest);
     options.request(pane, missing);
   };
   const imageKey = (pane: string, imageId: number) => `${pane}#${imageId}`;
@@ -120,17 +134,18 @@ export function createKittyGraphicsReceiver(options: {
     },
     blob(pane: string, blob: TerminalGraphicsBlob, bytes: Uint8Array): void {
       // The daemon pushes redrawn images unasked; never request them again.
-      held.add(blob.digest);
+      remember(blob.digest);
       const image = states.get(pane)?.images.find((entry) => entry.digest === blob.digest);
-      options.emit(
-        JSON.stringify({
-          kittyImageChunk: {
-            ...blob,
-            ...(image ? { image: imageKey(pane, image.imageId) } : {}),
-            data: Buffer.from(bytes).toString("base64"),
-          },
-        }) + "\n",
-      );
+      const metadata = { ...blob, ...(image ? { image: imageKey(pane, image.imageId) } : {}) };
+      if (options.emitChunk) {
+        if (options.emitChunk({ metadata, bytes }) === false) held.delete(blob.digest);
+      } else {
+        options.emit(
+          JSON.stringify({
+            kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
+          }) + "\n",
+        );
+      }
     },
     /** Placements for one published pane snapshot; pulls missing bytes. */
     placements(pane: string, snapshot: TerminalReplicaSnapshot): KeyedPlacement[] {
@@ -168,6 +183,8 @@ export function createKittyGraphicsReceiver(options: {
     },
     retire(): void {
       states.clear();
+      visible.clear();
+      held.clear();
     },
   };
 }
@@ -211,13 +228,16 @@ export function canvasPlacements(
 /** Browser side: which digests the window holds (bounded, oldest forgotten first). */
 export function createKnownDigests(limit = MAX_KNOWN_DIGESTS) {
   const known = new Set<string>();
+  const observeBytes = (chunk: TerminalGraphicsBlob, length: number) => {
+    if (chunk.offset + length < chunk.total) return;
+    known.delete(chunk.digest);
+    known.add(chunk.digest);
+    while (known.size > limit) known.delete(known.values().next().value!);
+  };
   return {
+    observeBytes,
     observe(chunk: TerminalGraphicsBlob & { data: string }): void {
-      const length = Buffer.byteLength(chunk.data, "base64");
-      if (chunk.offset + length < chunk.total) return;
-      known.delete(chunk.digest);
-      known.add(chunk.digest);
-      while (known.size > limit) known.delete(known.values().next().value!);
+      observeBytes(chunk, Buffer.byteLength(chunk.data, "base64"));
     },
     forget(digests: readonly string[]): void {
       for (const digest of digests) known.delete(digest);

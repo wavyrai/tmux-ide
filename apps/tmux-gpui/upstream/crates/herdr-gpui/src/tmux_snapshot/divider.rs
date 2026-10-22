@@ -4,6 +4,7 @@
 use super::{SnapshotView, browser, hit_regions};
 use bezel_ui::widgets::{Layout, SplitStyle};
 use gpui::{prelude::*, *};
+use herdr_client::protocol::FrameData;
 use serde::{Deserialize, Serialize};
 pub(super) mod canonical;
 pub(super) mod gesture;
@@ -355,6 +356,11 @@ impl Drag {
         })
     }
 }
+/// Where a drag to `cells` puts the boundary; `None` until the pointer leaves the start.
+fn preview_edge(split: &Split, cells: u16, extent: u16) -> Option<u16> {
+    let edge = (split.edge + cells).checked_sub(split.cells)?;
+    (cells != split.cells && edge < extent).then_some(edge)
+}
 impl SnapshotView {
     pub(super) fn divider_handles(&self, width: f32) -> Vec<AnyElement> {
         if !self.presence.ready()
@@ -369,15 +375,49 @@ impl SnapshotView {
         let Some(frame) = self.browser_state.frame.as_ref() else {
             return Vec::new();
         };
-        if self.browser_state.split_layout.is_some() {
-            return canonical::guides(
+        let mut handles = if self.browser_state.split_layout.is_some() {
+            canonical::guides(
                 &self.browser_state,
                 width,
                 self.terminal_height(),
                 self.divider.as_ref().map(|d| d.split.id.as_str()),
                 &super::design::palette(&self.theme()),
-            );
-        }
+            )
+        } else {
+            self.rectangle_handles(frame, width)
+        };
+        handles.extend(self.divider_preview(frame, width));
+        handles
+    }
+    /// The pointer's target boundary, drawn locally while tmux reflows the panes.
+    /// Presentation only: the gesture's daemon-confirmed geometry is unchanged.
+    fn divider_preview(&self, frame: &FrameData, width: f32) -> Option<AnyElement> {
+        let drag = self.divider.as_ref()?;
+        let split = &drag.split;
+        let extent = if split.axis == Axis::Cols {
+            frame.width
+        } else {
+            frame.height
+        };
+        let edge = preview_edge(split, drag.cells, extent)?;
+        let height = self.terminal_height();
+        let (left, top, cols, rows) = if split.axis == Axis::Cols {
+            (edge, split.start, 1, split.span)
+        } else {
+            (split.start, edge, split.span, 1)
+        };
+        Some(
+            handle(&super::design::palette(&self.theme()), split.axis, true)
+                .id("pane-divider-preview")
+                .absolute()
+                .left(px(f32::from(left) * width))
+                .top(px(f32::from(top) * height))
+                .w(px(f32::from(cols) * width))
+                .h(px(f32::from(rows) * height))
+                .into_any_element(),
+        )
+    }
+    fn rectangle_handles(&self, frame: &FrameData, width: f32) -> Vec<AnyElement> {
         splits(&self.browser_state)
             .into_iter()
             .enumerate()

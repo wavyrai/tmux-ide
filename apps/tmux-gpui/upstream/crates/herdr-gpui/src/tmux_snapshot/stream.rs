@@ -14,7 +14,7 @@ const MAX_LINE: u64 = 8 * 1024 * 1024;
 struct Publication {
     connection: String,
     sequence: u64,
-    snapshot: Option<serde_json::Value>,
+    snapshot: Option<Box<serde_json::value::RawValue>>,
 }
 
 #[derive(Default)]
@@ -41,7 +41,9 @@ impl Reader {
         }
         let frame = event
             .snapshot
-            .map(|snapshot| decode::frame(&serde_json::to_vec(&snapshot)?).map(Arc::new))
+            .map(|snapshot| {
+                decode::live_frame(snapshot.get().as_bytes()).map(|(frame, _)| Arc::new(frame))
+            })
             .transpose()?;
         self.connection = Some(event.connection);
         self.sequence = event.sequence;

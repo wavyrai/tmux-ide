@@ -3,7 +3,8 @@ use super::SnapshotView;
 use gpui::Context;
 impl SnapshotView {
     pub(super) fn terminal_input_ready(&self) -> bool {
-        !self.browser_state.retained_preview
+        !self.browser_state.input_target_rejected
+            && !self.browser_state.retained_preview
             && self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
@@ -32,6 +33,7 @@ impl SnapshotView {
             && self.browser_state.selected_pane.is_some()
     }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
+        self.pending_input = None;
         self.cancel_pointer();
         self.input_interrupted = true;
         self.discard_composition(cx);
@@ -45,7 +47,8 @@ impl SnapshotView {
             self.interrupt_input(cx);
             return false;
         }
-        if !self.terminal_input_ready() {
+        self.expire_pending_input(cx);
+        if !self.terminal_input_ready() && !self.pending_input_ready() {
             self.interrupt_input(cx);
         }
         // Only a current, ready terminal click clears this local latch. Publications,

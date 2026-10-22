@@ -44,7 +44,7 @@ if (packageInput) {
   assert.ok(metadata.byteLength < 65536, "Bounded package manifest required");
   const manifest = JSON.parse(metadata);
   assert.equal(manifest.name, "tmux-ide");
-  assert.ok(["2.9.6", "2.9.7", "2.9.8", "2.9.9", "2.9.10"].includes(manifest.version));
+  assert.ok(["2.9.6", "2.9.7", "2.9.8", "2.9.9", "2.9.10", "2.9.11"].includes(manifest.version));
   assert.equal(manifest.bin?.["tmux-ide"], "bin/cli.js");
   packageVersion = manifest.version;
   packageJsonSha256 = createHash("sha256").update(metadata).digest("hex");

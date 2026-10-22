@@ -81,7 +81,7 @@ fn pending_input_case(cx: &mut TestAppContext, accepted: bool) {
     let expected_request = if accepted { 8 } else { 7 };
     let expected_id = if accepted { "pane-b" } else { "pane-a" };
     assert!(
-        matches!(receiver.try_recv().unwrap(), browser::Command::Input {
+        matches!(receiver.try_recv().unwrap(), browser::Command::Input { input_target: None,
         request, id, input: Input::Text(text)
     } if request == expected_request && id == expected_id && text == "FRESH_COMMAND")
     );

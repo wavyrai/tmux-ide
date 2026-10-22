@@ -184,15 +184,43 @@ try {
       await until(
         () => events.at(-1)?.inputReady && fleet.windowGrid(fleet.sessionNames[1]).cols !== 80,
       );
+      const focusedGrid = fleet.windowGrid(fleet.sessionNames[1]);
+      const focusedPublication = events.at(-1);
+      const focusStart = events.length;
+      const backgroundAck = () =>
+        events
+          .slice(focusStart)
+          .find(
+            (event) =>
+              event.request === focusedPublication.request &&
+              event.presenceRevision > focusedPublication.presenceRevision &&
+              event.inputReady === false,
+          );
       console.log("Native focus test ready: switch away from the preview");
-      await until(
-        () => !events.at(-1)?.inputReady && fleet.windowGrid(fleet.sessionNames[1]).cols === 80,
+      await until(() => !!backgroundAck());
+      const backgroundPublication = backgroundAck();
+      assert.deepEqual(
+        fleet.windowGrid(fleet.sessionNames[1]),
+        focusedGrid,
+        "physical focus loss preserves the fitted terminal grid",
       );
-      console.log("Native background restored natural geometry; return to preview");
-      await until(
-        () => events.at(-1)?.inputReady && fleet.windowGrid(fleet.sessionNames[1]).cols !== 80,
+      console.log("Native background revoked input and preserved geometry; return to preview");
+      await until(() =>
+        events
+          .slice(focusStart)
+          .some(
+            (event) =>
+              event.request === focusedPublication.request &&
+              event.presenceRevision > backgroundPublication.presenceRevision &&
+              event.inputReady === true,
+          ),
       );
-      console.log("Native foreground reacquired input and resized source window");
+      assert.deepEqual(
+        fleet.windowGrid(fleet.sessionNames[1]),
+        focusedGrid,
+        "physical focus return preserves geometry while reacquiring input",
+      );
+      console.log("Native foreground reacquired input with the same source window geometry");
     } else {
       console.log(
         "Native selection across both sessions produced verified snapshots; click terminal and type echo gpui then Enter",

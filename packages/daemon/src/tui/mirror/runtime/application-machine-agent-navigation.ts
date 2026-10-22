@@ -1,3 +1,4 @@
+import { retainsAgentControl } from "./application-retained-agent.ts";
 import {
   createApplicationHomeAgentNavigator,
   type HomeAgentNavigationSource,
@@ -39,6 +40,20 @@ export function createApplicationMachineAgentNavigator(options: {
       const selected = () => options.selectedMachineId() === machineId;
       const generation = () =>
         selected() && options.generationMachineId() === machineId ? options.generation() : null;
+      if (
+        selected() &&
+        options.isCurrentTarget(machineId, target) &&
+        options.sessionName() === target.sessionName &&
+        retainsAgentControl(generation(), target)
+      ) {
+        // Reserve before the next key; the terminal controller waits for a fresh
+        // coherent runtime and remains the only owner of physical input.
+        options.selectPane(target.paneId!, source);
+        options.showTerminals(source);
+        options.setNote(null);
+        opening = false;
+        return Promise.resolve({ opened: true });
+      }
       current = createApplicationHomeAgentNavigator({
         isCurrentTarget: (row) => selected() && options.isCurrentTarget(machineId, row),
         currentGeneration() {

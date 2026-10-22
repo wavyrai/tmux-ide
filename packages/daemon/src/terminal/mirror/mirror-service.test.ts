@@ -9,6 +9,7 @@ import {
   fixtureState,
   FIXTURE,
 } from "./__tests__/simulated-channel.ts";
+import { SessionChannel } from "./session-channel.ts";
 import { MirrorService, type MirrorServiceOptions } from "./mirror-service.ts";
 
 function rig(options: MirrorServiceOptions = {}): {
@@ -60,6 +61,189 @@ function stampDetachedFixture(state: ReturnType<typeof fixtureState>): void {
 }
 
 describe("MirrorService refcounting", () => {
+  it("shares concurrent missing-pane refresh and rejects a reused native session identity", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+    const original = SessionChannel.prototype.describeTrustedInventory;
+    const flights: Promise<unknown>[] = [];
+    const spy = vi
+      .spyOn(SessionChannel.prototype, "describeTrustedInventory")
+      .mockImplementation(function (...args) {
+        const flight = original.apply(this, args);
+        flights.push(flight);
+        return flight;
+      });
+    try {
+      const results = await Promise.all([
+        service.describeSessionAuthority(FIXTURE.session, ["pane.absent"]),
+        service.describeSessionAuthority(FIXTURE.session, ["pane.absent"]),
+      ]);
+      expect(flights).toHaveLength(2);
+      expect(flights[0]).toBe(flights[1]);
+      expect(
+        results.every(
+          (result) => !result.description.panes.some((p) => p.semanticPaneId === "pane.absent"),
+        ),
+      ).toBe(true);
+      state.descriptorRows = state.descriptorRows.map((row) => {
+        const fields = row.split("\t");
+        fields[10] = "$99";
+        return fields.join("\t");
+      });
+      await expect(
+        service.describeSessionAuthority(FIXTURE.session, ["pane.absent"]),
+      ).rejects.toThrow();
+    } finally {
+      spy.mockRestore();
+      await retention.close();
+      await service.dispose();
+    }
+  });
+  it("rejects authority if its retained channel retires while the inventory result is pending", async () => {
+    const { service } = rig();
+    const retention = await service.retainSession(FIXTURE.session);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const spy = vi
+      .spyOn(SessionChannel.prototype, "describeTrustedInventory")
+      .mockImplementation(async () => {
+        entered();
+        await held;
+        return {} as never;
+      });
+    try {
+      const pending = service.describeSessionAuthority(FIXTURE.session, ["pane.absent"]);
+      const rejected = expect(pending).rejects.toThrow(/retired/);
+      await started;
+      await service.dispose();
+      release();
+      await rejected;
+    } finally {
+      release();
+      spy.mockRestore();
+      await retention.close();
+      await service.dispose();
+    }
+  });
+  it("does not let an older stamp completion overwrite a newer admission identity join", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    let sim!: SimulatedChannel;
+    let hold = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const service = new MirrorService({
+      generatePaneId: () => "pane.old-stamp",
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+        const request = sim.request.bind(sim);
+        sim.request = async (command) => {
+          const reply = await request(command);
+          if (hold && command.startsWith("set-option -p -t %3")) {
+            hold = false;
+            entered();
+            await gate;
+          }
+          return reply;
+        };
+        return sim;
+      },
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+    try {
+      hold = true;
+      state.descriptorRows[2] = state.descriptorRows[2]!.replace("%3\tpane.gamma\t", "%3\t\t");
+      sim.feedLines("%window-add @2");
+      await started;
+      state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+        /^%3\t[^\t]*\t/,
+        "%3\tpane.new-stamp\t",
+      );
+      const fresh = await service.describeSessionAuthority(FIXTURE.session, ["pane.new-stamp"]);
+      expect(fresh.description.panes.some((p) => p.semanticPaneId === "pane.new-stamp")).toBe(true);
+      release();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const after = await service.describeSessionAuthority(FIXTURE.session);
+      expect(after.description.panes.some((p) => p.semanticPaneId === "pane.new-stamp")).toBe(true);
+      expect(after.description.panes.some((p) => p.semanticPaneId === "pane.old-stamp")).toBe(
+        false,
+      );
+    } finally {
+      release();
+      await retention.close();
+      await service.dispose();
+    }
+  });
+  it("joins a newly catalogued pane before authority admission without refreshing known panes", async () => {
+    const full = fixtureState();
+    stampDetachedFixture(full);
+    const state = fixtureState();
+    state.truthRows = full.truthRows.slice(0, 2);
+    state.windowRows = full.windowRows.slice(0, 1);
+    state.descriptorRows = full.descriptorRows.slice(0, 2).map((row) => {
+      const fields = row.split("\t");
+      fields[19] = "1";
+      return fields.join("\t");
+    });
+    let sim!: SimulatedChannel;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+        return sim;
+      },
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+    try {
+      const before = sim.written.length;
+      expect(
+        (
+          await service.describeSessionAuthority(FIXTURE.session, ["pane.alpha"])
+        ).description.panes.some((p) => p.semanticPaneId === "pane.alpha"),
+      ).toBe(true);
+      expect(sim.written.length).toBe(before);
+      Object.assign(state, full);
+      // The ordinary inventory retains its no-join contract. An admission
+      // arriving during that flight must wait for settlement, including failure,
+      // then perform its own qualified join instead of inheriting stale absence.
+      const ordinary = service.describeTrustedInventory(FIXTURE.session, "$1");
+      const ordinaryRejected = expect(ordinary).rejects.toThrow(/verified identity/);
+      const admission = service.describeSessionAuthority(FIXTURE.session, ["pane.gamma"]);
+      await ordinaryRejected;
+      expect(
+        (await admission).description.panes.some((p) => p.semanticPaneId === "pane.gamma"),
+      ).toBe(true);
+      expect(
+        (
+          await service.describeSessionAuthority(FIXTURE.session, ["pane.gamma"])
+        ).description.panes.some((p) => p.semanticPaneId === "pane.gamma"),
+      ).toBe(true);
+      expect(
+        (
+          await service.describeSessionAuthority(FIXTURE.session, ["pane.absent"])
+        ).description.panes.some((p) => p.semanticPaneId === "pane.absent"),
+      ).toBe(false);
+    } finally {
+      await retention.close();
+      await service.dispose();
+    }
+  });
+
   it.each(["unlinked-window-add @99", "session-renamed $2 renamed", "sessions-changed"])(
     "rechecks registered ownership after server notification %s",
     async (notification) => {

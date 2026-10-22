@@ -1,5 +1,7 @@
 import {
   PANE_STREAM_ISSUE_PATH,
+  PaneStreamInputLifetimeSchemaZ,
+  type PaneStreamInputLifetime,
   PANE_STREAM_PROTOCOL_VERSION,
   PaneStreamClientFrameSchemaZ,
   PaneStreamIssueMutationRequestSchemaZ,
@@ -343,6 +345,7 @@ export interface PaneStreamRuntimeClient {
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
   readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
   readonly connectionClientId: string | null;
+  readonly supportsInputLifetime?: boolean;
   ownsConnectionAuthority(authority: SessionRuntimeAuthorityKind): boolean;
   connectionAuthorityClientId(authority: SessionRuntimeAuthorityKind): string | null;
   setPresence(state: SessionRuntimePresenceState): void;
@@ -358,6 +361,7 @@ export interface PaneStreamRuntimeClient {
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeRequestV1,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): Promise<SessionRuntimeTerminalInputResult>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
@@ -984,12 +988,20 @@ export async function connectIssuedPaneStreamRuntimeClient(
     connectionAuthorityReleases.set(authority, release);
     return release;
   };
+  let supportsInputLifetime = false;
   const sendTerminalInput = (
     target: TerminalReplicaAddress,
     rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
     causalProbeRequest?: CausalCellProbeRequestV1,
+    expectedLifetime?: PaneStreamInputLifetime,
   ): Promise<SessionRuntimeTerminalInputResult> => {
+    if (expectedLifetime && !supportsInputLifetime)
+      return Promise.reject(new Error("Input lifetime capability unavailable"));
+    const lifetime =
+      expectedLifetime === undefined
+        ? undefined
+        : PaneStreamInputLifetimeSchemaZ.parse(expectedLifetime);
     const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
     const pane = target.semanticPaneId;
     if (!descriptor.panes.includes(pane)) {
@@ -1087,6 +1099,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
             seq: sequence,
             ...(performanceTraceId ? { performanceTraceId } : {}),
             ...(causalProbe ? { causalProbe } : {}),
+            ...(lifetime ? { expectedLifetime: lifetime } : {}),
           },
           Boolean(transportStage),
         );
@@ -1285,6 +1298,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       )
         return fail("Pane-stream peer client identity did not match the redeemed connection");
       connectionClientId = frame.connectionClientId ?? null;
+      supportsInputLifetime = frame.inputLifetime === true;
       verified = true;
       options.onConnectionDiagnostic?.("ready-frame", {
         requestId: descriptor.requestId,
@@ -1553,6 +1567,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
       send({ type: "activity", generation: descriptor.daemonInstanceId, activity }),
     requestAuthority,
     releaseAuthority,
+    get supportsInputLifetime() {
+      return supportsInputLifetime;
+    },
     sendTerminalInput,
     sendText: (pane, text, performanceTraceId) => {
       void sendTerminalInput(

@@ -1,0 +1,58 @@
+---
+title: tmux-ide 2.9.11
+metaTitle: "What's new in 2.9.11"
+description: "Native frame delivery, pane-switch typing, and stable terminal sizing."
+---
+
+`2.9.11` pairs with the separately distributed native macOS alpha `0.1.7`,
+build `2026102201`. This release improves the native terminal delivery path
+and fixes typing immediately after switching panes.
+
+## Pane switching and terminal sizing
+
+When you select another pane in the same window and immediately type, the native
+app briefly holds the input until that exact pane is confirmed ready. Text,
+paste, and keys retain their order. The hold is bounded and tied to the pane's
+lifetime: a changed target, lost connection, or expired hold discards unsent
+input instead of sending it elsewhere. Rejected input is not retried. If the
+app reports an interruption, follow its recovery message, then retype the command.
+
+Transient loading and error messages now overlay the terminal instead of
+shrinking its grid. Pane-divider and whole-window resize gestures stage sizing
+changes until geometry settles. History page navigation uses the selected
+pane's content height rather than the height of the entire composed window.
+
+## Frame delivery
+
+Compatible native components negotiate compact frames and binary transport.
+Incremental updates carry changed rows; a missing or incompatible baseline
+requests a complete frame before input can resume. Frame and image ingestion
+remain bounded, and older peers retain the existing snapshot path.
+
+The live helper now runs within the browser process on the supported path,
+removing an intermediate process and serialization step. Immutable terminal
+rows are reused for validation and history byte accounting, avoiding repeated
+work on unchanged content. These changes retain canonical terminal verification
+and history rather than removing those checks to reduce work.
+
+This release does not claim a measured speedup or parity with other native
+terminals. A direct Rust connection to the daemon and zero-copy local image
+delivery remain deferred; the native app still uses the bridge.
+
+## Discovery and terminal UI recovery
+
+Newly created panes can be admitted after verified discovery catches up with
+their creation. In the terminal UI, an agent pane selection can survive a
+bounded rebind when its identity remains valid. An uncertain selection command
+is not sent again, and replacement panes or changed control ownership still
+fail closed.
+
+## Updating
+
+Update the CLI and its running daemon to `2.9.11`. Install native alpha `0.1.7`
+separately when it is available from the [native release page](/docs/native-alpha).
+The CLI and native app are separate installations: publishing or installing the
+CLI does not publish, install, or update the native app. Both updates are needed
+for the matching native behavior described here.
+
+Existing tmux sessions and the programs running in their panes are preserved.

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.11
+
+- Add negotiated compact and binary terminal frames to the native GUI bridge, with incremental row updates and full-frame recovery when a delta cannot be applied. Older peers keep the existing snapshot path.
+- Bound frame and image ingestion, consolidate the live helper into the browser process, and reuse immutable terminal rows to avoid repeated serialization and validation work.
+- Stage pane-divider and window sizing changes until geometry settles. Keep transient native status messages from resizing the terminal grid.
+- Hold immediate typing during a same-window pane switch until the selected pane is confirmed. Preserve input order, reject changed target lifetimes, and require explicit recovery after rejection without replaying uncertain input.
+- Use the selected pane's content height for native history page navigation, and admit newly created panes after verified discovery catches up.
+- Preserve an agent pane selection across a bounded terminal UI rebind without redispatching an uncertain selection command.
+
+The matching native macOS alpha is `0.1.7`, build `2026102201`, distributed separately from CLI/daemon `2.9.11`. Check the native release page for availability; updating the CLI does not update the native app. Existing tmux sessions are preserved. This release makes no measured speedup or native-parity claim. A direct Rust daemon client and zero-copy local images remain deferred.
+
 ## 2.9.10
 
 - Improve native GUI typing over SSH by keeping terminal input responsive while earlier input is still in flight.

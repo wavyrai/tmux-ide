@@ -741,6 +741,40 @@ describe("real SessionRuntime qualification", () => {
       expect(next[0]!.canonicalRevision).toBeGreaterThan(before[0]!.canonicalRevision);
       expect(next[1]!.incarnation).toBe(next[0]!.incarnation);
       expect(next[1]!.canonicalStateHash).toBe(next[0]!.canonicalStateHash);
+      const heldLease = clients[0]!.acquireController();
+      const writtenBeforeStale = driver.channel.written.length;
+      expect(() =>
+        clients[0]!.sendInput(
+          heldLease,
+          "pane.alpha",
+          { kind: "key", data: "Enter" },
+          undefined,
+          undefined,
+          undefined,
+          { generation: GENERATION, incarnation: before[0]!.incarnation },
+        ),
+      ).toThrow(/lifetime/);
+      expect(driver.channel.written).toHaveLength(writtenBeforeStale);
+      expect(() =>
+        clients[0]!.sendInput(
+          heldLease,
+          "pane.alpha",
+          { kind: "key", data: "Enter" },
+          undefined,
+          undefined,
+          undefined,
+          { generation: "old-daemon", incarnation: next[0]!.incarnation },
+        ),
+      ).toThrow(/lifetime/);
+      clients[0]!.sendInput(
+        heldLease,
+        "pane.alpha",
+        { kind: "key", data: "Enter" },
+        undefined,
+        undefined,
+        undefined,
+        { generation: GENERATION, incarnation: next[0]!.incarnation },
+      );
       clients[0]!.sendInput(
         clients[0]!.acquireController(),
         "pane.alpha",

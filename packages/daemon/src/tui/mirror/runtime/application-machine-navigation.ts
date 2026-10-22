@@ -1,3 +1,4 @@
+import { retainsAgentControl } from "./application-retained-agent.ts";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 import type { TmuxServerScope } from "@tmux-ide/contracts";
 import { fleetHostColor } from "./fleet-presentation.ts";
@@ -90,7 +91,12 @@ export function createApplicationMachineNavigation(options: {
   const [tabRevision, setTabRevision] = createSignal(0);
   const history: string[] = [...saved().recent].reverse();
   let historyIndex = history.length - 1;
-  const select = (id: string, expectedLiveSessionId?: string, server?: TmuxServerScope) => {
+  const select = (
+    id: string,
+    expectedLiveSessionId?: string,
+    server?: TmuxServerScope,
+    retainedAgent?: ApplicationMachineAgent,
+  ) => {
     if (!manager.getMachine(id)) return false;
     if (manager.snapshot().selectedMachineId !== id) {
       navigation++;
@@ -100,9 +106,17 @@ export function createApplicationMachineNavigation(options: {
       else options.resetWorkspace(id, expectedLiveSessionId);
       manager.select(id);
     } else if (expectedLiveSessionId) {
+      const active = options.attachedGeneration?.() ?? null;
+      const retained =
+        retainedAgent && retainsAgentControl(active, retainedAgent)
+          ? {
+              liveSessionId: active!.connection!.liveSessionId,
+              daemonGeneration: active!.daemonGeneration,
+              ...(active!.connection!.server ? { server: active!.connection!.server } : {}),
+            }
+          : null;
       const attached =
-        options.attachedTarget?.() ??
-        attachedMachineNavigationTarget(options.attachedGeneration?.() ?? null);
+        options.attachedTarget?.() ?? attachedMachineNavigationTarget(active) ?? retained;
       const sameAuthority =
         attached?.liveSessionId === expectedLiveSessionId &&
         (server
@@ -357,7 +371,7 @@ export function createApplicationMachineNavigation(options: {
         return;
       }
       options.cancelOpen();
-      if (!select(id, selectedSession?.liveSessionId, selectedSession?.server)) return;
+      if (!select(id, selectedSession?.liveSessionId, selectedSession?.server, row)) return;
       if (selectedSession) setActiveSessionKey(selectedSession.id);
       navigation++;
       setFocused(false);

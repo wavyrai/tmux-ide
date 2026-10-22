@@ -43,6 +43,7 @@ fn make_view(
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
+        pending_input: None,
         picker: None,
         attention: Default::default(),
         palette: Default::default(),
@@ -61,6 +62,7 @@ fn make_view(
         window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
+        fit_settle: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: Some((

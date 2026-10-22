@@ -1,3 +1,8 @@
+import process from "node:process";
+import console from "node:console";
+import { URL } from "node:url";
+const { AbortController } = globalThis;
+import { nativeSnapshotEncoding } from "./native-capabilities.mjs";
 import { fileURLToPath } from "node:url";
 import { runPreview } from "./preview-processes.mjs";
 
@@ -11,12 +16,22 @@ if (process.argv.length !== (browse ? 5 : 4)) {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   try {
+    const encoding = await nativeSnapshotEncoding(process.argv[2], {
+      signal: controller.signal,
+      damage: browse,
+    });
     process.exitCode = await runPreview({
       native: {
+        env: { ...process.env, TMUX_IDE_GUI_NATIVE_ENCODING: encoding },
         command: process.argv[2],
         args: [browse ? "--tmux-browser-stdio" : "--tmux-live-stdin"],
       },
       helper: {
+        env: {
+          ...process.env,
+          TMUX_IDE_GUI_NATIVE_ENCODING: encoding,
+          TMUX_IDE_GUI_HELPER_ENCODING: browse ? "legacy" : encoding,
+        },
         command: process.execPath,
         args: [
           ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
