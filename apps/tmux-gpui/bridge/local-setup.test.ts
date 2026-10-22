@@ -75,7 +75,7 @@ test("fixed managed lookup and explicit supported update use pinned paths and bo
 test("unsupported versions never execute, including newer installs and prereleases", async () => {
   for (const version of [
     "2.9.5",
-    "2.9.11",
+    "2.9.12",
     "3.0.0",
     "2.9.8-beta.1",
     "2.9.9-beta.1",
