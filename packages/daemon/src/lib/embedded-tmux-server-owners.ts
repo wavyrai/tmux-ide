@@ -1,3 +1,4 @@
+import type { LocalImageOwner } from "../terminal/graphics/local-image-owner.ts";
 import type { Server, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -22,6 +23,7 @@ import {
 
 /** Adapts the established default owner without duplicating its control clients. */
 export async function createEmbeddedTmuxServerOwners(options: {
+  readonly localImages?: LocalImageOwner;
   readonly environmentId: string;
   readonly onDefaultScope?: (scope: TmuxServerScope) => Promise<void>;
   readonly defaultAuthority: WorkspacePaneTmuxAuthority;
@@ -89,6 +91,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
       if (registration.serverId === defaultRegistration.serverId) await retireDefault();
       const route = tmuxServerPaneStreamPath(scope);
       const owner = await createNativeTmuxServerOwner({
+        localImages: options.localImages,
         environmentId: options.environmentId,
         ...scope,
         tmuxAuthority: observation.authority,

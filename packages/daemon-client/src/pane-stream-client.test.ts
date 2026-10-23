@@ -1,5 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { TerminalDeliveryServerMessage } from "@tmux-ide/contracts";
+import {
+  encodeTerminalDeliveryBinaryChunk,
+  encodeTerminalGraphicsBinary,
+  type TerminalDeliveryServerMessage,
+} from "@tmux-ide/contracts";
 
 import {
   classifyPaneStreamInputTransportDelay,
@@ -108,13 +112,18 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function acceptInteractiveHandshake(socket: FakeSocket, inputLifetime = false): void {
+function acceptInteractiveHandshake(
+  socket: FakeSocket,
+  inputLifetime = false,
+  inputBytes = false,
+): void {
   socket.onSend = (frame) => {
     if (frame.type === "redeem") {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
           ...(inputLifetime ? { inputLifetime: true } : {}),
+          ...(inputBytes ? { inputBytes: true } : {}),
           protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
@@ -2866,3 +2875,148 @@ for (const supported of [false, true]) {
     client.close();
   });
 }
+
+for (const offered of [false, true])
+  for (const acknowledged of [false, true]) {
+    it(`byte input requires offer=${offered} and ready acknowledgement=${acknowledged}`, async () => {
+      const socket = new FakeSocket();
+      acceptInteractiveHandshake(socket, true, acknowledged);
+      const config = options(socket);
+      const client = await openPaneStreamRuntimeClient({
+        ...config,
+        stream: {
+          ...config.stream,
+          terminalDelivery: {
+            ...config.stream.terminalDelivery,
+            protocolVersions: offered ? [1, 105, 106] : [1, 105],
+          },
+        },
+      });
+      expect(client.supportsInputBytes).toBe(offered && acknowledged);
+      const target = { workspaceName: "alpha", semanticPaneId: "pane.editor" };
+      const sending = client.sendTerminalInput(target, { kind: "bytes", data: "00ff80c3281b4d" });
+      if (offered && acknowledged) {
+        expect(socket.sent.at(-1)).toMatchObject({
+          type: "input",
+          kind: "bytes",
+          data: "00ff80c3281b4d",
+          seq: 1,
+        });
+        socket.message({ type: "input-ack", pane: "pane.editor", seq: 1 });
+        expect(await sending).toBe("ok");
+      } else {
+        await expect(sending).rejects.toThrow("Byte input capability unavailable");
+        expect(socket.sent.filter((f) => (f as { type?: string }).type === "input")).toHaveLength(
+          0,
+        );
+        const key = client.sendTerminalInput(target, { kind: "key", data: "Enter" });
+        expect(socket.sent.at(-1)).toMatchObject({ type: "input", kind: "key", seq: 1 });
+        socket.message({ type: "input-ack", pane: "pane.editor", seq: 1 });
+        expect(await key).toBe("ok");
+      }
+      client.close();
+    });
+  }
+
+describe("negotiated binary pane stream", () => {
+  const packet = (pane = "pane.editor") =>
+    encodeTerminalDeliveryBinaryChunk(
+      { pane, transactionId: TRANSACTION, index: 0 },
+      new Uint8Array([0, 255, 42]),
+    );
+  const negotiation = (pane = "pane.editor") => ({
+    type: "terminal-delivery-ready",
+    pane,
+    negotiation: {
+      accepted: true,
+      negotiated: {
+        protocolVersion: 1,
+        encoding: "semantic-binary-v1",
+        richPlacements: false,
+        generation: INSTANCE,
+        deliveryNonce: TRANSACTION,
+      },
+    },
+  });
+  async function connect(binary = true) {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const opts = options(socket);
+    if (binary) opts.stream.terminalDelivery.protocolVersions.push(109);
+    const client = await openPaneStreamRuntimeClient(opts);
+    return { socket, opts, client };
+  }
+  it("delivers ArrayBuffer and offset Uint8Array chunks unchanged after per-pane negotiation", async () => {
+    const { socket, opts, client } = await connect();
+    socket.message(negotiation());
+    const p = packet();
+    socket.emit("message", p.buffer);
+    const backing = new Uint8Array(p.length + 4);
+    backing.set(p, 2);
+    socket.emit("message", backing.subarray(2, 2 + p.length));
+    expect(opts.onTerminalDelivery).toHaveBeenCalledTimes(2);
+    expect(opts.onTerminalDelivery.mock.calls[0]?.[1]).toEqual({
+      type: "terminal.delivery.chunk",
+      transactionId: TRANSACTION,
+      index: 0,
+      bytes: new Uint8Array([0, 255, 42]),
+    });
+    expect(socket.closed).toBeNull();
+    client.close();
+  });
+  it.each(["unnegotiated", "unissued", "malformed", "unsolicited"])(
+    "rejects %s binary delivery",
+    async (kind) => {
+      const { socket, opts } = await connect(kind !== "unsolicited");
+      if (kind !== "unnegotiated") socket.message(negotiation());
+      socket.emit(
+        "message",
+        kind === "malformed"
+          ? new Uint8Array([84, 68, 67, 49])
+          : packet(kind === "unissued" ? "pane.other" : "pane.editor"),
+      );
+      expect(socket.closeCalls).toBe(1);
+      expect(opts.onTerminalDelivery).not.toHaveBeenCalled();
+    },
+  );
+  it("gates binary graphics on accepted per-pane state", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const received = mock();
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { onTerminalGraphicsBlob: received }),
+    );
+    const blob = {
+      digest: "a".repeat(32),
+      format: "rgba" as const,
+      width: 1,
+      height: 1,
+      total: 4,
+      offset: 0,
+    };
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const packet = encodeTerminalGraphicsBinary({ pane: "pane.editor", blob }, bytes);
+    socket.message({
+      type: "terminal-graphics",
+      pane: "pane.editor",
+      state: { revision: 1, images: [], placements: [], binaryBlobs: true },
+    });
+    socket.emit("message", packet);
+    expect(received).toHaveBeenCalledWith("pane.editor", blob, bytes);
+    socket.message({
+      type: "terminal-graphics",
+      pane: "pane.editor",
+      state: { revision: 2, images: [], placements: [] },
+    });
+    socket.emit("message", packet);
+    expect(received).toHaveBeenCalledTimes(1);
+    expect(socket.closeCalls).toBe(1);
+    client.close();
+  });
+  it("rejects binary before verified ready", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = () => socket.emit("message", packet());
+    await expect(openPaneStreamRuntimeClient(options(socket))).rejects.toThrow("before readiness");
+    expect(socket.closeCalls).toBe(1);
+  });
+});

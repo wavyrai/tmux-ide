@@ -1,0 +1,32 @@
+[
+  {
+    "name": "seed-unicode-wide-modes-placement",
+    "wire": "{\"f\":\"s\",\"k\":\"terminal-semantic-compact\",\"r\":1,\"s\":[4,2,[[0,[[1,\"A\",1,0,0,0],[1,\"é\",1,0,0,0],[1,\"界\",2,0,0,0],[1,\"\",0,0,0,0]]],[1,[[4,\" \",1,0,0,0]]]],[[0,[[4,\"h\",1,0,0,0]]]],[2,1,0,\"bar\",1],[0,1,0,1,0,0,1,1,\"drag\",\"sgr\",0],[[\"image:1\",\"kitty\",0,0,2,1,\"abc\"]],[\"authoritative-stream\",\"observed-from-start\"]],\"v\":1}",
+    "representationHash": "fc89531231b84826",
+    "canonicalHash": "a76b0cc51e05f0a6"
+  },
+  {
+    "name": "dirty-row-history-delta",
+    "wire": "{\"b\":1,\"f\":\"p\",\"k\":\"terminal-semantic-compact\",\"p\":[null,[[1,[0,[[1,\"👩‍💻\",2,[2,11259375],[1,255],255],[1,\"\",0,0,0,0],[1,\"é\",1,0,0,0],[1,\"\\\\\\n\",1,0,0,0]]]]],null,[1,[[0,[[1,\"A\",1,0,0,0],[1,\"é\",1,0,0,0],[1,\"界\",2,0,0,0],[1,\"\",0,0,0,0]]]]],[0,0,0,\"bar\",1],null,null,null],\"r\":2,\"v\":1}",
+    "representationHash": "f9e92919b89913d5",
+    "canonicalHash": "f27a3df9fafb2618"
+  },
+  {
+    "name": "metadata-only",
+    "wire": "{\"b\":2,\"f\":\"p\",\"k\":\"terminal-semantic-compact\",\"p\":[null,[],null,null,null,[1,1,0,1,0,0,1,1,null,null,0],[],null],\"r\":3,\"v\":1}",
+    "representationHash": "ff0acf755d9f8689",
+    "canonicalHash": "123e9af5759d33b1"
+  },
+  {
+    "name": "resize",
+    "wire": "{\"b\":3,\"f\":\"p\",\"k\":\"terminal-semantic-compact\",\"p\":[[3,1],[[0,[0,[[1,\"r\",1,0,0,0],[1,\"s\",1,0,0,0],[1,\"t\",1,0,0,0]]]]],[],null,[0,0,1,\"underline\",0],null,[],[\"painted-capture\",\"unknown\"]],\"r\":4,\"v\":1}",
+    "representationHash": "8801b4c1c15f70f5",
+    "canonicalHash": "65d5fe875edecdf2"
+  },
+  {
+    "name": "tombstone",
+    "wire": "{\"b\":4,\"f\":\"t\",\"k\":\"terminal-semantic-compact\",\"r\":5,\"t\":\"pane-closed\",\"v\":1}",
+    "representationHash": "bcc627aa3fce0a66",
+    "canonicalHash": "14172a8ddb28ea24"
+  }
+]

@@ -1,3 +1,4 @@
+import type { LocalImageOwner } from "../terminal/graphics/local-image-owner.ts";
 import { shellEscape } from "./shell.ts";
 import {
   createNativeSplitCapabilityProbe,
@@ -68,6 +69,7 @@ import {
 } from "./tmux-server-generation-runner.ts";
 
 export interface NativeTmuxServerOwnerOptions {
+  readonly localImages?: LocalImageOwner;
   readonly environmentId: string;
   readonly serverId: string;
   readonly generation: string;
@@ -485,6 +487,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     }),
   });
   const paneStreamRuntime = createPaneStreamRuntime({
+    localImages: options.localImages,
     daemonInstanceId: generation,
     webSocketUrl: options.webSocketUrl,
     sessionRuntimeRegistry,

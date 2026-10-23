@@ -1,9 +1,12 @@
-import type { TerminalDeliveryEnvelope } from "@tmux-ide/contracts";
+import type { TerminalDeliveryEnvelope, TerminalProjectionEnvelope } from "@tmux-ide/contracts";
 
-const deliveryOrdinals = new WeakMap<TerminalDeliveryEnvelope, number>();
+const deliveryOrdinals = new WeakMap<
+  TerminalDeliveryEnvelope | TerminalProjectionEnvelope,
+  number
+>();
 
 export function registerTerminalDeliveryObservationOrdinal(
-  envelope: TerminalDeliveryEnvelope,
+  envelope: TerminalDeliveryEnvelope | TerminalProjectionEnvelope,
   ordinal: number,
 ): void {
   if (!Number.isSafeInteger(ordinal) || ordinal < 1)
@@ -12,7 +15,7 @@ export function registerTerminalDeliveryObservationOrdinal(
 }
 
 export function terminalDeliveryObservationOrdinal(
-  envelope: TerminalDeliveryEnvelope,
+  envelope: TerminalDeliveryEnvelope | TerminalProjectionEnvelope,
 ): number | null {
   return deliveryOrdinals.get(envelope) ?? null;
 }

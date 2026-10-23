@@ -427,6 +427,101 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     ).toThrow("seed encoding failed");
   });
 
+  it("keeps alternate-screen full-grid updates as compact patches without resending normal history", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "alternate-history",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-compact-v1"], richPlacements: false },
+      (message) => messages.push(message),
+    );
+    try {
+      const blank = blankTerminalReplicaSnapshot(250, 70);
+      let snapshot: TerminalReplicaSnapshot = {
+        ...blank,
+        modes: { ...blank.modes, alternateScreen: true },
+        history: Array.from({ length: 1000 }, () => blank.grid[0]!),
+      };
+      owner.emit({
+        type: "terminal.seed",
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        generation,
+        incarnation: `${generation}:0`,
+        revision: 0,
+        cols: 250,
+        rows: 70,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        hashAlgorithm: "fnv1a64-v1",
+        snapshot,
+      });
+      await vi.waitFor(() =>
+        expect(
+          messages.some((m) => m.type === "terminal.delivery" && m.canonicalRevision === 0),
+        ).toBe(true),
+      );
+      connection.ack(
+        ack(messages.findLast((m) => m.type === "terminal.delivery") as TerminalDeliveryEnvelope),
+      );
+      for (let revision = 1; revision <= 3; revision++) {
+        const grid = Array.from({ length: 70 }, (_, y) => ({
+          wrapped: false,
+          cells: Array.from({ length: 250 }, (_, x) => ({
+            ...blank.grid[0]!.cells[0]!,
+            grapheme: String.fromCharCode(65 + ((x + y + revision) % 26)),
+            foreground: { kind: "rgb" as const, value: 0xabcdef },
+            background: { kind: "rgb" as const, value: 0x123456 },
+          })),
+        }));
+        snapshot = { ...snapshot, grid };
+        owner.emit({
+          type: "terminal.patch",
+          workspaceName: "workspace",
+          semanticPaneId: "pane-a",
+          generation,
+          incarnation: `${generation}:0`,
+          baseRevision: revision - 1,
+          revision,
+          cols: 250,
+          rows: 70,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+          hashAlgorithm: "fnv1a64-v1",
+          patch: { rows: grid.map((row, index) => ({ index, row })) },
+        });
+        await vi.waitFor(() =>
+          expect(
+            messages.some(
+              (m) => m.type === "terminal.delivery" && m.canonicalRevision === revision,
+            ),
+          ).toBe(true),
+        );
+        const envelope = messages.findLast(
+          (m) => m.type === "terminal.delivery",
+        ) as TerminalDeliveryEnvelope;
+        expect(envelope.frame).toBe("patch");
+        expect(envelope.canonicalStateHash).toBe(hashTerminalReplicaSnapshot(snapshot));
+        const decoded = decodeCompactSemanticTerminalUpdate(assembledBytes(envelope, messages));
+        expect(decoded.frame).toBe("patch");
+        if (decoded.frame !== "patch") throw new Error("expected patch");
+        expect(decoded.patch.history).toBeUndefined();
+        expect(decoded.patch.rows).toHaveLength(70);
+        connection.ack(ack(envelope));
+      }
+      expect(hub.metrics()).toMatchObject({ inFlight: 0, queueDepth: 0, reseeds: 1 });
+      expect(messages.filter((m) => m.type === "terminal.delivery").map((m) => m.frame)).toEqual([
+        "seed",
+        "patch",
+        "patch",
+        "patch",
+      ]);
+    } finally {
+      await connection.close();
+      await hub.close();
+    }
+  });
+
   it("selects the smaller exact over-threshold representation through the real hub", async () => {
     const runCase = async (
       baseRevision: number,
@@ -2864,3 +2959,63 @@ it.each([false, true])(
     }
   },
 );
+
+describe("binary and compact clients sharing canonical delivery", () => {
+  it("keeps independent ACK baselines and identical canonical lifecycle state", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const outputs: TerminalDeliveryServerMessage[][] = [[], []];
+    const clients = await Promise.all(
+      outputs.map((out, index) =>
+        hub.open(
+          `mixed-${index}`,
+          "pane-a",
+          {
+            protocolVersions: index ? [1] : [1, 109],
+            encodings: ["semantic-compact-v1"],
+            richPlacements: false,
+          },
+          (message) => {
+            out.push(message);
+          },
+        ),
+      ),
+    );
+    try {
+      const states = clients.map((client) => {
+        if (!client.negotiation.accepted) throw new Error("rejected");
+        return createTerminalDeliveryClientState(
+          client.negotiation.negotiated,
+          "workspace",
+          "pane-a",
+        );
+      });
+      for (const update of [seed(), patch(1, 1), tombstone(2)]) {
+        owner.emit(update);
+        await vi.waitFor(() => {
+          for (const out of outputs)
+            expect(
+              out.some(
+                (message) =>
+                  message.type === "terminal.delivery" &&
+                  message.canonicalRevision === update.revision,
+              ),
+            ).toBe(true);
+        });
+        for (let index = 0; index < clients.length; index++) {
+          const envelope = outputs[index]!.findLast(
+            (message): message is TerminalDeliveryEnvelope => message.type === "terminal.delivery",
+          )!;
+          expect(envelope.encoding).toBe(index ? "semantic-compact-v1" : "semantic-binary-v1");
+          const committed = commitMessages(states[index]!, envelope, outputs[index]!);
+          states[index] = committed.state;
+          expect(committed.ack.canonicalStateHash).toBe(update.stateHash);
+          await clients[index]!.ack(committed.ack);
+        }
+      }
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await hub.close();
+    }
+  });
+});

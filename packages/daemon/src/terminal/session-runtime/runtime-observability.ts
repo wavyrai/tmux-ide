@@ -81,7 +81,7 @@ export interface SessionRuntimeStageSpan {
     readonly attemptedLegacySeedSizeCapped?: boolean;
     readonly attemptedCompactPatchBytes?: number | null;
     readonly attemptedCompactSeedBytes?: number | null;
-    readonly selectedEncoding?: "semantic-v1" | "semantic-compact-v1";
+    readonly selectedEncoding?: "semantic-v1" | "semantic-compact-v1" | "semantic-binary-v1";
     readonly selectionStatus?:
       | "patch-preferred"
       | "seed-preferred"
