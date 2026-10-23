@@ -33677,7 +33677,7 @@ var init_local_image_store = __esm({
           throw new Error("Local image publication replaced");
         return { path: path2, bytes: data.byteLength, identity: stat3 };
       }
-      async #unlinkOwned(path2, expected) {
+      async #unlinkOwned(path2, expected, immutable = false) {
         await this.#checkDirectory();
         let stat3;
         try {
@@ -33686,7 +33686,7 @@ var init_local_image_store = __esm({
           if (error.code === "ENOENT") return;
           throw error;
         }
-        if (!stat3.isFile() || !same(stat3, expected))
+        if (!stat3.isFile() || !same(stat3, expected) || immutable && (stat3.size !== expected.size || stat3.mode !== expected.mode || stat3.uid !== expected.uid || stat3.mtimeMs !== expected.mtimeMs || stat3.ctimeMs !== expected.ctimeMs))
           throw new Error("Local image cleanup refused replacement");
         await unlink(path2);
       }
@@ -33694,7 +33694,7 @@ var init_local_image_store = __esm({
         const referenced = new Set([...this.#leases.values()].map((lease) => lease.digest));
         for (const [digest3, entry] of this.#entries) {
           if (referenced.has(digest3)) continue;
-          await this.#unlinkOwned(entry.path, entry.identity);
+          await this.#unlinkOwned(entry.path, entry.identity, true);
           this.#entries.delete(digest3);
           this.#bytes -= entry.bytes;
         }
@@ -33975,11 +33975,13 @@ var init_local_image_owner = __esm({
           store: { name: basename10(this.store.directory), identity: record(this.storeIdentity) },
           files: files.map((f) => ({ name: basename10(f.path), identity: record(f.identity) }))
         };
+        const encoded = JSON.stringify(ManifestSchema.parse(manifest));
         const path2 = join32(this.path, "owner.json");
         if (this.#manifestIdentity) {
           const current = await readManifest(path2);
           if (JSON.stringify(record(current.identity)) !== JSON.stringify(record(this.#manifestIdentity)))
             throw new Error("Local image manifest replaced");
+          if (JSON.stringify(current.manifest) === encoded) return;
         }
         const temporary = join32(this.path, `.owner-${randomUUID15()}`);
         const file = await open2(
@@ -33989,7 +33991,7 @@ var init_local_image_owner = __esm({
         );
         const stat3 = await file.stat();
         try {
-          await file.writeFile(JSON.stringify(ManifestSchema.parse(manifest)));
+          await file.writeFile(encoded);
           await file.sync();
           await this.#check();
           if (!same2(await lstat2(temporary), stat3))

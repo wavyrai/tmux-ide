@@ -102,6 +102,17 @@ test("symlink and replacement files are refused and never cleaned as owned files
   await expect(owner.dispose()).rejects.toThrow("replacement");
   expect(await readFile(lease.path, "utf8")).toBe("other owner");
 });
+test("cleanup refuses changed content even when the file keeps its inode", async () => {
+  const owner = await store();
+  const lease = await owner.acquire(input());
+  const before = await lstat(lease.path);
+  await chmod(lease.path, 0o600);
+  await writeFile(lease.path, "other owner");
+  await chmod(lease.path, 0o400);
+  expect((await lstat(lease.path)).ino).toBe(before.ino);
+  await expect(owner.dispose()).rejects.toThrow("replacement");
+  expect(await readFile(lease.path, "utf8")).toBe("other owner");
+});
 test("directory replacement and unexpected entries survive disposal", async () => {
   const owner = await store();
   const original = owner.directory + "-original";

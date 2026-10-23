@@ -202,7 +202,7 @@ export class LocalImageStore {
       throw new Error("Local image publication replaced");
     return { path, bytes: data.byteLength, identity: stat };
   }
-  async #unlinkOwned(path: string, expected: Stats): Promise<void> {
+  async #unlinkOwned(path: string, expected: Stats, immutable = false): Promise<void> {
     await this.#checkDirectory();
     let stat: Stats;
     try {
@@ -211,7 +211,16 @@ export class LocalImageStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
-    if (!stat.isFile() || !same(stat, expected))
+    if (
+      !stat.isFile() ||
+      !same(stat, expected) ||
+      (immutable &&
+        (stat.size !== expected.size ||
+          stat.mode !== expected.mode ||
+          stat.uid !== expected.uid ||
+          stat.mtimeMs !== expected.mtimeMs ||
+          stat.ctimeMs !== expected.ctimeMs))
+    )
       throw new Error("Local image cleanup refused replacement");
     await unlink(path);
   }
@@ -219,7 +228,9 @@ export class LocalImageStore {
     const referenced = new Set([...this.#leases.values()].map((lease) => lease.digest));
     for (const [digest, entry] of this.#entries) {
       if (referenced.has(digest)) continue;
-      await this.#unlinkOwned(entry.path, entry.identity);
+      // Inodes can be reused after unlink. Published files must retain their
+      // immutable metadata; staging links intentionally change ctime instead.
+      await this.#unlinkOwned(entry.path, entry.identity, true);
       this.#entries.delete(digest);
       this.#bytes -= entry.bytes;
     }

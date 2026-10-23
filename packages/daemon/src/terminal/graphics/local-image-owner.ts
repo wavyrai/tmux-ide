@@ -169,6 +169,7 @@ export class LocalImageOwner {
       store: { name: basename(this.store.directory), identity: record(this.storeIdentity) },
       files: files.map((f) => ({ name: basename(f.path), identity: record(f.identity) })),
     };
+    const encoded = JSON.stringify(ManifestSchema.parse(manifest));
     const path = join(this.path, "owner.json");
     if (this.#manifestIdentity) {
       const current = await readManifest(path);
@@ -176,6 +177,9 @@ export class LocalImageOwner {
         JSON.stringify(record(current.identity)) !== JSON.stringify(record(this.#manifestIdentity))
       )
         throw new Error("Local image manifest replaced");
+      // Leases are in-memory; only the owned file set is crash-recovery data.
+      // Reuse its durable record after checking identity, including on shared leases.
+      if (JSON.stringify(current.manifest) === encoded) return;
     }
     const temporary = join(this.path, `.owner-${randomUUID()}`);
     const file = await open(
@@ -185,7 +189,7 @@ export class LocalImageOwner {
     );
     const stat = await file.stat();
     try {
-      await file.writeFile(JSON.stringify(ManifestSchema.parse(manifest)));
+      await file.writeFile(encoded);
       await file.sync();
       await this.#check();
       if (!same(await lstat(temporary), stat))
