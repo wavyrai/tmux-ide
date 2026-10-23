@@ -8,7 +8,8 @@ import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts
 import { WindowLinkTargetSchemaZ } from "@tmux-ide/contracts";
 import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { LocalImageOwner, cleanupLocalImageOwner } from "../terminal/graphics/local-image-owner.ts";
 import { createClaudeTeamMembershipReader } from "../terminal/attachments/claude-team-names.ts";
 import { PaneSourceDiscovery } from "./pane-source-discovery.ts";
 import { createBackgroundNativeCapture } from "./background-native-capture.ts";
@@ -159,6 +160,7 @@ import { captureDaemonProvenance } from "./daemon-provenance.ts";
 import { registerLogSecret, setLogIdentity } from "./log.ts";
 import {
   canonicalDaemonUrl,
+  getCanonicalDaemonInfoPath,
   clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
   inspectCanonicalDaemonInfo,
@@ -1399,6 +1401,7 @@ async function startEmbeddedDaemonGeneration(
     };
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
+    let localImages: LocalImageOwner | undefined;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
     let defaultEditorContextRetired = false;
     const defaultDiagnosticsLifetime = new AbortController();
@@ -1732,7 +1735,34 @@ async function startEmbeddedDaemonGeneration(
       };
       const peekTerminalAttachmentRuntime = (): NativeTerminalAttachmentRuntime | null =>
         terminalAttachmentRuntime;
+      // The held canonical claim has already proven and hardened this private root.
+      // Local images are optional: unavailable storage retains inline graphics.
+      if (process.platform !== "win32") {
+        const root = dirname(getCanonicalDaemonInfoPath());
+        try {
+          if (existingCanonical.status === "valid") {
+            await cleanupLocalImageOwner({
+              root,
+              owner: {
+                generation: existingCanonical.info.instanceId,
+                pid: existingCanonical.info.pid,
+                startedAt: existingCanonical.info.startedAt,
+              },
+              proveDead: () => isCanonicalDaemonRecordOwnerProvenDead(existingCanonical),
+            });
+          }
+          localImages = await LocalImageOwner.create({
+            root,
+            generation: instanceId,
+            pid: process.pid,
+            startedAt,
+          });
+        } catch {
+          localImages = undefined;
+        }
+      }
       paneStreamRuntime = createPaneStreamRuntime({
+        localImages,
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         sessionRuntimeRegistry,
@@ -1758,6 +1788,7 @@ async function startEmbeddedDaemonGeneration(
       });
       await externalInteractionObserver.start();
       serverOwners = await createEmbeddedTmuxServerOwners({
+        localImages,
         environmentId,
         onDefaultScope: async (scope) => {
           interactionEvidence = new InteractionEvidenceAuthority(environmentId, scope);
@@ -2075,7 +2106,10 @@ async function startEmbeddedDaemonGeneration(
       // The pane-stream coordinator may still hold runtime consumers while it
       // drains. Preserve the normal shutdown order on startup rollback too:
       // transports first, then the one session/control authority.
-      await Promise.allSettled([sessionRuntimeRegistry?.dispose() ?? Promise.resolve()]);
+      await Promise.allSettled([
+        sessionRuntimeRegistry?.dispose() ?? Promise.resolve(),
+        localImages?.dispose() ?? Promise.resolve(),
+      ]);
       throw error;
     }
     const {
@@ -2108,6 +2142,7 @@ async function startEmbeddedDaemonGeneration(
         )),
         ...(await retirePaneStreamTransport()),
       ];
+      await localImages?.dispose();
       terminalInventoryRuntime.dispose();
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
@@ -2375,6 +2410,7 @@ async function startEmbeddedDaemonGeneration(
               )),
             );
             failures.push(...(await retirePaneStreamTransport()));
+            await capture(() => localImages?.dispose());
             await capture(() => terminalInventoryRuntime.dispose());
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());

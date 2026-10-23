@@ -86,6 +86,30 @@ test("hash corruption clears the view without ACK", () => {
   assert.deepEqual(published, [null]);
   assert.equal(acks.length, 0);
 });
+test("a complete-state receiver retires on projection delivery without acknowledging history", () => {
+  const { receiver, published, acks } = setup();
+  const { envelope, chunks } = seed();
+  receiver.accept(envelope);
+  chunks.forEach((chunk) => receiver.accept(chunk));
+  assert.equal(acks.length, 1);
+  assert.throws(
+    () =>
+      receiver.accept({
+        ...envelope,
+        type: "terminal.projection",
+        encoding: "alternate-projection-binary-v1",
+        canonicalEquivalent: false,
+        history: "deferred",
+        projectionStateHash: "0000000000000000",
+      }),
+    /projection was not negotiated/,
+  );
+  assert.equal(receiver.current(), null);
+  assert.equal(published.at(-1), null);
+  receiver.accept(envelope);
+  chunks.forEach((chunk) => receiver.accept(chunk));
+  assert.equal(acks.length, 1);
+});
 test("disconnect ignores late callbacks and does not replay state", () => {
   const { receiver, published, acks } = setup();
   const { envelope, chunks } = seed();

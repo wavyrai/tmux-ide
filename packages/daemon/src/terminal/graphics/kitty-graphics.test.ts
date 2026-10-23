@@ -176,8 +176,13 @@ describe("kitty image store", () => {
       line: 10,
       alternate: false,
     });
-    // Viewport scrolled so the placement's first row is above row 0.
+    const beforeScroll = store.state(10, 5, 20, false);
+    // Viewport projection changes independently of the image-store revision.
+    // Consumers must not reject these placement-only updates as reordered data.
     const state = store.state(11, 5, 20, false);
+    expect(state.revision).toBe(beforeScroll.revision);
+    expect(state.images).toEqual(beforeScroll.images);
+    expect(state.placements).not.toEqual(beforeScroll.placements);
     expect(state.placements).toEqual([
       expect.objectContaining({
         row: 0,

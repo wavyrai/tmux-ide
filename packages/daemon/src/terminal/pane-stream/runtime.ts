@@ -1,3 +1,4 @@
+import type { LocalImageOwner } from "../graphics/local-image-owner.ts";
 import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
@@ -9,6 +10,7 @@ import {
 } from "./pane-stream-websocket.ts";
 
 export interface PaneStreamRuntimeOptions {
+  readonly localImages?: LocalImageOwner;
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
   /** Canonical daemon-generation session/control owner. */
@@ -38,6 +40,7 @@ export class PaneStreamRuntime {
     const transportBinder = new SessionRuntimeTransportBinder(options.sessionRuntimeRegistry);
     this.coordinator = new PaneStreamAdmissionCoordinator({
       ...options.admission,
+      localImages: options.localImages,
       daemonInstanceId: options.daemonInstanceId,
       webSocketUrl: options.webSocketUrl,
       leaseManager,

@@ -120,3 +120,7 @@ export * from "./tmux-agent-open.ts";
 export * from "./tmux-server-diagnostics.ts";
 
 export * from "./terminal-history-anchor.ts";
+
+export * from "./terminal-delivery-binary-chunk.ts";
+
+export * from "./terminal-projection.ts";

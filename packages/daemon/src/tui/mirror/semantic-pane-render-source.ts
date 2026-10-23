@@ -202,6 +202,10 @@ export class SemanticPaneReplica {
   }
 
   accept(message: TerminalDeliveryServerMessage): void {
+    if (message.type === "terminal.projection") {
+      this.#fail("protocol-violation", message.transactionId);
+      return;
+    }
     if (message.type === "terminal.delivery.fault") {
       this.#assembler = null;
       this.#snapshot = null;

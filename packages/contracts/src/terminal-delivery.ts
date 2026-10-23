@@ -1,3 +1,4 @@
+import type { TerminalProjectionEnvelope } from "./terminal-projection.ts";
 import { z } from "zod";
 import { CausalCellProofV1SchemaZ } from "./causal-cell.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
@@ -13,6 +14,11 @@ import {
 export const STOCK_CAPTURE_TAB_UNAVAILABLE =
   "This tmux server cannot provide an exact snapshot of saved tab cells. Continue this session in native tmux, or use a new session started with tmux-ide's bundled server.";
 
+/** Opt-in bundles:109 adds binary cells+107 graphics;110 also adds108 local image leases.
+ * Offer compact in encodings for old-daemon compatibility; new daemons respond binary explicitly. */
+export const TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION = 109;
+export const TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION = 110;
+
 export const TERMINAL_DELIVERY_PROTOCOL_VERSION = 1 as const;
 export const TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
 export const TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
@@ -20,6 +26,7 @@ export const TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
 
 export const TerminalDeliveryEncodingSchemaZ = z.enum([
   "semantic-compact-v1",
+  "semantic-binary-v1",
   "semantic-v1",
   "ansi-diff-v1",
   "ansi-raw-v1",
@@ -46,18 +53,22 @@ export const TerminalDeliveryNegotiatedSchemaZ = z
     protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
     encoding: TerminalDeliveryEncodingSchemaZ,
     fallbackEncoding: z.literal("semantic-v1").nullable().optional(),
+    alternateScreenProjection: z.literal("deferred-history-v1").optional(),
     richPlacements: z.boolean(),
     generation: SessionRuntimeGenerationSchemaZ,
     deliveryNonce: z.uuid(),
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.alternateScreenProjection && value.encoding !== "semantic-binary-v1")
+      context.addIssue({ code: "custom", message: "projection requires binary semantic delivery" });
     if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
       context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
     if (
       value.richPlacements &&
       value.encoding !== "semantic-v1" &&
-      value.encoding !== "semantic-compact-v1"
+      value.encoding !== "semantic-compact-v1" &&
+      value.encoding !== "semantic-binary-v1"
     )
       context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
   });
@@ -118,7 +129,10 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
 })
   .strict()
   .superRefine((value, context) => {
-    const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1";
+    const semantic =
+      value.encoding === "semantic-v1" ||
+      value.encoding === "semantic-compact-v1" ||
+      value.encoding === "semantic-binary-v1";
     const expectedChunks = Math.max(
       1,
       Math.ceil(value.representationBytes / TERMINAL_DELIVERY_CHUNK_BYTES),
@@ -206,6 +220,7 @@ export type TerminalDeliveryNack = z.infer<typeof TerminalDeliveryNackSchemaZ>;
 
 export type TerminalDeliveryServerMessage =
   | TerminalDeliveryEnvelope
+  | TerminalProjectionEnvelope
   | TerminalDeliveryChunk
   | TerminalDeliveryFault;
 

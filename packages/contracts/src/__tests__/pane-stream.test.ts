@@ -534,3 +534,47 @@ describe("window-scoped viewport frames", () => {
     ).toBe(false);
   });
 });
+
+describe("negotiated exact byte input", () => {
+  it("preserves NUL/non-UTF8 hex and accepts exactly 1024 bytes", () => {
+    for (const data of ["00ff80c3281b4d", "FF00", "ff".repeat(1024)]) {
+      const frame = { type: "input", kind: "bytes", pane: "pane.editor", seq: 1, data };
+      expect(PaneStreamInputFrameSchemaZ.parse(frame)).toEqual(frame);
+    }
+  });
+  it("rejects malformed, empty or over-limit byte frames", () => {
+    for (const data of ["", "0", "fff", "gg", "0xff", "\0", "ff".repeat(1025)]) {
+      expect(
+        PaneStreamInputFrameSchemaZ.safeParse({
+          type: "input",
+          kind: "bytes",
+          pane: "pane.editor",
+          seq: 1,
+          data,
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({
+        type: "ready",
+        protocolVersion: 2,
+        daemonInstanceId: INSTANCE_ID,
+        requestId: REQUEST_ID,
+        panes: ["pane.editor"],
+        effectiveViewerMode: "interactive",
+        inputBytes: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({
+        type: "ready",
+        protocolVersion: 2,
+        daemonInstanceId: INSTANCE_ID,
+        requestId: REQUEST_ID,
+        panes: ["pane.editor"],
+        effectiveViewerMode: "interactive",
+        inputBytes: false,
+      }).success,
+    ).toBe(false);
+  });
+});
