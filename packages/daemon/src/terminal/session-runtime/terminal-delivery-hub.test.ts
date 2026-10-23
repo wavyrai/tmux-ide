@@ -429,8 +429,24 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
 
   it("keeps alternate-screen full-grid updates as compact patches without resending normal history", async () => {
     const owner = new FakeOwner();
-    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const clock = cooperativeScheduler();
+    // Encoding correctness must not depend on coverage instrumentation consuming
+    // the cooperative wall-clock budget; yield behavior has separate tests.
+    clock.scheduler.nowMs = () => 0;
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, clock);
     const messages: TerminalDeliveryServerMessage[] = [];
+    const delivered = (revision: number) => {
+      const envelope = messages.find(
+        (m): m is TerminalDeliveryEnvelope =>
+          m.type === "terminal.delivery" && m.canonicalRevision === revision,
+      );
+      return (
+        !!envelope &&
+        messages.filter(
+          (m) => m.type === "terminal.delivery.chunk" && m.transactionId === envelope.transactionId,
+        ).length === envelope.chunkCount
+      );
+    };
     const connection = await hub.open(
       "alternate-history",
       "pane-a",
@@ -457,11 +473,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
         hashAlgorithm: "fnv1a64-v1",
         snapshot,
       });
-      await vi.waitFor(() =>
-        expect(
-          messages.some((m) => m.type === "terminal.delivery" && m.canonicalRevision === 0),
-        ).toBe(true),
-      );
+      await clock.until(() => delivered(0));
       connection.ack(
         ack(messages.findLast((m) => m.type === "terminal.delivery") as TerminalDeliveryEnvelope),
       );
@@ -490,13 +502,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
           hashAlgorithm: "fnv1a64-v1",
           patch: { rows: grid.map((row, index) => ({ index, row })) },
         });
-        await vi.waitFor(() =>
-          expect(
-            messages.some(
-              (m) => m.type === "terminal.delivery" && m.canonicalRevision === revision,
-            ),
-          ).toBe(true),
-        );
+        await clock.until(() => delivered(revision));
         const envelope = messages.findLast(
           (m) => m.type === "terminal.delivery",
         ) as TerminalDeliveryEnvelope;
