@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.12
+
+- Add opt-in binary terminal and image delivery, byte input, and alternate-screen projections for clients that negotiate those capabilities. Existing clients retain their current delivery path.
+- Add bounded, expiring local image leases with inline fallback. Reuse unchanged ownership journals instead of flushing them for every shared lease, and verify immutable file metadata before cleanup.
+- Keep deferred-history receipts separate from complete-state acknowledgements, and reject unsolicited projections in existing complete-state clients.
+
+The native app is distributed separately. This release supplies transport foundations; it does not enable the pending direct-Rust GUI rewrite or claim measured typing/scrolling improvements. Existing tmux sessions are preserved.
+
 ## 2.9.11
 
 - Add negotiated compact and binary terminal frames to the native GUI bridge, with incremental row updates and full-frame recovery when a delta cannot be applied. Older peers keep the existing snapshot path.
