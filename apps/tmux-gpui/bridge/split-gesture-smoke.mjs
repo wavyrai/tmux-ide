@@ -1,7 +1,11 @@
-// Source or exact packaged bridge, HTTP issuance, WebSocket redemption and native tmux.
+// Legacy live-helper contract: HTTP issuance, WebSocket redemption and native tmux.
+// Production Rust divider preview/release is covered by pane-resize-gesture-smoke.mjs.
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
-import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
+import {
+  createTmuxServerClient,
+  listTmuxServers,
+} from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import { spawn, execFileSync } from "node:child_process";
 import { stopFixtureChild } from "./fixture-child.mjs";
 import { writeFile } from "node:fs/promises";
@@ -19,8 +23,8 @@ const app = process.env.TMUX_GPUI_TEST_APP;
 if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
 const helperNode = app ? join(app, "Contents/Resources/node") : process.execPath;
 const helperEntry = app
-  ? join(app, "Contents/Resources/bridge/browser.bundle.mjs")
-  : resolve("apps/tmux-gpui/bridge/browser.ts");
+  ? join(app, "Contents/Resources/bridge/live.bundle.mjs")
+  : resolve("apps/tmux-gpui/bridge/live.ts");
 const digest = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 // Fail before creating fixtures if the selected artifact is missing.
 const helperIdentity = {
@@ -46,6 +50,7 @@ const tmux = (...args) =>
     timeout: 5000,
   }).trim();
 let daemon,
+  client,
   helper,
   diagnostic = "",
   events = [],
@@ -95,19 +100,31 @@ try {
   const { servers } = await listTmuxServers(options);
   const server = servers.find((s) => s.state === "online");
   assert.ok(server);
+  const scope = { serverId: server.serverId, generation: server.generation };
+  client = createTmuxServerClient(options, scope);
+  const liveSession = (await client.sessions()).sessions[0];
+  const opened = await client.openSession(liveSession.liveSessionId);
+  const ids = (await client.inventory(opened.workspaceName)).resource.semanticPaneIds;
+  assert.equal(ids.length, 2);
   const config = fleet.root + "/host.json";
   await writeFile(
     config,
     JSON.stringify({
       baseUrl: options.baseUrl,
       ownerToken: options.ownerToken,
-      scope: { serverId: server.serverId, generation: server.generation },
+      scope,
+      workspaceName: opened.workspaceName,
+      liveSessionId: liveSession.liveSessionId,
+      semanticPaneId: ids[0],
+      visiblePaneIds: ids,
     }),
     { mode: 0o600 },
   );
   helper = spawn(
     helperNode,
-    app ? [helperEntry, config] : ["--import", "tsx", helperEntry, config],
+    app
+      ? [helperEntry, config, "--interactive"]
+      : ["--import", "tsx", helperEntry, config, "--interactive"],
     {
       cwd: app ? fleet.root : process.cwd(),
       env: { ...process.env, ...fleet.environment },
@@ -136,17 +153,14 @@ try {
     }
   });
   const send = (command) => helper.stdin.write(JSON.stringify(command) + "\n");
-  await wait(() => latest()?.sessions?.length, "sessions");
-  send({ type: "session", request: 1, id: latest().sessions[0].id });
-  await wait(() => latest()?.panes?.length === 2, "panes");
-  send({ type: "pane", request: 2, id: latest().panes[0].id });
+  send({ kind: "presence", active: true, revision: 1 });
   await wait(
     () => latest()?.inputReady && latest()?.splitLayout?.splits?.length === 1,
     "canonical split",
   );
   const resource = latest().splitLayout;
   const split = resource.splits[0];
-  const request = latest().request;
+  const request = 1;
   const gesture = randomUUID();
   const target = {
     window: resource.window,
@@ -205,12 +219,7 @@ try {
     .find((row) => row[1] === latest().selectedPane)?.[0];
   assert.ok(selectedRuntime);
   const marker = "LAZY_" + randomUUID().replaceAll("-", "").slice(0, 16);
-  send({
-    type: "input",
-    request,
-    id: latest().selectedPane,
-    input: { kind: "text", data: "echo " + marker + "\n" },
-  });
+  send({ kind: "text", data: "echo " + marker + "\n" });
   await wait(
     () =>
       tmux("capture-pane", "-p", "-t", selectedRuntime)
@@ -224,6 +233,7 @@ try {
 } finally {
   for (const cleanup of [
     () => stopFixtureChild(helper),
+    () => client?.dispose(),
     () => daemon?.stop(),
     () => fleet.dispose(),
   ]) {
