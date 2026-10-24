@@ -1,3 +1,4 @@
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 // Rename and explicit zoom through the browser bridge on an owned tmux socket.
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
@@ -19,7 +20,7 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
 }
 const fleet = await createScratchFleet({ sessions: 1, windowsPerSession: 1, slug: "gpui-actions" });
-let daemon, helper, failure;
+let daemon, helper, native, failure;
 let diagnostic = "";
 const events = [];
 const tmux = (...args) =>
@@ -30,6 +31,7 @@ const tmux = (...args) =>
 const wait = async (predicate, label) => {
   const end = Date.now() + 30000;
   while (!predicate()) {
+    native?.assertHealthy();
     if (helper?.exitCode != null || helper?.signalCode != null)
       throw new Error("Helper exited: " + diagnostic);
     if (Date.now() > end) {
@@ -51,7 +53,7 @@ const wait = async (predicate, label) => {
     await new Promise((r) => setTimeout(r, 25));
   }
 };
-const send = (command) => helper.stdin.write(JSON.stringify(command) + "\n");
+const send = (command) => native.send(command);
 const latest = () => events.at(-1);
 const ready = () => latest()?.inputReady && latest()?.snapshot && latest()?.paneActions;
 let presence = 1;
@@ -100,15 +102,12 @@ try {
     },
   );
   helper.stderr.on("data", (b) => (diagnostic = (diagnostic + b).slice(-4000)));
-  let buffer = "";
-  helper.stdout.on("data", (b) => {
-    buffer += b;
-    let end;
-    while ((end = buffer.indexOf("\n")) >= 0) {
-      events.push(JSON.parse(buffer.slice(0, end)));
-      if (events.length > 500) events.shift();
-      buffer = buffer.slice(end + 1);
-    }
+  native = startNativeJourney(helper, {
+    worker: true,
+    onState: (state) => {
+      events.push(state);
+      if (events.length > 128) events.shift();
+    },
   });
   await wait(() => latest()?.sessions?.length === 1, "catalog");
   send({ type: "presence", active: true, revision: presence });
@@ -211,6 +210,11 @@ try {
   failure = error;
 } finally {
   const errors = [];
+  try {
+    await native?.stop();
+  } catch (error) {
+    errors.push(error);
+  }
   for (const child of [helper]) {
     if (!child || child.exitCode !== null || child.signalCode !== null) continue;
     let escalation, deadline;

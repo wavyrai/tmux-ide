@@ -10,6 +10,8 @@ fn explicit_session_open_consumes_current_catalog_preference_once(cx: &mut TestA
             view.input_interrupted = true;
             // Foreground intent survives an unacknowledged initial presence.
             view.presence = Presence::new(true);
+            view.presence.flush(view.browser_commands.as_ref().unwrap());
+            receiver.try_iter().for_each(drop);
             view.select(Selection::Session("session-a".into()), window, cx);
             assert!(matches!(receiver.try_recv().unwrap(), browser::Command::Session { request: 8, .. }));
             let mut state = view.browser_state.clone();
@@ -106,6 +108,7 @@ fn session_followup_refuses_background_wrong_session_and_queue_failure(cx: &mut 
                 state.panes = vec![pane("pane-b", Some("window-b"))];
                 if !wrong_session {
                     view.presence.set_active(false);
+                    view.cancel_session_open();
                 }
                 view.apply_browser_state(Some(state), cx);
                 view.finish_session_open(window, cx);
@@ -132,5 +135,77 @@ fn session_followup_refuses_background_wrong_session_and_queue_failure(cx: &mut 
                 browser::Command::Home { request: 99 }
             ));
         });
+    });
+}
+
+#[gpui::test]
+fn initial_inactive_session_selection_waits_for_current_foreground_catalog(
+    cx: &mut TestAppContext,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window,cx|view.update(cx,|view,cx| {
+        receiver.try_iter().for_each(drop);
+        view.presence=Presence::new(false);
+        view.presence.flush(view.browser_commands.as_ref().unwrap());
+        assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Presence{active:false,revision:1}));
+        view.select(Selection::Session("session-a".into()),window,cx);
+        assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Session{request:8,..}));
+        let mut state=view.browser_state.clone();
+        state.request=8;state.surface=browser::Surface::Workspace;
+        state.selected_session=Some("session-a".into());state.selected_pane=None;
+        state.frame=None;state.input_ready=false;state.presence_revision=1;
+        state.panes=vec![pane("pane-a",Some("window-a")),pane("pane-b",Some("window-b"))];
+        state.preferred_pane=None;state.session_catalog_complete=true;
+        view.apply_browser_state(Some(state.clone()),cx);
+        view.finish_session_open(window,cx);
+        assert!(view.pending_session_open.is_some(),"initial inactive catalog must preserve explicit selection");
+        assert!(receiver.try_recv().is_err());
+        view.presence.set_active(true);
+        view.presence.flush(view.browser_commands.as_ref().unwrap());
+        assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Presence{active:true,revision:2}));
+        view.finish_session_open(window,cx);
+        assert!(view.pending_session_open.is_some(),"active without ACK cannot consume background preference");
+        assert!(receiver.try_recv().is_err());
+        view.presence.acknowledge(2);
+        view.finish_session_open(window,cx);
+        assert!(view.pending_session_open.is_some(),"ready with stale catalog presence cannot consume it");
+        state.presence_revision=2;state.preferred_pane=Some("pane-b".into());
+        view.apply_browser_state(Some(state.clone()),cx);
+        view.finish_session_open(window,cx);
+        assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Pane{request:9,id}if id=="pane-b"));
+        assert!(!view.browser_state.input_ready,"navigation is not terminal authority");
+        view.apply_browser_state(Some(state),cx);view.finish_session_open(window,cx);
+        assert!(receiver.try_recv().is_err(),"no navigation replay");
+    }));
+}
+
+#[gpui::test]
+fn actual_blur_cancellation_does_not_revive_exact_or_late_admitted_navigation(
+    cx: &mut TestAppContext,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            receiver.try_iter().for_each(drop);
+            view.select(Selection::Session("session-a".into()), window, cx);
+            receiver.try_iter().for_each(drop);
+            view.cancel_session_open(); // Same cancellation owner as the real activation observer.
+            view.presence.set_active(false);
+            view.finish_session_open(window, cx);
+            assert!(view.pending_session_open.is_none());
+            view.pending_session_open = Some(crate::tmux_snapshot::session_open::Intent::admitted(
+                view.browser_request,
+            ));
+            view.finish_session_open(window, cx);
+            assert!(
+                view.pending_session_open.is_none(),
+                "late acknowledged tab/history response cannot survive blur"
+            );
+            view.presence.set_active(true);
+            view.finish_session_open(window, cx);
+            assert!(receiver.try_recv().is_err());
+        })
     });
 }

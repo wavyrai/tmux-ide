@@ -5,7 +5,7 @@ fn header_view(
     sender: mpsc::SyncSender<browser::Command>,
 ) -> SnapshotView {
     let mut view = make_view(window, cx, sender);
-    let mut frame = (**view.frame.as_ref().unwrap()).clone();
+    let mut frame = view.frame.as_ref().unwrap().legacy().as_ref().clone();
     frame.width = 40;
     frame.height = 20;
     let mut blank = frame.cells[0].clone();
@@ -16,9 +16,15 @@ fn header_view(
     frame.cursor = None;
     frame.graphics.clear();
     let frame = Arc::new(frame);
-    view.frame = Some(frame.clone());
-    view.painted_frame = Some(frame.clone());
-    view.browser_state.frame = Some(frame);
+    view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.painted_frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame,
+    ));
     view.browser_state.panes = vec![
         choice("pane-a", "Same title"),
         choice("pane-b", "Same title"),
@@ -140,3 +146,5 @@ fn pending_header_menu_is_cancelled_by_competing_modal_or_navigation(cx: &mut Te
     });
     assert!(receiver.try_recv().is_err());
 }
+
+mod back_to_live;

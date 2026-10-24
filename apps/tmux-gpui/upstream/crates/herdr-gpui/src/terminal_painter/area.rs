@@ -1,7 +1,7 @@
 //! Which cells, and which layer of them, a paint covers.
 
+use super::FrameView;
 use super::Highlight;
-use herdr_client::protocol::FrameData;
 use std::ops::Range;
 
 /// Cells of one row that a paint covers, in the grid of the frame it paints.
@@ -35,11 +35,12 @@ pub(crate) struct Part<'a> {
 }
 
 /// Every cell of `frame`, row by row.
-pub(super) fn whole(frame: &FrameData) -> Vec<Span> {
-    (0..frame.height)
+pub(super) fn whole<'a>(frame: impl Into<FrameView<'a>>) -> Vec<Span> {
+    let frame = frame.into();
+    (0..frame.height())
         .map(|row| Span {
             row,
-            columns: 0..frame.width,
+            columns: 0..frame.width(),
         })
         .collect()
 }
@@ -53,16 +54,20 @@ pub(crate) fn covers(area: &[Span], x: u16, y: u16) -> bool {
 /// The non-empty runs of `area` inside `frame`, as ranges of its cell indices.
 /// A frame short of cells paints the ones it has.
 pub(crate) fn cell_ranges<'a>(
-    frame: &'a FrameData,
+    frame: impl Into<FrameView<'a>>,
     area: &'a [Span],
 ) -> impl Iterator<Item = Range<usize>> + 'a {
-    let width = usize::from(frame.width);
+    let frame = frame.into();
+    let width = usize::from(frame.width());
     area.iter()
-        .filter(|span| span.row < frame.height)
+        .filter(move |span| span.row < frame.height())
         .map(move |span| {
             let start = usize::from(span.row) * width;
-            let end =
-                |column: u16| (start + usize::from(column.min(frame.width))).min(frame.cells.len());
+            let end = |column: u16| {
+                start
+                    + usize::from(column.min(frame.width()))
+                        .min(frame.row(usize::from(span.row)).map_or(0, <[_]>::len))
+            };
             end(span.columns.start)..end(span.columns.end)
         })
         .filter(|range| range.start < range.end)

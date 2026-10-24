@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.12
+
+- Add opt-in binary terminal and image delivery, byte input, and alternate-screen projections for clients that negotiate those capabilities. Existing clients retain their current delivery path.
+- Add bounded, expiring local image leases with inline fallback. Reuse unchanged ownership journals instead of flushing them for every shared lease, and verify immutable file metadata before cleanup.
+- Keep deferred-history receipts separate from complete-state acknowledgements, and reject unsolicited projections in existing complete-state clients.
+
+- Move the native GUI terminal stream and input into Rust, keeping the Node broker for discovery, SSH setup and application metadata. Retain unchanged terminal rows and apply changed rows directly.
+- Preserve queued typing and paste through terminal recapture during resize. Reject commands admitted while backgrounded, including stale resize requests during rapid refocus.
+- Preview divider movement locally and commit the exact terminal geometry on release. Improve initial pane selection and add Cmd-click links in GUI terminals.
+
+The matching native macOS alpha is `0.1.8`, distributed separately from CLI/daemon `2.9.12`. Updating the CLI does not update the native app. Existing tmux sessions are preserved. This release makes no measured typing/scrolling speedup or TUI-parity claim.
+
 ## 2.9.11
 
 - Add negotiated compact and binary terminal frames to the native GUI bridge, with incremental row updates and full-frame recovery when a delta cannot be applied. Older peers keep the existing snapshot path.

@@ -15,8 +15,8 @@ impl Capture {
         Some(Saved {
             identity: self.identity.clone()?,
             geometry: (
-                self.frame.width,
-                self.frame.height,
+                self.frame.view().width(),
+                self.frame.view().height(),
                 self.region.left,
                 self.region.top,
                 self.region.width,
@@ -36,8 +36,8 @@ impl Saved {
         let region = state.copy_region.as_ref()?;
         if self.geometry
             != (
-                frame.width,
-                frame.height,
+                frame.view().width(),
+                frame.view().height(),
                 region.left,
                 region.top,
                 region.width,

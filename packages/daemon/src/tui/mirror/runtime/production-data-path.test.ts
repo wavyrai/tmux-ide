@@ -486,6 +486,15 @@ describe("production OpenTUI v2 data path", () => {
         /node:|\b(?:fetch|dispatch|sendInput|requestAuthority|createWorkspaceClient|createTerminalFastLane|openSshDaemonTransport|setInterval)\s*\(/u,
       );
     }
+    // The opt-in renderer probe observes the existing render/input path. It may
+    // record bounded fixture evidence, but cannot create a second runtime owner.
+    const rendererProbeHelpers = ["packages/daemon/src/tui/mirror/runtime/renderer-probe.ts"];
+    for (const path of rendererProbeHelpers) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|openSshDaemonTransport|requestAuthority|sendInput)\s*\(/u,
+      );
+    }
     expect(authorityDataPathFiles.length).toBeLessThanOrEqual(
       154 +
         sharedFleetOwners.length +
@@ -493,7 +502,8 @@ describe("production OpenTUI v2 data path", () => {
         inputHelpers.length +
         teamPresentationHelpers.length +
         remoteCommandHelpers.length +
-        selectionRecoveryHelpers.length,
+        selectionRecoveryHelpers.length +
+        rendererProbeHelpers.length,
     );
   });
 });

@@ -27,6 +27,7 @@ mod tests;
 
 use super::{SnapshotView, browser_ui::Selection, hit_regions};
 use gpui::{prelude::*, *};
+#[cfg(test)]
 use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct Controls {
@@ -59,10 +60,10 @@ fn headers(state: &State) -> Vec<Header> {
         return Vec::new();
     };
     if state.surface != super::browser::Surface::Workspace
-        || frame.width > 1000
-        || frame.height > 500
-        || !frame.graphics.is_empty()
-        || !hit_regions::valid(&state.regions, Some(frame), &state.panes)
+        || frame.view().width() > 1000
+        || frame.view().height() > 500
+        || frame.view().has_inline_graphics()
+        || !hit_regions::valid_view(&state.regions, Some(frame.view()), &state.panes)
     {
         return Vec::new();
     }
@@ -131,7 +132,7 @@ fn label(state: &State, id: &str) -> String {
 fn current_header(
     view: &SnapshotView,
     request: u64,
-    frame: &Arc<herdr_client::protocol::FrameData>,
+    frame: &super::display_frame::DisplayFrame,
     regions: &[hit_regions::Region],
     id: &str,
 ) -> bool {
@@ -144,6 +145,7 @@ fn current_header(
         && view.new_session.is_none()
         && view.selection.is_none()
         && view.divider.is_none()
+        && !view.resize_gesture.busy()
         && hit_regions::is_painted(Some(frame), view.frame.as_ref())
         && hit_regions::is_painted(Some(frame), view.painted_frame.as_ref())
         && publication_current(&view.browser_state, request, frame, regions, id)
@@ -151,7 +153,7 @@ fn current_header(
 fn publication_current(
     state: &State,
     request: u64,
-    frame: &Arc<herdr_client::protocol::FrameData>,
+    frame: &super::display_frame::DisplayFrame,
     regions: &[hit_regions::Region],
     id: &str,
 ) -> bool {
@@ -273,7 +275,7 @@ impl SnapshotView {
                         return;
                     }
                     if history > 0 && view.browser_state.history_offset == history {
-                        view.queue_input(super::keys::Input::Scroll(0), cx);
+                        view.return_to_live(window, cx);
                     } else if history == 0
                         && let Some(target) = &target
                     {
@@ -357,6 +359,7 @@ impl SnapshotView {
             || self.pane_actions.is_some()
             || self.new_session.is_some()
             || self.divider.is_some()
+            || self.resize_gesture.busy()
         {
             return Vec::new();
         }
@@ -398,7 +401,8 @@ impl SnapshotView {
         {
             return row.into_any_element();
         }
-        for header in headers(&self.browser_state)
+        for header in self
+            .presentation_headers()
             .into_iter()
             .filter(|h| h.row.is_none())
         {
@@ -408,8 +412,12 @@ impl SnapshotView {
             };
             let regions = self.browser_state.regions.clone();
             let id = header.id.clone();
-            let overflow = self.header_overflow(&header, width, cx);
-            let mode = self.header_mode(&header, width, cx);
+            let overflow = (!self.resize_gesture.busy())
+                .then(|| self.header_overflow(&header, width, cx))
+                .flatten();
+            let mode = (!self.resize_gesture.busy())
+                .then(|| self.header_mode(&header, width, cx))
+                .flatten();
             row = row
                 .child(
                     self.pane_header_label(&header, width)
@@ -534,10 +542,23 @@ impl SnapshotView {
         }
         // Labels remain pass-through. Only the separately rendered trailing controls
         // occlude their reserved rectangles; the remaining separator still drags.
-        headers(&self.browser_state)
+        self.presentation_headers()
             .iter()
             .filter(|h| h.row.is_some())
             .map(|h| self.pane_header_label(h, width))
             .collect()
+    }
+    fn presentation_headers(&self) -> Vec<Header> {
+        let mut result = headers(&self.browser_state);
+        if let Some(preview) = self.divider_content_preview() {
+            for header in &mut result {
+                if let Some(region) = preview.regions.iter().find(|r| r.id == header.id) {
+                    header.left = region.left;
+                    header.width = region.width;
+                    header.row = region.top.checked_sub(1);
+                }
+            }
+        }
+        result
     }
 }

@@ -3,6 +3,7 @@ use super::*;
 use core::prelude::v1::test;
 use herdr_client::protocol::{CellData, FrameData};
 use std::sync::Arc;
+mod preview_cases;
 fn state(axis: Axis) -> browser::State {
     let regions = if axis == Axis::Cols {
         vec![region("a", 0, 0, 5, 9), region("b", 6, 0, 5, 9)]
@@ -27,24 +28,27 @@ fn state(axis: Axis) -> browser::State {
             })
             .collect(),
         regions,
-        frame: Some(Arc::new(FrameData {
-            width: 11,
-            height: 9,
-            cursor: None,
-            hyperlinks: vec![],
-            graphics: vec![],
-            cells: vec![
-                CellData {
-                    symbol: " ".into(),
-                    fg: 0,
-                    bg: 0,
-                    modifier: 0,
-                    skip: false,
-                    hyperlink: None
-                };
-                99
-            ],
-        })),
+        frame: Some(
+            Arc::new(FrameData {
+                width: 11,
+                height: 9,
+                cursor: None,
+                hyperlinks: vec![],
+                graphics: vec![],
+                cells: vec![
+                    CellData {
+                        symbol: " ".into(),
+                        fg: 0,
+                        bg: 0,
+                        modifier: 0,
+                        skip: false,
+                        hyperlink: None
+                    };
+                    99
+                ],
+            })
+            .into(),
+        ),
         ..Default::default()
     }
 }
@@ -149,11 +153,8 @@ fn content_only_updates_survive_but_topology_lifetime_selection_and_presence_do_
     )
     .unwrap();
     let mut busy = original.clone();
-    Arc::make_mut(busy.frame.as_mut().unwrap()).cells[0].symbol = "busy".into();
-    assert!(!Arc::ptr_eq(
-        original.frame.as_ref().unwrap(),
-        busy.frame.as_ref().unwrap()
-    ));
+    Arc::make_mut((busy.frame.as_mut().unwrap()).legacy_mut()).cells[0].symbol = "busy".into();
+    assert!(!(original.frame.as_ref().unwrap()).same(busy.frame.as_ref().unwrap()));
     assert!(drag.compatible(&busy));
     for case in 0..8 {
         let mut changed = original.clone();
@@ -184,7 +185,7 @@ fn content_outer_edges_nonoverlapping_splits_and_styled_gaps_are_not_handles() {
         assert!(at(&s, x, y).is_none());
     }
     assert!(at(&s, 5.5, 2.).is_some());
-    Arc::make_mut(s.frame.as_mut().unwrap()).cells[27].bg = 0x123456;
+    Arc::make_mut((s.frame.as_mut().unwrap()).legacy_mut()).cells[27].bg = 0x123456;
     assert!(at(&s, 5.5, 2.).is_none());
     s = state(Axis::Cols);
     s.regions[1].top = 5;
@@ -321,7 +322,9 @@ fn make_view(
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
-        frame: Some(frame.clone()),
+        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
@@ -352,7 +355,10 @@ fn make_view(
             Bounds::default(),
         )),
         input_cell_width: Some(10.),
-        painted_frame: Some(frame.clone()),
+        painted_focus: None,
+        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         pointer: Default::default(),
         selection: None,
         divider: None,
@@ -368,7 +374,9 @@ fn make_view(
             ],
             selected_session: Some("session-a".into()),
             selected_pane: Some("pane-a".into()),
-            frame: Some(frame),
+            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame,
+            )),
             regions: serde_json::from_str(
                 r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
             )
@@ -400,7 +408,7 @@ fn native_handler_path_emits_one_resize_never_terminal_input_or_optimistic_frame
         assert!(!view.offer_terminal_input(cx));
         assert!(receiver.try_recv().is_err());
         // A fresh output frame with identical topology does not kill the gesture.
-        Arc::make_mut(view.browser_state.frame.as_mut().unwrap()).cells[0].symbol="output".into();
+        Arc::make_mut((view.browser_state.frame.as_mut().unwrap()).legacy_mut()).cells[0].symbol="output".into();
         view.frame=view.browser_state.frame.clone();view.painted_frame=view.frame.clone();
         let actual=view.frame.clone().unwrap();
         view.move_divider(point_at(7.5,2.),false,cx);
@@ -408,7 +416,7 @@ fn native_handler_path_emits_one_resize_never_terminal_input_or_optimistic_frame
         view.move_divider(point_at(7.5,2.),true,cx);
         assert!(matches!(receiver.try_recv().unwrap(),browser::Command::ResizePane{request:7,id,cells:7,axis:Axis::Cols,..} if id=="a"));
         assert!(receiver.try_recv().is_err());assert!(view.divider.is_none());
-        assert!(Arc::ptr_eq(view.frame.as_ref().unwrap(),&actual));
+        assert!((view.frame.as_ref().unwrap()).same(&actual));
         // A changed pixel transform invalidates release, even when tokens match.
         assert!(view.begin_divider(point_at(5.5,2.),cx));
         view.input_cell_width=Some(11.);

@@ -37,7 +37,7 @@ fn same_font_and_size_limit_do_not_save_or_invalidate_geometry(cx: &mut TestAppC
             assert!(!view.terminal_font.saving);
             assert!(view.terminal_font.note.is_none());
             assert_eq!(view.terminal_font.revision, revision);
-            assert!(Arc::ptr_eq(view.painted_frame.as_ref().unwrap(), &frame));
+            assert!((view.painted_frame.as_ref().unwrap()).same(&frame));
         })
     });
     assert!(receiver.try_recv().is_err());

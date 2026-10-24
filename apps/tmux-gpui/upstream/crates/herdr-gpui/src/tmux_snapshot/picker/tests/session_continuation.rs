@@ -3,6 +3,7 @@ use super::*;
 const ACTION: &str = "11111111-1111-4111-8111-111111111111";
 fn prepare(v: &mut SnapshotView) {
     v.browser_state.request = 7;
+    v.browser_state.presence_revision = 1;
     v.browser_state.surface = browser::Surface::Workspace;
     v.browser_state.session_history = Some(crate::tmux_snapshot::session_history::Capability {
         revision: 1,

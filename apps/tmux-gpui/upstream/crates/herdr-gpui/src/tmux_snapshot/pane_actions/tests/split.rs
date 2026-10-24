@@ -12,6 +12,7 @@ fn rendered_split_choices_queue_exact_target_once_without_input_or_navigation(
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     for (selector, direction) in [
         ("pane-actions/Split pane right", "right"),
         ("pane-actions/Split pane down", "down"),

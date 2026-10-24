@@ -11,13 +11,14 @@ import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 import { parseDiagnosticLine, diagnosticStatus } from "./live-diagnostics.ts";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 const fleet = await createScratchFleet({
   sessions: 2,
   slug: "gpui-browser",
   windowsPerSession: 1,
   initialPaneMarker: "RIG_GPUI_BROWSER",
 });
-let daemon, browser, native;
+let daemon, browser, native, journey, metadata;
 const events = [];
 let stderr = "";
 // Fixed-field, bounded failure evidence: never retain terminal text or credentials.
@@ -53,7 +54,8 @@ const send = (command) => {
       inputKind: command.input.kind,
       ...(command.input.kind === "resize" ? command.input.data : {}),
     });
-  browser.stdin.write(JSON.stringify(command) + "\n");
+  if (journey && !["theme", "appearance"].includes(command.type)) journey.send(command);
+  else browser.stdin.write(JSON.stringify(command) + "\n");
 };
 let previousGrid;
 const observedGrid = (session) => {
@@ -99,6 +101,7 @@ const resumePublication = (event) => ({
 const until = async (predicate) => {
   const end = Date.now() + (process.env.TMUX_GPUI_TEST_BINARY ? 120000 : 20000);
   while (!predicate()) {
+    journey?.assertHealthy();
     if (browser?.exitCode !== null && browser?.exitCode !== undefined)
       throw new Error("Browser exited: " + stderr);
     if (Date.now() > end) throw new Error("Browser deadline: " + stderr);
@@ -151,7 +154,8 @@ try {
     let end;
     while ((end = buffer.indexOf("\n")) >= 0) {
       const event = JSON.parse(buffer.slice(0, end));
-      events.push(event);
+      if (process.env.TMUX_GPUI_TEST_BINARY) events.push(event);
+      else if (event.connection) metadata = event;
       trace({
         event: "publication",
         request: event.request,
@@ -166,6 +170,24 @@ try {
       buffer = buffer.slice(end + 1);
     }
   });
+  if (!process.env.TMUX_GPUI_TEST_BINARY) {
+    journey = startNativeJourney(browser, {
+      worker: true,
+      onState: (state) => {
+        const event = { ...metadata, ...state };
+        if (state.snapshot)
+          event.snapshot = {
+            ...state.snapshot,
+            grid: state.frameText
+              .split("\n")
+              .map((line) => ({ cells: [...line].map((grapheme) => ({ grapheme })) })),
+          };
+        events.push(event);
+        recordResume(resumePublication(event));
+      },
+    });
+    send({ type: "presence", active: true, revision: 0 });
+  }
   if (process.env.TMUX_GPUI_TEST_BINARY) {
     native = spawn(process.env.TMUX_GPUI_TEST_BINARY, ["--tmux-browser-stdio"], {
       stdio: ["pipe", "pipe", "inherit"],
@@ -411,8 +433,10 @@ try {
         .some((e) => e.snapshot?.cols === 91 && e.snapshot?.rows === 27 && e.inputReady),
     );
     assert.ok(
-      events.slice(resizeStart).every((e) => e.request !== 6 || (e.snapshot && e.inputReady)),
-      "Resize must not revoke established input readiness while authority remains valid",
+      events
+        .slice(resizeStart)
+        .every((e) => e.request !== 6 || (e.snapshot && e.selectedPane === second)),
+      "Resize retains the selected terminal while Rust buffers input until geometry is coherent",
     );
     await until(() =>
       fleet
@@ -478,7 +502,10 @@ try {
     send({ type: "pane", request: 7, id: second });
     await until(() => events.at(-1)?.request === 7 && !!events.at(-1)?.snapshot);
     assert.equal(events.at(-1).inputReady, false);
-    assert.equal(events.at(-1).status, "Window inactive — activate tmux-ide to type");
+    assert.match(
+      events.at(-1).status,
+      /^(Window inactive — activate tmux-ide to type|Waiting for input authority)$/,
+    );
     send({ type: "presence", active: true, revision: 4 });
     await until(
       () =>
@@ -503,37 +530,52 @@ try {
   const stopRequest = events.at(-1).request;
   await daemon.stop();
   daemon = undefined;
-  const shutdownDiagnostic = () =>
-    stderr
-      .split("\n")
-      .map(parseDiagnosticLine)
-      .find(
-        (diagnostic) =>
-          diagnostic &&
-          ["source-closed", "transport-closed", "transport-error"].includes(diagnostic.code),
-      );
-  await until(() => {
-    const diagnostic = shutdownDiagnostic();
-    return (
-      diagnostic &&
+  if (journey) {
+    await until(() =>
       events
         .slice(stopIndex)
         .some(
           (event) =>
             event.request === stopRequest &&
-            event.status === diagnosticStatus(diagnostic) &&
             event.snapshot === null &&
-            event.inputReady === false,
-        )
+            !event.inputReady &&
+            /reconnecting|interrupted|unavailable/i.test(event.status),
+        ),
     );
-  });
-  const retiredIndex = events.findIndex(
-    (event, index) => index >= stopIndex && event.status === diagnosticStatus(shutdownDiagnostic()),
-  );
-  for (const event of events.slice(retiredIndex)) {
-    assert.equal(event.request, stopRequest);
-    assert.equal(event.snapshot, null, "shutdown must clear terminal contents");
-    assert.equal(event.inputReady, false, "shutdown must revoke input");
+  } else {
+    const shutdownDiagnostic = () =>
+      stderr
+        .split("\n")
+        .map(parseDiagnosticLine)
+        .find(
+          (diagnostic) =>
+            diagnostic &&
+            ["source-closed", "transport-closed", "transport-error"].includes(diagnostic.code),
+        );
+    await until(() => {
+      const diagnostic = shutdownDiagnostic();
+      return (
+        diagnostic &&
+        events
+          .slice(stopIndex)
+          .some(
+            (event) =>
+              event.request === stopRequest &&
+              event.status === diagnosticStatus(diagnostic) &&
+              event.snapshot === null &&
+              event.inputReady === false,
+          )
+      );
+    });
+    const retiredIndex = events.findIndex(
+      (event, index) =>
+        index >= stopIndex && event.status === diagnosticStatus(shutdownDiagnostic()),
+    );
+    for (const event of events.slice(retiredIndex)) {
+      assert.equal(event.request, stopRequest);
+      assert.equal(event.snapshot, null, "shutdown must clear terminal contents");
+      assert.equal(event.inputReady, false, "shutdown must revoke input");
+    }
   }
   if (!native) {
     // Keep the same browser process across a real daemon replacement.
@@ -622,6 +664,7 @@ try {
         timeline: resumeEvidence.timeline.map(({ ms, value }) => ({ ms, ...JSON.parse(value) })),
       }),
     );
+  if (journey) await journey.stop();
   if (native && native.exitCode === null) {
     const close = once(native, "close");
     native.kill("SIGTERM");

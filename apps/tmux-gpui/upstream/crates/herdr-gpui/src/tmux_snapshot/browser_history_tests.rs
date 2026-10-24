@@ -15,9 +15,11 @@ fn history() -> anyhow::Result<serde_json::Value> {
 #[test]
 fn history_is_bounded_read_only_and_bound_to_a_selected_frame() -> anyhow::Result<()> {
     let value = history()?;
-    let state = Reader::default().accept(&serde_json::to_vec(&value)?)?;
-    assert_eq!(state.history_offset, 30);
-    assert!(!state.input_ready);
+    assert!(
+        Reader::default()
+            .accept(&serde_json::to_vec(&value)?)
+            .is_err()
+    );
     for (field, invalid) in [
         ("historyOffset", json!(-1)),
         ("historyOffset", json!(1001)),
@@ -35,34 +37,37 @@ fn history_is_bounded_read_only_and_bound_to_a_selected_frame() -> anyhow::Resul
             reader.accept(&serde_json::to_vec(&bad)?).is_err(),
             "{field}"
         );
+        let mut catalog = value.clone();
+        catalog["snapshot"] = serde_json::Value::Null;
+        catalog["historyOffset"] = json!(0);
         assert_eq!(
-            reader.accept(&serde_json::to_vec(&value)?)?.history_offset,
-            30
+            reader
+                .accept(&serde_json::to_vec(&catalog)?)?
+                .history_offset,
+            0
         );
     }
     Ok(())
 }
 
 #[test]
-fn legacy_publication_defaults_to_live_and_new_live_frame_clears_history() -> anyhow::Result<()> {
+fn catalog_defaults_to_zero_history_and_never_accepts_broker_rows() -> anyhow::Result<()> {
     let mut value = history()?;
     let mut reader = Reader::default();
-    reader.accept(&serde_json::to_vec(&value)?)?;
-    value["sequence"] = json!(2);
+    assert!(reader.accept(&serde_json::to_vec(&value)?).is_err());
+    value["snapshot"] = serde_json::Value::Null;
     value["historyOffset"] = json!(0);
-    value["inputReady"] = json!(true);
     assert_eq!(
         reader.accept(&serde_json::to_vec(&value)?)?.history_offset,
         0
     );
+    value["sequence"] = json!(2);
     value
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("expected object"))?
+        .ok_or_else(|| anyhow::anyhow!("object"))?
         .remove("historyOffset");
     assert_eq!(
-        Reader::default()
-            .accept(&serde_json::to_vec(&value)?)?
-            .history_offset,
+        reader.accept(&serde_json::to_vec(&value)?)?.history_offset,
         0
     );
     Ok(())

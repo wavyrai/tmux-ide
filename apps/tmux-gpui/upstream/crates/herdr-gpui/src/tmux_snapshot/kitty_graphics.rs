@@ -158,6 +158,7 @@ fn valid_digest(digest: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChunkLine {
@@ -176,11 +177,13 @@ struct Chunk {
     offset: u64,
     #[serde(default)]
     image: Option<String>,
+    #[cfg(test)]
     #[serde(default)]
     data: String,
 }
 
 /// True for an image chunk line (checked before publication parsing).
+#[cfg(test)]
 pub(super) fn is_chunk_line(line: &[u8]) -> bool {
     line.starts_with(b"{\"kittyImageChunk\":")
 }
@@ -251,31 +254,90 @@ impl Store {
 
     /// Accepts one chunk line. Out-of-order or inconsistent chunks drop the
     /// partial image; the window reports it missing and the bridge resends.
+    #[cfg(test)]
     pub(super) fn accept_line(&self, line: &[u8]) -> Result<(), Error> {
         let ChunkLine { chunk } = serde_json::from_slice(line)?;
         let data = base64(&chunk.data).ok_or(Error::Invalid("kitty image data is not base64"))?;
         self.accept_chunk(chunk, data)
     }
-    pub(super) fn accept_binary(&self, metadata: &[u8], data: &[u8]) -> Result<(), Error> {
-        if metadata.len() > 4096 || data.is_empty() || data.len() > 512 * 1024 {
-            return Err(Error::Invalid("invalid binary image sizes"));
-        }
-        let value: serde_json::Value = serde_json::from_slice(metadata)?;
-        if value
-            .as_object()
-            .is_none_or(|object| object.contains_key("data"))
+    /// Native chunks have already passed the daemon digest verifier. Move their bytes
+    /// directly into the assembly path without JSON/base64 or another chunk-sized copy.
+    pub(super) fn accept_native(
+        &self,
+        chunk: herdr_client::tmux_graphics::ImageChunk,
+    ) -> Result<(), Error> {
+        use herdr_client::tmux_graphics::Format as NativeFormat;
+        let metadata = chunk.metadata;
+        let blob = metadata.blob;
+        if metadata.image.len() > 600
+            || metadata.image.chars().any(char::is_control)
+            || chunk.bytes.is_empty()
+            || chunk.bytes.len() > 512 * 1024
+            || blob
+                .offset
+                .checked_add(chunk.bytes.len())
+                .is_none_or(|end| {
+                    end > blob.total || (end == blob.total) != chunk.complete_verified
+                })
         {
-            return Err(Error::Invalid("binary image metadata contains data"));
+            return Err(Error::Invalid("unverified native image completion"));
         }
-        let chunk: Chunk = serde_json::from_value(value)?;
-        if chunk
-            .image
-            .as_ref()
-            .is_some_and(|image| image.len() > 600 || image.chars().any(char::is_control))
-        {
-            return Err(Error::Invalid("invalid binary image identity"));
+        let format = match blob.format {
+            NativeFormat::Png => Format::Png,
+            NativeFormat::Rgba => Format::Rgba,
+            NativeFormat::Rgb => Format::Rgb,
+            NativeFormat::RgbaZlib => Format::RgbaZlib,
+            NativeFormat::RgbZlib => Format::RgbZlib,
+        };
+        self.accept_chunk(
+            Chunk {
+                digest: blob.digest,
+                format,
+                width: blob.width,
+                height: blob.height,
+                total: blob.total as u64,
+                offset: blob.offset as u64,
+                image: Some(metadata.image),
+                #[cfg(test)]
+                data: String::new(),
+            },
+            chunk.bytes,
+        )
+    }
+    pub(super) fn invalidate_native(&self, digests: &[String]) {
+        let mut inner = self.lock();
+        for digest in digests {
+            inner.partials.remove(digest);
+            if let Some(key) = inner.keys.remove(digest) {
+                inner.bytes = inner.bytes.saturating_sub(key.data_len as usize);
+                inner.images.remove(&key);
+            }
+            inner.order.retain(|stored| stored != digest);
+            inner.referenced.remove(digest);
+            inner.reported.remove(digest);
+            inner.painted.retain(|_, stored| stored != digest);
+            inner.latest.retain(|_, stored| stored != digest);
+            // Reject an already inflating native image when it attempts to publish.
+            inner.arrivals.retain(|_, stored| stored != digest);
         }
-        self.accept_chunk(chunk, data.to_vec())
+        inner.changed = true;
+        drop(inner);
+        self.1
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(digest, _)| !digests.contains(digest));
+    }
+    pub(super) fn retire_native(&self) {
+        let mut inner = self.lock();
+        *inner = Inner::default();
+        inner.changed = true;
+        drop(inner);
+        self.1
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
     fn accept_chunk(&self, chunk: Chunk, data: Vec<u8>) -> Result<(), Error> {
         if !valid_digest(&chunk.digest)
@@ -735,3 +797,7 @@ mod tests;
 #[cfg(test)]
 #[path = "kitty_graphics_partial_tests.rs"]
 mod partial_budget_tests;
+
+#[cfg(test)]
+#[path = "kitty_native_tests.rs"]
+mod native_tests;

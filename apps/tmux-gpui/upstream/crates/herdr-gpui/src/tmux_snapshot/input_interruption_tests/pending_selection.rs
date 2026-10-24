@@ -160,7 +160,7 @@ fn old_helper_and_queue_overflow_never_release_a_command_suffix(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn stale_ready_publication_cannot_flush_and_channel_failure_never_retries(cx: &mut TestAppContext) {
+fn stale_ready_publication_cannot_flush_and_disconnection_never_retries(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(32);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     receiver.try_iter().for_each(drop);
@@ -180,9 +180,15 @@ fn stale_ready_publication_cannot_flush_and_channel_failure_never_retries(cx: &m
         let ready = confirmation(view);
         view.apply_browser_state(Some(ready.clone()), cx);
         assert!(matches!(tiny.try_recv().unwrap(), browser::Command::Input {input: Input::Text(ref text), ..} if text == "prefix"));
-        assert!(view.input_interrupted, "failed Enter cannot become a later retry");
+        assert!(!view.input_interrupted, "a full queue retains the unsent Enter");
+        assert!(view.pending_input.is_some());
+        drop(tiny);
+        view.flush_pending_input(cx);
+        assert!(view.input_interrupted, "disconnection cancels the unsent suffix");
+        let (sender, recovered) = mpsc::sync_channel(32);
+        view.browser_commands = Some(sender);
         view.apply_browser_state(Some(ready), cx);
-        assert!(tiny.try_recv().is_err());
+        assert!(recovered.try_recv().is_err());
     }));
 }
 

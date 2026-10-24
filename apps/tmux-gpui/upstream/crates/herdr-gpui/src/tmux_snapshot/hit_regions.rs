@@ -1,5 +1,8 @@
 //! Hit targets share the verified window canvas's cell coordinates.
 use super::browser::Choice;
+use super::display_frame::DisplayFrame;
+use crate::terminal_painter::FrameView;
+#[cfg(test)]
 use herdr_client::protocol::FrameData;
 use serde::Deserialize;
 #[derive(Clone, Deserialize, PartialEq, Eq)]
@@ -11,7 +14,15 @@ pub(super) struct Region {
     pub(super) width: u16,
     pub(super) height: u16,
 }
+#[cfg(test)]
 pub(super) fn valid(regions: &[Region], frame: Option<&FrameData>, choices: &[Choice]) -> bool {
+    valid_view(regions, frame.map(FrameView::from), choices)
+}
+pub(super) fn valid_view(
+    regions: &[Region],
+    frame: Option<FrameView<'_>>,
+    choices: &[Choice],
+) -> bool {
     if regions.is_empty() {
         return true;
     }
@@ -23,8 +34,8 @@ pub(super) fn valid(regions: &[Region], frame: Option<&FrameData>, choices: &[Ch
         && regions.iter().enumerate().all(|(i, r)| {
             r.width > 0
                 && r.height > 0
-                && u32::from(r.left) + u32::from(r.width) <= u32::from(frame.width)
-                && u32::from(r.top) + u32::from(r.height) <= u32::from(frame.height)
+                && u32::from(r.left) + u32::from(r.width) <= u32::from(frame.width())
+                && u32::from(r.top) + u32::from(r.height) <= u32::from(frame.height())
                 && choices.iter().any(|c| c.id == r.id)
                 && ids.insert(&r.id)
                 && regions[..i].iter().all(|p| {
@@ -35,13 +46,10 @@ pub(super) fn valid(regions: &[Region], frame: Option<&FrameData>, choices: &[Ch
                 })
         })
 }
-pub(super) fn is_painted(
-    current: Option<&std::sync::Arc<FrameData>>,
-    painted: Option<&std::sync::Arc<FrameData>>,
-) -> bool {
+pub(super) fn is_painted(current: Option<&DisplayFrame>, painted: Option<&DisplayFrame>) -> bool {
     current
         .zip(painted)
-        .is_some_and(|(current, painted)| std::sync::Arc::ptr_eq(current, painted))
+        .is_some_and(|(current, painted)| current.same(painted))
 }
 pub(super) fn hit(regions: &[Region], x: f32, y: f32, width: f32, height: f32) -> Option<&str> {
     if ![x, y, width, height].iter().all(|v| v.is_finite())
@@ -73,16 +81,17 @@ pub(super) struct SeparatorCell {
 
 /// Carve only adjacent unused cells; all pane rectangles (including any status
 /// rows) are protected. Never borrow a terminal cell to manufacture an outline.
-pub(super) fn separator_cells(
+pub(super) fn separator_cells<'a>(
     selected: &str,
     regions: &[Region],
-    frame: &FrameData,
+    frame: impl Into<FrameView<'a>>,
     choices: &[Choice],
 ) -> Vec<SeparatorCell> {
-    if frame.width > 1000
-        || frame.height > 500
-        || !frame.graphics.is_empty()
-        || !valid(regions, Some(frame), choices)
+    let frame = frame.into();
+    if frame.width() > 1000
+        || frame.height() > 500
+        || frame.has_inline_graphics()
+        || !valid_view(regions, Some(frame), choices)
     {
         return Vec::new();
     }
@@ -91,8 +100,8 @@ pub(super) fn separator_cells(
     };
     let mut result = Vec::new();
     let mut candidate = |col: u16, row: u16, vertical: bool| {
-        if col >= frame.width
-            || row >= frame.height
+        if col >= frame.width()
+            || row >= frame.height()
             || regions.iter().any(|r| {
                 col >= r.left
                     && u32::from(col) < u32::from(r.left) + u32::from(r.width)
@@ -104,8 +113,8 @@ pub(super) fn separator_cells(
         }
         // Defense in depth: a publication containing visible data in a gap is
         // not an unused separator, even if its rectangles say otherwise.
-        let index = usize::from(row) * usize::from(frame.width) + usize::from(col);
-        if frame.cells.get(index).is_none_or(|cell| {
+        let index = usize::from(row) * usize::from(frame.width()) + usize::from(col);
+        if frame.cell_at(index).is_none_or(|cell| {
             !matches!(cell.symbol.as_str(), "" | " ")
                 || cell.skip
                 || cell.modifier != 0

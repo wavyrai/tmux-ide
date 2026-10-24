@@ -3,8 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   type CanonicalDaemonInfo,
@@ -12,6 +13,7 @@ import {
 import {
   discoverPreviewHost,
   localPreviewHostProof,
+  localPreviewImageAccess,
   DaemonCompatibilityError,
   DaemonDiscoveryError,
 } from "./discovery.ts";
@@ -237,10 +239,28 @@ test("local editor provenance cannot be minted from a copied host and is revoked
     assert.equal(localPreviewHostProof({ ...host }), null);
     const proof = localPreviewHostProof(host)!;
     await proof.verify();
+    if (process.platform !== "win32") {
+      assert.deepEqual(localPreviewImageAccess(proof, host), {
+        root: join(realpathSync(dirname(path)), `local-images-${info.instanceId}`),
+        generation: info.instanceId,
+      });
+      assert.equal(localPreviewImageAccess({ ...proof }, host), null);
+      assert.equal(localPreviewImageAccess(proof, { ...host, ownerToken: "different" }), null);
+      assert.equal(
+        localPreviewImageAccess(proof, {
+          ...host,
+          scope: { ...host.scope, generation: randomUUID() },
+        }),
+        null,
+      );
+      assert.equal(localPreviewImageAccess(null, host), null);
+    }
     identity = { ...identity, instanceId: randomUUID() };
     await assert.rejects(proof.verify(), /identity changed/);
     await writeFile(path, JSON.stringify({ ...info, instanceId: randomUUID() }));
     assert.throws(() => proof.assertCurrent(), /record changed/);
+    if (process.platform !== "win32")
+      assert.throws(() => localPreviewImageAccess(proof, host), /record changed/);
   });
 });
 

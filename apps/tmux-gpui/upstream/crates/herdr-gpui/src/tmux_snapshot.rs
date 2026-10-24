@@ -3,6 +3,15 @@
 mod agent_indicator;
 mod appearance;
 mod browser;
+mod browser_direct;
+mod browser_native_actions;
+mod browser_native_divider;
+mod browser_native_editor;
+mod browser_native_graphics;
+mod browser_native_history;
+mod browser_native_input;
+mod browser_native_owner;
+mod browser_native_preview;
 mod browser_state;
 mod browser_ui;
 mod composition;
@@ -12,6 +21,8 @@ mod decode;
 pub(crate) mod design;
 mod developer_mode;
 mod diagnostics;
+mod direct_projection;
+mod display_frame;
 mod divider;
 mod geometry;
 mod glass;
@@ -28,6 +39,7 @@ mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
+mod renderer_probe;
 mod selection;
 mod session_history;
 mod session_open;
@@ -43,8 +55,8 @@ mod workspace_chrome;
 mod workspace_fleet_agents;
 
 use crate::terminal_painter::{CellPixels, ImageTarget, PlacedImages, TerminalPainter};
+use display_frame::DisplayFrame;
 use gpui::{prelude::*, *};
-use herdr_client::protocol::FrameData;
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +99,7 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<(), Error> {
         println!("Validated tmux snapshot: {}x{}", frame.width, frame.height);
         return Ok(());
     }
-    show(Some(frame), None, None, graphics)
+    show(Some(frame.into()), None, None, graphics)
 }
 
 pub(crate) fn welcome() -> Result<(), Error> {
@@ -105,7 +117,7 @@ pub(crate) fn browse() -> Result<(), Error> {
 }
 
 fn show(
-    frame: Option<Arc<FrameData>>,
+    frame: Option<DisplayFrame>,
     mailbox: Option<stream::Mailbox>,
     browser: Option<browser::Bridge>,
     graphics: KittyView,
@@ -156,7 +168,7 @@ fn show(
                                             if update.is_none() {
                                                 eprintln!("tmux-preview: unavailable applied");
                                             }
-                                            view.frame = update;
+                                            view.frame = update.map(DisplayFrame::from);
                                             view.refresh_picker(cx);
                                             view.refresh_pane_actions(cx);
                                             view.refresh_new_session(cx);
@@ -182,7 +194,8 @@ fn show(
                                             view.presence.flush(sender);
                                         }
                                         view.flush_resize_gesture(cx);
-                                        view.expire_pending_input(cx);
+                                        view.flush_pending_input(cx);
+                                        renderer_probe::runtime::tick();
                                         if !view.terminal_input_ready()
                                             || view.selection.is_some()
                                             || view.divider.is_some()
@@ -224,8 +237,9 @@ fn show(
                     });
                     let activation = cx.observe_window_activation(window, |view, window, cx| {
                         if !window.is_window_active() {
+                            view.cancel_pending_input(cx);
                             view.sidebar_keyboard.active = false;
-                            view.pending_session_open = None;
+                            view.cancel_session_open();
                             view.header_controls = Default::default();
                             view.cancel_attention();
                             view.cancel_palette();
@@ -290,6 +304,7 @@ fn show(
                         marked_selection: None,
                         input_geometry: None,
                         input_cell_width: None,
+                        painted_focus: None,
                         painted_frame: None,
                         pointer: Default::default(),
                         selection: None,
@@ -334,7 +349,7 @@ struct KittyView {
 }
 
 struct SnapshotView {
-    frame: Option<Arc<FrameData>>,
+    frame: Option<DisplayFrame>,
     /// Kitty graphics images and the static snapshot's placements.
     graphics: KittyView,
     browsing: bool,
@@ -371,7 +386,8 @@ struct SnapshotView {
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
-    painted_frame: Option<Arc<FrameData>>,
+    painted_focus: Option<pending_input::PaintedFocus>,
+    painted_frame: Option<DisplayFrame>,
     pointer: pointer::Owner,
     selection: Option<selection::Capture>,
     divider: Option<divider::Drag>,
@@ -446,6 +462,7 @@ impl SnapshotView {
                 .child(guidance)
                 .into_any_element();
         };
+        let resize_preview = self.divider_content_preview();
         div()
             .relative()
             .size_full()
@@ -460,13 +477,16 @@ impl SnapshotView {
                         }
                         entity.update(cx, |view, cx| {
                             if view.browsing
-                                && view.presence.ready()
-                                // AppKit must keep delivering text while a verified
-                                // pane selection holds never-dispatched input.
-                                && (view.browser_state.input_ready || view.pending_input_ready())
+                                // Platform text delivery is not input authority. Keep it
+                                // installed across focus loss so the first returning commit
+                                // reaches the bounded admission gate before the next repaint.
+                                && ((view.presence.ready() && view.browser_state.input_ready)
+                                    || view.pending_input_ready()
+                                    || view.browser_state.native_focus_target.is_some())
                                 && !view.browser_state.retained_preview
                                 && view.selection.is_none()
                                 && view.divider.is_none()
+                                && !view.resize_gesture.busy()
                                 && view.picker.is_none()
                                 && view.pane_actions.is_none()
                                 && view.new_session.is_none()
@@ -477,7 +497,7 @@ impl SnapshotView {
                                     cx,
                                 );
                             }
-                            let cursor = frame.cursor.as_ref();
+                            let cursor = frame.view().cursor();
                             let origin = bounds.origin
                                 + point(
                                     px(width * cursor.map_or(0., |c| f32::from(c.x))),
@@ -486,7 +506,10 @@ impl SnapshotView {
                             let cursor_bounds = Bounds::new(origin, size(px(width), px(height)));
                             view.input_geometry = Some((bounds, cursor_bounds));
                             view.input_cell_width = Some(width);
-                            view.painted_frame = Some(frame.clone());
+                            // A translated preview is not evidence that canonical
+                            // hit coordinates are on screen, including after cancel.
+                            view.painted_frame = resize_preview.is_none().then(|| frame.clone());
+                            view.record_painted_focus();
                             if let Some((cols, rows)) = geometry::cell_grid(
                                 f32::from(bounds.size.width),
                                 f32::from(bounds.size.height),
@@ -540,6 +563,7 @@ impl SnapshotView {
                                         },
                                     };
                                     if sender.try_send(command).is_ok() {
+                                        view.capture_viewport_input(cols, rows);
                                         view.last_resize = Some(desired);
                                         view.fit_settle.clear();
                                         view.graphics.cell_pixels.set(Some(cell_pixels));
@@ -549,6 +573,34 @@ impl SnapshotView {
                                 view.fit_settle.clear();
                             }
                         });
+                        if let Some(preview) = &resize_preview {
+                            kitty_store.with_images(|images| {
+                                preview.paint(
+                                    &mut painter.borrow_mut(),
+                                    frame.view(),
+                                    bounds,
+                                    width,
+                                    height,
+                                    &font,
+                                    separator,
+                                    (!kitty_scene.is_empty()).then_some(PlacedImages {
+                                        placements: &kitty_scene,
+                                        images,
+                                        target: ImageTarget::Main,
+                                        cell_pixels: kitty_cell_pixels.get().map(
+                                            |(width, height, _, _)| CellPixels {
+                                                width,
+                                                height,
+                                                scale: window.scale_factor(),
+                                            },
+                                        ),
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            });
+                            return;
+                        }
                         let rails = entity.update(cx, |view, _| {
                             if !hit_regions::is_painted(
                                 Some(&frame),
@@ -574,9 +626,9 @@ impl SnapshotView {
                             cells.dedup();
                             cells
                         });
-                        kitty_store.with_images(|images| {
-                            painter.borrow_mut().paint_frame(
-                                &frame,
+                        let paint_ok = kitty_store.with_images(|images| {
+                            painter.borrow_mut().paint_view(
+                                frame.view(),
                                 bounds.origin,
                                 Some(bounds.size),
                                 width,
@@ -599,6 +651,22 @@ impl SnapshotView {
                                 window,
                                 cx,
                             )
+                        });
+                        entity.update(cx, |view, _| {
+                            if view.selection.is_none()
+                                && view.picker.is_none()
+                                && view.pane_actions.is_none()
+                                && view.new_session.is_none()
+                                && view.divider.is_none()
+                            {
+                                renderer_probe::runtime::after_paint(
+                                    &view.browser_state,
+                                    &frame,
+                                    (f32::from(bounds.size.width) / width).floor().max(0.) as u16,
+                                    (f32::from(bounds.size.height) / height).floor().max(0.) as u16,
+                                    paint_ok,
+                                );
+                            }
                         });
                         window.with_content_mask(
                             Some(ContentMask {
@@ -658,3 +726,6 @@ impl SnapshotView {
 
 #[cfg(test)]
 mod fit_test_support;
+
+#[cfg(feature = "integration-test")]
+pub(crate) mod journey_probe;

@@ -275,3 +275,46 @@ pub(super) fn plain_url(text: &str, hit: usize) -> Option<(Range<usize>, bool)> 
 
 #[cfg(test)]
 mod tests;
+
+/// Resolve a bounded, already-proven logical line without constructing a flat frame.
+/// The caller owns pane bounds and soft-wrap provenance; only web links escape.
+pub(crate) fn logical_web_link(
+    cells: &[&herdr_client::protocol::CellData],
+    selected: usize,
+    hyperlinks: &[String],
+) -> Option<String> {
+    if cells.len() > 8192 {
+        return None;
+    }
+    let mut source = selected;
+    while cells.get(source)?.skip && source > 0 {
+        source -= 1;
+    }
+    let cell = cells.get(source)?;
+    if cell.modifier & HIDDEN != 0 {
+        return None;
+    }
+    if let Some(index) = cells.get(selected)?.hyperlink.or(cell.hyperlink) {
+        return web_url(hyperlinks.get(index as usize)?);
+    }
+    let mut text = String::new();
+    let mut hit = None;
+    for (index, cell) in cells.iter().enumerate() {
+        if index == source {
+            hit = Some(text.len());
+        }
+        if cell.skip {
+            continue;
+        }
+        let symbol = shown(cell);
+        if text.len() + symbol.len() > MAX_ROW_BYTES {
+            return None;
+        }
+        text.push_str(symbol);
+    }
+    let (range, truncated) = plain_url(&text, hit?)?;
+    if truncated {
+        return None;
+    }
+    web_url(&text[range])
+}

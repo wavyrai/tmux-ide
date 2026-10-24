@@ -88,7 +88,9 @@ fn browser_fixture(
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
-        frame: Some(frame.clone()),
+        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         browsing: true,
         terminal_focus: cx.focus_handle(),
         input_interrupted: true,
@@ -116,6 +118,7 @@ fn browser_fixture(
         marked_selection: None,
         input_geometry: None,
         input_cell_width: None,
+        painted_focus: None,
         painted_frame: None,
         pointer: Default::default(),
         selection: None,
@@ -128,7 +131,9 @@ fn browser_fixture(
             selected_pane: Some(pane.id.clone()),
             panes: vec![pane],
             status: "Keyboard ready".into(),
-            frame: Some(frame),
+            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame,
+            )),
             ..Default::default()
         },
         browser_commands: Some(sender),

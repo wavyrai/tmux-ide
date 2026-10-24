@@ -12879,7 +12879,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.11",
+      version: "2.9.12",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -60657,9 +60657,10 @@ var init_terminal_replica_owner = __esm({
       inputDispatchIncarnation() {
         return this.#disposed ? null : this.#publishedIncarnation;
       }
-      /** Scalar admission fence; unavailable while canonical replacement is pending. */
+      /** Screen recapture does not replace the terminal lifetime. Keep its input fence
+       * while resizing; disposal or a new owner still invalidates held input. */
       inputAdmissionIncarnation() {
-        return this.#disposed || this.#reseed || this.#waitingForGeometryCapture ? null : this.#publishedIncarnation;
+        return this.#disposed ? null : this.#publishedIncarnation;
       }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();

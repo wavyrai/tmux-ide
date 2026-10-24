@@ -31,7 +31,6 @@ enum Encoding {
 }
 
 mod compact;
-pub(super) mod delta;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

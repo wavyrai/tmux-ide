@@ -27,12 +27,17 @@ impl Intent {
     }
 }
 impl SnapshotView {
+    /// Called by the activation observer for an actual subsequent blur.
+    pub(super) fn cancel_session_open(&mut self) {
+        self.pending_session_open = None;
+    }
     pub(super) fn finish_session_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(intent) = self.pending_session_open.as_ref() else {
             return;
         };
         if intent.request != self.browser_request
-            || !self.presence.active()
+            // A late tab/history admission must not resurrect navigation after blur.
+            || (!self.presence.active() && matches!(intent.target, Target::Admitted))
             || self.picker.is_some()
             || self.pane_actions.is_some()
             || self.new_session.is_some()
@@ -42,6 +47,14 @@ impl SnapshotView {
             return;
         }
         let state = &self.browser_state;
+        // An explicit selection may be made before the first activation callback.
+        // Its background catalog has no preferred pane. Wait for the catalog tied
+        // to acknowledged foreground presence; actual blur cancels via the observer.
+        if !self.presence.ready()
+            || self.presence.queued_active_revision() != Some(state.presence_revision)
+        {
+            return;
+        }
         if state.request != intent.request || !state.session_catalog_complete {
             return;
         }

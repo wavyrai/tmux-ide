@@ -22,8 +22,12 @@ fn prepare(view: &mut SnapshotView) {
             99
         ],
     });
-    view.frame = Some(frame.clone());
-    view.browser_state.frame = Some(frame);
+    view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame,
+    ));
     view.browser_state.request = view.browser_request;
     view.browser_state.selected_session = Some("session".into());
     view.browser_state.selected_pane = Some("pane-a".into());

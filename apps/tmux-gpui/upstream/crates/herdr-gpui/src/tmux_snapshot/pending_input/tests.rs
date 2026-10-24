@@ -2,6 +2,7 @@ use super::*;
 use core::prelude::v1::test;
 fn pending() -> Pending {
     Pending {
+        kind: Kind::Selection,
         request: 8,
         id: "pane-b".into(),
         token: "a".repeat(64),

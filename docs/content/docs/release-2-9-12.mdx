@@ -1,0 +1,41 @@
+---
+title: tmux-ide 2.9.12
+metaTitle: "What's new in 2.9.12"
+description: "Direct Rust terminal delivery for the native GUI, changed-row updates and stable resize input."
+---
+
+`2.9.12` and the separately distributed native alpha `0.1.8` move the GUI's live
+terminal stream and input into Rust. The Node broker continues to provide
+discovery, SSH setup and application metadata. Terminal cells and keystrokes no
+longer pass through it.
+
+## Native terminal updates
+
+Rust retains unchanged rows and converts changed rows for painting. Cursor-only
+updates reuse cell rows. Binary terminal and image delivery reduces intermediate
+encoding work; compatible same-host connections can use bounded, expiring image
+file leases. Older clients retain their supported delivery path.
+
+Alternate-screen projections can defer normal-screen history. Their receipts are
+separate from complete-state acknowledgements, and history-dependent interaction
+waits for a complete snapshot.
+
+## Input and resizing
+
+Typing and paste remain queued during temporary screen recapture without losing
+the terminal's lifetime identity. Actual owner replacement still rejects stale
+input. Commands admitted while the GUI is backgrounded cannot revive after a
+rapid refocus, including resize requests.
+
+Divider movement uses a local preview and commits the exact canonical split
+boundary on release, avoiding repeated terminal reflow while dragging. The native
+app also improves initial pane selection and supports Cmd-clicking terminal links.
+
+## Updating
+
+Update both the CLI/daemon and the [native macOS app](/docs/native-alpha) to use
+the complete change. They are separate distributions; updating the CLI alone does
+not update the GUI. Existing tmux sessions are preserved.
+
+Automated protocol, input and rendering checks do not establish physical GUI
+latency or TUI parity. This release makes no measured speedup claim.

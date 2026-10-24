@@ -4,10 +4,11 @@
 use super::{SnapshotView, browser, hit_regions};
 use bezel_ui::widgets::{Layout, SplitStyle};
 use gpui::{prelude::*, *};
-use herdr_client::protocol::FrameData;
+
 use serde::{Deserialize, Serialize};
 pub(super) mod canonical;
 pub(super) mod gesture;
+pub(super) mod preview;
 pub(super) use gesture::Owner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,15 +52,15 @@ fn splits(state: &browser::State) -> Vec<Split> {
     if state.surface != browser::Surface::Workspace
         || (state.resize_token.is_none() && state.split_layout.is_none())
         || !state.input_ready
-        || !hit_regions::valid(&state.regions, Some(frame), &state.panes)
-        || frame.width > 1000
-        || frame.height > 500
+        || !hit_regions::valid_view(&state.regions, Some(frame.view()), &state.panes)
+        || frame.view().width() > 1000
+        || frame.view().height() > 500
     {
         return Vec::new();
     }
     if let Some(layout) = state.split_layout.as_ref() {
-        if !layout.matches(
-            Some(frame),
+        if !layout.matches_view(
+            Some(frame.view()),
             &state.regions,
             &state.panes,
             state.selected_session.as_deref(),
@@ -172,6 +173,7 @@ fn at(state: &browser::State, x: f32, y: f32) -> Option<Split> {
         .then_some(split)
 }
 
+#[derive(Clone)]
 pub(super) struct Drag {
     gesture: Option<String>,
     split: Split,
@@ -220,7 +222,7 @@ impl Drag {
             selected: state.selected_pane.clone()?,
             presence_revision: state.presence_revision,
             regions: state.regions.clone(),
-            grid: (frame.width, frame.height),
+            grid: (frame.view().width(), frame.view().height()),
             bounds,
             cell_width: width,
             cell_height: height,
@@ -249,10 +251,9 @@ impl Drag {
             && state.selected_session.as_ref() == Some(&self.session)
             && state.selected_pane.as_ref() == Some(&self.selected)
             && state.presence_revision == self.presence_revision
-            && state
-                .frame
-                .as_ref()
-                .map_or(pending, |f| (f.width, f.height) == self.grid)
+            && state.frame.as_ref().map_or(pending, |f| {
+                (f.view().width(), f.view().height()) == self.grid
+            })
     }
     fn geometry_compatible(&self, state: &browser::State) -> bool {
         if let Some(original) = self.split.canonical.as_ref() {
@@ -375,6 +376,9 @@ impl SnapshotView {
         let Some(frame) = self.browser_state.frame.as_ref() else {
             return Vec::new();
         };
+        if self.divider_content_preview().is_some() {
+            return self.divider_preview(frame, width).into_iter().collect();
+        }
         let mut handles = if self.browser_state.split_layout.is_some() {
             canonical::guides(
                 &self.browser_state,
@@ -391,15 +395,25 @@ impl SnapshotView {
     }
     /// The pointer's target boundary, drawn locally while tmux reflows the panes.
     /// Presentation only: the gesture's daemon-confirmed geometry is unchanged.
-    fn divider_preview(&self, frame: &FrameData, width: f32) -> Option<AnyElement> {
-        let drag = self.divider.as_ref()?;
+    fn divider_preview(
+        &self,
+        frame: &super::display_frame::DisplayFrame,
+        width: f32,
+    ) -> Option<AnyElement> {
+        let drag = self
+            .divider
+            .as_ref()
+            .or_else(|| self.resize_gesture.released_preview())?;
         let split = &drag.split;
         let extent = if split.axis == Axis::Cols {
-            frame.width
+            frame.view().width()
         } else {
-            frame.height
+            frame.view().height()
         };
-        let edge = preview_edge(split, drag.cells, extent)?;
+        let edge = self
+            .divider_content_preview()
+            .map(|p| p.edge)
+            .or_else(|| preview_edge(split, drag.cells, extent))?;
         let height = self.terminal_height();
         let (left, top, cols, rows) = if split.axis == Axis::Cols {
             (edge, split.start, 1, split.span)
@@ -417,7 +431,11 @@ impl SnapshotView {
                 .into_any_element(),
         )
     }
-    fn rectangle_handles(&self, frame: &FrameData, width: f32) -> Vec<AnyElement> {
+    fn rectangle_handles(
+        &self,
+        frame: &super::display_frame::DisplayFrame,
+        width: f32,
+    ) -> Vec<AnyElement> {
         splits(&self.browser_state)
             .into_iter()
             .enumerate()

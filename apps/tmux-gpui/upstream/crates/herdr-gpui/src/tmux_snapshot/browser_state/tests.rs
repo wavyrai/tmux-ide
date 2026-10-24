@@ -41,7 +41,9 @@ fn make_view(
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
-        frame: Some(frame.clone()),
+        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
@@ -72,7 +74,10 @@ fn make_view(
             Bounds::default(),
         )),
         input_cell_width: Some(10.),
-        painted_frame: Some(frame.clone()),
+        painted_focus: None,
+        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         pointer: Default::default(),
         selection: None,
         divider: None,
@@ -88,7 +93,9 @@ fn make_view(
             ],
             selected_session: Some("session-a".into()),
             selected_pane: Some("pane-a".into()),
-            frame: Some(frame),
+            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame,
+            )),
             regions: serde_json::from_str(
                 r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
             )
@@ -158,7 +165,7 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
             current.selected_pane = Some("pane-b".into());
             current.status = "Current pane ready".into();
             current.presence_revision = 1;
-            let current_frame = Arc::make_mut(current.frame.as_mut().unwrap());
+            let current_frame = Arc::make_mut((current.frame.as_mut().unwrap()).legacy_mut());
             current_frame.cells[0].symbol = "B".into();
             let expected = current.frame.clone().unwrap();
             *mailbox.lock().unwrap() = Some(Some(current));
@@ -166,7 +173,7 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
             assert!(view.presence.ready());
             assert!(view.browser_state.input_ready);
             assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
-            assert!(Arc::ptr_eq(view.frame.as_ref().unwrap(), &expected));
+            assert!((view.frame.as_ref().unwrap()).same(&expected));
 
             *mailbox.lock().unwrap() = Some(Some(old));
             drain(view, &mailbox, cx);
@@ -174,7 +181,7 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
             assert!(view.presence.ready());
             assert_eq!(view.browser_state.status, "Current pane ready");
             assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
-            assert!(Arc::ptr_eq(view.frame.as_ref().unwrap(), &expected));
+            assert!((view.frame.as_ref().unwrap()).same(&expected));
             assert!(view.browser_state.input_ready);
             assert!(receiver.try_recv().is_err());
 
@@ -221,7 +228,7 @@ fn reselecting_a_pane_of_the_painted_window_keeps_its_frame_until_confirmation(
                 receiver.try_recv().unwrap(),
                 browser::Command::Pane { request: 8, id } if id == "pane-b"
             ));
-            assert!(Arc::ptr_eq(view.frame.as_ref().unwrap(), &painted));
+            assert!((view.frame.as_ref().unwrap()).same(&painted));
             assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-b"));
             assert!(
                 !view.browser_state.input_ready,

@@ -87,10 +87,10 @@ fn resize_token_is_optional_bounded_and_never_grants_home_authority() -> anyhow:
     );
     value["surface"] = json!("workspace");
     value["selectedSession"] = json!("s");
-    let state = Reader::default().accept(&serde_json::to_vec(&value)?)?;
-    assert_eq!(
-        state.resize_token.as_deref(),
-        Some("312b2c16-a13d-4411-82e5-1fdb58adab92")
+    assert!(
+        Reader::default()
+            .accept(&serde_json::to_vec(&value)?)
+            .is_err()
     );
     value["resizeToken"] = json!("not-a-token");
     assert!(

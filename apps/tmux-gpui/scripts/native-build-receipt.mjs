@@ -75,6 +75,12 @@ export async function snapshotNativeSources(workspace) {
   return { version: 1, files, sha256: digest(JSON.stringify(files)) };
 }
 function validate(receipt) {
+  // Retain historical receipts; new builds bound compiler concurrency to one.
+  const command = receipt?.build?.command;
+  const normalizedCommand =
+    Array.isArray(command) && command[3] === "--jobs" && command[4] === "1"
+      ? [...command.slice(0, 3), ...command.slice(5)]
+      : command;
   if (
     !receipt ||
     Object.keys(receipt).sort().join() !== "binary,build,kind,sources,version" ||
@@ -99,7 +105,7 @@ function validate(receipt) {
     typeof receipt.build.hostTarget !== "string" ||
     receipt.build.hostTarget.length > 256 ||
     !Array.isArray(receipt.build.command) ||
-    JSON.stringify(receipt.build.command) !==
+    JSON.stringify(normalizedCommand) !==
       JSON.stringify([
         "build",
         "--locked",

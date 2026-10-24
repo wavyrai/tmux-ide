@@ -1,12 +1,11 @@
 //! A selection owns its painted frame; streaming updates cannot change its text.
+use super::display_frame::DisplayFrame;
 use super::{Error, browser, copy, hit_regions};
 use crate::terminal_painter::{Highlight, Tint};
-use herdr_client::protocol::FrameData;
-use std::sync::Arc;
 
 pub(super) struct Capture {
     identity: Option<String>,
-    pub frame: Arc<FrameData>,
+    pub frame: DisplayFrame,
     region: copy::Region,
     regions: Vec<hit_regions::Region>,
     anchor: (u16, u16),
@@ -21,7 +20,7 @@ impl Capture {
         }
         let frame = state.frame.clone()?;
         let region = state.copy_region.clone()?;
-        if !region.valid(&frame, state.selected_pane.as_deref())
+        if !region.valid_view(frame.view(), state.selected_pane.as_deref())
             || !x.is_finite()
             || !y.is_finite()
             || x < f32::from(region.left)
@@ -50,7 +49,7 @@ impl Capture {
         self.head = head;
         self.highlights = self
             .region
-            .spans(&self.frame, self.anchor, self.head)?
+            .spans_view(self.frame.view(), self.anchor, self.head)?
             .into_iter()
             .filter(|(_, columns)| !columns.is_empty())
             .map(|(row, columns)| Highlight {
@@ -67,7 +66,7 @@ impl Capture {
     }
     pub fn text(&self) -> Result<String, Error> {
         self.region
-            .text_between(&self.frame, self.anchor, self.head)
+            .text_between_view(self.frame.view(), self.anchor, self.head)
     }
     pub fn compatible(&self, state: &browser::State) -> bool {
         if state.retained_preview {
@@ -78,8 +77,8 @@ impl Capture {
         };
         state.selected_pane.as_deref() == Some(self.region.id.as_str())
             && self.regions == state.regions
-            && frame.width == self.frame.width
-            && frame.height == self.frame.height
+            && frame.view().width() == self.frame.view().width()
+            && frame.view().height() == self.frame.view().height()
             && region.id == self.region.id
             && region.left == self.region.left
             && region.top == self.region.top

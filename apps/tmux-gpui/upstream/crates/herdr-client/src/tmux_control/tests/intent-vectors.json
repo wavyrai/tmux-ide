@@ -1,0 +1,167 @@
+[
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "semanticPaneId": "pane.one",
+        "verb": "workspace.pane.select"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.pane.select",
+          "semanticPaneId": "pane.one"
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "semanticPaneId": "pane.one",
+        "axis": "cols",
+        "cells": 80,
+        "verb": "workspace.pane.resize"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.pane.resize",
+          "semanticPaneId": "pane.one",
+          "axis": "cols",
+          "cells": 70
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "semanticPaneId": "pane.one",
+        "direction": "right",
+        "verb": "workspace.window.split"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.window.split",
+          "direction": "right",
+          "semanticPaneId": "pane.created",
+          "displayTitle": "New pane"
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "semanticPaneId": "pane.one",
+        "verb": "workspace.pane.kill"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.pane.kill",
+          "windowClosed": false,
+          "remainingWindowCount": 1
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "target": {
+          "by": "pane",
+          "semanticPaneId": "pane.one"
+        },
+        "verb": "workspace.window.kill"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.window.kill",
+          "remainingWindowCount": 1
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "type": "semantic-intent",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "intent": {
+        "workspaceName": "workspace",
+        "verb": "workspace.session.kill"
+      }
+    },
+    "ack": {
+      "type": "semantic-intent-ack",
+      "operationId": "12d14eac-0000-4000-8000-000000000002",
+      "outcome": {
+        "status": "applied",
+        "result": {
+          "operationId": "12d14eac-0000-4000-8000-000000000002",
+          "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+          "outcome": "applied",
+          "workspaceName": "workspace",
+          "verb": "workspace.session.kill"
+        }
+      }
+    }
+  }
+]

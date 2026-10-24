@@ -1,4 +1,5 @@
 //! Native font section checks: inline role rows, picker, and size editing.
+#[cfg(feature = "mockup")]
 use super::super::themes;
 use super::*;
 use crate::{config::FontFace, font_picker::FontTarget};

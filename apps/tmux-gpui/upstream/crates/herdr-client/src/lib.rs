@@ -25,6 +25,15 @@ mod session;
 mod sessions;
 mod ssh;
 mod surface_images;
+pub mod tmux_control;
+pub mod tmux_controller;
+pub mod tmux_delivery;
+pub mod tmux_handoff;
+pub mod tmux_native_session;
+pub mod tmux_receiver;
+pub mod tmux_stream;
+pub mod tmux_terminal;
+pub mod tmux_topology;
 mod transport;
 mod upload;
 mod wsl;
@@ -80,3 +89,11 @@ pub use wsl::{
     WslHost, WslHosts, add_wsl_host, delete_distro_session, list_distro_sessions, list_distros,
     load_wsl_hosts, probe_distro, remove_wsl_host, store_wsl_selection, valid_distro,
 };
+
+pub mod tmux_history;
+
+pub mod tmux_input;
+
+pub mod tmux_graphics;
+
+pub mod tmux_pointer;

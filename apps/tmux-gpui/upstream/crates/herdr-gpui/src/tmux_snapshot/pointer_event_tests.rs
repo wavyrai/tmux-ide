@@ -12,9 +12,9 @@ fn pointer_selected_painted_press_release_and_shift_stays_local(cx: &mut TestApp
             id: "pane-a".into(),
             left: 0,
             top: 0,
-            width: frame.width,
-            height: frame.height,
-            wrapped: vec![false; usize::from(frame.height)],
+            width: frame.view().width(),
+            height: frame.view().height(),
+            wrapped: vec![false; usize::from(frame.view().height())],
         });
         let content = view.browser_state.copy_region.as_ref().unwrap();
         view.browser_state.regions = vec![crate::tmux_snapshot::hit_regions::Region {
@@ -50,7 +50,7 @@ fn pointer_selected_painted_press_release_and_shift_stays_local(cx: &mut TestApp
             Modifiers::default(),
             cx
         ));
-        view.frame = Some(Arc::new((**view.frame.as_ref().unwrap()).clone()));
+        view.frame = Some(Arc::new(view.frame.as_ref().unwrap().legacy().as_ref().clone()).into());
         assert!(!crate::tmux_snapshot::hit_regions::is_painted(
             view.frame.as_ref(),
             view.painted_frame.as_ref()
@@ -110,9 +110,9 @@ fn pointer_mode_loss_cancels_and_late_release_is_not_delivered(cx: &mut TestAppC
             id: "pane-a".into(),
             left: 0,
             top: 0,
-            width: frame.width,
-            height: frame.height,
-            wrapped: vec![false; usize::from(frame.height)],
+            width: frame.view().width(),
+            height: frame.view().height(),
+            wrapped: vec![false; usize::from(frame.view().height())],
         });
         let content = view.browser_state.copy_region.as_ref().unwrap();
         view.browser_state.regions = vec![crate::tmux_snapshot::hit_regions::Region {

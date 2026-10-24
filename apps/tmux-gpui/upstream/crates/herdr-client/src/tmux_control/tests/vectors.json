@@ -1,0 +1,138 @@
+{
+  "clients": [
+    {
+      "type": "presence",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "state": "foreground"
+    },
+    {
+      "type": "authority-request",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "requestId": "12d14eac-0000-4000-8000-000000000002",
+      "authority": "input"
+    },
+    {
+      "kind": "text",
+      "data": "é",
+      "type": "input",
+      "pane": "pane.one",
+      "seq": 1,
+      "expectedLifetime": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "incarnation": "pane:1"
+      }
+    },
+    {
+      "type": "authority-request",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "requestId": "12d14eac-0000-4000-8000-000000000003",
+      "authority": "geometry"
+    },
+    {
+      "type": "viewport",
+      "semanticWindowId": "window.one",
+      "seq": 1,
+      "cols": 80,
+      "rows": 24,
+      "authorityLease": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "clientId": "gpui:test",
+        "authority": "geometry",
+        "token": "12d14eac-0000-4000-8000-000000000004",
+        "revision": 2
+      }
+    },
+    {
+      "type": "presence",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "state": "background"
+    },
+    {
+      "type": "authority-release",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "requestId": "12d14eac-0000-4000-8000-000000000002",
+      "authority": "input"
+    },
+    {
+      "type": "authority-release",
+      "generation": "12d14eac-0000-4000-8000-000000000001",
+      "requestId": "12d14eac-0000-4000-8000-000000000003",
+      "authority": "geometry"
+    }
+  ],
+  "servers": [
+    {
+      "type": "authority-receipt",
+      "requestId": "12d14eac-0000-4000-8000-000000000002",
+      "authority": "input",
+      "status": "granted",
+      "lease": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "clientId": "gpui:test",
+        "authority": "input",
+        "token": "12d14eac-0000-4000-8000-000000000004",
+        "revision": 1
+      },
+      "snapshot": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "revision": 1,
+        "owners": {
+          "input": "gpui:test",
+          "focus": null,
+          "geometry": null
+        },
+        "nativeGeometryYieldUntilMs": 0,
+        "clients": []
+      }
+    },
+    {
+      "type": "input-ack",
+      "pane": "pane.one",
+      "seq": 1
+    },
+    {
+      "type": "authority-receipt",
+      "requestId": "12d14eac-0000-4000-8000-000000000003",
+      "authority": "geometry",
+      "status": "granted",
+      "lease": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "clientId": "gpui:test",
+        "authority": "geometry",
+        "token": "12d14eac-0000-4000-8000-000000000004",
+        "revision": 2
+      },
+      "snapshot": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "revision": 2,
+        "owners": {
+          "input": "gpui:test",
+          "focus": null,
+          "geometry": "gpui:test"
+        },
+        "nativeGeometryYieldUntilMs": 0,
+        "clients": []
+      }
+    },
+    {
+      "type": "viewport-ack",
+      "seq": 1,
+      "cols": 80,
+      "rows": 24,
+      "outcome": "ok",
+      "authorityLease": {
+        "generation": "12d14eac-0000-4000-8000-000000000001",
+        "session": "tmux-session",
+        "clientId": "gpui:test",
+        "authority": "geometry",
+        "token": "12d14eac-0000-4000-8000-000000000004",
+        "revision": 2
+      }
+    }
+  ]
+}

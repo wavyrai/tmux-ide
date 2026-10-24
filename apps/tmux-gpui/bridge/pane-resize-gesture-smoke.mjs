@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { stopFixtureChild } from "./fixture-child.mjs";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 import { canonicalDaemonUrl } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
 import { resolve, join, isAbsolute } from "node:path";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
@@ -75,7 +76,7 @@ const fleet = await createScratchFleet({
   windowsPerSession: 1,
   slug: "gpui-live-drag",
 });
-let daemon, browser, latest, fatal, result;
+let daemon, browser, latest, fatal, result, native;
 let buffer = "",
   stderr = "";
 const errors = [];
@@ -87,6 +88,7 @@ const tmux = (...args) =>
 const until = async (predicate, label) => {
   const end = Date.now() + 25000;
   for (;;) {
+    native?.assertHealthy();
     if (fatal) throw fatal;
     if (predicate()) return;
     if (browser && (browser.exitCode !== null || browser.signalCode !== null))
@@ -104,7 +106,7 @@ const until = async (predicate, label) => {
     await new Promise((r) => setTimeout(r, 20));
   }
 };
-const send = (v) => browser.stdin.write(JSON.stringify(v) + "\n");
+const send = (v) => native.send(v);
 try {
   const first = tmux("list-panes", "-t", fleet.sessionNames[0], "-F", "#{pane_id}");
   tmux("split-window", "-h", "-t", first, "sh -i");
@@ -153,91 +155,104 @@ try {
       buffer += b;
       let end;
       while ((end = buffer.indexOf("\n")) >= 0) {
-        latest = JSON.parse(buffer.slice(0, end));
+        JSON.parse(buffer.slice(0, end));
         buffer = buffer.slice(end + 1);
       }
     } catch (e) {
       fatal ??= e;
     }
   });
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+    },
+  });
+  send({ type: "presence", active: true, revision: 0 });
   await until(() => latest?.sessions?.length === 1, "catalog");
   send({ type: "session", request: 1, id: latest.sessions[0].id });
   await until(() => latest?.request === 1 && latest.panes.length === 2, "panes");
   send({ type: "pane", request: 2, id: latest.panes[0].id });
   const ready = () =>
-    latest?.inputReady && latest.snapshot && latest.resizeToken && latest.regions?.length === 2;
+    latest?.inputReady && latest.snapshot && latest.splitLayout && latest.regions?.length === 2;
   await until(ready, "ready");
-  assert.equal(latest.resizeGestureSupported, true);
-  const region = () => latest.regions.find((p) => p.left === 0);
+  const begin = (axis) => {
+    const layout = latest.splitLayout;
+    const edge = layout.splits.find((split) => split.axis === axis);
+    assert.ok(edge);
+    const gesture = randomUUID();
+    send({
+      type: "split-gesture",
+      request: latest.request,
+      gesture,
+      phase: "begin",
+      axis,
+      target: {
+        window: layout.window,
+        layoutId: layout.layoutId,
+        splitId: edge.splitId,
+        boundary: edge.boundary,
+      },
+    });
+    return gesture;
+  };
+  const release = (gesture, boundary) =>
+    send({ type: "split-gesture", request: latest.request, gesture, phase: "release", boundary });
   const width = () => Number(tmux("display-message", "-p", "-t", first, "#{pane_width}"));
   const original = width();
-  const key = {
-    type: "resize-gesture",
-    request: latest.request,
-    gesture: randomUUID(),
-    id: region().id,
-    axis: "cols",
-  };
-  send({ ...key, phase: "begin", token: latest.resizeToken, cells: original });
-  send({ ...key, phase: "move", cells: original + 4 });
+  const gesture = begin("cols");
   await until(
-    () => ready() && width() === original + 4 && region().width === original + 4,
-    "real geometry changes before release",
+    () => latest.splitGesture?.gesture === gesture && latest.splitGesture.phase === "dragging",
+    "drag begins",
   );
-  // Burst while keeping one final explicit release target. No click/terminal input.
-  for (let i = 0; i < 40; i++) send({ ...key, phase: "move", cells: original + 2 + (i % 7) });
-  send({ ...key, phase: "release", cells: original + 6 });
+  // The GUI previews movement locally. Canonical geometry changes only on release.
+  assert.equal(width(), original);
+  release(gesture, original + 6);
   await until(
     () =>
       ready() &&
-      latest.resizeGesture?.gesture === key.gesture &&
-      latest.resizeGesture.phase === "settled" &&
-      width() === original + 6 &&
-      region().width === original + 6,
-    "final release settles exact target",
+      latest.splitGesture?.gesture === gesture &&
+      latest.splitGesture.phase === "settled" &&
+      width() === original + 6,
+    "column release exact target",
   );
-  const cancel = { ...key, gesture: randomUUID() };
-  send({ ...cancel, phase: "begin", token: latest.resizeToken, cells: width() });
-  await until(() => latest.resizeGesture?.gesture === cancel.gesture, "next gesture accepted");
+  const cancelled = begin("cols");
+  await until(() => latest.splitGesture?.gesture === cancelled, "next gesture accepted");
   send({ type: "presence", active: false, revision: 1 });
   await until(() => latest.presenceRevision === 1 && !latest.inputReady, "foreground loss");
-  send({ ...cancel, phase: "move", cells: original + 10 });
-  send({ ...cancel, phase: "release", cells: original + 10 });
+  release(cancelled, original + 10);
   send({ type: "presence", active: true, revision: 2 });
   await until(() => ready() && latest.presenceRevision === 2, "foreground restored");
   assert.equal(width(), original + 6);
   tmux("select-layout", "-t", first, "even-vertical");
   tmux("set-option", "-w", "-t", first, "pane-border-status", "top");
   const height = () => Number(tmux("display-message", "-p", "-t", first, "#{pane_height}"));
-  const top = () => latest.regions.find((p) => p.top === 0);
   await until(
-    () => ready() && latest.regions.every((p) => p.left === 0) && top().height === height() + 1,
-    "horizontal divider with status row",
+    () => ready() && latest.splitLayout.splits.some((split) => split.axis === "rows"),
+    "row split layout",
   );
   const originalRows = height();
-  const rows = { ...key, gesture: randomUUID(), id: top().id, axis: "rows" };
-  send({ ...rows, phase: "begin", token: latest.resizeToken, cells: top().height });
-  send({ ...rows, phase: "move", cells: originalRows + 3 });
+  const rows = begin("rows");
   await until(
-    () => ready() && height() === originalRows + 2 && top().height === originalRows + 3,
-    "row geometry before release excludes status",
+    () => latest.splitGesture?.gesture === rows && latest.splitGesture.phase === "dragging",
+    "row drag begins",
   );
-  send({ ...rows, phase: "release", cells: originalRows + 4 });
+  assert.equal(height(), originalRows);
+  release(rows, originalRows + 4);
   await until(
     () =>
       ready() &&
-      latest.resizeGesture?.gesture === rows.gesture &&
-      latest.resizeGesture.phase === "settled" &&
-      height() === originalRows + 3 &&
-      top().height === originalRows + 4,
-    "final row target excludes status",
+      latest.splitGesture?.gesture === rows &&
+      latest.splitGesture.phase === "settled" &&
+      height() === originalRows + 3,
+    "row release excludes status row",
   );
   assert.ok(!JSON.stringify(latest).includes(daemon.record.authToken));
   result = {
     passed: true,
     runtime: app ? "packaged" : "source",
-    beforeReleaseGeometry: true,
-    burstFinalTarget: true,
+    unchangedGeometryBeforeRelease: true,
+    exactFinalTarget: true,
     presenceCancels: true,
     rowsWithStatus: true,
     nativeUi: false,
@@ -246,6 +261,7 @@ try {
   errors.push(e);
 } finally {
   for (const cleanup of [
+    () => native?.stop(),
     async () => {
       if (browser && browser.exitCode === null && browser.signalCode === null) {
         const done = once(browser, "close");
