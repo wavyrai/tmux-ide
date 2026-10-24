@@ -87,7 +87,16 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
       - name: Load repository-pinned Rust toolchain
-        run: rustup show
+        run: |
+          # Some hosted images put rustup outside CARGO_HOME. The release
+          # wrapper deliberately resolves tools from this private bin directory.
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          rustup_binary="$(command -v rustup)"
+          mkdir -p "$cargo_home/bin"
+          if [[ ! -e "$cargo_home/bin/rustup" ]]; then
+            ln -s "$rustup_binary" "$cargo_home/bin/rustup"
+          fi
+          "$cargo_home/bin/rustup" show
       - name: Formatting and file size
         run: |
           cargo fmt --all -- --check
