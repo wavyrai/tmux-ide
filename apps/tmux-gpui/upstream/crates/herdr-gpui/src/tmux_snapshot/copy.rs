@@ -1,5 +1,7 @@
 //! Copy canonical pane cells, retaining soft-wrap metadata absent from FrameData.
 use super::Error;
+use crate::terminal_painter::FrameView;
+#[cfg(test)]
 use herdr_client::protocol::FrameData;
 use serde::Deserialize;
 #[derive(Clone, Deserialize)]
@@ -13,30 +15,45 @@ pub(super) struct Region {
     pub wrapped: Vec<bool>,
 }
 impl Region {
+    #[cfg(test)]
     pub fn valid(&self, frame: &FrameData, selected: Option<&str>) -> bool {
+        self.valid_view(frame.into(), selected)
+    }
+    pub fn valid_view(&self, frame: FrameView<'_>, selected: Option<&str>) -> bool {
         selected == Some(self.id.as_str())
             && self.width > 0
             && self.height > 0
-            && u32::from(self.left) + u32::from(self.width) <= u32::from(frame.width)
-            && u32::from(self.top) + u32::from(self.height) <= u32::from(frame.height)
+            && u32::from(self.left) + u32::from(self.width) <= u32::from(frame.width())
+            && u32::from(self.top) + u32::from(self.height) <= u32::from(frame.height())
             && self.wrapped.len() == usize::from(self.height)
     }
+    #[cfg(test)]
     pub fn text(&self, frame: &FrameData) -> Result<String, Error> {
-        self.text_between(frame, (0, 0), (self.height.saturating_sub(1), self.width))
+        self.text_view(frame.into())
+    }
+    pub fn text_view(&self, frame: FrameView<'_>) -> Result<String, Error> {
+        self.text_between_view(frame, (0, 0), (self.height.saturating_sub(1), self.width))
     }
     /// Half-open pane-relative cell boundaries. Keep intersected graphemes whole.
+    #[cfg(test)]
     pub fn text_between(
         &self,
         frame: &FrameData,
         anchor: (u16, u16),
         head: (u16, u16),
     ) -> Result<String, Error> {
+        self.text_between_view(frame.into(), anchor, head)
+    }
+    pub fn text_between_view(
+        &self,
+        frame: FrameView<'_>,
+        anchor: (u16, u16),
+        head: (u16, u16),
+    ) -> Result<String, Error> {
         let mut text = String::new();
         let last_row = anchor.0.max(head.0);
-        for (row, columns) in self.spans(frame, anchor, head)? {
-            let start =
-                usize::from(self.top + row) * usize::from(frame.width) + usize::from(self.left);
-            let cells = &frame.cells[start..start + usize::from(self.width)];
+        for (row, columns) in self.spans_view(frame, anchor, head)? {
+            let cells = self.row(frame, row)?;
             let left = columns.start;
             let right = columns.end;
             let mut line = String::new();
@@ -76,13 +93,13 @@ impl Region {
         }
         Ok(text)
     }
-    pub fn spans(
+    pub fn spans_view(
         &self,
-        frame: &FrameData,
+        frame: FrameView<'_>,
         anchor: (u16, u16),
         head: (u16, u16),
     ) -> Result<Vec<(u16, std::ops::Range<usize>)>, Error> {
-        if !self.valid(frame, Some(&self.id)) {
+        if !self.valid_view(frame, Some(&self.id)) {
             return Err(Error::Invalid("invalid copy region"));
         }
         if [anchor, head]
@@ -101,12 +118,7 @@ impl Region {
         };
         let mut spans = Vec::new();
         for row in first.0..=last.0 {
-            let start =
-                usize::from(self.top + row) * usize::from(frame.width) + usize::from(self.left);
-            let cells = frame
-                .cells
-                .get(start..start + usize::from(self.width))
-                .ok_or(Error::Invalid("missing copy cells"))?;
+            let cells = self.row(frame, row)?;
             let mut left = if row == first.0 {
                 usize::from(first.1)
             } else {
@@ -129,7 +141,22 @@ impl Region {
         }
         Ok(spans)
     }
+    fn row<'a>(
+        &self,
+        frame: FrameView<'a>,
+        row: u16,
+    ) -> Result<&'a [herdr_client::protocol::CellData], Error> {
+        let start = usize::from(self.left);
+        frame
+            .row(usize::from(self.top) + usize::from(row))
+            .and_then(|cells| cells.get(start..start + usize::from(self.width)))
+            .ok_or(Error::Invalid("missing copy cells"))
+    }
 }
 #[cfg(test)]
 #[path = "copy_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "copy_row_tests.rs"]
+mod row_tests;

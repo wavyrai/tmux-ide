@@ -27,9 +27,12 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             last_workspace_session: None,
             pending_session_open: None,
             header_controls: Default::default(),
-            frame: Some(Arc::new(
-                decode::frame(include_bytes!("../../../../../fixtures/snapshot.json")).unwrap(),
-            )),
+            frame: Some(
+                Arc::new(
+                    decode::frame(include_bytes!("../../../../../fixtures/snapshot.json")).unwrap(),
+                )
+                .into(),
+            ),
             browsing: true,
             terminal_focus: focus,
             input_interrupted: false,
@@ -57,6 +60,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             marked_selection: None,
             input_geometry: None,
             input_cell_width: None,
+            painted_focus: None,
             painted_frame: None,
             pointer: Default::default(),
             selection: None,

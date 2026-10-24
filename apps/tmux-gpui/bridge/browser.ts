@@ -1,33 +1,26 @@
 import {
-  visibleInputTargets,
-  inputTargetsSchema,
-  resolveInputTarget,
-  type InputTarget,
-} from "./input-targets.ts";
-import { HostedPreviewSession, type PreviewSession } from "./preview-session.ts";
-import { createHostedSurfaceValidator, validateHostedImage } from "./hosted-publication.ts";
-import { encodeBinaryImage } from "./binary-framing.ts";
+  createDirectTerminalHandoff,
+  nativePaneSelectedSchema,
+  type DirectTerminalEvent,
+} from "./direct-terminal-handoff.ts";
+import { issueDirectTerminal } from "./direct-terminal.ts";
+import { createDirectHistory, type DirectHistoryResult } from "./direct-history.ts";
+import { createDirectEditor, type EditorResult } from "./direct-editor.ts";
+import { createDirectSplitLayout, type SplitLayoutResult } from "./direct-split-layout.ts";
+import { createDirectNativePreview } from "./direct-native-preview.ts";
 import {
-  createNativePublicationWriter,
-  nativeFrameResyncSchema,
-  type NativePublicationContext,
-} from "./native-publication.ts";
+  createDirectOwnerActions,
+  type OwnerActionBinding,
+  type OwnerActionResult,
+} from "./direct-owner-actions.ts";
+import { readDirectInventory, refreshDirectTerminal } from "./direct-terminal-refresh.ts";
 import {
-  COMPACT_HELPER_ENV,
-  COMPACT_NATIVE_ENV,
-  decodeSurfacePublication,
-} from "./snapshot-wire.ts";
-import { scopeSelectionIdentity } from "./selection-identity.ts";
-import { AGENT_NOT_READY_ERROR, GENERIC_PANE_ACTION_ERROR } from "./agent-launch-guidance.ts";
-import { drainHistoryCapture } from "./history-handoff.ts";
+  acceptsNativeReady,
+  acceptNativeCatalog,
+  acceptsNativeInterrupted,
+} from "./direct-terminal-ready.ts";
+import { encodeBinaryFrame } from "./binary-framing.ts";
 import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
-import { createRetainedFrameCache, type RetainedSnapshotJson } from "./retained-frame-cache.ts";
-import {
-  preparePublication,
-  createPublicationDeduplicator,
-  type PreparedPublication,
-} from "./prepared-publication.ts";
-import type { TerminalReplicaSnapshot } from "../../../packages/contracts/src/terminal-replica.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
 import {
@@ -40,15 +33,8 @@ import {
 } from "./session-history-controller.ts";
 import { createPaletteOwner, paletteObserveSchema, openPaletteAgentSchema } from "./palette.ts";
 import { fleetPreferenceCommand } from "./fleet-preference-publication.ts";
-import { createDiagnosticChannel } from "./diagnostic-channel.ts";
-import { diagnosticStatus } from "./live-diagnostics.ts";
-import { closePane, confirmsClosedPane } from "./close-pane.ts";
-import {
-  confirmsNewWindow,
-  newWindowReceiptSchema,
-  matchesCreation,
-  type NewAgent,
-} from "./new-window.ts";
+import { confirmsClosedPane } from "./close-pane.ts";
+import { confirmsNewWindow } from "./new-window.ts";
 import { completeFleetServerSelection } from "./fleet-server-selection.ts";
 import { createOnFleetRoute } from "./fleet-server-create.ts";
 import { applyHomeAgentFilter, homeAgentFilterSchema } from "./home-agent-filter.ts";
@@ -77,22 +63,6 @@ import {
   SavedMachineSchema,
   SavedMachineMutationSchema,
 } from "../../../packages/contracts/src/saved-machines.ts";
-import {
-  splitRefreshGuard,
-  refreshSplitInventory,
-  SplitRefreshError,
-} from "./pane-split-refresh.ts";
-import { WorkspaceWindowSplitResultSchemaZ } from "../../../packages/contracts/src/workspace-multiplexer.ts";
-import {
-  splitGestureSchema,
-  splitGesturePublicationSchema,
-  type SplitGesturePublication,
-} from "./split-gesture.ts";
-import {
-  WindowSplitLayoutResourceSchemaZ,
-  type WindowSplitLayoutResource,
-} from "../../../packages/contracts/src/window-split-layout.ts";
-import { splitLayoutMatches } from "./split-layout.ts";
 import { createHomeAgentObserver } from "./home-agents.ts";
 import {
   homeAgentPublication,
@@ -100,11 +70,6 @@ import {
   openAgentSchema,
   openWorkspaceAgentSchema,
 } from "./home-agent-publication.ts";
-import {
-  resizeGestureSchema,
-  resizeGesturePublicationSchema,
-  type ResizeGesturePublication,
-} from "./resize-gesture.ts";
 import { createSessionOwner, sessionCreateSchema } from "./session-create.ts";
 import {
   proveLocalSessionCreate,
@@ -112,9 +77,6 @@ import {
   verifyLocalSessionCreateOwner,
   type LocalSessionCreateProof,
 } from "./local-session-create.ts";
-import { paneActionSchema, paneActionsSchema } from "./pane-actions.ts";
-import { openEditorSchema, openSelectedPaneEditor } from "./local-editor.ts";
-import { paneResizeSchema, resizePresentationMatches } from "./pane-resize.ts";
 import { CatalogStageError } from "./catalog-errors.ts";
 import { createAppearanceOwner } from "./appearance.ts";
 import {
@@ -122,28 +84,9 @@ import {
   DaemonCompatibilityError,
   DaemonDiscoveryError,
 } from "./discovery.ts";
-import { scrollSchema } from "./history.ts";
-import { mouseSchema } from "./mouse.ts";
-import { wheelSchema } from "./wheel.ts";
-import { surfacesSchema } from "./window-canvas.ts";
-import { createWindowPresentation } from "./window-presentation.ts";
-import {
-  KITTY_KNOWN_ENV,
-  canvasPlacements,
-  createKnownDigests,
-  kittyChunkLineSchema,
-  paneGraphicsSchema,
-  type KeyedPlacement,
-} from "./kitty-graphics.ts";
-import { paneChoices, preferredPane, topologySchema, type Layout } from "./topology.ts";
-import { resizeSchema } from "./geometry.ts";
-import { previewInputSchema, MAX_INPUT_LINE } from "./input.ts";
+import { paneChoices, preferredPane, type Layout } from "./topology.ts";
+import { MAX_INPUT_LINE } from "./input.ts";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 import { z } from "zod";
 import { createPreviewCatalog, sessionChoice } from "./catalog.ts";
 import { connectionSchema } from "./config.ts";
@@ -178,16 +121,7 @@ const machineRegistryCommand = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 const commandSchema = z.union([
-  nativeFrameResyncSchema,
-  z
-    .object({
-      type: z.literal("kitty-missing"),
-      digests: z
-        .array(z.string().regex(/^[0-9a-f]{32}$/u))
-        .min(1)
-        .max(64),
-    })
-    .strict(),
+  nativePaneSelectedSchema,
   z
     .object({ type: z.literal("local-setup"), request: z.number().int().nonnegative().safe() })
     .strict(),
@@ -243,7 +177,6 @@ const commandSchema = z.union([
       sshTarget: remoteHostConfigSchema.shape.sshTarget.nullable(),
     })
     .strict(),
-  openEditorSchema,
   openWorkspaceAgentSchema,
   homeAgentRecoverySchema,
   homeAgentFilterSchema,
@@ -252,10 +185,6 @@ const commandSchema = z.union([
   sessionCreateSchema
     .extend({ type: z.literal("create-local-session"), action: z.uuid() })
     .strict(),
-  paneActionSchema,
-  paneResizeSchema,
-  resizeGestureSchema,
-  splitGestureSchema,
   z.object({ type: z.literal("theme"), id: z.string().min(1).max(64) }).strict(),
   z.object({ type: z.literal("appearance"), system: z.enum(["dark", "light"]) }).strict(),
   z
@@ -263,18 +192,6 @@ const commandSchema = z.union([
       type: z.literal("presence"),
       active: z.boolean(),
       revision: z.number().int().nonnegative().safe().default(0),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("input"),
-      request: z.number().int().positive().safe(),
-      id: z.string().min(1).max(512),
-      input: z.union([previewInputSchema, resizeSchema, scrollSchema, wheelSchema, mouseSchema]),
-      inputTarget: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/)
-        .optional(),
     })
     .strict(),
   z.object({ type: z.literal("home"), request: z.number().int().positive().safe() }).strict(),
@@ -357,101 +274,95 @@ let sessions: ReturnType<typeof sessionChoice>[] = [];
 let panes: z.infer<typeof connectionSchema>[] = [];
 let selectedSession: string | null = null,
   selectedPane: string | null = null;
-let resizeToken: string | null = null;
-let splitLayout: WindowSplitLayoutResource | null = null;
-let splitGesture: SplitGesturePublication | null = null;
-let activeSplitGesture: string | null = null;
-let resizeGestureSupported = false;
-let resizeGesture: ResizeGesturePublication | null = null;
-let activeGesture: { gesture: string; id: string; axis: "cols" | "rows"; request: number } | null =
-  null;
-let pendingPaneSplit:
-  | (Extract<z.infer<typeof paneActionSchema>, { action: "split" }> & {
-      window: string;
-      presenceRevision: number;
-    })
-  | null = null;
-let pendingClose: {
-  token: string;
-  id: string;
-  presenceRevision: number;
-  submitted: boolean;
-} | null = null;
-let pendingNewWindow: {
-  token: string;
-  window: string;
-  presenceRevision: number;
-  agent?: NewAgent;
-} | null = null;
-let paneActions: z.infer<typeof paneActionsSchema> | null = null;
-let editorPending = false;
-let editorConsumed: string | null = null;
-let editorMessage: { request: number; id: string; text: string } | null = null;
-let snapshot: unknown = null;
-let historyOffset = 0;
-let copyRegion: unknown = null;
-let regions: unknown[] = [];
-let kittyPlacements: KeyedPlacement[] = [];
-const kittyKnown = createKnownDigests();
 // Image chunk lines are ordered ahead of publications and never coalesced.
 const orderedLines: (string | Buffer)[] = [];
 let orderedBytes = 0;
 const MAX_ORDERED_BYTES = 64 * 1024 * 1024;
 let layouts: Layout[] = [];
-let inputReady = false;
-let inputTargetRejected = false;
 let foreground = true;
 let sessionCatalogComplete = false;
 let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
-let inputTargets: {
-  snapshot: TerminalReplicaSnapshot;
-  owner: unknown;
-  value: InputTarget[];
-  raw: InputTarget[];
-} | null = null;
-let selectionIdentity: { snapshot: TerminalReplicaSnapshot; value: string } | null = null;
 let surface: "home" | "workspace" = "home";
 let homePhase: "loading" | "live" | "unavailable" = "loading";
 let status = "Loading sessions";
-const nativeEncoding = process.env[COMPACT_NATIVE_ENV];
-const nativeWriter = createNativePublicationWriter(
-  nativeEncoding === "binary-rle-v1" ||
-    nativeEncoding === "rle-delta-v1" ||
-    nativeEncoding === "rle-v1"
-    ? nativeEncoding
-    : "legacy",
-  (line) => process.stdout.write(line),
-  MAX_FRAME,
-);
-process.stdout.on("error", () => nativeWriter.retire());
-let nativeFrameBasis = "unavailable";
-let forceNativePublication = false;
-function nativeFrameContext(): NativePublicationContext {
-  return {
-    connection,
-    request,
-    identity: JSON.stringify([nativeFrameBasis, surface, foreground, historyOffset]),
-  };
+const nativeEncoding = process.env.TMUX_IDE_GUI_NATIVE_ENCODING;
+function writeNativeControl(
+  event:
+    | DirectTerminalEvent
+    | DirectHistoryResult
+    | OwnerActionResult
+    | SplitLayoutResult
+    | EditorResult,
+) {
+  const payload = Buffer.from(JSON.stringify(event));
+  const frame =
+    nativeEncoding === "binary-rle-v1"
+      ? encodeBinaryFrame(1, payload)
+      : Buffer.concat([payload, Buffer.from("\n")]);
+  // A lost one-use capability or close changes ownership; never drop it like an image.
+  if (blocked && orderedBytes + frame.length > MAX_ORDERED_BYTES) {
+    process.stdout.destroy();
+    void stop();
+    throw new Error("Native terminal handoff transport overflow");
+  }
+  writeOrdered(frame);
 }
-type QueuedPublication = PreparedPublication & { context: NativePublicationContext };
-const admitPublication = createPublicationDeduplicator();
+const directHistory = createDirectHistory(writeNativeControl);
+const directEditor = createDirectEditor(writeNativeControl);
+const directOwner = createDirectOwnerActions(writeNativeControl);
+const directSplitLayout = createDirectSplitLayout(writeNativeControl);
+let currentDirectScope: OwnerActionBinding | null = null;
+let nativeReady: { id: string; request: number; pane: string; presence: number } | null = null;
+let acceptDirectCatalog: ((layouts: Layout[]) => Promise<void>) | null = null;
+const directTerminal = createDirectTerminalHandoff(
+  writeNativeControl,
+  (config, mode, signal) =>
+    issueDirectTerminal(config, mode, signal, fetch, catalog?.localProof ?? null),
+  (scope) => {
+    currentDirectScope = scope;
+    nativeReady = null;
+    directEditor.retire();
+    if (scope) {
+      const owner = catalog;
+      if (owner && !scope.catalogOnly)
+        directEditor.bind({
+          ...scope,
+          proof: owner.localProof,
+          read: (signal) =>
+            owner.paneEditorContext(
+              scope.config.workspaceName,
+              scope.config.liveSessionId,
+              scope.config.semanticPaneId,
+              signal,
+            ),
+          current: (revision) =>
+            !stopped &&
+            foreground &&
+            surface === "workspace" &&
+            currentDirectScope === scope &&
+            catalog === owner &&
+            request === scope.request &&
+            selectedSession === scope.config.liveSessionId &&
+            selectedPane === scope.config.semanticPaneId &&
+            presenceRevision === revision,
+        });
+      directHistory.bind(scope);
+      directOwner.bind(scope);
+      directSplitLayout.bind(scope);
+    } else {
+      directHistory.retire();
+      directOwner.retire();
+      directSplitLayout.retire();
+      acceptDirectCatalog = null;
+    }
+  },
+);
+type QueuedPublication = { json: string };
+let lastPublication: string | null = null;
 let pending: QueuedPublication | null = null,
   blocked = false;
-let active:
-  | {
-      child: PreviewSession;
-      done: Promise<void>;
-      catalogOnly: boolean;
-      historyIntent?: number;
-      drainHistory?: () => void;
-      presentation: ReturnType<typeof createWindowPresentation>;
-      /** Retarget this helper to another pane of its subscribed window, without a new attachment. */
-      reselect?: (choice: z.infer<typeof connectionSchema>, request: number) => boolean;
-    }
-  | undefined;
-
 let attentionSelectionRejected: { request: number; fromRequest: number; scope: number } | null =
   null;
 const attention = createAttentionOwner(publish);
@@ -529,14 +440,17 @@ const terminalRecovery = createTerminalRecovery({
     panes = choices;
     selectedSession = sessionId;
     selectedPane = target.pane;
-    snapshot = null;
-    inputReady = false;
     status = "Reconnecting terminal";
     publish();
     await openPane(pane, target.request, false, undefined, live);
     const deadline = Date.now() + 5000;
     while (live() && Date.now() < deadline) {
-      if (snapshot && selectedPane === target.pane && (!foreground || inputReady)) {
+      if (
+        nativeReady?.request === target.request &&
+        nativeReady.pane === target.pane &&
+        nativeReady.presence === presenceRevision &&
+        nativeReady.id === currentDirectScope?.id
+      ) {
         const retained = owner.retainedTarget(key);
         if (retained && sessionTabs.recover(target.request, target.key, retained)) target.key = key;
         startAgents();
@@ -561,58 +475,26 @@ function recoverTerminal(reason: string) {
     return;
   // Fixed stage only, no host identifiers, credentials or terminal content.
   process.stderr.write(`TMUX_GPUI_RECOVERY ${reason}\n`);
-  inputReady = false;
-  snapshot = null;
   status = "Reconnecting terminal";
   terminalRecovery.start();
   publish();
 }
-const retainedFrames = createRetainedFrameCache();
-const historyDrains = new Map<string, { result: Promise<unknown>; cancel: () => void }>();
-let historyDrainEpoch = 0;
-function cancelHistoryDrains() {
-  historyDrainEpoch++;
-  for (const drain of historyDrains.values()) drain.cancel();
-  historyDrains.clear();
-}
-const retainedHistory = new Map<string, { proof: string; pane: string; token: string | null }>();
-let lastCoherentFrame: {
-  request: number;
-  key: string;
-  proof: string;
-  snapshot: TerminalReplicaSnapshot;
-} | null = null;
-let retainedPreview: {
-  request: number;
-  key: string;
-  proof: string;
-  snapshotJson: RetainedSnapshotJson;
-  expires: number;
-} | null = null;
 let retainedPreviewTimer: ReturnType<typeof setTimeout> | undefined;
 function frameProof(key: string): string | null {
   const route = fleet?.retainedFrameProof(key);
   return route ? JSON.stringify([route, appearance.publication()?.theme]) : null;
 }
+const nativePreviews = createDirectNativePreview(frameProof);
 function clearRetainedPreview() {
-  retainedPreview = null;
+  nativePreviews.clear();
   if (retainedPreviewTimer) clearTimeout(retainedPreviewTimer);
   retainedPreviewTimer = undefined;
 }
-function rememberRetainedFrame() {
-  const frame = lastCoherentFrame;
-  if (frame && frame.request === request && frame.proof === frameProof(frame.key))
-    retainedFrames.remember(frame.key, frame.proof, frame.snapshot);
-  lastCoherentFrame = null;
-}
 function beginRetainedPreview(key: string) {
   clearRetainedPreview();
-  const proof = frameProof(key);
-  const captured = proof ? retainedFrames.preview(key, proof) : null;
-  if (!proof || !captured) return;
-  retainedPreview = { request, key, proof, snapshotJson: captured, expires: Date.now() + 5000 };
+  nativePreviews.begin(key, request);
   retainedPreviewTimer = setTimeout(() => {
-    clearRetainedPreview();
+    nativePreviews.clear();
     if (!stopped) publish();
   }, 5000);
 }
@@ -641,7 +523,8 @@ function cancelLocalCreate() {
   localCreateOperation = null;
 }
 async function offerLocalCreation(token: number) {
-  if (!localSetupContext() || request !== token || localCreateOperation || active) return;
+  if (!localSetupContext() || request !== token || localCreateOperation || currentDirectScope)
+    return;
   revokeLocalCreateOffer();
   const controller = new AbortController();
   localCreateProbe = controller;
@@ -654,7 +537,7 @@ async function offerLocalCreation(token: number) {
     request === token &&
     machineRouteRevision === route &&
     presenceRevision === presence &&
-    !active &&
+    !currentDirectScope &&
     !localCreateOperation;
   const result = await proveLocalSessionCreate({ current, signal: controller.signal });
   if (!current()) return;
@@ -665,8 +548,6 @@ async function offerLocalCreation(token: number) {
   sessions = [];
   selectedSession = null;
   selectedPane = null;
-  snapshot = null;
-  inputReady = false;
   homePhase = "live";
   sessionCreate.reset();
   status = "No local sessions yet — create a session to get started";
@@ -679,7 +560,7 @@ function startLocalSessionCreation(cmd: { request: number; action: string; name:
     cmd.action !== proof.action ||
     cmd.request !== request ||
     !localSetupContext() ||
-    active ||
+    currentDirectScope ||
     homePhase !== "live" ||
     localCreateOperation ||
     sessionCreate.publication().phase !== "idle"
@@ -697,7 +578,7 @@ function startLocalSessionCreation(cmd: { request: number; action: string; name:
     request === token &&
     machineRouteRevision === route &&
     presenceRevision === presence &&
-    !active;
+    !currentDirectScope;
   let receipt:
     | Extract<Awaited<ReturnType<typeof createLocalSession>>, { kind: "created" }>["receipt"]
     | undefined;
@@ -847,7 +728,7 @@ function startLocalSetup() {
 let highestNavigationAttempt = 0;
 const admitNavigationAttempt = (attempt: number) => {
   if (attempt <= request || attempt <= highestNavigationAttempt) return false;
-  rememberRetainedFrame();
+
   cancelLocalSetup();
   cancelTerminalRecovery();
   highestNavigationAttempt = attempt;
@@ -1074,7 +955,6 @@ function launchFleetSelection(
     })
     .catch(() => {
       if (!current()) return;
-      inputReady = false;
       sessionHistory.cancel();
       sessionTabs.cancel();
       status = "Fleet session unavailable — return Home and select it again";
@@ -1152,42 +1032,33 @@ function publish() {
     homePhase = "unavailable";
     status = "Selected server is not available in this fleet view — select a server again.";
   }
-  // Terminal-free navigation surfaces apply presence locally. Interactive helpers
-  // retain ACK ownership even while their snapshot or input grant is unavailable.
+  // Terminal-free navigation surfaces apply presence locally. Rust owns terminal ACKs.
   if (
-    !active &&
+    !currentDirectScope &&
     (surface === "home" ||
       (surface === "workspace" &&
         catalog &&
         selectedSession !== null &&
         sessionCatalogComplete &&
-        selectedPane === null &&
-        snapshot === null &&
-        !inputReady))
+        selectedPane === null))
   )
     appliedPresenceRevision = presenceRevision;
   if (stopped) return;
-  retainedFrames.retain(sessionTabs.keys());
-  for (const [key, drain] of historyDrains)
-    if (!sessionTabs.keys().includes(key)) {
-      drain.cancel();
-      historyDrains.delete(key);
-    }
-  for (const key of retainedHistory.keys())
-    if (!sessionTabs.keys().includes(key)) retainedHistory.delete(key);
-  if (
-    retainedPreview &&
-    (retainedPreview.request !== request ||
-      surface !== "workspace" ||
-      !foreground ||
-      snapshot !== null ||
-      inputReady ||
-      Date.now() >= retainedPreview.expires ||
-      frameProof(retainedPreview.key) !== retainedPreview.proof)
-  )
-    clearRetainedPreview();
-  const preview = retainedPreview;
+  const nativeFrameKey =
+    currentDirectScope?.request === request &&
+    currentDirectScope.config.liveSessionId === selectedSession
+      ? fleet?.attachmentKey(currentDirectScope.config)
+      : null;
+  const nativeFrameScope = nativeFrameKey ? nativePreviews.scope(nativeFrameKey) : null;
+  const nativeRetainedPreview = nativePreviews.publication({
+    request,
+    foreground,
+    workspace: surface === "workspace",
+    liveAvailable: false,
+  });
   const prefix = {
+    nativeFrameScope,
+    nativeRetainedPreview,
     version: 1,
     connection,
     sequence: ++sequence,
@@ -1195,16 +1066,30 @@ function publish() {
     sessions,
     surface,
     home: { phase: homePhase },
-    diagnostics:
-      foreground && surface === "workspace" && inputReady && active && snapshot
+    diagnostics: null,
+    nativeDiagnostics:
+      foreground &&
+      surface === "workspace" &&
+      currentDirectScope &&
+      nativeReady?.id === currentDirectScope.id &&
+      nativeReady.request === request &&
+      nativeReady.pane === selectedPane &&
+      nativeReady.presence === presenceRevision
         ? {
-            daemonVersion: catalog?.diagnosticVersion() ?? null,
-            tmuxVersion: diagnosticTmuxVersion(),
+            id: currentDirectScope.id,
+            request,
+            pane: selectedPane,
+            generation: currentDirectScope.config.scope.generation,
+            presenceRevision,
+            versions: {
+              daemonVersion: catalog?.diagnosticVersion() ?? null,
+              tmuxVersion: diagnosticTmuxVersion(),
+            },
           }
         : null,
     localSetup: localSetupContext() ? localSetup : null,
     localSessionCreate:
-      localSetupContext() && homePhase === "live" && !active ? localCreateProof : null,
+      localSetupContext() && homePhase === "live" && !currentDirectScope ? localCreateProof : null,
     createSession: selectedFleet && !fleet?.selectedServer() ? null : sessionCreate.publication(),
     selectedServer:
       surface === "home" && homePhase === "live" && selectedFleet
@@ -1237,76 +1122,54 @@ function publish() {
     sessionCatalogComplete,
     preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
     selectedSession,
-    selectedPane: preview ? null : selectedPane,
+    selectedPane,
   };
-  const suffix = {
-    inputTargetRejected,
-    inputTargets:
-      !stopped &&
-      !preview &&
-      foreground &&
-      active &&
-      surface === "workspace" &&
-      historyOffset === 0 &&
-      inputTargets?.snapshot === snapshot &&
-      inputTargets?.owner === active.child
-        ? inputTargets.value
-        : [],
-    selectionIdentity:
-      !preview &&
-      foreground &&
-      active &&
-      surface === "workspace" &&
-      selectionIdentity !== null &&
-      snapshot === selectionIdentity.snapshot
-        ? selectionIdentity.value
-        : null,
-    status: preview
-      ? `Restoring terminal… — ${status}`
-      : historySaveFailed
-        ? `${status} — Session visit could not be saved; refresh local preferences.`
-        : inputReady && editorMessage?.request === request && editorMessage.id === selectedPane
-          ? editorMessage.text
-          : surface === "home" && machineMessage
-            ? `${status} · ${machineMessage}`
-            : status,
-    snapshot: snapshot as TerminalReplicaSnapshot | null,
-    historyOffset: snapshot && selectedPane ? historyOffset : 0,
-    copyRegion: snapshot ? copyRegion : null,
-    regions: snapshot ? regions : [],
-    graphics: snapshot && !preview ? kittyPlacements : [],
-    inputReady,
-    resizeToken: inputReady && snapshot ? resizeToken : null,
-    splitLayout: inputReady && snapshot ? splitLayout : null,
-    splitGesture: preview ? null : splitGesture,
-    resizeGestureSupported: !preview && !!active && resizeGestureSupported,
-    resizeGesture:
-      !preview && resizeGesture
-        ? { ...resizeGesture, token: inputReady && snapshot ? resizeGesture.token : null }
-        : null,
-    paneActions: inputReady && snapshot ? paneActions : null,
+  const metadata = {
+    ...prefix,
+    inputTargetRejected: false,
+    inputTargets: [],
+    selectionIdentity: null,
+    status: historySaveFailed
+      ? status + " — Session visit could not be saved; refresh local preferences."
+      : surface === "home" && machineMessage
+        ? status + " · " + machineMessage
+        : status,
+    snapshot: null,
+    historyOffset: 0,
+    copyRegion: null,
+    regions: [],
+    graphics: [],
+    inputReady: false,
+    resizeToken: null,
+    splitLayout: null,
+    splitGesture: null,
+    resizeGestureSupported: false,
+    resizeGesture: null,
+    paneActions: null,
     presenceRevision: appliedPresenceRevision,
     appearance: appearance.publication(),
     fleet: fleet?.publication() ?? null,
     machines: machines ? { ...machines.publication(), message: machineMessage } : null,
   };
-  const publication = {
-    ...preparePublication(prefix, suffix, preview?.snapshotJson ?? null),
-    context: nativeFrameContext(),
-  };
-  if (Buffer.byteLength(publication.before) + Buffer.byteLength(publication.after) > MAX_FRAME)
+  const comparison = JSON.stringify({ ...metadata, sequence: 0 });
+  if (comparison === lastPublication) return;
+  lastPublication = comparison;
+  const json = JSON.stringify(metadata);
+  if (Buffer.byteLength(json) > MAX_FRAME)
     throw new Error("Browser publication metadata too large");
-  const changed = admitPublication(publication);
-  if (!changed && !forceNativePublication) return;
-  forceNativePublication = false;
+  const publication = { json };
   if (blocked) pending = publication;
   else writePublication(publication);
 }
 function writePublication(publication: QueuedPublication) {
-  blocked = !nativeWriter.write(publication, publication.context);
+  const payload = Buffer.from(publication.json);
+  blocked = !process.stdout.write(
+    nativeEncoding === "binary-rle-v1"
+      ? encodeBinaryFrame(1, payload)
+      : Buffer.concat([payload, Buffer.from("\n")]),
+  );
 }
-// A window that cannot keep up loses whole images; it reports the gap and the
-// helper pulls them again (see kitty_graphics.rs).
+// Capability and owner-result messages stay ordered ahead of coalesced catalog metadata.
 function writeOrdered(line: string | Buffer) {
   if (!blocked) {
     blocked = !process.stdout.write(line);
@@ -1331,42 +1194,18 @@ process.stdout.on("drain", () => {
   }
 });
 async function retire() {
+  directTerminal.retire();
   attentionSelectionRejected = null;
   paletteSelectionRejected = null;
   attention.cancel();
   palette.cancel();
-  const old = active;
-  active = undefined;
-  pendingPaneSplit = null;
-  pendingNewWindow = null;
-  pendingClose = null;
-  splitLayout = null;
-  splitGesture = null;
-  activeSplitGesture = null;
-  resizeGestureSupported = false;
-  resizeGesture = null;
-  activeGesture = null;
-  if (!old) return;
-  if (!stopped && old.historyIntent === historyDrainEpoch && old.drainHistory) {
-    old.drainHistory();
-    return;
-  }
-  old.child.kill("SIGTERM");
-  const timer = setTimeout(() => old.child.kill("SIGKILL"), 500);
-  try {
-    await old.done;
-  } finally {
-    clearTimeout(timer);
-  }
+  nativeReady = null;
 }
 function retireMachineRoute() {
   if (stopped) return;
   cancelLocalSetup();
   clearRetainedPreview();
-  retainedFrames.clear();
-  cancelHistoryDrains();
-  retainedHistory.clear();
-  lastCoherentFrame = null;
+
   recoverTerminal("machine-route-retired");
   sessionHistory.cancel();
   sessionTabs.cancel();
@@ -1381,9 +1220,6 @@ function retireMachineRoute() {
   selectedPane = null;
   initialPane = null;
   sessionCatalogComplete = false;
-  inputReady = false;
-  snapshot = null;
-  paneActions = null;
   homePhase = "unavailable";
   status = recoveryTarget
     ? "Reconnecting terminal"
@@ -1404,10 +1240,7 @@ async function stop() {
   observingTabs = false;
   sessionTabs.dispose();
   clearRetainedPreview();
-  retainedFrames.clear();
-  cancelHistoryDrains();
-  retainedHistory.clear();
-  lastCoherentFrame = null;
+
   workspaceFleetAgents.cancel();
   hostSource?.dispose();
   machines?.dispose();
@@ -1458,1121 +1291,316 @@ async function openPane(
   },
   requiredCurrent?: () => boolean,
   closeConfirmation?: { killed: string; current: () => boolean },
-  recoveryNotice?: string,
+  ___recoveryNotice?: string,
 ) {
-  const admissionPresence = presenceRevision;
   const owningCatalog = catalog;
-  const waitingKey = fleet?.attachmentKey(config);
-  const waiting = !catalogOnly && waitingKey ? historyDrains.get(waitingKey) : undefined;
-  if (waiting) {
-    inputReady = false;
-    status = "Restoring saved history";
-    publish();
-    // Do not block command admission: close and another navigation can cancel.
-    void waiting.result
-      .then(() => {
-        if (
-          stopped ||
-          request !== token ||
-          catalog !== owningCatalog ||
-          presenceRevision !== admissionPresence ||
-          (requiredCurrent && !requiredCurrent())
-        )
-          return;
-        return openPane(
-          config,
-          token,
-          catalogOnly,
-          splitConfirmation,
-          requiredCurrent,
-          closeConfirmation,
-          recoveryNotice,
-        );
-      })
-      .catch(() => {
-        if (!stopped && request === token) {
-          inputReady = false;
-          status = "Saved history restoration unavailable";
-          publish();
-        }
-      });
+  if (
+    stopped ||
+    token !== request ||
+    !owningCatalog ||
+    catalog !== owningCatalog ||
+    (requiredCurrent && !requiredCurrent())
+  )
     return;
-  }
-  const directory = await mkdtemp(join(tmpdir(), "tmux-gpui-pane-"));
-  let handedOff = false;
-  let presentation = createWindowPresentation(config.semanticPaneId);
-  // Set between an in-window reselect and the helper's publication for that pane.
-  let reselecting = false;
-  try {
-    const path = join(directory, "connection.json");
-    const historyKey = fleet?.attachmentKey(config);
-    const savedHistory = historyKey ? retainedHistory.get(historyKey) : undefined;
-    const restoreToken =
-      !catalogOnly &&
-      savedHistory?.pane === config.semanticPaneId &&
-      savedHistory.proof === fleet?.retainedFrameProof(historyKey!)
-        ? savedHistory.token
-        : undefined;
-    await writeFile(
-      path,
-      JSON.stringify({
-        ...config,
-        ...(restoreToken ? { historyAnchor: restoreToken } : {}),
-        ...(!catalogOnly && savedHistory && !restoreToken ? { historyUnavailable: true } : {}),
-      }),
-      { mode: 0o600 },
-    );
+  status = "Connecting native terminal";
+  publish();
+  await directTerminal.open(config, token, catalogOnly);
+  if (catalogOnly) {
+    const bound = currentDirectScope;
     if (
-      stopped ||
-      token !== request ||
-      !owningCatalog ||
-      catalog !== owningCatalog ||
-      (requiredCurrent && !requiredCurrent())
+      !bound ||
+      bound.request !== token ||
+      bound.config.semanticPaneId !== config.semanticPaneId ||
+      bound.config.scope.generation !== config.scope.generation ||
+      catalog !== owningCatalog
     )
       return;
-    const child: PreviewSession & {
-      stdin: import("node:stream").Writable;
-      stdout: import("node:stream").Readable;
-      stderr: import("node:stream").Readable;
-    } =
-      process.env.TMUX_IDE_GUI_LIVE_MODE !== "process"
-        ? new HostedPreviewSession({
-            config: {
-              ...config,
-              ...(restoreToken ? { historyAnchor: restoreToken } : {}),
-              ...(!catalogOnly && savedHistory && !restoreToken
-                ? { historyUnavailable: true }
-                : {}),
-            },
-            mode: catalogOnly ? "catalog" : "interactive",
-            knownDigests: kittyKnown.env().split(",").filter(Boolean),
-          })
-        : spawn(
-            process.execPath,
-            [
-              ...(import.meta.url.endsWith(".bundle.mjs") ? [] : ["--import", "tsx"]),
-              fileURLToPath(
-                new URL(
-                  import.meta.url.endsWith(".bundle.mjs") ? "live.bundle.mjs" : "live.ts",
-                  import.meta.url,
-                ),
-              ),
-              path,
-              catalogOnly ? "--catalog" : "--interactive",
-            ],
-            {
-              stdio: ["pipe", "pipe", "pipe"],
-              env: {
-                ...process.env,
-                [KITTY_KNOWN_ENV]: kittyKnown.env(),
-                [COMPACT_HELPER_ENV]: "rle-v1",
-              },
-            },
-          );
-    const done = new Promise<void>((resolve) =>
-      child.once("close", () => {
-        void rm(directory, { recursive: true, force: true })
-          .catch(() => {
-            process.stderr.write("Could not remove private preview state\n");
-            process.exitCode = 1;
-          })
-          .finally(resolve);
-      }),
-    );
-    child.stdin.on("error", () => {
-      if (active?.child !== child) return;
-      inputReady = false;
-      void retire();
-    });
-    inputTargetRejected = false;
-    active = {
-      child,
-      done,
-      catalogOnly,
-      presentation,
-      drainHistory: () => {
-        const key = fleet?.attachmentKey(config);
-        const proof = key ? fleet?.retainedFrameProof(key) : null;
-        if (!key || !proof || !sessionTabs.keys().includes(key)) {
-          child.kill("SIGTERM");
-          const timer = setTimeout(() => child.kill("SIGKILL"), 500);
-          void done.then(() => clearTimeout(timer));
-          return;
-        }
-        historyDrains.get(key)?.cancel();
-        while (historyDrains.size >= 8) {
-          const first = historyDrains.keys().next().value!;
-          historyDrains.get(first)!.cancel();
-          historyDrains.delete(first);
-        }
-        const drainEpoch = historyDrainEpoch;
-        retainedHistory.set(key, { proof, pane: config.semanticPaneId, token: null });
-        const drain = drainHistoryCapture(child, done);
-        const record = { result: Promise.resolve() as Promise<unknown>, cancel: drain.cancel };
-        historyDrains.set(key, record);
-        record.result = drain.result.then((result) => {
-          if (historyDrains.get(key) !== record) return;
-          historyDrains.delete(key);
-          if (
-            stopped ||
-            drainEpoch !== historyDrainEpoch ||
-            !sessionTabs.keys().includes(key) ||
-            fleet?.retainedFrameProof(key) !== proof
-          )
-            return;
-          if (result?.state === "live") retainedHistory.delete(key);
-          else
-            retainedHistory.set(key, {
-              proof,
-              pane: config.semanticPaneId,
-              token: result?.state === "historical" ? result.token : null,
-            });
-        });
-      },
-    };
-    if (!catalogOnly)
-      active.reselect = (choice, next) => {
+    acceptDirectCatalog = async (nativeLayouts) => {
+      const current = () =>
+        !stopped &&
+        request === token &&
+        catalog === owningCatalog &&
+        currentDirectScope === bound &&
+        (!requiredCurrent || requiredCurrent());
+      if (!current()) return;
+      layouts = nativeLayouts;
+      if (closeConfirmation) {
         if (
-          active?.child !== child ||
-          child.exitCode !== null ||
-          !child.stdin.writable ||
-          diagnostics.fault ||
-          !foreground ||
-          historyOffset !== 0 ||
-          !snapshot ||
-          pendingClose ||
-          pendingPaneSplit ||
-          pendingNewWindow ||
-          choice.baseUrl !== config.baseUrl ||
-          choice.ownerToken !== config.ownerToken ||
-          choice.remoteSocketOrigin !== config.remoteSocketOrigin ||
-          choice.scope.serverId !== config.scope.serverId ||
-          choice.scope.generation !== config.scope.generation ||
-          choice.workspaceName !== config.workspaceName ||
-          choice.liveSessionId !== config.liveSessionId ||
-          !choice.visiblePaneIds?.includes(choice.semanticPaneId) ||
-          JSON.stringify(choice.visiblePaneIds) !== JSON.stringify(config.visiblePaneIds)
+          !closeConfirmation.current() ||
+          !confirmsClosedPane(
+            layouts.flatMap((layout) =>
+              layout.panes.map((pane) => pane.pane).filter((id): id is string => !!id),
+            ),
+            closeConfirmation.killed,
+          )
         )
-          return false;
-        // Same subscription and attachment: only the selected pane and request change.
-        // Input written after this line is ordered behind the helper's retarget.
-        config = choice;
-        token = next;
-        presentation = createWindowPresentation(choice.semanticPaneId);
-        active.presentation = presentation;
-        reselecting = true;
-        child.stdin.write(
-          JSON.stringify({ kind: "select-pane", id: choice.semanticPaneId }) + "\n",
+          throw new Error("Closed pane still present");
+        const preferred = preferredPane(
+          panes.map((pane) => pane.semanticPaneId),
+          layouts,
         );
-        return true;
-      };
-    if (!catalogOnly)
-      child.stdin.write(
-        JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
+        const survivor = panes.find((pane) => pane.semanticPaneId === preferred) ?? panes[0];
+        directTerminal.retire();
+        if (survivor && closeConfirmation.current()) {
+          selectedPane = survivor.semanticPaneId;
+          await openPane(survivor, token, false, undefined, closeConfirmation.current);
+        }
+        return;
+      }
+      if (splitConfirmation) {
+        const matching = layouts.filter(
+          (layout) => layout.semanticWindowId === splitConfirmation.window,
+        );
+        if (
+          !splitConfirmation.current() ||
+          (splitConfirmation.originalPane
+            ? !confirmsNewWindow(
+                layouts,
+                splitConfirmation.originalPane,
+                splitConfirmation.window,
+                splitConfirmation.createdPane,
+              )
+            : matching.length !== 1 ||
+              !matching[0].panes.some((pane) => pane.pane === config.semanticPaneId) ||
+              !matching[0].panes.some((pane) => pane.pane === splitConfirmation.createdPane))
+        )
+          throw new Error("Split layout did not confirm panes");
+        directTerminal.retire();
+        await openPane(config, token, false, undefined, splitConfirmation.current);
+        return;
+      }
+      sessionCatalogComplete = true;
+      initialPane = preferredPane(
+        panes.map((pane) => pane.semanticPaneId),
+        layouts,
       );
-    handedOff = true;
-    let buffer = Buffer.alloc(0),
-      childConnection: string | undefined,
-      childSequence = 0;
-    let content: {
-      bytes: Buffer;
-      value: { snapshot: unknown; surfaces: unknown };
-      surfaces: z.infer<typeof surfacesSchema> | null;
-    } | null = null;
-    let childPresentationEpoch: number | undefined;
-    const diagnostics = createDiagnosticChannel((fault) => {
-      if (stopped || request !== token || active?.child !== child) return;
-      process.stderr.write(`TMUX_GPUI_DIAGNOSTIC ${JSON.stringify(fault)}\n`);
-      unavailable();
+      const historyKey = foreground ? fleet?.attachmentKey(config) : null;
+      if (historyKey) {
+        sessionHistory.catalogReady(token, historyKey, owningCatalog, presenceRevision);
+        sessionTabs.catalogReady(token, historyKey, owningCatalog, presenceRevision);
+      }
+      status = "Choose a pane or window";
+      directTerminal.retire();
+      publish();
+    };
+  }
+  return;
+}
+async function command(value: unknown) {
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    (value.type === "native-editor-open" || value.type === "native-editor-cancel")
+  ) {
+    if (!stopped) void directEditor.handle(value).catch(() => void stop());
+    return;
+  }
+  if (typeof value === "object" && value !== null && "type" in value) {
+    if (value.type === "native-split-layout") {
+      void directSplitLayout.handle(value).catch(() => void stop());
+      return;
+    }
+    if (value.type === "native-owner-action") {
+      if (!stopped && foreground && surface === "workspace")
+        void directOwner.handle(value).catch(() => {
+          process.stdout.destroy();
+          void stop();
+        });
+      return;
+    }
+    if (value.type === "native-terminal-catalog") {
+      const callback = acceptDirectCatalog,
+        bound = currentDirectScope,
+        owner = catalog,
+        capturedPresence = presenceRevision;
+      const nativeLayouts = acceptNativeCatalog(currentDirectScope, value, presenceRevision);
       if (
-        fault.code === "transport-closed" ||
-        fault.code === "transport-error" ||
-        fault.code === "topology-changed"
-      )
-        recoverTerminal(fault.code);
-    });
-    const unavailable = () => {
-      if (stopped || request !== token || active?.child !== child) return;
-      if (pendingClose?.submitted) {
-        snapshot = null;
-        inputReady = false;
-        status = "Closing pane";
+        !stopped &&
+        surface === "workspace" &&
+        bound &&
+        !bound.catalogOnly &&
+        request === bound.request &&
+        selectedSession === bound.config.liveSessionId &&
+        selectedPane === bound.config.semanticPaneId &&
+        nativeLayouts
+      ) {
+        layouts = nativeLayouts;
+        sessionCatalogComplete = true;
         publish();
         return;
       }
-      sessionHistory.cancel();
-      sessionTabs.cancel();
-      attention.cancel();
-      palette.cancel();
-      retireAgents();
-      snapshot = null;
-      inputReady = false;
-      initialPane = null;
-      if (catalogOnly) sessionCatalogComplete = true;
-      status = diagnostics.fault
-        ? diagnosticStatus(diagnostics.fault)
-        : catalogOnly
-          ? "Session layout unavailable — refresh, then select the session again"
-          : "Pane unavailable — select again or refresh";
-      publish();
-    };
-    child.stderr.on("data", (chunk: Buffer) => diagnostics.push(chunk));
-    child.on("error", unavailable);
-    child.on("exit", () => {
-      // A helper that refused an in-window reselect exits before addressing the
-      // new pane; attach the target freshly instead of reporting it unavailable.
+      if (!stopped && surface === "workspace" && callback && nativeLayouts)
+        void callback(nativeLayouts).catch(() => {
+          if (
+            !stopped &&
+            bound &&
+            request === bound.request &&
+            catalog === owner &&
+            selectedSession === bound.config.liveSessionId &&
+            presenceRevision === capturedPresence
+          ) {
+            status = "Native layout catalog unavailable — refresh";
+            publish();
+          }
+        });
+      return;
+    }
+    if (value.type === "native-terminal-interrupted") {
       if (
-        reselecting &&
-        !diagnostics.fault &&
         !stopped &&
-        request === token &&
-        active?.child === child
+        surface === "workspace" &&
+        acceptsNativeInterrupted(currentDirectScope, value, presenceRevision)
       ) {
-        reselecting = false;
-        const target = config,
-          owner = token;
-        void retire()
-          .then(() => {
-            if (!stopped && request === owner) return openPane(target, owner);
-          })
-          .catch(unavailable);
-        return;
+        nativeReady = null;
+        recoverTerminal("native-connection-interrupted");
       }
-      unavailable();
-    });
-    const validateSurfaces = createHostedSurfaceValidator();
-    // Both transports enter the same envelope/authority/presentation validation.
-    function applyChildPublication(value: unknown, sameTail = false, typed = false): boolean {
+      return;
+    }
+    if (value.type === "native-terminal-ready") {
+      const bound = currentDirectScope,
+        owner = catalog;
       if (
         stopped ||
-        request !== token ||
-        active?.child !== child ||
-        diagnostics.fault ||
-        inputTargetRejected ||
-        !owningCatalog
+        !foreground ||
+        surface !== "workspace" ||
+        !owner ||
+        !bound ||
+        request !== bound.request ||
+        selectedSession !== bound.config.liveSessionId ||
+        selectedPane !== bound.config.semanticPaneId ||
+        !acceptsNativeReady(bound, value, presenceRevision)
       )
-        return false;
-      let publicationStage = "envelope";
-      try {
-        if (!value || typeof value !== "object" || Array.isArray(value))
-          throw new Error("Invalid child publication");
-        const event = value as Record<string, unknown>;
-        publication: {
-          if (typed && "rawKittyImage" in event) {
-            publicationStage = "graphics";
-            const { metadata, bytes } = validateHostedImage(
-              event.rawKittyImage as Parameters<typeof validateHostedImage>[0],
-            );
-            kittyKnown.observeBytes(metadata, bytes.byteLength);
-            if (nativeEncoding === "binary-rle-v1")
-              writeOrdered(encodeBinaryImage(metadata, bytes));
-            else
-              writeOrdered(
-                JSON.stringify({
-                  kittyImageChunk: { ...metadata, data: Buffer.from(bytes).toString("base64") },
-                }) + "\n",
-              );
-            break publication;
-          }
-          if (event && typeof event === "object" && "kittyImageChunk" in event) {
-            publicationStage = "graphics";
-            const chunk = kittyChunkLineSchema.parse(event).kittyImageChunk;
-            kittyKnown.observe(chunk);
-            if (nativeEncoding === "binary-rle-v1") {
-              const { data, ...metadata } = chunk;
-              writeOrdered(encodeBinaryImage(metadata, Buffer.from(data, "base64")));
-            } else writeOrdered(JSON.stringify({ kittyImageChunk: chunk }) + "\n");
-            break publication;
-          }
-          if (event.kind === "input-target-rejected") {
-            inputTargetRejected = true;
-            inputReady = false;
-            inputTargets = null;
-            status = "Input interrupted — reselect the pane, then retype";
-            process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
-            publish();
-            break publication;
-          }
-          publicationStage = "envelope";
-          if (
-            typeof event.connection !== "string" ||
-            typeof event.sequence !== "number" ||
-            !Number.isSafeInteger(event.sequence) ||
-            event.sequence <= childSequence ||
-            (childConnection && event.connection !== childConnection)
-          )
-            throw new Error("Invalid child publication");
-          publicationStage = "topology";
-          childConnection = event.connection;
-          childSequence = event.sequence;
-          // Publications emitted before the helper applied a reselect describe the
-          // previous pane's input, history and action identities.
-          if (!catalogOnly && event.selectedPane !== config.semanticPaneId) break publication;
-          reselecting = false;
-          layouts = topologySchema.parse(event.layouts ?? []);
-          if (catalogOnly) {
-            if (event.catalogReady !== true) throw new Error("Layout catalog unavailable");
-            if (closeConfirmation) {
-              if (
-                !closeConfirmation.current() ||
-                !confirmsClosedPane(
-                  layouts.flatMap((l) =>
-                    l.panes.map((p) => p.pane).filter((id): id is string => !!id),
-                  ),
-                  closeConfirmation.killed,
-                )
-              )
-                throw new Error("Closed pane still present");
-              const preferred = preferredPane(
-                panes.map((p) => p.semanticPaneId),
-                layouts,
-              );
-              const survivor = panes.find((p) => p.semanticPaneId === preferred);
-              if (survivor) {
-                void retire()
-                  .then(async () => {
-                    if (!closeConfirmation.current()) return;
-                    selectedPane = survivor.semanticPaneId;
-                    await openPane(survivor, token, false, undefined, closeConfirmation.current);
-                  })
-                  .catch(() => {
-                    if (closeConfirmation.current()) {
-                      snapshot = null;
-                      inputReady = false;
-                      status = "Pane closed; survivor unavailable — refresh";
-                      publish();
-                    }
-                  });
-                return false;
-              }
-            }
-            if (splitConfirmation) {
-              const matching = layouts.filter(
-                (layout) => layout.semanticWindowId === splitConfirmation.window,
-              );
-              if (
-                splitConfirmation.originalPane
-                  ? !confirmsNewWindow(
-                      layouts,
-                      splitConfirmation.originalPane,
-                      splitConfirmation.window,
-                      splitConfirmation.createdPane,
-                    )
-                  : matching.length !== 1 ||
-                    !matching[0].panes.some((pane) => pane.pane === config.semanticPaneId) ||
-                    !matching[0].panes.some((pane) => pane.pane === splitConfirmation.createdPane)
-              )
-                throw new Error("Split layout did not confirm both panes");
-              void retire()
-                .then(async () => {
-                  if (!splitConfirmation.current()) return;
-                  await openPane(config, token, false, undefined, splitConfirmation.current);
-                })
-                .catch(() => {
-                  if (splitConfirmation.current()) {
-                    snapshot = null;
-                    inputReady = false;
-                    status = "Split applied; pane unavailable — refresh";
-                    publish();
-                  }
-                });
-              return false;
-            }
-            snapshot = null;
-            inputReady = false;
-            sessionCatalogComplete = true;
-            initialPane = preferredPane(
-              panes.map((pane) => pane.semanticPaneId),
-              layouts,
-            );
-            const historyKey =
-              foreground && admissionPresence === presenceRevision
-                ? fleet?.attachmentKey(config)
-                : null;
-            if (historyKey) {
-              sessionHistory.catalogReady(token, historyKey, owningCatalog, presenceRevision);
-              sessionTabs.catalogReady(token, historyKey, owningCatalog, presenceRevision);
-            }
-            status = "Choose a pane or window";
-            // retire clears active synchronously; publish only after this metadata
-            // helper releases ACK ownership, without waiting for process reaping.
-            void retire();
-            publish();
-            return false;
-          }
-          if (event.closePaneReady && pendingClose && !pendingClose.submitted) {
-            const ready = z
-              .object({
-                token: z.string().uuid(),
-                id: z.string().min(1).max(512),
-                hostClientId: z
-                  .string()
-                  .refine(
-                    (value) =>
-                      value.startsWith("gpui:") &&
-                      z.string().uuid().safeParse(value.slice(5)).success,
-                  ),
-                presenceRevision: z.number().int().nonnegative().safe(),
-              })
-              .strict()
-              .parse(event.closePaneReady);
-            if (
-              ready.token !== pendingClose.token ||
-              ready.id !== pendingClose.id ||
-              ready.id !== config.semanticPaneId ||
-              ready.presenceRevision !== pendingClose.presenceRevision ||
-              presenceRevision !== ready.presenceRevision ||
-              !foreground ||
-              !catalog ||
-              !selectedSession ||
-              event.inputReady !== true
-            )
-              throw new Error("Close target retired");
-            pendingClose.submitted = true;
-            const host = catalog,
-              session = selectedSession,
-              killed = ready.id;
-            const current = splitRefreshGuard(() => ({
-              request,
-              session: selectedSession,
-              catalog,
-              presenceRevision,
-              foreground,
-              stopped,
-            }));
-            snapshot = null;
-            inputReady = false;
-            paneActions = null;
-            status = "Closing pane";
-            publish();
-            void (async () => {
-              if (
-                !(await closePane({
-                  current,
-                  generation: config.scope.generation,
-                  workspace: config.workspaceName,
-                  pane: killed,
-                  submit: (operation) =>
-                    host.closePane(
-                      operation,
-                      config.workspaceName,
-                      session,
-                      killed,
-                      ready.hostClientId,
-                    ),
-                }))
-              )
-                return;
-              await retire();
-              if (!current()) return;
-              const freshSessions = (await host.sessions()).map(sessionChoice);
-              if (!current()) return;
-              if (freshSessions.length > 512) throw new Error("Session catalog exceeds limit");
-              sessions = freshSessions;
-              if (!freshSessions.some((s) => s.id === session)) {
-                selectedPane = null;
-                selectedSession = null;
-                panes = [];
-                layouts = [];
-                surface = "home";
-                homePhase = "live";
-                status = "Session no longer available after pane close";
-                snapshot = null;
-                inputReady = false;
-                publish();
-                startAgents();
-                return;
-              }
-              const choices = await host.workspacePanes(session, config.workspaceName);
-              if (!current()) return;
-              if (
-                !confirmsClosedPane(
-                  choices.map((p) => p.semanticPaneId),
-                  killed,
-                )
-              )
-                throw new Error("Pane close absence not confirmed");
-              panes = choices;
-              selectedPane = null;
-              layouts = [];
-              snapshot = null;
-              inputReady = false;
-              status = "Loading surviving panes";
-              publish();
-              if (choices[0])
-                await openPane(choices[0], token, true, undefined, current, { killed, current });
-              else {
-                status = "No available panes — refresh";
-                publish();
-              }
-            })().catch(async () => {
-              if (!current()) return;
-              await retire();
-              if (!current()) return;
-              snapshot = null;
-              inputReady = false;
-              paneActions = null;
-              status = "Pane close not confirmed — reselect pane or refresh";
-              publish();
-              // A failed response is not proof of refusal. Requalify only the exact
-              // original semantic pane; never replay the mutation or pick a substitute.
-              try {
-                const choices = await host.workspacePanes(session, config.workspaceName);
-                if (!current() || choices.length > 512) return;
-                const matches = choices.filter((pane) => pane.semanticPaneId === killed);
-                if (matches.length !== 1) return;
-                panes = choices;
-                layouts = [];
-                selectedPane = killed;
-                await openPane(
-                  matches[0],
-                  token,
-                  false,
-                  undefined,
-                  current,
-                  undefined,
-                  "Close not confirmed — original pane reconnected",
-                );
-              } catch {
-                // Keep the explicit unavailable state if exact requalification fails.
-              }
-            });
-            return false;
-          }
-          if (
-            event.newWindowReceipt &&
-            pendingNewWindow &&
-            typeof event.newWindowReceipt === "object" &&
-            "token" in event.newWindowReceipt &&
-            event.newWindowReceipt.token === pendingNewWindow.token
-          ) {
-            const captured = pendingNewWindow;
-            const receipt = z
-              .object({ token: z.string().uuid(), result: newWindowReceiptSchema })
-              .strict()
-              .parse(event.newWindowReceipt);
-            if (
-              receipt.result.daemonInstanceId !== config.scope.generation ||
-              receipt.result.resource.workspaceName !== config.workspaceName ||
-              !matchesCreation(receipt.result.resource, captured.agent) ||
-              receipt.result.outcome !== "created" ||
-              receipt.result.resource.semanticPaneId === config.semanticPaneId
-            )
-              throw new Error("Invalid new window receipt");
-            if (
-              !catalog ||
-              !selectedSession ||
-              !foreground ||
-              presenceRevision !== captured.presenceRevision
-            )
-              throw new Error("New window target retired");
-            const host = catalog,
-              session = selectedSession;
-            pendingNewWindow = null;
-            pendingClose = null;
-            snapshot = null;
-            inputReady = false;
-            paneActions = null;
-            status = captured.agent ? "Loading new agent window" : "Loading new terminal window";
-            publish();
-            const current = splitRefreshGuard(() => ({
-              request,
-              session: selectedSession,
-              catalog,
-              presenceRevision,
-              foreground,
-              stopped,
-            }));
-            void refreshSplitInventory({
-              current,
-              originalPane: config.semanticPaneId,
-              createdPane: receipt.result.resource.semanticPaneId,
-              retire,
-              read: () => host.workspacePanes(session, config.workspaceName),
-              selectedSession: session,
-              readSessions: async () => (await host.sessions()).map(sessionChoice),
-              attach: async (_original, choices, freshSessions) => {
-                const created = choices.find(
-                  (p) => p.semanticPaneId === receipt.result.resource.semanticPaneId,
-                );
-                if (!created) throw new Error("Created window unavailable");
-                sessions = freshSessions;
-                panes = choices;
-                selectedPane = created.semanticPaneId;
-                await openPane(
-                  created,
-                  token,
-                  true,
-                  {
-                    window: captured.window,
-                    createdPane: created.semanticPaneId,
-                    originalPane: config.semanticPaneId,
-                    current,
-                  },
-                  current,
-                );
-              },
-            }).catch((error: unknown) => {
-              if (current()) {
-                // Fixed stage only; do not expose raw transport/configuration errors.
-                console.error(
-                  JSON.stringify({
-                    stage: "new-window-refresh-failed",
-                    refreshStage: error instanceof SplitRefreshError ? error.stage : "unknown",
-                    catalog: error instanceof SplitRefreshError ? error.catalog : undefined,
-                  }),
-                );
-                snapshot = null;
-                inputReady = false;
-                status = "New window created; pane unavailable — refresh";
-                publish();
-              }
-            });
-            return false;
-          }
-          if (
-            event.paneSplitReceipt &&
-            pendingPaneSplit &&
-            typeof event.paneSplitReceipt === "object" &&
-            "token" in event.paneSplitReceipt &&
-            event.paneSplitReceipt.token === pendingPaneSplit.token
-          ) {
-            const split = pendingPaneSplit;
-            const receipt = z
-              .object({ token: z.string().uuid(), result: WorkspaceWindowSplitResultSchemaZ })
-              .strict()
-              .parse(event.paneSplitReceipt);
-            if (
-              receipt.token !== split.token ||
-              receipt.result.direction !== split.direction ||
-              receipt.result.daemonInstanceId !== config.scope.generation ||
-              receipt.result.workspaceName !== config.workspaceName ||
-              receipt.result.outcome !== "applied" ||
-              receipt.result.semanticPaneId === config.semanticPaneId
-            )
-              throw new Error("Invalid split receipt");
-            const window = split.window;
-            if (
-              !window ||
-              !catalog ||
-              !selectedSession ||
-              !foreground ||
-              presenceRevision !== split.presenceRevision
-            )
-              throw new Error("Split target retired");
-            const host = catalog,
-              session = selectedSession;
-            pendingPaneSplit = null;
-            pendingNewWindow = null;
-            pendingClose = null;
-            snapshot = null;
-            inputReady = false;
-            paneActions = null;
-            status = "Loading split layout";
-            publish();
-            const current = splitRefreshGuard(() => ({
-              request,
-              session: selectedSession,
-              catalog,
-              presenceRevision,
-              foreground,
-              stopped,
-            }));
-            void refreshSplitInventory({
-              current,
-              originalPane: config.semanticPaneId,
-              createdPane: receipt.result.semanticPaneId,
-              retire,
-              read: () => host.workspacePanes(session, config.workspaceName),
-              selectedSession: session,
-              readSessions: async () => (await host.sessions()).map(sessionChoice),
-              attach: async (original, choices, freshSessions) => {
-                sessions = freshSessions;
-                panes = choices;
-                await openPane(
-                  original,
-                  token,
-                  true,
-                  {
-                    window,
-                    createdPane: receipt.result.semanticPaneId,
-                    current,
-                  },
-                  current,
-                );
-              },
-            }).catch(() => {
-              if (current()) {
-                snapshot = null;
-                inputReady = false;
-                status = "Split applied; pane unavailable — refresh";
-                publish();
-              }
-            });
-            return false;
-          }
-          publicationStage = "epoch";
-          const epoch = z.number().int().nonnegative().safe().parse(event.presentationEpoch);
-          if (childPresentationEpoch !== epoch) presentation.update(undefined, [], false);
-          childPresentationEpoch = epoch;
-          const layout = layouts.find((l) => l.panes.some((p) => p.pane === config.semanticPaneId));
-          publicationStage = "surfaces";
-          const surfaces = typed
-            ? validateSurfaces(event.surfaces ?? [])
-            : sameTail && content!.surfaces
-              ? content!.surfaces
-              : decodeSurfacePublication(event.surfaces ?? [], "rle-v1");
-          if (content) content.surfaces = surfaces;
-          const scrollOffset = z
-            .number()
-            .int()
-            .min(0)
-            .max(1000)
-            .parse(event.scrollOffset ?? 0);
-          const historyAnchor = z
-            .object({
-              state: z.enum([
-                "live",
-                "historical",
-                "restoring",
-                "lost",
-                "unavailable",
-                "unsupported",
-              ]),
-              token: z.uuid().nullable(),
-            })
-            .strict()
-            .nullable()
-            .parse(event.historyAnchor ?? null);
-          const anchorKey = fleet?.attachmentKey(config);
-          const anchorProof = anchorKey ? fleet?.retainedFrameProof(anchorKey) : null;
-          if (anchorKey && anchorProof && historyAnchor) {
-            if (!["live", "lost", "unavailable", "unsupported"].includes(historyAnchor.state)) {
-              retainedHistory.delete(anchorKey);
-              retainedHistory.set(anchorKey, {
-                proof: anchorProof,
-                pane: config.semanticPaneId,
-                token: historyAnchor.token,
-              });
-              while (retainedHistory.size > 8)
-                retainedHistory.delete(retainedHistory.keys().next().value!);
-            } else if (historyAnchor.state !== "restoring") retainedHistory.delete(anchorKey);
-          }
-          appliedPresenceRevision = z
-            .number()
-            .int()
-            .nonnegative()
-            .safe()
-            .parse(event.presenceRevision);
-          const hasAuthority =
-            !pendingClose &&
-            foreground &&
-            appliedPresenceRevision === presenceRevision &&
-            event.inputReady === true &&
-            scrollOffset === 0;
-          publicationStage = "presentation";
-          const coherent = presentation.update(
-            event.snapshot ? layout : undefined,
-            surfaces,
-            hasAuthority,
-          );
-          snapshot = coherent?.snapshot ?? null;
-          const childInputTargets = visibleInputTargets(
-            event.inputTargets,
-            connection,
-            surfaces,
-            coherent,
-          );
-          inputTargets =
-            coherent && hasAuthority
-              ? {
-                  snapshot: coherent.snapshot,
-                  owner: child,
-                  value: childInputTargets,
-                  raw: inputTargetsSchema.parse(event.inputTargets ?? []),
-                }
-              : null;
-          nativeFrameBasis = JSON.stringify([
-            childConnection,
-            epoch,
-            layout,
-            scrollOffset,
-            historyAnchor?.state ?? null,
-            historyAnchor?.token ?? null,
-          ]);
-          const childSelectionIdentity = z
-            .string()
-            .regex(/^[a-f0-9]{64}$/)
-            .nullable()
-            .parse(event.selectionIdentity ?? null);
-          const selectedSurface = surfaces.find(
-            (surface) => surface.paneId === config.semanticPaneId,
-          )?.snapshot;
-          const selectionValue =
-            coherent &&
-            selectedSurface &&
-            selectedSurface.cols === coherent.copyRegion.width &&
-            selectedSurface.rows === coherent.copyRegion.height &&
-            selectedSurface.grid.every(
-              (row, y) =>
-                row.wrapped === coherent.copyRegion.wrapped[y] &&
-                row.cells.every(
-                  (cell, x) =>
-                    cell ===
-                    coherent.snapshot.grid[coherent.copyRegion.top + y]?.cells[
-                      coherent.copyRegion.left + x
-                    ],
-                ),
-            )
-              ? scopeSelectionIdentity(
-                  childSelectionIdentity,
-                  anchorProof ?? null,
-                  layout?.semanticWindowId ?? undefined,
-                  coherent.copyRegion,
-                  coherent.snapshot,
-                )
-              : null;
-          selectionIdentity =
-            coherent && selectionValue
-              ? { snapshot: coherent.snapshot, value: selectionValue }
-              : null;
-          historyOffset = snapshot ? scrollOffset : 0;
-          copyRegion = coherent?.copyRegion ?? null;
-          regions = coherent?.regions ?? [];
-          publicationStage = "graphics";
-          kittyPlacements = coherent
-            ? canvasPlacements(layout, paneGraphicsSchema.parse(event.graphics ?? []))
-            : [];
-          inputReady = hasAuthority && !!snapshot;
-          publicationStage = "resize-token";
-          resizeToken = resizePresentationMatches(layout, coherent?.regions ?? [])
-            ? z
-                .string()
-                .uuid()
-                .nullable()
-                .parse(event.resizeToken ?? null)
-            : null;
-          publicationStage = "split-layout";
-          const offeredSplit = WindowSplitLayoutResourceSchemaZ.nullable().parse(
-            event.splitLayout ?? null,
-          );
-          splitLayout =
-            hasAuthority &&
-            layout &&
-            offeredSplit &&
-            splitLayoutMatches(offeredSplit, layout) &&
-            resizePresentationMatches(layout, coherent?.regions ?? [])
-              ? offeredSplit
-              : null;
-          publicationStage = "split-gesture";
-          const offeredSplitGesture = splitGesturePublicationSchema
-            .nullable()
-            .parse(event.splitGesture ?? null);
-          splitGesture =
-            offeredSplitGesture?.gesture === activeSplitGesture ? offeredSplitGesture : null;
-          resizeGestureSupported = event.resizeGestureSupported === true;
-          publicationStage = "resize-gesture";
-          const offeredGesture = resizeGesturePublicationSchema
-            .nullable()
-            .parse(event.resizeGesture ?? null);
-          resizeGesture =
-            offeredGesture &&
-            activeGesture?.gesture === offeredGesture.gesture &&
-            activeGesture.id === offeredGesture.id &&
-            activeGesture.axis === offeredGesture.axis
-              ? {
-                  ...offeredGesture,
-                  token:
-                    hasAuthority && resizeToken === offeredGesture.token
-                      ? offeredGesture.token
-                      : null,
-                }
-              : null;
-          publicationStage = "pane-actions";
-          const offeredActions = paneActionsSchema.nullable().parse(event.paneActions ?? null);
-          const geometryMatches =
-            !!layout &&
-            layout.panes.length === (coherent?.regions.length ?? 0) &&
-            layout.panes.every((pane) =>
-              coherent?.regions.some(
-                (r) =>
-                  r.id === pane.pane &&
-                  r.left === pane.left &&
-                  r.top === pane.top &&
-                  r.width === pane.width &&
-                  r.height === pane.height,
-              ),
-            );
-          paneActions =
-            inputReady &&
-            geometryMatches &&
-            offeredActions?.id === config.semanticPaneId &&
-            offeredActions.zoomed === layout?.zoomed
-              ? offeredActions
-              : null;
-          status =
-            recoveryNotice && inputReady
-              ? recoveryNotice
-              : event.paneActionError === GENERIC_PANE_ACTION_ERROR ||
-                  event.paneActionError === AGENT_NOT_READY_ERROR
-                ? event.paneActionError
-                : snapshot && scrollOffset > 0
-                  ? `History: ${scrollOffset} lines above live — Shift-End returns to live`
-                  : snapshot
-                    ? inputReady
-                      ? event.resizeBlocked === true
-                        ? "Resize unavailable — reselect pane to retry"
-                        : "Keyboard ready — click terminal to type"
-                      : !foreground
-                        ? "Window inactive — activate tmux-ide to type"
-                        : "Waiting for input authority"
-                    : diagnostics.fault
-                      ? diagnosticStatus(diagnostics.fault)
-                      : "Pane unavailable — select again or refresh";
-          if (historyAnchor?.state === "restoring") status = "Restoring saved history";
-          else if (historyAnchor?.state === "lost")
-            status =
-              scrollOffset > 0
-                ? "History shown but its saved anchor was lost — Shift-End returns to live"
-                : "Saved history is no longer available — live terminal shown";
-          else if (historyAnchor?.state === "unavailable")
-            status =
-              scrollOffset > 0
-                ? "History shown but could not be saved — Shift-End returns to live"
-                : "Saved history could not be restored — live terminal shown";
-          else if (historyAnchor?.state === "unsupported")
-            status =
-              scrollOffset > 0
-                ? "History shown — this daemon cannot retain it across tabs; Shift-End returns to live"
-                : "This daemon cannot restore saved history — live terminal shown";
-          if (!catalogOnly)
-            acceptSessionVisit = () => {
-              if (
-                (!inputReady &&
-                  !(
-                    historyAnchor?.state === "historical" &&
-                    scrollOffset > 0 &&
-                    event.historyReady === true &&
-                    appliedPresenceRevision === presenceRevision
-                  )) ||
-                !snapshot ||
-                !foreground ||
-                stopped ||
-                active?.child !== child ||
-                token !== request ||
-                catalog !== owningCatalog ||
-                admissionPresence !== presenceRevision ||
-                selectedPane !== config.semanticPaneId ||
-                selectedSession !== config.liveSessionId
-              )
-                return;
-              const key = fleet?.attachmentKey(config);
-              if (!key) return;
-              if (
-                !recoveryTarget ||
-                recoveryTarget.request !== token ||
-                recoveryTarget.pane !== config.semanticPaneId
-              ) {
-                const resolve = fleet?.recoveryRoute(key);
-                if (resolve)
-                  recoveryTarget = { resolve, key, pane: config.semanticPaneId, request: token };
-              }
-              const proof = frameProof(key);
-              if (inputReady && proof && coherent)
-                lastCoherentFrame = { request: token, key, proof, snapshot: coherent.snapshot };
-              const tabTarget = fleet?.retainedTarget(key);
-              if (tabTarget) sessionTabs.accept(token, tabTarget);
-              const visit = sessionHistory.accept(token, key),
-                owner = fleet;
-              if (visit && owner)
-                void owner.recordVisit(visit.key).then((saved) => {
-                  if (stopped || fleet !== owner) return;
-                  historySaveFailed = !saved;
-                  publish();
-                });
+        return;
+      const capturedPresence = presenceRevision;
+      const current = () =>
+        !stopped &&
+        foreground &&
+        catalog === owner &&
+        currentDirectScope === bound &&
+        request === bound.request &&
+        selectedSession === bound.config.liveSessionId &&
+        selectedPane === bound.config.semanticPaneId &&
+        presenceRevision === capturedPresence;
+      const key = fleet?.attachmentKey(bound.config);
+      if (key) {
+        sessionHistory.catalogReady(request, key, owner, presenceRevision);
+        sessionTabs.catalogReady(request, key, owner, presenceRevision);
+        acceptSessionVisit = () => {
+          if (!current()) return;
+          const resolve = fleet?.recoveryRoute(key);
+          if (resolve)
+            recoveryTarget = {
+              resolve,
+              key,
+              pane: bound.config.semanticPaneId,
+              request: bound.request,
             };
-          publicationStage = "publish";
+          const tabTarget = fleet?.retainedTarget(key);
+          if (tabTarget) sessionTabs.accept(bound.request, tabTarget);
+          const visit = sessionHistory.accept(bound.request, key),
+            fleetOwner = fleet;
+          if (visit && fleetOwner)
+            void fleetOwner.recordVisit(visit.key).then((saved) => {
+              if (!current() || fleet !== fleetOwner) return;
+              historySaveFailed = !saved;
+              publish();
+            });
+        };
+      }
+      nativeReady = {
+        id: bound.id,
+        request: bound.request,
+        pane: bound.config.semanticPaneId,
+        presence: presenceRevision,
+      };
+      nativePreviews.clear();
+      status = "Live";
+      publish();
+      return;
+    }
+    if (value.type === "native-terminal-refresh") {
+      const bound = currentDirectScope,
+        owner = catalog,
+        capturedPresence = presenceRevision;
+      if (
+        stopped ||
+        !foreground ||
+        surface !== "workspace" ||
+        !bound ||
+        !owner ||
+        request !== bound.request ||
+        selectedSession !== bound.config.liveSessionId
+      )
+        return;
+      const current = () =>
+        !stopped &&
+        foreground &&
+        catalog === owner &&
+        request === bound.request &&
+        selectedSession === bound.config.liveSessionId &&
+        presenceRevision === capturedPresence;
+      void refreshDirectTerminal(bound, value, {
+        current,
+        retire: () => directTerminal.retire(),
+        read: () =>
+          readDirectInventory({
+            current,
+            panes: () =>
+              owner.workspacePanes(bound.config.liveSessionId, bound.config.workspaceName),
+            sessions: () => owner.sessions(),
+            publishSessions: (fresh) => {
+              sessions = fresh;
+            },
+          }),
+        open: async (choice, choices, token) => {
+          if (!current()) return;
+          panes = choices;
+          selectedPane = choice.semanticPaneId;
+          sessionCatalogComplete = true;
+          await openPane(choice, token, false, undefined, current);
+        },
+      }).catch(() => {
+        if (current()) {
+          status = "Native terminal inventory unavailable — refresh";
           publish();
         }
-        return true;
-      } catch {
-        console.error(
-          JSON.stringify({ diagnostic: "child-publication-rejected", stage: publicationStage }),
-        );
-        unavailable();
-        void retire();
-        return false;
-      }
+      });
+      return;
     }
-    if (child instanceof HostedPreviewSession)
-      child.on("publication", (event) => applyChildPublication(event, false, true));
-    child.stdout.on("data", (chunk: Buffer) => {
-      // Fatal helper diagnostics retire this presentation lifetime. Buffered
-      // stdout must not restore a frame or input authority after that fault.
-      if (stopped || request !== token || active?.child !== child || diagnostics.fault) return;
-      let publicationStage = "framing";
-      try {
-        buffer = Buffer.concat([buffer, chunk]);
-        let end;
-        while ((end = buffer.indexOf(10)) >= 0) {
-          publicationStage = "framing";
-          if (end > MAX_FRAME) throw new Error("Oversized child publication");
-          publicationStage = "decode";
-          const line = buffer.subarray(0, end);
-          buffer = buffer.subarray(end + 1);
-          // The helper puts terminal content last behind its byte length. An unchanged
-          // tail (gesture, presence or status-only publications) is not decoded again.
-          const tailBytes = Number(
-            /^\{"surfaceBytes":(\d{1,8}),/.exec(line.toString("latin1", 0, 32))?.[1],
-          );
-          const tailStart = line.length - tailBytes;
-          const sameTail =
-            !!content && tailStart > 0 && line.subarray(tailStart).equals(content.bytes);
-          const event = JSON.parse(
-            sameTail ? line.toString("utf8", 0, tailStart) + "}" : line.toString("utf8"),
-          );
-          if (sameTail) Object.assign(event, content!.value);
-          else
-            content =
-              tailStart > 0
-                ? {
-                    bytes: Buffer.from(line.subarray(tailStart)),
-                    value: { snapshot: event.snapshot, surfaces: event.surfaces },
-                    surfaces: null,
-                  }
-                : null;
-          if (!applyChildPublication(event, sameTail, false)) return;
-        }
-        publicationStage = "framing";
-        if (buffer.length > MAX_FRAME) throw new Error("Oversized child publication");
-      } catch {
-        // Fixed stage metadata only: never log terminal contents or connection credentials.
-        console.error(
-          JSON.stringify({ diagnostic: "child-publication-rejected", stage: publicationStage }),
-        );
-        unavailable();
-        void retire();
-      }
-    });
-  } finally {
-    if (!handedOff) await rm(directory, { recursive: true, force: true });
   }
-}
-async function command(value: unknown) {
-  const cmd = commandSchema.parse(value);
-  if (cmd.type === "frame-resync") {
-    if (nativeWriter.resync(cmd, nativeFrameContext())) {
-      forceNativePublication = true;
-      publish();
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    value.type === "native-history"
+  ) {
+    if (!stopped) {
+      // Keep owner HTTP off the ordered command loop so navigation can cancel it immediately.
+      void directHistory.handle(value).catch(() => {
+        process.stdout.destroy();
+        void stop();
+      });
     }
     return;
   }
-  if (cmd.type === "kitty-missing") {
-    kittyKnown.forget(cmd.digests);
-    if (active && !active.catalogOnly)
-      active.child.stdin?.write(
-        JSON.stringify({ kind: "kitty-missing", digests: cmd.digests }) + "\n",
-      );
+  const cmd = commandSchema.parse(value);
+  if (cmd.type === "native-pane-selected") {
+    if (
+      stopped ||
+      surface !== "workspace" ||
+      cmd.fromRequest !== request ||
+      cmd.request <= highestNavigationAttempt ||
+      !directTerminal.advanceSelection(cmd)
+    )
+      return;
+    // Native completed navigation: either an ACK-fenced selection or a refusal
+    // retaining the current pane. Mirror its request scope without granting authority.
+    highestNavigationAttempt = cmd.request;
+    request = cmd.request;
+    selectedPane = cmd.pane;
+    status = "Live";
+    publish();
     return;
   }
   if (cmd.type === "create-local-session") {
@@ -2662,7 +1690,7 @@ async function command(value: unknown) {
       catalog === owner &&
       surface === "home" &&
       homePhase === "live" &&
-      !active;
+      !currentDirectScope;
     if (!owner || !foreground || cmd.request !== token || !current()) return;
     const createPresence = presenceRevision;
     const createRoute = selectedFleet ? fleet : undefined;
@@ -2697,279 +1725,32 @@ async function command(value: unknown) {
   }
   if (cmd.type === "theme" || cmd.type === "appearance") {
     clearRetainedPreview();
-    retainedFrames.clear();
-    cancelHistoryDrains();
-    retainedHistory.clear();
-    lastCoherentFrame = null;
+
     if (cmd.type === "theme") appearance.select(cmd.id);
     else appearance.setSystem(cmd.system);
     publish();
     return;
   }
   if (cmd.type === "presence") {
-    active?.presentation.update(undefined, [], false);
     foreground = cmd.active;
     if (!foreground) {
       cancelLocalSetup();
       clearRetainedPreview();
-      retainedFrames.clear();
-      cancelHistoryDrains();
-      retainedHistory.clear();
-      lastCoherentFrame = null;
+
       workspaceFleetAgents.cancel();
       sessionHistory.cancel();
       sessionTabs.cancel();
       attention.cancel();
       palette.cancel();
       initialPane = null;
-      pendingPaneSplit = null;
-      pendingNewWindow = null;
-      pendingClose = null;
     }
     if (foreground) {
       startAgents();
       if (localSetupContext() && homePhase === "unavailable") launchRefresh(request);
     } else retireAgents();
     presenceRevision = cmd.revision;
-    inputReady = false;
-    paneActions = null;
-    if (active?.child.stdin && !active.catalogOnly) {
-      if (active.child.stdin.writableLength > MAX_INPUT_LINE * 2) {
-        await retire();
-        throw new Error("Presence queue full");
-      }
-      active.child.stdin.write(
-        JSON.stringify({ kind: "presence", active: foreground, revision: presenceRevision }) + "\n",
-      );
-    }
+    nativeReady = null;
     publish();
-    return;
-  }
-  if (cmd.type === "open-editor") {
-    const key = `${cmd.request}\0${cmd.id}\0${cmd.token}`;
-    const owner = catalog;
-    const pane = panes.find((candidate) => candidate.semanticPaneId === cmd.id);
-    const session = selectedSession;
-    const capturedPresence = presenceRevision;
-    const helper = active;
-    const current = () =>
-      !stopped &&
-      catalog === owner &&
-      active === helper &&
-      surface === "workspace" &&
-      request === cmd.request &&
-      selectedSession === session &&
-      selectedPane === cmd.id &&
-      paneActions?.id === cmd.id &&
-      paneActions.token === cmd.token &&
-      foreground &&
-      presenceRevision === capturedPresence &&
-      inputReady &&
-      snapshot !== null;
-    if (editorPending || editorConsumed === key || !owner || !pane || !session || !current())
-      return;
-    editorPending = true;
-    editorConsumed = key;
-    status = "Opening selected pane folder in VS Code";
-    editorMessage = { request: cmd.request, id: cmd.id, text: status };
-    publish();
-    // Do not block stdin: presence/navigation must be able to revoke an in-flight read.
-    void openSelectedPaneEditor({
-      proof: owner.localProof,
-      current,
-      read: (signal) => owner.paneEditorContext(pane.workspaceName, session, cmd.id, signal),
-    })
-      .then((message) => {
-        if (current()) {
-          status = message;
-          editorMessage = { request: cmd.request, id: cmd.id, text: message };
-          publish();
-        }
-      })
-      .finally(() => {
-        editorPending = false;
-      });
-    return;
-  }
-  if (cmd.type === "pane-action") {
-    editorMessage = null;
-    if (
-      surface !== "workspace" ||
-      inputTargetRejected ||
-      cmd.request !== request ||
-      cmd.id !== selectedPane ||
-      cmd.id !== paneActions?.id ||
-      cmd.token !== paneActions.token ||
-      !inputReady ||
-      !foreground ||
-      !snapshot ||
-      !active?.child.stdin
-    )
-      return;
-    const line = JSON.stringify(cmd) + "\n";
-    if (
-      Buffer.byteLength(line) > MAX_INPUT_LINE ||
-      active.child.stdin.writableLength > MAX_INPUT_LINE * 2
-    )
-      throw new Error("Pane action queue full");
-    paneActions = null;
-    if (cmd.action === "close")
-      pendingClose = { token: cmd.token, id: cmd.id, presenceRevision, submitted: false };
-    if (cmd.action === "split" || cmd.action === "new-window" || cmd.action === "new-agent") {
-      const window = layouts.find((layout) =>
-        layout.panes.some((pane) => pane.pane === cmd.id),
-      )?.semanticWindowId;
-      if (!window) throw new Error("Split window unavailable");
-      if (cmd.action === "split") pendingPaneSplit = { ...cmd, window, presenceRevision };
-      else
-        pendingNewWindow = {
-          token: cmd.token,
-          window,
-          presenceRevision,
-          ...(cmd.action === "new-agent"
-            ? { agent: { name: cmd.name, harness: cmd.harness } }
-            : {}),
-        };
-    }
-    publish();
-    active.child.stdin.write(line);
-    return;
-  }
-  if (cmd.type === "split-gesture") {
-    if (surface !== "workspace" || cmd.request !== request || !active?.child.stdin) return;
-    if (cmd.phase === "begin") {
-      if (
-        !foreground ||
-        !inputReady ||
-        !snapshot ||
-        !splitLayout ||
-        cmd.target.layoutId !== splitLayout.layoutId ||
-        JSON.stringify(cmd.target.window) !== JSON.stringify(splitLayout.window) ||
-        !splitLayout.splits.some(
-          (split) =>
-            split.splitId === cmd.target.splitId &&
-            split.axis === cmd.axis &&
-            split.boundary === cmd.target.boundary,
-        ) ||
-        (activeSplitGesture &&
-          (!splitGesture || ["dragging", "pending"].includes(splitGesture.phase))) ||
-        (activeGesture && (!resizeGesture || ["dragging", "pending"].includes(resizeGesture.phase)))
-      )
-        return;
-      activeSplitGesture = cmd.gesture;
-    } else if (cmd.gesture !== activeSplitGesture || (!foreground && cmd.phase !== "cancel"))
-      return;
-    if (active.child.stdin.writableLength > MAX_INPUT_LINE * 2)
-      throw new Error("Split gesture queue full");
-    active.child.stdin.write(JSON.stringify(cmd) + "\n");
-    return;
-  }
-  if (cmd.type === "resize-gesture") {
-    if (
-      surface !== "workspace" ||
-      cmd.request !== request ||
-      !active?.child.stdin ||
-      !resizeGestureSupported
-    )
-      return;
-    if (cmd.phase === "begin") {
-      if (
-        activeSplitGesture &&
-        (!splitGesture || ["dragging", "pending"].includes(splitGesture.phase))
-      )
-        return;
-      if (
-        !inputReady ||
-        !foreground ||
-        !snapshot ||
-        cmd.token !== resizeToken ||
-        !regions.some(
-          (region) =>
-            typeof region === "object" && region !== null && "id" in region && region.id === cmd.id,
-        )
-      )
-        return;
-      if (
-        activeGesture &&
-        (!resizeGesture || ["dragging", "pending"].includes(resizeGesture.phase))
-      )
-        return;
-      activeGesture = { gesture: cmd.gesture, id: cmd.id, axis: cmd.axis, request: cmd.request };
-    } else if (
-      !activeGesture ||
-      activeGesture.gesture !== cmd.gesture ||
-      activeGesture.id !== cmd.id ||
-      activeGesture.axis !== cmd.axis ||
-      (!foreground && cmd.phase !== "cancel")
-    )
-      return;
-    if (active.child.stdin.writableLength > MAX_INPUT_LINE * 2)
-      throw new Error("Resize gesture queue full");
-    active.child.stdin.write(JSON.stringify(cmd) + "\n");
-    return;
-  }
-  if (cmd.type === "resize-pane") {
-    if (
-      surface !== "workspace" ||
-      cmd.request !== request ||
-      cmd.token !== resizeToken ||
-      !inputReady ||
-      !foreground ||
-      !snapshot ||
-      !active?.child.stdin ||
-      !regions.some(
-        (region) =>
-          typeof region === "object" && region !== null && "id" in region && region.id === cmd.id,
-      )
-    )
-      return;
-    if (active.child.stdin.writableLength > MAX_INPUT_LINE * 2)
-      throw new Error("Resize queue full");
-    active.child.stdin.write(JSON.stringify(cmd) + "\n");
-    return;
-  }
-  if (cmd.type === "input") {
-    if (
-      cmd.request !== request ||
-      cmd.id !== selectedPane ||
-      (!inputReady &&
-        cmd.input.kind !== "scroll" &&
-        !(cmd.input.kind === "wheel" && historyOffset > 0)) ||
-      !foreground ||
-      !snapshot ||
-      !active?.child.stdin
-    )
-      return; // Discard stale/focus-lost input, never reinterpret it for another pane.
-    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel") {
-      active.presentation.update(undefined, [], false);
-    }
-    let outgoing: unknown = cmd.input;
-    if (cmd.inputTarget !== undefined) {
-      const raw =
-        inputTargets?.snapshot === snapshot && inputTargets?.owner === active.child
-          ? resolveInputTarget(cmd.inputTarget, cmd.id, inputTargets.value, inputTargets.raw)
-          : null;
-      if (!raw || !previewInputSchema.safeParse(cmd.input).success) {
-        process.stderr.write("TMUX_GPUI_INPUT_TARGET_REJECTED\n");
-        inputTargetRejected = true;
-        inputReady = false;
-        inputTargets = null;
-        active.child.stdin.end();
-        status = "Input interrupted — reselect the pane, then retype";
-        publish();
-        return;
-      }
-      outgoing = { kind: "fenced-input", id: cmd.id, inputTarget: raw, input: cmd.input };
-    }
-    const line = JSON.stringify(outgoing) + "\n";
-    if (
-      Buffer.byteLength(line) > MAX_INPUT_LINE ||
-      active.child.stdin.writableLength > MAX_INPUT_LINE * 2
-    )
-      throw new Error("Input queue full");
-    active.child.stdin.write(line);
-    if (cmd.input.kind === "scroll" || cmd.input.kind === "wheel")
-      active.historyIntent = historyDrainEpoch;
     return;
   }
   if (cmd.type === "open-workspace-fleet-agent") {
@@ -3007,10 +1788,7 @@ async function command(value: unknown) {
       !stopped && request === token && foreground && presenceRevision === capturedPresence;
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     surface = "workspace";
     selectedSession = null;
     panes = [];
@@ -3069,10 +1847,7 @@ async function command(value: unknown) {
       !stopped && request === token && foreground && presenceRevision === capturedPresence;
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     selectedSession = null;
     panes = [];
     layouts = [];
@@ -3126,10 +1901,7 @@ async function command(value: unknown) {
       !stopped && request === token && foreground && presenceRevision === capturedPresence;
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     surface = "workspace";
     selectedSession = null;
     panes = [];
@@ -3176,10 +1948,7 @@ async function command(value: unknown) {
     retireAgents();
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     surface = "workspace";
     selectedSession = null;
     panes = [];
@@ -3229,10 +1998,7 @@ async function command(value: unknown) {
     retireAgents();
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     surface = "workspace";
     selectedSession = null;
     panes = [];
@@ -3277,10 +2043,7 @@ async function command(value: unknown) {
     initialPane = null;
     const token = request;
     retireAgents();
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     await retire();
     if (!valid || !host || !workspace || !row) throw new Error("Workspace agent is stale");
     const choices = await host.workspacePanes(cmd.sessionId, workspace);
@@ -3320,10 +2083,7 @@ async function command(value: unknown) {
     retireAgents();
     sessionCatalogComplete = false;
     initialPane = null;
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
-    paneActions = null;
     await retire();
     if (!valid || !target) throw new Error("Fleet agent selection is stale");
     if (stopped || token !== request || !foreground || capturedPresence !== presenceRevision)
@@ -3365,8 +2125,6 @@ async function command(value: unknown) {
     sessionCatalogComplete = false;
     initialPane = null;
     retireAgents();
-    snapshot = null;
-    inputReady = false;
     selectedPane = null;
     if (!valid || !row || !host) throw new Error("Agent selection is stale");
     const token = request;
@@ -3390,8 +2148,8 @@ async function command(value: unknown) {
     return;
   }
   if (!admitNavigationAttempt(cmd.request)) throw new Error("Stale browser command");
-  // The completed metadata helper has retired. Only its proved catalog and exact displayed pane may
-  // carry a pending traversal into the newer interactive-child request.
+  // Only the proved catalog and exact displayed pane may carry a pending traversal
+  // into the newer native connection request.
   const continuationPane =
     cmd.type === "pane" && catalog && sessionCatalogComplete
       ? panes.find(
@@ -3400,8 +2158,7 @@ async function command(value: unknown) {
       : undefined;
   const continuationKey =
     continuationPane && foreground ? fleet?.attachmentKey(continuationPane) : null;
-  if (retainedPreview && continuationKey === retainedPreview.key)
-    retainedPreview.request = cmd.request;
+  if (continuationKey) nativePreviews.continue(continuationKey, cmd.request);
   const historyContinuation = continuationKey
     ? { fromRequest: request, key: continuationKey, catalog: catalog!, presence: presenceRevision }
     : undefined;
@@ -3417,28 +2174,7 @@ async function command(value: unknown) {
   sessionCatalogComplete = false;
   initialPane = null;
   const token = request;
-  if (cmd.type === "pane" && surface === "workspace" && !retainedPreview) {
-    // Another pane of the displayed window: keep the frame and attachment, and let the
-    // helper confirm the new target before input is admitted again.
-    const pane = panes.find(
-      (p) => p.semanticPaneId === cmd.id && p.liveSessionId === selectedSession,
-    );
-    if (!inputTargetRejected && pane && active?.reselect?.(pane, token)) {
-      selectedPane = cmd.id;
-      inputReady = false;
-      paneActions = null;
-      resizeToken = null;
-      splitLayout = null;
-      copyRegion = null;
-      selectionIdentity = null;
-      status = "Loading";
-      return;
-    }
-  }
-  snapshot = null;
-  inputReady = false;
   selectedPane = null;
-  paneActions = null;
   status = "Loading";
   surface =
     cmd.type === "home" ||
@@ -3647,8 +2383,6 @@ try {
         sessionTabs.cancel();
         sessionCatalogComplete = true;
         initialPane = null;
-        snapshot = null;
-        inputReady = false;
         if (surface === "home") {
           homePhase = "unavailable";
           retireAgents();

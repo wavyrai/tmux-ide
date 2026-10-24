@@ -163,6 +163,8 @@ try {
     "build",
     "--locked",
     "--offline",
+    "--jobs",
+    "1",
     "-p",
     "herdr-gpui",
     "--bin",

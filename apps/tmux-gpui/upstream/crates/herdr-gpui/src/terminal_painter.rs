@@ -1,9 +1,13 @@
+mod access;
+mod frame;
+pub(crate) use frame::{FrameView, NativeFrame};
 mod area;
 mod glyphs;
 mod graphics;
 mod grid;
 mod images;
 
+use self::access::link_bounds;
 use self::area::whole;
 pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
 use self::glyphs::GlyphCache;
@@ -153,32 +157,6 @@ impl Default for TerminalPainter {
             uncached: false,
         }
     }
-}
-
-/// The cell rectangle covering every in-frame cell of `rows`, if any.
-fn link_bounds(frame: &FrameData, rows: &[(u16, std::ops::Range<u16>)]) -> Option<SurfaceRect> {
-    let mut cells = rows.iter().filter_map(|(row, columns)| {
-        let end = columns.end.min(frame.width);
-        (*row < frame.height && columns.start < end).then_some((*row, columns.start, end))
-    });
-    let (row, start, end) = cells.next()?;
-    let (top, bottom, left, right) = cells.fold(
-        (row, row, start, end),
-        |(top, bottom, left, right), (row, start, end)| {
-            (
-                top.min(row),
-                bottom.max(row),
-                left.min(start),
-                right.max(end),
-            )
-        },
-    );
-    Some(SurfaceRect {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top + 1,
-    })
 }
 
 fn decoration_offsets(cell: &CellData, cell_height: f32) -> impl Iterator<Item = f32> + '_ {
@@ -395,9 +373,9 @@ impl TerminalPainter {
     /// Underlines the cells of a hovered link, painted after `paint_frame`
     /// for the same frame and origin. Each cell takes its own text color, as
     /// an SGR underline would, and spaces along the link are underlined too.
-    pub fn paint_link(
+    pub fn paint_link_view(
         &self,
-        frame: &FrameData,
+        frame: FrameView<'_>,
         origin: Point<Pixels>,
         cell_width: f32,
         rows: &[(u16, std::ops::Range<u16>)],
@@ -419,12 +397,13 @@ impl TerminalPainter {
         );
         window.paint_layer(layer, |window| {
             for (row, columns) in rows {
-                if *row >= frame.height {
+                if *row >= frame.height() {
                     continue;
                 }
-                for column in columns.start..columns.end.min(frame.width) {
-                    let index = usize::from(*row) * usize::from(frame.width) + usize::from(column);
-                    let Some(data) = frame.cells.get(index) else {
+                for column in columns.start..columns.end.min(frame.width()) {
+                    let index =
+                        usize::from(*row) * usize::from(frame.width()) + usize::from(column);
+                    let Some(data) = frame.cell_at(index) else {
                         continue;
                     };
                     let position = origin
@@ -452,9 +431,9 @@ impl TerminalPainter {
     /// outside the frame are ignored: a selection or search was made against
     /// the live surface, which a repaint may already have replaced.
     #[allow(clippy::too_many_arguments)]
-    pub fn paint_frame(
+    pub fn paint_view(
         &mut self,
-        frame: &FrameData,
+        frame: FrameView<'_>,
         origin: Point<Pixels>,
         available: Option<Size<Pixels>>,
         cell_width: f32,
@@ -465,9 +444,9 @@ impl TerminalPainter {
         images: Option<PlacedImages<'_>>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        if frame.width == 0 {
-            return;
+    ) -> bool {
+        if frame.width() == 0 {
+            return false;
         }
         // CPU scene construction only: this does not measure GPU completion.
         let started = Instant::now();
@@ -481,8 +460,8 @@ impl TerminalPainter {
         let grid = Bounds::new(
             origin,
             size(
-                px(f32::from(frame.width) * cell_width),
-                px(f32::from(frame.height) * self.cell_height),
+                px(f32::from(frame.width()) * cell_width),
+                px(f32::from(frame.height()) * self.cell_height),
             ),
         );
         // Only fill a sub-cell remainder. Retained frames during resize and
@@ -509,7 +488,7 @@ impl TerminalPainter {
         // The daemon's cell scrollbar is replaced by the pixel thumb painted below.
         let bars: Vec<SurfaceRect> = panes.iter().filter_map(|p| p.scrollbar_rect).collect();
         let in_bar = |index: usize| {
-            let width = usize::from(frame.width);
+            let width = usize::from(frame.width());
             bars.iter()
                 .any(|r| in_rect(*r, (index % width) as u16, (index / width) as u16))
         };
@@ -535,18 +514,18 @@ impl TerminalPainter {
         if draws(Layer::Backgrounds) {
             window.paint_layer(Bounds::new(origin, background), |window| {
                 // Backgrounds precede all glyphs, including wide graphemes' skip cells.
-                let width = usize::from(frame.width);
+                let width = usize::from(frame.width());
                 for range in cell_ranges(frame, area) {
                     let y = range.start / width;
-                    let row = &frame.cells[y * width..((y + 1) * width).min(frame.cells.len())];
+                    let row = frame.row(y).unwrap_or_default();
                     let columns = range.start - y * width..range.end - y * width;
                     let mut paint = |start: usize, end: usize, color| {
-                        let right = if end == usize::from(frame.width) {
+                        let right = if end == usize::from(frame.width()) {
                             background.width
                         } else {
                             px(end as f32 * cell_width)
                         };
-                        let bottom = if extend_last_row && y + 1 == usize::from(frame.height) {
+                        let bottom = if extend_last_row && y + 1 == usize::from(frame.height()) {
                             background.height
                         } else {
                             px((y + 1) as f32 * self.cell_height)
@@ -579,9 +558,11 @@ impl TerminalPainter {
                 // Between the backgrounds and the glyphs, so the tint reads as chosen
                 // without hiding either.
                 for Highlight { row, columns, tint } in &clip(highlights, area) {
-                    let (start, end) =
-                        (columns.start.min(frame.width), columns.end.min(frame.width));
-                    if *row >= frame.height || start >= end {
+                    let (start, end) = (
+                        columns.start.min(frame.width()),
+                        columns.end.min(frame.width()),
+                    );
+                    if *row >= frame.height() || start >= end {
                         continue;
                     }
                     let (top, bottom) = (f32::from(*row), f32::from(*row) + 1.);
@@ -644,14 +625,16 @@ impl TerminalPainter {
                 // above the backgrounds. Decorations cover the grid, including spaces
                 // and wide-glyph continuation cells.
                 for index in cell_ranges(frame, area).flatten() {
-                    let cell = &frame.cells[index];
+                    let Some(cell) = frame.cell_at(index) else {
+                        continue;
+                    };
                     if in_bar(index) {
                         continue;
                     }
                     let position = origin
                         + point(
-                            px((index % usize::from(frame.width)) as f32 * cell_width),
-                            px((index / usize::from(frame.width)) as f32 * self.cell_height),
+                            px((index % usize::from(frame.width())) as f32 * cell_width),
+                            px((index / usize::from(frame.width())) as f32 * self.cell_height),
                         );
                     if let Some(graphic) = (!cell.skip)
                         .then(|| Graphic::from_symbol(&cell.symbol))
@@ -671,8 +654,8 @@ impl TerminalPainter {
                         );
                     }
                     let (column, row) = (
-                        index % usize::from(frame.width),
-                        index / usize::from(frame.width),
+                        index % usize::from(frame.width()),
+                        index / usize::from(frame.width()),
                     );
                     for y in decoration_offsets(cell, self.cell_height) {
                         // Absolute corners keep a run of underlined cells one unbroken line.
@@ -692,8 +675,11 @@ impl TerminalPainter {
                         }
                     }
                 }
-                if let Some(cursor) = frame.cursor.as_ref().filter(|c| {
-                    c.visible && c.x < frame.width && c.y < frame.height && covers(area, c.x, c.y)
+                if let Some(cursor) = frame.cursor().filter(|c| {
+                    c.visible
+                        && c.x < frame.width()
+                        && c.y < frame.height()
+                        && covers(area, c.x, c.y)
                 }) {
                     let position = origin + cursor_offset(cursor, cell_width, self.cell_height);
                     let (offset, dimensions) = match cursor.shape {
@@ -745,7 +731,9 @@ impl TerminalPainter {
             });
         }
         // Kitty draws `z >= 0` over the text, decorations and cursor included.
-        paint_errors += self.paint_images(&above, window);
+        if draws(Layer::Decorations) {
+            paint_errors += self.paint_images(&above, window);
+        }
         #[cfg(feature = "integration-test")]
         {
             let total = cx.default_global::<crate::performance::Counts>();
@@ -784,6 +772,7 @@ impl TerminalPainter {
         if let Some(count) = self.diagnostics.take_errors(now, paint_errors) {
             tracing::warn!(category = "glyph_paint", count, "Terminal paint failed");
         }
+        paint_errors == 0
     }
 
     /// Paints images in order, returning how many failed.
@@ -813,7 +802,7 @@ impl TerminalPainter {
     #[allow(clippy::too_many_arguments)]
     fn paint_text(
         &mut self,
-        frame: &FrameData,
+        frame: FrameView<'_>,
         area: &[Span],
         origin: Point<Pixels>,
         cell_width: f32,
@@ -825,7 +814,9 @@ impl TerminalPainter {
     ) -> u64 {
         let mut paint_errors = 0;
         for index in cell_ranges(frame, area).flatten() {
-            let cell = &frame.cells[index];
+            let Some(cell) = frame.cell_at(index) else {
+                continue;
+            };
             if cell.skip
                 || cell.symbol.is_empty()
                 || cell.symbol == " "
@@ -836,13 +827,13 @@ impl TerminalPainter {
             }
             if let Some(separator) = CellSeparator::from_symbol(&cell.symbol) {
                 let (column, row) = (
-                    index % usize::from(frame.width),
-                    index / usize::from(frame.width),
+                    index % usize::from(frame.width()),
+                    index / usize::from(frame.width()),
                 );
                 // A separator the daemon measures as wide spans its continuation cell,
                 // as the font glyph would.
-                let wide = column + 1 < usize::from(frame.width)
-                    && frame.cells.get(index + 1).is_some_and(|next| next.skip);
+                let wide = column + 1 < usize::from(frame.width())
+                    && frame.cell_at(index + 1).is_some_and(|next| next.skip);
                 let cells = if wide { 2 } else { 1 };
                 let (near, far) = grid_corners(
                     window,
@@ -892,8 +883,8 @@ impl TerminalPainter {
             };
             let position = origin
                 + point(
-                    px((index % usize::from(frame.width)) as f32 * cell_width),
-                    px((index / usize::from(frame.width)) as f32 * self.cell_height),
+                    px((index % usize::from(frame.width())) as f32 * cell_width),
+                    px((index / usize::from(frame.width())) as f32 * self.cell_height),
                 );
             let color = rgb(cell_colors(cell, &self.theme).0);
             let result = paint_glyphs(shaped, position, px(self.cell_height), color, window);

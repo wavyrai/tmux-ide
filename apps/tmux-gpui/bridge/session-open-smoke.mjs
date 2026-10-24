@@ -11,6 +11,7 @@ import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratc
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import { stopFixtureChild } from "./fixture-child.mjs";
+import { startNativeJourney, isNativeTerminalEvent } from "./native-journey-fixture.mjs";
 const app = process.env.TMUX_GPUI_TEST_APP;
 if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
 const longNameMode = process.env.TMUX_GPUI_TEST_LONG_SESSION_NAME;
@@ -35,7 +36,7 @@ const run = (...args) =>
     encoding: "utf8",
     timeout: 5000,
   }).trim();
-let daemon, browser, latest, fatal, result;
+let daemon, browser, native, latest, fatal, result;
 let buffer = "",
   stderr = "";
 const failures = [];
@@ -43,6 +44,7 @@ async function until(predicate) {
   const deadline = Date.now() + 25000;
   for (;;) {
     if (fatal) throw fatal;
+    native?.assertHealthy();
     if (predicate()) return;
     if (browser && (browser.exitCode !== null || browser.signalCode !== null))
       throw new Error("Browser exited");
@@ -56,7 +58,7 @@ try {
   );
   assert.equal(windows.length, 2);
   run("select-window", "-t", windows[1]);
-  const activeRuntime = run("display-message", "-p", "-t", windows[1], "#{pane_id}");
+  let activeRuntime = run("display-message", "-p", "-t", windows[1], "#{pane_id}");
   if (longSessionName) {
     run("rename-session", "-t", `=${fleet.sessionNames[0]}`, longSessionName);
     assert.equal(
@@ -94,6 +96,7 @@ try {
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
+  native = startNativeJourney(browser);
   browser.on("error", (error) => {
     fatal ??= error;
   });
@@ -109,7 +112,8 @@ try {
       let end;
       while ((end = buffer.indexOf("\n")) >= 0) {
         assert.ok(end <= 8 * 1024 * 1024);
-        latest = JSON.parse(buffer.slice(0, end));
+        const event = JSON.parse(buffer.slice(0, end));
+        if (!isNativeTerminalEvent(event)) latest = event;
         buffer = buffer.slice(end + 1);
       }
       assert.ok(buffer.length <= 8 * 1024 * 1024);
@@ -126,7 +130,19 @@ try {
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
   assert.equal(latest.selectedPane, null);
-  const expected = run("show-options", "-p", "-v", "-t", activeRuntime, "@tmux_ide_pane_id");
+  // Native topology is keyed by semantic window identity, not creation order.
+  // Select the actual last catalog choice so this scenario is deterministic.
+  const expected = latest.panes.at(-1).id;
+  const nativeRow = run("list-panes", "-a", "-F", "#{pane_id}|#{@tmux_ide_pane_id}")
+    .split("\n")
+    .find((row) => row.split("|")[1] === expected);
+  assert.ok(nativeRow);
+  activeRuntime = nativeRow.split("|")[0];
+  send({ type: "home", request: 2 });
+  await until(() => latest?.request === 2 && latest.surface === "home");
+  run("select-window", "-t", activeRuntime);
+  send({ type: "session", request: 3, id: session });
+  await until(() => latest?.request === 3 && latest.sessionCatalogComplete);
   assert.ok(expected);
   assert.notEqual(latest.panes[0].id, expected, "active window must not be first inventory choice");
   assert.equal(
@@ -134,15 +150,22 @@ try {
     expected,
     "metadata must identify authoritative current-window active pane",
   );
-  send({ type: "pane", request: 2, id: latest.preferredPane });
-  await until(() => latest?.request === 2 && latest.snapshot && latest.inputReady);
+  send({ type: "pane", request: 4, id: latest.preferredPane });
+  await until(
+    () => latest?.request === 4 && native.state?.request === 4 && native.state.inputReady,
+  );
+  assert.equal(latest.snapshot, null, "Node must not reconstruct terminal snapshots");
+  assert.equal(latest.inputReady, false, "Rust owns input readiness");
+  assert.equal(native.state.selectedPane, expected);
+  assert.equal(native.state.coherent, true);
   assert.equal(latest.selectedPane, expected);
   assert.equal(latest.preferredPane, null);
-  send({ type: "session", request: 3, id: session });
-  send({ type: "home", request: 4 });
+  send({ type: "session", request: 5, id: session });
+  send({ type: "home", request: 6 });
   await until(
-    () => latest?.request === 4 && latest.surface === "home" && latest.home.phase === "live",
+    () => latest?.request === 6 && latest.surface === "home" && latest.home.phase === "live",
   );
+  await until(() => native.state === null);
   assert.equal(latest.preferredPane, null);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
@@ -160,6 +183,8 @@ try {
     currentWindowNotFirst: true,
     metadataOnly: true,
     explicitPaneFollowup: true,
+    directRustInputReady: true,
+    nodeTerminalSnapshots: false,
     staleSessionRetired: true,
     ...(longSessionName ? { unicodeSpacedSessionStream: true, exactNativeNameRetained: true } : {}),
   };
@@ -167,6 +192,7 @@ try {
   failures.push(error);
 } finally {
   for (const cleanup of [
+    () => native?.stop(),
     () => stopFixtureChild(browser),
     () => daemon?.stop(),
     () => fleet.dispose(),

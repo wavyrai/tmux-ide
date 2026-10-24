@@ -1,7 +1,7 @@
 use super::*;
 fn prepare(view: &mut SnapshotView) {
     historical_selection_tests::history(view);
-    let mut frame = (**view.frame.as_ref().unwrap()).clone();
+    let mut frame = view.frame.as_ref().unwrap().legacy().as_ref().clone();
     for cell in &mut frame.cells {
         cell.symbol = " ".into();
         cell.skip = false;
@@ -10,9 +10,15 @@ fn prepare(view: &mut SnapshotView) {
         cell.symbol = c.to_string();
     }
     let frame = Arc::new(frame);
-    view.frame = Some(frame.clone());
-    view.browser_state.frame = Some(frame.clone());
-    view.painted_frame = Some(frame);
+    view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.painted_frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame,
+    ));
 }
 #[gpui::test]
 fn modifier_click_opens_without_input_or_rearming(cx: &mut TestAppContext) {

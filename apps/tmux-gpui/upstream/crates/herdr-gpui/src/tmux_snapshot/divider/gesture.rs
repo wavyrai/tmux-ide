@@ -46,6 +46,7 @@ pub(in crate::tmux_snapshot) enum Update {
     Cancel,
 }
 struct Active {
+    preview: Drag,
     request: u64,
     session: String,
     selected: String,
@@ -82,6 +83,7 @@ impl Owner {
             return;
         };
         self.active = Some(Active {
+            preview: drag.clone(),
             request: drag.request,
             session: drag.session.clone(),
             selected: drag.selected.clone(),
@@ -115,8 +117,15 @@ impl Owner {
                 a.progress = Instant::now();
             }
             a.desired = cells;
+            a.preview.cells = cells;
             a.released |= release;
         }
+    }
+    pub(super) fn released_preview(&self) -> Option<&Drag> {
+        self.active
+            .as_ref()
+            .filter(|a| a.released && !a.cancel)
+            .map(|a| &a.preview)
     }
     fn target_current(
         &self,

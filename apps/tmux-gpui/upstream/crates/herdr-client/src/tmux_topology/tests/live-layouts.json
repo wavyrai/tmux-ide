@@ -1,0 +1,150 @@
+{
+  "source": "Owned scratch-fleet/startDaemon live split and close qualification; each membership change retired the prior stream and a newly issued capability produced coherent Rust presentation. No terminal cells or credentials captured.",
+  "frames": [
+    {
+      "phase": "split",
+      "issuedPanes": 1,
+      "frame": {
+        "layouts": [
+          {
+            "cols": 80,
+            "currentWindow": true,
+            "modeKeys": "emacs",
+            "paneBorderStatus": "top",
+            "panes": [
+              {
+                "active": true,
+                "displayName": "vivid-puffin",
+                "displayNameSource": "generated",
+                "height": 24,
+                "left": 0,
+                "pane": "pane.promoted.e24836bb3594ead63e5c",
+                "top": 0,
+                "width": 80
+              }
+            ],
+            "rows": 24,
+            "semanticWindowId": "window.promoted.163563dec3216ecda4b8",
+            "type": "layout",
+            "windowName": "one",
+            "zoomed": false
+          }
+        ],
+        "topologyEpoch": 0,
+        "type": "layout-snapshot",
+        "windowLinks": {
+          "activeLinkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+          "linkRevision": 1,
+          "links": [
+            {
+              "displayIndex": 0,
+              "linkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+              "semanticWindowId": "window.promoted.163563dec3216ecda4b8"
+            }
+          ],
+          "liveSessionId": "live-session.4e4f2a06d77e4107b737"
+        }
+      }
+    },
+    {
+      "phase": "close",
+      "issuedPanes": 2,
+      "frame": {
+        "layouts": [
+          {
+            "cols": 80,
+            "currentWindow": true,
+            "modeKeys": "emacs",
+            "paneBorderStatus": "top",
+            "panes": [
+              {
+                "active": true,
+                "displayName": "vivid-puffin",
+                "displayNameSource": "generated",
+                "height": 24,
+                "left": 0,
+                "pane": "pane.promoted.e24836bb3594ead63e5c",
+                "top": 0,
+                "width": 40
+              },
+              {
+                "active": false,
+                "displayName": "brave-condor",
+                "displayNameSource": "generated",
+                "height": 24,
+                "left": 41,
+                "pane": "pane.mirror.2e439ae97ea825ba",
+                "top": 0,
+                "width": 39
+              }
+            ],
+            "rows": 24,
+            "semanticWindowId": "window.promoted.163563dec3216ecda4b8",
+            "type": "layout",
+            "windowName": "one",
+            "zoomed": false
+          }
+        ],
+        "topologyEpoch": 1,
+        "type": "layout-snapshot",
+        "windowLinks": {
+          "activeLinkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+          "linkRevision": 1,
+          "links": [
+            {
+              "displayIndex": 0,
+              "linkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+              "semanticWindowId": "window.promoted.163563dec3216ecda4b8"
+            }
+          ],
+          "liveSessionId": "live-session.4e4f2a06d77e4107b737"
+        }
+      }
+    },
+    {
+      "phase": "final",
+      "issuedPanes": 1,
+      "frame": {
+        "layouts": [
+          {
+            "cols": 80,
+            "currentWindow": true,
+            "modeKeys": "emacs",
+            "paneBorderStatus": "top",
+            "panes": [
+              {
+                "active": true,
+                "displayName": "vivid-puffin",
+                "displayNameSource": "generated",
+                "height": 24,
+                "left": 0,
+                "pane": "pane.promoted.e24836bb3594ead63e5c",
+                "top": 0,
+                "width": 80
+              }
+            ],
+            "rows": 24,
+            "semanticWindowId": "window.promoted.163563dec3216ecda4b8",
+            "type": "layout",
+            "windowName": "one",
+            "zoomed": false
+          }
+        ],
+        "topologyEpoch": 2,
+        "type": "layout-snapshot",
+        "windowLinks": {
+          "activeLinkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+          "linkRevision": 1,
+          "links": [
+            {
+              "displayIndex": 0,
+              "linkId": "window-link.42687c6eaecd4e59bf05b749841f99d5",
+              "semanticWindowId": "window.promoted.163563dec3216ecda4b8"
+            }
+          ],
+          "liveSessionId": "live-session.4e4f2a06d77e4107b737"
+        }
+      }
+    }
+  ]
+}

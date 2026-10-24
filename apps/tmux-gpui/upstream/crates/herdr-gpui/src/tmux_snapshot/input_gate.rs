@@ -4,6 +4,8 @@ use gpui::Context;
 impl SnapshotView {
     pub(super) fn terminal_input_ready(&self) -> bool {
         !self.browser_state.input_target_rejected
+            && self.divider.is_none()
+            && !self.resize_gesture.busy()
             && !self.browser_state.retained_preview
             && self.picker.is_none()
             && self.pane_actions.is_none()
@@ -16,6 +18,8 @@ impl SnapshotView {
     }
     pub(super) fn historical_selection_ready(&self) -> bool {
         !self.browser_state.retained_preview
+            && self.divider.is_none()
+            && !self.resize_gesture.busy()
             && self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
@@ -29,7 +33,7 @@ impl SnapshotView {
                 .frame
                 .as_ref()
                 .zip(self.browser_state.frame.as_ref())
-                .is_some_and(|(paint, current)| std::sync::Arc::ptr_eq(paint, current))
+                .is_some_and(|(paint, current)| paint.same(current))
             && self.browser_state.selected_pane.is_some()
     }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
@@ -43,7 +47,7 @@ impl SnapshotView {
         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
             return false;
         }
-        if self.divider.is_some() {
+        if self.divider.is_some() || self.resize_gesture.busy() {
             self.interrupt_input(cx);
             return false;
         }

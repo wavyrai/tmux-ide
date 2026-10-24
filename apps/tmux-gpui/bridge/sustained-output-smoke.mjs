@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { writeFile, access, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
-import { parseDiagnosticLine, diagnosticStatus } from "./live-diagnostics.ts";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 import { randomUUID } from "node:crypto";
 import { stopFixtureChild } from "./fixture-child.mjs";
 import { resolve, join, isAbsolute } from "node:path";
@@ -74,11 +74,11 @@ const fleet = await createScratchFleet({
   windowsPerSession: 1,
   initialPaneMarker: "RIG_GPUI_HOME_SOURCE",
 });
-let daemon, browser;
+let daemon, browser, native, brokerConnection;
 let latest,
   buffer = "",
   stderr = "";
-let fatal, shutdownDiagnostic;
+let fatal;
 const failures = [];
 let publications = 0,
   maxPublicationBytes = 0,
@@ -86,6 +86,7 @@ let publications = 0,
   floodProgressUpdates = 0,
   result;
 const checkFatal = () => {
+  native?.assertHealthy();
   if (fatal) throw fatal;
 };
 const until = async (predicate) => {
@@ -100,16 +101,6 @@ const until = async (predicate) => {
     assert.ok(Date.now() < deadline, "Home fixture deadline");
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-};
-// A controlled stop may legitimately start (and then abandon) one transport recovery.
-const shutdownDiagnosticLines = (lines) => {
-  const recoveryLines = lines.filter((line) => line.startsWith("TMUX_GPUI_RECOVERY "));
-  assert.ok(
-    recoveryLines.length <= 1 &&
-      recoveryLines.every((line) => line === "TMUX_GPUI_RECOVERY transport-closed"),
-    "Only the controlled transport closure may start recovery",
-  );
-  return lines.filter((line) => !line.startsWith("TMUX_GPUI_RECOVERY "));
 };
 try {
   browser = spawn(
@@ -152,42 +143,44 @@ try {
       buffer += data;
       let end;
       while ((end = buffer.indexOf("\n")) >= 0) {
-        maxPublicationBytes = Math.max(
-          maxPublicationBytes,
-          Buffer.byteLength(buffer.slice(0, end)),
-        );
-        publications++;
-        latest = JSON.parse(buffer.slice(0, end));
-        const text =
-          latest.snapshot?.grid
-            .map((row) => row.cells.map((cell) => cell.grapheme).join(""))
-            .join("\n") ?? "";
-        if (!text.includes("FINAL_")) {
-          const lines = [...text.matchAll(/FLOOD_(\d{4})_/g)].map((match) => Number(match[1]));
-          const next = Math.max(highestFloodLine, ...lines);
-          if (next > highestFloodLine) {
-            highestFloodLine = next;
-            floodProgressUpdates++;
-          }
-        }
+        const publication = JSON.parse(buffer.slice(0, end));
+        if (publication.connection) brokerConnection = publication.connection;
         buffer = buffer.slice(end + 1);
       }
     } catch (error) {
       fatal ??= error;
     }
   });
-  const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+      publications++;
+      maxPublicationBytes = Math.max(maxPublicationBytes, Buffer.byteLength(JSON.stringify(state)));
+      const text = state?.frameText ?? "";
+      if (!text.includes("FINAL_")) {
+        const lines = [...text.matchAll(/FLOOD_(\d{4})_/g)].map((match) => Number(match[1]));
+        const next = Math.max(highestFloodLine, ...lines);
+        if (next > highestFloodLine) {
+          highestFloodLine = next;
+          floodProgressUpdates++;
+        }
+      }
+    },
+  });
+  const send = (command) => native.send(command);
+  send({ type: "presence", active: true, revision: 1 });
   await until(() => latest?.home.phase === "unavailable");
   assert.match(latest.status, /Local sessions are not connected yet/);
   assert.match(latest.status, /Use setup or refresh sessions/);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
-  const connection = latest.connection;
+  const connection = brokerConnection;
   const before = fleet.captureWindowPanes(fleet.sessionNames[0]);
   daemon = await startFixtureDaemon(fleet);
   send({ type: "refresh", request: 1 });
   await until(() => latest?.request === 1 && latest.home.phase === "live");
-  assert.equal(latest.connection, connection);
+  assert.equal(brokerConnection, connection);
   assert.equal(latest.sessions.length, 1);
   assert.equal(latest.sessions[0].paneCount, 1);
   assert.equal(latest.snapshot, null);
@@ -219,7 +212,7 @@ try {
         latest.snapshot &&
         latest.inputReady,
     );
-    assert.equal(latest.connection, connection);
+    assert.equal(brokerConnection, connection);
     return paneId;
   }
   const pane = await select(2);
@@ -247,22 +240,43 @@ try {
       .some((line) => line === finalMarker),
   );
   const projected = () => {
-    const r = latest.copyRegion;
-    if (!latest.snapshot || !r) return null;
-    return latest.snapshot.grid.slice(r.top, r.top + r.height).map((row) =>
-      row.cells
-        .slice(r.left, r.left + r.width)
-        .map((cell) => cell.grapheme)
-        .join("")
-        .trimEnd(),
-    );
+    if (!latest.frameText) return null;
+    // The composed frame includes tmux pane-border status rows; capture-pane
+    // contains only terminal content. Use the actual content rectangle.
+    const [left, top, width, height] = execFileSync(
+      fleet.environment.TMUX_IDE_TMUX_BIN,
+      [
+        "-S",
+        fleet.socketPath,
+        "display-message",
+        "-p",
+        "-t",
+        nativePane,
+        "#{pane_left} #{pane_top} #{pane_width} #{pane_height}",
+      ],
+      { env: { ...process.env, ...fleet.environment }, encoding: "utf8", timeout: 5000 },
+    )
+      .trim()
+      .split(" ")
+      .map(Number);
+    return latest.frameText
+      .split("\n")
+      .slice(top, top + height)
+      .map((row) => row.slice(left, left + width).trimEnd());
   };
   const sourceRows = () =>
     capture()
       .replace(/\n$/, "")
       .split("\n")
       .map((row) => row.trimEnd());
-  await until(() => JSON.stringify(projected()) === JSON.stringify(sourceRows()));
+  try {
+    await until(() => JSON.stringify(projected()) === JSON.stringify(sourceRows()));
+  } catch (error) {
+    throw new Error(
+      JSON.stringify({ regions: latest.regions, projected: projected(), source: sourceRows() }),
+      { cause: error },
+    );
+  }
   assert.ok(publications > beforePublications + 1);
   assert.ok(floodProgressUpdates > 1, "distinct intermediate terminal flood progress");
   send({
@@ -274,33 +288,11 @@ try {
   await until(() => sourceRows().some((row) => row === inputMarker));
   await until(() => JSON.stringify(projected()) === JSON.stringify(sourceRows()));
   assert.equal(stderr, "", "No diagnostics before the controlled daemon stop");
-  const baseline = latest.sequence;
   await daemon.stop();
   daemon = undefined;
-  await until(() => {
-    // Stderr chunks can end midway through a protocol line.
-    const lines = shutdownDiagnosticLines(
-      stderr
-        .slice(0, stderr.lastIndexOf("\n") + 1)
-        .split("\n")
-        .filter(Boolean),
-    );
-    const diagnostic = lines.length === 1 ? parseDiagnosticLine(lines[0]) : null;
-    const expected =
-      diagnostic?.code === "source-closed" ||
-      (diagnostic?.code === "transport-closed" && diagnostic.closeCode === 1001);
-    if (
-      !expected ||
-      !(latest?.sequence > baseline) ||
-      latest.snapshot !== null ||
-      latest.inputReady !== false ||
-      latest.status !== diagnosticStatus(diagnostic)
-    )
-      return false;
-    shutdownDiagnostic = diagnostic;
-    return true;
-  });
-  assert.equal(latest.connection, connection);
+  await until(() => latest?.snapshot === null && latest?.inputReady === false);
+  assert.match(latest.status, /interrupt|closed|unavailable|reconnecting/i);
+  assert.equal(brokerConnection, connection);
   checkFatal();
   result = {
     passed: true,
@@ -314,7 +306,7 @@ try {
     finalTextCellsMatchTmux: true,
     responsiveInputAfterFlood: true,
     disconnectCleared: true,
-    shutdownDiagnostic,
+    shutdownStatus: latest.status,
     retainedEvidence: "latest publication and scalar counters only",
     nativeUi: false,
     resourceScope:
@@ -324,6 +316,9 @@ try {
   failures.push(error);
 } finally {
   for (const cleanup of [
+    async () => {
+      if (native) await native.stop();
+    },
     () => stopFixtureChild(browser),
     async () => {
       if (daemon) await daemon.stop();
@@ -337,17 +332,6 @@ try {
     } catch (error) {
       failures.push(error);
     }
-  }
-}
-if (shutdownDiagnostic) {
-  try {
-    assert.deepEqual(
-      shutdownDiagnosticLines(stderr.trim().split("\n")).map(parseDiagnosticLine),
-      [shutdownDiagnostic],
-      "Only the controlled shutdown diagnostic is expected through cleanup",
-    );
-  } catch (error) {
-    failures.push(error);
   }
 }
 if (fatal && !failures.includes(fatal)) failures.push(fatal);

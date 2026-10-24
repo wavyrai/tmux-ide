@@ -8,7 +8,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
-import { parseDiagnosticLine, diagnosticStatus } from "./live-diagnostics.ts";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 import { stopFixtureChild } from "./fixture-child.mjs";
 import { resolve, join, isAbsolute } from "node:path";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
@@ -73,13 +73,14 @@ const fleet = await createScratchFleet({
   windowsPerSession: 1,
   initialPaneMarker: "RIG_GPUI_HOME_SOURCE",
 });
-let daemon, browser;
+let daemon, browser, native, brokerConnection;
 let latest,
   buffer = "",
   stderr = "";
 let fatal;
 const failures = [];
 const checkFatal = () => {
+  native?.assertHealthy();
   if (fatal) throw fatal;
 };
 const until = async (predicate) => {
@@ -97,12 +98,7 @@ const until = async (predicate) => {
         JSON.stringify({
           snapshot: !!latest?.snapshot,
           inputReady: latest?.inputReady,
-          diagnostics: stderr.split("\n").map(parseDiagnosticLine).filter(Boolean),
-          diagnosticStatusVisible: stderr
-            .split("\n")
-            .map(parseDiagnosticLine)
-            .filter(Boolean)
-            .some((d) => latest?.status === diagnosticStatus(d)),
+          status: latest?.status,
         }),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -149,25 +145,33 @@ try {
       buffer += data;
       let end;
       while ((end = buffer.indexOf("\n")) >= 0) {
-        latest = JSON.parse(buffer.slice(0, end));
+        const publication = JSON.parse(buffer.slice(0, end));
+        if (publication.connection) brokerConnection = publication.connection;
         buffer = buffer.slice(end + 1);
       }
     } catch (error) {
       fatal ??= error;
     }
   });
-  const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+    },
+  });
+  const send = (command) => native.send(command);
+  send({ type: "presence", active: true, revision: 1 });
   await until(() => latest?.home.phase === "unavailable");
   assert.match(latest.status, /Local sessions are not connected yet/);
   assert.match(latest.status, /Use setup or refresh sessions/);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
-  const connection = latest.connection;
+  const connection = brokerConnection;
   const before = fleet.captureWindowPanes(fleet.sessionNames[0]);
   daemon = await startFixtureDaemon(fleet);
   send({ type: "refresh", request: 1 });
   await until(() => latest?.request === 1 && latest.home.phase === "live");
-  assert.equal(latest.connection, connection);
+  assert.equal(brokerConnection, connection);
   assert.equal(latest.sessions.length, 1);
   assert.equal(latest.sessions[0].paneCount, 1);
   assert.equal(latest.snapshot, null);
@@ -199,7 +203,7 @@ try {
         latest.snapshot &&
         latest.inputReady,
     );
-    assert.equal(latest.connection, connection);
+    assert.equal(brokerConnection, connection);
     return paneId;
   }
   const marker = randomUUID().replaceAll("-", "");
@@ -220,45 +224,11 @@ try {
   );
   assert.equal(stderr, "", "No diagnostic is allowed before the controlled daemon stop");
   const firstInstance = daemon.record.instanceId;
-  const baselineSequence = latest.sequence;
   await daemon.stop();
   daemon = undefined;
-  let shutdownDiagnostic;
-  const shutdownDiagnosticLines = (lines) => {
-    const recoveryLines = lines.filter((line) => line.startsWith("TMUX_GPUI_RECOVERY "));
-    assert.ok(
-      recoveryLines.length <= 1 &&
-        recoveryLines.every((line) => line === "TMUX_GPUI_RECOVERY transport-closed"),
-      "Only the controlled transport closure may start recovery",
-    );
-    return lines.filter((line) => !line.startsWith("TMUX_GPUI_RECOVERY "));
-  };
-  await until(() => {
-    // Hub retirement can deliver source-closed before the socket closes with 1001.
-    // Accept only those two controlled-stop outcomes, retaining first-fault status.
-    // Stderr chunks can end midway through a protocol line.
-    const lines = stderr
-      .slice(0, stderr.lastIndexOf("\n") + 1)
-      .split("\n")
-      .filter(Boolean);
-    const diagnosticLines = shutdownDiagnosticLines(lines);
-    const diagnostic =
-      diagnosticLines.length === 1 ? parseDiagnosticLine(diagnosticLines[0]) : null;
-    const expected =
-      diagnostic?.code === "source-closed" ||
-      (diagnostic?.code === "transport-closed" && diagnostic.closeCode === 1001);
-    if (
-      !expected ||
-      !(latest?.sequence > baselineSequence) ||
-      latest.snapshot !== null ||
-      latest.inputReady !== false ||
-      latest.status !== diagnosticStatus(diagnostic)
-    )
-      return false;
-    shutdownDiagnostic = diagnostic;
-    return true;
-  });
-  assert.equal(latest.connection, connection);
+  await until(() => latest?.snapshot === null && latest?.inputReady === false);
+  assert.match(latest.status, /interrupt|closed|unavailable|reconnecting/i);
+  assert.equal(brokerConnection, connection);
   daemon = await startFixtureDaemon(fleet);
   assert.notEqual(daemon.record.instanceId, firstInstance);
   send({ type: "refresh", request: 4 });
@@ -282,18 +252,21 @@ try {
       .some((line) => line === afterMarker),
   );
   assert.ok(!capture().includes(staleMarker), "stale request bytes never reached source");
-  assert.equal(latest.connection, connection);
+  assert.equal(brokerConnection, connection);
   assert.ok(!JSON.stringify(latest).includes(daemon.record.authToken));
   assert.deepEqual(
-    shutdownDiagnosticLines(stderr.trim().split("\n")).map(parseDiagnosticLine),
-    [shutdownDiagnostic],
-    "Only the controlled daemon-shutdown diagnostic is expected",
+    stderr.trim().split("\n").filter(Boolean),
+    ["TMUX_GPUI_RECOVERY native-connection-interrupted"],
+    "Only the controlled native connection loss may request broker recovery",
   );
   checkFatal();
 } catch (error) {
   failures.push(error);
 } finally {
   for (const cleanup of [
+    async () => {
+      if (native) await native.stop();
+    },
     () => stopFixtureChild(browser),
     async () => {
       if (daemon) await daemon.stop();

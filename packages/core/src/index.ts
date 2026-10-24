@@ -20,3 +20,5 @@ export * from "./saved-machines.ts";
 export * from "./fleet-client-state.ts";
 export * from "./resize-transaction.ts";
 export * from "./kitty-placeholders.ts";
+
+export * from "./terminal-projection.ts";

@@ -474,7 +474,7 @@ fn dismissed_attention_rejection_clears_pending_without_changing_current_view(
             assert_eq!(v.browser_request, 7);
             assert!(v.attention.pending.is_none());
             assert!(v.picker.is_none());
-            assert!(Arc::ptr_eq(&frame, v.frame.as_ref().unwrap()));
+            assert!(frame.same(v.frame.as_ref().unwrap()));
             assert!(!v.presence.ready());
         })
     });

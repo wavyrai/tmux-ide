@@ -1048,7 +1048,7 @@ function hashTerminalReplicaRow(
   return hash;
 }
 
-function hashTerminalReplicaRows(
+export function hashTerminalReplicaRows(
   rows: readonly TerminalReplicaRow[],
   profile?: MutableTerminalReplicaApplyProfile,
   instrumentation?: TerminalReplicaApplyOptions["instrumentation"],

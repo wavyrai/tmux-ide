@@ -62,7 +62,7 @@ fn workspace_agent_stale_scope_and_unavailable_actions_leave_terminal_unchanged(
             view.browser_state.surface = browser::Surface::Home;
             view.workspace_agent_select(7, 4, "session-a", "agent-a", window, cx);
             assert_eq!(view.browser_request, 7);
-            assert!(Arc::ptr_eq(&frame, view.frame.as_ref().unwrap()));
+            assert!(frame.same(view.frame.as_ref().unwrap()));
             assert!(view.browser_state.input_ready);
         })
     });

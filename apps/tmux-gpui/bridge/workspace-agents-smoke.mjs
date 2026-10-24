@@ -1,3 +1,6 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
 // Real daemon + native browser protocol. Fixture panes self-report through the
 // supported @agent_state contract; no external AI harness or native UI is used.
 import assert from "node:assert/strict";
@@ -11,6 +14,7 @@ import {
   listTmuxServers,
 } from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import { stopFixtureChild } from "./fixture-child.mjs";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 const app = process.env.TMUX_GPUI_TEST_APP;
 if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
 for (const key of Object.keys(process.env)) {
@@ -27,7 +31,7 @@ const run = (...args) =>
     encoding: "utf8",
     timeout: 5000,
   }).trimEnd();
-let daemon, client, browser, latest, result;
+let daemon, client, browser, latest, result, native, metadata, nativeState;
 let partial = "",
   stderr = "",
   protocolError;
@@ -35,6 +39,7 @@ const failures = [];
 async function until(predicate, description) {
   const deadline = Date.now() + 25000;
   while (!predicate()) {
+    native?.assertHealthy();
     if (protocolError) throw protocolError;
     if (browser && (browser.exitCode !== null || browser.signalCode !== null))
       throw new Error(`Browser exited: ${stderr}`);
@@ -120,7 +125,11 @@ try {
       let end;
       while ((end = partial.indexOf("\n")) >= 0) {
         assert.ok(end <= 8 * 1024 * 1024);
-        latest = JSON.parse(partial.slice(0, end));
+        const event = JSON.parse(partial.slice(0, end));
+        if (event.connection) {
+          metadata = event;
+          if (nativeState) latest = { ...metadata, ...nativeState };
+        }
         partial = partial.slice(end + 1);
       }
       assert.ok(partial.length <= 8 * 1024 * 1024);
@@ -128,7 +137,21 @@ try {
       protocolError = error;
     }
   });
-  const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      nativeState = state;
+      latest = { ...metadata, ...state };
+    },
+  });
+  // Agent navigation is a catalog/broker contract; terminal input and readiness
+  // are owned by the real Rust worker, never reconstructed in this fixture.
+  const send = (command) => {
+    if (["open-agent", "open-workspace-agent"].includes(command.type))
+      browser.stdin.write(JSON.stringify(command) + "\n");
+    else native.send(command);
+  };
+  send({ type: "presence", active: true, revision: 0 });
   await until(
     () => latest?.homeAgents?.phase === "live" && latest.homeAgents.rows.length === 2,
     "two Home agent rows",
@@ -287,6 +310,7 @@ try {
   failures.push(error);
 } finally {
   for (const cleanup of [
+    () => native?.stop(),
     () => stopFixtureChild(browser),
     () => client?.dispose(),
     () => daemon?.stop(),

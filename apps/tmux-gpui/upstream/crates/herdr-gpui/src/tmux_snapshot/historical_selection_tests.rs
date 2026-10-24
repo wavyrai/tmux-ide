@@ -8,15 +8,21 @@ pub(super) fn history(view: &mut SnapshotView) {
         Bounds::default(),
     ));
     view.input_cell_width = Some(10.);
-    let mut frame = (**view.frame.as_ref().unwrap()).clone();
+    let mut frame = view.frame.as_ref().unwrap().legacy().as_ref().clone();
     frame.cells[0].symbol = "界".into();
     frame.cells[1].symbol = " ".into();
     frame.cells[1].skip = true;
     frame.cells[2].symbol = "e\u{301}".into();
     let frame = Arc::new(frame);
-    view.frame = Some(frame.clone());
-    view.browser_state.frame = Some(frame.clone());
-    view.painted_frame = Some(frame);
+    view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.painted_frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame,
+    ));
     view.browser_state.request = view.browser_request;
     view.browser_state.history_offset = 30;
     view.browser_state.input_ready = false;
@@ -105,8 +111,9 @@ fn historical_selection_rejects_stale_disconnected_unpainted_and_other_pane(
                         .unwrap()
                     }
                     _ => {
-                        view.browser_state.frame =
-                            Some(Arc::new((**view.frame.as_ref().unwrap()).clone()))
+                        view.browser_state.frame = Some(
+                            Arc::new(view.frame.as_ref().unwrap().legacy().as_ref().clone()).into(),
+                        )
                     }
                 }
                 view.terminal_click(
@@ -136,7 +143,7 @@ fn historical_selection_joins_soft_wrap_but_preserves_hard_newline(cx: &mut Test
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             history(view);
-            let mut frame = (**view.frame.as_ref().unwrap()).clone();
+            let mut frame = view.frame.as_ref().unwrap().legacy().as_ref().clone();
             for cell in &mut frame.cells {
                 cell.symbol = " ".into();
                 cell.skip = false;
@@ -147,9 +154,15 @@ fn historical_selection_joins_soft_wrap_but_preserves_hard_newline(cx: &mut Test
             frame.cells[62].symbol = "e\u{301}".into();
             frame.cells[120].symbol = "Z".into();
             let frame = Arc::new(frame);
-            view.frame = Some(frame.clone());
-            view.browser_state.frame = Some(frame.clone());
-            view.painted_frame = Some(frame);
+            view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame.clone(),
+            ));
+            view.browser_state.frame = Some(
+                crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(frame.clone()),
+            );
+            view.painted_frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame,
+            ));
             view.browser_state.copy_region.as_mut().unwrap().wrapped[1] = true;
             view.input_geometry.as_mut().unwrap().0.size.width = px(600.);
             view.terminal_click(

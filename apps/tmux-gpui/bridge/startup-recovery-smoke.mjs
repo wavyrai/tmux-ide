@@ -1,20 +1,26 @@
+import process from "node:process";
+import console from "node:console";
+import { setTimeout } from "node:timers";
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 // Real daemon, same long-running browser: missing startup config and failed refresh recovery.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { stopFixtureChild } from "./fixture-child.mjs";
 import { writeFile, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
 const fleet = await createScratchFleet({ sessions: 1, windowsPerSession: 1, slug: "gpui-startup" });
-let daemon, browser;
+let daemon, browser, native, brokerConnection;
+const failures = [];
 let latest,
   buffer = "",
   stderr = "";
 const until = async (predicate) => {
   const deadline = Date.now() + 20000;
   while (!predicate()) {
+    native?.assertHealthy();
     if (browser.exitCode !== null || browser.signalCode !== null)
       throw new Error("Browser exited instead of retaining recovery: " + stderr);
     if (Date.now() > deadline) throw new Error("Startup recovery deadline: " + stderr);
@@ -22,7 +28,10 @@ const until = async (predicate) => {
   }
 };
 try {
-  daemon = await startDaemon(fleet);
+  daemon = await startDaemon(
+    fleet,
+    process.env.TMUX_GPUI_TEST_CLI ? { cliPath: process.env.TMUX_GPUI_TEST_CLI } : undefined,
+  );
   const options = {
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
@@ -49,15 +58,23 @@ try {
     buffer += b.toString();
     let end;
     while ((end = buffer.indexOf("\n")) >= 0) {
-      latest = JSON.parse(buffer.slice(0, end));
+      const publication = JSON.parse(buffer.slice(0, end));
+      if (publication.connection) brokerConnection = publication.connection;
       buffer = buffer.slice(end + 1);
     }
   });
-  const send = (value) => browser.stdin.write(JSON.stringify(value) + "\n");
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+    },
+  });
+  const send = (value) => native.send(value);
   await until(() => latest?.status.includes("unavailable"));
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
-  const connection = latest.connection;
+  const connection = brokerConnection;
+  send({ type: "presence", active: true, revision: 1 });
   await writeFile(config, JSON.stringify(host), { mode: 0o600 });
   send({ type: "refresh", request: 1 });
   await until(() => latest?.request === 1 && latest.sessions.length === 1);
@@ -98,7 +115,7 @@ try {
       .some((line) => line.trim() === "STARTUP_RECOVERED"),
   );
   assert.ok(!fleet.captureWindowPanes(fleet.sessionNames[0]).includes("STALE_STARTUP_INPUT"));
-  assert.equal(latest.connection, connection);
+  assert.equal(brokerConnection, connection);
   assert.ok(!stderr.includes(host.ownerToken));
   console.log(
     JSON.stringify({
@@ -109,17 +126,20 @@ try {
       staleInputRejected: true,
     }),
   );
+} catch (error) {
+  failures.push(error);
 } finally {
-  if (browser && browser.exitCode === null && browser.signalCode === null) {
-    const closed = once(browser, "close");
-    browser.kill("SIGTERM");
-    const timer = setTimeout(() => browser.kill("SIGKILL"), 2000);
+  for (const cleanup of [
+    () => native?.stop(),
+    () => stopFixtureChild(browser),
+    () => daemon?.stop(),
+    () => fleet.dispose(),
+  ]) {
     try {
-      await closed;
-    } finally {
-      clearTimeout(timer);
+      await cleanup();
+    } catch (error) {
+      failures.push(error);
     }
   }
-  if (daemon) await daemon.stop();
-  await fleet.dispose();
 }
+if (failures.length) throw new AggregateError(failures, "Native startup recovery fixture failed");

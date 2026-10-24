@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
-use herdr_client::protocol::CellData;
+use herdr_client::protocol::{CellData, FrameData};
 fn fixture(lines: &[&str], wrapped: Vec<bool>) -> (FrameData, copy::Region) {
     let width = lines.iter().map(|line| line.chars().count()).max().unwrap() as u16;
     let cells = lines
@@ -85,4 +85,29 @@ fn opening_requires_deliberate_unmixed_primary_modifier() {
     event.modifiers.shift = false;
     event.modifiers.alt = true;
     assert!(!gesture(&event));
+}
+
+#[test]
+fn native_wrapped_links_borrow_rows_and_preserve_fail_closed_edges() {
+    use crate::terminal_painter::NativeFrame;
+    use std::sync::Arc;
+    let (flat, mut region) = fixture(&["https://exam", "ple.com/   "], vec![false, true]);
+    let native = NativeFrame {
+        width: flat.width,
+        height: flat.height,
+        cursor: None,
+        rows: flat
+            .cells
+            .chunks(usize::from(flat.width))
+            .map(|row| Arc::from(row.to_vec()))
+            .collect(),
+    };
+    let before = Arc::clone(&native.rows[0]);
+    assert_eq!(
+        resolve(&native, &region, 3, 1).as_deref(),
+        Some("https://example.com/")
+    );
+    assert!(Arc::ptr_eq(&before, &native.rows[0]));
+    region.wrapped[0] = true;
+    assert!(resolve(&native, &region, 3, 1).is_none());
 }

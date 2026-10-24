@@ -1,3 +1,4 @@
+import { rendererProbe } from "./renderer-probe.ts";
 import { paneInteractionDisplayDestination } from "../ui/pane-interaction-presentation.ts";
 import type { InteractionObservationStatus, NativePaneIdentity } from "@tmux-ide/contracts";
 import { interactionPaneEndpointKey } from "@tmux-ide/core";
@@ -1350,6 +1351,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "scroll") {
+      const probeAt = rendererProbe() ? Math.floor(performance.now() * 1000) : 0;
       // A held selection owns the gesture even when the pointer crosses a sibling.
       const activeSelection = selecting;
       const selectionCell =
@@ -1359,7 +1361,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         activeSelection && selectionCell
           ? { frame: activeSelection.frame, ...selectionCell }
           : paneContentAt(point);
-      const before = props.onWheelObservation && hit ? scrollback.offset(hit.frame.paneId) : null;
+      const before =
+        (props.onWheelObservation || rendererProbe()) && hit
+          ? scrollback.offset(hit.frame.paneId)
+          : null;
       const observe = (route: string): void => {
         props.onWheelObservation?.({
           paneId: hit?.frame.paneId ?? null,
@@ -1457,6 +1462,20 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           scrollback.seek(hit.frame.paneId, { ...origin, y: next.originY });
           setKeyboardCopy({ ...keyboard, cursor: next.cursor });
         } else scrollback.move(hit.frame.paneId, motion.lines);
+        if (rendererProbe() && identity && before !== null)
+          rendererProbe()?.scroll(
+            {
+              pane: hit.frame.paneId,
+              generation: identity.generation,
+              incarnation: identity.incarnation,
+              cols: snapshot.cols,
+              rows: snapshot.rows,
+            },
+            snapshot,
+            before,
+            scrollback.offset(hit.frame.paneId),
+            probeAt,
+          );
         observe("local-history");
         if (selecting?.paneId === hit.frame.paneId) updatePointerSelection(selecting.pointer);
         else {

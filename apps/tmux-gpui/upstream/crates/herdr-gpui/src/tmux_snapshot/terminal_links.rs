@@ -1,7 +1,7 @@
 //! Deliberate web opening from the exact selected, painted canonical pane.
 use super::{SnapshotView, browser, copy, hit_regions};
+use crate::terminal_painter::FrameView;
 use gpui::{MouseButton, MouseDownEvent, Pixels, Point};
-use herdr_client::protocol::{FrameData, PaneSurfaceFrame, PaneSurfacePane, SurfaceRect};
 
 pub(super) fn gesture(event: &MouseDownEvent) -> bool {
     event.button == MouseButton::Left
@@ -47,11 +47,11 @@ impl SnapshotView {
         }
         let frame = self.frame.as_ref()?;
         let region = self.browser_state.copy_region.as_ref()?;
-        if !region.valid(frame, Some(id)) {
+        if !region.valid_view(frame.view(), Some(id)) {
             return None;
         }
         resolve(
-            frame,
+            frame.view(),
             region,
             (f32::from(point.x) / width).floor() as u16,
             (f32::from(point.y) / height).floor() as u16,
@@ -59,8 +59,14 @@ impl SnapshotView {
     }
 }
 
-fn resolve(frame: &FrameData, region: &copy::Region, column: u16, row: u16) -> Option<String> {
-    if !region.valid(frame, Some(&region.id))
+fn resolve<'a>(
+    frame: impl Into<FrameView<'a>>,
+    region: &copy::Region,
+    column: u16,
+    row: u16,
+) -> Option<String> {
+    let frame = frame.into();
+    if !region.valid_view(frame, Some(&region.id))
         || column < region.left
         || row < region.top
         || column >= region.left + region.width
@@ -87,51 +93,17 @@ fn resolve(frame: &FrameData, region: &copy::Region, column: u16, row: u16) -> O
     }
     let mut cells = Vec::with_capacity(count);
     for y in first..=last {
-        let start =
-            usize::from(region.top + y) * usize::from(frame.width) + usize::from(region.left);
-        cells.extend_from_slice(frame.cells.get(start..start + usize::from(region.width))?);
+        let start = usize::from(region.left);
+        cells.extend(
+            frame
+                .row(usize::from(region.top + y))?
+                .get(start..start + usize::from(region.width))?
+                .iter(),
+        );
     }
-    // Preserve parser's fail-closed right-edge rule; no fabricated terminator.
-    let width = u16::try_from(cells.len()).ok()?;
-    let rect = SurfaceRect {
-        x: 0,
-        y: 0,
-        width,
-        height: 1,
-    };
-    let surface = PaneSurfaceFrame {
-        boot_id: String::new(),
-        projection_revision: 0,
-        surface_revision: 0,
-        frame: FrameData {
-            width,
-            height: 1,
-            cells,
-            cursor: None,
-            hyperlinks: frame.hyperlinks.clone(),
-            graphics: vec![],
-        },
-        splits: vec![],
-        popup: None,
-        graphics: Default::default(),
-        panes: vec![PaneSurfacePane {
-            pane_id: region.id.clone(),
-            content_revision: 0,
-            rect,
-            inner_rect: rect,
-            scrollbar_rect: None,
-            scroll: None,
-            focused: true,
-            mouse_reporting: false,
-            sgr_pixel_mouse: false,
-            alternate_screen_active: false,
-            pixel_width: u32::from(width),
-            pixel_height: 1,
-        }],
-    };
     let hit =
         usize::from(row - first) * usize::from(region.width) + usize::from(column - region.left);
-    crate::terminal::link_at(&surface, hit as f32 + 0.5, 0.5, 1., 1.)
+    crate::terminal::logical_web_link(&cells, hit, frame.hyperlinks())
 }
 
 #[cfg(test)]

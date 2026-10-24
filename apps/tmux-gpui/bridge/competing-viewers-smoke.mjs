@@ -1,3 +1,4 @@
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 // Real isolated browser helpers, not GUI. Explicit input takeover hands off the
 // controller and retires old authority while retaining the last accepted grid.
 // See daemon session-runtime/authority-arbiter.ts. No personal daemon/session is used.
@@ -35,6 +36,7 @@ const grid = () => fleet.windowGrid(fleet.sessionNames[0]);
 function check() {
   for (const viewer of viewers) {
     if (viewer.fatal) throw viewer.fatal;
+    if (!viewer.closed) viewer.native?.assertHealthy();
     if (!viewer.closed && (viewer.child.exitCode !== null || viewer.child.signalCode !== null))
       throw new Error("Viewer exited unexpectedly");
   }
@@ -93,31 +95,23 @@ function launch() {
       fail(error);
     }
   });
-  child.stdout.on("data", (data) => {
-    if (v.fatal) return;
-    try {
-      assert.ok(Buffer.byteLength(v.buffer) + data.length <= 8 * 1024 * 1024);
-      v.buffer += data;
-      let end;
-      while ((end = v.buffer.indexOf("\n")) >= 0) {
-        v.maxBytes = Math.max(v.maxBytes, Buffer.byteLength(v.buffer.slice(0, end)));
-        v.latest = JSON.parse(v.buffer.slice(0, end));
-        v.sequence++;
-        v.buffer = v.buffer.slice(end + 1);
-      }
-    } catch (error) {
-      fail(error);
-    }
+  v.native = startNativeJourney(child, {
+    worker: true,
+    onState: (state) => {
+      v.latest = state;
+      v.sequence++;
+      v.maxBytes = Math.max(v.maxBytes, Buffer.byteLength(JSON.stringify(state)));
+    },
   });
   v.send = (command) => {
     check();
-    assert.ok(child.stdin.writableLength < 65536);
-    child.stdin.write(JSON.stringify(command) + "\n");
+    v.native.send(command);
   };
   return v;
 }
 async function select(v) {
   await until(() => v.latest?.home?.phase === "live" && v.latest.sessions.length === 1);
+  v.send({ type: "presence", active: true, revision: ++v.presence });
   v.send({ type: "session", request: ++v.request, id: v.latest.sessions[0].id });
   await until(
     () =>
@@ -152,7 +146,7 @@ try {
   const a = launch();
   stage = "first viewer selection";
   await select(a);
-  const connectionA = a.latest.connection;
+  const connectionA = a.native.opens.at(-1).id;
   stage = "first owner viewport";
   resize(a, 93, 29);
   await sized(93, 29);
@@ -160,7 +154,7 @@ try {
   stage = "contender selection";
   await select(b);
   assert.equal(a.pane, b.pane);
-  assert.notEqual(connectionA, b.latest.connection);
+  assert.notEqual(connectionA, b.native.opens.at(-1).id);
   // Explicit input takeover hands off the compatibility controller, which
   // releases the former owner's authority and backgrounds it daemon-side.
   stage = "controller handoff retires former owner";
@@ -185,13 +179,14 @@ try {
   await sized(97, 31);
   stage = "close geometry owner preserves accepted size";
   a.closed = true;
+  await a.native.stop();
   await stopFixtureChild(a.child);
   assert.deepEqual(grid(), { cols: 97, rows: 31 });
   stage = "remaining viewer reacquires after close";
   await presence(b, true);
   resize(b, 99, 33);
   await sized(99, 33);
-  assert.equal(a.latest.connection, connectionA);
+  assert.equal(a.native.opens.at(-1).id, connectionA);
   await presence(b, false);
   assert.deepEqual(grid(), { cols: 99, rows: 33 });
   // No terminal input is sent by this fixture. Resize may reflow the initial screen.
@@ -209,7 +204,7 @@ try {
     staleRequestViewportIgnored: true,
     remainingViewerReacquiresAfterClose: true,
     distinctConnections: true,
-    maxPublicationBytes: viewers.map((v) => v.maxBytes),
+    maxFixtureStateBytes: viewers.map((v) => v.maxBytes),
     nativeUi: false,
   };
 } catch (error) {
@@ -233,6 +228,7 @@ try {
   for (const cleanup of [
     ...viewers.map((v) => async () => {
       v.closed = true;
+      await v.native?.stop();
       await stopFixtureChild(v.child);
     }),
     async () => {

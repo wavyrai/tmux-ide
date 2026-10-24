@@ -1,3 +1,4 @@
+import { rendererProbe } from "./renderer-probe.ts";
 import { createTerminalSelectionWaiter } from "./terminal-selection-waiter.ts";
 import { WorkspaceWindowLinkSelectResultSchemaZ } from "@tmux-ide/contracts";
 import { windowLinkForPane, windowLinkTarget } from "./application-terminal-workspace-policy.ts";
@@ -1050,11 +1051,15 @@ export function createApplicationTerminalInteractionController(
       }
       return outcome.status === "sent";
     },
-    onFocusedPane: options.setFocusedPane,
+    onFocusedPane: (pane) => {
+      rendererProbe()?.cancel("selection-changed", nowMicros());
+      options.setFocusedPane(pane);
+    },
   });
 
   return {
     cancelPendingInput() {
+      rendererProbe()?.cancel("input-cancelled", nowMicros());
       selectionWaiter.cancel();
       finishLinkSelection(false);
       paneInput.invalidateSelection();
@@ -1064,6 +1069,7 @@ export function createApplicationTerminalInteractionController(
       selectionGeneration = snapshot;
       const control = controlIdentity(snapshot);
       if (!sameControl(selectedControl, control)) {
+        rendererProbe()?.cancel("control-changed", nowMicros());
         finishLinkSelection(false);
         paneInput.invalidateSelection();
       }
@@ -1118,6 +1124,7 @@ export function createApplicationTerminalInteractionController(
           next.fastLane !== inputAuthorityIdentity.fastLane ||
           next.adapter !== inputAuthorityIdentity.adapter);
       if (next === null || replaced) {
+        rendererProbe()?.cancel("generation-changed", nowMicros());
         finishLinkSelection(false);
         pendingWindowSwitch = null;
         pendingWindowRename = null;
@@ -1364,10 +1371,25 @@ export function createApplicationTerminalInteractionController(
       }
     },
     sendInput: async (input, parserOrigin) => {
-      await paneInput.sendInput({ input, parserOrigin });
+      const probe = rendererProbe();
+      const state = probe
+        ? (options.generation()?.fastLane?.lane.paneState(paneInput.focusedPane ?? "") ?? null)
+        : null;
+      const measured = probe?.admit(input, state, nowMicros());
+      const sent = await paneInput.sendInput({ input: measured ?? input, parserOrigin });
+      if (measured && !sent) probe?.cancel("dispatch-rejected", nowMicros());
     },
-    sendInputToPane: (paneId, input, parserOrigin) =>
-      paneInput.sendInputToPane(paneId, { input, parserOrigin }),
+    sendInputToPane: async (paneId, input, parserOrigin) => {
+      const probe = rendererProbe();
+      const state = probe ? (options.generation()?.fastLane?.lane.paneState(paneId) ?? null) : null;
+      const measured = probe?.admit(input, state, nowMicros());
+      const sent = await paneInput.sendInputToPane(paneId, {
+        input: measured ?? input,
+        parserOrigin,
+      });
+      if (measured && !sent) probe?.cancel("dispatch-rejected", nowMicros());
+      return sent;
+    },
     beginResizePointerIngress(input) {
       if (!options.diagnosticsEnabled) return null;
       const atMicros = diagnosticNowMicros();

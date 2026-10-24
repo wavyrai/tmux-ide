@@ -1,3 +1,4 @@
+import { rendererProbe } from "./renderer-probe.ts";
 import type { ReadNativeBacking } from "../../../terminal/protocol/native-backing-client.ts";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import type {
@@ -637,6 +638,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     // live parsing and must keep following the native pane's actual size.
     if (interest.retainedView && next) this.#resizeRetainedView(interest, next);
     interest.state = publication.state;
+    if (rendererProbe()?.pending)
+      rendererProbe()?.observe(publication.state, Math.floor(performance.now() * 1000));
     // Preserve coordinates for an unchanged prefix or an exact retained suffix.
     // The suffix offset is fixed by the length difference; never search repeated
     // log lines for a guessed overlap. Changed grids/reflow need a separate map.
@@ -992,6 +995,18 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         options.palette,
         options.viewportOrigin?.x ?? 0,
       );
+      if (interest?.state && rendererProbe()?.pending) {
+        rendererProbe()?.row(
+          interest.retainedView?.state ?? interest.state,
+          sourceRow,
+          row,
+          width,
+          height,
+          options.viewportOrigin?.x ?? 0,
+          options.viewportOrigin ? Math.max(0, -options.viewportOrigin.y) : scrollOffset,
+          Math.floor(performance.now() * 1_000),
+        );
+      }
       options.dirtyRows.push(row);
       paintedRows[row] = sourceRow;
     }

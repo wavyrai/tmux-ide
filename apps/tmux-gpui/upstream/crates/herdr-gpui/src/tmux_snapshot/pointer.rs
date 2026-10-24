@@ -242,7 +242,7 @@ impl SnapshotView {
     ) {
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
-        if self.browser_state.retained_preview {
+        if self.browser_state.retained_preview || self.resize_gesture.busy() {
             self.cancel_pointer();
             self.interrupt_input(cx);
             return;
@@ -280,15 +280,32 @@ impl SnapshotView {
             self.clear_selection(cx);
         }
         let input_ready = self.terminal_input_ready();
+
         if !input_ready {
-            self.interrupt_input(cx);
-            // Keep keydown observable even before AppKit text input is installed.
+            // A click is not dropped input. Only a verified foreground target may
+            // hold later, never-dispatched typing until the new lease arrives.
+            if !self.focus_click_matches_selected(event.position) {
+                // Refused navigation must not leave the previously selected pane armed.
+                self.interrupt_input(cx);
+            } else if event.modifiers == Modifiers::default() {
+                self.capture_focus_reclaim(event.position, cx);
+            }
             self.terminal_focus.focus(window, cx);
-            if !self.historical_selection_ready() {
+            if self.focus_reclaim_ready() || !self.historical_selection_ready() {
                 return;
             }
         }
         if !super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref()) {
+            // A content-only publication cannot invalidate the selected focus
+            // target. Copying and application mouse gestures still need exact paint.
+            if input_ready
+                && event.modifiers == Modifiers::default()
+                && self.focus_click_matches_selected(event.position)
+            {
+                self.input_interrupted = false;
+                self.terminal_focus.focus(window, cx);
+                return;
+            }
             // An unresolved target change must not leave the old pane armed for typing.
             self.interrupt_input(cx);
             return;

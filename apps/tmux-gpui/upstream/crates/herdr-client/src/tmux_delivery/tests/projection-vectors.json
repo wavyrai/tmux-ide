@@ -1,0 +1,1001 @@
+{
+  "source": {
+    "cols": 3,
+    "rows": 2,
+    "grid": [
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      },
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      }
+    ],
+    "cursor": {
+      "x": 0,
+      "y": 0,
+      "hidden": false,
+      "style": "block",
+      "blink": false
+    },
+    "modes": {
+      "alternateScreen": true,
+      "applicationCursor": false,
+      "applicationKeypad": false,
+      "bracketedPaste": false,
+      "insert": false,
+      "origin": false,
+      "wraparound": true,
+      "mouseTracking": false,
+      "synchronizedOutput": false
+    },
+    "history": [
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      },
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      }
+    ],
+    "placements": [],
+    "bootstrap": {
+      "kind": "painted-capture",
+      "hiddenState": "unknown"
+    }
+  },
+  "sourceHash": "23c068ffe8a43adb",
+  "materialized": {
+    "cols": 3,
+    "rows": 2,
+    "grid": [
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      },
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": "é",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      }
+    ],
+    "cursor": {
+      "x": 0,
+      "y": 0,
+      "hidden": false,
+      "style": "block",
+      "blink": false
+    },
+    "modes": {
+      "alternateScreen": true,
+      "applicationCursor": false,
+      "applicationKeypad": false,
+      "bracketedPaste": false,
+      "insert": false,
+      "origin": false,
+      "wraparound": true,
+      "mouseTracking": false,
+      "synchronizedOutput": false
+    },
+    "history": [
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      },
+      {
+        "wrapped": false,
+        "cells": [
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          },
+          {
+            "grapheme": " ",
+            "width": 1,
+            "foreground": {
+              "kind": "default"
+            },
+            "background": {
+              "kind": "default"
+            },
+            "attributes": 0
+          }
+        ]
+      }
+    ],
+    "placements": [],
+    "bootstrap": {
+      "kind": "painted-capture",
+      "hiddenState": "unknown"
+    }
+  },
+  "materializedBytes": [
+    84,
+    67,
+    66,
+    49,
+    0,
+    8,
+    3,
+    8,
+    1,
+    3,
+    1,
+    2,
+    3,
+    2,
+    3,
+    2,
+    1,
+    0,
+    3,
+    1,
+    3,
+    6,
+    1,
+    3,
+    2,
+    1,
+    32,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    3,
+    2,
+    1,
+    0,
+    3,
+    2,
+    3,
+    6,
+    1,
+    1,
+    2,
+    2,
+    195,
+    169,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    3,
+    6,
+    1,
+    2,
+    2,
+    1,
+    32,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    3,
+    2,
+    3,
+    2,
+    1,
+    0,
+    3,
+    1,
+    3,
+    6,
+    1,
+    3,
+    2,
+    1,
+    32,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    3,
+    2,
+    1,
+    0,
+    3,
+    1,
+    3,
+    6,
+    1,
+    3,
+    2,
+    1,
+    32,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    3,
+    5,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    2,
+    5,
+    98,
+    108,
+    111,
+    99,
+    107,
+    1,
+    0,
+    3,
+    11,
+    1,
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    1,
+    1,
+    0,
+    0,
+    0,
+    1,
+    0,
+    3,
+    0,
+    3,
+    2,
+    2,
+    15,
+    112,
+    97,
+    105,
+    110,
+    116,
+    101,
+    100,
+    45,
+    99,
+    97,
+    112,
+    116,
+    117,
+    114,
+    101,
+    2,
+    7,
+    117,
+    110,
+    107,
+    110,
+    111,
+    119,
+    110
+  ],
+  "materializedRepresentationHash": "d75976eed03bb4da",
+  "vectors": [
+    {
+      "payload": {
+        "frame": "seed",
+        "revision": 7,
+        "projection": {
+          "cols": 3,
+          "rows": 2,
+          "cursor": {
+            "x": 0,
+            "y": 0,
+            "hidden": false,
+            "style": "block",
+            "blink": false
+          },
+          "modes": {
+            "alternateScreen": true,
+            "applicationCursor": false,
+            "applicationKeypad": false,
+            "bracketedPaste": false,
+            "insert": false,
+            "origin": false,
+            "wraparound": true,
+            "mouseTracking": false,
+            "synchronizedOutput": false
+          },
+          "placements": [],
+          "bootstrap": {
+            "kind": "painted-capture",
+            "hiddenState": "unknown"
+          },
+          "deferredHistory": {
+            "rows": 2,
+            "digest": "7bf8611d4770bef8"
+          },
+          "grid": [
+            {
+              "wrapped": false,
+              "cells": [
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                },
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                },
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                }
+              ]
+            },
+            {
+              "wrapped": false,
+              "cells": [
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                },
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                },
+                {
+                  "grapheme": " ",
+                  "width": 1,
+                  "foreground": {
+                    "kind": "default"
+                  },
+                  "background": {
+                    "kind": "default"
+                  },
+                  "attributes": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "bytes": [
+        84,
+        67,
+        80,
+        49,
+        0,
+        7,
+        3,
+        8,
+        1,
+        3,
+        1,
+        2,
+        3,
+        2,
+        3,
+        2,
+        1,
+        0,
+        3,
+        1,
+        3,
+        6,
+        1,
+        3,
+        2,
+        1,
+        32,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        3,
+        2,
+        1,
+        0,
+        3,
+        1,
+        3,
+        6,
+        1,
+        3,
+        2,
+        1,
+        32,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        3,
+        5,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        2,
+        5,
+        98,
+        108,
+        111,
+        99,
+        107,
+        1,
+        0,
+        3,
+        11,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        3,
+        0,
+        3,
+        2,
+        2,
+        15,
+        112,
+        97,
+        105,
+        110,
+        116,
+        101,
+        100,
+        45,
+        99,
+        97,
+        112,
+        116,
+        117,
+        114,
+        101,
+        2,
+        7,
+        117,
+        110,
+        107,
+        110,
+        111,
+        119,
+        110,
+        3,
+        2,
+        1,
+        2,
+        2,
+        16,
+        55,
+        98,
+        102,
+        56,
+        54,
+        49,
+        49,
+        100,
+        52,
+        55,
+        55,
+        48,
+        98,
+        101,
+        102,
+        56
+      ],
+      "representationHash": "38979afac7d40c0e",
+      "projectionStateHash": "f61151b968b678dc",
+      "canonicalStateHash": "23c068ffe8a43adb"
+    },
+    {
+      "payload": {
+        "frame": "patch",
+        "baseRevision": 7,
+        "revision": 8,
+        "patch": {
+          "rows": [
+            {
+              "index": 1,
+              "row": {
+                "wrapped": false,
+                "cells": [
+                  {
+                    "grapheme": "é",
+                    "width": 1,
+                    "foreground": {
+                      "kind": "default"
+                    },
+                    "background": {
+                      "kind": "default"
+                    },
+                    "attributes": 0
+                  },
+                  {
+                    "grapheme": " ",
+                    "width": 1,
+                    "foreground": {
+                      "kind": "default"
+                    },
+                    "background": {
+                      "kind": "default"
+                    },
+                    "attributes": 0
+                  },
+                  {
+                    "grapheme": " ",
+                    "width": 1,
+                    "foreground": {
+                      "kind": "default"
+                    },
+                    "background": {
+                      "kind": "default"
+                    },
+                    "attributes": 0
+                  }
+                ]
+              }
+            }
+          ],
+          "deferredHistory": {
+            "rows": 2,
+            "digest": "7bf8611d4770bef8"
+          }
+        }
+      },
+      "bytes": [
+        84,
+        67,
+        80,
+        49,
+        1,
+        8,
+        7,
+        3,
+        7,
+        0,
+        3,
+        1,
+        3,
+        2,
+        1,
+        1,
+        3,
+        2,
+        1,
+        0,
+        3,
+        2,
+        3,
+        6,
+        1,
+        1,
+        2,
+        2,
+        195,
+        169,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        3,
+        6,
+        1,
+        2,
+        2,
+        1,
+        32,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        3,
+        2,
+        1,
+        2,
+        2,
+        16,
+        55,
+        98,
+        102,
+        56,
+        54,
+        49,
+        49,
+        100,
+        52,
+        55,
+        55,
+        48,
+        98,
+        101,
+        102,
+        56
+      ],
+      "representationHash": "4fb5797f2ae6fa03",
+      "projectionStateHash": "11941ba3bb7943f9",
+      "canonicalStateHash": "5f02da5d287901ac"
+    },
+    {
+      "payload": {
+        "frame": "tombstone",
+        "baseRevision": 8,
+        "revision": 9,
+        "tombstone": {
+          "reason": "pane-closed"
+        }
+      },
+      "bytes": [
+        84,
+        67,
+        80,
+        49,
+        2,
+        9,
+        8,
+        2,
+        11,
+        112,
+        97,
+        110,
+        101,
+        45,
+        99,
+        108,
+        111,
+        115,
+        101,
+        100
+      ],
+      "representationHash": "2c681f9a1fd45f56",
+      "projectionStateHash": "a0db56ac4abc64c5",
+      "canonicalStateHash": "14172a8ddb28ea24"
+    }
+  ]
+}

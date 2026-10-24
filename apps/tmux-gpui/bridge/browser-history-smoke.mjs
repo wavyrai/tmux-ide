@@ -1,3 +1,4 @@
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 // Isolated browser publication history journey; no GUI or CLI build.
 import assert from "node:assert/strict";
 import process from "node:process";
@@ -46,15 +47,16 @@ const run = (...args) =>
     encoding: "utf8",
     timeout: 5000,
   }).trim();
-let daemon, browser, latest, fatal, result;
-let buffer = "",
-  stderr = "";
+let daemon, browser, native, latest, fatal, result;
+let stderr = "";
 const failures = [];
 async function until(predicate) {
   const deadline = Date.now() + 25000;
   for (;;) {
+    native?.assertHealthy();
     if (fatal) throw fatal;
     if (predicate()) {
+      native?.assertHealthy();
       if (fatal) throw fatal;
       return;
     }
@@ -87,6 +89,7 @@ try {
   let record;
   const deadline = Date.now() + 25000;
   while (!record) {
+    native?.assertHealthy();
     if (fatal) throw fatal;
     assert.ok(Date.now() < deadline, "Daemon startup deadline");
     try {
@@ -136,21 +139,13 @@ try {
   browser.stderr.on("data", (chunk) => {
     stderr = (stderr + chunk).slice(-4096);
   });
-  browser.stdout.on("data", (chunk) => {
-    try {
-      buffer += chunk.toString();
-      let end;
-      while ((end = buffer.indexOf("\n")) >= 0) {
-        assert.ok(end <= 8 * 1024 * 1024);
-        latest = JSON.parse(buffer.slice(0, end));
-        buffer = buffer.slice(end + 1);
-      }
-      assert.ok(buffer.length <= 8 * 1024 * 1024);
-    } catch (error) {
-      fatal ??= error;
-    }
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+    },
   });
-  const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
+  const send = (command) => native.send(command);
   await until(() => latest?.sessions.length === 1);
   const session = latest.sessions[0].id;
   assert.equal(latest.sessions[0].paneCount, 1);
@@ -162,10 +157,7 @@ try {
   send({ type: "pane", request: 2, id: original });
   await until(() => latest?.inputReady && latest.paneActions);
   const before = run("list-panes", "-a", "-F", "#{pane_id}|#{pane_pid}|#{pane_birth_id}");
-  const text = () =>
-    latest.snapshot?.grid
-      .map((row) => row.cells.map((cell) => cell.grapheme).join(""))
-      .join("\n") ?? "";
+  const text = () => latest?.frameText ?? "";
   await until(() => latest?.request === 2 && latest.inputReady && text().includes("HISTORY_179"));
   assert.equal(latest.historyOffset, 0);
   send({ type: "input", request: 2, id: original, input: { kind: "scroll", data: 30 } });
@@ -201,6 +193,7 @@ try {
   failures.push(error);
 } finally {
   for (const cleanup of [
+    () => native?.stop(),
     () => stopFixtureChild(browser),
     () => daemon && stopFixtureChild(daemon),
     () => fleet.dispose(),

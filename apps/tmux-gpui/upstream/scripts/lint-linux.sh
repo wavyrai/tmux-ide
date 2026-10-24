@@ -18,7 +18,9 @@ command -v docker >/dev/null || fail 'docker is required'
 docker info >/dev/null 2>&1 || fail 'the docker daemon is not running'
 command -v rsync >/dev/null || fail 'rsync is required'
 
-root=$(git rev-parse --show-toplevel)
+# This client may be vendored inside a larger repository. Copy its workspace,
+# not the outer Git checkout (which can contain unrelated dependency caches).
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Cache outside the repository: the container writes here as root, and the
 # worktree must stay exactly as the developer left it. Keyed by platform so an
 # emulated build cannot reuse the native architecture's target directory.

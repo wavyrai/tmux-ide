@@ -60,6 +60,7 @@ uuid.workspace                 = true
 zeroize.workspace              = true
 
 [dev-dependencies]
+tungstenite.workspace = true
 gpui = { features = ["test-support"], workspace = true }
 
 [features]
@@ -128,3 +129,7 @@ required-features = ["integration-test"]
 [[bin]]
 name = "tmux-ide-gpui"
 path = "src/tmux_main.rs"
+
+[[example]]
+name = "tmux_native_journey"
+required-features = ["integration-test"]

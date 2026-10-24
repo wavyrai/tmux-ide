@@ -802,7 +802,7 @@ describe("real SessionRuntime qualification", () => {
     }
   }, 10000);
 
-  it("preserves text, binary mouse bytes, then named-key ordering on the single control lane", async () => {
+  it("preserves text, NUL/non-UTF8 mouse bytes, then named-key ordering on the single control lane", async () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:input");
     const opening = client.subscribe("pane.alpha", () => undefined);
@@ -814,7 +814,7 @@ describe("real SessionRuntime qualification", () => {
     const subscription = await opening;
     const lease = client.acquireController();
     client.sendInput(lease, "pane.alpha", { kind: "text", data: "paste界" });
-    client.sendInput(lease, "pane.alpha", { kind: "bytes", data: "1b5b4d20ff80" });
+    client.sendInput(lease, "pane.alpha", { kind: "bytes", data: "1b5b4d20ff8000c328" });
     client.sendInput(lease, "pane.alpha", { kind: "key", data: "Enter" });
     await drivers[0]!.settleUntil(
       () =>
@@ -826,7 +826,7 @@ describe("real SessionRuntime qualification", () => {
       command.startsWith("send-keys"),
     );
     expect(commands[0]).toContain("-H");
-    expect(commands[1]).toContain("-H 1b 5b 4d 20 ff 80");
+    expect(commands[1]).toContain("-H 1b 5b 4d 20 ff 80 00 c3 28");
     expect(commands[2]).toContain("Enter");
     client.releaseController(lease);
     expect(() => client.sendInput(lease, "pane.alpha", { kind: "bytes", data: "ff" })).toThrow();

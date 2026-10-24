@@ -40,7 +40,7 @@ impl SnapshotView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.browser_state.retained_preview {
+        if self.browser_state.retained_preview || self.resize_gesture.busy() {
             self.wheel = Default::default();
             return;
         }
@@ -127,7 +127,9 @@ impl SnapshotView {
         }
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
-        if self.browser_state.retained_preview {
+        if self.browser_state.retained_preview
+            || (self.resize_gesture.busy() && self.divider.is_none())
+        {
             self.interrupt_input(cx);
             cx.stop_propagation();
             return;
@@ -162,7 +164,7 @@ impl SnapshotView {
             cx.stop_propagation();
             return;
         }
-        if !self.presence.ready() || self.frame.is_none() {
+        if (!self.presence.ready() && !self.focus_reclaim_ready()) || self.frame.is_none() {
             return;
         }
         let key = &event.keystroke;
@@ -198,7 +200,7 @@ impl SnapshotView {
             if super::hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref())
                 && let (Some(frame), Some(region)) = (&self.frame, &self.browser_state.copy_region)
             {
-                match region.text(frame) {
+                match region.text_view(frame.view()) {
                     Ok(text) if !text.is_empty() => {
                         cx.write_to_clipboard(ClipboardItem::new_string(text))
                     }
@@ -225,7 +227,10 @@ impl SnapshotView {
                     let region = self.browser_state.copy_region.as_ref().filter(|region| {
                         self.browser_state.request == self.browser_request
                             && self.frame.as_ref().is_some_and(|frame| {
-                                region.valid(frame, self.browser_state.selected_pane.as_deref())
+                                region.valid_view(
+                                    frame.view(),
+                                    self.browser_state.selected_pane.as_deref(),
+                                )
                             })
                     });
                     let Some(region) = region else {
@@ -287,6 +292,8 @@ impl SnapshotView {
         cx.stop_propagation();
     }
     pub(super) fn queue_input(&mut self, input: super::keys::Input, cx: &mut Context<Self>) {
+        // Fixture timing starts before authority/focus buffering and transport admission.
+        let input = super::renderer_probe::runtime::admit(input, &self.browser_state);
         let terminal = matches!(
             input,
             super::keys::Input::Text(_)
@@ -294,13 +301,15 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
-        if self.browser_state.retained_preview {
+        if self.browser_state.retained_preview || self.resize_gesture.busy() {
+            super::renderer_probe::runtime::rejected();
             if terminal {
                 self.interrupt_input(cx);
             }
             return;
         }
         if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
+            super::renderer_probe::runtime::rejected();
             return;
         }
         if terminal && self.pending_input.is_some() {
@@ -324,6 +333,7 @@ impl SnapshotView {
             if terminal {
                 self.interrupt_input(cx);
             }
+            super::renderer_probe::runtime::rejected();
             self.browser_state.input_ready = false;
             self.browser_state.status = "Input queue unavailable — reselect the pane".into();
             cx.notify();

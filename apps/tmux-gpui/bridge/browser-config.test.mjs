@@ -138,7 +138,9 @@ test("malformed private config stays recoverable without leaking its contents", 
         "diagnostics",
         "localSetup",
         "localSessionCreate",
-        "retainedPreview",
+        "nativeDiagnostics",
+        "nativeFrameScope",
+        "nativeRetainedPreview",
         "selectionIdentity",
         "inputTargetRejected",
         "inputTargets",
@@ -153,6 +155,9 @@ test("malformed private config stays recoverable without leaking its contents", 
     assert.equal(event.attentionSelectionRejected, null);
     assert.equal(child.exitCode, null);
     assert.equal(event.snapshot, null);
+    assert.equal(event.nativeFrameScope, null);
+    assert.equal(event.nativeDiagnostics, null);
+    assert.equal(event.nativeRetainedPreview, null);
     assert.equal(event.inputReady, false);
     assert.equal(event.inputTargetRejected, false);
     assert.deepEqual(event.inputTargets, []);
@@ -210,7 +215,9 @@ test("malformed private config stays recoverable without leaking its contents", 
         "diagnostics",
         "localSetup",
         "localSessionCreate",
-        "retainedPreview",
+        "nativeDiagnostics",
+        "nativeFrameScope",
+        "nativeRetainedPreview",
         "selectionIdentity",
         "graphics",
         "inputTargetRejected",

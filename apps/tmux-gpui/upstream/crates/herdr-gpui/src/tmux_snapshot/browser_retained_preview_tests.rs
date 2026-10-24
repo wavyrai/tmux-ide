@@ -10,31 +10,13 @@ fn preview() -> serde_json::Value {
             include_str!("../../../../../fixtures/snapshot.json")).unwrap()}})
 }
 #[test]
-fn retained_frame_is_display_only_and_catalog_can_arrive_before_live_frame() -> anyhow::Result<()> {
+fn retained_broker_pixels_are_rejected_without_advancing_catalog_sequence() -> anyhow::Result<()> {
     let mut reader = Reader::default();
     let mut value = preview();
-    let state = reader.accept(&serde_json::to_vec(&value)?)?;
-    assert!(state.retained_preview && state.frame.is_some());
-    assert!(!state.input_ready && state.selected_pane.is_none() && state.regions.is_empty());
-    value["sequence"] = json!(2);
-    value["sessions"] = json!([{"id":"s","label":"Session"}]);
-    value["selectedSession"] = json!("s");
-    value["panes"] = json!([{"id":"p","label":"Pane","windowId":"w"}]);
-    value["sessionCatalogComplete"] = json!(true);
-    value["preferredPane"] = json!("p");
-    assert!(
-        reader
-            .accept(&serde_json::to_vec(&value)?)?
-            .retained_preview
-    );
-    value["sequence"] = json!(3);
+    assert!(reader.accept(&serde_json::to_vec(&value)?).is_err());
     value["retainedPreview"] = serde_json::Value::Null;
-    value["snapshot"] = preview()["retainedPreview"]["snapshot"].clone();
-    value["selectedPane"] = json!("p");
-    value["preferredPane"] = serde_json::Value::Null;
-    value["inputReady"] = json!(true);
-    let live = reader.accept(&serde_json::to_vec(&value)?)?;
-    assert!(!live.retained_preview && live.input_ready && live.frame.is_some());
+    let state = reader.accept(&serde_json::to_vec(&value)?)?;
+    assert!(!state.retained_preview && state.frame.is_none() && !state.input_ready);
     Ok(())
 }
 #[test]
@@ -79,14 +61,15 @@ fn retained_preview_rejects_live_authority_and_malformed_payloads() {
 #[test]
 fn retained_preview_obeys_existing_connection_sequence_and_request_fences() -> anyhow::Result<()> {
     let mut reader = Reader::default();
-    let first = preview();
+    let mut first = preview();
+    first["retainedPreview"] = serde_json::Value::Null;
     reader.accept(&serde_json::to_vec(&first)?)?;
     assert!(reader.accept(&serde_json::to_vec(&first)?).is_err());
-    let mut old_request = preview();
+    let mut old_request = first.clone();
     old_request["sequence"] = json!(2);
     old_request["request"] = json!(6);
     assert!(reader.accept(&serde_json::to_vec(&old_request)?).is_err());
-    let mut replaced = preview();
+    let mut replaced = first.clone();
     replaced["sequence"] = json!(2);
     replaced["connection"] = json!("replacement");
     assert!(reader.accept(&serde_json::to_vec(&replaced)?).is_err());

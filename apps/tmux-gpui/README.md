@@ -15,8 +15,9 @@ Cargo workspace, tests, assets, documentation, Apache-2.0 license and third-part
 notices. `upstream-provenance.json` records the source commit and SHA-256 digest
 of every imported file. Upstream crate names are retained for comparison.
 The adapter renders snapshots and the selected live window’s pane arrangement
-through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. A local TypeScript helper reuses the existing daemon delivery validator;
-Rust reads bounded, complete publications off the UI thread. Window resizing uses daemon geometry authority. Source and exact-packaged helper tests qualify two-viewer controller handoff and geometry preservation on background and authority release on close; simultaneous geometry-claim denial and native-client competition remain unqualified (see `evidence/competing-viewers-2026-10-10/README.md`). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
+through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. Rust receives and validates daemon pane-stream patches directly, applies changed
+rows, and prepares painting off the UI thread. The TypeScript broker handles
+discovery and application metadata without forwarding live terminal cells or input. Window resizing uses daemon geometry authority. Production Rust-worker journeys cover two-viewer handoff, pane replacement, background geometry, input during resize, daemon replacement and sustained output. These are headless ownership/transport checks, not physical GUI latency or native-client competition measurements (see `evidence/competing-viewers-2026-10-10/README.md` for the historical helper baseline). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
 implemented with further IME qualification pending. If you click or type before
 keyboard input is ready, the preview keeps input interrupted until you click the
 ready terminal again and retype. It never replays discarded input. This also
@@ -224,6 +225,62 @@ The original `herdr-gpui` executable remains for reference checks only. Shared
 modules currently compile through a library; this isolates startup dispatch but
 does not constitute dependency trimming or a signed application package.
 
+## Native terminal data path
+
+The source browser uses the direct Rust terminal route by default. Use an
+explicit private host configuration for isolated tests. This source change
+does not change an already installed release.
+
+The Node broker owns discovery, SSH connection setup, one-use capability issuance,
+and owner HTTP metadata/actions. Rust owns the canonical terminal WebSocket,
+ordered input and acknowledgements, geometry, grid patches, history, and graphics.
+Terminal cells and keystrokes do not pass through Node on this route. Broker
+messages are bounded control/catalog metadata, including scoped history tokens
+and split-layout resources; they cannot grant input authority.
+
+Canonical rows retain immutable shared identity. The native projection converts
+changed rows and recomposes affected canvas rows, while retaining unchanged rows
+for painting. Cursor-only updates reuse cell rows. Regression tests count converted
+and copied cells, but those counts are not a measured latency or frame-rate claim.
+
+The direct native client offers binary cells and deferred alternate-screen history through capability 111, or capability
+112 when canonical discovery proves same-host image access. These bundles include
+binary graphics (107); 112 also includes local image leases (108). The request
+keeps the existing `semantic-compact-v1` encoding string so older daemons accept
+it and use compact JSON cells plus capability-101 graphics. A new daemon selects
+`semantic-binary-v1` only for an explicit binary-cell offer. The broker records
+that offer in the native handoff; Rust must reject an unsolicited binary upgrade.
+Binary representation hashes cover the encoded bytes; canonical state hashes and
+acknowledgements continue to cover the same decoded terminal state.
+
+Cold alternate-screen subscriptions may negotiate `deferred-history-v1`. Their
+TCP1 projection contains visible rows and a history commitment, with a separate
+receipt that never acknowledges a complete terminal state. Leaving the alternate
+screen or requesting history loads a complete snapshot before history-dependent
+interaction resumes. Existing complete subscriptions retain their history.
+
+Graphics capability 107 negotiates bounded binary image chunks directly from the
+daemon to Rust. PNG and already-compressed image bytes remain unchanged; older
+daemons retain JSON/base64 delivery. Both paths use the same lifetime, ordering,
+size and digest checks.
+
+On proven same-host connections, capability 108 supersedes 107 and negotiates
+immutable file leases instead of sending image bytes through the socket. The
+broker derives the permitted directory from canonical daemon discovery; a
+loopback URL or copied host configuration does not grant file access. Rust reads
+bounded chunks on a dedicated worker, rejects symlinks and unexpected metadata,
+verifies the full file digest, and releases the lease. Expired or unavailable
+files fall back to inline binary delivery. Old daemons retain JSON graphics;
+SSH and Windows use network delivery. File transfer removes base64 and socket
+copies, but image decoding and GPU upload still require memory and work.
+
+## Opening terminal links
+
+Use **Cmd-click** on macOS or **Ctrl-click** to open a visible HTTP or HTTPS URL
+in the selected terminal pane. Ordinary clicks retain terminal selection and
+application mouse behavior. Link activation requires a current painted pane;
+stale retained previews cannot open links.
+
 ## Transitional session picker
 
 To choose a session and pane interactively before opening the native read-only
@@ -342,13 +399,10 @@ Switching windows retires the previous presentation and only admits responses
 for the new selection. Each pane uses canonical delivery with an interactive capability and
 explicit daemon input authority. The GUI receives display state, never the daemon owner token.
 
-The browser hosts live sessions in its own process by default. Typed immutable
-rows and raw image chunks cross a bounded asynchronous mailbox; unchanged rows
-are reused during composition and compact encoding. Native capability negotiation
-selects binary full/delta frames with explicit baseline recovery. The launcher
-supervises inherited duplex endpoints without relaying their payload bytes.
-Set `TMUX_IDE_GUI_LIVE_MODE=process` to exercise the separate live-helper fallback.
-See [binary protocol](bridge/binary-protocol.md) for bounds and
+The browser supplies control/catalog metadata while Rust consumes terminal
+delivery directly, as described above. The older helper binary protocol remains
+a diagnostic surface, not the native browser's terminal route.
+See [binary protocol](bridge/binary-protocol.md) for diagnostic bounds and
 [visible-response qualification](bridge/performance/README.md) for measurement
 requirements. These mechanisms alone do not establish GUI/TUI latency parity.
 
@@ -779,37 +833,28 @@ accounting and no terminal input leakage. The exact artifact, screenshots and
 remaining nested-layout limits are in `evidence/native-divider-2026-10-10/`.
 This is scoped evidence, not qualification of every later app build.
 
-Drag a separator to resize the actual tmux layout continuously. The cursor
-identifies available handles. The bridge reuses the TUI resize transaction: one
-request in flight, only the latest desired size retained, and the exact final
-target sent on release. Daemon receipts and coherent layout/surface geometry
-govern progress; the client renders the verified updated layout. It does
-not stretch terminal pixels or create a separate local pane layout.
+The direct Rust client previews separator movement locally and commits one exact
+canonical split boundary on release. Terminal processes keep their geometry during
+the drag, avoiding repeated reflow. The final daemon layout remains authoritative;
+preview guides do not stretch terminal pixels or alter the terminal replica.
 
-Output can continue during a drag. Session, topology, pane lifetime, focus or
-coordinate changes cancel the gesture; Escape cancels it too. Divider dragging
-is isolated from text selection and terminal input. Outer tmux pane-status rows
-are accounted for when requesting a content height.
+Canonical split-tree handles identify the exact boundary, including nested splits.
+Session, topology, pane lifetime, focus or coordinate changes cancel the gesture;
+Escape cancels it too. Divider dragging is isolated from text selection and terminal
+input. Pane-status rows are accounted for when requesting a content height.
 
-Simple splits and unambiguous T-shaped segments are supported. Some deeper
-nested outer dividers intentionally have no handle: a pane-size request can
-move an inner edge instead. Those need exact split-tree targeting before being
-enabled. Continuous resizing is implemented in the current local preview; older
-helpers without gesture support retain release-only behavior. The client never
-predicts terminal geometry. Current source and packaged bridge tests verify
-changes before release, final target preservation and presence cancellation on
-both axes. Physical smoothness of this build remains unqualified; see
-`evidence/continuous-resize-2026-10-10/`.
-
-The isolated real-tmux check is:
+The production-worker fixture verifies unchanged geometry before release, exact
+column and row targets, status-row accounting and focus cancellation. Use the
+bundled tmux build on PATH and the opt-in native journey driver:
 
 ```bash
-node --import tsx apps/tmux-gpui/bridge/pane-resize-smoke.mjs
-node --import tsx apps/tmux-gpui/bridge/pane-resize-gesture-smoke.mjs
+TMUX_GPUI_JOURNEY_PROBE=/absolute/path/to/tmux_native_journey \
+  node --import tsx apps/tmux-gpui/bridge/pane-resize-gesture-smoke.mjs
 ```
 
-Set `TMUX_GPUI_TEST_BINARY` to an explicit native executable for the interactive
-fixture. It opens only disposable sessions and asks for two divider drags.
+The historical continuous-resize evidence in
+`evidence/continuous-resize-2026-10-10/` describes the older helper route; it does
+not qualify physical smoothness of this direct Rust build.
 
 ### Shared tmux-ide themes (source preview)
 
@@ -942,3 +987,35 @@ Cursor image placements clip at pane edges and survive capture replay when cell
 dimensions, history origin and active buffer remain unchanged. Reflow, changed
 history origins, buffer switches and authoritative stream resets drop these
 best-effort anchors; Unicode placeholder placements remain the durable option.
+
+### Direct Rust journey drivers
+
+The metadata broker no longer publishes terminal cells or input readiness. The
+session-open fixture connects the production Rust controller to its handoff pipe:
+
+```bash
+cargo build --locked --manifest-path apps/tmux-gpui/upstream/Cargo.toml \
+  -p herdr-client --example tmux_journey_probe
+export TMUX_GPUI_JOURNEY_PROBE="$PWD/apps/tmux-gpui/upstream/target/debug/examples/tmux_journey_probe"
+node --import tsx apps/tmux-gpui/bridge/session-open-smoke.mjs
+```
+
+The window-creation, close-pane and browser-history fixtures use the actual native
+worker, including its input, action, history and presentation owners. On macOS:
+
+```bash
+cargo build --locked --manifest-path apps/tmux-gpui/upstream/Cargo.toml \
+  -p herdr-gpui --features integration-test --example tmux_native_journey
+export TMUX_GPUI_JOURNEY_PROBE="$PWD/apps/tmux-gpui/upstream/target/debug/examples/tmux_native_journey"
+node scripts/build-cli.mjs --outfile "$PWD/.tasks/gpui-journey/cli.mjs"
+export TMUX_GPUI_TEST_CLI="$PWD/.tasks/gpui-journey/cli.mjs"
+node --import tsx apps/tmux-gpui/bridge/new-window-smoke.mjs
+node --import tsx apps/tmux-gpui/bridge/browser-history-smoke.mjs
+node --import tsx apps/tmux-gpui/bridge/close-pane-smoke.mjs
+```
+
+Adjust the executable paths if using `CARGO_TARGET_DIR`. These drivers use bounded
+pipes and isolated fixture daemons. The native worker driver is opt-in through
+`integration-test`; it exposes fixture state and text for assertions and must not
+be attached to personal sessions. It does not exercise OS keyboard delivery, GPU
+painting, physical scrolling or SSH latency and is not a performance benchmark.

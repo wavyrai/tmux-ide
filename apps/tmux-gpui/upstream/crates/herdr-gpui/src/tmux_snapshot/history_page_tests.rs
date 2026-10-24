@@ -22,9 +22,15 @@ fn prepare(view: &mut SnapshotView, rows: u16) {
             1000
         ],
     });
-    view.frame = Some(frame.clone());
-    view.browser_state.frame = Some(frame.clone());
-    view.painted_frame = Some(frame);
+    view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame.clone(),
+    ));
+    view.painted_frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+        frame,
+    ));
     view.browser_state.request = view.browser_request;
     view.browser_state.history_offset = 30;
     view.browser_state.input_ready = false;
@@ -120,9 +126,9 @@ fn history_page_keys_accept_newer_same_geometry_publications_before_paint(cx: &m
         for (index, (key_name, expected)) in [("shift-pageup", 19), ("shift-pageup", 19), ("shift-pagedown", -19)].into_iter().enumerate() {
             let mut publication = view.browser_state.clone();
             let Some(frame) = publication.frame.as_ref() else { panic!("fixture frame missing") };
-            let mut updated = (**frame).clone();
+            let mut updated = frame.legacy().as_ref().clone();
             updated.cells[0].symbol = index.to_string();
-            publication.frame = Some(Arc::new(updated));
+            publication.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(Arc::new(updated)));
             publication.presence_revision = 1;
             view.apply_browser_state(Some(publication), cx);
             // UI publication and key dispatch happen before the next canvas paint.

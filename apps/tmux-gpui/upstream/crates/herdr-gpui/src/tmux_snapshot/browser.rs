@@ -10,7 +10,7 @@ pub(super) mod local_session;
 pub(super) mod local_setup;
 #[path = "browser_machines.rs"]
 pub(super) mod machines;
-use herdr_client::protocol::FrameData;
+use super::display_frame::DisplayFrame;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -75,7 +75,9 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub renderer_probe_scope: Option<super::renderer_probe::Scope>,
     pub diagnostics: Option<super::diagnostics::Versions>,
+    pub native_diagnostics: Option<super::browser_native_editor::Diagnostics>,
     pub pointer_modes: Option<decode::PointerModes>,
     pub local_setup: Option<local_setup::Setup>,
     pub local_session_create: Option<local_session::Capability>,
@@ -110,12 +112,16 @@ pub(super) struct State {
     pub appearance: Option<super::appearance::Appearance>,
     pub selection_identity: Option<String>,
     pub input_targets: Vec<super::pending_input::Target>,
+    /// Native lifecycle identity only; never permission to dispatch input.
+    pub native_focus_target: Option<super::pending_input::Target>,
     pub input_target_rejected: bool,
     pub copy_region: Option<super::copy::Region>,
     pub regions: Vec<super::hit_regions::Region>,
     pub request: u64,
     pub input_ready: bool,
     pub retained_preview: bool,
+    pub native_frame_scope: Option<super::browser_native_preview::Route>,
+    pub native_retained_preview: Option<super::browser_native_preview::Route>,
     pub history_offset: u32,
     pub presence_revision: u64,
     pub sessions: Vec<Choice>,
@@ -125,7 +131,7 @@ pub(super) struct State {
     pub selected_session: Option<String>,
     pub selected_pane: Option<String>,
     pub status: String,
-    pub frame: Option<Arc<FrameData>>,
+    pub frame: Option<DisplayFrame>,
     /// Kitty graphics placements in frame cells.
     pub graphics: Vec<super::kitty_graphics::Placement>,
 }
@@ -133,6 +139,7 @@ pub(super) struct State {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Publication {
     diagnostics: Option<super::diagnostics::Versions>,
+    native_diagnostics: Option<super::browser_native_editor::Diagnostics>,
     local_setup: Option<local_setup::Setup>,
     local_session_create: Option<local_session::Capability>,
     fleet: Option<fleet::Fleet>,
@@ -194,239 +201,17 @@ struct Publication {
     selected_session: Option<String>,
     selected_pane: Option<String>,
     status: String,
-    // Kept raw: the terminal grid is decoded once, straight into the painter frame.
-    snapshot: Option<transport::SnapshotPayload>,
-    retained_preview: Option<RetainedPreview>,
+    // Compatibility null field only; non-null terminal payloads are rejected before decode.
+    snapshot: Option<Box<serde_json::value::RawValue>>,
+    retained_preview: Option<Box<serde_json::value::RawValue>>,
+    native_frame_scope: Option<super::browser_native_preview::Route>,
+    native_retained_preview: Option<super::browser_native_preview::Route>,
     #[serde(default)]
     graphics: Vec<super::kitty_graphics::Placement>,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RetainedPreview {
-    snapshot: Box<serde_json::value::RawValue>,
-}
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub(super) enum Command {
-    #[serde(rename = "frame-resync")]
-    FrameResync {
-        connection: String,
-        request: u64,
-        epoch: String,
-        #[serde(rename = "baseSeq")]
-        base_seq: u64,
-    },
-    #[serde(rename = "open-workspace-fleet-agent", rename_all = "camelCase")]
-    OpenWorkspaceFleetAgent {
-        request: u64,
-        from_request: u64,
-        scope: u64,
-        roster_revision: u64,
-        key: String,
-    },
-    #[serde(rename = "session-tab", rename_all = "camelCase")]
-    SessionTab {
-        request: u64,
-        from_request: u64,
-        revision: u64,
-        action: String,
-    },
-    #[serde(rename = "session-history", rename_all = "camelCase")]
-    SessionHistory {
-        request: u64,
-        from_request: u64,
-        revision: u64,
-        action: String,
-    },
-    #[serde(rename = "home-agent-filter", rename_all = "camelCase")]
-    HomeAgentFilter {
-        request: u64,
-        roster_revision: u64,
-        machine_id: Option<String>,
-    },
-    #[serde(rename = "home-agent-recovery", rename_all = "camelCase")]
-    HomeAgentRecovery {
-        request: u64,
-        roster_revision: u64,
-        action: super::home::recovery::Action,
-    },
-    #[serde(rename = "palette-observe")]
-    PaletteObserve {
-        request: u64,
-        scope: u64,
-        active: bool,
-        query: String,
-    },
-    #[serde(rename = "open-palette-agent", rename_all = "camelCase")]
-    OpenPaletteAgent {
-        request: u64,
-        from_request: u64,
-        scope: u64,
-        roster_revision: u64,
-        key: String,
-    },
-    #[serde(rename = "attention-observe")]
-    AttentionObserve {
-        request: u64,
-        scope: u64,
-        active: bool,
-    },
-    #[serde(rename = "open-attention-agent", rename_all = "camelCase")]
-    OpenAttentionAgent {
-        request: u64,
-        from_request: u64,
-        scope: u64,
-        roster_revision: u64,
-        key: String,
-    },
-    #[serde(rename = "fleet-disconnect")]
-    FleetDisconnect {
-        request: u64,
-        disconnect: String,
-    },
-    #[serde(rename = "fleet-retry")]
-    FleetRetry {
-        request: u64,
-        retry: String,
-    },
-    #[serde(rename = "fleet-server")]
-    FleetServer {
-        request: u64,
-        selection: String,
-    },
-    #[serde(rename = "fleet-session")]
-    FleetSession {
-        request: u64,
-        selection: String,
-    },
-    #[serde(rename = "machines")]
-    Machines {
-        request: u64,
-        #[serde(flatten)]
-        operation: machines::Operation,
-    },
-    #[serde(rename = "machine-profile")]
-    MachineProfile {
-        request: u64,
-        id: String,
-        revision: u64,
-    },
-    #[serde(rename = "open-workspace-agent", rename_all = "camelCase")]
-    OpenWorkspaceAgent {
-        request: u64,
-        from_request: u64,
-        roster_revision: u64,
-        key: String,
-        session_id: String,
-    },
-    #[serde(rename = "open-agent", rename_all = "camelCase")]
-    OpenAgent {
-        request: u64,
-        from_request: u64,
-        roster_revision: u64,
-        key: String,
-    },
-    #[serde(rename = "create-local-session")]
-    CreateLocalSession {
-        request: u64,
-        action: String,
-        name: String,
-    },
-    #[serde(rename = "create-session")]
-    CreateSession {
-        request: u64,
-        name: String,
-    },
-    #[serde(rename = "open-editor")]
-    OpenEditor {
-        request: u64,
-        id: String,
-        token: String,
-    },
-    #[serde(rename = "pane-action")]
-    PaneAction {
-        request: u64,
-        id: String,
-        token: String,
-        #[serde(flatten)]
-        action: super::pane_actions::Action,
-    },
-    #[serde(rename = "split-gesture")]
-    SplitGesture {
-        request: u64,
-        gesture: String,
-        #[serde(flatten)]
-        update: super::divider::canonical::Update,
-    },
-    #[serde(rename = "resize-gesture")]
-    ResizeGesture {
-        request: u64,
-        gesture: String,
-        id: String,
-        axis: super::divider::Axis,
-        #[serde(flatten)]
-        update: super::divider::gesture::Update,
-    },
-    #[serde(rename = "resize-pane")]
-    ResizePane {
-        request: u64,
-        id: String,
-        token: String,
-        axis: super::divider::Axis,
-        cells: u16,
-    },
-    Theme {
-        id: String,
-    },
-    #[serde(rename = "fleet-preference")]
-    FleetPreference {
-        request: u64,
-        revision: u64,
-        action: String,
-        enabled: bool,
-    },
-    Appearance {
-        system: super::appearance::System,
-    },
-    Presence {
-        active: bool,
-        revision: u64,
-    },
-    Input {
-        #[serde(rename = "inputTarget", skip_serializing_if = "Option::is_none")]
-        input_target: Option<String>,
-        request: u64,
-        id: String,
-        input: super::keys::Input,
-    },
-    #[serde(rename_all = "camelCase")]
-    Machine {
-        request: u64,
-        ssh_target: Option<String>,
-    },
-    Home {
-        request: u64,
-    },
-    Refresh {
-        request: u64,
-    },
-    #[serde(rename = "local-setup")]
-    LocalSetup {
-        request: u64,
-    },
-    Session {
-        request: u64,
-        id: String,
-    },
-    Pane {
-        request: u64,
-        id: String,
-    },
-    #[serde(rename = "kitty-missing")]
-    KittyMissing {
-        digests: Vec<String>,
-    },
-}
+#[path = "browser_commands.rs"]
+mod commands;
+pub(super) use commands::Command;
 pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
 pub(super) struct Bridge {
     pub mailbox: Mailbox,
@@ -434,11 +219,6 @@ pub(super) struct Bridge {
 }
 #[derive(Default)]
 struct Reader {
-    delta: bool,
-    frames: decode::delta::Store,
-    frame_identity: Option<(u64, Option<String>, Option<String>, u32)>,
-    resync_epoch: Option<String>,
-    resync: Option<Command>,
     connection: Option<String>,
     sequence: u64,
     request: u64,
@@ -448,6 +228,41 @@ impl Reader {
         self.accept_publication(serde_json::from_slice(line)?)
     }
     fn accept_publication(&mut self, p: Publication) -> Result<State, Error> {
+        if p.snapshot.is_some()
+            || p.retained_preview.is_some()
+            || p.input_ready
+            || !p.graphics.is_empty()
+            || !p.regions.is_empty()
+            || p.copy_region.is_some()
+            || p.selection_identity.is_some()
+            || p.pane_actions.is_some()
+            || p.resize_token.is_some()
+            || p.split_layout.is_some()
+            || p.split_gesture.is_some()
+            || p.resize_gesture.is_some()
+            || p.resize_gesture_supported
+            || p.input_targets
+                .as_ref()
+                .is_some_and(|targets| !targets.is_empty())
+            || p.history_offset != 0
+        {
+            return Err(Error::Invalid("broker terminal payload is unsupported"));
+        }
+        if p.native_diagnostics.as_ref().is_some_and(|d| {
+            !d.valid()
+                || d.request != p.request
+                || p.surface != Some(Surface::Workspace)
+                || p.selected_pane.as_deref() != Some(d.pane.as_str())
+        }) {
+            return Err(Error::Invalid("invalid native diagnostics"));
+        }
+        if p.native_frame_scope
+            .iter()
+            .chain(p.native_retained_preview.iter())
+            .any(|r| !r.valid())
+        {
+            return Err(Error::Invalid("invalid native preview proof"));
+        }
         let surface = p.surface.unwrap_or(if p.selected_session.is_some() {
             Surface::Workspace
         } else {
@@ -648,97 +463,13 @@ impl Reader {
         {
             return Err(Error::Invalid("invalid history offset"));
         }
-        let delta = self.delta;
-        let identity = (
-            p.request,
-            p.selected_session.clone(),
-            p.selected_pane.clone(),
-            p.history_offset,
-        );
-        let mut prepared = None;
-        let mut recovery = None;
-        let empty_store = decode::delta::Store::default();
-        let frame_store = if self.frame_identity.as_ref() == Some(&identity) {
-            &self.frames
-        } else {
-            &empty_store
-        };
-        let (frame, pointer_modes) = match (&p.snapshot, &p.retained_preview) {
-            (Some(live), _) => {
-                if delta {
-                    match live.prepare(frame_store)? {
-                        decode::delta::Outcome::Ready(next) => {
-                            let frame = next.frame.clone();
-                            let modes = next.modes;
-                            prepared = Some(next);
-                            (Some(frame), modes)
-                        }
-                        decode::delta::Outcome::Resync {
-                            epoch,
-                            base_seq,
-                            frame,
-                        } => {
-                            recovery = Some((epoch, base_seq));
-                            (Some(Arc::new(frame)), None)
-                        }
-                    }
-                } else {
-                    let (frame, modes) = decode::live_frame(live.json()?)?;
-                    (Some(Arc::new(frame)), modes)
-                }
-            }
-            (None, Some(preview)) => (
-                Some(Arc::new(decode::frame(preview.snapshot.get().as_bytes())?)),
-                None,
-            ),
-            (None, None) => (None, None),
-        };
-        match frame.as_deref() {
-            Some(frame) => super::kitty_graphics::validate(&p.graphics, frame.width, frame.height)?,
-            None if !p.graphics.is_empty() => {
-                return Err(Error::Invalid("kitty graphics without a frame"));
-            }
-            None => {}
-        }
-        if !super::hit_regions::valid(&p.regions, frame.as_deref(), &p.panes) {
-            return Err(Error::Invalid("invalid pane regions"));
-        }
-        if p.copy_region.as_ref().is_some_and(|r| {
-            frame
-                .as_ref()
-                .is_none_or(|f| !r.valid(f, p.selected_pane.as_deref()))
-        }) {
-            return Err(Error::Invalid("invalid copy region"));
-        }
-        if p.split_layout.as_ref().is_some_and(|layout| {
-            !p.input_ready
-                || !layout.matches(
-                    frame.as_deref(),
-                    &p.regions,
-                    &p.panes,
-                    p.selected_session.as_deref(),
-                    p.selected_pane.as_deref(),
-                )
-        }) {
-            return Err(Error::Invalid("Invalid split layout presentation"));
-        }
-        if let Some((epoch, base_seq)) = recovery {
-            return Ok(self.recover(&p, epoch, base_seq));
-        }
-        if let Some(next) = prepared {
-            self.frames.commit(next);
-            self.resync_epoch = None;
-        } else {
-            self.frames.reset();
-            self.resync_epoch = None;
-        }
-        self.frame_identity = Some(identity);
         self.connection = Some(p.connection);
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
             diagnostics: p.diagnostics,
-            pointer_modes,
+            native_diagnostics: p.native_diagnostics,
+            pointer_modes: None,
             local_setup: p.local_setup,
             local_session_create: p.local_session_create,
             machines: p.machines,
@@ -772,12 +503,16 @@ impl Reader {
             appearance: p.appearance,
             selection_identity: p.selection_identity,
             input_targets: p.input_targets.unwrap_or_default(),
+            native_focus_target: None,
+            renderer_probe_scope: None,
             input_target_rejected: p.input_target_rejected,
             copy_region: p.copy_region,
             regions: p.regions,
             request: p.request,
             input_ready: p.input_ready,
             retained_preview,
+            native_frame_scope: p.native_frame_scope,
+            native_retained_preview: p.native_retained_preview,
             history_offset: p.history_offset,
             presence_revision: p.presence_revision,
             sessions: p.sessions,
@@ -787,7 +522,7 @@ impl Reader {
             selected_session: p.selected_session,
             selected_pane: p.selected_pane,
             status: p.status,
-            frame,
+            frame: None,
             graphics: p.graphics,
         })
     }
@@ -812,6 +547,7 @@ fn valid_choices(choices: &[Choice]) -> bool {
         })
 }
 // Never include the untrusted publication or serde error text in logs.
+#[cfg(test)]
 fn rejection_reason(error: &Error) -> &'static str {
     match error {
         Error::Invalid(reason) => reason,
@@ -822,6 +558,8 @@ fn rejection_reason(error: &Error) -> &'static str {
     }
 }
 
+#[path = "browser_native_transport.rs"]
+mod native_transport;
 #[path = "browser_transport.rs"]
 mod transport;
 pub(super) use transport::start;
@@ -892,12 +630,58 @@ mod selection_identity_tests;
 
 #[cfg(test)]
 pub(super) fn fixture_state(bytes: &[u8]) -> Result<State, Error> {
-    Reader::default().accept(bytes)
+    // Static link-click fixture adapter, deliberately separate from the production broker Reader.
+    let publication: Publication = serde_json::from_slice(bytes)?;
+    let snapshot = publication
+        .snapshot
+        .as_ref()
+        .ok_or(Error::Invalid("static fixture missing frame"))?;
+    let (frame, modes) = decode::live_frame(snapshot.get().as_bytes())?;
+    let mut metadata: serde_json::Value = serde_json::from_slice(bytes)?;
+    for field in [
+        "snapshot",
+        "retainedPreview",
+        "copyRegion",
+        "selectionIdentity",
+        "paneActions",
+        "resizeToken",
+        "splitLayout",
+        "splitGesture",
+        "resizeGesture",
+        "diagnostics",
+    ] {
+        metadata[field] = serde_json::Value::Null;
+    }
+    metadata["inputReady"] = false.into();
+    metadata["resizeGestureSupported"] = false.into();
+    metadata["historyOffset"] = 0.into();
+    for field in ["inputTargets", "regions", "graphics"] {
+        metadata[field] = serde_json::json!([]);
+    }
+    let mut state = Reader::default().accept(&serde_json::to_vec(&metadata)?)?;
+    state.frame = Some(DisplayFrame::from(Arc::new(frame)));
+    state.pointer_modes = modes;
+    state.input_ready = publication.input_ready;
+    state.input_targets = publication.input_targets.unwrap_or_default();
+    state.copy_region = publication.copy_region;
+    state.regions = publication.regions;
+    state.selection_identity = publication.selection_identity;
+    Ok(state)
 }
-
-#[path = "browser_frame_recovery.rs"]
-mod frame_recovery;
 
 #[cfg(test)]
 #[path = "browser_frame_tests.rs"]
 mod frame_tests;
+
+#[cfg(feature = "integration-test")]
+pub(super) fn start_journey(
+    input: impl Read + Send + 'static,
+    output: impl Write + Send + 'static,
+) -> Bridge {
+    native_transport::start_io(
+        Default::default(),
+        || BufReader::new(input),
+        || output,
+        false,
+    )
+}

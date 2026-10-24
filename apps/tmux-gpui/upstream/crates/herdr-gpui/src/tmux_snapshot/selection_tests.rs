@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+use std::sync::Arc;
 fn state() -> anyhow::Result<browser::State> {
     let mut frame =
         super::super::decode::frame(include_bytes!("../../../../../fixtures/snapshot.json"))?;
@@ -14,7 +15,7 @@ fn state() -> anyhow::Result<browser::State> {
         wrapped: vec![false; usize::from(frame.height)],
     };
     Ok(browser::State {
-        frame: Some(Arc::new(frame)),
+        frame: Some(Arc::new(frame).into()),
         copy_region: Some(region),
         selected_pane: Some("pane".into()),
         ..Default::default()
@@ -31,7 +32,7 @@ fn captured_text_and_highlight_survive_new_output() -> anyhow::Result<()> {
     let mut next =
         super::super::decode::frame(include_bytes!("../../../../../fixtures/snapshot.json"))?;
     next.cells[0].symbol = "Z".into();
-    state.frame = Some(Arc::new(next));
+    state.frame = Some(Arc::new(next).into());
     assert!(selection.compatible(&state));
     assert_eq!(selection.text()?, "AB");
     state.frame = None;

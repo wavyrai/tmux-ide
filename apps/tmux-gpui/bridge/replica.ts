@@ -56,6 +56,8 @@ export function createReplica(
           assembler = new TerminalDeliveryAssembler(message);
           return;
         }
+        if (message.type !== "terminal.delivery.chunk")
+          throw new Error("Terminal projection was not negotiated by this receiver");
         state = admitTerminalDeliveryChunk(state, message);
         if (state.failed || !assembler) throw new Error("Invalid terminal chunk");
         assembler.write(message);

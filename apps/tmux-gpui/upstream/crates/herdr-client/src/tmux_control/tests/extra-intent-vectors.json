@@ -1,0 +1,274 @@
+{
+  "resource": {
+    "version": 1,
+    "window": {
+      "liveSessionId": "live-session.aaaaaaaaaaaaaaaaaaaa",
+      "linkId": "window-link.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSemanticWindowId": "window.one",
+      "linkRevision": 1
+    },
+    "layoutId": "12d14eac-0000-4000-8000-000000000001",
+    "cols": 80,
+    "rows": 24,
+    "panes": [
+      {
+        "semanticPaneId": "pane.one",
+        "left": 0,
+        "top": 0,
+        "width": 39,
+        "height": 24
+      },
+      {
+        "semanticPaneId": "pane.two",
+        "left": 40,
+        "top": 0,
+        "width": 40,
+        "height": 24
+      }
+    ],
+    "splits": [
+      {
+        "splitId": "12d14eac-0000-4000-8000-000000000004",
+        "axis": "cols",
+        "boundary": 39,
+        "start": 0,
+        "length": 24
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "verb": "workspace.rename",
+          "scope": "pane",
+          "semanticPaneId": "pane.one",
+          "name": "Renamed"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.rename",
+            "scope": "pane",
+            "name": "Renamed"
+          }
+        }
+      }
+    },
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "verb": "workspace.rename",
+          "scope": "window",
+          "target": {
+            "by": "window",
+            "semanticWindowId": "window.one"
+          },
+          "name": "Window"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.rename",
+            "scope": "window",
+            "name": "Window"
+          }
+        }
+      }
+    },
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "verb": "workspace.rename",
+          "scope": "session",
+          "name": "Session"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.rename",
+            "scope": "session",
+            "name": "Session"
+          }
+        }
+      }
+    },
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "semanticPaneId": "pane.one",
+          "desired": "zoomed",
+          "verb": "workspace.pane.zoom.toggle"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.pane.zoom.toggle",
+            "semanticPaneId": "pane.one",
+            "zoomed": true
+          }
+        }
+      }
+    },
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "sourceSemanticPaneId": "pane.one",
+          "targetSemanticPaneId": "pane.two",
+          "verb": "workspace.pane.swap"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.pane.swap",
+            "sourceSemanticPaneId": "pane.one",
+            "targetSemanticPaneId": "pane.two"
+          }
+        }
+      }
+    },
+    {
+      "command": {
+        "type": "semantic-intent",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "intent": {
+          "workspaceName": "workspace",
+          "target": {
+            "window": {
+              "liveSessionId": "live-session.aaaaaaaaaaaaaaaaaaaa",
+              "linkId": "window-link.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "expectedSemanticWindowId": "window.one",
+              "linkRevision": 1
+            },
+            "layoutId": "12d14eac-0000-4000-8000-000000000001",
+            "splitId": "12d14eac-0000-4000-8000-000000000004",
+            "boundary": 45
+          },
+          "verb": "workspace.window.split.resize"
+        }
+      },
+      "ack": {
+        "type": "semantic-intent-ack",
+        "operationId": "12d14eac-0000-4000-8000-000000000002",
+        "outcome": {
+          "status": "applied",
+          "result": {
+            "operationId": "12d14eac-0000-4000-8000-000000000002",
+            "daemonInstanceId": "12d14eac-0000-4000-8000-000000000001",
+            "outcome": "applied",
+            "workspaceName": "workspace",
+            "verb": "workspace.window.split.resize",
+            "target": {
+              "window": {
+                "liveSessionId": "live-session.aaaaaaaaaaaaaaaaaaaa",
+                "linkId": "window-link.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "expectedSemanticWindowId": "window.one",
+                "linkRevision": 1
+              },
+              "layoutId": "12d14eac-0000-4000-8000-000000000001",
+              "splitId": "12d14eac-0000-4000-8000-000000000004",
+              "boundary": 45
+            },
+            "axis": "cols",
+            "boundary": 45,
+            "successor": {
+              "resource": {
+                "version": 1,
+                "window": {
+                  "liveSessionId": "live-session.aaaaaaaaaaaaaaaaaaaa",
+                  "linkId": "window-link.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "expectedSemanticWindowId": "window.one",
+                  "linkRevision": 1
+                },
+                "layoutId": "12d14eac-0000-4000-8000-000000000003",
+                "cols": 80,
+                "rows": 24,
+                "panes": [
+                  {
+                    "semanticPaneId": "pane.one",
+                    "left": 0,
+                    "top": 0,
+                    "width": 39,
+                    "height": 24
+                  },
+                  {
+                    "semanticPaneId": "pane.two",
+                    "left": 40,
+                    "top": 0,
+                    "width": 40,
+                    "height": 24
+                  }
+                ],
+                "splits": [
+                  {
+                    "splitId": "12d14eac-0000-4000-8000-000000000004",
+                    "axis": "cols",
+                    "boundary": 45,
+                    "start": 0,
+                    "length": 24
+                  }
+                ]
+              },
+              "splitId": "12d14eac-0000-4000-8000-000000000004"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -126,7 +126,3 @@ pub(super) fn expand_snapshot(snapshot: Snapshot<WireRow>) -> Result<Snapshot, E
 
 #[cfg(test)]
 mod tests;
-
-pub(super) fn empty_row(cols: u16) -> WireRow {
-    WireRow::Compact((false, vec![Run(u32::from(cols), String::new(), 1, 0, 0, 0)]))
-}

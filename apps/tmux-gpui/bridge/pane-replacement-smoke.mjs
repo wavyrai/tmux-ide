@@ -1,3 +1,4 @@
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 // Same browser and daemon: remove a selected tmux pane, then explicitly select its replacement.
 import assert from "node:assert/strict";
 import { diagnosticStatus, parseDiagnosticLine } from "./live-diagnostics.ts";
@@ -49,7 +50,7 @@ const fleet = await createScratchFleet({
   windowsPerSession: 1,
   slug: "gpui-pane-replacement",
 });
-let daemon, browser;
+let daemon, browser, native, brokerConnection;
 let pipeTimer, inputFd, outputFd;
 let inputPath, outputPath;
 let pipeError;
@@ -69,6 +70,7 @@ let latest,
 const until = async (predicate) => {
   const deadline = Date.now() + (pipeDir ? 180000 : 20000);
   while (true) {
+    native?.assertHealthy();
     if (pipeError) throw pipeError;
     if (browser.exitCode !== null || browser.signalCode !== null)
       throw new Error("Browser exited instead of retaining recovery: " + stderr);
@@ -125,10 +127,20 @@ try {
     buffer += b.toString();
     let end;
     while ((end = buffer.indexOf("\n")) >= 0) {
-      latest = JSON.parse(buffer.slice(0, end));
+      const publication = JSON.parse(buffer.slice(0, end));
+      if (publication.connection) brokerConnection = publication.connection;
+      if (pipeDir) latest = publication;
       buffer = buffer.slice(end + 1);
     }
   });
+  if (!pipeDir) {
+    native = startNativeJourney(browser, {
+      worker: true,
+      onState: (state) => {
+        latest = state;
+      },
+    });
+  }
   if (pipeDir) {
     mkdirSync(pipeDir, { mode: 0o700 });
     inputPath = join(pipeDir, "input.fifo");
@@ -177,15 +189,17 @@ try {
     }, 10);
     stage(`NATIVE_PIPE_READY ${pipeDir}`);
   }
-  const send = (value) => browser.stdin.write(JSON.stringify(value) + "\n");
+  const send = (value) =>
+    native ? native.send(value) : browser.stdin.write(JSON.stringify(value) + "\n");
   await until(() => latest?.sessions.length === 1);
-  const connection = latest.connection;
+  const connection = brokerConnection;
   let pane;
   if (pipeDir) {
     stage("Select the session and pane; type echo BEFORE_PANE_REPLACEMENT and Enter");
     await until(() => latest?.snapshot && latest.inputReady && latest.selectedPane);
     pane = latest.selectedPane;
   } else {
+    send({ type: "presence", active: true, revision: 1 });
     send({ type: "session", request: 2, id: latest.sessions[0].id });
     await until(() => latest?.request === 2 && latest.panes.length > 0);
     pane = latest.panes[0].id;
@@ -214,6 +228,7 @@ try {
     () =>
       latest?.request === originalRequest &&
       (latest.status.includes("unavailable") ||
+        latest.status.includes("interrupted") ||
         stderr.split("\n").some((line) => {
           const diagnostic = parseDiagnosticLine(line);
           return (
@@ -302,7 +317,7 @@ try {
     );
   }
   assert.ok(!fleet.captureWindowPanes(fleet.sessionNames[0]).includes("STALE_DELETED_PANE"));
-  assert.equal(latest.connection, connection);
+  assert.equal(brokerConnection, connection);
   assert.ok(!stderr.includes(host.ownerToken));
   if (pipeError) throw pipeError;
   console.log(
@@ -322,6 +337,11 @@ try {
 } catch (error) {
   errors.push(error);
 } finally {
+  try {
+    await native?.stop();
+  } catch (error) {
+    errors.push(error);
+  }
   clearInterval(pipeTimer);
   if (pipeError && !errors.includes(pipeError)) errors.push(pipeError);
   for (const fd of [inputFd, outputFd])

@@ -1,3 +1,4 @@
+import { startNativeJourney } from "./native-journey-fixture.mjs";
 import { newWindowDiagnostic } from "./new-window-diagnostic.mjs";
 // Real scoped terminal-window creation in a private session; no GUI or CLI build.
 // Only the receipt-created pane in a distinct canonical window may become selected.
@@ -54,12 +55,11 @@ const run = (...args) =>
     encoding: "utf8",
     timeout: 5000,
   }).trim();
-let daemon, browser, latest, fatal, result;
+let daemon, browser, native, latest, fatal, result;
 let originalPane = null,
   observedCreatedPane = null;
 let originalNativePaneIds = [];
-let buffer = "",
-  stderr = "";
+let stderr = "";
 const failures = [];
 // Failure-only evidence: never emit terminal contents, connection config or raw errors.
 function failureEvidence(error) {
@@ -156,8 +156,10 @@ function failureEvidence(error) {
 async function until(predicate) {
   const deadline = Date.now() + 25000;
   for (;;) {
+    native?.assertHealthy();
     if (fatal) throw fatal;
     if (predicate()) {
+      native?.assertHealthy();
       if (fatal) throw fatal;
       return;
     }
@@ -205,6 +207,7 @@ try {
   let record;
   const deadline = Date.now() + 25000;
   while (!record) {
+    native?.assertHealthy();
     if (fatal) throw fatal;
     assert.ok(Date.now() < deadline, "Daemon startup deadline");
     try {
@@ -254,21 +257,13 @@ try {
   browser.stderr.on("data", (chunk) => {
     stderr = (stderr + chunk).slice(-4096);
   });
-  browser.stdout.on("data", (chunk) => {
-    try {
-      buffer += chunk.toString();
-      let end;
-      while ((end = buffer.indexOf("\n")) >= 0) {
-        assert.ok(end <= 8 * 1024 * 1024);
-        latest = JSON.parse(buffer.slice(0, end));
-        buffer = buffer.slice(end + 1);
-      }
-      assert.ok(buffer.length <= 8 * 1024 * 1024);
-    } catch (error) {
-      fatal ??= error;
-    }
+  native = startNativeJourney(browser, {
+    worker: true,
+    onState: (state) => {
+      latest = state;
+    },
   });
-  const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
+  const send = (command) => native.send(command);
   await until(() => latest?.sessions.length === 1);
   const session = latest.sessions[0].id;
   const sessionLabel = latest.sessions[0].label;
@@ -295,7 +290,9 @@ try {
   };
   if (harness) {
     send({ ...command, name: " invalid" });
-    send({ ...command, harness: "sh" });
+    // Invalid wire harness cannot be constructed by the typed Rust UI. Keep
+    // that broker-boundary rejection check on its actual untrusted pipe.
+    browser.stdin.write(JSON.stringify({ ...command, harness: "sh" }) + "\n");
     send({ type: "presence", active: true, revision: 2 });
     await until(() => latest?.presenceRevision === 2 && latest.paneActions);
     assert.deepEqual(
@@ -373,7 +370,20 @@ try {
     assert.ok(after.includes(identity), "Original source identity preserved");
   send(command);
   send({ type: "presence", active: true, revision: 3 });
-  await until(() => latest?.presenceRevision === 3);
+  await until(() => latest?.presenceRevision === 3 && latest.inputReady);
+  const afterStaleMarker = "GPUI_AFTER_STALE_ACTION_OK";
+  send({
+    type: "input",
+    request: 2,
+    id: created,
+    input: { kind: "text", data: "printf '\\n" + afterStaleMarker + "\\n'" },
+  });
+  send({ type: "input", request: 2, id: created, input: { kind: "key", data: "Enter" } });
+  await until(() =>
+    run("capture-pane", "-p", "-t", nativePane)
+      .split("\n")
+      .some((line) => line.trim() === afterStaleMarker),
+  );
   assert.equal(run("list-windows", "-t", sessionLabel, "-F", "#{window_id}").split("\n").length, 2);
   result = {
     passed: true,
@@ -384,12 +394,15 @@ try {
     exactOneCreation: true,
     duplicateAndStaleRefused: true,
     sourceIdentityPreserved: true,
+    typingSurvivesStaleAction: true,
+    productionRustWorker: true,
   };
 } catch (error) {
   failures.push(error);
   failureEvidence(error);
 } finally {
   for (const cleanup of [
+    () => native?.stop(),
     () => stopFixtureChild(browser),
     () => daemon && stopFixtureChild(daemon),
     () => fleet.dispose(),

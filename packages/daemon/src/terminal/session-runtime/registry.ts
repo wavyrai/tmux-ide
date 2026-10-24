@@ -2472,6 +2472,8 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
       negotiation: upstream.negotiation,
       closed: upstream.closed,
       ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
+      ...(upstream.projectionReceipt ? { projectionReceipt: upstream.projectionReceipt } : {}),
+      ...(upstream.materialize ? { materialize: upstream.materialize } : {}),
       nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
       setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),
       close: async () => {

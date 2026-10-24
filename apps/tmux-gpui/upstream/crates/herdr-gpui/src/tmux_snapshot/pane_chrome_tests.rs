@@ -73,7 +73,9 @@ fn header_state(rects: &[(&str, u16, u16, u16, u16)]) -> State {
     };
     State {
         surface: crate::tmux_snapshot::browser::Surface::Workspace,
-        frame: Some(Arc::new(frame)),
+        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            Arc::new(frame),
+        )),
         panes: rects
             .iter()
             .map(|r| Choice {
@@ -131,10 +133,11 @@ fn full_headers_cover_vertical_horizontal_nested_and_zoom_geometry() {
 fn lower_headers_compact_around_occupied_cells_and_reject_visible_gap_data() -> Result<()> {
     let mut state = header_state(&[("a", 0, 0, 9, 12), ("b", 10, 0, 10, 5), ("c", 10, 6, 10, 6)]);
     let frame = Arc::make_mut(
-        state
+        (state
             .frame
             .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("fixture frame missing"))?,
+            .ok_or_else(|| anyhow::anyhow!("fixture frame missing"))?)
+        .legacy_mut(),
     );
     frame.cells[5 * 20 + 10].symbol = "X".into();
     let lower = headers(&state)
@@ -144,10 +147,11 @@ fn lower_headers_compact_around_occupied_cells_and_reject_visible_gap_data() -> 
     assert_eq!((lower.left, lower.width, lower.row), (11, 9, Some(5)));
     assert_no_overlap(&state);
     let frame = Arc::make_mut(
-        state
+        (state
             .frame
             .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("fixture frame missing"))?,
+            .ok_or_else(|| anyhow::anyhow!("fixture frame missing"))?)
+        .legacy_mut(),
     );
     for col in 10..20 {
         frame.cells[5 * 20 + col].symbol = "X".into();
@@ -188,7 +192,7 @@ fn header_callback_publication_fence_rejects_replaced_frame_request_and_regions(
         "b"
     ));
     changed = state.clone();
-    changed.frame = Some(Arc::new((**frame).clone()));
+    changed.frame = Some(Arc::new(frame.legacy().as_ref().clone()).into());
     assert!(!publication_current(
         &changed,
         0,

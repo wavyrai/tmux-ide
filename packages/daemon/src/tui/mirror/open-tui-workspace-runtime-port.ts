@@ -532,6 +532,10 @@ class WireTerminalEndpoint {
       return;
     }
     if (this.#unavailable) return;
+    if (message.type === "terminal.projection") {
+      this.#failConnection(new Error("Unsolicited alternate-screen projection"));
+      return;
+    }
     if (message.type === "terminal.delivery") {
       this.#acceptEnvelope(message);
       return;

@@ -1,0 +1,168 @@
+{
+  "source": "window-presentation.test.ts layout(width), pane-stream.test.ts window-link snapshot; validated by PaneStreamServerFrameSchemaZ",
+  "frames": [
+    {
+      "type": "layout",
+      "semanticWindowId": "window-a",
+      "windowName": "test",
+      "currentWindow": true,
+      "cols": 5,
+      "rows": 2,
+      "zoomed": false,
+      "paneBorderStatus": "off",
+      "modeKeys": "vi",
+      "panes": [
+        {
+          "pane": "left",
+          "left": 0,
+          "top": 0,
+          "width": 2,
+          "height": 2,
+          "active": false
+        },
+        {
+          "pane": "right",
+          "left": 3,
+          "top": 0,
+          "width": 2,
+          "height": 2,
+          "active": true
+        }
+      ]
+    },
+    {
+      "type": "layout",
+      "semanticWindowId": "window-a",
+      "windowName": "test",
+      "currentWindow": true,
+      "cols": 7,
+      "rows": 2,
+      "zoomed": false,
+      "paneBorderStatus": "off",
+      "modeKeys": "vi",
+      "panes": [
+        {
+          "pane": "left",
+          "left": 0,
+          "top": 0,
+          "width": 3,
+          "height": 2,
+          "active": false
+        },
+        {
+          "pane": "right",
+          "left": 4,
+          "top": 0,
+          "width": 3,
+          "height": 2,
+          "active": true
+        }
+      ]
+    },
+    {
+      "type": "layout",
+      "semanticWindowId": "window-a",
+      "windowName": "test",
+      "currentWindow": true,
+      "cols": 5,
+      "rows": 3,
+      "zoomed": false,
+      "paneBorderStatus": "top",
+      "modeKeys": "vi",
+      "panes": [
+        {
+          "pane": "left",
+          "left": 0,
+          "top": 0,
+          "width": 2,
+          "height": 3,
+          "active": false
+        },
+        {
+          "pane": "right",
+          "left": 3,
+          "top": 0,
+          "width": 2,
+          "height": 3,
+          "active": true
+        }
+      ]
+    },
+    {
+      "type": "layout",
+      "semanticWindowId": "window-a",
+      "windowName": "test",
+      "currentWindow": true,
+      "cols": 5,
+      "rows": 3,
+      "zoomed": false,
+      "paneBorderStatus": "bottom",
+      "modeKeys": "vi",
+      "panes": [
+        {
+          "pane": "left",
+          "left": 0,
+          "top": 0,
+          "width": 2,
+          "height": 3,
+          "active": false
+        },
+        {
+          "pane": "right",
+          "left": 3,
+          "top": 0,
+          "width": 2,
+          "height": 3,
+          "active": true
+        }
+      ]
+    },
+    {
+      "type": "layout-snapshot",
+      "topologyEpoch": 1,
+      "layouts": [
+        {
+          "type": "layout",
+          "semanticWindowId": "window-a",
+          "windowName": "test",
+          "currentWindow": true,
+          "cols": 5,
+          "rows": 2,
+          "zoomed": false,
+          "paneBorderStatus": "off",
+          "modeKeys": "vi",
+          "panes": [
+            {
+              "pane": "left",
+              "left": 0,
+              "top": 0,
+              "width": 2,
+              "height": 2,
+              "active": false
+            },
+            {
+              "pane": "right",
+              "left": 3,
+              "top": 0,
+              "width": 2,
+              "height": 2,
+              "active": true
+            }
+          ]
+        }
+      ],
+      "windowLinks": {
+        "liveSessionId": "live-session.aaaaaaaaaaaaaaaaaaaa",
+        "linkRevision": 1,
+        "activeLinkId": "window-link.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "links": [
+          {
+            "linkId": "window-link.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "semanticWindowId": "window-a",
+            "displayIndex": 0
+          }
+        ]
+      }
+    }
+  ]
+}

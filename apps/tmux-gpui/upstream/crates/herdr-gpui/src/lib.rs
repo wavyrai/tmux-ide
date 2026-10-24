@@ -186,3 +186,9 @@ pub fn run_herdr() -> std::process::ExitCode {
     #[cfg(not(feature = "integration-test"))]
     std::process::ExitCode::SUCCESS
 }
+
+/// Opt-in isolated protocol qualification; does not open a desktop window.
+#[cfg(feature = "integration-test")]
+pub fn run_tmux_journey_probe() -> anyhow::Result<()> {
+    tmux_snapshot::journey_probe::run()
+}

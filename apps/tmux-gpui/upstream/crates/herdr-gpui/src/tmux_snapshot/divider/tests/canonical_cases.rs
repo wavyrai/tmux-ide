@@ -152,6 +152,6 @@ fn canonical_segments_reject_content_and_crossings_without_inventing_ancestry() 
     });
     assert!(at(&s, 5.5, 2.5).is_none());
     assert!(at(&s, 5.5, 3.5).is_some());
-    Arc::make_mut(s.frame.as_mut().unwrap()).cells[3 * 11 + 5].symbol = "X".into();
+    Arc::make_mut((s.frame.as_mut().unwrap()).legacy_mut()).cells[3 * 11 + 5].symbol = "X".into();
     assert!(at(&s, 5.5, 3.5).is_none());
 }

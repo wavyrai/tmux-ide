@@ -85,7 +85,7 @@ fn rejection_diagnostic_does_not_echo_untrusted_json() -> anyhow::Result<()> {
 }
 
 #[test]
-fn diagnostic_versions_follow_publication_request_and_clear_when_not_live() -> anyhow::Result<()> {
+fn broker_diagnostics_cannot_smuggle_live_frames_or_advance_request() -> anyhow::Result<()> {
     let mut wire = publication(1, 3);
     wire["panes"] = json!([{"id":"p","label":"Pane"}]);
     wire["selectedPane"] = json!("p");
@@ -93,13 +93,7 @@ fn diagnostic_versions_follow_publication_request_and_clear_when_not_live() -> a
     wire["snapshot"] = serde_json::from_str(include_str!("../../../../../fixtures/snapshot.json"))?;
     wire["diagnostics"] = json!({"daemonVersion":"2.9.7"});
     let mut reader = Reader::default();
-    let live = reader.accept(&serde_json::to_vec(&wire)?)?;
-    assert_eq!(
-        live.diagnostics
-            .and_then(|value| value.daemon_version)
-            .as_deref(),
-        Some("2.9.7")
-    );
+    assert!(reader.accept(&serde_json::to_vec(&wire)?).is_err());
     let unavailable = reader.accept(&serde_json::to_vec(&publication(2, 4))?)?;
     assert!(unavailable.diagnostics.is_none());
     wire["sequence"] = json!(3);

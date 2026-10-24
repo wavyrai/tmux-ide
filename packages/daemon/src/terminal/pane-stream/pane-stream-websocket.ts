@@ -1,5 +1,13 @@
 import {
+  TERMINAL_PROJECTION_CAPABILITY_VERSION,
+  TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+  type TerminalProjectionReceipt,
+  type TerminalProjectionMaterialize,
+} from "@tmux-ide/contracts";
+import type { LocalImageOwner } from "../graphics/local-image-owner.ts";
+import {
   PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
+  PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
   type PaneStreamInputLifetime,
 } from "@tmux-ide/contracts";
 import { inflateSync } from "node:zlib";
@@ -15,6 +23,12 @@ import {
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES,
+  TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION,
+  TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_BINARY_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_LOCAL_CAPABILITY_VERSION,
+  encodeTerminalGraphicsBinary,
+  encodeTerminalDeliveryBinaryChunk,
   TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
   TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
   TERMINAL_GRAPHICS_LEGACY_MAX_IMAGE_BYTES,
@@ -245,6 +259,7 @@ export interface PaneStreamAdmissionSnapshot {
 }
 
 export interface PaneStreamAdmissionCoordinatorOptions {
+  readonly localImages?: LocalImageOwner;
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
   readonly leaseManager: PaneStreamLeaseAuthority;
@@ -326,6 +341,8 @@ export interface SessionRuntimeTerminalDeliveryConnection {
   readonly closed?: Promise<"closed" | "sink-failed">;
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
+  projectionReceipt?(receipt: TerminalProjectionReceipt): void;
+  materialize?(request: TerminalProjectionMaterialize): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
   close(): Promise<void>;
@@ -388,6 +405,7 @@ function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
  * ticket digests; a daemon restart makes every prior descriptor inert.
  */
 export class PaneStreamAdmissionCoordinator {
+  readonly #localImages: LocalImageOwner | undefined;
   readonly #instanceId: string;
   readonly #webSocketUrl: string;
   readonly #leaseManager: PaneStreamLeaseAuthority;
@@ -421,6 +439,7 @@ export class PaneStreamAdmissionCoordinator {
   #shutdownPromise: Promise<void> | null = null;
 
   constructor(options: PaneStreamAdmissionCoordinatorOptions) {
+    this.#localImages = options.localImages;
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
     this.#webSocketUrl = PaneStreamLoopbackWebSocketUrlSchemaZ.parse(options.webSocketUrl);
     this.#leaseManager = options.leaseManager;
@@ -792,6 +811,7 @@ export class PaneStreamAdmissionCoordinator {
         let live: PaneStreamLiveConnection;
         try {
           live = new PaneStreamLiveConnection({
+            localImages: this.#localImages,
             clientId: `psc-${this.#clientCounter}`,
             socket,
             descriptor: structuredClone(descriptor),
@@ -1010,6 +1030,7 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
 }
 
 interface LiveConnectionOptions {
+  readonly localImages?: LocalImageOwner;
   readonly clientId: string;
   readonly socket: DirectTerminalSocket;
   readonly descriptor: PaneStreamLeaseDescriptor;
@@ -1066,6 +1087,10 @@ interface PaneChannel {
   graphicsServed: Map<number, string>;
   graphicsState: TerminalGraphicsState | null;
   graphicsZlib?: boolean;
+  graphicsBinary?: boolean;
+  binaryCells?: boolean;
+  graphicsLocal?: boolean;
+  graphicsInline?: Set<string>;
 }
 
 interface QueuedSend {
@@ -1097,6 +1122,8 @@ export function rawGraphicsState(state: TerminalGraphicsState): TerminalGraphics
 const GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export class PaneStreamLiveConnection {
+  readonly #localImages: LocalImageOwner | undefined;
+  readonly #localLeases = new Map<string, { pane: string; expiresAt: number }>();
   readonly #clientId: string;
   readonly #socket: DirectTerminalSocket;
   readonly #descriptor: PaneStreamLeaseDescriptor;
@@ -1221,6 +1248,7 @@ export class PaneStreamLiveConnection {
   }
 
   constructor(options: LiveConnectionOptions) {
+    this.#localImages = options.localImages;
     this.#clientId = options.clientId;
     this.#socket = options.socket;
     this.#descriptor = options.descriptor;
@@ -1294,6 +1322,12 @@ export class PaneStreamLiveConnection {
         )
           ? { inputLifetime: true as const }
           : {}),
+        ...(this.#sessionRuntimeBinding &&
+        this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
+        )
+          ? { inputBytes: true as const }
+          : {}),
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         daemonInstanceId: this.#binding.daemonInstanceId,
         requestId: this.#binding.requestId,
@@ -1336,6 +1370,14 @@ export class PaneStreamLiveConnection {
     this.#stopAuthoritySnapshots?.();
     this.#stopAuthoritySnapshots = null;
     const closures: Promise<unknown>[] = [];
+    this.#localLeases.clear();
+    if (this.#localImages)
+      closures.push(
+        this.#localImages.releaseClient({
+          generation: this.#localImages.identity.generation,
+          client: this.#descriptor.leaseId,
+        }),
+      );
     const layoutSubscription = this.#layoutSubscription;
     this.#layoutSubscription = null;
     if (layoutSubscription) closures.push(layoutSubscription.close().catch(() => undefined));
@@ -1564,7 +1606,8 @@ export class PaneStreamLiveConnection {
       if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
       let incarnation: string | null = null;
       for (const message of pending) {
-        if (message.type !== "terminal.delivery") continue;
+        if (message.type !== "terminal.delivery" && message.type !== "terminal.projection")
+          continue;
         if (
           message.workspaceName !== this.#descriptor.workspaceName ||
           message.semanticPaneId !== channel.semanticPaneId ||
@@ -1686,13 +1729,19 @@ export class PaneStreamLiveConnection {
   }
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
-    if (message.type === "terminal.delivery") {
+    if (message.type === "terminal.projection") {
+      const channel = this.#panes.get(pane);
+      if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
+      if (channel) channel.binaryCells = true;
+      this.#sendFrame(pane, { type: "terminal-projection-envelope", pane, envelope: message });
+    } else if (message.type === "terminal.delivery") {
       if (!this.#diagnosticFirstSeedObserved) {
         this.#diagnosticFirstSeedObserved = true;
         this.#recordDiagnosticLifecycle("pane-stream-first-seed");
       }
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
+      if (channel) channel.binaryCells = message.encoding === "semantic-binary-v1";
       // The trusted lease address was fixed at delivery admission; preserve the
       // exact envelope and its observation identity through transmission.
       const detailedDeliveryObservation = this.#observability?.enabled === true;
@@ -1775,13 +1824,26 @@ export class PaneStreamLiveConnection {
         }
       }
     } else if (message.type === "terminal.delivery.chunk") {
-      this.#sendFrame(pane, {
-        type: "terminal-delivery-chunk",
-        pane,
-        transactionId: message.transactionId,
-        index: message.index,
-        data: Buffer.from(message.bytes).toString("base64"),
-      });
+      if (this.#panes.get(pane)?.binaryCells) {
+        this.#sendEncoded(
+          pane,
+          Buffer.from(
+            encodeTerminalDeliveryBinaryChunk(
+              { pane, transactionId: message.transactionId, index: message.index },
+              message.bytes,
+            ),
+          ),
+          true,
+        );
+      } else {
+        this.#sendFrame(pane, {
+          type: "terminal-delivery-chunk",
+          pane,
+          transactionId: message.transactionId,
+          index: message.index,
+          data: Buffer.from(message.bytes).toString("base64"),
+        });
+      }
     } else {
       this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
       // Lifecycle/control truth must never queue behind bulk terminal bytes.
@@ -1803,6 +1865,25 @@ export class PaneStreamLiveConnection {
         TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
       ) === true;
     channel.graphicsZlib = zlib;
+    channel.graphicsLocal =
+      !!this.#localImages &&
+      this.#descriptor.terminalDelivery?.protocolVersions.some(
+        (version) =>
+          version === TERMINAL_GRAPHICS_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+      ) === true;
+    channel.graphicsInline = new Set();
+    channel.graphicsBinary =
+      this.#descriptor.terminalDelivery?.protocolVersions.some(
+        (version) =>
+          version === TERMINAL_GRAPHICS_BINARY_CAPABILITY_VERSION ||
+          version === TERMINAL_GRAPHICS_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION ||
+          version === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
+          version === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+      ) === true;
     // Renderers that report cell pixels learn up front that this daemon
     // accepts them, before any image exists.
     const cellPixels =
@@ -1834,6 +1915,8 @@ export class PaneStreamLiveConnection {
           ...(zlib ? state : rawGraphicsState(state)),
           ...(cellPixels ? { cellPixels: true as const } : {}),
           ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
+          ...(channel.graphicsBinary ? { binaryBlobs: true as const } : {}),
+          ...(channel.graphicsLocal ? { localFiles: true as const } : {}),
         },
       });
       if (pushed.length > 0) this.#queueGraphics(channel, pushed);
@@ -1849,15 +1932,23 @@ export class PaneStreamLiveConnection {
           placements: [],
           cellPixels: true,
           ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
+          ...(channel.graphicsBinary ? { binaryBlobs: true as const } : {}),
+          ...(channel.graphicsLocal ? { localFiles: true as const } : {}),
         },
       });
     }
   }
 
-  #requestGraphics(pane: string, digests: readonly string[]): void {
+  #requestGraphics(pane: string, digests: readonly string[], preferInline = false): void {
     const channel = this.#panes.get(pane);
     // Requests are only meaningful after an announcement; ignore stray ones.
     if (!channel || channel.closed || !channel.graphicsAnnounced) return;
+    if (preferInline && channel.graphicsLocal) {
+      for (const digest of digests) {
+        if ((channel.graphicsInline?.size ?? 0) < GRAPHICS_MAX_QUEUED_DIGESTS)
+          channel.graphicsInline?.add(digest);
+      }
+    }
     this.#queueGraphics(channel, digests);
   }
 
@@ -1881,6 +1972,7 @@ export class PaneStreamLiveConnection {
     try {
       while (!this.#closed && !channel.closed && channel.graphicsQueue.length > 0) {
         const digest = channel.graphicsQueue.shift()!;
+        const inline = channel.graphicsInline?.delete(digest) ?? false;
         const graphics = channel.delivery?.graphics;
         const image = graphics?.image(digest);
         if (!graphics || !image) continue;
@@ -1902,6 +1994,47 @@ export class PaneStreamLiveConnection {
           continue;
         const format = raw ? (image.format === "rgba-zlib" ? "rgba" : "rgb") : image.format;
         const total = data.byteLength;
+        if (!inline && channel.graphicsLocal && !raw && this.#localImages) {
+          for (const [id, lease] of this.#localLeases)
+            if (lease.expiresAt <= Date.now()) this.#localLeases.delete(id);
+          if (this.#localLeases.size < 64) {
+            try {
+              const lease = await this.#localImages.acquire({
+                generation: this.#localImages.identity.generation,
+                client: this.#descriptor.leaseId,
+                digest,
+                bytes: data,
+              });
+              if (this.#closed || channel.closed || graphics.image(digest) !== image) {
+                await this.#localImages.release(lease);
+                continue;
+              }
+              this.#localLeases.set(lease.id, {
+                pane: channel.semanticPaneId,
+                expiresAt: lease.expiresAt,
+              });
+              this.#sendFrame(null, {
+                type: "terminal-graphics-local",
+                pane: channel.semanticPaneId,
+                generation: lease.generation,
+                leaseId: lease.id,
+                path: lease.path,
+                expiresAt: lease.expiresAt,
+                blob: {
+                  digest,
+                  format,
+                  width: image.width,
+                  height: image.height,
+                  total,
+                  offset: 0,
+                },
+              });
+              continue;
+            } catch {
+              /* Optional transport: retain the negotiated inline fallback. */
+            }
+          }
+        }
         for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
           while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
             if (this.#closed || channel.closed) return;
@@ -1912,6 +2045,29 @@ export class PaneStreamLiveConnection {
           // the renderer drops the partial image and shows the newer one.
           if (offset > 0 && graphics.image(digest) !== image) break;
           const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
+          if (channel.graphicsBinary) {
+            this.#sendEncoded(
+              null,
+              Buffer.from(
+                encodeTerminalGraphicsBinary(
+                  {
+                    pane: channel.semanticPaneId,
+                    blob: {
+                      digest,
+                      format,
+                      width: image.width,
+                      height: image.height,
+                      total,
+                      offset,
+                    },
+                  },
+                  data.subarray(offset, end),
+                ),
+              ),
+              true,
+            );
+            continue;
+          }
           this.#sendFrame(null, {
             type: "terminal-graphics-blob",
             pane: channel.semanticPaneId,
@@ -2245,7 +2401,12 @@ export class PaneStreamLiveConnection {
   #sendFrame(pane: string | null, frame: Record<string, unknown>): void {
     if (this.#closed || this.#socket.readyState !== WS_OPEN) return;
     const encoded = JSON.stringify(frame);
-    const bytes = Buffer.byteLength(encoded, "utf8");
+    this.#sendEncoded(pane, encoded, false);
+  }
+
+  #sendEncoded(pane: string | null, encoded: string | Buffer, binary: boolean): void {
+    if (this.#closed || this.#socket.readyState !== WS_OPEN) return;
+    const bytes = Buffer.byteLength(encoded);
     if (pane !== null) {
       this.#ledger.take(this.#clientId, pane, "ws-send-buffer", bytes);
       if (this.#deliveryAcks) this.#ledger.take(this.#clientId, pane, "renderer-backlog", 1);
@@ -2253,7 +2414,7 @@ export class PaneStreamLiveConnection {
     this.#sendQueue.push({ pane, remaining: bytes });
     this.#sentBytesTotal += bytes;
     try {
-      this.#socket.send(encoded, { binary: false });
+      this.#socket.send(encoded, { binary });
     } catch {
       this.close(1011, "stream-unavailable");
       return;
@@ -2475,6 +2636,20 @@ export class PaneStreamLiveConnection {
       });
       return;
     }
+    if (frame.type === "terminal-projection-receipt") {
+      const channel = this.#deliveryChannel(frame.receipt);
+      if (!channel) return;
+      if (!channel.delivery?.projectionReceipt) return this.#failProtocol("protocol-error");
+      channel.delivery.projectionReceipt(frame.receipt);
+      return;
+    }
+    if (frame.type === "terminal-projection-materialize") {
+      const channel = this.#deliveryChannel(frame.request);
+      if (!channel) return;
+      if (!channel.delivery?.materialize) return this.#failProtocol("protocol-error");
+      channel.delivery.materialize(frame.request);
+      return;
+    }
     if (frame.type === "terminal-delivery-ack") {
       const channel = this.#deliveryChannel(frame.ack);
       if (!channel) return;
@@ -2504,7 +2679,25 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (frame.type === "terminal-graphics-request") {
-      this.#requestGraphics(frame.pane, frame.digests);
+      this.#requestGraphics(frame.pane, frame.digests, frame.preferInline === true);
+      return;
+    }
+    if (frame.type === "terminal-graphics-local-release") {
+      const lease = this.#localLeases.get(frame.leaseId);
+      if (
+        lease &&
+        lease.pane === frame.pane &&
+        frame.generation === this.#localImages?.identity.generation
+      ) {
+        this.#localLeases.delete(frame.leaseId);
+        void this.#localImages
+          ?.release({
+            generation: frame.generation,
+            client: this.#descriptor.leaseId,
+            id: frame.leaseId,
+          })
+          .catch(() => {});
+      }
       return;
     }
     if (frame.type === "terminal-cell-pixels") {
@@ -2720,7 +2913,7 @@ export class PaneStreamLiveConnection {
   #acceptInput(
     pane: string,
     seq: number,
-    kind: "text" | "key",
+    kind: "text" | "key" | "bytes",
     data: string,
     frameBytes: number,
     performanceTraceId?: string,
@@ -2730,6 +2923,16 @@ export class PaneStreamLiveConnection {
     ingressAtSharedMicros: number | null = null,
     expectedLifetime?: PaneStreamInputLifetime,
   ): void {
+    if (
+      kind === "bytes" &&
+      (!this.#sessionRuntimeBinding ||
+        !this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
+        ))
+    ) {
+      this.#failProtocol("input-rejected");
+      return;
+    }
     if (
       expectedLifetime &&
       (!this.#sessionRuntimeBinding ||
@@ -2862,7 +3065,8 @@ export class PaneStreamLiveConnection {
           expectedLifetime,
         );
       else if (kind === "text") channel.sub!.sendText(data);
-      else channel.sub!.sendKey(data);
+      else if (kind === "key") channel.sub!.sendKey(data);
+      else throw new Error("Byte input requires semantic runtime");
       let ackStartedAtMicros: number | null = null;
       let ackStartedAtSharedMicros: number | null = null;
       if (trace) {

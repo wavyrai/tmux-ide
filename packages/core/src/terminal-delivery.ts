@@ -1,3 +1,12 @@
+import {
+  TERMINAL_PROJECTION_CAPABILITY_VERSION,
+  TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
+import {
+  BinaryTerminalWriter,
+  BinaryTerminalLimitError,
+  decodeBinaryTerminalTuple,
+} from "./terminal-delivery-binary.ts";
 import { z } from "zod";
 import {
   isOwnedTerminalReplicaRow,
@@ -6,6 +15,8 @@ import {
   TERMINAL_REPLICA_SPACE_CELL,
 } from "./terminal-replica-owned-row.ts";
 import {
+  TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION,
+  TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION,
   TERMINAL_DELIVERY_CHUNK_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TERMINAL_DELIVERY_PROTOCOL_VERSION,
@@ -71,22 +82,48 @@ export function negotiateTerminalDelivery(
 ): TerminalDeliveryNegotiationResult {
   if (!offer.protocolVersions.includes(TERMINAL_DELIVERY_PROTOCOL_VERSION))
     return { accepted: false, reason: "protocol-version-mismatch" };
-  const encoding = (
-    ["semantic-compact-v1", "semantic-v1", "ansi-diff-v1", "ansi-raw-v1"] as const
-  ).find((value) => offer.encodings.includes(value));
+  const binary =
+    offer.protocolVersions.some(
+      (v) =>
+        v === TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION ||
+        v === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
+        v === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
+        v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+    ) && offer.encodings.includes("semantic-compact-v1");
+  const encoding = binary
+    ? ("semantic-binary-v1" as const)
+    : (["semantic-compact-v1", "semantic-v1", "ansi-diff-v1", "ansi-raw-v1"] as const).find(
+        (value) => offer.encodings.includes(value),
+      );
   if (!encoding) return { accepted: false, reason: "encoding-mismatch" };
-  if (offer.richPlacements && encoding !== "semantic-v1" && encoding !== "semantic-compact-v1")
+  if (
+    offer.richPlacements &&
+    encoding !== "semantic-v1" &&
+    encoding !== "semantic-compact-v1" &&
+    encoding !== "semantic-binary-v1"
+  )
     return { accepted: false, reason: "unsupported-capability-combination" };
   return {
     accepted: true,
     negotiated: {
       protocolVersion: TERMINAL_DELIVERY_PROTOCOL_VERSION,
       encoding,
+      ...(binary &&
+      offer.protocolVersions.some(
+        (v) =>
+          v === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
+          v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+      )
+        ? { alternateScreenProjection: "deferred-history-v1" as const }
+        : {}),
       ...(encoding === "semantic-compact-v1" && offer.encodings.includes("semantic-v1")
         ? { fallbackEncoding: "semantic-v1" as const }
         : {}),
       richPlacements:
-        offer.richPlacements && (encoding === "semantic-v1" || encoding === "semantic-compact-v1"),
+        offer.richPlacements &&
+        (encoding === "semantic-v1" ||
+          encoding === "semantic-compact-v1" ||
+          encoding === "semantic-binary-v1"),
       generation,
       deliveryNonce,
     },
@@ -370,6 +407,12 @@ function hasOwnedSeedRow(input: TerminalSemanticDeliveryPayload): boolean {
 export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
+  const wire = compactSemanticWire(input);
+  const bytes = UTF8_ENCODER.encode(JSON.stringify(wire));
+  assertRepresentationSize(bytes);
+  return bytes;
+}
+function compactSemanticWire(input: TerminalSemanticDeliveryPayload) {
   const update = (
     hasOwnedPatchRow(input)
       ? CompactPatchEncodingPayloadSchema
@@ -406,9 +449,172 @@ export function encodeCompactSemanticTerminalUpdate(
             t: update.tombstone.reason,
             v: 1,
           };
-  const bytes = UTF8_ENCODER.encode(JSON.stringify(wire));
-  assertRepresentationSize(bytes);
-  return bytes;
+  return wire;
+}
+
+export function encodeBinarySemanticTerminalUpdate(
+  input: TerminalSemanticDeliveryPayload,
+): Uint8Array {
+  const wire = compactSemanticWire(input);
+  const writer = new BinaryTerminalWriter();
+  try {
+    writer.header(input.frame, wire.r, input.frame === "seed" ? undefined : input.baseRevision);
+    writer.value(wire.f === "s" ? wire.s : wire.f === "p" ? wire.p : wire.t);
+    return writer.finish();
+  } catch (error) {
+    if (error instanceof BinaryTerminalLimitError)
+      throw new TerminalDeliveryStateTooLargeError(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES + 1);
+    throw error;
+  }
+}
+export function decodeBinarySemanticTerminalUpdate(
+  bytes: Uint8Array,
+): TerminalSemanticDeliveryPayload {
+  const decoded = decodeBinaryTerminalTuple(bytes),
+    budget = { ...compactDecodeBudget(bytes.length), maxCells: COMPACT_MAX_EXPANDED_CELLS };
+  if (decoded.frame === "seed")
+    return Object.freeze({
+      frame: "seed",
+      revision: decoded.revision,
+      snapshot: expandSnapshot(decoded.value, budget),
+    });
+  if (decoded.baseRevision === undefined || decoded.revision <= decoded.baseRevision)
+    throw new TypeError("Binary revision did not advance");
+  if (decoded.frame === "patch")
+    return Object.freeze({
+      frame: "patch",
+      revision: decoded.revision,
+      baseRevision: decoded.baseRevision,
+      patch: expandPatch(decoded.value, budget),
+    });
+  if (
+    typeof decoded.value !== "string" ||
+    !["pane-closed", "session-restarted", "runtime-disposed"].includes(decoded.value)
+  )
+    throw new TypeError("Invalid binary tombstone");
+  return Object.freeze({
+    frame: "tombstone",
+    revision: decoded.revision,
+    baseRevision: decoded.baseRevision,
+    tombstone: Object.freeze({
+      reason: decoded.value as "pane-closed" | "session-restarted" | "runtime-disposed",
+    }),
+  });
+}
+export async function encodeBinarySemanticTerminalUpdateCooperatively(
+  input: TerminalSemanticDeliveryPayload,
+  options: { readonly yieldControl: () => Promise<void>; readonly signal?: AbortSignal },
+): Promise<Uint8Array> {
+  options.signal?.throwIfAborted();
+  if (input.frame !== "seed") return encodeBinarySemanticTerminalUpdate(input);
+  const { snapshot: source, ...headerInput } = input;
+  const header = CompactSeedHeaderSchema.parse(headerInput);
+  const { grid, history, placements, ...metadataInput } = source;
+  const metadata = CompactSeedMetadataSchema.parse(metadataInput);
+  if (
+    !Array.isArray(grid) ||
+    !Array.isArray(history) ||
+    !Array.isArray(placements) ||
+    grid.length !== metadata.rows ||
+    metadata.cols > COMPACT_MAX_DIMENSION ||
+    metadata.rows > COMPACT_MAX_DIMENSION
+  )
+    compactEncodingLimit();
+  let rowCount = 0,
+    cellCount = 0,
+    runCount = 0,
+    work = 0,
+    encodedWork = 0;
+  const checkpoint = (characters: number): Promise<void> | undefined => {
+    options.signal?.throwIfAborted();
+    work++;
+    encodedWork += characters + 64;
+    if (work >= 256 || encodedWork >= 32 * 1024) {
+      work = 0;
+      encodedWork = 0;
+      return options.yieldControl().then(() => options.signal?.throwIfAborted());
+    }
+    return undefined;
+  };
+  const writer = new BinaryTerminalWriter();
+  try {
+    writer.header("seed", header.revision);
+    writer.array(8);
+    writer.value(metadata.cols);
+    writer.value(metadata.rows);
+    for (const rows of [grid, history]) {
+      writer.array(rows.length);
+      for (const row of rows) {
+        const owned = isOwnedTerminalReplicaRow(row);
+        const validatedRow =
+          owned &&
+          (validatedOwnedEncodingRows.has(row) || isSchemaValidProjectedTerminalReplicaRow(row));
+        const { cells, ...rowHeaderInput } = row;
+        const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
+        if (
+          ++rowCount > COMPACT_MAX_ROWS ||
+          !Array.isArray(cells) ||
+          cells.length !== metadata.cols
+        )
+          compactEncodingLimit();
+        cellCount += cells.length;
+        if (cellCount > COMPACT_MAX_EXPANDED_CELLS) compactEncodingLimit();
+        const runs: CompactCellRun[] = [];
+        let prior: CompactCellRun | undefined;
+        for (let offset = 0; offset < cells.length; offset += 256) {
+          const slice = cells.slice(offset, offset + 256);
+          const validated =
+            validatedRow || (owned && isValidatedTrustedBlankSlice(slice))
+              ? slice
+              : owned
+                ? validateOwnedCellSlice(slice)
+                : CompactCellSliceSchema.parse(slice);
+          for (const cell of validated) {
+            const encoded = compactCell(cell);
+            if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
+            else {
+              if (++runCount > COMPACT_MAX_RUNS) compactEncodingLimit();
+              runs.push(encoded);
+              prior = encoded;
+            }
+            const pending = checkpoint(cell.grapheme.length);
+            if (pending) await pending;
+          }
+        }
+        writer.array(2);
+        writer.value(rowHeader.wrapped ? 1 : 0);
+        writer.array(runs.length);
+        for (const run of runs) {
+          writer.value(run);
+          const pending = checkpoint(run[1].length);
+          if (pending) await pending;
+        }
+        if (owned) validatedOwnedEncodingRows.add(row);
+      }
+    }
+    writer.value(compactCursor(metadata.cursor));
+    writer.value(compactModes(metadata.modes));
+    if (placements.length > COMPACT_MAX_PLACEMENTS) compactEncodingLimit();
+    writer.array(placements.length);
+    for (const value of placements) {
+      const placement = compactPlacement(TerminalReplicaPlacementSchemaZ.parse(value));
+      writer.value(placement);
+      const pending = checkpoint(
+        placement.reduce<number>(
+          (size, value) => size + (typeof value === "string" ? value.length : 8),
+          0,
+        ),
+      );
+      if (pending) await pending;
+    }
+    writer.value(compactBootstrap(metadata.bootstrap));
+    options.signal?.throwIfAborted();
+    return writer.finish();
+  } catch (error) {
+    if (error instanceof BinaryTerminalLimitError)
+      throw new TerminalDeliveryStateTooLargeError(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES + 1);
+    throw error;
+  }
 }
 
 // Keep the ordinary small-patch encoder unchanged. Large seeds are validated
@@ -3177,15 +3383,21 @@ export function commitTerminalDelivery(
     throw new TypeError("Terminal delivery representation hash mismatch");
   let canonicalSnapshot = state.canonicalSnapshot;
   let semanticUpdate: TerminalSemanticDeliveryPayload | null = null;
-  if (envelope.encoding === "semantic-v1" || envelope.encoding === "semantic-compact-v1") {
+  if (
+    envelope.encoding === "semantic-v1" ||
+    envelope.encoding === "semantic-compact-v1" ||
+    envelope.encoding === "semantic-binary-v1"
+  ) {
     const payload =
-      envelope.encoding === "semantic-compact-v1"
-        ? decodeVerifiedCompactSemanticTerminalUpdate(
-            staged.bytes,
-            canonicalSnapshot,
-            envelope.canonicalStateHash,
-          ).payload
-        : decodeSemanticTerminalUpdate(staged.bytes);
+      envelope.encoding === "semantic-binary-v1"
+        ? decodeBinarySemanticTerminalUpdate(staged.bytes)
+        : envelope.encoding === "semantic-compact-v1"
+          ? decodeVerifiedCompactSemanticTerminalUpdate(
+              staged.bytes,
+              canonicalSnapshot,
+              envelope.canonicalStateHash,
+            ).payload
+          : decodeSemanticTerminalUpdate(staged.bytes);
     semanticUpdate = payload;
     if (payload.frame !== envelope.frame || payload.revision !== envelope.canonicalRevision)
       throw new TypeError("Semantic frame or revision mismatch");
@@ -3406,4 +3618,147 @@ function isNewerIncarnation(current: string, candidate: string): boolean {
     candidateEpoch !== undefined &&
     Number(candidateEpoch) > Number(currentEpoch)
   );
+}
+
+/** Internal bounded viewport codec shared by the explicitly partial TCP1 protocol.
+ * Callers validate projection metadata; these adapters never construct a complete snapshot. */
+export function encodeTerminalProjectionViewportTuple(
+  snapshot: Omit<TerminalReplicaSnapshot, "history">,
+): readonly unknown[] {
+  const budget = {
+    ...compactDecodeBudget(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+  };
+  if (
+    snapshot.cols > COMPACT_MAX_DIMENSION ||
+    snapshot.rows > COMPACT_MAX_DIMENSION ||
+    snapshot.grid.length !== snapshot.rows
+  )
+    compactEncodingLimit();
+  return [
+    snapshot.cols,
+    snapshot.rows,
+    compactRows(snapshot.grid, snapshot.cols, budget),
+    compactCursor(snapshot.cursor),
+    compactModes(snapshot.modes),
+    compactPlacements(snapshot.placements, budget),
+    compactBootstrap(snapshot.bootstrap),
+  ];
+}
+export function decodeTerminalProjectionViewportTuple(
+  value: unknown,
+): Omit<TerminalReplicaSnapshot, "history"> {
+  const input = compactArray(value, 7, "projection viewport");
+  const budget = {
+    ...compactDecodeBudget(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+  };
+  const cols = compactInteger(input[0], 1, COMPACT_MAX_DIMENSION, "columns"),
+    rows = compactInteger(input[1], 1, COMPACT_MAX_DIMENSION, "rows");
+  return {
+    cols,
+    rows,
+    grid: expandRows(input[2], budget, cols, rows, "grid"),
+    cursor: expandCursor(input[3], cols, rows),
+    modes: expandModes(input[4]),
+    placements: expandPlacements(input[5], budget),
+    bootstrap: expandBootstrap(input[6]),
+  };
+}
+export function encodeTerminalProjectionPatchTuple(
+  patch: Omit<TerminalReplicaPatchPayload, "history" | "historyDelta">,
+): readonly unknown[] {
+  const tuple = compactPatch(patch);
+  return [tuple[0], tuple[1], tuple[4], tuple[5], tuple[6], tuple[7]];
+}
+export function decodeTerminalProjectionPatchTuple(
+  value: unknown,
+): Omit<TerminalReplicaPatchPayload, "history" | "historyDelta"> {
+  const tuple = compactArray(value, 6, "projection patch");
+  const budget = {
+    ...compactDecodeBudget(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+  };
+  // Null means absent patch operations, never an empty canonical history.
+  return expandPatch(
+    [tuple[0], tuple[1], null, null, tuple[2], tuple[3], tuple[4], tuple[5]],
+    budget,
+  );
+}
+
+/** Writes one bounded projection row, reusing immutable-row schema provenance. */
+export async function writeTerminalProjectionRowCooperatively(
+  writer: BinaryTerminalWriter,
+  row: TerminalReplicaRow,
+  cols: number | null,
+  options: { readonly yieldControl: () => Promise<void>; readonly signal?: AbortSignal },
+): Promise<void> {
+  options.signal?.throwIfAborted();
+  const owned = isOwnedTerminalReplicaRow(row);
+  const validatedRow =
+    owned && (validatedOwnedEncodingRows.has(row) || isSchemaValidProjectedTerminalReplicaRow(row));
+  const { cells, ...header } = row;
+  const rowHeader = CompactRowHeaderSchema.parse(header);
+  if (
+    !Array.isArray(cells) ||
+    cells.length > COMPACT_MAX_DIMENSION ||
+    (cols !== null && cells.length !== cols)
+  )
+    compactEncodingLimit();
+  const runs: CompactCellRun[] = [];
+  let prior: CompactCellRun | undefined,
+    work = 0,
+    characters = 0;
+  const checkpoint = (length: number): Promise<void> | undefined => {
+    options.signal?.throwIfAborted();
+    work++;
+    characters += length + 64;
+    if (work < 256 && characters < 32 * 1024) return undefined;
+    work = 0;
+    characters = 0;
+    return options.yieldControl().then(() => options.signal?.throwIfAborted());
+  };
+  for (let offset = 0; offset < cells.length; offset += 256) {
+    const slice = cells.slice(offset, offset + 256);
+    const validated =
+      validatedRow || (owned && isValidatedTrustedBlankSlice(slice))
+        ? slice
+        : owned
+          ? validateOwnedCellSlice(slice)
+          : CompactCellSliceSchema.parse(slice);
+    for (const cell of validated) {
+      const encoded = compactCell(cell);
+      if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
+      else {
+        runs.push(encoded);
+        prior = encoded;
+      }
+      const pause = checkpoint(cell.grapheme.length);
+      if (pause) await pause;
+    }
+  }
+  writer.array(2);
+  writer.value(rowHeader.wrapped ? 1 : 0);
+  writer.array(runs.length);
+  for (const run of runs) {
+    writer.value(run);
+    const pause = checkpoint(run[1].length);
+    if (pause) await pause;
+  }
+  if (owned) validatedOwnedEncodingRows.add(row);
+}
+/** Metadata-only tuples; no row graph, history, or JSON cell serialization. */
+export function encodeTerminalProjectionMetadataTuple(
+  value: Omit<TerminalReplicaSnapshot, "grid" | "history">,
+): readonly unknown[] {
+  const budget = {
+    ...compactDecodeBudget(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+  };
+  return [
+    compactCursor(value.cursor),
+    compactModes(value.modes),
+    compactPlacements(value.placements, budget),
+    compactBootstrap(value.bootstrap),
+  ];
 }

@@ -75,12 +75,14 @@ fn rejects_foreign_overlapping_and_out_of_frame_targets() -> anyhow::Result<()> 
 #[test]
 fn clicks_wait_for_the_current_frame_to_be_painted() -> anyhow::Result<()> {
     use std::sync::Arc;
-    let first = Arc::new(crate::tmux_snapshot::decode::frame(include_bytes!(
+    let first: DisplayFrame = Arc::new(crate::tmux_snapshot::decode::frame(include_bytes!(
         "../../../../../fixtures/snapshot.json"
-    ))?);
-    let next = Arc::new(crate::tmux_snapshot::decode::frame(include_bytes!(
+    ))?)
+    .into();
+    let next: DisplayFrame = Arc::new(crate::tmux_snapshot::decode::frame(include_bytes!(
         "../../../../../fixtures/snapshot.json"
-    ))?);
+    ))?)
+    .into();
     assert!(is_painted(Some(&first), Some(&first)));
     assert!(!is_painted(Some(&next), Some(&first)));
     assert!(!is_painted(None, Some(&first)));

@@ -120,6 +120,8 @@ impl Parser {
     }
 }
 
+// Legacy binary-cell fixtures remain diagnostic tests; the live broker admits JSON only.
+#[cfg(test)]
 pub(in crate::tmux_snapshot) mod cells;
 #[cfg(test)]
 mod tests;

@@ -27,9 +27,9 @@ fn selection_round_trip(cx: &mut TestAppContext, proven: bool, cancel: bool) {
                 id: "pane-a".into(),
                 left: 0,
                 top: 0,
-                width: frame.width,
-                height: frame.height,
-                wrapped: vec![false; usize::from(frame.height)],
+                width: frame.view().width(),
+                height: frame.view().height(),
+                wrapped: vec![false; usize::from(frame.view().height())],
             });
             let mut selected = selection::Capture::begin(&v.browser_state, 0., 0.).unwrap();
             selected.update(3., 0.).unwrap();

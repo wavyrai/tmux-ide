@@ -75,6 +75,24 @@ test("local receipt accepts copied native and excludes target and unrelated priv
     await assert.rejects(record(f), { code: "EEXIST" });
   });
 });
+test("single-job builds preserve their exact command and reject unrelated overrides", async () => {
+  await fixture(async (f) => {
+    const command = [...build.command.slice(0, 3), "--jobs", "1", ...build.command.slice(3)];
+    await writeNativeBuildReceipt({
+      ...f,
+      before: await snapshotNativeSources(f.workspace),
+      build: { ...build, command },
+    });
+    const receipt = await verifyNativeBuildReceipt(f.receiptPath, f.native, f.workspace);
+    assert.deepEqual(receipt.build.command, command);
+    receipt.build.command.splice(5, 0, "--features", "unreviewed");
+    await writeFile(f.receiptPath, JSON.stringify(receipt));
+    await assert.rejects(
+      verifyNativeBuildReceipt(f.receiptPath, f.native, f.workspace),
+      /Malformed/,
+    );
+  });
+});
 test("binary tampering and edited/new/deleted Rust or asset inputs invalidate receipt", async () => {
   for (const change of [
     async (f) => writeFile(f.native, "tampered"),

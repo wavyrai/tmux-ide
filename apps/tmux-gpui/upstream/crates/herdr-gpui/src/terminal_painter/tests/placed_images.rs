@@ -2,6 +2,15 @@ use super::*;
 
 #[gpui::test]
 fn placed_images_decode_off_thread_then_paint_in_z_order(cx: &mut TestAppContext) {
+    placed_image_layers(cx, false);
+}
+
+#[gpui::test]
+fn layered_images_paint_once_in_their_respective_layers(cx: &mut TestAppContext) {
+    placed_image_layers(cx, true);
+}
+
+fn placed_image_layers(cx: &mut TestAppContext, layered: bool) {
     use herdr_client::{
         SurfaceImages,
         protocol::{
@@ -82,24 +91,35 @@ fn placed_images_decode_off_thread_then_paint_in_z_order(cx: &mut TestAppContext
             canvas(
                 |_, _, _| (),
                 move |_, _, window, cx| {
-                    painter.borrow_mut().paint_frame(
-                        &frame,
-                        point(px(10.), px(10.)),
-                        None,
-                        10.,
-                        &font("Menlo"),
-                        &[],
-                        &[],
-                        None,
-                        Some(PlacedImages {
-                            placements: &placements,
-                            images: &images,
-                            target: ImageTarget::Main,
-                            cell_pixels: None,
-                        }),
-                        window,
-                        cx,
-                    );
+                    let area = whole(&frame);
+                    let parts: Vec<_> = if layered {
+                        Layer::ALL
+                            .into_iter()
+                            .map(|layer| Some(Part { area: &area, layer }))
+                            .collect()
+                    } else {
+                        vec![None]
+                    };
+                    for part in parts {
+                        painter.borrow_mut().paint_frame(
+                            &frame,
+                            point(px(10.), px(10.)),
+                            None,
+                            10.,
+                            &font("Menlo"),
+                            &[],
+                            &[],
+                            part,
+                            Some(PlacedImages {
+                                placements: &placements,
+                                images: &images,
+                                target: ImageTarget::Main,
+                                cell_pixels: None,
+                            }),
+                            window,
+                            cx,
+                        );
+                    }
                 },
             )
             .size_full()

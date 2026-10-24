@@ -30,7 +30,9 @@ fn make_view(
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
-        frame: Some(frame.clone()),
+        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         browsing: true,
         terminal_focus: focus,
         input_interrupted: false,
@@ -61,7 +63,10 @@ fn make_view(
             Bounds::default(),
         )),
         input_cell_width: Some(10.),
-        painted_frame: Some(frame.clone()),
+        painted_focus: None,
+        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+            frame.clone(),
+        )),
         pointer: Default::default(),
         selection: None,
         divider: None,
@@ -71,7 +76,9 @@ fn make_view(
             surface: browser::Surface::Workspace,
             input_ready: false,
             selected_pane: Some("pane-a".into()),
-            frame: Some(frame),
+            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
+                frame,
+            )),
             regions: serde_json::from_str(
                 r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
             )
@@ -133,7 +140,7 @@ fn click(view: &mut SnapshotView, window: &mut Window, cx: &mut Context<Snapshot
     );
 }
 #[gpui::test]
-fn premature_click_requires_new_ready_click_and_never_replays(cx: &mut TestAppContext) {
+fn rejected_typing_requires_new_ready_click_and_never_replays(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(32);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     while receiver.try_recv().is_ok() {}
@@ -142,6 +149,9 @@ fn premature_click_requires_new_ready_click_and_never_replays(cx: &mut TestAppCo
         view.presence.set_active(false);
         click(view,window,cx);
         assert!(view.terminal_focus.is_focused(window), "early click must expose keydown without text handler");
+        assert!(!view.input_interrupted, "clicking alone is not rejected input");
+        view.replace_text_in_range(None,"unverified-prefix",window,cx);
+        assert!(view.input_interrupted);
         view.presence = Presence::new(true);
         view.presence.flush(view.browser_commands.as_ref().unwrap());
         view.presence.acknowledge(1);
@@ -260,8 +270,8 @@ fn dropped_drag_prefix_stays_interrupted_after_release_until_ready_click(cx: &mu
     cx.update(|window, cx| view.update(cx, |view, cx| {
         let frame = Arc::new(FrameData { width: 11, height: 9, cursor: None, hyperlinks: vec![], graphics: vec![],
             cells: vec![CellData { symbol: " ".into(), fg: 0, bg: 0, modifier: 0, skip: false, hyperlink: None }; 99] });
-        view.frame = Some(frame.clone());
-        view.browser_state.frame = Some(frame);
+        view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(frame.clone()));
+        view.browser_state.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(frame));
         view.browser_state.request = 7;
         view.browser_state.input_ready = true;
         view.browser_state.selected_session = Some("session".into());
@@ -329,3 +339,9 @@ mod history_page_tests;
 
 #[path = "input_interruption_tests/pending_selection.rs"]
 mod pending_selection;
+
+#[path = "input_interruption_tests/focus_reclaim.rs"]
+mod focus_reclaim;
+
+#[path = "input_interruption_tests/viewport.rs"]
+mod viewport;

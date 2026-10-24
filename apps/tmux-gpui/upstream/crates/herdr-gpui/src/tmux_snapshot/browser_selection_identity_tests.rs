@@ -7,13 +7,13 @@ fn value() -> serde_json::Value {
     json!({"version":1,"connection":"c","sequence":1,"request":0,"surface":"workspace","inputReady":true,"sessions":[{"id":"s","label":"s"}],"panes":[{"id":"p","label":"p"}],"selectedSession":"s","selectedPane":"p","status":"ready","snapshot":snapshot,"copyRegion":{"id":"p","left":0,"top":0,"width":60,"height":20,"wrapped":vec![false;20]},"selectionIdentity":"a".repeat(64)})
 }
 #[test]
-fn selection_identity_is_optional_bounded_and_requires_fresh_copy_surface() {
+fn broker_selection_identity_never_authorizes_a_terminal_copy_surface() {
     let parse =
         |value: &serde_json::Value| Reader::default().accept(&serde_json::to_vec(value).unwrap());
     let mut valid = value();
-    assert!(parse(&valid).is_ok());
+    assert!(parse(&valid).is_err());
     valid.as_object_mut().unwrap().remove("selectionIdentity");
-    assert!(parse(&valid).is_ok());
+    assert!(parse(&valid).is_err());
     for identity in [
         "a".repeat(63),
         "A".repeat(64),

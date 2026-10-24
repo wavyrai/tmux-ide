@@ -1,6 +1,5 @@
 //! Daemon-issued ancestry handles. Rectangles validate presentation, never infer ancestry.
 use super::*;
-use herdr_client::protocol::FrameData;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -48,7 +47,7 @@ impl Target {
             && self.boundary <= 4096
     }
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(in crate::tmux_snapshot) struct Pane {
     pub semantic_pane_id: String,
@@ -57,7 +56,7 @@ pub(in crate::tmux_snapshot) struct Pane {
     pub width: u16,
     pub height: u16,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(in crate::tmux_snapshot) struct Edge {
     pub split_id: String,
@@ -66,7 +65,7 @@ pub(in crate::tmux_snapshot) struct Edge {
     pub start: u16,
     pub length: u16,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(in crate::tmux_snapshot) struct Layout {
     pub version: u8,
@@ -111,9 +110,9 @@ impl Layout {
                     && u32::from(s.start) + u32::from(s.length) <= u32::from(cross)
             })
     }
-    pub fn matches(
+    pub fn matches_view(
         &self,
-        frame: Option<&FrameData>,
+        frame: Option<crate::terminal_painter::FrameView<'_>>,
         regions: &[hit_regions::Region],
         choices: &[browser::Choice],
         session: Option<&str>,
@@ -121,8 +120,8 @@ impl Layout {
     ) -> bool {
         self.valid()
             && session == Some(self.window.live_session_id.as_str())
-            && frame.is_some_and(|f| f.width == self.cols && f.height == self.rows)
-            && hit_regions::valid(regions, frame, choices)
+            && frame.is_some_and(|f| f.width() == self.cols && f.height() == self.rows)
+            && hit_regions::valid_view(regions, frame, choices)
             && self.panes.len() == regions.len()
             && self.panes.iter().all(|p| {
                 regions.iter().any(|r| {
@@ -155,7 +154,7 @@ impl Layout {
         }
     }
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(in crate::tmux_snapshot) struct Ack {
     pub gesture: String,
@@ -187,9 +186,9 @@ pub(super) fn safe_cell(state: &browser::State, col: u16, row: u16) -> bool {
     let Some(frame) = state.frame.as_ref() else {
         return false;
     };
-    col < frame.width
-        && row < frame.height
-        && frame.graphics.is_empty()
+    col < frame.view().width()
+        && row < frame.view().height()
+        && !frame.view().has_inline_graphics()
         && !state.regions.iter().any(|r| {
             col >= r.left
                 && u32::from(col) < u32::from(r.left) + u32::from(r.width)
@@ -197,8 +196,8 @@ pub(super) fn safe_cell(state: &browser::State, col: u16, row: u16) -> bool {
                 && u32::from(row) < u32::from(r.top) + u32::from(r.height)
         })
         && frame
-            .cells
-            .get(usize::from(row) * usize::from(frame.width) + usize::from(col))
+            .view()
+            .cell(usize::from(col), usize::from(row))
             .is_some_and(|c| {
                 matches!(c.symbol.as_str(), "" | " ")
                     && !c.skip
