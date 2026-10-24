@@ -8,7 +8,11 @@ All notable changes to this project will be documented in this file.
 - Add bounded, expiring local image leases with inline fallback. Reuse unchanged ownership journals instead of flushing them for every shared lease, and verify immutable file metadata before cleanup.
 - Keep deferred-history receipts separate from complete-state acknowledgements, and reject unsolicited projections in existing complete-state clients.
 
-The native app is distributed separately. This release supplies transport foundations; it does not enable the pending direct-Rust GUI rewrite or claim measured typing/scrolling improvements. Existing tmux sessions are preserved.
+- Move the native GUI terminal stream and input into Rust, keeping the Node broker for discovery, SSH setup and application metadata. Retain unchanged terminal rows and apply changed rows directly.
+- Preserve queued typing and paste through terminal recapture during resize. Reject commands admitted while backgrounded, including stale resize requests during rapid refocus.
+- Preview divider movement locally and commit the exact terminal geometry on release. Improve initial pane selection and add Cmd-click links in GUI terminals.
+
+The matching native macOS alpha is `0.1.8`, distributed separately from CLI/daemon `2.9.12`. Updating the CLI does not update the native app. Existing tmux sessions are preserved. This release makes no measured typing/scrolling speedup or TUI-parity claim.
 
 ## 2.9.11
 

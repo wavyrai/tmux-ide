@@ -1,34 +1,41 @@
 ---
 title: tmux-ide 2.9.12
 metaTitle: "What's new in 2.9.12"
-description: "Negotiated terminal transport and bounded local image delivery."
+description: "Direct Rust terminal delivery for the native GUI, changed-row updates and stable resize input."
 ---
 
-`2.9.12` adds daemon transport foundations for compatible terminal clients.
-Existing clients retain their current delivery path. This release does not enable
-the pending direct-Rust GUI rewrite or claim measured typing and scrolling improvements.
+`2.9.12` and the separately distributed native alpha `0.1.8` move the GUI's live
+terminal stream and input into Rust. The Node broker continues to provide
+discovery, SSH setup and application metadata. Terminal cells and keystrokes no
+longer pass through it.
 
-## Terminal delivery
+## Native terminal updates
 
-Clients can negotiate binary cell and image frames, byte input, and alternate-screen
-projections. A projection can defer normal-screen history; its receipt is separate
-from a complete-state acknowledgement, so it cannot incorrectly advance the
-client's canonical baseline. Existing complete-state clients reject unsolicited
-projections.
+Rust retains unchanged rows and converts changed rows for painting. Cursor-only
+updates reuse cell rows. Binary terminal and image delivery reduces intermediate
+encoding work; compatible same-host connections can use bounded, expiring image
+file leases. Older clients retain their supported delivery path.
 
-## Local image delivery
+Alternate-screen projections can defer normal-screen history. Their receipts are
+separate from complete-state acknowledgements, and history-dependent interaction
+waits for a complete snapshot.
 
-Same-host clients can negotiate bounded, expiring image leases with inline fallback.
-The daemon reuses an unchanged ownership journal when multiple leases reference
-the same image, avoiding redundant disk flushes. Cleanup verifies immutable file
-metadata as well as file identity, protecting replacement files when an inode is reused.
+## Input and resizing
+
+Typing and paste remain queued during temporary screen recapture without losing
+the terminal's lifetime identity. Actual owner replacement still rejects stale
+input. Commands admitted while the GUI is backgrounded cannot revive after a
+rapid refocus, including resize requests.
+
+Divider movement uses a local preview and commits the exact canonical split
+boundary on release, avoiding repeated terminal reflow while dragging. The native
+app also improves initial pane selection and supports Cmd-clicking terminal links.
 
 ## Updating
 
-Update the CLI and running daemon to use the new transport support. Existing tmux
-sessions are preserved. The [native macOS app](/docs/native-alpha) is distributed
-separately; updating the CLI does not update that app. The current native installer
-retains its separately qualified CLI version.
+Update both the CLI/daemon and the [native macOS app](/docs/native-alpha) to use
+the complete change. They are separate distributions; updating the CLI alone does
+not update the GUI. Existing tmux sessions are preserved.
 
-The full direct-Rust GUI connection, its remaining live journeys, and physical
-GUI performance qualification remain separate work.
+Automated protocol, input and rendering checks do not establish physical GUI
+latency or TUI parity. This release makes no measured speedup claim.
