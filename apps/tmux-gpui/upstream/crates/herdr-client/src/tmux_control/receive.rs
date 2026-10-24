@@ -158,18 +158,18 @@ impl Policy {
             } => {
                 validate_lease(&authority_lease)?;
                 let pending = self.viewports.get(&seq).ok_or(Error::Invalid)?;
-                let current = self.grants.get(&Authority::Geometry);
+                // This receipt describes a submitted operation, not a new grant.
+                // Blur may revoke local geometry before its matching ACK arrives.
+                let current_matches = self.grants.get(&Authority::Geometry) == Some(&pending.lease);
                 if seq == 0
                     || cols != pending.cols
                     || rows != pending.rows
                     || authority_lease != pending.lease
-                    || current.is_some_and(|l| l != &pending.lease)
-                    || (outcome == ViewportOutcome::Ok && current.is_none())
                 {
                     return Err(Error::Invalid);
                 }
                 self.viewports.remove(&seq);
-                if outcome == ViewportOutcome::GeometryAuthorityConflict {
+                if outcome == ViewportOutcome::GeometryAuthorityConflict && current_matches {
                     self.grants.remove(&Authority::Geometry);
                 }
                 Ok(Outcome {

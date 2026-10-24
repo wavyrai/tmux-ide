@@ -328,3 +328,55 @@ mod pixels;
 
 #[path = "tmux_controller_projection_tests.rs"]
 mod projection;
+
+#[test]
+fn delayed_resize_ack_after_blur_keeps_the_native_connection() {
+    let (mut c, observed, response, peer) = fixture();
+    c.policy
+        .request_authority(Authority::Geometry, OP, 0)
+        .unwrap();
+    let geometry = json!({"generation":GEN,"session":"session","clientId":"native.test",
+        "authority":"geometry","token":TOKEN,"revision":2});
+    let mut owners = authority();
+    owners["revision"] = json!(2);
+    owners["owners"]["geometry"] = json!("native.test");
+    c.policy
+        .accept_json(
+            &serde_json::to_vec(&json!({"type":"authority-receipt",
+        "requestId":OP,"authority":"geometry","status":"granted",
+        "lease":geometry,"snapshot":owners}))
+            .unwrap(),
+        )
+        .unwrap();
+    let command = c.policy.viewport(111, 47, Some("window.one"), 0).unwrap();
+    c.send(command).unwrap();
+    let resize = observed.recv_timeout(Duration::from_secs(3)).unwrap();
+    // The server has already accepted the resize, but its ACK is still withheld.
+    c.presence(false, 2, 1).unwrap();
+    assert!(!c.owns(Authority::Input));
+    assert!(!c.owns(Authority::Geometry));
+    response
+        .send(json!({"type":"viewport-ack","seq":resize["seq"],
+        "cols":111,"rows":47,"authorityLease":resize["authorityLease"],"outcome":"ok"}))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let update = c.poll(2).unwrap();
+        if !update.viewports.is_empty() {
+            assert_eq!(
+                update.viewports,
+                vec![(1, tmux_control::ViewportOutcome::Ok)]
+            );
+            assert_eq!(update.presence_revision, Some(2));
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!c.retired);
+    assert!(!c.input_ready());
+    assert!(!c.owns(Authority::Geometry));
+    c.retire();
+    drop(response);
+    peer.join().unwrap();
+}

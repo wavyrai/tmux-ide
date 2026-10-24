@@ -237,6 +237,92 @@ fn viewport_requires_requested_geometry_and_correlates_lease() {
     assert!(p.accept_json(&serde_json::to_vec(&ack).unwrap()).is_err());
 }
 #[test]
+fn viewport_ack_after_blur_drains_without_restoring_authority() {
+    for forged in [false, true] {
+        let mut p = granted();
+        p.request_authority(Authority::Geometry, GEOMETRY, 0)
+            .unwrap();
+        p.accept_json(&receipt(
+            GEOMETRY,
+            Authority::Geometry,
+            "granted",
+            Some(lease(Authority::Geometry, 2)),
+            snapshot(2, true, true),
+        ))
+        .unwrap();
+        p.viewport(111, 47, Some("window.one"), 1).unwrap();
+        p.presence(false, REQUEST, GEOMETRY, 2).unwrap();
+        assert!(!p.owns(Authority::Input));
+        assert!(!p.owns(Authority::Geometry));
+        let mut ack = json!({"type":"viewport-ack","seq":1,"cols":111,"rows":47,
+            "authorityLease":lease(Authority::Geometry,2),"outcome":"ok"});
+        if forged {
+            ack["authorityLease"]["token"] = json!(REQUEST);
+        }
+        let result = p.accept_json(&serde_json::to_vec(&ack).unwrap());
+        if forged {
+            assert!(matches!(result, Err(Error::Invalid)));
+        } else {
+            assert_eq!(result.unwrap().viewport, Some((1, ViewportOutcome::Ok)));
+            assert!(!p.retired);
+            assert!(p.viewports.is_empty());
+            assert!(!p.owns(Authority::Input));
+            assert!(!p.owns(Authority::Geometry));
+            assert!(matches!(p.viewport(60, 20, None, 3), Err(Error::Authority)));
+        }
+    }
+}
+#[test]
+fn late_viewport_result_cannot_revoke_a_replacement_geometry_grant() {
+    for outcome in ["ok", "geometry-authority-conflict"] {
+        let mut p = granted();
+        p.request_authority(Authority::Geometry, GEOMETRY, 0)
+            .unwrap();
+        p.accept_json(&receipt(
+            GEOMETRY,
+            Authority::Geometry,
+            "granted",
+            Some(lease(Authority::Geometry, 2)),
+            snapshot(2, true, true),
+        ))
+        .unwrap();
+        p.viewport(111, 47, None, 1).unwrap();
+        p.release_authority(Authority::Geometry, GEOMETRY, 2)
+            .unwrap();
+        p.accept_json(&receipt(
+            GEOMETRY,
+            Authority::Geometry,
+            "released",
+            None,
+            snapshot(3, true, false),
+        ))
+        .unwrap();
+        p.request_authority(Authority::Geometry, GEOMETRY, 3)
+            .unwrap();
+        let replacement = lease(Authority::Geometry, 4);
+        p.accept_json(&receipt(
+            GEOMETRY,
+            Authority::Geometry,
+            "granted",
+            Some(replacement.clone()),
+            snapshot(4, true, true),
+        ))
+        .unwrap();
+        p.accept_json(
+            &serde_json::to_vec(&json!({"type":"viewport-ack","seq":1,
+            "cols":111,"rows":47,"authorityLease":lease(Authority::Geometry,2),
+            "outcome":outcome}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(p.owns(Authority::Geometry));
+        assert!(p.owns(Authority::Input));
+        let next: serde_json::Value =
+            serde_json::from_str(p.viewport(95, 30, None, 4).unwrap().as_str()).unwrap();
+        assert_eq!(next["authorityLease"], replacement);
+    }
+}
+#[test]
 fn malformed_or_regressed_receipt_revokes_everything() {
     for mutation in 0..3 {
         let mut p = granted();
