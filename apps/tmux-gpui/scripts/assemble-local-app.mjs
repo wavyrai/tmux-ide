@@ -24,14 +24,14 @@ if (!output.endsWith(".app")) throw new Error("Output must be a new .app directo
 const metadata =
   process.argv.length === 9 ? await readBundleMetadata(resolve(process.argv[8])) : undefined;
 const project = fileURLToPath(new URL("../", import.meta.url));
+// Verify source/binary consistency before executing either supplied binary.
+await verifyNativeBuildReceipt(receipt, native, join(project, "upstream"));
 // Check build-time palette parity without starting a runtime metadata helper.
 await run(
   node,
   ["--import", "tsx", join(project, "scripts/generate-native-appearance.ts"), "--check"],
   { cwd: join(project, "../..") },
 );
-// Verify local source/binary consistency before executing the supplied native binary.
-await verifyNativeBuildReceipt(receipt, native, join(project, "upstream"));
 const version = (await run(node, ["--version"])).stdout.trim();
 if (!/^v24\./.test(version)) throw new Error("Node 24 is required");
 const identity = (await run(native, ["--version"])).stdout.trim();
