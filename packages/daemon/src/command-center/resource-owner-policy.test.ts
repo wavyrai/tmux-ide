@@ -14,6 +14,7 @@ import { createApp } from "./server.ts";
  * behavior below is asserted against a real app, not a comment.
  */
 const OWNER = "resource-policy-owner";
+const INSTANCE = "11111111-1111-4111-8111-111111111111";
 
 type DeclaredPolicy =
   /** Owner-only: 401 without the bearer, 503 when the daemon holds no token. */
@@ -28,6 +29,7 @@ const DECLARED: Readonly<Record<string, DeclaredPolicy>> = {
   "/api/resources/fleet-preview": "owner-only",
   "/api/resources/fleet-client-state": "owner-only",
   "/api/resources/saved-machines": "owner-only",
+  "/api/resources/saved-machines/watch": "owner-only",
   "/api/resources/workspace-admission": "owner-only",
   "/api/resources/startup-readiness": "owner-only-when-held",
   "/api/resources/workspace-catalog": "open",
@@ -49,9 +51,16 @@ async function get(
     // This suite checks authorization against healthy resources. Host tmux
     // availability is a separate route contract, including its 503 response.
     catalogFleet: () => [],
+    daemonIdentity: {
+      instanceId: INSTANCE,
+      productVersion: "test",
+      startedAt: "2026-10-26T00:00:00Z",
+    },
     ...(options.ownerToken === null ? {} : { remoteAccess: { ownerToken: options.ownerToken } }),
   });
-  return app.request(`http://localhost${path}`, {
+  const query =
+    path === "/api/resources/saved-machines/watch" ? `?expectedInstanceId=${INSTANCE}` : "";
+  return app.request(`http://localhost${path}${query}`, {
     headers: options.bearer === undefined ? {} : { Authorization: `Bearer ${options.bearer}` },
   });
 }
