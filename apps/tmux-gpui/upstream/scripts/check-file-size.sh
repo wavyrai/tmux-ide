@@ -6,7 +6,9 @@ set -euo pipefail
 
 MAX_LINES=1000
 
-cd "$(git rev-parse --show-toplevel)"
+# This workspace is embedded in the tmux-ide monorepo. Keep its source limit
+# scoped here, rather than applying it to sibling third-party distributions.
+cd "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 failures=0
 while IFS= read -r -d '' file; do
