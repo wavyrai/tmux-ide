@@ -676,8 +676,6 @@ dependencies = [
 [[package]]
 name = "bezel-gpui-apple"
 version = "0.3.19+zed.f16f96"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "669b9027804920bf1193a1c77e78ce47fedfba5c1c900fa1ae3ef6a8f71a20d8"
 dependencies = [
  "anyhow",
  "async-task",
@@ -705,6 +703,7 @@ dependencies = [
  "objc2-core-text",
  "objc2-core-video",
  "objc2-foundation 0.3.2",
+ "objc2-io-surface",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "objc2-security",
@@ -3461,9 +3460,12 @@ name = "herdr-client"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "chrono",
  "crossbeam-channel",
+ "flate2",
  "herdr-protocol",
  "interprocess",
+ "regex",
  "rustix",
  "serde",
  "serde_json",
@@ -3471,6 +3473,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "tungstenite",
+ "unicode-normalization",
+ "ureq",
  "url",
  "uuid",
  "windows-sys 0.61.2",
@@ -3484,6 +3488,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "bezel-gpui",
+ "bezel-gpui-apple",
  "bezel-gpui-platform",
  "bezel-theme",
  "bezel-ui",
@@ -3513,6 +3518,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
+ "objc2-core-video",
  "objc2-foundation 0.3.2",
  "objc2-web-kit",
  "oo7",
@@ -3535,6 +3541,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.21",
+ "tmux-native-surface-sdk",
  "toml 1.1.6+spec-1.1.0",
  "toml_edit 0.25.15+spec-1.1.0",
  "tracing",
@@ -5190,6 +5197,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
  "bitflags 2.13.2",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
 ]
@@ -7870,6 +7878,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "tmux-native-surface-sdk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bezel-gpui-apple",
+ "herdr-client",
+ "objc2-core-foundation",
+ "objc2-core-video",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "tokio"
 version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8188,6 +8209,15 @@ name = "unicode-linebreak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-properties"

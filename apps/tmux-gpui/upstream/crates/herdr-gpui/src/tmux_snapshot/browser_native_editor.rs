@@ -9,23 +9,23 @@ const SAFE: u64 = 9_007_199_254_740_991;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Request {
-    version: u8,
-    id: String,
-    request: u64,
-    sequence: u64,
-    operation_id: String,
-    presence_revision: u64,
-    pane: String,
-    generation: String,
-    incarnation: String,
+    pub(super) version: u8,
+    pub(super) id: String,
+    pub(super) request: u64,
+    pub(super) sequence: u64,
+    pub(super) operation_id: String,
+    pub(super) presence_revision: u64,
+    pub(super) pane: String,
+    pub(super) generation: String,
+    pub(super) incarnation: String,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Cancel {
-    version: u8,
-    id: String,
-    request: u64,
-    operation_id: String,
+    pub(super) version: u8,
+    pub(super) id: String,
+    pub(super) request: u64,
+    pub(super) operation_id: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,7 +41,7 @@ pub(super) struct Response {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Status {
+pub(super) enum Status {
     Opened,
     Unavailable,
     Stale,
@@ -49,6 +49,18 @@ enum Status {
     Busy,
 }
 impl Response {
+    pub(super) fn native(request: &Request, status: Status) -> Self {
+        Self {
+            kind: "native-editor-result".into(),
+            version: 1,
+            id: request.id.clone(),
+            request: request.request,
+            operation_id: request.operation_id.clone(),
+            sequence: request.sequence,
+            status,
+        }
+    }
+
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         if bytes.len() > 2048 {
             return None;

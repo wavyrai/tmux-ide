@@ -1,3 +1,5 @@
+import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
+import { NativeSurfaceProviderRegistry } from "../terminal/graphics/native-surface-provider.ts";
 import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
 import {
   createNativeSplitCapabilityProbe,
@@ -139,6 +141,7 @@ import {
   attachTerminalAttachmentWebSocket,
   type TerminalAttachmentWebSocketBoundary,
 } from "../server/terminal-attachment-upgrade.ts";
+import { attachNativeSurfaceProvider } from "../server/native-surface-provider-upgrade.ts";
 import {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
@@ -920,6 +923,10 @@ async function startHttpServer({
       issue: (request, context) => getTerminalAttachmentRuntime().admission.issue(request, context),
     },
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
+    nativeSurfaceProviderSupported: () =>
+      serverOwners.isDefaultCurrent() && paneStreamRuntime.nativeSurfaces !== undefined,
+    nativeSurfaceProviderAvailable: () =>
+      serverOwners.isDefaultCurrent() && paneStreamRuntime.nativeSurfaces?.available === true,
     applicationShellInventoryBackend: terminalInventoryRuntime,
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
@@ -970,12 +977,26 @@ async function startHttpServer({
       (create ? getTerminalAttachmentRuntime() : peekTerminalAttachmentRuntime())?.admission ??
       null,
   );
-  const paneStreamBoundary = attachPaneStreamWebSocket(
+  const paneStreamSocketBoundary = attachPaneStreamWebSocket(
     server,
     paneStreamRuntime.coordinator,
     PANE_STREAM_REDEEM_PATH,
     () => serverOwners.isDefaultCurrent(),
   );
+  const nativeProviderBoundary = paneStreamRuntime.nativeSurfaces
+    ? attachNativeSurfaceProvider(
+        server,
+        paneStreamRuntime.nativeSurfaces,
+        localBypassToken ?? null,
+        () => serverOwners.isDefaultCurrent(),
+      )
+    : null;
+  const paneStreamBoundary: PaneStreamWebSocketBoundary = {
+    async close() {
+      nativeProviderBoundary?.close();
+      await paneStreamSocketBoundary.close();
+    },
+  };
   serverOwners.attach(server);
 
   try {
@@ -1526,6 +1547,8 @@ async function startEmbeddedDaemonGeneration(
         externalInteractionObserver.setDiagnostics(diagnostics);
         setFleetFactsObserverDiagnostics(diagnostics);
       }
+      const nativeSurfaces =
+        process.platform === "darwin" ? new NativeSurfaceProviderRegistry(instanceId) : undefined;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
@@ -1561,6 +1584,8 @@ async function startEmbeddedDaemonGeneration(
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
+          onNativeClientPresence: (session, present) =>
+            nativeSurfaces?.demand.presence(session, present),
           splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
           splitLayoutPrepare: createNativeSplitReadiness({
             observation: () => observationSelector ?? null,
@@ -1762,6 +1787,7 @@ async function startEmbeddedDaemonGeneration(
         }
       }
       paneStreamRuntime = createPaneStreamRuntime({
+        nativeSurfaces,
         localImages,
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
@@ -1880,6 +1906,22 @@ async function startEmbeddedDaemonGeneration(
             return grant ? interactionEvidence.captureSourceBinding(grant) : null;
           },
           interactionReceipts,
+          resolveNativeSurfaceContext: createNativeSurfaceContextResolver({
+            generation: instanceId,
+            registry: workspaceRegistry,
+            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            inventory: terminalInventoryRuntime,
+            run: (args, signal) => fleetFactsTmuxRunner(args, signal),
+            assertOpen: () => {
+              if (
+                defaultEditorContextRetired ||
+                serverOwners?.defaultRetired ||
+                !initialNativeServerIdentity ||
+                terminalInventoryRuntime?.lifecycleState() !== "ready"
+              )
+                throw new Error("Default native surface context owner is unavailable");
+            },
+          }),
           resolvePaneEditorContext: createPaneEditorContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,

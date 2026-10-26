@@ -74,4 +74,40 @@ describe("daemon capability negotiation", () => {
       reason: "Window fitting is awaiting isolated sizing qualification.",
     });
   });
+  it("advertises native surfaces only on opt-in and while the current provider is available", async () => {
+    let available = false;
+    const app = createApp({
+      remoteAccess: { ownerToken: OWNER },
+      paneStreamIssueBackend: {
+        issue: async () => {
+          throw new Error("not called");
+        },
+      },
+      nativeSurfaceProviderAvailable: () => available,
+      nativeSurfaceProviderSupported: () => true,
+    });
+    const read = async (query: string, token = OWNER) =>
+      app.request(`/api/v2/capabilities${query}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: "{}",
+      });
+    expect((await (await read("")).json()).capabilities).not.toHaveProperty("nativeSurfaces");
+    expect((await (await read("?nativeSurfaces=1")).json()).capabilities.nativeSurfaces).toEqual({
+      available: false,
+      protocolVersion: 116,
+      supported: true,
+    });
+    available = true;
+    expect((await (await read("?nativeSurfaces=1")).json()).capabilities.nativeSurfaces).toEqual({
+      available: true,
+      protocolVersion: 116,
+      supported: true,
+    });
+    expect((await read("?nativeSurfaces=1", "remote-access-token")).status).toBe(401);
+    available = false;
+    expect(
+      (await (await read("?nativeSurfaces=1")).json()).capabilities.nativeSurfaces.available,
+    ).toBe(false);
+  });
 });

@@ -1,10 +1,16 @@
 //! Private broker-to-native capability; no reusable owner credential crosses this boundary.
 use crate::tmux_stream::{ConnectOptions, IssuedDescriptor};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Handoff {
+    /// Minted only by verified local capability negotiation; never pipe JSON.
+    #[serde(skip)]
+    pub native_surfaces: bool,
+    /// In-memory native SSH provenance; never accepted from broker JSON.
+    #[serde(skip)]
+    pub remote_peer: Option<crate::tmux_ssh::PeerIdentity>,
     pub descriptor: IssuedDescriptor,
     pub origin: String,
     pub host_client_id: String,
@@ -27,7 +33,7 @@ pub struct Handoff {
     #[serde(default, deserialize_with = "optional_server_scope")]
     pub server_scope: Option<ServerScope>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ServerScope {
     pub server_id: String,
@@ -99,6 +105,7 @@ impl Handoff {
     pub fn into_connection(self) -> (ConnectOptions, String, String) {
         (
             ConnectOptions {
+                remote_peer: self.remote_peer,
                 descriptor: self.descriptor,
                 origin: self.origin,
                 host_client_id: self.host_client_id,

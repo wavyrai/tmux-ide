@@ -704,6 +704,9 @@ function applyTerminalReplicaPatchProfiled(
     patch.placements === undefined &&
     patch.bootstrap === undefined;
   if (unchanged) return current;
+  Object.freeze(grid);
+  if (grid !== current.grid && cols === current.cols && rows === current.rows)
+    registerGridPatchHash(current.grid, grid, preparedRows, profile, instrumentation);
   let history: readonly TerminalReplicaRow[];
   if (patch.history) {
     history = Object.freeze(patch.history.map(freezeRow));
@@ -1084,6 +1087,36 @@ export async function primeTerminalReplicaRowsHashCooperatively(
   }
   if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
     ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
+}
+
+function registerGridPatchHash(
+  previous: readonly TerminalReplicaRow[],
+  next: readonly TerminalReplicaRow[],
+  changes: readonly { readonly index: number; readonly row: TerminalReplicaRow }[],
+  profile?: MutableTerminalReplicaApplyProfile,
+  instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+): void {
+  const prior = ROW_ARRAY_HASH_CACHE.get(previous);
+  // A cached sequence proves that every retained row is deeply immutable.
+  // Without that proof (including cold or external snapshots), hash normally.
+  // Dense scrolling is cheaper as one linear fold than repeated polynomial
+  // replacements; preserve that path when more than a quarter of rows change.
+  if (!prior || changes.length > previous.length / 4) return;
+  let hash = prior.hash;
+  for (const { index } of changes) {
+    const row = next[index]!;
+    if (row === previous[index]) continue;
+    if (!isTerminalReplicaRowDeeplyFrozen(row)) return;
+    const before = BigInt(`0x${hashTerminalReplicaRow(previous[index]!)}`);
+    const after = BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`);
+    hash = BigInt.asUintN(
+      64,
+      hash + (after - before) * pow64(ROW_SEQUENCE_BASE, prior.length - 1 - index),
+    );
+  }
+  // applyTerminalReplicaPatch owns/froze this array and validates unique indices.
+  // The polynomial is unchanged: replace only each changed row's contribution.
+  ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
 }
 
 export function registerTerminalReplicaRowsDeltaHash(

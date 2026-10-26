@@ -11,7 +11,7 @@ import { stopFixtureChild } from "./fixture-child.mjs";
 
 const { AbortController, AbortSignal } = globalThis;
 
-for (const trigger of ["SIGTERM", "SIGINT", "oversized-input"]) {
+for (const trigger of ["SIGTERM", "SIGINT", "stdin-eof", "oversized-input"]) {
   test(`browser shutdown: ${trigger}`, { timeout: 15000 }, async () => {
     const home = await mkdtemp(join(tmpdir(), "gpui-stop-"));
     const env = Object.fromEntries(
@@ -58,6 +58,7 @@ for (const trigger of ["SIGTERM", "SIGINT", "oversized-input"]) {
       ]);
       child.stdout.resume();
       if (trigger === "oversized-input") child.stdin.write("x".repeat(1024 * 1024));
+      else if (trigger === "stdin-eof") child.stdin.end();
       else child.kill(trigger);
       const [code, exitSignal] = await closed;
       assert.equal(exitSignal, null);

@@ -149,6 +149,14 @@ impl OwnerState {
         pending.deadline = now.saturating_add(12000);
         Some(OwnerEvent::Authorized(pending.authorization.clone()))
     }
+    /// A retired terminal cannot authorize new work. Already submitted owner IO
+    /// stays correlated until its reply or the original deadline.
+    pub fn poll_interrupted(&mut self, now: u64) -> Option<OwnerCompletion> {
+        match self.transition(now, false, false, false) {
+            Some(OwnerEvent::Completed(done)) => Some(done),
+            _ => None,
+        }
+    }
     /// Only the exact submitted operation may release the gate; duplicate/stale replies do nothing.
     pub fn complete(&mut self, operation: &str, success: bool) -> Option<OwnerCompletion> {
         if !self

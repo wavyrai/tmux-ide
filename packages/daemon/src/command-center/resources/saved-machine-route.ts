@@ -1,3 +1,4 @@
+import { mountSavedMachineWatch } from "./saved-machine-watch.ts";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -7,6 +8,7 @@ import {
   loadSavedMachines,
   mergeSavedMachines,
   updateSavedMachines,
+  watchSavedMachines,
 } from "../../lib/saved-machines.ts";
 import { ownerAuthorityGate } from "../owner-authority.ts";
 
@@ -26,8 +28,10 @@ export function mountSavedMachineRoute(
     read?: typeof loadSavedMachines;
     merge?: typeof mergeSavedMachines;
     update?: typeof updateSavedMachines;
+    watch?: typeof watchSavedMachines;
   },
 ) {
+  mountSavedMachineWatch(app, options);
   const authorize = ownerAuthorityGate(options.ownerToken, {
     whenOwnerless: "unavailable",
     unavailableMessage: "Machine registry unavailable",

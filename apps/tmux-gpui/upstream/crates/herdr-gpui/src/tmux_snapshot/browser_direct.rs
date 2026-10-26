@@ -518,6 +518,10 @@ impl NativePresentation {
         .into();
         // These require separate native control/graphics publications; never retain stale Node grants.
         state.graphics.clear();
+        #[cfg(target_os = "macos")]
+        {
+            state.native_surfaces = None;
+        }
         state.pane_actions = None;
         state.resize_token = None;
         state.split_layout = None;

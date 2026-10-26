@@ -10,6 +10,8 @@ import {
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/command-center/resources/saved-machine-route.test.ts",
+  "packages/daemon/src/command-center/resources/saved-machine-watch.test.ts",
   "packages/daemon/src/tui/team/fuzzy.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-presentation.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-lifecycle-client.test.ts",
@@ -46,6 +48,8 @@ const sshTests = [
 ];
 
 const sshSources = [
+  "packages/daemon/src/command-center/resources/saved-machine-route.ts",
+  "packages/daemon/src/command-center/resources/saved-machine-watch.ts",
   "packages/daemon/src/command-center/resources/fleet-preview-route.ts",
   "packages/daemon/src/tui/mirror/runtime/application-fleet-preview.ts",
   "packages/daemon/src/tui/mirror/runtime/application-fleet-tabs.ts",

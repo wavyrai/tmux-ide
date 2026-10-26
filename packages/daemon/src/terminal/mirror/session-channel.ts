@@ -272,6 +272,8 @@ export interface SessionChannelOptions {
   onExit?: () => void;
   /** Event-driven proof that a non-control tmux client is actively attached. */
   onNativeClientActivity?: () => void;
+  /** null means unproven: consumers must preserve ordinary terminal output. */
+  onNativeClientPresence?: (present: boolean | null) => void;
   /** Optional diagnostic capture before dispatch; completion must not affect input. */
   captureInputWrite?: (
     action: InputAction,
@@ -514,6 +516,8 @@ export class SessionChannel {
   private disposed = false;
   private readonly nativeGrid: NativeGridCaptureReader;
   private nativeClientProbePending = false;
+  private nativeClientProbeDirty = false;
+  private nativeClientProbeClosed = false;
   // Native captures fence every geometry event; inventory fences identity only.
   private windowAuthorityOrdinal = 0;
   private readonly layoutNotificationOrdinals = new Map<string, number>();
@@ -751,7 +755,7 @@ export class SessionChannel {
     this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
     this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
     this.io.send("refresh-client -B 'tmux-ide-scroll-on-clear:%*:#{scroll-on-clear}'");
-    if (this.opts.onNativeClientActivity) {
+    if (this.opts.onNativeClientActivity || this.opts.onNativeClientPresence) {
       // tmux does not guarantee `%client-attached` is broadcast to an
       // existing control client. A format subscription is the documented,
       // event-driven observation seam; its notification only schedules the
@@ -760,6 +764,7 @@ export class SessionChannel {
     }
     await this.syncNow();
     await this.firstJoin;
+    if (this.opts.onNativeClientPresence) this.probeNativeClientActivity();
   }
 
   // ── Public surface (semantic ids only) ──────────────────────────────────
@@ -1489,6 +1494,7 @@ export class SessionChannel {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.opts.onNativeClientPresence?.(null);
     this.snapshotActive?.cleanup?.();
     this.snapshotActive?.cancelFence?.();
     this.snapshotActive = null;
@@ -2951,7 +2957,7 @@ export class SessionChannel {
     // before the once-per-second subscription notification. The inventory
     // (not either notification) remains the proof.
     if (
-      this.opts.onNativeClientActivity &&
+      (this.opts.onNativeClientActivity || this.opts.onNativeClientPresence) &&
       (NATIVE_CLIENT_NOTIFICATIONS.has(name) || name === "layout-change")
     ) {
       this.probeNativeClientActivity();
@@ -3142,23 +3148,36 @@ export class SessionChannel {
   }
 
   private probeNativeClientActivity(): void {
-    if (this.nativeClientProbePending || this.disposed) return;
+    if (this.disposed || this.nativeClientProbeClosed) return;
+    this.opts.onNativeClientPresence?.(null);
+    if (this.nativeClientProbePending) {
+      this.nativeClientProbeDirty ||= this.opts.onNativeClientPresence !== undefined;
+      return;
+    }
     this.nativeClientProbePending = true;
+    this.nativeClientProbeDirty = false;
     void this.io
       .request(
         `list-clients -t "${this.opts.session}" -F "#{client_control_mode}\t#{client_activity}"`,
       )
       .then((lines) => {
-        // The daemon's own mirror is a control-mode client. Only a tmux-owned
-        // attached client (control mode = 0) is honest evidence for yielding
-        // geometry; notification names alone can include our own lifecycle.
-        if (lines.some((line) => /^0\t\d+$/u.test(line.trim()))) {
-          this.opts.onNativeClientActivity?.();
-        }
+        if (this.disposed || this.nativeClientProbeClosed || this.nativeClientProbeDirty) return;
+        // Control-mode clients include our own mirrors. Only complete valid
+        // inventory proves absence; malformed replies must preserve fallback.
+        const valid = lines.every((line) => /^[01]\t\d+$/u.test(line.trim()));
+        const present = lines.some((line) => /^0\t\d+$/u.test(line.trim()));
+        this.opts.onNativeClientPresence?.(present ? true : valid ? false : null);
+        if (present) this.opts.onNativeClientActivity?.();
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!this.disposed && !this.nativeClientProbeClosed)
+          this.opts.onNativeClientPresence?.(null);
+      })
       .finally(() => {
         this.nativeClientProbePending = false;
+        // An attach/detach while the query ran invalidated its answer. Keep one
+        // follow-up request, rather than dropping the event or growing a queue.
+        if (this.nativeClientProbeDirty) this.probeNativeClientActivity();
       });
   }
 
@@ -4209,6 +4228,8 @@ export class SessionChannel {
 
   private onChannelExit(): void {
     if (this.disposed) return;
+    this.nativeClientProbeClosed = true;
+    this.opts.onNativeClientPresence?.(null);
     this.snapshotActive?.cancelFence?.();
     this.snapshotActive = null;
     this.snapshotQueue.clear();

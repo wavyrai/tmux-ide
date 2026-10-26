@@ -17,10 +17,16 @@ pub struct Ticket {
     serial: u64,
     scope: Scope,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum AnchorOperation {
-    Capture { history_index: usize },
-    Resolve { token: String },
+    Capture {
+        #[serde(rename = "historyIndex")]
+        history_index: usize,
+    },
+    Resolve {
+        token: String,
+    },
 }
 #[derive(Clone, Debug)]
 pub struct AnchorAction {

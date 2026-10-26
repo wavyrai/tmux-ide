@@ -12,9 +12,9 @@ import {
   TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
 } from "../../../packages/contracts/src/terminal-graphics.ts";
 import {
-  TERMINAL_PROJECTION_CAPABILITY_VERSION,
-  TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
-} from "../../../packages/contracts/src/terminal-projection.ts";
+  TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
+} from "../../../packages/contracts/src/terminal-graphics.ts";
 import { connectionSchema, paneStreamSocketUrl } from "./config.ts";
 import { localPreviewImageAccess, type LocalPreviewHostProof } from "./discovery.ts";
 
@@ -66,8 +66,8 @@ export async function issueDirectTerminal(
             1,
             TERMINAL_GRAPHICS_CAPABILITY_VERSION,
             localImages
-              ? TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION
-              : TERMINAL_PROJECTION_CAPABILITY_VERSION,
+              ? TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION
+              : TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION,
             TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
             TERMINAL_GRAPHICS_CELL_PIXELS_CAPABILITY_VERSION,
             TERMINAL_GRAPHICS_PRECISE_PIXELS_CAPABILITY_VERSION,
@@ -78,7 +78,7 @@ export async function issueDirectTerminal(
                 ]
               : []),
           ],
-          // Keep the offer valid on older daemons. 111/112 opt into binary projection;
+          // Keep the offer valid on older daemons. 113/114 opt into binary projection and lossless raw image chunks;
           // older peers ignore them and select compact semantic delivery.
           encodings: ["semantic-compact-v1"],
           richPlacements: true,

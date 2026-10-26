@@ -1,3 +1,4 @@
+import { TERMINAL_SURFACE_CAPABILITY_VERSION } from "@tmux-ide/contracts";
 import { mountAutomationRoutes } from "./automation.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
 import { streamBoundedLogs } from "./log-stream.ts";
@@ -197,6 +198,9 @@ export interface CreateAppOptions {
   /** Catalog + startup-barrier facts for the startup readiness ladder. */
   startupReadinessAttachmentBackend?: StartupReadinessAttachmentAuthority | null;
   paneStreamIssueBackend?: PaneStreamIssueBackend | null;
+  /** Current authenticated provider availability, never inferred from platform or PID. */
+  nativeSurfaceProviderAvailable?: () => boolean;
+  nativeSurfaceProviderSupported?: () => boolean;
   applicationShellInventoryBackend?: {
     discoverApplicationShellSession(
       requestedSessionName: string,
@@ -657,6 +661,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         status: "ok" as const,
         daemon: daemonInstanceIdentity,
         capabilities: {
+          ...(c.req.query("nativeSurfaces") === "1"
+            ? {
+                nativeSurfaces: {
+                  supported:
+                    !!options.paneStreamIssueBackend &&
+                    options.nativeSurfaceProviderSupported?.() === true,
+                  available:
+                    options.paneStreamIssueBackend !== undefined &&
+                    options.paneStreamIssueBackend !== null &&
+                    options.nativeSurfaceProviderAvailable?.() === true,
+                  protocolVersion: TERMINAL_SURFACE_CAPABILITY_VERSION,
+                },
+              }
+            : {}),
           // Opt-in keeps the response compatible with older strict host schemas.
           ...(c.req.query("windowViewport") === "1"
             ? {

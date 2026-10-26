@@ -35,13 +35,14 @@ impl std::fmt::Debug for IssuedDescriptor {
 }
 
 pub struct ConnectOptions {
+    pub remote_peer: Option<crate::tmux_ssh::PeerIdentity>,
     pub descriptor: IssuedDescriptor,
     pub origin: String,
     pub host_client_id: String,
 }
 
 impl IssuedDescriptor {
-    pub(super) fn validate(&self) -> Result<Url, Error> {
+    pub(crate) fn validate(&self) -> Result<Url, Error> {
         let url = Url::parse(&self.web_socket_url).map_err(|_| Error::Descriptor)?;
         let ticket = self
             .redemption_ticket
@@ -108,7 +109,10 @@ fn valid_path(path: &str) -> bool {
     }) && uuid::Uuid::parse_str(parts[4]).is_ok()
 }
 
-fn valid_pane(pane: &str) -> bool {
+pub(crate) fn valid_pane(pane: &str) -> bool {
+    valid_identity(pane) && !pane.starts_with("terminal.discovered.")
+}
+pub(crate) fn valid_identity(pane: &str) -> bool {
     !pane.is_empty()
         && pane.len() <= 128
         && pane.as_bytes()[0].is_ascii_alphanumeric()
@@ -116,7 +120,6 @@ fn valid_pane(pane: &str) -> bool {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
         && !matches!(pane, "__proto__" | "prototype" | "constructor")
-        && !pane.starts_with("terminal.discovered.")
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,12 +286,26 @@ pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Res
         }
         return Ok(delivery);
     }
+    if matches!(
+        kind.kind,
+        "terminal-surface-available"
+            | "terminal-surface-peer"
+            | "terminal-surface-offer"
+            | "terminal-surface-fallback"
+    ) && text.len() > crate::tmux_graphics::surface_control::MAX_CONTROL_BYTES
+    {
+        return Err(Error::FrameBound);
+    }
     if !matches!(
         kind.kind,
         "terminal-delivery-fault"
             | "terminal-graphics"
             | "terminal-graphics-blob"
             | "terminal-graphics-local"
+            | "terminal-surface-available"
+            | "terminal-surface-peer"
+            | "terminal-surface-offer"
+            | "terminal-surface-fallback"
             | "layout"
             | "layout-snapshot"
             | "authority-snapshot"
@@ -316,7 +333,7 @@ pub(super) fn redeem(options: &ConnectOptions) -> Result<String, Error> {
 }
 
 pub(super) fn parse_binary(bytes: &[u8], options: &ConnectOptions) -> Result<Event, Error> {
-    if bytes.starts_with(b"TGB1") {
+    if bytes.starts_with(b"TGB1") || bytes.starts_with(b"TGB2") {
         if bytes.len() > 8 + 4096 + 512 * 1024 {
             return Err(Error::FrameBound);
         }

@@ -50,6 +50,10 @@ impl Command {
                 | "terminal-cell-pixels"
                 | "terminal-graphics-request"
                 | "terminal-graphics-local-release"
+                | "terminal-surface-watch"
+                | "terminal-surface-receiver"
+                | "terminal-surface-retired"
+                | "terminal-surface-fallback"
         ) {
             return Err(Error::Frame);
         }
@@ -92,7 +96,23 @@ pub struct PaneStream {
 
 impl PaneStream {
     /// Validates locally, then performs all connection and wire work off the caller thread.
-    pub fn spawn(options: ConnectOptions) -> Result<Self, Error> {
+    pub fn spawn(mut options: ConnectOptions) -> Result<Self, Error> {
+        let peer = options.remote_peer.take();
+        Self::spawn_inner(options, peer)
+    }
+    /// Prove the SSH-discovered peer on the physical socket before upgrading or
+    /// redeeming. The expected identity contains no reusable daemon credential.
+    pub fn spawn_remote(
+        mut options: ConnectOptions,
+        peer: crate::tmux_ssh::PeerIdentity,
+    ) -> Result<Self, Error> {
+        options.remote_peer = Some(peer);
+        Self::spawn(options)
+    }
+    fn spawn_inner(
+        options: ConnectOptions,
+        peer: Option<crate::tmux_ssh::PeerIdentity>,
+    ) -> Result<Self, Error> {
         options.descriptor.validate()?;
         validate_headers(&options)?;
         let (commands_tx, commands) = bounded(32);
@@ -109,7 +129,7 @@ impl PaneStream {
                 // Keep events connected until the terminal result is published. Otherwise
                 // a consumer can observe EOF first and lose the actual failure reason.
                 let completion_guard = events_tx.clone();
-                let result = run(options, commands, events_tx, &worker_cancellation);
+                let result = run(options, peer, commands, events_tx, &worker_cancellation);
                 let error = if worker_cancellation.check().is_err() {
                     Error::Cancelled
                 } else {
@@ -206,6 +226,7 @@ impl Write for Stream {
 
 fn run(
     options: ConnectOptions,
+    peer: Option<crate::tmux_ssh::PeerIdentity>,
     commands: Receiver<Command>,
     events: Sender<Event>,
     cancel: &Cancellation,
@@ -226,6 +247,11 @@ fn run(
         let mut owned = cancel.socket.lock().map_err(|_| Error::Cancelled)?;
         cancel.check()?;
         *owned = Some(socket.try_clone()?);
+    }
+    if let Some(peer) = peer {
+        crate::tmux_ssh::verify_socket_identity(&socket, &peer, CONNECT_TIMEOUT)
+            .map_err(Error::RemoteIdentity)?;
+        cancel.check()?;
     }
     let mut request = options
         .descriptor

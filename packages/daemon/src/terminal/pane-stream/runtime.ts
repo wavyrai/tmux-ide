@@ -1,4 +1,5 @@
 import type { LocalImageOwner } from "../graphics/local-image-owner.ts";
+import { NativeSurfaceProviderRegistry } from "../graphics/native-surface-provider.ts";
 import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
@@ -10,6 +11,7 @@ import {
 } from "./pane-stream-websocket.ts";
 
 export interface PaneStreamRuntimeOptions {
+  readonly nativeSurfaces?: NativeSurfaceProviderRegistry;
   readonly localImages?: LocalImageOwner;
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
@@ -20,7 +22,7 @@ export interface PaneStreamRuntimeOptions {
   readonly observability?: SessionRuntimeObservability;
   readonly admission?: Omit<
     PaneStreamAdmissionCoordinatorOptions,
-    "daemonInstanceId" | "webSocketUrl" | "leaseManager" | "mirror"
+    "daemonInstanceId" | "webSocketUrl" | "leaseManager" | "mirror" | "nativeSurfaces"
   >;
 }
 
@@ -31,9 +33,15 @@ export interface PaneStreamRuntimeOptions {
  */
 export class PaneStreamRuntime {
   readonly coordinator: PaneStreamAdmissionCoordinator;
+  readonly nativeSurfaces: NativeSurfaceProviderRegistry | undefined;
   #disposePromise: Promise<void> | null = null;
 
   constructor(options: PaneStreamRuntimeOptions) {
+    this.nativeSurfaces =
+      options.nativeSurfaces ??
+      (process.platform === "darwin"
+        ? new NativeSurfaceProviderRegistry(options.daemonInstanceId)
+        : undefined);
     const leaseManager = new PaneStreamLeaseManager({
       daemonInstanceId: options.daemonInstanceId,
     });
@@ -41,6 +49,7 @@ export class PaneStreamRuntime {
     this.coordinator = new PaneStreamAdmissionCoordinator({
       ...options.admission,
       localImages: options.localImages,
+      nativeSurfaces: this.nativeSurfaces,
       daemonInstanceId: options.daemonInstanceId,
       webSocketUrl: options.webSocketUrl,
       leaseManager,
@@ -69,6 +78,7 @@ export class PaneStreamRuntime {
   dispose(): Promise<void> {
     if (!this.#disposePromise) {
       this.#disposePromise = (async () => {
+        this.nativeSurfaces?.close();
         await this.coordinator.shutdown();
       })();
     }

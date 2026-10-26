@@ -1,3 +1,4 @@
+import { NativeSurfaceLocationSchema } from "../lib/native-surface-context.ts";
 import { mountTmuxServerHistoryAnchorRoute } from "./tmux-server-history-anchor.ts";
 import { mountTmuxServerDiagnosticsRoute } from "./tmux-server-diagnostics.ts";
 import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
@@ -275,6 +276,19 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           }),
         }),
       );
+    }),
+  );
+  app.post(
+    `${scoped}/native-surface-context`,
+    route(async (c) => {
+      const server = scope(c);
+      const target = NativeSurfaceLocationSchema.parse(await boundedJson(c.req.raw, 8192));
+      c.req.raw.signal.throwIfAborted();
+      const context = await options.owners.withOwner(server, (owner) =>
+        owner.resolveNativeSurfaceContext(target, c.req.raw.signal),
+      );
+      c.req.raw.signal.throwIfAborted();
+      return c.json({ version: 1, server, context });
     }),
   );
   app.get(

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.13
+
+- Move native GUI discovery, session catalogs, agent operations and SSH connections into Rust. The normal native path no longer starts the Node metadata helper.
+- Update terminal state hashes incrementally when rows change, and negotiate bounded lossless image compression for compatible remote clients.
+- Keep image delivery responsive when the native window is backgrounded and restored, without disconnecting on a full image queue.
+- Add authenticated local macOS pixel surfaces with bounded frame retention, GPU retirement and Kitty fallback. A separate development patch integrates terminal-browser; the external browser is not bundled or automatically updated.
+
+The native GUI changes require the separately distributed native alpha `0.1.8`, build `2026102601`, and the matching updated daemon. Updating npm alone does not update the GUI. Existing tmux sessions are preserved. No physical typing-latency or GUI/TUI performance-parity claim is made.
+
 ## 2.9.12
 
 - Add opt-in binary terminal and image delivery, byte input, and alternate-screen projections for clients that negotiate those capabilities. Existing clients retain their current delivery path.

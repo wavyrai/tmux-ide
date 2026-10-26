@@ -18,6 +18,10 @@ import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts"
 export const TERMINAL_GRAPHICS_CAPABILITY_VERSION = 101;
 /** Raw binary blob frames; requires the graphics side channel (101). */
 export const TERMINAL_GRAPHICS_BINARY_CAPABILITY_VERSION = 107;
+/** Bundles 113/114 include projection 111/112 and bounded lossless raw-pixel chunks.
+ * Older daemons ignore these and retain the offered compact/text and JSON graphics fallback. */
+export const TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION = 113;
+export const TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION = 114;
 /** Verified same-host file leases, including binary-blob fallback (107).
  * Offer 108 instead of 107 to retain the existing eight-capability bound.
  * Never infer locality from a loopback URL. */
@@ -100,6 +104,7 @@ export const TerminalGraphicsStateSchemaZ = z
     cellPixels: z.literal(true).optional(),
     preciseCellPixels: z.literal(true).optional(),
     binaryBlobs: z.literal(true).optional(),
+    compressedBlobs: z.literal(true).optional(),
     localFiles: z.literal(true).optional(),
   })
   .strict();

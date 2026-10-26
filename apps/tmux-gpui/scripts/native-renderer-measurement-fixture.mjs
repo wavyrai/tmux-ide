@@ -25,6 +25,7 @@ for (let i = 0; i < args.length; i += 2) {
       "--seconds",
       "--route",
       "--smoke",
+      "--transport",
     ].includes(args[i]) ||
     !args[i + 1] ||
     options[args[i]]
@@ -46,6 +47,8 @@ if (options["--smoke"] !== undefined && options["--smoke"] !== "1")
   throw Error("--smoke requires 1");
 const seconds = Number(options["--seconds"] ?? 1200),
   route = options["--route"] ?? "local";
+const transport = options["--transport"] ?? "native";
+if (!["native", "legacy"].includes(transport)) throw Error("--transport requires native|legacy");
 if (
   !Number.isInteger(seconds) ||
   seconds < 60 ||
@@ -105,6 +108,7 @@ try {
     throw Error("Explicit bundled tmux mismatch");
   const env = { ...process.env, ...fleet.environment };
   daemon = await startDaemon(fleet, { cliPath: options["--cli"] });
+  for (const name of fleet.sessionNames) await daemon.promote(name);
   const { servers } = await listTmuxServers({
     baseUrl: daemon.baseUrl + "/",
     ownerToken: daemon.record.authToken,
@@ -128,7 +132,7 @@ try {
     fixture,
     outputWorkload: join(repo, "apps/tmux-gpui/bridge/performance/renderer-output.mjs"),
     tuiProbe: join(repo, "packages/daemon/src/tui/mirror/runtime/renderer-probe.ts"),
-    broker: join(repo, "apps/tmux-gpui/bridge/browser.ts"),
+    ...(transport === "legacy" ? { broker: join(repo, "apps/tmux-gpui/bridge/browser.ts") } : {}),
   }))
     hashes[name] = { path, sha256: await hash(path) };
   const git = async (...argv) =>
@@ -152,6 +156,7 @@ try {
   const grid = fleet.windowGrid(fleet.sessionNames[0]);
   manifest = trialManifest({
     build: {
+      transport,
       profile: options["--profile"],
       profileVerified: false,
       nodeVersion: process.version,
@@ -239,26 +244,47 @@ await tracker.capture().catch(close);
   const config = join(fleet.root, "host.json");
   await writeFile(config, JSON.stringify(ssh?.host ?? {}), { mode: 0o600 });
   if (!options["--smoke"]) {
-    native = spawn(options["--binary"], ["--tmux-browser-stdio"], {
+    const nativeArgs =
+      transport === "legacy"
+        ? ["--tmux-browser-stdio"]
+        : ssh
+          ? [
+              "--tmux-native-ssh",
+              ssh.host.sshTarget,
+              "--local-daemon",
+              join(fleet.daemonInfoDir, "daemon.json"),
+            ]
+          : ["--tmux-native-local"];
+    native = spawn(options["--binary"], nativeArgs, {
       env: { ...clientEnv, ...probeEnv("gui") },
       cwd: repo,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: [transport === "native" ? "ignore" : "pipe", "pipe", "pipe"],
     });
-    browser = spawn(
-      process.execPath,
-      ["--import", "tsx", join(repo, "apps/tmux-gpui/bridge/browser.ts"), ssh ? config : "--local"],
-      { env: clientEnv, cwd: repo, stdio: ["pipe", "pipe", "pipe"] },
-    );
-    native.stdout.pipe(browser.stdin);
-    browser.stdout.pipe(native.stdin);
+    if (transport === "legacy") {
+      browser = spawn(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          join(repo, "apps/tmux-gpui/bridge/browser.ts"),
+          ssh ? config : "--local",
+        ],
+        { env: clientEnv, cwd: repo, stdio: ["pipe", "pipe", "pipe"] },
+      );
+      native.stdout.pipe(browser.stdin);
+      browser.stdout.pipe(native.stdin);
+    } else {
+      native.stdout.pipe(createWriteStream(join(output, "native-stdout.log"), { mode: 0o600 }));
+    }
     for (const [name, child] of [
       ["native", native],
       ["browser", browser],
     ]) {
+      if (!child) continue;
       child.stderr.pipe(createWriteStream(join(output, `${name}.log`), { mode: 0o600 }));
       child.once("error", stop);
       child.once("exit", stop);
-      child.stdin.on("error", () => {});
+      child.stdin?.on("error", () => {});
     }
   }
   const sample = async () => {
@@ -304,7 +330,7 @@ await tracker.capture().catch(close);
   await writeFile(
     join(output, "instructions.txt"),
     [
-      `Manual launch: ${[process.execPath, "--import", import.meta.resolve("tsx"), join(output, "launch-tui.mjs")].map((v) => "\'" + v.replaceAll("\'", "\'\\\'\'") + "\'").join(" ")}`,
+      `Manual launch: ${[process.execPath, "--import", import.meta.resolve("tsx"), join(output, "launch-tui.mjs")].map((v) => "'" + v.replaceAll("'", "'\\''") + "'").join(" ")}`,
       `Select GUI session ${fleet.sessionNames[0]} and its only pane. Keep both clients alive.`,
       "Before any trial, match actual pane columns/rows in BOTH receipts and geometry.jsonl. Initial manifest geometry is setup only, not qualification.",
       "Do not benchmark during builds. Record terminal version/font/window size, display settings, load and user-visible response observations separately.",
@@ -347,7 +373,9 @@ await tracker.capture().catch(close);
   try {
     await access(join(output, "tui-started.json"));
     tuiStarted = true;
-  } catch {}
+  } catch {
+    // A manual TUI may never have been launched.
+  }
   let tuiStopped = !tuiStarted;
   for (let i = 0; tuiStarted && !tuiStopped && i < 100; i++) {
     try {
@@ -372,7 +400,6 @@ await tracker.capture().catch(close);
       cleanup.push({ name, ok: false });
     }
   }
-  await json("cleanup.json", { time: Date.now(), cleanup });
   if (manifest) {
     const receipts = [];
     for (const side of ["gui", "tui"]) {
@@ -384,10 +411,15 @@ await tracker.capture().catch(close);
             .map(JSON.parse),
         );
       } catch (e) {
-        if (e.code !== "ENOENT") throw e;
+        if (e.code !== "ENOENT") {
+          cleanup.push({ name: `${side}-receipts`, ok: false });
+          receipts.length = 0;
+          break;
+        }
       }
     }
     await json("summary.json", analyzeTrials(manifest, receipts));
   }
+  await json("cleanup.json", { time: Date.now(), cleanup });
   if (cleanup.some((c) => !c.ok)) process.exitCode = 1;
 }

@@ -1,4 +1,6 @@
 import {
+  TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
 } from "@tmux-ide/contracts";
@@ -88,7 +90,9 @@ export function negotiateTerminalDelivery(
         v === TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION ||
         v === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
         v === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
-        v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+        v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION ||
+        v === TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION ||
+        v === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
     ) && offer.encodings.includes("semantic-compact-v1");
   const encoding = binary
     ? ("semantic-binary-v1" as const)
@@ -112,7 +116,9 @@ export function negotiateTerminalDelivery(
       offer.protocolVersions.some(
         (v) =>
           v === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
-          v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+          v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION ||
+          v === TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION ||
+          v === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
       )
         ? { alternateScreenProjection: "deferred-history-v1" as const }
         : {}),

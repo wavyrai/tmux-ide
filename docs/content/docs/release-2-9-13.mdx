@@ -1,0 +1,37 @@
+---
+title: tmux-ide 2.9.13
+metaTitle: "What's new in 2.9.13"
+description: "Direct Rust GUI ownership, incremental terminal hashing and bounded native image delivery."
+---
+
+`2.9.13` accompanies native macOS alpha `0.1.8`, build `2026102601`.
+The CLI/daemon and native app are separate installations; update both to use the
+complete change.
+
+## Direct native ownership
+
+The native GUI now handles discovery, catalogs, agent operations and SSH
+connections in Rust. Its normal startup path no longer starts the Node metadata
+helper. Terminal cells and input already use the direct Rust connection.
+
+The daemon updates cached terminal hashes from changed rows and negotiates
+bounded lossless graphics compression with compatible clients. Older clients
+retain their supported delivery path.
+
+## Images and browser integration
+
+Image delivery handles a backgrounded native window without disconnecting when
+its image queue fills. Local macOS applications can publish authenticated native
+pixel surfaces, with bounded storage, GPU retirement and Kitty fallback.
+
+The repository includes a development integration patch for the external
+terminal-browser project. It supports full browser chrome, automatic local
+discovery and recovery after browser replacement. The browser is not bundled or
+automatically updated by tmux-ide. This path copies pixels into IOSurface; it does
+not provide zero-copy Chromium texture sharing or a new remote video transport.
+
+## Updating
+
+Update the CLI/daemon and the [native macOS app](/docs/native-alpha). Existing
+tmux sessions remain intact. The automated and live GUI checks establish
+correctness and recovery, not physical typing latency or GUI/TUI performance parity.

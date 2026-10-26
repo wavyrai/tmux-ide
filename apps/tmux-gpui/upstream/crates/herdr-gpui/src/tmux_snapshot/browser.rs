@@ -17,7 +17,7 @@ use std::{
     sync::{Arc, Mutex, mpsc},
 };
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(super) struct Choice {
     pub pane_count: Option<u64>,
@@ -134,6 +134,9 @@ pub(super) struct State {
     pub frame: Option<DisplayFrame>,
     /// Kitty graphics placements in frame cells.
     pub graphics: Vec<super::kitty_graphics::Placement>,
+    /// Prepared only by native transport; pipe publications cannot supply storage.
+    #[cfg(target_os = "macos")]
+    pub native_surfaces: Option<(DisplayFrame, Vec<crate::tmux_native_surface::Paint>)>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -524,6 +527,8 @@ impl Reader {
             status: p.status,
             frame: None,
             graphics: p.graphics,
+            #[cfg(target_os = "macos")]
+            native_surfaces: None,
         })
     }
 }
@@ -555,6 +560,10 @@ fn rejection_reason(error: &Error) -> &'static str {
         Error::TooLarge => "snapshot exceeds size limit",
         Error::Io(_) => "snapshot read failed",
         Error::Arguments => "invalid snapshot arguments",
+        Error::NativeCatalog(_) => "native catalog worker failed",
+        Error::NativeOwner(_) => "native SSH owner shutdown failed",
+        #[cfg(unix)]
+        Error::NativeFleet(_) => "native fleet ownership failed",
     }
 }
 
@@ -562,6 +571,7 @@ fn rejection_reason(error: &Error) -> &'static str {
 mod native_transport;
 #[path = "browser_transport.rs"]
 mod transport;
+pub(super) use native_transport::{NativeOwner, start_io, start_local};
 pub(super) use transport::start;
 
 #[cfg(test)]
@@ -678,10 +688,13 @@ pub(super) fn start_journey(
     input: impl Read + Send + 'static,
     output: impl Write + Send + 'static,
 ) -> Bridge {
-    native_transport::start_io(
+    start_io(
         Default::default(),
         || BufReader::new(input),
         || output,
         false,
     )
 }
+
+#[cfg(unix)]
+pub(super) use native_transport::start_remote;

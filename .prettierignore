@@ -25,6 +25,7 @@ native/macos/notifier/AppIcon.icon/icon.json
 
 # Preserve the pinned third-party source baseline; Rust uses its own formatter.
 apps/tmux-gpui/upstream/
+apps/tmux-gpui/vendor/bezel-gpui-apple/
 
 # Qualification evidence preserves exact artifact/source bytes; receipts and
 # README files record SHA-256 hashes of the retained scripts.

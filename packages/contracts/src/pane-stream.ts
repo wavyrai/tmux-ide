@@ -1,4 +1,13 @@
 import {
+  TerminalSurfaceWatchSchemaZ,
+  TerminalSurfaceReceiverSchemaZ,
+  TerminalSurfaceAvailableSchemaZ,
+  TerminalSurfacePeerSchemaZ,
+  TerminalSurfaceOfferSchemaZ,
+  TerminalSurfaceRetiredSchemaZ,
+  TerminalSurfaceFallbackSchemaZ,
+} from "./terminal-surfaces.ts";
+import {
   TerminalProjectionEnvelopeSchemaZ,
   TerminalProjectionReceiptSchemaZ,
   TerminalProjectionMaterializeSchemaZ,
@@ -436,6 +445,10 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamTerminalGraphicsRequestFrameSchemaZ,
   PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ,
   PaneStreamTerminalCellPixelsFrameSchemaZ,
+  TerminalSurfaceWatchSchemaZ,
+  TerminalSurfaceReceiverSchemaZ,
+  TerminalSurfaceRetiredSchemaZ,
+  TerminalSurfaceFallbackSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -855,6 +868,10 @@ export const PaneStreamErrorFrameSchemaZ = z
   .strict();
 
 export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
+  TerminalSurfaceAvailableSchemaZ,
+  TerminalSurfacePeerSchemaZ,
+  TerminalSurfaceOfferSchemaZ,
+  TerminalSurfaceFallbackSchemaZ,
   PaneStreamReadyFrameSchemaZ,
   PaneStreamSeedBatchFrameSchemaZ,
   PaneStreamOutputFrameSchemaZ,

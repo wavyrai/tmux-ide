@@ -4,6 +4,7 @@ mod wire;
 mod worker;
 
 pub use wire::{ConnectOptions, Event, IssuedDescriptor, Ready, ViewerMode};
+pub(crate) use wire::{valid_identity, valid_pane};
 pub use worker::{Command, PaneStream};
 
 pub const SUBPROTOCOL: &str = "tmux-ide-pane-stream.v2";
@@ -12,6 +13,8 @@ pub const MAX_SERVER_BYTES: usize = 1024 * 1024;
 
 #[derive(thiserror::Error)]
 pub enum Error {
+    #[error("remote pane-stream identity verification failed")]
+    RemoteIdentity(#[source] crate::tmux_ssh::IdentityError),
     #[error("invalid pane-stream descriptor")]
     Descriptor,
     #[error("invalid pane-stream connection headers")]

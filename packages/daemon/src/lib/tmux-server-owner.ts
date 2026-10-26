@@ -1,3 +1,4 @@
+import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
 import type { LocalImageOwner } from "../terminal/graphics/local-image-owner.ts";
 import { shellEscape } from "./shell.ts";
 import {
@@ -609,6 +610,14 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     },
     serverId: options.serverId,
     generation,
+    resolveNativeSurfaceContext: createNativeSurfaceContextResolver({
+      generation,
+      assertOpen,
+      registry: workspaceRegistry,
+      catalog,
+      inventory: terminalInventoryRuntime,
+      run: (args, signal) => generationRunAsync(args, signal),
+    }),
     resolvePaneEditorContext,
     catalog,
     readWindowSplitLayout: async (workspaceName: string, input: WindowLinkTarget) => {

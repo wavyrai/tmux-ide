@@ -27,10 +27,12 @@ mod ssh;
 mod surface_images;
 pub mod tmux_control;
 pub mod tmux_controller;
+pub mod tmux_daemon;
 pub mod tmux_delivery;
 pub mod tmux_handoff;
 pub mod tmux_native_session;
 pub mod tmux_receiver;
+pub mod tmux_ssh;
 pub mod tmux_stream;
 pub mod tmux_terminal;
 pub mod tmux_topology;
@@ -97,3 +99,5 @@ pub mod tmux_input;
 pub mod tmux_graphics;
 
 pub mod tmux_pointer;
+
+pub mod tmux_broker_process;

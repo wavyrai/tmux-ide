@@ -1,0 +1,43 @@
+{
+  "package": "bezel-gpui-apple",
+  "version": "0.3.19+zed.f16f96",
+  "source": "crates.io registry package pinned in upstream/Cargo.lock",
+  "originalFilesSha256": {
+    ".cargo_vcs_info.json": "ea43db507c28b6588983a65c38014ec60fcfba41de1b842dccf0d65c0ea100ec",
+    "Cargo.toml": "58f28218f638757eee28789b71ec42403571cec1308dd49bc5cec47157ea44c9",
+    "Cargo.toml.orig": "557333498973a4b2435090a7ea6678c9f759248dbf996a9d9d835fd23f1a08c7",
+    "LICENSE-APACHE": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a",
+    "README.md": "ef0a96b38cdfb6222a1e00491207b8445a908e93b4caaa1e430f76a56427da7a",
+    "build.rs": "1ca0bfa13a6e98631881cc05d26aece1ca849f07ea8dfbdb46541d4a2ec11c61",
+    "gpui/src/color.rs": "4292aa1a2bbc56b653aaef0702726325f8efb93f16226320519e257c3ba8a839",
+    "gpui/src/geometry.rs": "900fc506a964cda44ed0cf1f97c01ff28d7268c87c9eeadbf7a4f1bb50e33edd",
+    "gpui/src/platform.rs": "da385f5f99b1c94e7a3039a95b150ae63ba2c4805f536b69d1632c21e961db5f",
+    "gpui/src/scene.rs": "257c334f4b763ccc7ab89edc915c7452b42f3853c5ca8c143ba2b854f8147002",
+    "gpui/src/window.rs": "b62da21270197604b4f565f6016b3c76658741824758d9653360101a17fc2abf",
+    "src/dispatcher.rs": "21ec54613d48cd3c419f2f694f75460d1019491c2406a7ed4dfa3374c84824cf",
+    "src/gpui_apple.rs": "96ef426df5a543c0d090d69596efce126ea97618e4c58e243b035befac957bc2",
+    "src/keychain.rs": "c7067d3cc5961690f7f398750fa443e9349a8234f2ef5f630fa5e2223ee1dadd",
+    "src/metal_atlas.rs": "c414bf9caf88413b04fb6a3214c4f070686b454c82c28fa471af9d1bcc91ddba",
+    "src/metal_renderer.rs": "59d1da3486c905df9e50797c256834a1da8b27f717d6d61bb29333f0043935b8",
+    "src/open_type.rs": "bc827c157fdce50125b158adb595b665d82f38b62fc6b3a9693c65abae640453",
+    "src/shaders.metal": "e89a25070317ff1062fc5733913c9e92d3439aec941d124bac0a38c316a0a844",
+    "src/text_system.rs": "932774c521b1bfd99a2552572cf09769e0dd39b2b2e306a3f6df80f57522b375",
+    "src/thermal.rs": "a894594d2676d81968554171738ed6c42f0d0d859201f5658ab138f222e08395"
+  },
+  "originalCrateSha256": "669b9027804920bf1193a1c77e78ce47fedfba5c1c900fa1ae3ef6a8f71a20d8",
+  "patchPurpose": "Straight-alpha BGRA CoreVideo surfaces alongside NV12, and retain submitted surface buffers until GPU completion.",
+  "modifiedFiles": [
+    "Cargo.toml",
+    "src/gpui_apple.rs",
+    "src/metal_renderer.rs",
+    "src/shaders.metal"
+  ],
+  "addedSourceFiles": [
+    "src/packed_surfaces.rs",
+    "src/packed_surface_tests.rs",
+    "src/surface_owner.rs",
+    "src/surface_port.rs",
+    "src/surface_inbox.rs"
+  ],
+  "testLockfile": "bezel-gpui-apple/Cargo.lock pins standalone renderer tests only; the application uses upstream/Cargo.lock."
+}

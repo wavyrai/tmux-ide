@@ -75,7 +75,7 @@ test("direct broker issues one scoped binary-opt-in capability with a compact-co
         panes: config.visiblePaneIds,
         viewerMode: "interactive",
         terminalDelivery: {
-          protocolVersions: [1, 101, 111, 102, 103, 104, 105, 106],
+          protocolVersions: [1, 101, 113, 102, 103, 104, 105, 106],
           encodings: ["semantic-compact-v1"],
           richPlacements: true,
         },
@@ -116,7 +116,7 @@ test("read-only capability does not advertise input lifetime and defaults to the
     fetcher(async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.stream.panes, [config.semanticPaneId]);
-      assert.deepEqual(body.stream.terminalDelivery.protocolVersions, [1, 101, 111, 102, 103, 104]);
+      assert.deepEqual(body.stream.terminalDelivery.protocolVersions, [1, 101, 113, 102, 103, 104]);
       assert.equal(body.stream.viewerMode, "read-only");
       return Response.json(issued(init));
     }),
@@ -314,7 +314,7 @@ test("local images require live canonical provenance and never infer locality fr
     const issue = fetcher(async (_url, init) => {
       calls++;
       const offered = JSON.parse(String(init?.body)).stream.terminalDelivery.protocolVersions;
-      assert.equal(offered.includes(112), process.platform !== "win32");
+      assert.equal(offered.includes(114), process.platform !== "win32");
       assert.equal(offered.includes(111), process.platform === "win32");
       assert.equal(offered.length, 8);
       return Response.json(issued(init));
@@ -342,7 +342,7 @@ test("local images require live canonical provenance and never infer locality fr
       new AbortController().signal,
       fetcher(async (_url, init) => {
         assert.equal(
-          JSON.parse(String(init?.body)).stream.terminalDelivery.protocolVersions.includes(112),
+          JSON.parse(String(init?.body)).stream.terminalDelivery.protocolVersions.includes(114),
           false,
         );
         return Response.json(issued(init));

@@ -32,6 +32,8 @@ impl SnapshotView {
     pub(super) fn discard_composition(&mut self, cx: &mut Context<Self>) {
         self.marked.clear();
         self.marked_selection = None;
+        #[cfg(not(target_os = "macos"))]
+        let _ = cx;
         #[cfg(target_os = "macos")]
         cx.spawn(async move |entity, cx| {
             let terminal_owns_input = entity

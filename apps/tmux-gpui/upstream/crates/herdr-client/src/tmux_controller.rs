@@ -77,6 +77,20 @@ pub struct Controller {
 }
 impl Controller {
     pub fn spawn(handoff: Handoff) -> Result<Self, Error> {
+        Self::spawn_configured(handoff, None)
+    }
+    /// The broker must have negotiated a native provider on this same-host
+    /// handoff. Preserve its other offered encodings and fallback transports.
+    pub fn spawn_with_surfaces(
+        handoff: Handoff,
+        driver: Box<dyn tmux_native_session::surfaces::Driver>,
+    ) -> Result<Self, Error> {
+        Self::spawn_configured(handoff, Some(driver))
+    }
+    fn spawn_configured(
+        handoff: Handoff,
+        driver: Option<Box<dyn tmux_native_session::surfaces::Driver>>,
+    ) -> Result<Self, Error> {
         let graphics = handoff.graphics;
         let binary_cells = handoff.binary_cells;
         let alternate_screen_projection = handoff.alternate_screen_projection;
@@ -95,13 +109,14 @@ impl Controller {
         )?;
         let presentation = Presentation::new(selected.clone())?;
         Ok(Self {
-            session: NativeSession::spawn_offered(
+            session: NativeSession::spawn_configured(
                 options,
                 workspace,
                 graphics,
                 local_images,
                 binary_cells,
                 alternate_screen_projection,
+                driver,
             )?,
             policy,
             topology,

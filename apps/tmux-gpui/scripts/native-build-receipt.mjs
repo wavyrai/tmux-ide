@@ -71,6 +71,25 @@ export async function snapshotNativeSources(workspace) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+  // Fixed sibling dependency only; never walk arbitrary parent/vendor contents.
+  const vendor = "../vendor",
+    apple = `${vendor}/bezel-gpui-apple`;
+  let hasVendor = false;
+  try {
+    const parent = await lstat(join(root, vendor));
+    if (parent.isSymbolicLink() || !parent.isDirectory()) throw new Error("Invalid vendor root");
+    hasVendor = true;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (hasVendor) {
+    const packageRoot = await lstat(join(root, apple));
+    if (packageRoot.isSymbolicLink() || !packageRoot.isDirectory())
+      throw new Error("Invalid Apple vendor root");
+    for (const path of ["Cargo.toml", "build.rs", "LICENSE-APACHE", "src", "gpui"])
+      await walk(`${apple}/${path}`);
+    await walk(`${vendor}/bezel-gpui-apple-provenance.json`);
+  }
   files.sort((a, b) => a.path.localeCompare(b.path, "en"));
   return { version: 1, files, sha256: digest(JSON.stringify(files)) };
 }

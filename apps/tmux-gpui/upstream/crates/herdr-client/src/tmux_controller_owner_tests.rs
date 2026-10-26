@@ -87,3 +87,29 @@ fn uncertain_http_timeout_is_bounded_and_not_replayed() {
     assert!(state.transition(12101, true, true, true).is_none());
     assert!(state.complete("operation", true).is_none());
 }
+
+#[test]
+fn interrupted_stream_keeps_only_submitted_receipt_correlation() {
+    let mut unsent = waiting();
+    assert!(
+        unsent
+            .poll_interrupted(1)
+            .is_some_and(|c| c.outcome == OwnerOutcome::Stale && !c.submitted)
+    );
+    let mut submitted = waiting();
+    submitted.transition(1, true, true, true);
+    assert!(submitted.poll_interrupted(2).is_none());
+    assert!(
+        submitted
+            .complete("operation", true)
+            .is_some_and(|c| c.outcome == OwnerOutcome::Applied && c.submitted)
+    );
+    let mut expired = waiting();
+    expired.transition(1, true, true, true);
+    assert!(
+        expired
+            .poll_interrupted(12001)
+            .is_some_and(|c| c.outcome == OwnerOutcome::TimedOut && c.submitted)
+    );
+    assert!(!expired.busy());
+}

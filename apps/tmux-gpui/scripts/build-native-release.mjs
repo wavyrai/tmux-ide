@@ -6,8 +6,8 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 if (process.platform !== "darwin")
   throw new Error("Native release wrapper currently supports macOS only");
-import { realpath, lstat, open, unlink } from "node:fs/promises";
-import { join, resolve, relative, sep, isAbsolute, dirname } from "node:path";
+import { realpath, lstat, open, unlink, readFile } from "node:fs/promises";
+import { join, resolve, isAbsolute, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   snapshotNativeSources,
@@ -16,6 +16,7 @@ import {
   hashNativeFile,
   writeNativeBuildReceipt,
 } from "./native-build-receipt.mjs";
+import { pinnedToolchainPaths, localManifestAllowed } from "./native-build-inputs.mjs";
 const workspace = await realpath(fileURLToPath(new URL("../upstream", import.meta.url)));
 if (process.argv.length !== 3)
   throw new Error("Usage: node build-native-release.mjs NEW_RECEIPT.json");
@@ -108,15 +109,21 @@ async function run(command, args, timeout = 20000, maxBytes = 4 * 1024 * 1024) {
     });
   });
 }
-const inside = (path) => {
-  const rel = relative(workspace, path);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-};
 try {
+  await run(process.execPath, [
+    "--import",
+    "tsx",
+    resolve(workspace, "../scripts/generate-native-appearance.ts"),
+    "--check",
+  ]);
   const before = await snapshotNativeSources(workspace);
-  const rustup = join(cargoHome, "bin/rustup");
-  const cargo = await realpath(await run(rustup, ["which", "cargo"]));
-  const rustc = await realpath(await run(rustup, ["which", "rustc"]));
+  const pinned = pinnedToolchainPaths(
+    rustupHome,
+    await readFile(join(workspace, "rust-toolchain.toml"), "utf8"),
+    process.arch,
+  );
+  const cargo = await realpath(pinned.cargo);
+  const rustc = await realpath(pinned.rustc);
   // Cargo invoked directly does not establish rustup's toolchain environment.
   // Bind its compiler explicitly and prefer the resolved toolchain for rustdoc.
   env.RUSTC = rustc;
@@ -128,6 +135,8 @@ try {
   });
   const cargoIdentity = await tool(cargo, ["--version"]),
     rustcIdentity = await tool(rustc, ["-vV"]);
+  if (!rustcIdentity.version.includes(`release: ${pinned.channel}\n`))
+    throw new Error("Pinned Rust compiler version mismatch");
   const target = /^host: (\S+)$/m.exec(rustcIdentity.version)?.[1];
   if (!target) throw new Error("Rust host target missing");
   const metadata = JSON.parse(
@@ -141,11 +150,9 @@ try {
   for (const pkg of metadata.packages ?? []) {
     if (
       pkg.source === null &&
-      (!inside(await realpath(pkg.manifest_path)) ||
-        (relative(workspace, await realpath(pkg.manifest_path)) !== "Cargo.toml" &&
-          !relative(workspace, await realpath(pkg.manifest_path)).startsWith(`crates${sep}`)))
+      !localManifestAllowed(workspace, await realpath(pkg.manifest_path), before.files)
     )
-      throw new Error("External local Cargo package unsupported");
+      throw new Error("Local Cargo package outside declared source snapshot");
   }
   if (
     !Array.isArray(metadata.packages) ||

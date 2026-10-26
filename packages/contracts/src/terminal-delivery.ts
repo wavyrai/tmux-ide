@@ -35,7 +35,8 @@ export type TerminalDeliveryEncoding = z.infer<typeof TerminalDeliveryEncodingSc
 
 export const TerminalDeliveryOfferSchemaZ = z
   .object({
-    protocolVersions: z.array(z.number().int().positive()).min(1).max(8),
+    // Interactive binary/graphics offers use eight slots; native surfaces add one.
+    protocolVersions: z.array(z.number().int().positive()).min(1).max(9),
     encodings: z.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
     richPlacements: z.boolean(),
   })

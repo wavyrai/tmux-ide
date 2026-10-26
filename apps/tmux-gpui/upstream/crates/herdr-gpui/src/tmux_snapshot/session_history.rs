@@ -1,4 +1,4 @@
-//! Bridge-owned visited-session navigation; no native history ledger.
+//! UI capabilities for visited-session navigation owned by the metadata backend.
 use super::{SnapshotView, browser};
 use gpui::{Context, KeyDownEvent, Keystroke, Window};
 use serde::Deserialize;

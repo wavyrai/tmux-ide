@@ -58,6 +58,7 @@ async function startedRig(
     nativeBirth?: string;
     executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
     onNativeClientActivity?: () => void;
+    onNativeClientPresence?: (present: boolean | null) => void;
     onOutputObserved?: (
       semanticPaneId: string,
       ageMs: number | null,
@@ -261,6 +262,7 @@ async function startedRig(
         }
       : {}),
     onNativeClientActivity: options.onNativeClientActivity,
+    onNativeClientPresence: options.onNativeClientPresence,
     onOutputObserved: options.onOutputObserved,
     onFlowRecoveryObserved: options.onFlowRecoveryObserved,
   });
@@ -433,6 +435,58 @@ function completeSeed(rig: Rig, lines: readonly string[], cursor: string): void 
 }
 
 describe("native client activity", () => {
+  it("distinguishes proven absence from native presence and malformed inventory", async () => {
+    const presence = vi.fn();
+    const rig = await startedRig({ onNativeClientPresence: presence });
+    expect(presence).toHaveBeenLastCalledWith(null);
+    rig.sim.reply(["1\t123"]);
+    await vi.waitFor(() => expect(presence).toHaveBeenLastCalledWith(false));
+    rig.sim.feedLines("%subscription-changed tmux-ide-native-clients $1 @1 0 %1 : 2");
+    expect(presence).toHaveBeenLastCalledWith(null);
+    rig.sim.reply(["1\t123", "0\t124"]);
+    await vi.waitFor(() => expect(presence).toHaveBeenLastCalledWith(true));
+    rig.sim.feedLines("%subscription-changed tmux-ide-native-clients $1 @1 0 %1 : 1");
+    rig.sim.reply(["malformed"]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(presence).toHaveBeenLastCalledWith(null);
+    await rig.channel.dispose();
+  });
+
+  it("rechecks changes during inventory without publishing stale absence", async () => {
+    const presence = vi.fn();
+    const rig = await startedRig({ onNativeClientPresence: presence });
+    const probes = () => rig.sim.written.filter((command) => command.startsWith("list-clients "));
+    expect(probes()).toHaveLength(1);
+    for (let i = 0; i < 8; i++)
+      rig.sim.feedLines("%subscription-changed tmux-ide-native-clients $1 @1 0 %1 : 2");
+    expect(probes()).toHaveLength(1);
+    rig.sim.reply(["1\t123"]);
+    await vi.waitFor(() => expect(probes()).toHaveLength(2));
+    expect(presence).not.toHaveBeenCalledWith(false);
+    rig.sim.reply(["0\t124"]);
+    await vi.waitFor(() => expect(presence).toHaveBeenLastCalledWith(true));
+    await rig.channel.dispose();
+    expect(presence).toHaveBeenLastCalledWith(null);
+  });
+
+  it("invalidates presence when the control channel exits", async () => {
+    const presence = vi.fn();
+    const rig = await startedRig({ onNativeClientPresence: presence });
+    rig.sim.reply(["1\t123"]);
+    await vi.waitFor(() => expect(presence).toHaveBeenLastCalledWith(false));
+    rig.sim.feedLines("%exit");
+    expect(presence).toHaveBeenLastCalledWith(null);
+    await rig.channel.dispose();
+  });
+
+  it("does not publish a pending inventory after disposal", async () => {
+    const presence = vi.fn();
+    const rig = await startedRig({ onNativeClientPresence: presence });
+    await rig.channel.dispose();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(presence.mock.calls.every(([value]) => value === null)).toBe(true);
+  });
+
   it("subscribes to attached-client changes and proves native presence from inventory", async () => {
     const onNativeClientActivity = vi.fn();
     const rig = await startedRig({ onNativeClientActivity });

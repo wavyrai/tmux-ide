@@ -10,6 +10,15 @@ pub struct WindowLink {
     pub expected_semantic_window_id: String,
     pub link_revision: u64,
 }
+impl WindowLink {
+    pub fn validate(&self) -> Result<()> {
+        if valid_link(self) {
+            Ok(())
+        } else {
+            Err(Error::Invalid)
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "by", rename_all = "lowercase", deny_unknown_fields)]
 pub enum WindowTarget {

@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, thiserror::Error)]
 enum NativeError {
+    #[cfg(target_os = "macos")]
+    #[error("native surface publication failed")]
+    Surface(#[from] crate::tmux_native_surface::driver::Error),
     #[error("direct terminal handoff failed")]
     Handoff(#[from] herdr_client::tmux_handoff::Error),
     #[error("direct terminal controller failed")]
@@ -28,7 +31,10 @@ enum NativeError {
     #[error("direct terminal presentation failed")]
     Presentation(#[from] Error),
 }
+#[path = "browser_native_diagnostics.rs"]
+mod diagnostics;
 enum Incoming {
+    NativeOwner(Box<browser_native_owner::Response>),
     Catalog(Box<State>),
     Handoff(Event),
     History(Response),
@@ -50,6 +56,8 @@ struct Active {
     controller: Controller,
     presentation: NativePresentation,
     graphics: Graphics,
+    #[cfg(target_os = "macos")]
+    surfaces: super::super::browser_native_surfaces::Scene,
     input: InputOwner,
     selection_notice: Option<Command>,
     history: History,
@@ -62,6 +70,7 @@ struct Active {
     reissue: bool,
     preferred_pane: Option<String>,
     owner: Owner,
+    stream_interrupted: bool,
     owner_notice: Option<Command>,
     action_status: Option<&'static str>,
     catalog_only: bool,
@@ -87,13 +96,21 @@ fn revoke(active: &mut Option<Active>, state: &mut State) {
     state.copy_region = None;
     state.regions.clear();
     state.graphics.clear();
+    #[cfg(target_os = "macos")]
+    {
+        state.native_surfaces = None;
+    }
     state.pane_actions = None;
     state.resize_token = None;
     state.split_layout = None;
 }
-fn revoke_connection(active: &mut Option<Active>, state: &mut State, output: &mut impl Write) {
+fn revoke_connection(
+    active: &mut Option<Active>,
+    state: &mut State,
+    output: &mut impl FnMut(Command) -> Result<(), Error>,
+) {
     if let Some(value) = active.as_mut().and_then(|a| a.editor.cancel()) {
-        let _ = write_command(output, &Command::NativeEditorCancel { value });
+        let _ = output(Command::NativeEditorCancel { value });
     }
     revoke(active, state);
 }
@@ -223,7 +240,7 @@ fn read_pipe(mut input: impl BufRead, binary: bool, tx: mpsc::SyncSender<Incomin
     }
     let _ = tx.send(Incoming::Closed);
 }
-fn write_command(output: &mut impl Write, command: &Command) -> Result<(), Error> {
+fn write_pipe_command(output: &mut impl Write, command: &Command) -> Result<(), Error> {
     let mut bytes = serde_json::to_vec(command)?;
     bytes.push(b'\n');
     output.write_all(&bytes)?;
@@ -240,17 +257,30 @@ pub(super) fn start(kitty: super::super::kitty_graphics::Store) -> Bridge {
     )
 }
 // Construct handles inside their owning threads, preserving lock lifetimes and ordered I/O.
-pub(super) fn start_io<R: BufRead, W: Write>(
+pub(in crate::tmux_snapshot) fn start_io<R: BufRead, W: Write>(
     kitty: super::super::kitty_graphics::Store,
     input: impl FnOnce() -> R + Send + 'static,
     output: impl FnOnce() -> W + Send + 'static,
     binary: bool,
 ) -> Bridge {
+    let (tx, rx) = mpsc::sync_channel(8);
+    std::thread::spawn(move || read_pipe(input(), binary, tx));
+    start_events(kitty, rx, move || {
+        let mut output = output();
+        move |command| write_pipe_command(&mut output, &command)
+    })
+}
+
+// The terminal loop consumes typed events and moves commands to its owner.
+// Only the legacy pipe adapter above serializes catalog/control messages.
+fn start_events<F: FnMut(Command) -> Result<(), Error>>(
+    kitty: super::super::kitty_graphics::Store,
+    rx: mpsc::Receiver<Incoming>,
+    output: impl FnOnce() -> F + Send + 'static,
+) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
-    let (tx, rx) = mpsc::sync_channel(8);
-    std::thread::spawn(move || read_pipe(input(), binary, tx));
     std::thread::spawn(move || {
         let mut active: Option<Active> = None;
         let history_cache: Cache = Default::default();
@@ -263,9 +293,29 @@ pub(super) fn start_io<R: BufRead, W: Write>(
         'worker: loop {
             let now = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
             let mut changed = false;
-            while let Ok(event) = rx.try_recv() {
+            loop {
+                let event = match rx.try_recv() {
+                    Ok(event) => event,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => break 'worker,
+                };
                 match event {
                     Incoming::Closed => break 'worker,
+                    Incoming::NativeOwner(response) => {
+                        if let Some(current) = active
+                            .as_mut()
+                            .filter(|a| a.id == response.id && a.request == response.request)
+                        {
+                            match current.owner.response_native(*response) {
+                                Ok(Some(done)) => current.owner_completed(done),
+                                Ok(None) => {}
+                                Err(_) => {
+                                    revoke_connection(&mut active, &mut state, &mut output);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
                     Incoming::Owner { id, request, bytes } => {
                         if let Some(current) = active
                             .as_mut()
@@ -293,12 +343,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                                 presence.1,
                                 now,
                             ) {
-                                if write_command(
-                                    &mut output,
-                                    &Command::NativeEditorCancel { value },
-                                )
-                                .is_err()
-                                {
+                                if output(Command::NativeEditorCancel { value }).is_err() {
                                     break 'worker;
                                 }
                             } else if let Some(status) = current.editor.response(response) {
@@ -389,7 +434,23 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                             capability.selected_pane.clone(),
                             history_cache.clone(),
                         );
-                        let Ok(mut controller) = Controller::spawn(*capability) else {
+                        #[cfg(target_os = "macos")]
+                        let (controller_result, surface_inbox) = if capability.native_surfaces {
+                            let Ok(generation_id) = uuid::Uuid::parse_str(&generation) else {
+                                break 'worker;
+                            };
+                            let (driver, inbox) =
+                                crate::tmux_native_surface::driver::Driver::new(generation_id);
+                            (
+                                Controller::spawn_with_surfaces(*capability, Box::new(driver)),
+                                Some(inbox),
+                            )
+                        } else {
+                            (Controller::spawn(*capability), None)
+                        };
+                        #[cfg(not(target_os = "macos"))]
+                        let controller_result = Controller::spawn(*capability);
+                        let Ok(mut controller) = controller_result else {
                             break 'worker;
                         };
                         if controller.presence(presence.0, presence.1, now).is_err() {
@@ -407,6 +468,10 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                         active = Some(Active {
                             presentation: NativePresentation::new(&id, &workspace),
                             graphics: Graphics::new(kitty.clone()),
+                            #[cfg(target_os = "macos")]
+                            surfaces: super::super::browser_native_surfaces::Scene::new(
+                                surface_inbox,
+                            ),
                             id,
                             request,
                             input_epoch: request,
@@ -424,6 +489,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                             reissue: false,
                             preferred_pane: None,
                             owner,
+                            stream_interrupted: false,
                             owner_notice: None,
                             action_status: None,
                             catalog_only,
@@ -450,11 +516,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                             pending.retain(|command| !matches!(command, Command::Input { .. }));
                             if let Some(current) = active.as_mut() {
                                 if let Some(value) = current.editor.cancel()
-                                    && write_command(
-                                        &mut output,
-                                        &Command::NativeEditorCancel { value },
-                                    )
-                                    .is_err()
+                                    && output(Command::NativeEditorCancel { value }).is_err()
                                 {
                                     break 'worker;
                                 }
@@ -466,6 +528,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                         }
                         if let Some(current) = active.as_mut()
                             && !current.reissue
+                            && !current.stream_interrupted
                             && current
                                 .controller
                                 .presence(foreground, revision, now)
@@ -473,13 +536,10 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                         {
                             break 'worker;
                         }
-                        if write_command(
-                            &mut output,
-                            &Command::Presence {
-                                active: foreground,
-                                revision,
-                            },
-                        )
+                        if output(Command::Presence {
+                            active: foreground,
+                            revision,
+                        })
                         .is_err()
                         {
                             break 'worker;
@@ -505,11 +565,23 @@ pub(super) fn start_io<R: BufRead, W: Write>(
             if let Some(current) = active.as_mut().filter(|a| !a.reissue) {
                 match current.poll(&mut state, now) {
                     Ok(dirty) => changed |= dirty,
-                    Err(_) => {
+                    Err(error) => {
+                        eprintln!(
+                            "tmux-preview: terminal poll interrupted: {}",
+                            diagnostics::code(&error)
+                        );
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.
                         let structural = current.actions.interrupted().is_some_and(|c| c.reissue);
-                        if structural {
+                        if current.owner.waiting_receipt() && current.owner_notice.is_none() {
+                            // The authorized HTTP operation may retire the stream
+                            // before replying. Preserve correlation, not terminal IO.
+                            current.stream_interrupted = true;
+                            current.controller.retire();
+                            current.input.focus_loss();
+                            pending.retain(|command| !matches!(command, Command::Input { .. }));
+                            revoke(&mut None, &mut state);
+                        } else if structural {
                             current.reissue = true;
                             current.input.focus_loss();
                             pending.retain(|command| !matches!(command, Command::Input { .. }));
@@ -525,7 +597,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                                 presence_revision: presence.1,
                             };
                             revoke_connection(&mut active, &mut state, &mut output);
-                            if write_command(&mut output, &notice).is_err() {
+                            if output(notice).is_err() {
                                 break 'worker;
                             }
                         }
@@ -536,38 +608,38 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                 }
             }
             if let Some(command) = active.as_mut().and_then(|a| a.editor_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.selection_notice.take()) {
-                if write_command(&mut output, &command).is_err() {
+                if output(command).is_err() {
                     break 'worker;
                 }
                 changed = true;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.split_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.owner_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.topology_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.metadata_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.history_notice.take())
-                && write_command(&mut output, &command).is_err()
+                && output(command).is_err()
             {
                 break 'worker;
             }
@@ -580,7 +652,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                         request: current.request,
                         preferred_pane: current.preferred_pane.clone(),
                     };
-                    if write_command(&mut output, &command).is_err() {
+                    if output(command).is_err() {
                         break 'worker;
                     }
                 }
@@ -639,7 +711,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                 admitted = true;
                 if navigates(&command)
                     && let Some(value) = active.as_mut().and_then(|a| a.editor.cancel())
-                    && write_command(&mut output, &Command::NativeEditorCancel { value }).is_err()
+                    && output(Command::NativeEditorCancel { value }).is_err()
                 {
                     break 'worker;
                 }
@@ -661,9 +733,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                                 now,
                             )
                         {
-                            if write_command(&mut output, &Command::NativeEditorOpen { value })
-                                .is_err()
-                            {
+                            if output(Command::NativeEditorOpen { value }).is_err() {
                                 break 'worker;
                             }
                             current.action_status = Some("Opening selected pane folder in VS Code");
@@ -750,17 +820,17 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                     } => {
                         presence = (foreground, revision);
                         let result = active.as_mut().map_or(Ok(()), |a| {
+                            if a.stream_interrupted {
+                                return Ok(());
+                            }
                             a.controller
                                 .presence(foreground, revision, now)
                                 .map_err(NativeError::from)
                         });
-                        if write_command(
-                            &mut output,
-                            &Command::Presence {
-                                active: foreground,
-                                revision,
-                            },
-                        )
+                        if output(Command::Presence {
+                            active: foreground,
+                            revision,
+                        })
                         .is_err()
                         {
                             break 'worker;
@@ -772,7 +842,7 @@ pub(super) fn start_io<R: BufRead, W: Write>(
                             revoke_connection(&mut active, &mut state, &mut output);
                             changed = true;
                         }
-                        if write_command(&mut output, &other).is_err() {
+                        if output(other).is_err() {
                             break 'worker;
                         }
                         Ok(())
@@ -846,3 +916,14 @@ mod tests;
 #[cfg(test)]
 #[path = "browser_native_selection_tests.rs"]
 mod selection_tests;
+
+#[cfg(test)]
+#[path = "browser_native_backend_tests.rs"]
+mod backend_tests;
+
+#[path = "browser_native_local.rs"]
+mod local;
+pub(in crate::tmux_snapshot) use local::{NativeOwner, start as start_local};
+
+#[cfg(unix)]
+pub(in crate::tmux_snapshot) use local::start_remote;
