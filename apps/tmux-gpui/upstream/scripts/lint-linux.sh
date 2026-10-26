@@ -29,6 +29,27 @@ temp=${TMPDIR:-/tmp}
 cache=${HERDR_LINT_CACHE:-${temp%/}/herdr-lint-linux}/${name//\//-}
 mkdir -p "$cache/tree"
 rsync -a --delete --exclude target --exclude .git "$root/" "$cache/tree/"
+# tmux-ide patches the Apple backend beside this vendored workspace. Cargo still
+# resolves target-specific patch manifests on Linux, even though it never builds
+# the macOS implementation. Preserve that exact relative layout in the snapshot.
+mkdir -p "$cache/vendor"
+if [[ -d "$root/../vendor/bezel-gpui-apple" ]]; then
+    mkdir -p "$cache/vendor/bezel-gpui-apple"
+    rsync -a --delete --exclude target --exclude .git \
+        "$root/../vendor/bezel-gpui-apple/" "$cache/vendor/bezel-gpui-apple/"
+fi
+
+# The tmux-ide qualification tests include these sibling data files at compile
+# time. Copy only fixture inputs, not the outer application's runtime or caches.
+mkdir -p "$cache/fixtures" "$cache/bridge" "$cache/evidence/home-fleet-2026-10-15"
+if [[ -d "$root/../fixtures" ]]; then
+    rsync -a --delete "$root/../fixtures/" "$cache/fixtures/"
+fi
+for fixture in bridge/binary-vectors.json evidence/home-fleet-2026-10-15/fleet.json; do
+    if [[ -f "$root/../$fixture" ]]; then
+        cp "$root/../$fixture" "$cache/$fixture"
+    fi
+done
 
 cat > "$cache/run.sh" <<'INNER'
 set -euo pipefail
@@ -75,6 +96,9 @@ jobs=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / (2 * 1024 * 1024) ))
 if [ "$jobs" -lt 1 ]; then jobs=1; fi
 if [ "$jobs" -gt "$(nproc)" ]; then jobs=$(nproc); fi
 export CARGO_BUILD_JOBS=$jobs
+# Persist compiled dependencies, but do not retain rustc's incremental query graph
+# for this large all-targets check inside a memory-limited Docker VM.
+export CARGO_INCREMENTAL=0
 
 printf 'host: %s, jobs: %s\n' "$(rustc -vV | sed -n 's/^host: //p')" "$jobs"
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -87,7 +111,8 @@ run=(docker run --rm)
 if [[ -n $platform ]]; then
     run+=(--platform "$platform")
 fi
-run+=(-v "$cache/tree":/tree -v "$cache":/cache ubuntu:24.04 bash /cache/run.sh)
+run+=(-v "$cache/tree":/tree:ro -v "$cache/vendor":/vendor:ro -v "$cache/fixtures":/fixtures:ro
+    -v "$cache/bridge":/bridge:ro -v "$cache/evidence":/evidence:ro -v "$cache":/cache ubuntu:24.04 bash /cache/run.sh)
 
 printf 'Linting for Linux%s. Cache: %s\n' "${platform:+ ($platform)}" "$cache"
 status=0

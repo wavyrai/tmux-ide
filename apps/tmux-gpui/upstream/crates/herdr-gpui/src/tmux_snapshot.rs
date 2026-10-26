@@ -12,6 +12,8 @@ mod browser_native_history;
 mod browser_native_input;
 mod browser_native_owner;
 mod browser_native_preview;
+#[cfg(target_os = "macos")]
+mod browser_native_surfaces;
 mod browser_state;
 mod browser_ui;
 mod composition;
@@ -61,6 +63,13 @@ use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
+    #[cfg(unix)]
+    #[error("native fleet ownership failed")]
+    NativeFleet(#[from] herdr_client::tmux_daemon::FleetRegistryError),
+    #[error("native catalog worker failed")]
+    NativeCatalog(#[from] herdr_client::tmux_daemon::WorkerError),
+    #[error("native SSH owner shutdown failed")]
+    NativeOwner(#[from] herdr_client::tmux_daemon::Error),
     #[error("usage: --tmux-snapshot FILE [--validate-only]")]
     Arguments,
     #[error("cannot read snapshot: {0}")]
@@ -116,25 +125,125 @@ pub(crate) fn browse() -> Result<(), Error> {
     show(None, None, Some(bridge), graphics)
 }
 
+pub(crate) fn browse_native_local() -> Result<(), Error> {
+    let record = herdr_client::tmux_daemon::LocalConfigNamespace::capture(None)
+        .and_then(|namespace| namespace.daemon_record())
+        .ok_or(Error::Invalid("invalid local runtime namespace"))?;
+    browse_native(record)
+}
+
+pub(crate) fn browse_native(record: PathBuf) -> Result<(), Error> {
+    if !record.is_absolute() {
+        return Err(Error::Invalid(
+            "native daemon record must be an absolute path",
+        ));
+    }
+    let graphics = KittyView::default();
+    let (bridge, owner) = browser::start_local(record, graphics.store.clone())?;
+    let result = show_owned(None, None, Some(bridge), graphics, Some(owner.clone()));
+    let cleanup = owner.shutdown();
+    result?;
+    cleanup
+}
+
+#[cfg(unix)]
+pub(crate) fn browse_native_remote(
+    target: &std::ffi::OsStr,
+    environment: Option<&std::ffi::OsStr>,
+    local_record: Option<PathBuf>,
+) -> Result<(), Error> {
+    if local_record
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(Error::Invalid(
+            "local daemon record must be an absolute path",
+        ));
+    }
+    let target = target
+        .to_str()
+        .ok_or(Error::Invalid("invalid SSH destination"))?;
+    let target = herdr_client::tmux_ssh::SshTarget::parse(target)
+        .map_err(|_| Error::Invalid("invalid SSH destination"))?;
+    let environment = environment
+        .map(|value| {
+            let value = value
+                .to_str()
+                .ok_or(Error::Invalid("invalid remote environment identity"))?;
+            if value.len() != 36 || uuid::Uuid::parse_str(value).is_err() {
+                return Err(Error::Invalid("invalid remote environment identity"));
+            }
+            Ok(value.to_owned())
+        })
+        .transpose()?;
+    let graphics = KittyView::default();
+    let (bridge, owner) =
+        browser::start_remote(target, environment, local_record, graphics.store.clone())?;
+    let result = show_owned(None, None, Some(bridge), graphics, Some(owner.clone()));
+    let cleanup = owner.shutdown();
+    result?;
+    cleanup
+}
+
+pub(crate) fn browse_with_helper(
+    node: &std::ffi::OsStr,
+    script: &std::ffi::OsStr,
+    host: &std::ffi::OsStr,
+) -> Result<(), Error> {
+    // Paths are supplied by the version-pinned app launcher, never terminal data.
+    // Spawn before entering GPUI; the owner retires/reaps only this child off-thread.
+    let herdr_client::tmux_broker_process::Broker {
+        reader,
+        writer,
+        owner,
+    } = herdr_client::tmux_broker_process::spawn(node, script, host)?;
+    let graphics = KittyView::default();
+    let bridge = browser::start_io(
+        graphics.store.clone(),
+        move || std::io::BufReader::new(reader),
+        move || writer,
+        true,
+    );
+    let result = show(None, None, Some(bridge), graphics);
+    let retired = owner.shutdown();
+    result.and(retired.map_err(Error::from))
+}
+
 fn show(
     frame: Option<DisplayFrame>,
     mailbox: Option<stream::Mailbox>,
     browser: Option<browser::Bridge>,
     graphics: KittyView,
 ) -> Result<(), Error> {
+    show_owned(frame, mailbox, browser, graphics, None)
+}
+fn show_owned(
+    frame: Option<DisplayFrame>,
+    mailbox: Option<stream::Mailbox>,
+    browser: Option<browser::Bridge>,
+    graphics: KittyView,
+    owner: Option<browser::NativeOwner>,
+) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
     let application = gpui_platform::application().with_assets(crate::icons::Icons);
     application.run(move |cx| {
-        cx.on_window_closed(|cx, _| {
+        let closing = Rc::new(std::cell::Cell::new(false));
+        let quit_owner = owner.clone();
+        let quit_closing = closing.clone();
+        cx.on_window_closed(move |cx, _| {
             if cx.windows().is_empty() {
-                cx.quit();
+                request_native_quit(quit_owner.clone(), quit_closing.clone(), cx);
             }
         })
         .detach();
         cx.bind_keys([KeyBinding::new("cmd-q", crate::Quit, None)]);
         shell::bind_keys(cx);
-        cx.on_action(|_: &crate::Quit, cx| cx.quit());
+        let action_owner = owner.clone();
+        let action_closing = closing.clone();
+        cx.on_action(move |_: &crate::Quit, cx| {
+            request_native_quit(action_owner.clone(), action_closing.clone(), cx);
+        });
         let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
         let result = cx.open_window(
             WindowOptions {
@@ -324,7 +433,7 @@ fn show(
         if let Err(error) = result {
             eprintln!("Could not open snapshot window: {error}");
             open_failed.set(true);
-            cx.quit();
+            request_native_quit(owner.clone(), closing.clone(), cx);
         } else {
             cx.activate(true);
         }
@@ -462,6 +571,14 @@ impl SnapshotView {
                 .child(guidance)
                 .into_any_element();
         };
+        #[cfg(target_os = "macos")]
+        let native_surfaces = self
+            .browser_state
+            .native_surfaces
+            .as_ref()
+            .filter(|(source, surfaces)| source.same(&frame) && surfaces.len() <= 8)
+            .map(|(_, surfaces)| surfaces.clone())
+            .unwrap_or_default();
         let resize_preview = self.divider_content_preview();
         div()
             .relative()
@@ -652,6 +769,12 @@ impl SnapshotView {
                                 cx,
                             )
                         });
+                        #[cfg(target_os = "macos")]
+                        if paint_ok {
+                            for surface in &native_surfaces {
+                                surface.paint(bounds, width, height, window);
+                            }
+                        }
                         entity.update(cx, |view, _| {
                             if view.selection.is_none()
                                 && view.picker.is_none()
@@ -729,3 +852,32 @@ mod fit_test_support;
 
 #[cfg(feature = "integration-test")]
 pub(crate) mod journey_probe;
+
+// Normal Quit/last-window-close waits off-thread before asking macOS to exit.
+// GPUI's final shutdown hook has only 200 ms, less than SSH's TERM grace period.
+fn request_native_quit(
+    owner: Option<browser::NativeOwner>,
+    closing: Rc<std::cell::Cell<bool>>,
+    cx: &mut App,
+) {
+    let Some(owner) = owner else {
+        cx.quit();
+        return;
+    };
+    if closing.replace(true) {
+        return;
+    }
+    let cleanup = cx
+        .background_executor()
+        .spawn(async move { owner.shutdown() });
+    cx.spawn(async move |cx| match cleanup.await {
+        Ok(()) => {
+            cx.update(|cx| cx.quit());
+        }
+        Err(error) => {
+            eprintln!("tmux-ide: native SSH shutdown failed: {error}");
+            closing.set(false);
+        }
+    })
+    .detach();
+}

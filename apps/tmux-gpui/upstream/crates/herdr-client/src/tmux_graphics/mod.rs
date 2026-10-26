@@ -1,7 +1,16 @@
 //! Connection-scoped Kitty side channel. Decode once in Rust; verify before the final chunk.
 mod binary;
+#[cfg(test)]
+pub(crate) use binary::COMPRESSED_CHUNKS;
 pub(crate) mod local;
 mod placeholders;
+pub mod surface_control;
+pub mod surface_handoff;
+pub mod surface_leases;
+pub mod surface_offer;
+pub mod surface_provider;
+pub mod surface_provider_offer;
+pub mod surface_session;
 pub use local::LocalImages;
 mod wire;
 use crate::tmux_native_session::CommittedPane;
@@ -40,6 +49,8 @@ pub enum Error {
     Digest,
     #[error("invalid native graphics base64")]
     Base64(#[source] base64::DecodeError),
+    #[error("invalid compressed native graphics chunk")]
+    Compression,
     #[error("native graphics retired")]
     Retired,
 }
@@ -247,6 +258,7 @@ impl Graphics {
                             || frame.state.cell_pixels != old.cell_pixels
                             || frame.state.precise_cell_pixels != old.precise_cell_pixels
                             || frame.state.binary_blobs != old.binary_blobs
+                            || frame.state.compressed_blobs != old.compressed_blobs
                             || frame.state.local_files != old.local_files
                         {
                             return Err(Error::Ordering);

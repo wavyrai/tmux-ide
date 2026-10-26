@@ -49,6 +49,7 @@ pub struct State {
     pub cell_pixels: Option<bool>,
     pub precise_cell_pixels: Option<bool>,
     pub binary_blobs: Option<bool>,
+    pub compressed_blobs: Option<bool>,
     pub local_files: Option<bool>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -105,6 +106,8 @@ impl State {
             || self.cell_pixels == Some(false)
             || self.precise_cell_pixels == Some(false)
             || self.binary_blobs == Some(false)
+            || self.compressed_blobs == Some(false)
+            || (self.compressed_blobs == Some(true) && self.binary_blobs != Some(true))
             || self.local_files == Some(false)
         {
             return Err(Error::Bounds);

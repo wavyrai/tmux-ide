@@ -1,4 +1,4 @@
-// Opt-in owned GUI/daemon/broker RSS qualification; no desktop input automation.
+// Opt-in owned GUI/daemon RSS qualification; no desktop input automation.
 // Node --import tsx. --smoke 1 never launches GUI and is not GUI qualification.
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,6 +23,7 @@ for (let i = 0; i < argv.length; i += 2) {
       "--profile",
       "--smoke",
       "--image-profile",
+      "--transport",
     ].includes(argv[i]) ||
     !argv[i + 1] ||
     opt[argv[i]]
@@ -38,6 +39,8 @@ if (
   (opt["--smoke"] !== undefined && opt["--smoke"] !== "1")
 )
   throw Error("Explicit profile and valid smoke flag required");
+const transport = opt["--transport"] ?? "native";
+if (!["native", "legacy"].includes(transport)) throw Error("--transport requires native|legacy");
 const imageProfile = opt["--image-profile"] ?? "small";
 const limits = limitsFor(imageProfile);
 const repo = opt["--repo"],
@@ -104,25 +107,35 @@ try {
   if (fleet.environment.TMUX_IDE_TMUX_BIN !== opt["--tmux"]) throw Error("Explicit tmux mismatch");
   const env = { ...process.env, ...fleet.environment };
   daemon = await startDaemon(fleet, { cliPath: opt["--cli"] });
+  for (const name of fleet.sessionNames) await daemon.promote(name);
   if (!smoke) {
-    native = spawn(opt["--binary"], ["--tmux-browser-stdio"], {
-      cwd: repo,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    broker = spawn(
-      process.execPath,
-      ["--import", "tsx", join(repo, "apps/tmux-gpui/bridge/browser.ts"), "--local"],
-      { cwd: repo, env, stdio: ["pipe", "pipe", "pipe"] },
+    native = spawn(
+      opt["--binary"],
+      transport === "native" ? ["--tmux-native-local"] : ["--tmux-browser-stdio"],
+      {
+        cwd: repo,
+        env,
+        stdio: [transport === "native" ? "ignore" : "pipe", "pipe", "pipe"],
+      },
     );
-    native.stdout.pipe(broker.stdin);
-    broker.stdout.pipe(native.stdin);
+    if (transport === "legacy") {
+      broker = spawn(
+        process.execPath,
+        ["--import", "tsx", join(repo, "apps/tmux-gpui/bridge/browser.ts"), "--local"],
+        { cwd: repo, env, stdio: ["pipe", "pipe", "pipe"] },
+      );
+      native.stdout.pipe(broker.stdin);
+      broker.stdout.pipe(native.stdin);
+    } else {
+      native.stdout.pipe(createWriteStream(join(output, "native-stdout.log"), { mode: 0o600 }));
+    }
     for (const [name, child] of [
       ["native", native],
       ["broker", broker],
     ]) {
+      if (!child) continue;
       child.stderr.pipe(createWriteStream(join(output, name + ".log"), { mode: 0o600 }));
-      child.stdin.on("error", () => {});
+      child.stdin?.on("error", () => {});
       child.once("error", stop);
       child.once("exit", stop);
     }
@@ -149,7 +162,7 @@ try {
     native: opt["--binary"],
     tmux: opt["--tmux"],
     workload,
-    broker: join(repo, "apps/tmux-gpui/bridge/browser.ts"),
+    ...(transport === "legacy" ? { broker: join(repo, "apps/tmux-gpui/bridge/browser.ts") } : {}),
     runner: import.meta.filename,
   }))
     hashes[name] = {
@@ -180,6 +193,7 @@ try {
       .digest("hex");
   const manifest = {
     smoke,
+    transport,
     profile: opt["--profile"],
     profileVerified: false,
     nodeVersion: process.version,
@@ -208,7 +222,9 @@ try {
   let uptime = "unavailable";
   try {
     uptime = (await run("/usr/bin/uptime", [], { timeout: 2000 })).stdout.trim();
-  } catch {}
+  } catch {
+    // Host load is optional context, not a workload result.
+  }
   await save("load-before.json", { time: Date.now(), uptime });
   await writeFile(
     join(output, "instructions.txt"),
@@ -244,7 +260,9 @@ try {
       let request;
       try {
         request = JSON.parse(await readFile(join(output, "arm.json"), "utf8"));
-      } catch {}
+      } catch {
+        // Wait until the user writes a complete arm request.
+      }
       if (
         smoke ||
         (request?.visible === true &&
@@ -312,7 +330,9 @@ try {
         .split("\n")
         .filter(Boolean)
         .map(JSON.parse);
-    } catch {}
+    } catch {
+      // The workload may not have created its event log yet.
+    }
     if (events.some((e) => e.type === "phase" && e.phase === "complete")) {
       completed = true;
       stop();
@@ -321,8 +341,13 @@ try {
   timer = setInterval(() => {
     if (!flight)
       flight = sample()
-        .catch(() => {
+        .catch(async (error) => {
           samplingFailed = true;
+          await save("sampling-error.json", {
+            time: Date.now(),
+            message: String(error),
+            stack: error?.stack?.slice(0, 8192),
+          });
           stop();
         })
         .finally(() => {

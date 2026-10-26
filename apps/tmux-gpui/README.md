@@ -16,8 +16,9 @@ notices. `upstream-provenance.json` records the source commit and SHA-256 digest
 of every imported file. Upstream crate names are retained for comparison.
 The adapter renders snapshots and the selected live window’s pane arrangement
 through the upstream painter. Keyboard input targets one selected pane. The browser preview supports authenticated keyboard input and bounded Cmd-V text paste. Rust receives and validates daemon pane-stream patches directly, applies changed
-rows, and prepares painting off the UI thread. The TypeScript broker handles
-discovery and application metadata without forwarding live terminal cells or input. Window resizing uses daemon geometry authority. Production Rust-worker journeys cover two-viewer handoff, pane replacement, background geometry, input during resize, daemon replacement and sustained output. These are headless ownership/transport checks, not physical GUI latency or native-client competition measurements (see `evidence/competing-viewers-2026-10-10/README.md` for the historical helper baseline). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
+rows, and prepares painting off the UI thread. Newly assembled apps use Rust for
+local discovery, fleet metadata/actions and SSH ownership; explicit legacy private-host
+configurations retain the TypeScript metadata broker. Window resizing uses daemon geometry authority. Production Rust-worker journeys cover two-viewer handoff, pane replacement, background geometry, input during resize, daemon replacement and sustained output. These are headless ownership/transport checks, not physical GUI latency or native-client competition measurements (see `evidence/competing-viewers-2026-10-10/README.md` for the historical helper baseline). Verified fleet terminals now retry transport retirement automatically with fresh session and pane authority; protocol/replica faults still require explicit recovery. Native text composition is
 implemented with further IME qualification pending. If you click or type before
 keyboard input is ready, the preview keeps input interrupted until you click the
 ready terminal again and retype. It never replays discarded input. This also
@@ -29,6 +30,14 @@ The baseline is the revision examined in our research, not a claim of latest ups
 The root MIT license does not replace the imported source's license. Preserve
 `upstream/LICENSE`, `upstream/NOTICE`, nested notices and attribution; identify
 modified upstream files when adapting them.
+
+The opt-in native discovery path now persists favorite and collapsed-group
+controls through the verified local daemon, including while viewing SSH. Action
+revisions and private owner stamps reject stale writes. Recent visits are recorded only after a verified live attachment, with bounded
+owner-fenced writes. Back/forward navigation now resolves destinations through the current verified
+catalog and commits on live attachment, including restored scrollback. Previously visited saved machines can now be re-verified and rediscovered for
+cross-machine history navigation. Concurrent multi-route fleet aggregation and
+persistent cached route discovery remain pending. See [research progress](research/README.md).
 
 ## Development boundary
 
@@ -231,12 +240,25 @@ The source browser uses the direct Rust terminal route by default. Use an
 explicit private host configuration for isolated tests. This source change
 does not change an already installed release.
 
-The Node broker owns discovery, SSH connection setup, one-use capability issuance,
-and owner HTTP metadata/actions. Rust owns the canonical terminal WebSocket,
-ordered input and acknowledgements, geometry, grid patches, history, and graphics.
-Terminal cells and keystrokes do not pass through Node on this route. Broker
-messages are bounded control/catalog metadata, including scoped history tokens
-and split-layout resources; they cannot grant input authority.
+Newly assembled apps use `--tmux-native-local` when launched without arguments.
+Rust derives the canonical daemon record from the validated local runtime namespace,
+then owns discovery, saved-machine registry/catalog operations, SSH connections,
+agent observations and selection, tab state, and authenticated metadata/actions.
+Rust also owns terminal WebSockets, ordered input and acknowledgements, geometry,
+grid patches, history, and graphics. The normal app launch does not start Node.
+This source change does not update an installed release.
+
+Passing an explicit legacy private-host configuration to the packaged launcher
+still uses the Rust-owned Node metadata helper. That compatibility path and the
+development preview supervisor remain available; the Node runtime and broker are
+therefore still packaged. The normal path has no automatic helper fallback.
+Native startup, first-run setup and actual-window behavior still require final
+packaged qualification before release. See the research log for scoped evidence.
+
+Authenticated local pixel surfaces are available to compatible providers; see
+[the shared-storage integration](research/pixel-surfaces/README.md). Ordinary
+terminal applications retain the Kitty graphics path. [Sparse grid hashing measurements](research/daemon-hashing/README.md)
+cover reducer work only, not interactive latency.
 
 Canonical rows retain immutable shared identity. The native projection converts
 changed rows and recomposes affected canvas rows, while retaining unchanged rows
@@ -1019,3 +1041,38 @@ pipes and isolated fixture daemons. The native worker driver is opt-in through
 `integration-test`; it exposes fixture state and text for assertions and must not
 be attached to personal sessions. It does not exercise OS keyboard delivery, GPU
 painting, physical scrolling or SSH latency and is not a performance benchmark.
+
+### Native catalog development entries
+
+The development binary can use Rust catalog and SSH ownership directly:
+
+```bash
+tmux-ide-gpui --tmux-native-daemon /absolute/private/daemon.json
+tmux-ide-gpui --tmux-native-ssh user@host
+# Optionally pin a previously verified remote environment UUID:
+tmux-ide-gpui --tmux-native-ssh user@host --environment UUID
+# Retain a separately verified local registry while starting on SSH:
+tmux-ide-gpui --tmux-native-ssh user@host --local-daemon /absolute/private/daemon.json
+```
+
+These entries require an existing compatible daemon; they do not install or start
+one. SSH uses noninteractive OpenSSH authentication and existing host trust.
+The SSH entry shares one owned forward between independent foreground and layout
+HTTP lanes and verifies the peer on each terminal socket before redemption.
+Interrupted terminals now use bounded automatic rediscovery and reopen only the
+same server generation and session, preserving the preferred pane. Recovery
+defers while backgrounded; navigation cancels it, and mutations are never
+automatically replayed. Saved-profile selection and return-to-Local retain a separate local registry
+worker. The local entry provides that worker automatically; the SSH entry
+requires the explicit `--local-daemon` record for registry operations.
+Recovery and manual refresh revalidate saved-profile authority before replacement
+SSH discovery. An authenticated local registry watch also invalidates changed
+profiles during healthy connections. Disabling, removing or retargeting the
+selected profile retires its SSH route and returns to Local; unchanged heartbeat
+responses do not republish UI state. This watch requires the matching daemon
+watch endpoint. Native Add machine now saves through the local owner, preserves
+existing identity pins, and reconciles uncertain saves without replaying them.
+The client also supports add-only registry imports. The packaged launcher now
+uses native local discovery by default; the metadata helper remains available
+only through the explicit compatibility entry. See `research/README.md` for
+evidence and remaining work; these entries are not a performance-parity claim.

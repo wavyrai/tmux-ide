@@ -16,6 +16,8 @@ pub(super) struct Response {
     operation_id: u64,
     status: Status,
     body: Option<String>,
+    #[serde(skip)]
+    native_result: Option<Option<herdr_client::tmux_history::AnchorResult>>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +27,31 @@ enum Status {
     Failed,
 }
 impl Response {
+    pub fn from_native(
+        id: String,
+        request: u64,
+        operation_id: u64,
+        result: Result<
+            Option<herdr_client::tmux_history::AnchorResult>,
+            herdr_client::tmux_daemon::Error,
+        >,
+    ) -> Self {
+        let (status, native_result) = match result {
+            Ok(result) => (Status::Ok, Some(result)),
+            Err(_) => (Status::Failed, None),
+        };
+        Self {
+            kind: "native-history-result".into(),
+            version: 1,
+            id,
+            request,
+            operation_id,
+            status,
+            body: None,
+            native_result,
+        }
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() > 20 * 1024 {
             return Err(Error::Invalid("native history response too large"));
@@ -174,12 +201,16 @@ impl History {
             presentation.fail_history(&ticket);
             return Ok(true);
         }
-        let result = match (response.status, response.body, self.key.as_ref()) {
-            (Status::Ok, Some(body), Some(key)) => Some(
-                decode_result(body.as_bytes(), &key.0, &key.1)
-                    .map_err(|_| Error::Invalid("native history scope rejected"))?,
-            ),
-            _ => None,
+        let result = if let Some(result) = response.native_result {
+            result
+        } else {
+            match (response.status, response.body, self.key.as_ref()) {
+                (Status::Ok, Some(body), Some(key)) => Some(
+                    decode_result(body.as_bytes(), &key.0, &key.1)
+                        .map_err(|_| Error::Invalid("native history scope rejected"))?,
+                ),
+                _ => None,
+            }
         };
         let changed = presentation.complete_history(&ticket, result, now);
         self.save(presentation);

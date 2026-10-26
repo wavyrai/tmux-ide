@@ -18,6 +18,8 @@ mod checkpoint;
 mod cli;
 mod close_modal;
 mod tmux_cli;
+#[cfg(target_os = "macos")]
+pub mod tmux_native_surface;
 mod tmux_snapshot;
 
 pub fn run_tmux() -> std::process::ExitCode {

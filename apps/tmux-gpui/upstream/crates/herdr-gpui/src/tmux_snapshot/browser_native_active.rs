@@ -94,6 +94,13 @@ impl Active {
         Ok(())
     }
     pub(super) fn poll(&mut self, state: &mut State, now: u64) -> Result<bool, NativeError> {
+        if self.stream_interrupted {
+            if let Some(done) = self.owner.poll_interrupted(now) {
+                self.owner_completed(done);
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         let prior_actions = state.pane_actions.clone();
         let prior_status = state.status.clone();
         let update = self.controller.poll(now)?;
@@ -205,6 +212,10 @@ impl Active {
         let prior = state.frame.clone();
         let ready = state.input_ready;
         let presence = state.presence_revision;
+        #[cfg(target_os = "macos")]
+        let surfaces_changed;
+        #[cfg(not(target_os = "macos"))]
+        let surfaces_changed = false;
         if let Some(window) = update.window {
             self.history
                 .before_pane(&window.paint.selected_pane, &self.presentation);
@@ -236,14 +247,29 @@ impl Active {
                     .graphics
                     .placements(&window, self.presentation.history_offset())?;
             }
+            #[cfg(target_os = "macos")]
+            {
+                surfaces_changed =
+                    self.surfaces
+                        .apply(state, &window, self.presentation.history_offset())?;
+            }
         } else {
+            #[cfg(target_os = "macos")]
+            {
+                surfaces_changed = self.surfaces.clear(state);
+            }
             self.presentation.invalidate_overlay();
             revoke(&mut None, state);
         }
         if selection_rejected {
             state.input_target_rejected = true;
         }
-        if state.input_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
+        // Attachment acceptance concerns coherent live authority. Restored
+        // scrollback intentionally disables UI typing, but must not prevent
+        // session navigation/history from acknowledging the live attachment.
+        let attachment_ready =
+            self.controller.input_ready() && state.frame.is_some() && !state.retained_preview;
+        if attachment_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
             self.metadata_notice = Some(Command::NativeTerminalReady {
                 version: 1,
                 id: self.id.clone(),
@@ -293,6 +319,7 @@ impl Active {
             || prior_status != state.status
             || history_changed
             || graphics_changed
+            || surfaces_changed
             || ready != state.input_ready
             || presence != state.presence_revision
             || match (prior.as_ref(), state.frame.as_ref()) {

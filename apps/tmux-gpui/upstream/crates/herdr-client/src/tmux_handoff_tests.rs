@@ -176,3 +176,25 @@ fn local_root_is_explicit_strict_and_canonical_generation_is_not_scope_generatio
 
 #[path = "tmux_handoff_binary_tests.rs"]
 mod binary;
+
+#[test]
+fn broker_json_cannot_inject_native_remote_identity() {
+    for value in [json!(null), json!({"pid":123})] {
+        let mut wrong = envelope();
+        wrong["capability"]["remotePeer"] = value;
+        assert!(matches!(
+            Event::parse(wrong.to_string().as_bytes()),
+            Err(Error::Json(_))
+        ));
+    }
+}
+
+#[test]
+fn pipe_json_cannot_enable_native_surface_authority() {
+    let mut value = envelope();
+    value["capability"]["nativeSurfaces"] = json!(true);
+    assert!(matches!(
+        Event::parse(value.to_string().as_bytes()),
+        Err(Error::Json(_))
+    ));
+}

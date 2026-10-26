@@ -136,6 +136,21 @@ node-pty loading only; it is not an exhaustive test of the watcher or the native
 recipes above. Changes require relevant PTY/watcher behavior and installed-package
 qualification on supported hosts; there is no local patch-removal condition.
 
+### Native macOS alpha: Apple GPUI surfaces
+
+The separately distributed GUI patches `bezel-gpui-apple` 0.3.19+zed.f16f96 to
+[repository-owned source](../apps/tmux-gpui/vendor/README.md).
+[Provenance](../apps/tmux-gpui/vendor/bezel-gpui-apple-provenance.json) records the
+original crate checksum, original file hashes and modified files. The patch adds
+BGRA surfaces and retains submitted CoreVideo buffers through GPU completion,
+while preserving NV12. Native build receipts include these dependency inputs.
+
+Qualify upgrades with the standalone Metal readback/lifetime tests and application
+GUI tests using their respective lockfiles. Remove the patch only after equivalent
+upstream color, mixed-format and lifetime behavior passes. This is a renderer
+prerequisite; it does not provide authenticated pixel transport or producer ACKs,
+and the universal npm package does not ship these native assets.
+
 ## Separate experimental inputs
 
 These recipes are not evidence that the terminal release uses Ghostty:

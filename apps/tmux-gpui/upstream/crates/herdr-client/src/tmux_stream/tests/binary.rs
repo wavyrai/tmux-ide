@@ -1,6 +1,7 @@
 use super::super::*;
 fn options() -> ConnectOptions {
     ConnectOptions {
+        remote_peer: None,
         descriptor: serde_json::from_value(serde_json::json!({"protocolVersion":2,"webSocketUrl":"ws://127.0.0.1:4000/v2/terminal/pane-streams/redeem","subprotocol":SUBPROTOCOL,"redemptionTicket":"unused","daemonInstanceId":"unused","requestId":"unused","expiresAt":1,"panes":["pane.one"],"effectiveViewerMode":"read-only"})).unwrap(),
         origin:"http://127.0.0.1:4000".into(),host_client_id:"native.test".into(),
     }
@@ -22,6 +23,10 @@ fn binary_chunks_demultiplex_with_exact_scope_and_bounds() {
     );
     assert!(matches!(
         wire::parse_binary(b"TGB1abcdefgh", &options()),
+        Ok(Event::GraphicsBinary(_))
+    ));
+    assert!(matches!(
+        wire::parse_binary(b"TGB2abcdefgh", &options()),
         Ok(Event::GraphicsBinary(_))
     ));
     for change in [

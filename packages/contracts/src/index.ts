@@ -50,6 +50,8 @@ export * from "./session-runtime.ts";
 export * from "./terminal-replica.ts";
 export * from "./terminal-delivery.ts";
 export * from "./terminal-graphics.ts";
+export * from "./terminal-graphics-compressed.ts";
+export * from "./terminal-surfaces.ts";
 export * from "./terminal-runtime-inventory.ts";
 export * from "./experience-shell.ts";
 export * from "./application-shell.ts";

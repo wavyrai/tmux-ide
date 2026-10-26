@@ -17,19 +17,19 @@ pub(super) enum Harness {
     Claude,
     Codex,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Request {
-    version: u8,
-    id: String,
-    request: u64,
-    sequence: u64,
-    operation_id: String,
-    live_session_id: String,
-    generation: String,
-    pane: String,
+    pub(super) version: u8,
+    pub(super) id: String,
+    pub(super) request: u64,
+    pub(super) sequence: u64,
+    pub(super) operation_id: String,
+    pub(super) live_session_id: String,
+    pub(super) generation: String,
+    pub(super) pane: String,
     #[serde(flatten)]
-    action: Action,
+    pub(super) action: Action,
 }
 #[derive(Debug, thiserror::Error)]
 pub(super) enum Error {
@@ -172,6 +172,18 @@ impl Owner {
             }
         }
     }
+    pub(super) fn waiting_receipt(&self) -> bool {
+        self.gate.busy() && !self.gate.waiting()
+    }
+    pub(super) fn poll_interrupted(&mut self, now: u64) -> Option<Completion> {
+        let done = self.gate.poll_interrupted(now)?;
+        self.pending = None;
+        Some(Completion {
+            reissue: done.submitted,
+            target_pane: None,
+            outcome: done.outcome,
+        })
+    }
     pub fn cancel_waiting(&mut self) {
         if self.gate.cancel_waiting().is_some() {
             self.pending = None;
@@ -183,6 +195,12 @@ impl Owner {
             return Err(Error::Invalid);
         }
         let response: Response = serde_json::from_slice(bytes).map_err(|_| Error::Invalid)?;
+        self.response_native(response)
+    }
+    pub(super) fn response_native(
+        &mut self,
+        response: Response,
+    ) -> Result<Option<Completion>, Error> {
         if response.kind != "native-owner-action-result"
             || response.version != 1
             || response.id != self.id
@@ -210,12 +228,12 @@ impl Owner {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Response {
+pub(super) struct Response {
     #[serde(rename = "type")]
     kind: String,
     version: u8,
-    id: String,
-    request: u64,
+    pub(super) id: String,
+    pub(super) request: u64,
     sequence: u64,
     operation_id: String,
     status: String,
@@ -312,4 +330,59 @@ fn receipt_present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Receipt>, D::Error> {
     Receipt::deserialize(deserializer).map(Some)
+}
+
+impl Response {
+    pub(super) fn native(
+        request: &Request,
+        receipt: Option<herdr_client::tmux_daemon::CreatedPane>,
+        busy: bool,
+    ) -> Self {
+        let receipt = receipt.map(|r| Receipt {
+            operation_id: r.operation_id,
+            daemon_instance_id: r.daemon_instance_id,
+            outcome: match r.outcome {
+                herdr_client::tmux_daemon::PaneCreateOutcome::Created => "created",
+                herdr_client::tmux_daemon::PaneCreateOutcome::Replayed => "replayed",
+            }
+            .into(),
+            resource: Resource {
+                resource_version: r.resource.resource_version,
+                workspace_name: r.resource.workspace_name,
+                semantic_pane_id: r.resource.semantic_pane_id,
+                display_title: r.resource.display_title,
+                kind: match r.resource.kind {
+                    herdr_client::tmux_daemon::PaneKind::Terminal => "terminal",
+                    herdr_client::tmux_daemon::PaneKind::Agent => "agent",
+                }
+                .into(),
+                harness_profile_id: r
+                    .resource
+                    .harness_profile_id
+                    .map_or(serde_json::Value::Null, Into::into),
+                role: r.resource.role.map_or(serde_json::Value::Null, Into::into),
+                mission_id: r
+                    .resource
+                    .mission_id
+                    .map_or(serde_json::Value::Null, Into::into),
+            },
+        });
+        Self {
+            kind: "native-owner-action-result".into(),
+            version: 1,
+            id: request.id.clone(),
+            request: request.request,
+            sequence: request.sequence,
+            operation_id: request.operation_id.clone(),
+            status: if receipt.is_some() {
+                "created"
+            } else if busy {
+                "busy"
+            } else {
+                "failed"
+            }
+            .into(),
+            receipt,
+        }
+    }
 }

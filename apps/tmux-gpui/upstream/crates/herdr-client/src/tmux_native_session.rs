@@ -17,6 +17,9 @@ use std::{
 #[path = "tmux_native_session_local.rs"]
 mod local;
 
+#[path = "tmux_native_session_surfaces.rs"]
+pub mod surfaces;
+
 const GRAPHICS_BYTES: usize = 8 * 1024 * 1024;
 const GRAPHICS_COUNT: usize = 32;
 const CONTROL_COUNT: usize = 32;
@@ -38,6 +41,8 @@ pub enum Error {
     GraphicsBacklog,
     #[error("native graphics capability not offered")]
     GraphicsDisabled,
+    #[error("native surface platform owner failed")]
+    NativeSurface(#[source] surfaces::Failure),
     #[error("native terminal session cancelled")]
     Cancelled,
     #[error("native terminal worker stopped")]
@@ -161,6 +166,12 @@ impl Mailbox {
         self.precise_cell_pixels = false;
     }
 
+    fn local_graphics_room(&self) -> bool {
+        // Reserve a chunk plus the bounded invalidations it can produce.
+        self.graphics.len() + 2 <= GRAPHICS_COUNT
+            && self.graphics_bytes + tmux_graphics::CHUNK_BYTES + 512 + 256 * 32 <= GRAPHICS_BYTES
+    }
+
     fn graphics_event(&mut self, event: GraphicsEvent) -> Result<(), Error> {
         let bytes = match &event {
             GraphicsEvent::Chunk(chunk) => chunk.bytes.len() + 512,
@@ -205,6 +216,7 @@ impl Mailbox {
 /// One connection's native state. Old handles cannot publish into a successor's mailbox.
 pub struct NativeSession {
     graphics_missing: crossbeam_channel::Sender<Vec<String>>,
+    graphics_drained: crossbeam_channel::Sender<()>,
     stream: Arc<PaneStream>,
     shared: Arc<Mutex<Mailbox>>,
 }
@@ -239,6 +251,44 @@ impl NativeSession {
         binary_cells: bool,
         alternate_screen_projection: bool,
     ) -> Result<Self, Error> {
+        Self::spawn_configured(
+            options,
+            workspace,
+            graphics_enabled,
+            local_images,
+            binary_cells,
+            alternate_screen_projection,
+            None,
+        )
+    }
+
+    /// The trusted broker must have negotiated a same-host native provider for
+    /// this issued stream. A loopback URL alone does not authorize this entry.
+    /// The driver is started by the model worker only after authenticated Ready.
+    pub fn spawn_with_surfaces(
+        options: ConnectOptions,
+        workspace: String,
+        driver: Box<dyn surfaces::Driver>,
+    ) -> Result<Self, Error> {
+        Self::spawn_configured(options, workspace, true, None, false, false, Some(driver))
+    }
+
+    pub(crate) fn spawn_configured(
+        options: ConnectOptions,
+        workspace: String,
+        graphics_enabled: bool,
+        local_images: Option<tmux_graphics::LocalImages>,
+        binary_cells: bool,
+        alternate_screen_projection: bool,
+        surfaces: Option<Box<dyn surfaces::Driver>>,
+    ) -> Result<Self, Error> {
+        let surfaces = surfaces.map(surfaces::Owner::new);
+        if surfaces.is_some() && (options.remote_peer.is_some() || !graphics_enabled) {
+            return Err(Error::GraphicsDisabled);
+        }
+        if options.remote_peer.is_some() && local_images.is_some() {
+            return Err(Error::Graphics(tmux_graphics::Error::Identity));
+        }
         if local_images
             .as_ref()
             .is_some_and(|root| !graphics_enabled || !root.validate())
@@ -254,6 +304,7 @@ impl NativeSession {
             None
         };
         let (graphics_missing, missing) = crossbeam_channel::bounded(8);
+        let (graphics_drained, drained) = crossbeam_channel::bounded(1);
         let state = TerminalState::new_offered(
             options.descriptor.daemon_instance_id.clone(),
             workspace,
@@ -276,9 +327,10 @@ impl NativeSession {
                     state,
                     graphics,
                     local_images,
-                    missing,
+                    (missing, drained),
                     &worker_stream,
                     &worker_shared,
+                    surfaces,
                 ) && let Ok(mut mailbox) = worker_shared.lock()
                 {
                     mailbox.retire(Status::Failed(Arc::new(error)));
@@ -292,6 +344,7 @@ impl NativeSession {
             stream,
             shared,
             graphics_missing,
+            graphics_drained,
         })
     }
 
@@ -341,7 +394,8 @@ impl NativeSession {
             .collect();
         mailbox.control_bytes = 0;
         mailbox.graphics_bytes = 0;
-        Ok(Updates {
+        let had_graphics = !mailbox.graphics.is_empty();
+        let updates = Updates {
             materializing: mailbox.materializing.clone(),
             status: mailbox.status.clone(),
             panes,
@@ -350,7 +404,12 @@ impl NativeSession {
             graphics_placements: std::mem::take(&mut mailbox.graphics_placements),
             cell_pixels: mailbox.cell_pixels,
             precise_cell_pixels: mailbox.precise_cell_pixels,
-        })
+        };
+        drop(mailbox);
+        if had_graphics {
+            let _ = self.graphics_drained.try_send(());
+        }
+        Ok(updates)
     }
 
     /// Retained snapshots become preview-only as soon as this returns no current value.
@@ -425,16 +484,25 @@ fn run(
     mut state: TerminalState,
     mut graphics: Option<Graphics>,
     local_images: Option<tmux_graphics::LocalImages>,
-    missing: crossbeam_channel::Receiver<Vec<String>>,
+    graphics_notices: (
+        crossbeam_channel::Receiver<Vec<String>>,
+        crossbeam_channel::Receiver<()>,
+    ),
     stream: &PaneStream,
     shared: &Mutex<Mailbox>,
+    mut surfaces: Option<surfaces::Owner>,
 ) -> Result<(), Error> {
+    let (missing, drained) = graphics_notices;
+    let paused_local = crossbeam_channel::never();
     let mut local = local_images.map(local::LocalTransfers::new).transpose()?;
     let local_events = local
         .as_ref()
         .map_or_else(crossbeam_channel::never, local::LocalTransfers::events);
     let mut committed = BTreeMap::new();
     let mut maintenance = Maintenance::new();
+    let surface_events = surfaces
+        .as_ref()
+        .map_or_else(crossbeam_channel::never, surfaces::Owner::events);
     loop {
         if shared.lock().map_err(|_| Error::Mailbox)?.retired {
             state.retire();
@@ -446,6 +514,9 @@ fn run(
         }
         // Due maintenance cannot starve behind continuously ready terminal/image channels.
         let now = Instant::now();
+        if let Some(surfaces) = &mut surfaces {
+            surfaces.poll(now, &committed, stream)?;
+        }
         if let Some(graphics) = graphics.as_mut()
             && graphics
                 .next_expiry()
@@ -464,8 +535,25 @@ fn run(
                 refresh_graphics(graphics, &committed, stream, shared, None)?;
             }
         }
-        maintenance.arm(graphics.as_ref().and_then(Graphics::next_expiry));
+        maintenance.arm(
+            graphics
+                .as_ref()
+                .and_then(Graphics::next_expiry)
+                .into_iter()
+                .chain(surfaces.as_ref().and_then(surfaces::Owner::deadline))
+                .min(),
+        );
+        let local_ready = if shared
+            .lock()
+            .map_err(|_| Error::Mailbox)?
+            .local_graphics_room()
+        {
+            &local_events
+        } else {
+            &paused_local
+        };
         crossbeam_channel::select! {
+            recv(drained) -> _ => {}
             recv(stream.completion()) -> result => {
                 return Err(result.map_or(Error::WorkerStopped, Error::Transport));
             }
@@ -492,10 +580,21 @@ fn run(
                     stream.try_send(Command::from_json(json)?)?;
                 }
                 match &outcome {
+                    Outcome::Ready(_) => {
+                        if let Some(surfaces) = &mut surfaces { surfaces.start(stream)?; }
+                    }
                     Outcome::Control(raw) => {
                         #[derive(serde::Deserialize)]
                         struct Kind<'a> { #[serde(rename="type")] kind: &'a str }
-                        if serde_json::from_str::<Kind<'_>>(raw.get()).map_err(Error::Ack)?.kind == "terminal-graphics-local" {
+                        let kind = serde_json::from_str::<Kind<'_>>(raw.get()).map_err(Error::Ack)?.kind;
+                        // Parsing a native control frame does not negotiate native
+                        // storage. Until a platform owner is attached to this exact
+                        // session, never expose unsolicited offers to presentation.
+                        if matches!(kind, "terminal-surface-available" | "terminal-surface-peer" | "terminal-surface-offer" | "terminal-surface-fallback") {
+                            surfaces.as_mut().ok_or(Error::GraphicsDisabled)?.accept(raw.get(), &committed, stream)?;
+                            continue;
+                        }
+                        if kind == "terminal-graphics-local" {
                             local.as_mut().ok_or(Error::GraphicsDisabled)?.accept(raw.get(),graphics.as_mut().ok_or(Error::GraphicsDisabled)?,stream,shared)?;
                             continue;
                         }
@@ -526,8 +625,11 @@ fn run(
                 }
                 publish(shared, outcome)?;
             }
-            recv(local_events) -> result => {
+            recv(local_ready) -> result => {
                 local.as_mut().ok_or(Error::GraphicsDisabled)?.apply(result.map_err(|_|Error::WorkerStopped)?,graphics.as_mut().ok_or(Error::GraphicsDisabled)?,stream,shared)?;
+            }
+            recv(surface_events) -> _ => {
+                if let Some(surfaces) = &mut surfaces { surfaces.wake(&committed, stream)?; }
             }
             recv(missing) -> result => {
                 let digests = result.map_err(|_| Error::Cancelled)?;

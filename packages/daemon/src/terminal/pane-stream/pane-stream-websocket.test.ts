@@ -1,3 +1,5 @@
+import * as compression from "../graphics/compress-chunk.ts";
+import { NativeSurfaceProviderRegistry } from "../graphics/native-surface-provider.ts";
 import { LocalImageOwner } from "../graphics/local-image-owner.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, lstat, rm } from "node:fs/promises";
@@ -8,6 +10,7 @@ import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel
 import { describe, expect, it, vi } from "vitest";
 import {
   decodeTerminalGraphicsBinary,
+  decodeTerminalGraphicsCompressed,
   decodeTerminalDeliveryBinaryChunk,
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
@@ -441,6 +444,7 @@ function testScheduler() {
 
 function harness(
   options: {
+    nativeSurfaces?: NativeSurfaceProviderRegistry;
     localImages?: LocalImageOwner;
     panes?: string[];
     budgets?: ConstructorParameters<typeof PaneStreamAdmissionCoordinator>[0]["flowBudgets"];
@@ -519,6 +523,7 @@ function harness(
     };
   });
   const coordinator = new PaneStreamAdmissionCoordinator({
+    nativeSurfaces: options.nativeSurfaces,
     localImages: options.localImages,
     daemonInstanceId: INSTANCE,
     webSocketUrl: WS_URL,
@@ -3687,4 +3692,445 @@ describe("negotiated local graphics leases", () => {
       }
     },
   );
+});
+
+describe("negotiated raw pixel compression", () => {
+  it.each([107, 113, 114])("preserves bytes and requires capability %s", async (capability) => {
+    const data = Buffer.alloc(32 * 32 * 4, 42);
+    const digest = createHash("sha256").update(data).digest("hex").slice(0, 32);
+    const image = { imageId: 1, digest, width: 32, height: 32, format: "rgba" as const, data };
+    const h = harness({
+      graphics: {
+        subscribe(listener) {
+          listener({
+            revision: 1,
+            images: [{ ...image, bytes: data.length, placeholder: null }],
+            placements: [],
+          });
+          return () => undefined;
+        },
+        image: () => image,
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.editor"],
+      semanticDelivery: true,
+      protocolVersions: [1, 101, 102, capability],
+    });
+    try {
+      socket.drainAll();
+      socket.message({ type: "terminal-graphics-request", pane: "pane.editor", digests: [digest] });
+      await vi.waitFor(() => {
+        h.scheduler.runDue();
+        expect(socket.binaryFrames).toHaveLength(1);
+      });
+      const state = socket.framesOfType("terminal-graphics")[0]!.state as Record<string, unknown>;
+      expect(state.compressedBlobs).toBe(capability === 107 ? undefined : true);
+      const decoded =
+        capability === 107
+          ? decodeTerminalGraphicsBinary(socket.binaryFrames[0]!)
+          : decodeTerminalGraphicsCompressed(socket.binaryFrames[0]!);
+      expect(decoded.header.blob).toEqual({
+        digest,
+        width: 32,
+        height: 32,
+        format: "rgba",
+        total: data.length,
+        offset: 0,
+      });
+      expect(capability === 107 ? Buffer.from(decoded.bytes) : inflateSync(decoded.bytes)).toEqual(
+        data,
+      );
+    } finally {
+      socket.close();
+    }
+  });
+});
+
+describe("compression completion lifetime", () => {
+  it.each(["closed", "superseded"])("drops results after %s", async (reason) => {
+    const data = Buffer.alloc(4096, 42);
+    const digest = "a".repeat(32);
+    const image = { imageId: 1, digest, width: 32, height: 32, format: "rgba" as const, data };
+    let current: typeof image | undefined = image;
+    let finish!: (result: Uint8Array | null) => void;
+    const spy = vi.spyOn(compression, "compressGraphicsChunk").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const h = harness({
+      graphics: {
+        subscribe(listener) {
+          listener({
+            revision: 1,
+            images: [
+              {
+                imageId: 1,
+                digest,
+                width: 32,
+                height: 32,
+                format: "rgba",
+                bytes: data.length,
+                placeholder: null,
+              },
+            ],
+            placements: [],
+          });
+          return () => undefined;
+        },
+        image: () => current,
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.editor"],
+      semanticDelivery: true,
+      protocolVersions: [1, 101, 102, 113],
+    });
+    try {
+      socket.drainAll();
+      socket.message({ type: "terminal-graphics-request", pane: "pane.editor", digests: [digest] });
+      await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
+      if (reason === "closed") socket.close();
+      else current = undefined;
+      finish(Uint8Array.of(1, 2, 3));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      h.scheduler.runDue();
+      expect(socket.binaryFrames).toHaveLength(0);
+    } finally {
+      finish?.(null);
+      spy.mockRestore();
+      socket.close();
+    }
+  });
+});
+
+describe("native surface negotiation with a registered provider", () => {
+  it("requires opt-in and routes retirement only to the original producer connection", async () => {
+    const nativeSurfaces = new NativeSurfaceProviderRegistry(INSTANCE);
+    const clients: Array<{
+      offer(value: unknown): boolean;
+      retire: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    }> = [];
+    const unregister = nativeSurfaces.register({
+      auditToken: [8, 7, 6, 5, 4, 3, 2, 1],
+      open: (context) => {
+        const client = { offer: context.offer, retire: vi.fn(), close: vi.fn() };
+        clients.push(client);
+        return { start() {}, retire: client.retire, fallback() {}, close: client.close };
+      },
+    });
+    const h = harness({ nativeSurfaces });
+    const receiver = () => ({
+      type: "terminal-surface-receiver",
+      version: 1,
+      generation: INSTANCE,
+      connectionNonce: randomUUID(),
+      challenge: randomUUID(),
+      pid: 123,
+      slot: 0,
+      auditToken: [1, 2, 3, 4, 5, 6, 7, 8],
+    });
+    try {
+      const unoffered = await connect(h, { semanticDelivery: true });
+      unoffered.socket.message(receiver());
+      expect(clients).toHaveLength(0);
+      expect(unoffered.socket.framesOfType("terminal-surface-fallback")).toHaveLength(1);
+      const first = await connect(h, {
+        semanticDelivery: true,
+        protocolVersions: [1, 101, 114, 102, 103, 104, 116, 105, 106],
+      });
+      const identity = receiver();
+      first.socket.message(identity);
+      first.socket.message(identity);
+      expect(clients).toHaveLength(1);
+      expect(first.socket.framesOfType("terminal-surface-peer")).toHaveLength(1);
+      expect(
+        clients[0]!.offer({
+          type: "terminal-surface-offer",
+          version: 1,
+          pane: "pane.editor",
+          generation: INSTANCE,
+          incarnation: "pane:1",
+          deliveryNonce: randomUUID(),
+          canonicalRevision: 1,
+          canonicalStateHash: "0000000000000001",
+          sequence: 1,
+          surfaceId: randomUUID(),
+          storageTicket: randomUUID(),
+          placement: { row: 0, column: 0, rows: 1, columns: 1 },
+          format: "bgra8-straight",
+          width: 16,
+          height: 16,
+          stride: 64,
+          allocationBytes: 1024,
+        }),
+      ).toBe(true);
+      expect(first.socket.framesOfType("terminal-surface-offer")).toHaveLength(1);
+      expect(first.socket.framesOfType("terminal-surface-offer")[0]).toMatchObject({
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        canonicalRevision: 1,
+        canonicalStateHash: "0000000000000001",
+        incarnation: "pane:1",
+      });
+      const second = await connect(h, {
+        semanticDelivery: true,
+        protocolVersions: [1, 101, 114, 102, 103, 104, 116, 105, 106],
+      });
+      const otherIdentity = receiver();
+      second.socket.message(otherIdentity);
+      expect(clients[1]!.offer(first.socket.framesOfType("terminal-surface-offer")[0])).toBe(true);
+      second.socket.message({
+        type: "terminal-surface-retired",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: identity.connectionNonce,
+        sequence: 1,
+      });
+      expect(second.socket.closed).not.toBeNull();
+      expect(clients[0]!.retire).not.toHaveBeenCalled();
+      expect(clients[1]!.retire).not.toHaveBeenCalled();
+      unregister();
+      expect(first.socket.framesOfType("terminal-surface-fallback")).toHaveLength(1);
+      first.socket.message({
+        type: "terminal-surface-retired",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: identity.connectionNonce,
+        sequence: 1,
+      });
+      expect(clients[0]!.retire).toHaveBeenCalledExactlyOnceWith(1);
+      expect(first.socket.closed).toBeNull();
+      first.socket.message({
+        type: "terminal-surface-retired",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: identity.connectionNonce,
+        sequence: 1,
+      });
+      expect(first.socket.closed).not.toBeNull();
+    } finally {
+      await h.coordinator.shutdown();
+      nativeSurfaces.close();
+    }
+  });
+});
+
+describe("native surface negotiation without an enabled provider", () => {
+  const receiver = () => ({
+    type: "terminal-surface-receiver",
+    version: 1,
+    generation: INSTANCE,
+    connectionNonce: randomUUID(),
+    challenge: randomUUID(),
+    pid: 123,
+    slot: 0,
+    auditToken: [1, 2, 3, 4, 5, 6, 7, 8],
+  });
+  it("rejects native control before redemption", async () => {
+    const h = harness();
+    try {
+      await h.coordinator.issue(
+        {
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          workspaceName: "workspace.alpha",
+          panes: ["pane.editor"],
+          viewerMode: "read-only",
+        },
+        {
+          requestId: freshRequestId(),
+          projectIdentity: "workspace.alpha",
+          sessionName: SESSION,
+          rendererOrigin: ORIGIN,
+          hostClientId: "test-native-unredeemed",
+        },
+      );
+      const decision = h.coordinator.reserveUpgrade({
+        path: PANE_STREAM_REDEEM_PATH,
+        protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+        origin: ORIGIN,
+      });
+      if (!decision.accepted) throw new Error("fixture upgrade refused");
+      const socket = new FakeSocket();
+      decision.admission.bind(socket);
+      socket.message(receiver());
+      expect(socket.closed).not.toBeNull();
+      expect(socket.framesOfType("terminal-surface-fallback")).toHaveLength(0);
+    } finally {
+      await h.coordinator.shutdown();
+    }
+  });
+  it.each(["legacy", "oversized"])("rejects %s native control", async (mode) => {
+    const h = harness();
+    const { socket } = await connect(h, { semanticDelivery: mode !== "legacy" });
+    try {
+      socket.message(
+        mode === "oversized" ? " ".repeat(16385) + JSON.stringify(receiver()) : receiver(),
+      );
+      expect(socket.closed).not.toBeNull();
+      expect(socket.framesOfType("terminal-surface-fallback")).toHaveLength(0);
+    } finally {
+      await h.coordinator.shutdown();
+    }
+  });
+  it("returns one scoped fallback and preserves the authenticated terminal stream", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { semanticDelivery: true });
+    try {
+      const frame = receiver();
+      socket.message(frame);
+      socket.message(frame);
+      expect(socket.framesOfType("terminal-surface-fallback")).toEqual([
+        {
+          type: "terminal-surface-fallback",
+          version: 1,
+          generation: INSTANCE,
+          connectionNonce: frame.connectionNonce,
+          reason: "unsupported",
+        },
+      ]);
+      socket.message({
+        type: "terminal-surface-fallback",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: frame.connectionNonce,
+        reason: "unsupported",
+      });
+      expect(socket.closed).toBeNull();
+      expect(socket.framesOfType("terminal-surface-peer")).toHaveLength(0);
+      expect(socket.framesOfType("terminal-surface-offer")).toHaveLength(0);
+    } finally {
+      await h.coordinator.shutdown();
+    }
+  });
+  it.each(["generation", "connectionNonce", "challenge", "pid", "slot", "auditToken"])(
+    "rejects receiver rebinding through %s",
+    async (field) => {
+      const h = harness();
+      const { socket } = await connect(h, { semanticDelivery: true });
+      try {
+        const frame = receiver();
+        socket.message(frame);
+        socket.message({
+          ...frame,
+          [field]:
+            field === "auditToken"
+              ? [2, 2, 2, 2, 2, 2, 2, 2]
+              : field === "pid"
+                ? 124
+                : field === "slot"
+                  ? 1
+                  : randomUUID(),
+        });
+        expect(socket.closed).not.toBeNull();
+        expect(socket.framesOfType("terminal-surface-fallback")).toHaveLength(1);
+      } finally {
+        await h.coordinator.shutdown();
+      }
+    },
+  );
+  it("rejects stale generation before returning a fallback", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { semanticDelivery: true });
+    try {
+      socket.message({ ...receiver(), generation: randomUUID() });
+      expect(socket.closed).not.toBeNull();
+      expect(socket.framesOfType("terminal-surface-fallback")).toHaveLength(0);
+    } finally {
+      await h.coordinator.shutdown();
+    }
+  });
+  it("does not accept another socket's fallback scope or an unissued retirement", async () => {
+    const h = harness();
+    const first = await connect(h, { semanticDelivery: true });
+    const second = await connect(h, { semanticDelivery: true });
+    try {
+      const frame = receiver();
+      first.socket.message(frame);
+      second.socket.message(receiver());
+      second.socket.message({
+        type: "terminal-surface-fallback",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: frame.connectionNonce,
+        reason: "storage",
+      });
+      expect(second.socket.closed).not.toBeNull();
+      expect(first.socket.closed).toBeNull();
+      first.socket.message({
+        type: "terminal-surface-retired",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: frame.connectionNonce,
+        sequence: 1,
+      });
+      expect(first.socket.closed).not.toBeNull();
+    } finally {
+      await h.coordinator.shutdown();
+    }
+  });
+});
+
+describe("native availability on an existing terminal connection", () => {
+  it("announces a late provider without issuing another terminal ready frame", async () => {
+    const nativeSurfaces = new NativeSurfaceProviderRegistry(INSTANCE);
+    const h = harness({
+      nativeSurfaces,
+      graphics: { subscribe: () => () => undefined, image: () => null },
+    });
+    nativeSurfaces.demand.presence(SESSION, false);
+    const { socket } = await connect(h, {
+      semanticDelivery: true,
+      protocolVersions: [1, 101, 116],
+    });
+    try {
+      expect(nativeSurfaces.demand.required("pane.editor")).toBe(true);
+      const watch = { type: "terminal-surface-watch", version: 1, generation: INSTANCE };
+      socket.message(watch);
+      await Promise.resolve();
+      expect(socket.framesOfType("terminal-surface-available")).toEqual([
+        {
+          type: "terminal-surface-available",
+          version: 1,
+          generation: INSTANCE,
+          connectionNonce: null,
+        },
+      ]);
+      const start = vi.fn();
+      nativeSurfaces.register({
+        auditToken: [8, 7, 6, 5, 4, 3, 2, 1],
+        open: () => ({ start, retire() {}, fallback() {}, close() {} }),
+      });
+      await Promise.resolve();
+      const availability = socket.framesOfType("terminal-surface-available").at(-1)!;
+      socket.message({
+        type: "terminal-surface-receiver",
+        version: 1,
+        generation: INSTANCE,
+        connectionNonce: availability.connectionNonce,
+        challenge: randomUUID(),
+        pid: 123,
+        slot: 0,
+        auditToken: [1, 2, 3, 4, 5, 6, 7, 8],
+      });
+      expect(start).toHaveBeenCalledOnce();
+      expect(nativeSurfaces.demand.required("pane.editor")).toBe(false);
+      const terminal = await connect(h, { panes: ["pane.editor"] });
+      expect(nativeSurfaces.demand.required("pane.editor")).toBe(true);
+      expect(nativeSurfaces.demand.required("pane.shell")).toBe(false);
+      terminal.socket.close();
+      await vi.waitFor(() => expect(nativeSurfaces.demand.required("pane.editor")).toBe(false));
+      expect(socket.framesOfType("terminal-surface-peer")).toHaveLength(1);
+      socket.message(watch);
+      await Promise.resolve();
+      expect(socket.framesOfType("terminal-surface-available")).toHaveLength(2);
+      expect(socket.framesOfType("ready")).toHaveLength(1);
+      expect(socket.closed).toBeNull();
+    } finally {
+      await h.coordinator.shutdown();
+      nativeSurfaces.close();
+    }
+  });
 });

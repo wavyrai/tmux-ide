@@ -60,6 +60,7 @@ uuid.workspace                 = true
 zeroize.workspace              = true
 
 [dev-dependencies]
+base64.workspace = true
 tungstenite.workspace = true
 gpui = { features = ["test-support"], workspace = true }
 
@@ -102,6 +103,9 @@ futures-lite.workspace = true
 oo7.workspace          = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+gpui_apple.workspace = true
+tmux-native-surface-sdk.workspace = true
+objc2-core-video.workspace = true
 block2.workspace                = true
 dispatch2.workspace             = true
 objc2-core-foundation.workspace = true

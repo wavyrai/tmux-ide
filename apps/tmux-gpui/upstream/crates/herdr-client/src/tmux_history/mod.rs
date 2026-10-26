@@ -1,5 +1,7 @@
 //! Native bounded scrollback. No HTTP credentials or terminal cell serialization crosses Node.
+mod request;
 mod restoration;
+pub use request::AnchorRequest;
 mod size;
 mod viewport;
 mod wire;

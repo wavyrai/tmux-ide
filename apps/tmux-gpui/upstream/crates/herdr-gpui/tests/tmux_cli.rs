@@ -7,11 +7,16 @@ use std::{
 };
 
 fn cli(args: &[&str]) -> Output {
+    cli_env(args, &[])
+}
+
+fn cli_env(args: &[&str], env: &[(&str, &str)]) -> Output {
     let home = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tmux-ide-gpui"))
         .args(args)
         .env_clear()
         .env("HOME", home.path())
+        .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -57,6 +62,15 @@ fn rejects_upstream_options_and_extra_arguments() {
         vec!["--dev"],
         vec!["--help", "extra"],
         vec!["--tmux-live-stdin", "extra"],
+        vec!["--tmux-browser-helper"],
+        vec!["--tmux-native-daemon"],
+        vec!["--tmux-native-local", "extra"],
+        vec!["--tmux-native-ssh"],
+        vec!["--tmux-native-ssh", "host", "bad"],
+        vec!["--tmux-native-ssh", "host", "--other", "bad"],
+        vec!["--tmux-native-daemon", "/private/daemon.json", "extra"],
+        vec!["--tmux-browser-helper", "node", "broker"],
+        vec!["--tmux-browser-helper", "node", "broker", "host", "extra"],
         vec!["--tmux-snapshot"],
         vec!["--tmux-snapshot", "file", "bad"],
     ] {
@@ -81,4 +95,49 @@ fn validates_snapshot_through_dedicated_executable() {
             .unwrap()
             .contains("Validated tmux snapshot")
     );
+}
+
+#[test]
+fn missing_broker_runtime_exits_before_opening_a_window() {
+    let out = cli(&[
+        "--tmux-browser-helper",
+        "/missing-tmux-test-node",
+        "broker",
+        "--local",
+    ]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn invalid_native_ssh_input_exits_without_gui_or_discovery() {
+    for args in [
+        vec!["--tmux-native-ssh", "-bad"],
+        vec!["--tmux-native-ssh", "host", "--environment", "bad"],
+        vec![
+            "--tmux-native-ssh",
+            "host",
+            "--local-daemon",
+            "relative.json",
+        ],
+    ] {
+        let out = cli(&args);
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+    }
+}
+
+#[test]
+fn invalid_native_local_namespace_exits_before_window_or_personal_state() {
+    for mode in ["invalid", "test", "development"] {
+        let out = cli_env(&["--tmux-native-local"], &[("TMUX_IDE_RUNTIME_MODE", mode)]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(out.stdout.is_empty());
+        assert!(
+            String::from_utf8(out.stderr)
+                .unwrap()
+                .contains("invalid local runtime namespace")
+        );
+    }
 }

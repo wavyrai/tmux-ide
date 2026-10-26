@@ -1,4 +1,18 @@
+import type { SurfaceViewerDemand } from "../graphics/native-surface-demand.ts";
 import {
+  TERMINAL_SURFACE_MAX_CONTROL_BYTES,
+  TERMINAL_SURFACE_CAPABILITY_VERSION,
+  type TerminalSurfaceReceiver,
+} from "@tmux-ide/contracts";
+import type {
+  NativeSurfaceProviderRegistry,
+  NativeSurfaceSession,
+} from "../graphics/native-surface-provider.ts";
+import { NativeSurfaceViewer } from "../graphics/native-surface-viewer.ts";
+import { compressGraphicsChunk } from "../graphics/compress-chunk.ts";
+import {
+  TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION,
+  TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
   type TerminalProjectionReceipt,
@@ -259,6 +273,7 @@ export interface PaneStreamAdmissionSnapshot {
 }
 
 export interface PaneStreamAdmissionCoordinatorOptions {
+  readonly nativeSurfaces?: NativeSurfaceProviderRegistry;
   readonly localImages?: LocalImageOwner;
   readonly daemonInstanceId: string;
   readonly webSocketUrl: string;
@@ -405,6 +420,7 @@ function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
  * ticket digests; a daemon restart makes every prior descriptor inert.
  */
 export class PaneStreamAdmissionCoordinator {
+  readonly #nativeSurfaces: NativeSurfaceProviderRegistry | undefined;
   readonly #localImages: LocalImageOwner | undefined;
   readonly #instanceId: string;
   readonly #webSocketUrl: string;
@@ -439,6 +455,9 @@ export class PaneStreamAdmissionCoordinator {
   #shutdownPromise: Promise<void> | null = null;
 
   constructor(options: PaneStreamAdmissionCoordinatorOptions) {
+    this.#nativeSurfaces = options.nativeSurfaces;
+    if (this.#nativeSurfaces && this.#nativeSurfaces.generation !== options.daemonInstanceId)
+      throw new Error("Native surface provider generation mismatch");
     this.#localImages = options.localImages;
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
     this.#webSocketUrl = PaneStreamLoopbackWebSocketUrlSchemaZ.parse(options.webSocketUrl);
@@ -811,6 +830,7 @@ export class PaneStreamAdmissionCoordinator {
         let live: PaneStreamLiveConnection;
         try {
           live = new PaneStreamLiveConnection({
+            nativeSurfaces: this.#nativeSurfaces,
             localImages: this.#localImages,
             clientId: `psc-${this.#clientCounter}`,
             socket,
@@ -1030,6 +1050,7 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
 }
 
 interface LiveConnectionOptions {
+  readonly nativeSurfaces?: NativeSurfaceProviderRegistry;
   readonly localImages?: LocalImageOwner;
   readonly clientId: string;
   readonly socket: DirectTerminalSocket;
@@ -1088,6 +1109,7 @@ interface PaneChannel {
   graphicsState: TerminalGraphicsState | null;
   graphicsZlib?: boolean;
   graphicsBinary?: boolean;
+  graphicsCompressed?: boolean;
   binaryCells?: boolean;
   graphicsLocal?: boolean;
   graphicsInline?: Set<string>;
@@ -1122,6 +1144,13 @@ export function rawGraphicsState(state: TerminalGraphicsState): TerminalGraphics
 const GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export class PaneStreamLiveConnection {
+  // One bounded native negotiation per redeemed socket; never reuse on reconnect.
+  readonly #nativeSurfaces: NativeSurfaceProviderRegistry | undefined;
+  #surfaceViewer: NativeSurfaceViewer | null = null;
+  #surfaceDemands = new Map<string, SurfaceViewerDemand>();
+  #surfaceNative = false;
+  #surfaceSession: NativeSurfaceSession | null = null;
+  #surfaceReceiver: TerminalSurfaceReceiver | null = null;
   readonly #localImages: LocalImageOwner | undefined;
   readonly #localLeases = new Map<string, { pane: string; expiresAt: number }>();
   readonly #clientId: string;
@@ -1248,6 +1277,7 @@ export class PaneStreamLiveConnection {
   }
 
   constructor(options: LiveConnectionOptions) {
+    this.#nativeSurfaces = options.nativeSurfaces;
     this.#localImages = options.localImages;
     this.#clientId = options.clientId;
     this.#socket = options.socket;
@@ -1349,6 +1379,7 @@ export class PaneStreamLiveConnection {
       this.#sessionRuntimeBinding?.onAuthoritySnapshot?.((snapshot) =>
         this.#usesExplicitAuthority ? this.#sendAuthoritySnapshot(snapshot) : undefined,
       ) ?? null;
+    if (!this.#descriptor.terminalDelivery) this.#observeSurfaceDemand(this.#descriptor.panes);
     void this.#subscribeAll();
   }
 
@@ -1356,6 +1387,12 @@ export class PaneStreamLiveConnection {
     if (this.#closed) return;
     this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
     this.#closed = true;
+    for (const demand of this.#surfaceDemands.values()) demand.close();
+    this.#surfaceDemands.clear();
+    this.#surfaceViewer?.close();
+    this.#surfaceViewer = null;
+    this.#surfaceSession?.close();
+    this.#surfaceSession = null;
     this.#cancelDrainTick?.();
     this.#cancelDrainTick = null;
     // Departure force-returns every ticket within this same tick.
@@ -1387,6 +1424,8 @@ export class PaneStreamLiveConnection {
       const delivery = channel.delivery;
       channel.delivery = null;
       channel.closed = true;
+      this.#surfaceDemands.get(channel.semanticPaneId)?.close();
+      this.#surfaceDemands.delete(channel.semanticPaneId);
       if (sub) closures.push(sub.close().catch(() => undefined));
       if (delivery) closures.push(delivery.close().catch(() => undefined));
     }
@@ -1854,10 +1893,27 @@ export class PaneStreamLiveConnection {
     await this.#awaitSemanticCredit(pane);
   }
 
+  #observeSurfaceDemand(panes: readonly string[]): void {
+    for (const pane of panes) {
+      if (this.#surfaceDemands.has(pane)) continue;
+      const demand = this.#nativeSurfaces?.demand.viewer(this.#descriptor.sessionName, [pane]);
+      if (!demand) return;
+      demand.native(this.#surfaceNative);
+      this.#surfaceDemands.set(pane, demand);
+    }
+  }
+
+  #surfaceControl(type: string): void {
+    if (type === "terminal-surface-offer") return;
+    this.#surfaceNative = type === "terminal-surface-peer";
+    for (const demand of this.#surfaceDemands.values()) demand.native(this.#surfaceNative);
+  }
+
   /** Announce the pane's kitty graphics state; the client pulls bytes it lacks. */
   #startGraphics(channel: PaneChannel): void {
     const graphics = channel.delivery?.graphics;
     if (!graphics) return;
+    this.#observeSurfaceDemand([channel.semanticPaneId]);
     // Renderers that cannot inflate see raw formats; their bytes are inflated
     // when served.
     const zlib =
@@ -1871,7 +1927,14 @@ export class PaneStreamLiveConnection {
         (version) =>
           version === TERMINAL_GRAPHICS_LOCAL_CAPABILITY_VERSION ||
           version === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
-          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
+      ) === true;
+    channel.graphicsCompressed =
+      this.#descriptor.terminalDelivery?.protocolVersions.some(
+        (version) =>
+          version === TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION ||
+          version === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
       ) === true;
     channel.graphicsInline = new Set();
     channel.graphicsBinary =
@@ -1882,7 +1945,9 @@ export class PaneStreamLiveConnection {
           version === TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION ||
           version === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
           version === TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION ||
-          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+          version === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION ||
+          version === TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION ||
+          version === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
       ) === true;
     // Renderers that report cell pixels learn up front that this daemon
     // accepts them, before any image exists.
@@ -1916,6 +1981,7 @@ export class PaneStreamLiveConnection {
           ...(cellPixels ? { cellPixels: true as const } : {}),
           ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
           ...(channel.graphicsBinary ? { binaryBlobs: true as const } : {}),
+          ...(channel.graphicsCompressed ? { compressedBlobs: true as const } : {}),
           ...(channel.graphicsLocal ? { localFiles: true as const } : {}),
         },
       });
@@ -1933,6 +1999,7 @@ export class PaneStreamLiveConnection {
           cellPixels: true,
           ...(preciseCellPixels ? { preciseCellPixels: true as const } : {}),
           ...(channel.graphicsBinary ? { binaryBlobs: true as const } : {}),
+          ...(channel.graphicsCompressed ? { compressedBlobs: true as const } : {}),
           ...(channel.graphicsLocal ? { localFiles: true as const } : {}),
         },
       });
@@ -2046,6 +2113,27 @@ export class PaneStreamLiveConnection {
           if (offset > 0 && graphics.image(digest) !== image) break;
           const end = Math.min(total, offset + TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES);
           if (channel.graphicsBinary) {
+            const header = {
+              pane: channel.semanticPaneId,
+              blob: {
+                digest,
+                format,
+                width: image.width,
+                height: image.height,
+                total,
+                offset,
+              },
+            };
+            const compressed = channel.graphicsCompressed
+              ? await compressGraphicsChunk(header, data.subarray(offset, end))
+              : null;
+            // Compression yields: a pane may close or replace this image meanwhile.
+            if (this.#closed || channel.closed) return;
+            if (graphics.image(digest) !== image) break;
+            if (compressed) {
+              this.#sendEncoded(null, Buffer.from(compressed), true);
+              continue;
+            }
             this.#sendEncoded(
               null,
               Buffer.from(
@@ -2223,6 +2311,8 @@ export class PaneStreamLiveConnection {
   #emitClosed(channel: PaneChannel): void {
     if (channel.closed) return;
     channel.closed = true;
+    this.#surfaceDemands.get(channel.semanticPaneId)?.close();
+    this.#surfaceDemands.delete(channel.semanticPaneId);
     const sub = channel.sub;
     channel.sub = null;
     if (sub) void sub.close().catch(() => undefined);
@@ -2677,6 +2767,143 @@ export class PaneStreamLiveConnection {
     if (frame.type === "semantic-intent") {
       this.#acceptSemanticIntent(frame.operationId, frame.intent);
       return;
+    }
+    if (frame.type === "terminal-surface-watch") {
+      if (
+        byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES ||
+        frame.generation !== this.#sessionRuntimeBinding?.generation ||
+        !this.#descriptor.terminalDelivery?.protocolVersions.includes(
+          TERMINAL_SURFACE_CAPABILITY_VERSION,
+        ) ||
+        !this.#nativeSurfaces ||
+        this.#surfaceReceiver
+      )
+        return this.#failProtocol("protocol-error");
+      if (this.#surfaceViewer) return;
+      this.#surfaceViewer = new NativeSurfaceViewer(
+        this.#nativeSurfaces,
+        this.#descriptor.panes,
+        (control) => {
+          if (this.#closed) return false;
+          this.#surfaceControl(control.type);
+          this.#sendFrame(null, control);
+          return !this.#closed;
+        },
+        (pane, generation) => {
+          const channel = this.#panes.get(pane);
+          const address = channel?.deliveryAddress;
+          return !this.#closed &&
+            channel &&
+            !channel.closed &&
+            channel.delivery &&
+            address?.generation === generation
+            ? address.deliveryNonce
+            : null;
+        },
+      );
+      this.#surfaceViewer.start();
+      return;
+    }
+    if (frame.type === "terminal-surface-receiver") {
+      if (this.#surfaceViewer) {
+        if (byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES || !this.#surfaceViewer.receive(frame))
+          this.#failProtocol("protocol-error");
+        return;
+      }
+      if (
+        byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES ||
+        !this.#descriptor.terminalDelivery ||
+        frame.generation !== this.#sessionRuntimeBinding?.generation
+      ) {
+        return this.#failProtocol("protocol-error");
+      }
+      if (this.#surfaceReceiver) {
+        // Parsed schema order is deterministic. A duplicate cannot change the
+        // challenge, kernel identity or endpoint, nor amplify fallback replies.
+        if (JSON.stringify(frame) !== JSON.stringify(this.#surfaceReceiver)) {
+          return this.#failProtocol("protocol-error");
+        }
+        return;
+      }
+      this.#surfaceReceiver = frame;
+      if (
+        this.#descriptor.terminalDelivery.protocolVersions.includes(
+          TERMINAL_SURFACE_CAPABILITY_VERSION,
+        )
+      ) {
+        const native =
+          this.#nativeSurfaces?.open(
+            frame,
+            this.#descriptor.panes,
+            (control) => {
+              if (this.#closed) return false;
+              this.#surfaceControl(control.type);
+              this.#sendFrame(null, control);
+              return !this.#closed;
+            },
+            (pane, generation) => {
+              const channel = this.#panes.get(pane);
+              const address = channel?.deliveryAddress;
+              if (
+                this.#closed ||
+                !channel ||
+                channel.closed ||
+                !channel.delivery ||
+                !address ||
+                address.generation !== generation
+              )
+                return null;
+              return address.deliveryNonce;
+            },
+          ) ?? null;
+        if (this.#closed) {
+          native?.close();
+          return;
+        }
+        this.#surfaceSession = native;
+        if (native) return;
+      }
+      // No provider/capability means no PID/slot lookup and no inferred locality.
+      this.#sendFrame(null, {
+        type: "terminal-surface-fallback",
+        version: 1,
+        generation: frame.generation,
+        connectionNonce: frame.connectionNonce,
+        reason: "unsupported",
+      });
+      return;
+    }
+    if (frame.type === "terminal-surface-fallback") {
+      if (this.#surfaceViewer) {
+        if (byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES || !this.#surfaceViewer.fallback(frame))
+          this.#failProtocol("protocol-error");
+        return;
+      }
+      if (
+        byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES ||
+        frame.generation !== this.#surfaceReceiver?.generation ||
+        frame.connectionNonce !== this.#surfaceReceiver.connectionNonce
+      ) {
+        return this.#failProtocol("protocol-error");
+      }
+      this.#surfaceSession?.fallback(frame.reason);
+      return;
+    }
+    if (frame.type === "terminal-surface-retired") {
+      if (this.#surfaceViewer) {
+        if (byteLength > TERMINAL_SURFACE_MAX_CONTROL_BYTES || !this.#surfaceViewer.retire(frame))
+          this.#failProtocol("protocol-error");
+        return;
+      }
+      if (
+        byteLength <= TERMINAL_SURFACE_MAX_CONTROL_BYTES &&
+        frame.generation === this.#surfaceReceiver?.generation &&
+        frame.connectionNonce === this.#surfaceReceiver.connectionNonce &&
+        this.#surfaceSession?.retire(frame.sequence)
+      )
+        return;
+      // Unissued/replayed ACKs must not retire another socket's native storage.
+      return this.#failProtocol("protocol-error");
     }
     if (frame.type === "terminal-graphics-request") {
       this.#requestGraphics(frame.pane, frame.digests, frame.preferInline === true);

@@ -17,8 +17,9 @@ const WAIT: Duration = Duration::from_secs(3);
 const REQUEST: &str = "b987f903-e864-43dd-8591-8d0a464ca6e8";
 const INSTANCE: &str = "e01ce8ee-74d8-40d0-9a59-a096050a6ade";
 
-fn options(port: u16) -> ConnectOptions {
+pub(super) fn options(port: u16) -> ConnectOptions {
     ConnectOptions {
+        remote_peer: None,
         descriptor: IssuedDescriptor {
             protocol_version: 2,
             web_socket_url: format!("ws://127.0.0.1:{port}/v2/terminal/pane-streams/redeem"),
@@ -42,7 +43,7 @@ fn options(port: u16) -> ConnectOptions {
     }
 }
 
-fn ready() -> String {
+pub(super) fn ready() -> String {
     serde_json::json!({"type":"ready","protocolVersion":2,"requestId":REQUEST,
         "daemonInstanceId":INSTANCE,"connectionClientId":"native.test","panes":["pane.one"],
         "effectiveViewerMode":"interactive", "inputLifetime":true})

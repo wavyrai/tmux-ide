@@ -24,8 +24,14 @@ if (!output.endsWith(".app")) throw new Error("Output must be a new .app directo
 const metadata =
   process.argv.length === 9 ? await readBundleMetadata(resolve(process.argv[8])) : undefined;
 const project = fileURLToPath(new URL("../", import.meta.url));
-// Verify local source/binary consistency before executing the supplied native binary.
+// Verify source/binary consistency before executing either supplied binary.
 await verifyNativeBuildReceipt(receipt, native, join(project, "upstream"));
+// Check build-time palette parity without starting a runtime metadata helper.
+await run(
+  node,
+  ["--import", "tsx", join(project, "scripts/generate-native-appearance.ts"), "--check"],
+  { cwd: join(project, "../..") },
+);
 const version = (await run(node, ["--version"])).stdout.trim();
 if (!/^v24\./.test(version)) throw new Error("Node 24 is required");
 const identity = (await run(native, ["--version"])).stdout.trim();
@@ -68,6 +74,7 @@ try {
   await copyFile(resolve(project, "../../LICENSE"), join(resources, "TMUX-IDE-LICENSE"));
   // Preserve upstream's supplemental attribution even when a feature is not exposed.
   const supplementalNotices = {
+    "APPEARANCE-LICENSE": "crates/herdr-gpui/src/tmux_snapshot/appearance/catalog.LICENSE",
     "HERDR-PROTOCOL-LICENSE": "crates/herdr-protocol/LICENSE-APACHE",
     "HERDR-PROTOCOL-NOTICE": "crates/herdr-protocol/NOTICE.md",
     "HERDR-SOUND-NOTICE": "crates/herdr-gpui/SOUND-NOTICE.md",
@@ -99,7 +106,10 @@ if [ "$#" -gt 1 ]; then
   echo 'Usage: tmux-ide-launcher [private-host.json]' >&2
   exit 2
 fi
-exec "$resources/node" "$resources/bridge/preview-launcher.bundle.mjs" "$app_macos/tmux-ide-gpui" "\${1:---local}" --browse
+if [ "$#" -eq 0 ]; then
+  exec "$app_macos/tmux-ide-gpui" --tmux-native-local
+fi
+exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resources/bridge/browser.bundle.mjs" "\${1:---local}"
 `,
     { mode: 0o755 },
   );

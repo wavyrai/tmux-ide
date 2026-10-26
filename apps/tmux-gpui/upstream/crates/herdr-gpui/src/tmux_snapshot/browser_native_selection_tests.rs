@@ -102,6 +102,7 @@ fn fixture_with_batch_ack(
     let handoff=Handoff::parse(&serde_json::to_vec(&json!({"descriptor":{"protocolVersion":2,"webSocketUrl":format!("ws://127.0.0.1:{port}/v2/terminal/pane-streams/redeem"),"subprotocol":tmux_stream::SUBPROTOCOL,"redemptionTicket":format!("ps2_{}","a".repeat(43)),"daemonInstanceId":GEN,"requestId":ID,"expiresAt":u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap()+30000,"panes":["left","right"],"effectiveViewerMode":"interactive"},"origin":"http://127.0.0.1:4000","hostClientId":"native.test","workspaceName":"workspace","selectedPane":"left"})).unwrap()).unwrap();
     let session = "live-session.01234567890123456789";
     let mut active = Active {
+        stream_interrupted: false,
         id: ID.into(),
         request: 3,
         input_epoch: 3,
@@ -109,6 +110,8 @@ fn fixture_with_batch_ack(
         controller: Controller::spawn(handoff).unwrap(),
         presentation: NativePresentation::new(ID, "workspace"),
         graphics: Graphics::new(Default::default()),
+        #[cfg(target_os = "macos")]
+        surfaces: Default::default(),
         input: InputOwner::default(),
         selection_notice: None,
         history: History::new(

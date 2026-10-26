@@ -48,6 +48,7 @@ fn fixture() -> (TcpListener, ConnectOptions) {
     (
         listener,
         ConnectOptions {
+            remote_peer: None,
             descriptor,
             origin: "http://127.0.0.1:4000".into(),
             host_client_id: "native.test".into(),
@@ -569,3 +570,10 @@ mod projection;
 
 #[path = "tmux_native_session_completion_tests.rs"]
 mod completion;
+
+#[path = "tmux_native_session_surface_tests.rs"]
+mod native_surfaces;
+
+#[cfg(unix)]
+#[path = "tmux_native_session_backpressure_tests.rs"]
+mod backpressure_tests;

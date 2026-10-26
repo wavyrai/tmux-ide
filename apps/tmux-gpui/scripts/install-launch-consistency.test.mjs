@@ -17,9 +17,11 @@ assert.ok(template, "expected unique generated launcher template");
 const launcher = template[1].replaceAll("\\${", "${");
 const exec = promisify(execFile);
 
-for (const operation of ["update", "rollback", "detach", "direct"]) {
+for (const { operation, entry } of ["native", "legacy"].flatMap((entry) =>
+  ["update", "rollback", "detach", "direct"].map((operation) => ({ operation, entry })),
+)) {
   test(
-    `installed launcher pins one retained version during ${operation}`,
+    `installed launcher pins one retained version during ${operation} (${entry})`,
     { timeout: 15000 },
     async () => {
       const root = await realpath(await mkdtemp(join(tmpdir(), "gpui-launch-pin-")));
@@ -34,17 +36,17 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
           await writeFile(join(app, "Contents/MacOS/tmux-ide-launcher"), launcher, { mode: 0o755 });
           await writeFile(
             join(app, "Contents/Resources/node"),
-            `#!/bin/sh\nset -eu\necho NODE_${version}\nIFS= read -r release\nexec "$1" "$2"\n`,
+            `#!/bin/sh\nset -eu\necho NODE_${version}\nexec "$1" "$2"\n`,
             { mode: 0o755 },
           );
           await writeFile(
-            join(app, "Contents/Resources/bridge/preview-launcher.bundle.mjs"),
-            `#!/bin/sh\nset -eu\necho HELPER_${version}\nexec "$1"\n`,
+            join(app, "Contents/Resources/bridge/browser.bundle.mjs"),
+            `#!/bin/sh\nset -eu\necho HELPER_${version}\n\n`,
             { mode: 0o755 },
           );
           await writeFile(
             join(app, "Contents/MacOS/tmux-ide-gpui"),
-            `#!/bin/sh\necho NATIVE_${version}\n`,
+            `#!/bin/sh\nset -eu\necho NATIVE_${version}\nIFS= read -r release\nif [ "$1" = --tmux-native-local ]; then echo READY_${version}; exit 0; fi\n[ "$1" = --tmux-browser-helper ]\nexec "$2" "$3" "$4"\n`,
             { mode: 0o755 },
           );
           return app;
@@ -63,7 +65,12 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
           operation === "direct"
             ? join(installRoot, "versions/one/TmuxIDE.app")
             : join(installRoot, "TmuxIDE.app");
-        child = spawn(join(appPath, "Contents/MacOS/tmux-ide-launcher"), [], {
+        const arguments_ = entry === "legacy" ? ["private-host.json"] : [];
+        const expected = (version) =>
+          entry === "legacy"
+            ? `NATIVE_${version}\nNODE_${version}\nHELPER_${version}\n`
+            : `NATIVE_${version}\nREADY_${version}\n`;
+        child = spawn(join(appPath, "Contents/MacOS/tmux-ide-launcher"), arguments_, {
           cwd: root,
           env: { HOME: root, PATH: "/usr/bin:/bin" },
           stdio: ["pipe", "pipe", "pipe"],
@@ -94,7 +101,7 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
             await delay(10);
           }
         }
-        await until(() => output === `NODE_${initial}\n`);
+        await until(() => output === `NATIVE_${initial}\n`);
         if (operation === "update")
           await installApp({ installRoot, stagedApp: v2, version: "two", verify });
         else if (operation === "rollback") await rollbackApp({ installRoot, verify });
@@ -104,7 +111,7 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
         await until(() => closed !== undefined);
         assert.deepEqual(closed, { code: 0, signal: null }, errors);
         assert.equal(errors, "");
-        assert.equal(output, `NODE_${initial}\nHELPER_${initial}\nNATIVE_${initial}\n`);
+        assert.equal(output, expected(initial));
         const stableLauncher = join(installRoot, "TmuxIDE.app/Contents/MacOS/tmux-ide-launcher");
         const nextLauncher =
           operation === "detach"
@@ -114,7 +121,7 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
           await assert.rejects(realpath(stableLauncher), { code: "ENOENT" });
         const next = await exec(
           "/bin/sh",
-          ["-c", 'printf "continue\\n" | "$1"', "launch-control", nextLauncher],
+          ["-c", 'printf "continue\\n" | "$@"', "launch-control", nextLauncher, ...arguments_],
           {
             cwd: root,
             env: { HOME: root, PATH: "/usr/bin:/bin" },
@@ -124,10 +131,7 @@ for (const operation of ["update", "rollback", "detach", "direct"]) {
         );
         const nextVersion = operation === "update" ? "two" : "one";
         assert.equal(next.stderr, "");
-        assert.equal(
-          next.stdout,
-          `NODE_${nextVersion}\nHELPER_${nextVersion}\nNATIVE_${nextVersion}\n`,
-        );
+        assert.equal(next.stdout, expected(nextVersion));
       } finally {
         try {
           if (child) await stopFixtureChild(child);

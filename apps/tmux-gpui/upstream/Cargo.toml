@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol"]
+members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol", "crates/tmux-native-surface-sdk"]
 resolver = "2"
 
 [workspace.package]
@@ -42,6 +42,8 @@ foreign-types        = "0.5"
 futures-lite         = "2"
 getrandom            = "0.3.4"
 gpui                 = { package = "bezel-gpui", version = "=0.3.19" }
+gpui_apple           = { package = "bezel-gpui-apple", version = "=0.3.19" }
+objc2-core-video     = { default-features = false, features = ["std", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVReturn", "objc2-io-surface"], version = "=0.3.2" }
 gpui_platform        = { package = "bezel-gpui-platform", version = "=0.3.19" }
 gpui-wry             = { path = "crates/gpui-wry" }
 bezel_theme          = { package = "bezel-theme", version = "=0.2.16" }
@@ -49,6 +51,7 @@ bezel_ui             = { package = "bezel-ui", version = "=0.2.16" }
 # The same wry gpui-wry builds on; it does not re-export the builder.
 wry                  = { package = "lb-wry", version = "=0.53.3" }
 herdr-client         = { path = "crates/herdr-client" }
+tmux-native-surface-sdk = { path = "crates/tmux-native-surface-sdk" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
 interprocess         = "2.4.2"
 # Local interface addresses, so Bonjour discovery skips this machine; the
@@ -107,3 +110,7 @@ ureq                 = "3"
 uuid                 = { features = ["serde"], version = "1" }
 windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
 zeroize              = "=1.9.0"
+
+# Repository-owned Apple surface support; pinned source and modifications live in ../vendor.
+[patch.crates-io]
+bezel-gpui-apple = { path = "../vendor/bezel-gpui-apple" }

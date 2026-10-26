@@ -129,3 +129,5 @@ impl SnapshotView {
 }
 #[cfg(test)]
 mod tests;
+
+pub(in crate::tmux_snapshot) mod native;
