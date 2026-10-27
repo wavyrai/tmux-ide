@@ -34,6 +34,8 @@ const run = (...args) =>
   }).trim();
 let daemon, browser, native, latest, fatal, result;
 let stderr = "";
+let awaitingEditorResult = false;
+let editorUnavailable = false;
 const failures = [];
 async function until(predicate) {
   const deadline = Date.now() + 25000;
@@ -97,6 +99,15 @@ try {
     worker: true,
     onState: (state) => {
       latest = state;
+      // Action feedback can be followed by a terminal frame in the same pipe read.
+      // Observe every publication instead of polling only the last frame's status.
+      if (
+        awaitingEditorResult &&
+        state.request === 4 &&
+        state.presenceRevision === 42 &&
+        state.status === "Open folder requires verified local daemon discovery"
+      )
+        editorUnavailable = true;
     },
   });
   const send = (command) => native.send(command);
@@ -141,8 +152,9 @@ try {
   await until(() => latest?.presenceRevision === 42 && latest.inputReady && latest.paneActions);
   action.token = latest.paneActions.token;
   assert.notEqual(latest.status, "Open folder requires verified local daemon discovery");
+  awaitingEditorResult = true;
   send(action);
-  await until(() => latest?.status === "Open folder requires verified local daemon discovery");
+  await until(() => editorUnavailable);
   assert.equal(latest.selectedPane, expected);
   assert.equal(latest.inputReady, true);
   assert.equal(run("capture-pane", "-p", "-t", activeRuntime), before);
