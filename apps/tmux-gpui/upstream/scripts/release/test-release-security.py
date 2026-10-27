@@ -97,8 +97,8 @@ class ReleaseTargets(unittest.TestCase):
         self.assertEqual(re.findall(r"- runner: (\S+)\n            target: (\S+)", linux), [
             ("ubuntu-24.04", "x86_64-unknown-linux-gnu"),
             ("ubuntu-24.04-arm", "aarch64-unknown-linux-gnu")])
-        for command in ('cargo build --locked --release -p herdr-gpui --target "$TARGET"',
-                        'cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"',
+        for command in ('cargo build --locked --release -p tmux-ide-gpui --target "$TARGET"',
+                        'cargo test --locked --release -p tmux-ide-gpui --test cli --target "$TARGET"',
                         'cargo clippy --locked --workspace --all-targets --all-features -- -D warnings',
                         'cargo test --locked --workspace --all-features',
                         'test "$(rustc -vV | sed -n \'s/^host: //p\')" = "$TARGET"',
@@ -116,8 +116,8 @@ class ReleaseTargets(unittest.TestCase):
         self.assertEqual(re.findall(r"- runner: (\S+)\n            target: (\S+)", windows), [
             ("windows-2025", "x86_64-pc-windows-msvc"),
             ("windows-11-arm", "aarch64-pc-windows-msvc")])
-        for command in ('cargo build --locked --release -p herdr-gpui --target "$TARGET"',
-                        'cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"',
+        for command in ('cargo build --locked --release -p tmux-ide-gpui --target "$TARGET"',
+                        'cargo test --locked --release -p tmux-ide-gpui --test cli --target "$TARGET"',
                         'cargo clippy --locked --workspace --all-targets --all-features -- -D warnings',
                         'cargo test --locked -p herdr-protocol -p herdr-client',
                         'test "$(rustc -vV | sed -n \'s/^host: //p\')" = "$TARGET"',

@@ -226,6 +226,17 @@ impl NativeSession {
         Self::spawn_offered(options, workspace, false, None, false, false)
     }
 
+    /// Observe one read-only pane's canonical cells without building a window
+    /// presentation. The trusted broker must have offered capability 109.
+    pub fn spawn_cell_observer(options: ConnectOptions, workspace: String) -> Result<Self, Error> {
+        if options.descriptor.effective_viewer_mode != tmux_stream::ViewerMode::ReadOnly
+            || options.descriptor.panes.len() != 1
+        {
+            return Err(Error::Terminal(tmux_terminal::Error::Identity));
+        }
+        Self::spawn_offered(options, workspace, false, None, true, false)
+    }
+
     /// The trusted broker must have offered capability 101 on this exact issued stream.
     /// This records the offer, not a new negotiated flag: graphics state confirms support.
     pub fn spawn_with_graphics(options: ConnectOptions, workspace: String) -> Result<Self, Error> {

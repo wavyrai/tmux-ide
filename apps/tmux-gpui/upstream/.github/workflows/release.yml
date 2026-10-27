@@ -147,8 +147,8 @@ jobs:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
       - run: rustup show
-      - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
+      - run: cargo build --locked --release -p tmux-ide-gpui --target "$TARGET"
+      - run: cargo test --locked --release -p tmux-ide-gpui --test cli --target "$TARGET"
       # cargo-about gates its binary behind the non-default `cli` feature, and
       # `cargo install` only warns and exits 0 when it installs nothing. Verify
       # the subcommand resolves here rather than failing in the next step.
@@ -201,8 +201,8 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace
       - run: cargo test --locked --workspace --all-features
-      - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
+      - run: cargo build --locked --release -p tmux-ide-gpui --target "$TARGET"
+      - run: cargo test --locked --release -p tmux-ide-gpui --test cli --target "$TARGET"
       # cargo-about gates its binary behind the non-default `cli` feature, and
       # `cargo install` only warns and exits 0 when it installs nothing. Verify
       # the subcommand resolves here rather than failing in the next step.
@@ -272,8 +272,8 @@ jobs:
           test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked -p herdr-protocol -p herdr-client
-      - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
+      - run: cargo build --locked --release -p tmux-ide-gpui --target "$TARGET"
+      - run: cargo test --locked --release -p tmux-ide-gpui --test cli --target "$TARGET"
       # cargo-about gates its binary behind the non-default `cli` feature, and
       # `cargo install` only warns and exits 0 when it installs nothing. Verify
       # the subcommand resolves here rather than failing in the next step.

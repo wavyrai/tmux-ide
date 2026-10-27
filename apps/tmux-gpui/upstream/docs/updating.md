@@ -85,7 +85,7 @@ verification.
 
 ## Authentication Contract
 
-The source of truth is `crates/herdr-gpui/src/updater/release.rs`. Release assets
+The source of truth is `crates/tmux-ide-gpui/src/updater/release.rs`. Release assets
 include `update-manifest.json` and `update-manifest.sig`. Example JSON, formatted
 here only for readability:
 
@@ -356,7 +356,7 @@ the ordinary test suite uses fake Homebrew processes instead.
 ## Native QA
 
 `just run` enables the QA menu automatically. With Cargo, enable it with
-`cargo run --locked --release -p herdr-gpui --features qa-menu`.
+`cargo run --locked --release -p tmux-ide-gpui --features qa-menu`.
 Default Cargo builds and published releases omit this menu.
 
 The GPUI **QA > Show app update available** action presents safe synthetic

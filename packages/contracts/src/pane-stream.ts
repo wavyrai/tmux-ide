@@ -249,6 +249,8 @@ export const PaneStreamKeyNameSchemaZ = SessionRuntimeTerminalKeyNameSchemaZ;
 export const PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION = 105;
 /** Exact hex bytes require explicit offer + ready acknowledgement; older daemons may omit it. */
 export const PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION = 106;
+/** Bundles zlib capability 102 and optional browser icon metadata; fixed 16×16 RGBA hex, empty means browser fallback. */
+export const PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = 117;
 export const PaneStreamInputLifetimeSchemaZ = z
   .object({
     generation: z.string().min(1).max(256),
@@ -558,6 +560,11 @@ export const PaneStreamLayoutFrameSchemaZ = z
             /** Optional for compatibility with an older daemon during reconnect. */
             displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
             displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
+            browserIcon: z
+              .string()
+              .regex(/^(?:[0-9a-f]{2048})?$/u)
+              .nullable()
+              .optional(),
             left: CellCoordinateSchemaZ,
             top: CellCoordinateSchemaZ,
             width: GridCellSchemaZ,

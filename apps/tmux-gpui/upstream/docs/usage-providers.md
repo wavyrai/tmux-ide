@@ -2,9 +2,9 @@
 
 The status bar shows plan usage for every AI service signed in on the
 selected host, and clicking one opens its panel. Each service is a
-*provider*: one module in `crates/herdr-gpui/src/usage/providers/` with a
+*provider*: one module in `crates/tmux-ide-gpui/src/usage/providers/` with a
 unit struct implementing `Service`, listed once in
-`crates/herdr-gpui/src/usage/registry.rs`. Providers are ported from
+`crates/tmux-ide-gpui/src/usage/registry.rs`. Providers are ported from
 [CodexBar](https://github.com/steipete/CodexBar) (MIT), whose
 `docs/<id>.md` and `Sources/CodexBarCore/Providers/<Name>/` document each
 service's sign-in, endpoints, and response shapes.

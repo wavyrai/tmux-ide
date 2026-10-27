@@ -111,8 +111,8 @@ jobs:
           cargo test --locked --workspace --all-features
       - name: Build and check the release preview executable
         run: |
-          cargo build --locked --release -p herdr-gpui --bin tmux-ide-gpui
-          cargo test --locked --release -p herdr-gpui --test tmux_cli
+          cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui
+          cargo test --locked --release -p tmux-ide-gpui --test tmux_cli
       - name: Install pinned license-report generator
         run: cargo install cargo-about --version 0.9.2 --locked --features cli
       # Offline metadata reads the full lockfile, including non-macOS dependencies.
@@ -144,7 +144,7 @@ jobs:
           node scripts/build-bundled-tmux.mjs --source "$RUNNER_TEMP/gpui-tmux-source" --output "$RUNNER_TEMP/gpui-tmux-bundle" --jobs 2 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/tmux-build.log"
       - name: Build production native worker journey driver
         run: |
-          cargo build --locked -p herdr-gpui --features integration-test --example tmux_native_journey
+          cargo build --locked -p tmux-ide-gpui --features integration-test --example tmux_native_journey
           echo "TMUX_GPUI_JOURNEY_PROBE=$PWD/target/debug/examples/tmux_native_journey" >> "$GITHUB_ENV"
       - name: Direct Rust source terminal journeys (no physical UI claim)
         working-directory: .

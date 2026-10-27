@@ -1,3 +1,39 @@
+diff --git a/browser/src/session/session.tsx b/browser/src/session/session.tsx
+index 803c1f6..f2db23b 100644
+--- a/browser/src/session/session.tsx
++++ b/browser/src/session/session.tsx
+@@ -1,3 +1,4 @@
++import { NativeIcon } from "./native-icon";
+ import { spawn } from "node:child_process";
+ import net from "node:net";
+ import path from "node:path";
+@@ -269,6 +270,7 @@ class Session {
+ 
+   constructor(ctx: SessionContext) {
+     this.ctx = ctx;
++    this.nativeIcon = new NativeIcon(ctx.env);
+     this.defaultUrl = ctx.env.TERMINAL_BROWSER_START_PAGE === "1" ? START_URL : HOME_URL;
+     const socket = ctx.env[TERMINAL_SOCKET_ENV];
+     this.terminal = socket ? socketTerminal(socket) : detect(ctx.env);
+@@ -437,14 +439,18 @@ class Session {
+     else this.tabs.close(id);
+   }
+ 
++  private readonly nativeIcon: NativeIcon;
++
+   private syncTitle() {
+     const state = this.tabs.activeState;
++    this.nativeIcon.update(state?.favicon ?? null);
+     this.root?.setTitle(state ? state.title || displayUrl(state.url) : "");
+   }
+ 
+   shutdown(code = 0) {
+     if (this.shuttingDown) return;
+     this.shuttingDown = true;
++    this.nativeIcon.dispose();
+     for (const record of this.records.values()) record.dispose();
+     this.records.clear();
+     this.shownRecord = null;
 diff --git a/pixel/engine/Cargo.lock b/pixel/engine/Cargo.lock
 index 710ec9d..f7c0754 100644
 --- a/pixel/engine/Cargo.lock
@@ -5055,7 +5091,7 @@ index e1f0543..9d5d943 100644
  mod throttle;
  pub mod wrapper;
 diff --git a/pixel/engine/crates/pixel-core/src/terminal.rs b/pixel/engine/crates/pixel-core/src/terminal.rs
-index 7670827..790bed3 100644
+index 7670827..c30799b 100644
 --- a/pixel/engine/crates/pixel-core/src/terminal.rs
 +++ b/pixel/engine/crates/pixel-core/src/terminal.rs
 @@ -16,6 +16,7 @@ use present::{Identity, Presenter};
@@ -5066,16 +5102,18 @@ index 7670827..790bed3 100644
      HostClosed,
      Handoff(Handoff),
      Wheel {
-@@ -275,6 +276,8 @@ impl TtyHandle {
+@@ -275,6 +276,10 @@ impl TtyHandle {
  }
  
  pub struct Terminal {
 +    #[cfg(target_os = "macos")]
 +    tmux_surface: Option<crate::tmux_surface::Native>,
++    #[cfg(target_os = "macos")]
++    tmux_kitty_visible: bool,
      io: TtyHandle,
      saved: Option<Termios>,
      hosted: Option<crate::hosted::HostState>,
-@@ -385,6 +388,13 @@ impl SessionEnv {
+@@ -385,6 +390,13 @@ impl SessionEnv {
          Self { session: None }
      }
  
@@ -5089,7 +5127,7 @@ index 7670827..790bed3 100644
      pub fn var(&self, key: &str) -> Option<String> {
          match &self.session {
              Some(env) => env.get(key).cloned(),
-@@ -511,6 +521,8 @@ impl Terminal {
+@@ -511,6 +523,8 @@ impl Terminal {
              wrapper,
              crate::herdr::HerdrTarget::from_env(&env),
          );
@@ -5098,16 +5136,18 @@ index 7670827..790bed3 100644
          terminal.kitty_keyboard = terminal.probe_kitty_keyboard()?;
          if !terminal.kitty_keyboard {
              terminal.io.out().write_all(b"\x1b[>4;2m")?;
-@@ -545,6 +557,8 @@ impl Terminal {
+@@ -545,6 +559,10 @@ impl Terminal {
          herdr_target: Option<crate::herdr::HerdrTarget>,
      ) -> Self {
          Self {
 +            #[cfg(target_os = "macos")]
 +            tmux_surface: None,
++            #[cfg(target_os = "macos")]
++            tmux_kitty_visible: false,
              io,
              saved,
              hosted: None,
-@@ -736,11 +750,28 @@ impl Terminal {
+@@ -736,11 +754,38 @@ impl Terminal {
          self.highlight_transmits = on;
      }
  
@@ -5130,13 +5170,23 @@ index 7670827..790bed3 100644
 +            let native = self.tmux_surface.as_mut().unwrap();
 +            let was_active = native.active();
 +            let presented = native.present(frame, cols, rows);
-+            if presented && !native.kitty_required() { return Ok(0); }
++            if presented && !native.kitty_required() {
++                if self.tmux_kitty_visible {
++                    // Native canvases include the chrome, including transparent pixels.
++                    // Remove this pane's startup fallback before compositing the canvas.
++                    self.write_synchronized(b"\x1b_Ga=d,d=A,q=2\x1b\\")?;
++                    self.tmux_kitty_visible = false;
++                    self.invalidate_graphics_target();
++                }
++                return Ok(0);
++            }
 +            if was_active && !presented { self.invalidate_graphics_target(); }
++            self.tmux_kitty_visible = true;
 +        }
          let canvas = frame.canvas;
          let embedded = self.is_embedded();
          if let Some(state) = &self.hosted {
-@@ -938,6 +969,14 @@ impl Terminal {
+@@ -938,6 +983,14 @@ impl Terminal {
      }
  
      pub fn poll_event(&mut self, timeout: Option<Duration>) -> io::Result<Option<Event>> {
@@ -5182,12 +5232,43 @@ index ecf0a9e..2e91e75 100644
      pub(super) fn opaque_rects(&self) -> Vec<Rect> {
          self.opaque.iter().map(|area| area.rect).collect()
      }
+diff --git a/pixel/packages/pixel/src/scale.ts b/pixel/packages/pixel/src/scale.ts
+index 843a208..4c8397e 100644
+--- a/pixel/packages/pixel/src/scale.ts
++++ b/pixel/packages/pixel/src/scale.ts
+@@ -1,6 +1,5 @@
+ import { screen } from "electron";
+ 
+-import type { EngineInfo } from "./react";
+ import type { Terminal } from "./terminal";
+ 
+ export function hostDisplayScale(terminal: Terminal | null, env: NodeJS.ProcessEnv): number {
+@@ -10,18 +9,4 @@ export function hostDisplayScale(terminal: Terminal | null, env: NodeJS.ProcessE
+   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).scaleFactor;
+ }
+ 
+-export class CellZoomFollower {
+-  private last: { rows: number; basePx: number } | null = null;
+-
+-  ratio(info: EngineInfo): number | null {
+-    const { height, basePx, cellHeight } = info;
+-    const rows = cellHeight > 0 ? Math.round(height / cellHeight) : 0;
+-    const prev = this.last;
+-    this.last = { rows, basePx };
+-    if (!prev || !prev.basePx || !prev.rows || !rows) return null;
+-    const ratio = basePx / prev.basePx;
+-    if (!Number.isFinite(ratio) || ratio <= 0 || Math.abs(ratio - 1) < 0.01) return null;
+-    if (rows === prev.rows) return null;
+-    return ratio;
+-  }
+-}
++export { CellZoomFollower } from "./cell-zoom";
 diff --git a/pixel/engine/crates/pixel-core/src/tmux_surface.rs b/pixel/engine/crates/pixel-core/src/tmux_surface.rs
 new file mode 100644
-index 0000000..1956cde
+index 0000000..f4cb2cc
 --- /dev/null
 +++ b/pixel/engine/crates/pixel-core/src/tmux_surface.rs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,213 @@
 +use crate::{canvas::Frame, terminal::SessionEnv};
 +use herdr_client::{
 +    tmux_daemon::{LocalConfigNamespace, LocalDaemon, NativeSurfaceLocation, TerminalSelection},
@@ -5302,11 +5383,11 @@ index 0000000..1956cde
 +            .as_ref()
 +            .is_none_or(Publisher::kitty_required)
 +    }
-+    fn failed(&mut self) {
++    fn failed(&mut self, error: impl std::fmt::Debug) {
 +        self.publisher = None;
 +        self.retry = Instant::now() + Duration::from_secs(2);
 +        if !self.warned {
-+            crate::logging::warn("tmux-native", "native surface unavailable; using Kitty");
++            crate::logging::warn("tmux-native", format!("native surface unavailable ({error:?}); using Kitty"));
 +            self.warned = true;
 +        }
 +    }
@@ -5318,15 +5399,11 @@ index 0000000..1956cde
 +                    self.publisher = Some(publisher);
 +                    self.warned = false;
 +                }
-+                Err(_) => self.failed(),
++                Err(error) => self.failed(error),
 +            }
 +        }
-+        if self
-+            .publisher
-+            .as_mut()
-+            .is_some_and(|publisher| publisher.poll().is_err())
-+        {
-+            self.failed();
++        if let Some(Err(error)) = self.publisher.as_mut().map(Publisher::poll) {
++            self.failed(error);
 +        }
 +        let state = (self.active(), self.kitty_required());
 +        let changed = state != self.announced;
@@ -5341,7 +5418,7 @@ index 0000000..1956cde
 +            return false;
 +        };
 +        let canvas = frame.canvas;
-+        if publisher
++        if let Err(error) = publisher
 +            .present_rgba(RgbaCanvas {
 +                width: canvas.width as usize,
 +                height: canvas.height as usize,
@@ -5350,9 +5427,8 @@ index 0000000..1956cde
 +                rgba: &canvas.pixels,
 +                premultiplied: frame.premultiplied,
 +            })
-+            .is_err()
 +        {
-+            self.failed();
++            self.failed(error);
 +            return false;
 +        }
 +        true
@@ -5406,3 +5482,173 @@ index 0000000..1956cde
 +        assert_eq!(config.selection.visible_panes, ["pane.browser"]);
 +    }
 +}
+diff --git a/pixel/packages/pixel/src/cell-zoom.ts b/pixel/packages/pixel/src/cell-zoom.ts
+new file mode 100644
+index 0000000..4a8f778
+--- /dev/null
++++ b/pixel/packages/pixel/src/cell-zoom.ts
+@@ -0,0 +1,21 @@
++import type { EngineInfo } from "./react";
++
++export class CellZoomFollower {
++  private last: { rows: number; basePx: number; height: number; cellHeight: number } | null = null;
++
++  ratio(info: EngineInfo): number | null {
++    const { height, basePx, cellHeight } = info;
++    const rows = cellHeight > 0 ? Math.round(height / cellHeight) : 0;
++    const prev = this.last;
++    this.last = { rows, basePx, height, cellHeight };
++    if (!prev || !prev.basePx || !prev.rows || !rows) return null;
++    const ratio = basePx / prev.basePx;
++    if (!Number.isFinite(ratio) || ratio <= 0 || Math.abs(ratio - 1) < 0.01) return null;
++    if (rows === prev.rows) return null;
++    // A terminal font zoom changes the grid inside roughly the same pixel viewport.
++    // Initial PTY metric correction and pane resizing must not zoom web content.
++    if (Math.abs(height - prev.height) > Math.max(cellHeight, prev.cellHeight)) return null;
++    if ((ratio > 1) === (rows > prev.rows)) return null;
++    return ratio;
++  }
++}
+diff --git a/pixel/packages/pixel/test/cell-zoom.test.js b/pixel/packages/pixel/test/cell-zoom.test.js
+new file mode 100644
+index 0000000..7a11c3f
+--- /dev/null
++++ b/pixel/packages/pixel/test/cell-zoom.test.js
+@@ -0,0 +1,16 @@
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const { CellZoomFollower } = require('../dist/cell-zoom.js');
++const info = (rows, cellHeight) => ({ height: rows * cellHeight, cellHeight, basePx: cellHeight * 0.7575 });
++test('initial native PTY metric correction does not magnify the page', () => {
++  const zoom = new CellZoomFollower();
++  assert.equal(zoom.ratio(info(23, 32)), null);
++  assert.equal(zoom.ratio(info(24, 40)), null);
++  assert.equal(zoom.ratio(info(12, 40)), null);
++});
++test('font zoom follows inverse row changes within the same pixel viewport', () => {
++  const zoom = new CellZoomFollower();
++  zoom.ratio(info(30, 32));
++  assert.equal(zoom.ratio(info(24, 40)), 1.25);
++  assert.equal(zoom.ratio(info(30, 32)), 0.8);
++});
+diff --git a/browser/src/session/native-icon.ts b/browser/src/session/native-icon.ts
+new file mode 100644
+index 0000000..1910281
+--- /dev/null
++++ b/browser/src/session/native-icon.ts
+@@ -0,0 +1,64 @@
++import { execFile } from "node:child_process";
++import { nativeImage } from "electron";
++
++/** Only tmux-ide's launcher opts into pane metadata publication. */
++export class NativeIcon {
++  private last: string | null | undefined;
++  private pending: string | undefined;
++  private running = false;
++  private disposed = false;
++  private readonly binary: string | undefined;
++  private readonly pane: string | undefined;
++  private readonly socket: string | undefined;
++  constructor(env: NodeJS.ProcessEnv) {
++    this.binary = env.TMUX_IDE_BROWSER_TMUX;
++    this.pane = env.TMUX_PANE;
++    this.socket = /^(.*),[0-9]+,[0-9]+$/.exec(env.TMUX ?? "")?.[1];
++  }
++
++  update(file: string | null) {
++    if (this.disposed || this.last === file) return;
++    this.last = file;
++    let rgba = "";
++    try {
++      if (file) {
++        const icon = nativeImage.createFromPath(file);
++        if (!icon.isEmpty()) {
++          const bitmap = icon.resize({ width: 16, height: 16 }).toBitmap();
++          if (bitmap.length === 1024) {
++            // Electron's native bitmap is premultiplied BGRA on macOS.
++            // The wire pixels are straight-alpha RGBA, like decoded PNG pixels.
++            for (let i = 0; i < bitmap.length; i += 4) {
++              const blue = bitmap[i]!;
++              const alpha = bitmap[i + 3]!;
++              const straight = (value: number) => alpha ? Math.min(255, Math.round(value * 255 / alpha)) : 0;
++              bitmap[i] = straight(bitmap[i + 2]!);
++              bitmap[i + 1] = straight(bitmap[i + 1]!);
++              bitmap[i + 2] = straight(blue);
++            }
++            rgba = bitmap.toString("hex");
++          }
++        }
++      }
++    } catch { /* A missing or unreadable favicon retains the browser fallback. */ }
++    this.pending = `${process.pid}:${rgba}`;
++    this.flush();
++  }
++  dispose() {
++    this.disposed = true;
++    this.pending = "";
++    this.flush();
++  }
++  private flush() {
++    if (this.running || this.pending === undefined || !this.binary?.startsWith("/") ||
++        !this.socket?.startsWith("/") || !/^%[0-9]+$/.test(this.pane ?? "")) return;
++    const value = this.pending;
++    this.pending = undefined;
++    this.running = true;
++    execFile(this.binary, ["-S", this.socket, "set-option", "-p", "-t", this.pane!,
++      "@tmux_ide_browser_icon", value], { timeout: 2000, maxBuffer: 4096 }, () => {
++        this.running = false;
++        this.flush();
++      });
++  }
++}
+diff --git a/browser/test/native-icon.test.js b/browser/test/native-icon.test.js
+new file mode 100644
+index 0000000..83401d1
+--- /dev/null
++++ b/browser/test/native-icon.test.js
+@@ -0,0 +1,45 @@
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const { readFileSync } = require('node:fs');
++const vm = require('node:vm');
++function fixture(env = {}) {
++  const calls = [], callbacks = [];
++  const exports = {};
++  vm.runInNewContext(readFileSync(require.resolve('../dist/session/native-icon.js'), 'utf8'), {
++    exports, Buffer, process: { pid: 123, env: { TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env } },
++    require: name => name === 'electron' ? { nativeImage: { createFromPath: file => ({
++      isEmpty: () => file === 'missing', resize: () => ({ toBitmap: () => Buffer.from(Array(256).fill([10, 20, 30, file === 'translucent' ? 128 : 255]).flat()) })
++    }) } } : { execFile: (binary, args, options, done) => { calls.push({ binary, args: Array.from(args), options }); callbacks.push(done); } },
++  });
++  return { icon: new exports.NativeIcon({ TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env }), calls, callbacks };
++}
++test('publishes active favicon pixels once and coalesces tab switches', () => {
++  const { icon, calls, callbacks } = fixture();
++  icon.update('one.png');
++  assert.equal(calls.length, 1);
++  assert.equal(calls[0].args.at(-1), '123:' + '1e140aff'.repeat(256));
++  icon.update('one.png');
++  icon.update('two.png');
++  icon.update(null);
++  assert.equal(calls.length, 1);
++  callbacks.shift()();
++  assert.equal(calls.length, 2);
++  assert.equal(calls[1].args.at(-1), '123:');
++  icon.dispose();
++  callbacks.shift()();
++  assert.equal(calls[2].args.at(-1), '');
++  icon.update('three.png');
++  assert.equal(calls.length, 3);
++});
++test('missing favicon falls back; absent launcher authority cannot mutate tmux', () => {
++  const a = fixture(); a.icon.update('missing');
++  assert.equal(a.calls[0].args.at(-1), '123:');
++  for (const env of [{ TMUX_IDE_BROWSER_TMUX: undefined }, { TMUX_PANE: '%2;kill-server' }, { TMUX: 'invalid' }]) {
++    const b = fixture(env); b.icon.update('one.png'); assert.equal(b.calls.length, 0);
++  }
++});
++
++test('preserves straight-alpha favicon colours', () => {
++  const { icon, calls } = fixture(); icon.update('translucent');
++  assert.equal(calls[0].args.at(-1), '123:' + '3c281480'.repeat(256));
++});

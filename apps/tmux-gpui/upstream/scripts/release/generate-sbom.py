@@ -25,7 +25,7 @@ def main():
         subprocess.run([shutil.which("cargo-cyclonedx"), "cyclonedx", "--format", "json",
                         "--spec-version", "1.5", "--all", "--target", target,
                         "--override-filename", "sbom"], env=env, check=True)
-        document = json.loads(pathlib.Path("crates/herdr-gpui/sbom.json").read_text())
+        document = json.loads(pathlib.Path("crates/tmux-ide-gpui/sbom.json").read_text())
         if document["bomFormat"] != "CycloneDX" or document["specVersion"] != "1.5":
             raise ValueError("Unexpected SBOM format")
         if not document.get("components") or not document.get("dependencies"):

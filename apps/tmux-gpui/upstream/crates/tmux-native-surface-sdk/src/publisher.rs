@@ -1,11 +1,10 @@
 //! Complete-canvas application producer. Operate and poll on one render worker.
 use crate::{Producer, canvas};
 use herdr_client::{
-    tmux_controller::Controller,
     tmux_daemon::{LocalDaemon, TerminalSelection},
     tmux_graphics::surface_offer::Placement,
     tmux_handoff::ServerScope,
-    tmux_native_session::CommittedIdentity,
+    tmux_native_session::{self, CommittedIdentity, NativeSession, Status},
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_video::CVPixelBuffer;
@@ -17,7 +16,9 @@ pub enum Error {
     #[error("native canvas source discovery failed")]
     Discovery(#[from] herdr_client::tmux_daemon::Error),
     #[error("native canvas source failed")]
-    Source(#[from] herdr_client::tmux_controller::Error),
+    Source(#[from] tmux_native_session::Error),
+    #[error("native canvas source stopped")]
+    SourceStopped(#[source] Arc<tmux_native_session::Error>),
     #[error("native canvas producer failed")]
     Producer(#[from] crate::Error),
     #[error("native canvas conversion failed")]
@@ -71,11 +72,10 @@ pub struct RgbaCanvas<'a> {
 /// frame. One latest canvas is retained outside those bounded retirement leases;
 /// newer canvases supersede it rather than accumulating in a FIFO.
 pub struct Publisher {
-    source: Controller,
+    source: NativeSession,
     producer: Producer,
     pane: String,
     surface: Uuid,
-    started: Instant,
     sequence: u64,
     latest: Option<Canvas>,
     submitted: BTreeMap<Uuid, Stamp>,
@@ -91,7 +91,8 @@ impl Publisher {
     ) -> Result<Self, Error> {
         let client = owner.select_server(scope)?;
         let handoff = client.issue_surface_source(selection)?;
-        let source = Controller::spawn(handoff)?;
+        let (options, workspace, _) = handoff.into_connection();
+        let source = NativeSession::spawn_cell_observer(options, workspace)?;
         let mut producer = Producer::connect(owner)?;
         producer.watch_demand(std::slice::from_ref(&selection.selected_pane))?;
         Ok(Self {
@@ -99,7 +100,6 @@ impl Publisher {
             producer,
             pane: selection.selected_pane.clone(),
             surface: Uuid::new_v4(),
-            started: Instant::now(),
             sequence: 0,
             latest: None,
             submitted: BTreeMap::new(),
@@ -173,8 +173,13 @@ impl Publisher {
         result
     }
     fn poll_inner(&mut self) -> Result<(), Error> {
-        self.source
-            .poll(self.started.elapsed().as_millis().min(u64::MAX as u128) as u64)?;
+        // The producer needs its own canonical identity, not a GUI projection
+        // requiring content subscriptions to every neighbouring pane.
+        match self.source.drain()?.status {
+            Status::Failed(error) => return Err(Error::SourceStopped(error)),
+            Status::Cancelled => return Err(Error::Closed),
+            Status::Connecting | Status::Ready(_) => {}
+        }
         self.producer.poll(Instant::now())?;
         let receivers: Vec<_> = self
             .producer
@@ -186,7 +191,7 @@ impl Publisher {
         let Some(canvas) = &self.latest else {
             return Ok(());
         };
-        let Some(current) = self.source.committed(&self.pane) else {
+        let Some(current) = self.source.committed(&self.pane)? else {
             return Ok(());
         };
         let Some(snapshot) = &current.snapshot else {
@@ -203,18 +208,19 @@ impl Publisher {
                 &current.identity,
                 self.producer.rejections(connection).unwrap_or(0),
             );
-            if self.submitted.get(&connection) == Some(&stamp)
-                || self
-                    .producer
-                    .outstanding(connection)
-                    .is_none_or(|count| count >= 2)
-            {
+            // Retirement can discard an admitted frame during a viewport change
+            // without changing this source's canonical stamp. With no backing
+            // left at the receiver, resend the latest canvas even if unchanged.
+            if !needs_submission(
+                self.submitted.get(&connection) == Some(&stamp),
+                self.producer.outstanding(connection),
+            ) {
                 continue;
             }
             self.producer.submit(
                 connection,
                 &self.pane,
-                current,
+                &current,
                 self.surface,
                 Placement {
                     row: 0,
@@ -233,7 +239,7 @@ impl Publisher {
             return;
         }
         self.closed = true;
-        self.source.retire();
+        self.source.cancel();
         self.producer.close();
         self.latest = None;
         self.submitted.clear();
@@ -244,3 +250,14 @@ impl Drop for Publisher {
         self.close();
     }
 }
+
+fn needs_submission(same_stamp: bool, outstanding: Option<usize>) -> bool {
+    match outstanding {
+        Some(0) => true,
+        Some(1) => !same_stamp,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests;

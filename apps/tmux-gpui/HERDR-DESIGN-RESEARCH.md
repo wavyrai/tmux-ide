@@ -14,15 +14,15 @@ in another editor group. VS Code can be a workspace side panel or a group tab.
 The implementation uses `gpui-wry` 0.6.6 and `lb-wry` 0.53.3. Native child webviews
 sit above the GPUI surface, so it explicitly manages geometry, visibility and overlays.
 The current source enables embedded pages on macOS and Windows; Linux has an external
-browser fallback. Sources: [browser model](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/herdr-gpui/src/browser.rs),
-[native views](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/herdr-gpui/src/browser/native.rs).
+browser fallback. Sources: [browser model](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/tmux-ide-gpui/src/browser.rs),
+[native views](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/tmux-ide-gpui/src/browser/native.rs).
 
 VS Code uses a web server, not a GPUI rewrite of the editor. Herdr discovers the
 VS Code CLI and supervises `code serve-web` off the UI thread, with token/port handling,
 readiness, restart backoff and shutdown. It asks the user to accept the server terms
 before launching with the acceptance flag. Sources:
-[launcher](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/herdr-gpui/src/code_server/launcher.rs),
-[supervisor](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/herdr-gpui/src/code_server/supervisor.rs).
+[launcher](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/tmux-ide-gpui/src/code_server/launcher.rs),
+[supervisor](https://github.com/penso/herdr-gpui/blob/1500fd2f8a226490ae7355b7ff4a4be59484182e/crates/tmux-ide-gpui/src/code_server/supervisor.rs).
 
 For tmux-ide, reuse these modules selectively and replace Herdr workspace assumptions
 with our live daemon context. Keep terminal identity/input/geometry in the daemon;

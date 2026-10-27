@@ -31,7 +31,7 @@ style details.
    dir=$(mktemp -d /tmp/gpui-mockup.XXXXXX)
    ```
    Write `$dir/mockup.rs`, starting from
-   `crates/herdr-gpui/src/mockup/demo.rs`, the built-in example. The rules are
+   `crates/tmux-ide-gpui/src/mockup/demo.rs`, the built-in example. The rules are
    under [Writing variants](#writing-variants).
 4. **Build and open it** in the background, keeping the log:
    ```sh

@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { appearanceOptions, resolveNativeAppearance } from "../bridge/appearance.ts";
 import { findVisualThemePreset } from "@tmux-ide/contracts";
 const destination = new URL(
-  "../upstream/crates/herdr-gpui/src/tmux_snapshot/appearance/catalog.json",
+  "../upstream/crates/tmux-ide-gpui/src/tmux_snapshot/appearance/catalog.json",
   import.meta.url,
 );
 const entries = appearanceOptions.map(({ id, name }) => ({

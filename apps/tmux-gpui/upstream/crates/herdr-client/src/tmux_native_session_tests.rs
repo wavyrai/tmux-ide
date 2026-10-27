@@ -577,3 +577,48 @@ mod native_surfaces;
 #[cfg(unix)]
 #[path = "tmux_native_session_backpressure_tests.rs"]
 mod backpressure_tests;
+
+#[test]
+fn cell_observer_rejects_interactive_and_multi_pane_capabilities() {
+    let (_listener, mut options) = fixture();
+    options.descriptor.effective_viewer_mode = tmux_stream::ViewerMode::Interactive;
+    assert!(matches!(
+        NativeSession::spawn_cell_observer(options, "workspace".into()),
+        Err(Error::Terminal(tmux_terminal::Error::Identity))
+    ));
+    let (_listener, mut options) = fixture();
+    options.descriptor.panes.push("pane.neighbour".into());
+    assert!(matches!(
+        NativeSession::spawn_cell_observer(options, "workspace".into()),
+        Err(Error::Terminal(tmux_terminal::Error::Identity))
+    ));
+}
+
+#[test]
+fn cell_observer_retains_only_its_pane_with_neighbour_layout_controls() {
+    let (listener, options) = fixture();
+    let (done_tx, done_rx) = bounded(1);
+    let (acked_tx, acked_rx) = bounded(1);
+    let peer = thread::spawn(move || {
+        let mut socket = accept(listener);
+        send(
+            &mut socket,
+            json!({"type":"layout-snapshot", "topologyEpoch":1, "layouts":[{"panes":[{"pane":"pane.test"},{"pane":"pane.neighbour"}]}]}),
+        );
+        transaction(&mut socket, 0, false);
+        ack(&mut socket, 0);
+        acked_tx.send(()).unwrap();
+        done_rx.recv_timeout(WAIT).unwrap();
+    });
+    let session = NativeSession::spawn_cell_observer(options, "workspace".into()).unwrap();
+    until(|| session.committed("pane.test").unwrap());
+    let updates = session.drain().unwrap();
+    assert!(matches!(updates.status, Status::Ready(_)));
+    assert_eq!(updates.controls.len(), 1);
+    assert!(session.committed("pane.neighbour").unwrap().is_none());
+    acked_rx.recv_timeout(WAIT).unwrap();
+    session.cancel();
+    assert!(session.committed("pane.test").unwrap().is_none());
+    done_tx.send(()).unwrap();
+    peer.join().unwrap();
+}

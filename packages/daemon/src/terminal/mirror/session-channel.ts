@@ -749,6 +749,7 @@ export class SessionChannel {
   async start(): Promise<void> {
     await this.io.start();
     await this.captureAttachedSessionIdentity();
+    this.io.send("refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'");
     // Changing border placement can resize PTYs without changing the layout
     // string, so tmux emits no layout-change. Subscribe to this window option.
     this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
@@ -2883,6 +2884,10 @@ export class SessionChannel {
       name === "sessions-changed"
     )
       this.opts.onWindowTopologyChanged?.();
+    if (name === "subscription-changed" && rest.startsWith("tmux-ide-browser-icon ")) {
+      this.scheduleSync();
+      return;
+    }
     if (name === "subscription-changed") {
       const policy =
         /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
@@ -3299,6 +3304,7 @@ export class SessionChannel {
           semanticPaneId: pane?.semanticId ?? null,
           displayName: display?.name ?? null,
           displayNameSource: display?.source ?? null,
+          browserIcon: pane?.descriptor?.browserIcon ?? null,
           left: leaf.left,
           top: leaf.top,
           width: leaf.width,

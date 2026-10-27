@@ -1515,8 +1515,11 @@ export class PaneStreamLiveConnection {
       this.close(1011, "stream-unavailable");
       return;
     }
-    const expectedPaneIds = [...this.#descriptor.panes].sort();
-    if (expectedPaneIds.some((pane) => !known.has(pane))) {
+    // Layout authority covers the whole session, while content leases may select
+    // only one pane (for example a native browser observing its own canvas).
+    // Keep the full inventory fence without subscribing to unleased content.
+    const expectedPaneIds = [...known].sort();
+    if (this.#descriptor.panes.some((pane) => !known.has(pane))) {
       this.#failTopologyChanged();
       return;
     }
@@ -1917,8 +1920,8 @@ export class PaneStreamLiveConnection {
     // Renderers that cannot inflate see raw formats; their bytes are inflated
     // when served.
     const zlib =
-      this.#descriptor.terminalDelivery?.protocolVersions.includes(
-        TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION,
+      this.#descriptor.terminalDelivery?.protocolVersions.some(
+        (version) => version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION || version === 117,
       ) === true;
     channel.graphicsZlib = zlib;
     channel.graphicsLocal =
@@ -2414,6 +2417,9 @@ export class PaneStreamLiveConnection {
         pane: pane.semanticPaneId,
         displayName: pane.displayName,
         displayNameSource: pane.displayNameSource,
+        ...(this.#descriptor.terminalDelivery?.protocolVersions.includes(117)
+          ? { browserIcon: pane.browserIcon ?? null }
+          : {}),
         left: pane.left,
         top: pane.top,
         width: pane.width,

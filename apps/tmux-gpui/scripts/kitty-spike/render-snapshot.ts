@@ -3,7 +3,7 @@
  * replica interpreter and write a preview snapshot with its kitty images.
  *
  *   bun render-snapshot.ts TRANSCRIPT OUT.json [cols rows]
- *   cargo run -p herdr-gpui --bin tmux-ide-gpui -- --tmux-snapshot OUT.json
+ *   cargo run -p tmux-ide-gpui --bin tmux-ide-gpui -- --tmux-snapshot OUT.json
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseControlLine } from "../../../../packages/daemon/src/terminal/protocol/control.ts";

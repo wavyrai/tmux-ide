@@ -43,7 +43,7 @@ class AppNameTests(unittest.TestCase):
             self.assertIsNotNone(body, recipe)
             launch = f"exec target/{profile}/Herdr.app/Contents/MacOS/Herdr {{{{args}}}}"
             self.assertIn(launch, body.group(1))
-            self.assertNotIn(f"target/{profile}/herdr-gpui", body.group(1))
+            self.assertNotIn(f"target/{profile}/tmux-ide-gpui", body.group(1))
             if recipe == "run":
                 self.assertIn("{{just_executable()}} bundle release qa-menu", body.group(1))
                 self.assertIn("--features qa-menu -- {{args}}", body.group(1))
@@ -53,8 +53,8 @@ class AppNameTests(unittest.TestCase):
         body = re.search(r'(?m)^bundle profile="release" features="":\n((?:[ \t]+.*\n|\n)+)', justfile)
         self.assertIsNotNone(body)
         for expected in (
-            'cargo build --locked $flags --target-dir target -p herdr-gpui --features "{{features}}"',
-            'cp target/{{profile}}/herdr-gpui "$app/Contents/MacOS/Herdr"',
+            'cargo build --locked $flags --target-dir target -p tmux-ide-gpui --features "{{features}}"',
+            'cp target/{{profile}}/tmux-ide-gpui "$app/Contents/MacOS/Herdr"',
             'cp assets/macos/Info.plist "$app/Contents/Info.plist"',
             '"$app/Contents/Resources/Herdr.icns"',
             '"$app/Contents/Resources/Assets.car"',

@@ -2176,6 +2176,25 @@ describe("PaneStreamAdmissionCoordinator", () => {
     ]);
   });
 
+  it("streams one native source pane while validating the complete session layout", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"] });
+    h.mirror.initialLayouts = [authoritativeLayout(["pane.one", "pane.two"])];
+    const { socket } = await connect(h, {
+      panes: ["pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(1));
+    expect(socket.framesOfType("error")).toHaveLength(0);
+    expect([...h.deliveryListeners.keys()]).toEqual(["pane.two"]);
+    expect(socket.framesOfType("layout-snapshot")[0]?.layouts).toHaveLength(1);
+    expect(
+      socket
+        .framesOfType("layout-snapshot")[0]
+        ?.layouts[0].panes.map((pane: { pane: string }) => pane.pane),
+    ).toEqual(["pane.one", "pane.two"]);
+  });
+
   it("rejects stale semantic topology before any layout, delivery open, or seed escapes", async () => {
     const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
     h.mirror.initialLayouts = [authoritativeLayout(["pane.one", "pane.two"])];
@@ -4133,4 +4152,22 @@ describe("native availability on an existing terminal connection", () => {
       nativeSurfaces.close();
     }
   });
+});
+
+it("delivers browser icons only to clients offering capability 117", async () => {
+  for (const offered of [false, true]) {
+    const h = harness();
+    const layout = authoritativeLayout(["pane.editor", "pane.shell"]);
+    layout.panes[0]!.browserIcon = "ff00807f".repeat(256);
+    h.mirror.initialLayouts = [layout];
+    const { socket } = await connect(h, {
+      semanticDelivery: true,
+      protocolVersions: offered ? [1, 117] : [1],
+    });
+    const frame = socket.framesOfType("layout-snapshot")[0];
+    expect(frame?.layouts[0]?.panes[0]?.browserIcon).toBe(
+      offered ? "ff00807f".repeat(256) : undefined,
+    );
+    socket.close();
+  }
 });

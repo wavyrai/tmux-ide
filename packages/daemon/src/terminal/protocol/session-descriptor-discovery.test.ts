@@ -247,3 +247,16 @@ it("reads explicit name provenance without confusing it with a pane identity", (
   expect(result[0]).toMatchObject({ runtimePaneId: "%3", name: "Shell", nameSource: "manual" });
   expect(parseSessionPaneDescriptors([`${line("%3")}\tuntrusted`])[0]?.nameSource).toBeNull();
 });
+
+it("carries live browser icon metadata without changing pane identity", () => {
+  const icon = "ff00807f".repeat(256);
+  const record = `${line("%3")}\tmanual\t${process.pid}:${icon}`;
+  expect(parseSessionPaneDescriptors([record])[0]).toMatchObject({
+    runtimePaneId: "%3",
+    browserIcon: icon,
+  });
+  expect(parseSessionPaneDescriptors([`${line("%3")}\tmanual\tbad`])[0]).toMatchObject({
+    runtimePaneId: "%3",
+    browserIcon: null,
+  });
+});

@@ -74,11 +74,11 @@ try {
   await copyFile(resolve(project, "../../LICENSE"), join(resources, "TMUX-IDE-LICENSE"));
   // Preserve upstream's supplemental attribution even when a feature is not exposed.
   const supplementalNotices = {
-    "APPEARANCE-LICENSE": "crates/herdr-gpui/src/tmux_snapshot/appearance/catalog.LICENSE",
+    "APPEARANCE-LICENSE": "crates/tmux-ide-gpui/src/tmux_snapshot/appearance/catalog.LICENSE",
     "HERDR-PROTOCOL-LICENSE": "crates/herdr-protocol/LICENSE-APACHE",
     "HERDR-PROTOCOL-NOTICE": "crates/herdr-protocol/NOTICE.md",
-    "HERDR-SOUND-NOTICE": "crates/herdr-gpui/SOUND-NOTICE.md",
-    "HERDR-GITHUB-NOTICE": "crates/herdr-gpui/GITHUB-NOTICE.md",
+    "HERDR-SOUND-NOTICE": "crates/tmux-ide-gpui/SOUND-NOTICE.md",
+    "HERDR-GITHUB-NOTICE": "crates/tmux-ide-gpui/GITHUB-NOTICE.md",
     "OCTICONS-LICENSE": "assets/icons/LICENSE-octicons",
     "HEROICONS-LICENSE": "assets/icons/LICENSE-heroicons",
     "HEROICONS-PROVENANCE.json": "assets/icons/heroicons-provenance.json",

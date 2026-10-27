@@ -91,6 +91,7 @@ export type MirrorPaneEvent =
 
 /** One visible pane rectangle inside a layout event, in window cells. */
 export interface MirrorLayoutPane {
+  browserIcon?: string | null;
   /** Null while the pane's semantic identity join is still unverified. */
   semanticPaneId: string | null;
   /** Daemon-authored presentation; clients never infer this from terminal bytes. */

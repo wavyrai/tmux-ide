@@ -258,6 +258,6 @@ jobs:
           key: release-${{ matrix.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build optimized native executable
-        run: cargo build --locked --release -p herdr-gpui
+        run: cargo build --locked --release -p tmux-ide-gpui
       - name: Exercise release executable without opening a window
-        run: cargo test --locked --release -p herdr-gpui --test cli
+        run: cargo test --locked --release -p tmux-ide-gpui --test cli

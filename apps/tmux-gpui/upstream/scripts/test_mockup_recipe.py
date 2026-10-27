@@ -17,7 +17,7 @@ class MockupRecipeTests(unittest.TestCase):
             invocation.mkdir()
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            app = root / "target/debug/herdr-gpui"
+            app = root / "target/debug/tmux-ide-gpui"
             app.parent.mkdir(parents=True)
             cargo = bin_dir / "cargo"
             cargo.write_text(
@@ -55,7 +55,7 @@ class MockupRecipeTests(unittest.TestCase):
                     ]
                     self.assertEqual(
                         build_log.read_bytes().split(b"\0")[:-1],
-                        [os.fsencode(paths[0]), b"build", b"--locked", b"-p", b"herdr-gpui", b"--features", b"mockup"],
+                        [os.fsencode(paths[0]), b"build", b"--locked", b"-p", b"tmux-ide-gpui", b"--features", b"mockup"],
                     )
                     expected = ["--mockup"]
                     for flag, path in zip(("--feedback", "--capture"), paths[1:]):

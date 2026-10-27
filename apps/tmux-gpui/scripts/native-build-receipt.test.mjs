@@ -27,7 +27,7 @@ const build = {
     "--locked",
     "--offline",
     "-p",
-    "herdr-gpui",
+    "tmux-ide-gpui",
     "--bin",
     "tmux-ide-gpui",
     "--release",

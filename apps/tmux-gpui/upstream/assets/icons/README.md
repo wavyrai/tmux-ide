@@ -91,7 +91,7 @@ theme foreground, rather than fixed-color cached images.
 
 Each `agent-<label>.svg` is named after Herdr's canonical `agent_label`
 identifier in `src/detect/mod.rs`, not an editable display label. The
-`agent_icons!` table in `crates/herdr-gpui/src/icons.rs` is the only mapping;
+`agent_icons!` table in `crates/tmux-ide-gpui/src/icons.rs` is the only mapping;
 its test checks that every label Herdr emits has its own mark. Unknown, empty,
 and missing identities use `agent-generic.svg`.
 

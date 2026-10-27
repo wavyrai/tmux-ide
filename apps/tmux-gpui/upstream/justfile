@@ -6,7 +6,7 @@ run *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != Darwin ]; then
-        exec cargo run --locked --release -p herdr-gpui --features qa-menu -- {{args}}
+        exec cargo run --locked --release -p tmux-ide-gpui --features qa-menu -- {{args}}
     fi
     {{just_executable()}} bundle release qa-menu
     exec target/release/Herdr.app/Contents/MacOS/Herdr {{args}}
@@ -15,7 +15,7 @@ run-debug *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != Darwin ]; then
-        exec cargo run --locked -p herdr-gpui -- {{args}}
+        exec cargo run --locked -p tmux-ide-gpui -- {{args}}
     fi
     {{just_executable()}} bundle debug
     exec target/debug/Herdr.app/Contents/MacOS/Herdr {{args}}
@@ -42,17 +42,17 @@ test-live binary:
 
 # Opens a real native window; requires an active desktop. Uses an isolated daemon.
 test-gui binary:
-    HERDR_TEST_BINARY="{{binary}}" cargo test --locked -p herdr-gpui --features integration-test --test live_gui -- --ignored --nocapture --test-threads=1
+    HERDR_TEST_BINARY="{{binary}}" cargo test --locked -p tmux-ide-gpui --features integration-test --test live_gui -- --ignored --nocapture --test-threads=1
 
 # Explicit opt-in: reads the real code signature and Homebrew records of an
 # installed app. Never discovers an installation on its own.
 test-update bundle:
-    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-gpui updater::install::tests::signing::installed_bundle -- --ignored --nocapture
-    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-gpui updater::brew::tests::the_real_cask -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p tmux-ide-gpui updater::install::tests::signing::installed_bundle -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p tmux-ide-gpui updater::brew::tests::the_real_cask -- --ignored --nocapture
 
 # Really upgrades the installed app through Homebrew; restart it afterwards.
 test-brew-upgrade bundle expected:
-    HERDR_TEST_BUNDLE="{{bundle}}" HERDR_TEST_BREW_EXPECTED="{{expected}}" HERDR_TEST_BREW_UPGRADE=1 cargo test --locked -p herdr-gpui updater::brew::tests::homebrew_really_installs -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" HERDR_TEST_BREW_EXPECTED="{{expected}}" HERDR_TEST_BREW_UPGRADE=1 cargo test --locked -p tmux-ide-gpui updater::brew::tests::homebrew_really_installs -- --ignored --nocapture
 
 # Repeat the Linux suite under CPU pressure in a container, where scheduling
 # races reproduce that a fast machine hides. Needs Docker; nothing else.
@@ -61,12 +61,12 @@ stress-linux iterations="30" cpus="0.5" filter="":
 
 # Native font/glyph regression across repeated frames and sizes; no daemon needed.
 test-sidebar:
-    cargo test --locked -p herdr-gpui --features integration-test --test live_gui native_sidebar -- --ignored --nocapture --test-threads=1
+    cargo test --locked -p tmux-ide-gpui --features integration-test --test live_gui native_sidebar -- --ignored --nocapture --test-threads=1
 
 # Native hover/scroll CPU scene budget in milliseconds, calibrated for this machine.
 test-perf budget="30":
-    cargo build --locked --release -p herdr-gpui --features integration-test
-    HERDR_PERF_P95_MS="{{budget}}" target/release/herdr-gpui --performance-test
+    cargo build --locked --release -p tmux-ide-gpui --features integration-test
+    HERDR_PERF_P95_MS="{{budget}}" target/release/tmux-ide-gpui --performance-test
 
 # Compare UI variants written as GPUI code in `file` (the built-in demo when
 # empty) in a native window. "Send to agent" writes `feedback`; `capture` gets
@@ -81,14 +81,14 @@ mockup file="" feedback="" capture="":
     file="$(absolute "$1")"
     feedback="$(absolute "$2")"
     capture="$(absolute "$3")"
-    HERDR_MOCKUP_FILE="$file" cargo build --locked -p herdr-gpui --features mockup
+    HERDR_MOCKUP_FILE="$file" cargo build --locked -p tmux-ide-gpui --features mockup
     args=(--mockup)
     if [ -n "$feedback" ]; then args+=(--feedback "$feedback"); fi
     if [ -n "$capture" ]; then args+=(--capture "$capture"); fi
-    exec target/debug/herdr-gpui "${args[@]}"
+    exec target/debug/tmux-ide-gpui "${args[@]}"
 
 build-release:
-    cargo build --locked --release -p herdr-gpui
+    cargo build --locked --release -p tmux-ide-gpui
 
 # Regenerate the checked-in artwork on macOS (requires brew install librsvg).
 icons:
@@ -105,9 +105,9 @@ bundle profile="release" features="":
         *) echo "Unknown profile: {{profile}} (release or debug)" >&2; exit 2 ;;
     esac
     app=target/{{profile}}/Herdr.app
-    cargo build --locked $flags --target-dir target -p herdr-gpui --features "{{features}}"
+    cargo build --locked $flags --target-dir target -p tmux-ide-gpui --features "{{features}}"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp target/{{profile}}/herdr-gpui "$app/Contents/MacOS/Herdr"
+    cp target/{{profile}}/tmux-ide-gpui "$app/Contents/MacOS/Herdr"
     cp assets/macos/Info.plist "$app/Contents/Info.plist"
     # LaunchServices and the Dock cache icons by bundle ID, so every worktree
     # build sharing the release ID competed with the installed app's icon.
@@ -124,7 +124,7 @@ bundle profile="release" features="":
 
 # Link the actual optimized application and exercise its CLI without a desktop.
 test-build: build-release
-    cargo test --locked --release -p herdr-gpui --test cli
+    cargo test --locked --release -p tmux-ide-gpui --test cli
 
 # Fail on source files over 1,000 lines.
 check-file-size:
