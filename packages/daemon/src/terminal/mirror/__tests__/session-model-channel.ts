@@ -205,6 +205,7 @@ export class SessionModelChannel implements MirrorChannelIo {
           text.startsWith('list-panes -s -t "zz-sim" -F ') ||
           text.startsWith('list-windows -t "zz-sim" -F ');
         const subscription =
+          text === "refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'" ||
           /^refresh-client -B 'tmux-ide-(?:pane-borders|copy-keys|pane-history|scroll-on-clear):[^']+'$/u.test(
             text,
           );
