@@ -515,14 +515,20 @@ try {
     );
     let last = 0;
     for (const event of events) {
-      assert.ok(event.request >= last);
+      assert.ok(
+        event.request >= last,
+        `Native request regressed: ${last} -> ${event.request}; status=${event.status}`,
+      );
       last = event.request;
       if (event.snapshot && event.request === 6) assert.equal(event.selectedPane, second);
     }
   }
   let lastRequest = 0;
   for (const event of events) {
-    assert.ok(event.request >= lastRequest);
+    assert.ok(
+      event.request >= lastRequest,
+      `Native request regressed: ${lastRequest} -> ${event.request}; status=${event.status}`,
+    );
     lastRequest = event.request;
   }
   assert.equal(stderr, "", "healthy browser must not report a diagnostic before shutdown");

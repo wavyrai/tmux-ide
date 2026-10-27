@@ -72,3 +72,35 @@ fn typed_backend_command_failure_closes_the_authoritative_mailbox() {
     bridge.commands.send(Command::Home { request: 1 }).unwrap();
     assert!(next_state(&bridge.mailbox).is_none());
 }
+
+#[test]
+fn delayed_catalog_cannot_replace_a_newer_navigation() {
+    let (events, receiver) = mpsc::sync_channel(8);
+    let bridge = start_events(Default::default(), receiver, || |_| Ok(()));
+    events
+        .send(Incoming::Catalog(Box::new(State {
+            request: 7,
+            status: "Current pane".into(),
+            ..State::default()
+        })))
+        .unwrap();
+    assert_eq!(next_state(&bridge.mailbox).unwrap().request, 7);
+    events
+        .send(Incoming::Catalog(Box::new(State {
+            request: 6,
+            status: "Old pane".into(),
+            ..State::default()
+        })))
+        .unwrap();
+    bridge
+        .commands
+        .send(Command::Presence {
+            active: true,
+            revision: 4,
+        })
+        .unwrap();
+    let state = next_state(&bridge.mailbox).unwrap();
+    assert_eq!(state.request, 7);
+    assert_eq!(state.status, "Current pane");
+    drop(events);
+}

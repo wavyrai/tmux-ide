@@ -393,6 +393,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         }
                     }
                     Incoming::Catalog(next) => {
+                        if next.request < state.request
+                            || active.as_ref().is_some_and(|a| next.request < a.request)
+                        {
+                            continue;
+                        }
                         if active.as_ref().is_some_and(|a| next.request > a.request) {
                             revoke_connection(&mut active, &mut state, &mut output);
                         }
