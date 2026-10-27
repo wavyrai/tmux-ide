@@ -288,3 +288,79 @@ fn refused_newer_navigation_does_not_retire_accepted_input_correlation() {
     active.controller.retire();
     peer.join().unwrap();
 }
+
+#[test]
+fn catalog_repaint_does_not_cancel_pending_editor_read() {
+    let (mut active, mut state, _observed, peer) = fixture(true);
+    let token = state.pane_actions.as_ref().unwrap().token.clone();
+    let request = active
+        .editor
+        .submit(
+            &active.controller,
+            &active.presentation,
+            ReadContext {
+                id: ID,
+                request: 3,
+                pane: "left",
+                token: &token,
+                presence: 1,
+            },
+            1,
+        )
+        .unwrap();
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, 2).unwrap();
+    assert!(
+        active.editor_notice.is_none(),
+        "catalog repaint cancelled a current editor read"
+    );
+    assert_eq!(
+        active.editor.response(EditorResponse::native(
+            &request,
+            crate::tmux_snapshot::browser_native_editor::Status::Unavailable
+        )),
+        Some("Open folder requires verified local daemon discovery")
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
+#[test]
+fn editor_result_waits_for_repaint_and_still_rejects_focus_loss() {
+    for blurred in [false, true] {
+        let (mut active, mut state, _observed, peer) = fixture(true);
+        let token = state.pane_actions.as_ref().unwrap().token.clone();
+        let request = active
+            .editor
+            .submit(
+                &active.controller,
+                &active.presentation,
+                ReadContext {
+                    id: ID,
+                    request: 3,
+                    pane: "left",
+                    token: &token,
+                    presence: 1,
+                },
+                1,
+            )
+            .unwrap();
+        assert!(active.editor.receive(EditorResponse::native(
+            &request,
+            crate::tmux_snapshot::browser_native_editor::Status::Unavailable
+        )));
+        active.presentation.invalidate_overlay();
+        if blurred {
+            active.controller.presence(false, 2, 2).unwrap();
+        }
+        active.poll(&mut state, 3).unwrap();
+        assert_eq!(active.editor_notice.is_some(), blurred);
+        assert_eq!(
+            state.status == "Open folder requires verified local daemon discovery",
+            !blurred
+        );
+        assert!(active.editor.finish_response().is_none());
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}

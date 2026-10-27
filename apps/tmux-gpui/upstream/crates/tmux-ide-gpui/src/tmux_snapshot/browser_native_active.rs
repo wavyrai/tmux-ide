@@ -104,15 +104,6 @@ impl Active {
         let prior_actions = state.pane_actions.clone();
         let prior_status = state.status.clone();
         let update = self.controller.poll(now)?;
-        if let Some(value) = self.editor.poll(
-            &self.controller,
-            &self.presentation,
-            self.request,
-            update.presence_revision.unwrap_or(state.presence_revision),
-            now,
-        ) {
-            self.editor_notice = Some(Command::NativeEditorCancel { value });
-        }
         let prior_split = state.split_layout.clone();
         let prior_gesture = state.split_gesture.clone();
         if let Some(event) = self.owner.poll(&mut self.controller, now)? {
@@ -260,6 +251,17 @@ impl Active {
             }
             self.presentation.invalidate_overlay();
             revoke(&mut None, state);
+        }
+        if let Some(value) = self.editor.poll(
+            &self.controller,
+            &self.presentation,
+            self.request,
+            update.presence_revision.unwrap_or(state.presence_revision),
+            now,
+        ) {
+            self.editor_notice = Some(Command::NativeEditorCancel { value });
+        } else if let Some(status) = self.editor.finish_response() {
+            self.action_status = Some(status);
         }
         if selection_rejected {
             state.input_target_rejected = true;

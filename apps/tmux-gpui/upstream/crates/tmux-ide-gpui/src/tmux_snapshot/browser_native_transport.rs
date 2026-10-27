@@ -336,20 +336,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             .as_mut()
                             .filter(|a| a.id == response.id && a.request == response.request)
                         {
-                            if let Some(value) = current.editor.poll(
-                                &current.controller,
-                                &current.presentation,
-                                current.request,
-                                presence.1,
-                                now,
-                            ) {
-                                if output(Command::NativeEditorCancel { value }).is_err() {
-                                    break 'worker;
-                                }
-                            } else if let Some(status) = current.editor.response(response) {
-                                current.action_status = Some(status);
-                                changed = true;
-                            }
+                            changed |= current.editor.receive(response);
                         }
                     }
                     Incoming::Split(response) => {

@@ -92,3 +92,23 @@ fn metadata_versions_require_exact_attachment_and_presence_and_validate_strings(
     invalid["versions"]["daemonVersion"] = serde_json::json!("private error path");
     assert!(serde_json::from_value::<Diagnostics>(invalid).is_err());
 }
+
+#[test]
+fn queued_response_is_bounded_correlated_and_discarded_on_cancel() {
+    let mut editor = Editor::default();
+    let stale = begin(&mut editor, 0);
+    editor.cancel();
+    let current = begin(&mut editor, 1);
+    assert!(!editor.receive(response(&stale)));
+    assert!(editor.receive(response(&current)));
+    assert!(!editor.receive(response(&current)));
+    editor.cancel();
+    assert!(editor.finish_response().is_none());
+    let next = begin(&mut editor, 2);
+    assert!(editor.receive(response(&next)));
+    assert_eq!(
+        editor.finish_response(),
+        Some("Folder open request sent to VS Code")
+    );
+    assert!(editor.finish_response().is_none());
+}

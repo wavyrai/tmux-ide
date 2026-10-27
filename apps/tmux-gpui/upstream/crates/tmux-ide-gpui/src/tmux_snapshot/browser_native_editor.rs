@@ -86,6 +86,7 @@ struct Pending {
 pub(super) struct Editor {
     highest: u64,
     pending: Option<Pending>,
+    received: Option<Response>,
 }
 pub(super) struct ReadContext<'a> {
     pub id: &'a str,
@@ -180,6 +181,7 @@ impl Editor {
     }
     pub fn cancel(&mut self) -> Option<Cancel> {
         let pending = self.pending.take()?;
+        self.received = None;
         Some(Cancel {
             version: 1,
             id: pending.request.id,
@@ -187,13 +189,27 @@ impl Editor {
             operation_id: pending.request.operation_id,
         })
     }
+    pub fn receive(&mut self, response: Response) -> bool {
+        if self.received.is_some() || !self.matches_response(&response) {
+            return false;
+        }
+        self.received = Some(response);
+        true
+    }
+    pub fn finish_response(&mut self) -> Option<&'static str> {
+        let response = self.received.take()?;
+        self.response(response)
+    }
+    fn matches_response(&self, response: &Response) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            response.id == pending.request.id
+                && response.request == pending.request.request
+                && response.sequence == pending.request.sequence
+                && response.operation_id == pending.request.operation_id
+        })
+    }
     pub fn response(&mut self, response: Response) -> Option<&'static str> {
-        let pending = self.pending.as_ref()?;
-        if response.id != pending.request.id
-            || response.request != pending.request.request
-            || response.sequence != pending.request.sequence
-            || response.operation_id != pending.request.operation_id
-        {
+        if !self.matches_response(&response) {
             return None;
         }
         self.pending = None;
