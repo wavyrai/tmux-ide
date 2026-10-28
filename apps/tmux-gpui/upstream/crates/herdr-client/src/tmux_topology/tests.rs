@@ -326,3 +326,28 @@ fn actual_daemon_split_close_layouts_validate_under_fresh_capability_scopes() {
         assert!(state.links().is_some());
     }
 }
+
+#[test]
+fn browser_icons_update_without_changing_pane_geometry() {
+    let mut frame = frames()
+        .into_iter()
+        .find(|frame| frame["type"] == "layout-snapshot")
+        .unwrap();
+    let icon = "ff00807f".repeat(256);
+    frame["layouts"][0]["panes"][0]["browserIcon"] = json!(icon);
+    let mut state = topology(&frame);
+    let original = state.layouts()["window-a"].panes[0].clone();
+    assert_eq!(original.browser_icon.as_deref(), Some(icon.as_str()));
+    frame["topologyEpoch"] = json!(frame["topologyEpoch"].as_u64().unwrap() + 1);
+    frame["layouts"][0]["panes"][0]["browserIcon"] = json!("");
+    state.apply_control(&to_raw_value(&frame).unwrap()).unwrap();
+    let next = &state.layouts()["window-a"].panes[0];
+    assert_eq!(next.browser_icon.as_deref(), Some(""));
+    assert_eq!(
+        (next.left, next.top, next.width, next.height),
+        (original.left, original.top, original.width, original.height)
+    );
+    frame["topologyEpoch"] = json!(frame["topologyEpoch"].as_u64().unwrap() + 1);
+    frame["layouts"][0]["panes"][0]["browserIcon"] = json!("https://site/favicon");
+    assert!(state.apply_control(&to_raw_value(&frame).unwrap()).is_err());
+}

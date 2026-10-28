@@ -9,4 +9,4 @@ fi
 snapshot=${1:-"$project_dir/fixtures/snapshot.json"}
 case "$snapshot" in /*) ;; *) snapshot="$PWD/$snapshot" ;; esac
 cd "$project_dir/upstream"
-exec cargo run --locked -p herdr-gpui --bin tmux-ide-gpui -- --tmux-snapshot "$snapshot"
+exec cargo run --locked -p tmux-ide-gpui --bin tmux-ide-gpui -- --tmux-snapshot "$snapshot"

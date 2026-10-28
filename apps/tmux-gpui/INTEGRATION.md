@@ -203,7 +203,7 @@ existing components where practical:
    retaining pending/error UI and identity checks. Do not import Herdr RPC or
    issue tmux commands directly from the UI.
 
-These paths are within upstream/crates/herdr-gpui. This is an implementation map,
+These paths are within upstream/crates/tmux-ide-gpui. This is an implementation map,
 not completed UI. Existing license/notices remain required for adapted code.
 
 ### Native material appearance — user requirement, 9 October 2026

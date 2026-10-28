@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TARGETS = ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
 LICENSES = ("LICENSE", "NOTICE", "assets/icons/LICENSE-octicons",
             "crates/herdr-protocol/LICENSE-APACHE", "crates/herdr-protocol/NOTICE.md",
-            "crates/herdr-gpui/SOUND-NOTICE.md")
+            "crates/tmux-ide-gpui/SOUND-NOTICE.md")
 # Zip cannot store dates before 1980; a fixed stamp keeps entries independent
 # of checkout and build times.
 TIMESTAMP = (1980, 1, 1, 0, 0, 0)

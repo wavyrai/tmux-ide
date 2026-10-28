@@ -1,4 +1,7 @@
+import { browserIcon } from "./browser-icon.ts";
+
 export interface SessionPaneDescriptor {
+  browserIcon?: string | null;
   nativePaneBirthId?: string | null;
   sessionName: string;
   runtimePaneId: string;
@@ -52,6 +55,7 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{session_windows}",
   "#{pane_birth_id}",
   "#{qa:@tmux_ide_name_source}",
+  "#{qa:@tmux_ide_browser_icon}",
 ].join("\t");
 
 /** Decode the escapes emitted by tmux's `qa` format modifier. */
@@ -131,7 +135,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length !== 21 && encoded.length !== 22) continue;
+    if (encoded.length !== 21 && encoded.length !== 22 && encoded.length !== 23) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -155,6 +159,7 @@ export function parseSessionPaneDescriptorReply(
       sessionWindowCountRaw = "",
       nativePaneBirthId = "",
       nameSource = "",
+      browserIconRaw = "",
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -194,6 +199,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     descriptors.push({
+      browserIcon: browserIcon(browserIconRaw),
       sessionName,
       runtimePaneId,
       runtimeSessionId,

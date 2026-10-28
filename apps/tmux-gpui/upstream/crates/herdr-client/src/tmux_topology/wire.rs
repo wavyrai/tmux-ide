@@ -32,6 +32,8 @@ pub enum DisplayNameSource {
 pub struct LayoutPane {
     pub pane: Option<String>,
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_icon: Option<String>,
     pub display_name_source: Option<DisplayNameSource>,
     pub left: usize,
     pub top: usize,
@@ -120,6 +122,15 @@ impl Layout {
             return Err(Error::Bounds);
         }
         for pane in &self.panes {
+            if pane.browser_icon.as_ref().is_some_and(|icon| {
+                !icon.is_empty()
+                    && (icon.len() != 2048
+                        || !icon
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+            }) {
+                return Err(Error::Bounds);
+            }
             if pane.pane.as_ref().is_some_and(|id| !identity(id))
                 || pane
                     .display_name

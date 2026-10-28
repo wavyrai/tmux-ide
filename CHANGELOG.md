@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.14
+
+- Add `tmux-ide open [url]` to open an installed terminal-browser in an explicitly targeted tmux pane or window, with safe argument handling and clear missing-browser errors.
+- Redesign the native workspace with rounded pane cards, continuous header/content surfaces, compact session navigation, and window tabs. Remove duplicate session tabs and the connected footer.
+- Fix pane divider activation and terminal content sizing, and add pane focus and zoom shortcuts with keyboard badges in menus.
+- Carry bounded browser favicon updates to native pane headers and window tabs when using the prepared terminal-browser integration.
+- Keep native browser image observers scoped to their pane and discard stale surface handoffs during resizing without tearing down the image connection.
+
+Native UI changes require the separately distributed alpha `0.1.9`, build `2026102701`. Updating npm alone does not update the GUI. Terminal-browser remains a separate installation; native pixel surfaces and favicon support require the prepared development integration. Native browser navigation controls are not part of this release.
+
 ## 2.9.13
 
 - Move native GUI discovery, session catalogs, agent operations and SSH connections into Rust. The normal native path no longer starts the Node metadata helper.

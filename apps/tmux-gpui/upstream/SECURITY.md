@@ -33,7 +33,7 @@ In scope:
   entry used by signed release builds (development builds use the private file
   store instead). The [README](README.md#native-github-sign-in) documents credential
   precedence, requested scope, and the limits of memory erasure.
-- Anything in `crates/herdr-gpui` that lets terminal content escape its pane:
+- Anything in `crates/tmux-ide-gpui` that lets terminal content escape its pane:
   unintended command execution, clipboard or notification writes, or path
   handling from daemon-supplied strings.
 

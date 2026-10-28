@@ -53,13 +53,13 @@
   Shared icon buttons now render sidebar switch/theme/refresh controls with hints;
   their existing action listeners and ownership checks are retained.
 
-- `upstream/crates/herdr-gpui/src/main.rs`: thin upstream-reference entry.
+- `upstream/crates/tmux-ide-gpui/src/main.rs`: thin upstream-reference entry.
   Its original module composition and preview interception moved to new `lib.rs`.
-- `upstream/crates/herdr-gpui/Cargo.toml`: adds the dedicated `tmux-ide-gpui`
+- `upstream/crates/tmux-ide-gpui/Cargo.toml`: adds the dedicated `tmux-ide-gpui`
   binary as the package default run target. New `src/tmux_main.rs` and `src/tmux_cli.rs` dispatch exclusively to
   preview modes, never normal Herdr startup. New `tests/tmux_cli.rs` checks
   executable argument rejection, product identity and offline validation.
-- `upstream/crates/herdr-gpui/src/tmux_snapshot.rs` and `tmux_snapshot/`: new
+- `upstream/crates/tmux-ide-gpui/src/tmux_snapshot.rs` and `tmux_snapshot/`: new
   bounded JSON decoder, read-only window, latest-frame mailbox and regression tests.
   `bridge/` outside upstream owns the local TypeScript daemon connection.
 - New `tmux_snapshot/browser.rs`, `browser_ui.rs` and `browser_tests.rs` add
@@ -69,7 +69,7 @@
   interruption/re-arm behavior and deterministic native input regressions. The
   view, composition handler and browser UI share the gate; no daemon authority
   or upstream terminal protocol is changed.
-- `upstream/crates/herdr-gpui/src/terminal.rs`: makes the existing
+- `upstream/crates/tmux-ide-gpui/src/terminal.rs`: makes the existing
   `WheelRemainder` and its `add` method crate-visible for native tmux scroll
   handling. The accumulation behavior is unchanged.
 - `tmux_snapshot/pane_chrome.rs` and `hit_regions.rs` add a display-only selected
@@ -242,3 +242,14 @@ as an additional reference for layering.
 - Incomplete image assemblies share a 64 MiB reservation limit in addition to
   their existing count limit. Replacing or retiring an assembly releases its
   reservation; completed image-cache limits remain separate.
+
+## Application crate rename (2026-10-27)
+
+The tmux-ide application package and Rust namespace are now `tmux-ide-gpui` /
+`tmux_ide_gpui`; its source directory moved to `upstream/crates/tmux-ide-gpui`.
+The retained upstream reference executable remains explicitly named `herdr-gpui`.
+The client/protocol crate names, upstream repository attribution, licenses, and
+immutable `upstream-provenance.json` hashes are unchanged. For provenance lookup,
+map the new crate directory back to `crates/herdr-gpui` in the original manifest.
+Native build receipts, assembly notices, preview scripts, Cargo selectors and
+CI paths now reference the renamed application crate.

@@ -11,8 +11,8 @@
 <p align="center">
   <a href="https://github.com/penso/herdr-gpui/releases">Releases</a> ·
   <a href="docs/updating.md">App updates</a> ·
-  <a href="crates/herdr-gpui/README.md">GUI scope &amp; configuration</a> ·
-  <a href="crates/herdr-gpui/PERFORMANCE.md">Performance report</a> ·
+  <a href="crates/tmux-ide-gpui/README.md">GUI scope &amp; configuration</a> ·
+  <a href="crates/tmux-ide-gpui/PERFORMANCE.md">Performance report</a> ·
   <a href="AGENTS.md">Contributing</a> ·
   <a href="#star-history">Star history</a>
 </p>
@@ -42,14 +42,14 @@ running another terminal emulator or wrapping the TUI.
     <td width="50%" valign="top">
       <img src="docs/screenshots/teleport.png" alt="Teleport dialog listing two saved SSH hosts as destinations for the feat-multi-currency worktree">
       <br>
-      <sub><b><a href="crates/herdr-gpui/README.md#teleport">Teleport</a>.</b> Move a worktree to another host with its commits, uncommitted changes, tabs, splits, running programs, and agent sessions.</sub>
+      <sub><b><a href="crates/tmux-ide-gpui/README.md#teleport">Teleport</a>.</b> Move a worktree to another host with its commits, uncommitted changes, tabs, splits, running programs, and agent sessions.</sub>
     </td>
   </tr>
   <tr>
     <td colspan="2">
       <img src="docs/screenshots/review.png" alt="Review tab showing a unified diff of uncommitted changes with syntax colouring, a changed-files list, and two numbered review notes ready to send to Claude">
       <br>
-      <sub><b><a href="crates/herdr-gpui/README.md#reviewing-an-agents-changes">Review an agent's changes</a>.</b> Open <b>Review Changes</b> from a tab strip's <b>+</b> menu, click any line to leave a note like a pull request comment, then <b>Send to agent</b>.</sub>
+      <sub><b><a href="crates/tmux-ide-gpui/README.md#reviewing-an-agents-changes">Review an agent's changes</a>.</b> Open <b>Review Changes</b> from a tab strip's <b>+</b> menu, click any line to leave a note like a pull request comment, then <b>Send to agent</b>.</sub>
     </td>
   </tr>
   <tr>
@@ -63,7 +63,7 @@ running another terminal emulator or wrapping the TUI.
     <td colspan="2">
       <img src="docs/screenshots/browser-annotate.png" alt="Browser tab showing a local page with two numbered annotations, a hovered element outline, and a notes panel with element screenshots and Send to agent">
       <br>
-      <sub><b><a href="crates/herdr-gpui/README.md#annotating-a-page">Browser tabs with annotations</a>.</b> An agent opens its page with <code>herdr-gpui browser open</code>; you pick elements or regions, write notes, and send them back to that agent. Listening ports such as <code>:4173</code> appear under their workspace.</sub>
+      <sub><b><a href="crates/tmux-ide-gpui/README.md#annotating-a-page">Browser tabs with annotations</a>.</b> An agent opens its page with <code>herdr-gpui browser open</code>; you pick elements or regions, write notes, and send them back to that agent. Listening ports such as <code>:4173</code> appear under their workspace.</sub>
     </td>
   </tr>
   <tr>
@@ -98,14 +98,14 @@ running another terminal emulator or wrapping the TUI.
   </tr>
 </table>
 
-Also included: saved SSH hosts with [file copies](crates/herdr-gpui/README.md#ssh-file-copies),
-[inline images](crates/herdr-gpui/README.md#images),
-[clickable links](crates/herdr-gpui/README.md#terminal-links),
-[file drops](crates/herdr-gpui/README.md#file-drops),
-[editor groups](crates/herdr-gpui/README.md#editor-groups), and
-[system notifications](crates/herdr-gpui/README.md#system-notifications),
-[sounds](crates/herdr-gpui/README.md#notification-sounds), and a
-[Dock badge](crates/herdr-gpui/README.md#macos-dock-badge) when an agent needs you.
+Also included: saved SSH hosts with [file copies](crates/tmux-ide-gpui/README.md#ssh-file-copies),
+[inline images](crates/tmux-ide-gpui/README.md#images),
+[clickable links](crates/tmux-ide-gpui/README.md#terminal-links),
+[file drops](crates/tmux-ide-gpui/README.md#file-drops),
+[editor groups](crates/tmux-ide-gpui/README.md#editor-groups), and
+[system notifications](crates/tmux-ide-gpui/README.md#system-notifications),
+[sounds](crates/tmux-ide-gpui/README.md#notification-sounds), and a
+[Dock badge](crates/tmux-ide-gpui/README.md#macos-dock-badge) when an agent needs you.
 
 ## Install
 
@@ -185,7 +185,7 @@ just run
 `just run-debug` is notably slower with a dense terminal on screen.
 On macOS both build a local bundle identified as `so.pen.herdr-gpui.dev`, so
 it never shares a Dock tile or icon cache with an installed release.
-Without `just`: `cargo run --locked --release -p herdr-gpui --features qa-menu`.
+Without `just`: `cargo run --locked --release -p tmux-ide-gpui --features qa-menu`.
 
 Install the Herdr daemon separately. The app starts an already-installed local
 `herdr server` when the target session is absent, but never installs or upgrades
@@ -202,7 +202,7 @@ same script. Linux binaries require the system ALSA shared library (`libasound2t
 on Ubuntu 24.04), a configured default audio device, and Vulkan for rendering.
 Audio normally routes through the desktop's ALSA plugin configuration; no CLI
 audio player is required. Custom notification sounds are MP3 only. See
-[notification sounds](crates/herdr-gpui/README.md#notification-sounds).
+[notification sounds](crates/tmux-ide-gpui/README.md#notification-sounds).
 
 ### Windows
 
@@ -214,10 +214,10 @@ or live daemon has been exercised. Local
 connections use the named pipe the Windows daemon binds, and configuration and
 state follow its `%APPDATA%` / `%LOCALAPPDATA%` layout. A Herdr daemon inside a
 WSL distribution can be added as a device from **Add Device…**; see
-[WSL distributions](crates/herdr-gpui/README.md#wsl-distributions). Saved SSH
+[WSL distributions](crates/tmux-ide-gpui/README.md#wsl-distributions). Saved SSH
 hosts, in-app updates, saved GitHub credentials, and the avatar disk cache are
 unavailable and report that plainly; see
-[the GUI README](crates/herdr-gpui/README.md#windows).
+[the GUI README](crates/tmux-ide-gpui/README.md#windows).
 
 Each release publishes `Herdr-VERSION-x86_64-pc-windows-msvc.zip` and
 `Herdr-VERSION-aarch64-pc-windows-msvc.zip` (native ARM64), each containing
@@ -251,7 +251,7 @@ binary **client** socket, renders the surfaces it is sent, and sends semantic
 input back. Closing or detaching the GUI leaves the daemon and its terminals
 running.
 
-[Browser tabs](crates/herdr-gpui/README.md#browser-tabs) are the exception:
+[Browser tabs](crates/tmux-ide-gpui/README.md#browser-tabs) are the exception:
 Herdr has no browser panes, so web pages shown beside a workspace's terminals
 belong to the GUI alone. Agents in your panes open them with
 `herdr-gpui browser open URL`, which reaches the running app over a local
@@ -261,11 +261,11 @@ socket of its own.
 
 The QA menu is excluded from default Cargo builds, including published releases.
 `just run` enables it automatically; with Cargo, use
-`cargo run --locked --release -p herdr-gpui --features qa-menu`.
+`cargo run --locked --release -p tmux-ide-gpui --features qa-menu`.
 To manually test native audio in that build, choose **QA > Play Sound**. It plays the built-in
 Done sound on the background Rodio worker, even without a daemon or active pane
 and even with notifications muted. `HERDR_DISABLE_SOUND` and `NEXTEST` still
-suppress playback. See [notification sounds](crates/herdr-gpui/README.md#notification-sounds)
+suppress playback. See [notification sounds](crates/tmux-ide-gpui/README.md#notification-sounds)
 for queue limits and playback details.
 
 ## Performance
@@ -282,7 +282,7 @@ measures CPU event-to-scene construction, not GPU completion or pointer-to-scree
 latency. Use `just test-perf 50` to set a different calibrated budget; native tests
 remain opt-in rather than imposing machine-dependent timings on hosted CI.
 
-See [PERFORMANCE.md](crates/herdr-gpui/PERFORMANCE.md) for the before/after results,
+See [PERFORMANCE.md](crates/tmux-ide-gpui/PERFORMANCE.md) for the before/after results,
 reference mode, workload, deterministic checks, and remaining limitations.
 
 ## License

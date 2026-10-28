@@ -142,7 +142,7 @@ function runTmuxBinaryAsync(executable, args, options = {}) {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
   }
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     execFile(
       executable,
       args,
@@ -154,7 +154,7 @@ function runTmuxBinaryAsync(executable, args, options = {}) {
       },
       (error, stdout) => {
         if (error) reject(classifyTmuxError(error));
-        else resolve44(stdout);
+        else resolve45(stdout);
       }
     );
   });
@@ -1596,7 +1596,7 @@ async function acquirePrivateOperationLock(lock, waitMs) {
       if (Date.now() >= deadline)
         throw new Error("timed out waiting for another private operation");
       await new Promise(
-        (resolve44) => setTimeout(resolve44, Math.min(50, Math.max(0, deadline - Date.now())))
+        (resolve45) => setTimeout(resolve45, Math.min(50, Math.max(0, deadline - Date.now())))
       );
     }
   } catch (error) {
@@ -7944,6 +7944,7 @@ var init_pane_stream = __esm({
           /** Optional for compatibility with an older daemon during reconnect. */
           displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
           displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
+          browserIcon: z49.string().regex(/^(?:[0-9a-f]{2048})?$/u).nullable().optional(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
@@ -13007,7 +13008,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.12",
+      version: "2.9.14",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -13962,7 +13963,7 @@ function readProcessTable() {
   }
 }
 function readProcessTableAsync(signal) {
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     execFile3(
       "ps",
       ["-axo", "pid=,ppid=,command="],
@@ -13971,7 +13972,7 @@ function readProcessTableAsync(signal) {
         timeout: 2e3,
         signal
       },
-      (error, stdout) => resolve44(error ? [] : parsePsOutput(stdout))
+      (error, stdout) => resolve45(error ? [] : parsePsOutput(stdout))
     );
   });
 }
@@ -19331,7 +19332,7 @@ var init_contract = __esm({
 import { execFile as execFile4 } from "node:child_process";
 function boundedTmuxRead(executable, args, options) {
   if (options.signal?.aborted) return Promise.reject(new Error("Tmux read cancelled"));
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     let output = "";
     let failure4 = null;
     let escalation = null;
@@ -19367,7 +19368,7 @@ function boundedTmuxRead(executable, args, options) {
       if (escalation) clearTimeout(escalation);
       options.signal?.removeEventListener("abort", stop3);
       if (failure4) reject(failure4);
-      else resolve44(output);
+      else resolve45(output);
     });
     if (options.signal?.aborted) stop3();
   });
@@ -23522,11 +23523,11 @@ var init_bootstrap_coordinator = __esm({
         this.cause = options.cause;
       }
     };
-    defaultSleep = (milliseconds) => new Promise((resolve44) => {
+    defaultSleep = (milliseconds) => new Promise((resolve45) => {
       const releaseTimer = acquireRuntimeResource("runtime-timer");
       setTimeout(() => {
         releaseTimer();
-        resolve44();
+        resolve45();
       }, milliseconds);
     });
     defaultPollMs = (poll) => Math.min(25 * 2 ** poll, 200);
@@ -24088,10 +24089,10 @@ async function reconcilePaneSourceCredentialsAtStartup(authority2, sessions, tim
   const reconciliation = Promise.allSettled(
     uniqueSessions.map((session) => authority2.reconcileSessionAsync(session, controller.signal))
   );
-  const deadline = new Promise((resolve44) => {
+  const deadline = new Promise((resolve45) => {
     timeout = setTimeout(() => {
       controller.abort();
-      resolve44("timed-out");
+      resolve45("timed-out");
     }, timeoutMs);
   });
   const result2 = await Promise.race([reconciliation.then(() => "complete"), deadline]);
@@ -24891,12 +24892,12 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile6 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     execFile6(
       "tmux",
       runtimeTmuxArgs(args),
       { env: sanitizeTmuxClientEnvironment() },
-      (err, stdout) => err ? reject(err) : resolve44(stdout.trimEnd())
+      (err, stdout) => err ? reject(err) : resolve45(stdout.trimEnd())
     );
   });
 }
@@ -25093,11 +25094,11 @@ async function claimSocketPath(path2) {
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve44) => {
+  const alive = await new Promise((resolve45) => {
     const probe = connect(path2);
     const done = (result2) => {
       probe.destroy();
-      resolve44(result2);
+      resolve45(result2);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -25179,7 +25180,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve44, reject) => {
+  await new Promise((resolve45, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -25195,14 +25196,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve44();
+      resolve45();
     });
   });
   chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve44) => {
+    close: () => new Promise((resolve45) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -25211,7 +25212,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync5(socketPath);
         } catch {
         }
-        resolve44();
+        resolve45();
       });
     })
   };
@@ -25242,12 +25243,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve44(wrap(socket));
+      resolve45(wrap(socket));
     });
   });
 }
@@ -25299,12 +25300,12 @@ function wrap(socket) {
   });
   const request3 = (verb, params) => {
     const id2 = nextId++;
-    return new Promise((resolve44, reject) => {
+    return new Promise((resolve45, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id2, { resolve: resolve44, reject });
+      pending.set(id2, { resolve: resolve45, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id: id2, verb, params }));
     });
   };
@@ -25586,7 +25587,7 @@ function createBoundedDevelopmentLog(path2, options = {}) {
   let flight = null;
   const queue = [];
   const append = options.write ?? ((fd2, data) => new Promise(
-    (resolve44, reject) => write(fd2, data, (error, written) => error ? reject(error) : resolve44(written))
+    (resolve45, reject) => write(fd2, data, (error, written) => error ? reject(error) : resolve45(written))
   ));
   const drain = async () => {
     try {
@@ -25594,7 +25595,7 @@ function createBoundedDevelopmentLog(path2, options = {}) {
         const data = queue[0];
         if (size + data.length > limit) {
           await new Promise(
-            (resolve44, reject) => ftruncate(fd, 0, (error) => error ? reject(error) : resolve44())
+            (resolve45, reject) => ftruncate(fd, 0, (error) => error ? reject(error) : resolve45())
           );
           size = 0;
         }
@@ -25651,12 +25652,12 @@ function createBoundedDevelopmentLog(path2, options = {}) {
       accepting = false;
       let timer;
       const closing = (flight ?? Promise.resolve()).then(
-        () => new Promise((resolve44) => close(fd, () => resolve44()))
+        () => new Promise((resolve45) => close(fd, () => resolve45()))
       );
       await Promise.race([
         closing,
-        new Promise((resolve44) => {
-          timer = setTimeout(resolve44, 1e3);
+        new Promise((resolve45) => {
+          timer = setTimeout(resolve45, 1e3);
         })
       ]);
       if (timer) clearTimeout(timer);
@@ -26439,6 +26440,26 @@ var init_manual_pane_team = __esm({
   }
 });
 
+// packages/daemon/src/terminal/protocol/browser-icon.ts
+function browserIcon(value, alive = processAlive) {
+  const match = /^([1-9][0-9]{0,9}):([0-9a-f]{2048}|)$/u.exec(value);
+  if (!match || !alive(Number(match[1]))) return null;
+  return match[2];
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_browser_icon = __esm({
+  "packages/daemon/src/terminal/protocol/browser-icon.ts"() {
+    "use strict";
+  }
+});
+
 // packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts
 function decodeTmuxArgument(value) {
   const encoded = value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
@@ -26488,7 +26509,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     }
     const encoded = utf8Line.split("	");
-    if (encoded.length !== 21 && encoded.length !== 22) continue;
+    if (encoded.length !== 21 && encoded.length !== 22 && encoded.length !== 23) continue;
     const [
       runtimePaneId = "",
       semanticPaneId3 = "",
@@ -26511,7 +26532,8 @@ function parseSessionPaneDescriptorReply(lines) {
       windowPaneCountRaw = "",
       sessionWindowCountRaw = "",
       nativePaneBirthId = "",
-      nameSource2 = ""
+      nameSource2 = "",
+      browserIconRaw = ""
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -26529,6 +26551,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     }
     descriptors.push({
+      browserIcon: browserIcon(browserIconRaw),
       sessionName,
       runtimePaneId,
       runtimeSessionId,
@@ -26574,6 +26597,7 @@ var SESSION_PANE_DESCRIPTOR_FORMAT, SessionDescriptorDiscovery, STRICT_UTF8_DECO
 var init_session_descriptor_discovery = __esm({
   "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
     "use strict";
+    init_browser_icon();
     SESSION_PANE_DESCRIPTOR_FORMAT = [
       "#{pane_id}",
       "#{qa:@tmux_ide_pane_id}",
@@ -26596,7 +26620,8 @@ var init_session_descriptor_discovery = __esm({
       "#{window_panes}",
       "#{session_windows}",
       "#{pane_birth_id}",
-      "#{qa:@tmux_ide_name_source}"
+      "#{qa:@tmux_ide_name_source}",
+      "#{qa:@tmux_ide_browser_icon}"
     ].join("	");
     SessionDescriptorDiscovery = class {
       options;
@@ -27268,14 +27293,14 @@ function tmuxInteractionWaitCommand(bufferName, channel) {
 }
 function defaultWaiter(authority2, bufferName) {
   const prefix = socketArguments(authority2);
-  return (channel, signal) => new Promise((resolve44, reject) => {
+  return (channel, signal) => new Promise((resolve45, reject) => {
     execFile8(
       authority2.executablePath,
       [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
       { signal, encoding: "utf8", windowsHide: true },
       (error) => {
-        if (!error) resolve44();
-        else if (signal.aborted) resolve44();
+        if (!error) resolve45();
+        else if (signal.aborted) resolve45();
         else reject(error);
       }
     );
@@ -27283,12 +27308,12 @@ function defaultWaiter(authority2, bufferName) {
 }
 function abortableDelay(milliseconds, signal) {
   if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     const timer = setTimeout(done, milliseconds);
     function done() {
       signal.removeEventListener("abort", done);
       clearTimeout(timer);
-      resolve44();
+      resolve45();
     }
     signal.addEventListener("abort", done, { once: true });
   });
@@ -30130,7 +30155,7 @@ var init_native_grid_reader = __esm({
           return Promise.resolve({ status: "unsupported" });
         if (!/^%\d+$/.test(runtimePaneId) || this.pending.size >= 64)
           return Promise.resolve({ status: "unavailable" });
-        return new Promise((resolve44) => {
+        return new Promise((resolve45) => {
           let settled = false;
           let timer;
           const finish = (result2) => {
@@ -30138,7 +30163,7 @@ var init_native_grid_reader = __esm({
             settled = true;
             clearTimeout(timer);
             if (result2.status !== "timeout") this.pending.delete(retire2);
-            resolve44(result2);
+            resolve45(result2);
           };
           const retire2 = () => finish({ status: "retired" });
           this.pending.add(retire2);
@@ -31013,8 +31038,8 @@ var init_session_channel = __esm({
       /** Settles once the FIRST identity join lands (or is proven impossible), so
        *  `start()` returns a channel whose semantic ids are subscribable. */
       resolveFirstJoin = null;
-      firstJoin = new Promise((resolve44) => {
-        this.resolveFirstJoin = resolve44;
+      firstJoin = new Promise((resolve45) => {
+        this.resolveFirstJoin = resolve45;
       });
       input = new InputCoalescer(
         (action) => {
@@ -31168,6 +31193,7 @@ var init_session_channel = __esm({
       async start() {
         await this.io.start();
         await this.captureAttachedSessionIdentity();
+        this.io.send("refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'");
         this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
         this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
         this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
@@ -31298,12 +31324,12 @@ var init_session_channel = __esm({
           if (!listing && !resize) throw new Error("Invalid resize control command");
           const pinned = listing ? [...args.slice(0, 3), identity3.runtimeSessionId, ...args.slice(4)] : args;
           const command3 = pinned.map((arg, index) => resize && index === 5 ? ";" : tmuxSingleQuote(arg)).join(" ");
-          const lines = listing ? await this.io.request(command3) : await new Promise((resolve44, reject) => {
+          const lines = listing ? await this.io.request(command3) : await new Promise((resolve45, reject) => {
             this.io.commandListInline(
               command3,
               2,
               1,
-              (reply) => reply.ok ? resolve44(reply.lines) : reject(new Error("Resize control command failed"))
+              (reply) => reply.ok ? resolve45(reply.lines) : reject(new Error("Resize control command failed"))
             );
           });
           assertCurrent();
@@ -31391,8 +31417,8 @@ var init_session_channel = __esm({
             () => true,
             () => false
           ),
-          new Promise((resolve44) => {
-            timer = setTimeout(() => resolve44(false), 2e3);
+          new Promise((resolve45) => {
+            timer = setTimeout(() => resolve45(false), 2e3);
           })
         ]).finally(() => {
           if (timer !== void 0) clearTimeout(timer);
@@ -31448,10 +31474,10 @@ var init_session_channel = __esm({
             semanticPaneId3,
             () => !sub.closed && sub.pane === pane && this.panesBySemantic.get(semanticPaneId3) === pane
           ),
-          readHistorySize: () => new Promise((resolve44) => {
+          readHistorySize: () => new Promise((resolve45) => {
             const current = () => !this.disposed && !sub.closed && !sub.frozen && this.panesByRuntime.get(pane.runtimeId) === pane;
             if (!current()) {
-              resolve44(null);
+              resolve45(null);
               return;
             }
             this.io.commandInline(
@@ -31459,7 +31485,7 @@ var init_session_channel = __esm({
               (reply) => {
                 const value = reply.lines[0]?.trim() ?? "";
                 const size = Number(value);
-                resolve44(
+                resolve45(
                   current() && reply.ok && /^[0-9]+$/u.test(value) && Number.isSafeInteger(size) ? size : null
                 );
               }
@@ -32829,6 +32855,10 @@ var init_session_channel = __esm({
       onNotify(name, rest) {
         if (name === "window-add" || name === "window-close" || name === "unlinked-window-add" || name === "unlinked-window-close" || name === "session-renamed" || name === "sessions-changed")
           this.opts.onWindowTopologyChanged?.();
+        if (name === "subscription-changed" && rest.startsWith("tmux-ide-browser-icon ")) {
+          this.scheduleSync();
+          return;
+        }
         if (name === "subscription-changed") {
           const policy = /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
             rest
@@ -33145,6 +33175,7 @@ var init_session_channel = __esm({
               semanticPaneId: pane?.semanticId ?? null,
               displayName: display?.name ?? null,
               displayNameSource: display?.source ?? null,
+              browserIcon: pane?.descriptor?.browserIcon ?? null,
               left: leaf.left,
               top: leaf.top,
               width: leaf.width,
@@ -34809,7 +34840,7 @@ var init_pane_source_discovery = __esm({
             if (counts.get(session) !== 1) this.#fingerprints.delete(session);
         });
         this.#tail = work.catch(() => void 0);
-        return new Promise((resolve44, reject) => {
+        return new Promise((resolve45, reject) => {
           const abort = () => reject(bounded5.reason);
           if (bounded5.aborted) {
             reject(bounded5.reason);
@@ -34819,7 +34850,7 @@ var init_pane_source_discovery = __esm({
           void work.then(
             () => {
               bounded5.removeEventListener("abort", abort);
-              resolve44();
+              resolve45();
             },
             (error) => {
               bounded5.removeEventListener("abort", abort);
@@ -36327,10 +36358,10 @@ var init_native_journal_control_connection = __esm({
             { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, TMUX: "" } }
           );
           this.#process = child;
-          this.#exited = new Promise((resolve44) => {
+          this.#exited = new Promise((resolve45) => {
             child.once("close", () => {
               this.#fail("Native journal peer closed");
-              resolve44();
+              resolve45();
             });
           });
           child.once("error", () => this.#fail("Native journal peer failed to start"));
@@ -36381,8 +36412,8 @@ var init_native_journal_control_connection = __esm({
         const abort = () => this.#fail("Native journal request cancelled");
         signal.addEventListener("abort", abort, { once: true });
         try {
-          return await new Promise((resolve44, reject) => {
-            this.#pending = { flags, phase: "begin", maxLines, resolve: resolve44, reject };
+          return await new Promise((resolve45, reject) => {
+            this.#pending = { flags, phase: "begin", maxLines, resolve: resolve45, reject };
             this.#armPhaseDeadline();
             try {
               write2();
@@ -36483,8 +36514,8 @@ var init_native_journal_control_connection = __esm({
             try {
               return await Promise.race([
                 this.#exited.then(() => true),
-                new Promise((resolve44) => {
-                  timer = setTimeout(() => resolve44(false), ms);
+                new Promise((resolve45) => {
+                  timer = setTimeout(() => resolve45(false), ms);
                 })
               ]);
             } finally {
@@ -36514,7 +36545,7 @@ function freezeMetadata2(value) {
   Object.freeze(value);
 }
 function delay(milliseconds, signal) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     if (signal.aborted) {
       reject(signal.reason);
       return;
@@ -36525,7 +36556,7 @@ function delay(milliseconds, signal) {
     };
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", abort);
-      resolve44();
+      resolve45();
     }, milliseconds);
     signal.addEventListener("abort", abort, { once: true });
   });
@@ -37057,8 +37088,8 @@ var init_owner_interaction_observation = __esm({
         try {
           const completed = await Promise.race([
             this.start().then(() => true),
-            new Promise((resolve44) => {
-              timer = setTimeout(() => resolve44(false), 6e3);
+            new Promise((resolve45) => {
+              timer = setTimeout(() => resolve45(false), 6e3);
             })
           ]);
           if (!completed) {
@@ -37960,7 +37991,7 @@ var init_fleet_lifecycle_authority = __esm({
     init_fleet_agent_lifecycle();
     init_tmux_terminal_color();
     MAX_REPLAY_OPERATIONS = 128;
-    sleep2 = (milliseconds) => new Promise((resolve44) => setTimeout(resolve44, milliseconds));
+    sleep2 = (milliseconds) => new Promise((resolve45) => setTimeout(resolve45, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
       constructor(code2, message) {
         super(message);
@@ -38295,8 +38326,8 @@ var init_fleet_lifecycle_authority = __esm({
       async #exclusive(run) {
         const predecessor = this.#tail;
         let release;
-        this.#tail = new Promise((resolve44) => {
-          release = resolve44;
+        this.#tail = new Promise((resolve45) => {
+          release = resolve45;
         });
         await predecessor;
         try {
@@ -40061,15 +40092,15 @@ function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTE
 }
 function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     const timer = setTimeout(() => {
       proc.off("exit", onExit);
-      resolve44(false);
+      resolve45(false);
     }, timeoutMs);
     timer.unref?.();
     const onExit = () => {
       clearTimeout(timer);
-      resolve44(true);
+      resolve45(true);
     };
     proc.once("exit", onExit);
   });
@@ -40840,13 +40871,13 @@ var init_control_channel = __esm({
           this.core.fail("control channel exited");
           this.noteExit(null);
         });
-        return new Promise((resolve44, reject) => {
+        return new Promise((resolve45, reject) => {
           let timer;
           const settle = (error) => {
             if (timer) clearTimeout(timer);
             this.guardedStart = null;
             if (error) reject(error);
-            else resolve44();
+            else resolve45();
           };
           if (this.opts.nativeServerIdentity) {
             this.guardedStart = { resolve: () => settle(), reject: (error) => settle(error) };
@@ -40928,7 +40959,7 @@ var init_control_channel = __esm({
         this.viewerHandshakeStarted = true;
         this.viewerConfig = config2;
         this.unsubscribeNativeViewerReady();
-        return new Promise((resolve44) => {
+        return new Promise((resolve45) => {
           let settled = false;
           const finish = (identity3) => {
             if (settled) return;
@@ -40941,7 +40972,7 @@ var init_control_channel = __esm({
             } catch {
               this.retireNativeViewer();
             }
-            resolve44();
+            resolve45();
           };
           const timer = setTimeout(() => finish(null), 1e3);
           timer.unref?.();
@@ -40997,8 +41028,8 @@ var init_control_channel = __esm({
       request(cmd) {
         const proc = this.proc;
         if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
-        return new Promise((resolve44, reject) => {
-          this.core.push({ kind: "promise", resolve: resolve44, reject, lines: [] });
+        return new Promise((resolve45, reject) => {
+          this.core.push({ kind: "promise", resolve: resolve45, reject, lines: [] });
           proc.stdin.write(`${cmd}
 `);
         });
@@ -41722,14 +41753,14 @@ var init_mirror_service = __esm({
                   throw new Error("Window link mutation requires a pinned socket authority");
                 if (this.opts.resolveSocketPath) this.opts.resolveSocketPath();
                 const socket = revalidateUnixSocketIdentity(mutationSocketIdentity);
-                return new Promise((resolve44) => {
+                return new Promise((resolve45) => {
                   execFile9(
                     executable,
                     ["-N", "-u", "-S", socket, ...args],
                     { timeout: 5e3, maxBuffer: 65536, encoding: "utf8", env: environment },
                     (error, stdout) => {
                       const status2 = !error ? 0 : typeof error.code === "number" && !error.killed ? error.code : null;
-                      resolve44({ status: status2, stdout });
+                      resolve45({ status: status2, stdout });
                     }
                   );
                 });
@@ -42355,8 +42386,8 @@ var init_semantic_mutation_executor = __esm({
         if (needsTmuxObservation) {
           let settleObservation;
           let rejectObservation;
-          observed = new Promise((resolve44, reject) => {
-            settleObservation = resolve44;
+          observed = new Promise((resolve45, reject) => {
+            settleObservation = resolve45;
             rejectObservation = reject;
           });
           let sessionPending = this.#pending.get(session);
@@ -48535,7 +48566,7 @@ ${stackTraceFormattedLines.join("\n")}
       }
       Event2.fromDOMEventEmitter = fromDOMEventEmitter;
       function toPromise(event) {
-        return new Promise((resolve44) => once(event)(resolve44));
+        return new Promise((resolve45) => once(event)(resolve45));
       }
       Event2.toPromise = toPromise;
       function fromPromise(promise) {
@@ -59297,7 +59328,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         return this.#terminal.buffer.active.baseY;
       }
       write(data) {
-        return new Promise((resolve44) => this.#terminal.write(data, resolve44));
+        return new Promise((resolve45) => this.#terminal.write(data, resolve45));
       }
       canImportNativeGrid() {
         const buffer = this.#terminal.buffer.active._buffer;
@@ -60501,8 +60532,8 @@ var init_terminal_replica_interpreter = __esm({
         );
         this.#attachKitty(this.#backend);
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
-        this.#seedReady = new Promise((resolve44, reject) => {
-          this.#resolveSeedReady = resolve44;
+        this.#seedReady = new Promise((resolve45, reject) => {
+          this.#resolveSeedReady = resolve45;
           this.#rejectSeedReady = reject;
         });
         void this.#seedReady.catch(() => void 0);
@@ -60525,8 +60556,8 @@ var init_terminal_replica_interpreter = __esm({
             flushQueued: false,
             trace
           };
-          const promise = new Promise((resolve44, reject) => {
-            group.entries.push({ data, offset: 0, resolve: resolve44, reject });
+          const promise = new Promise((resolve45, reject) => {
+            group.entries.push({ data, offset: 0, resolve: resolve45, reject });
             group.bytes += data.length;
           });
           if (!group.scheduled && !group.flushQueued) {
@@ -62116,8 +62147,8 @@ var init_terminal_delivery_hub = __esm({
           const pane = await this.#ensurePane(semanticPaneId3);
           if (this.#closed) throw new Error("Terminal delivery hub is closed");
           let resolveClosed;
-          const closed = new Promise((resolve44) => {
-            resolveClosed = resolve44;
+          const closed = new Promise((resolve45) => {
+            resolveClosed = resolve45;
           });
           const client = {
             deliveryWorkspaceName: address,
@@ -62502,13 +62533,13 @@ var init_terminal_delivery_hub = __esm({
       }
       #yieldCanonical(pane) {
         if (this.#scheduler.nowMs() - pane.canonicalYieldStartedAt < 2) return Promise.resolve();
-        return new Promise((resolve44) => {
+        return new Promise((resolve45) => {
           let timer;
           const finish = () => {
             timer?.cancel();
             pane.canonicalYieldStartedAt = this.#scheduler.nowMs();
             pane.canonicalAbort.signal.removeEventListener("abort", finish);
-            resolve44();
+            resolve45();
           };
           pane.canonicalAbort.signal.addEventListener("abort", finish, { once: true });
           if (pane.canonicalAbort.signal.aborted) finish();
@@ -62820,13 +62851,13 @@ var init_terminal_delivery_hub = __esm({
       }
       #yieldEncoding(job) {
         if (this.#scheduler.nowMs() - job.yieldStartedAt < 2) return Promise.resolve();
-        return new Promise((resolve44) => {
+        return new Promise((resolve45) => {
           let timer;
           const finish = () => {
             timer?.cancel();
             job.yieldStartedAt = this.#scheduler.nowMs();
             job.abort.signal.removeEventListener("abort", finish);
-            resolve44();
+            resolve45();
           };
           job.abort.signal.addEventListener("abort", finish, { once: true });
           if (job.abort.signal.aborted) finish();
@@ -63874,10 +63905,10 @@ import { z as z106 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
   signal.throwIfAborted();
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(resolve44, reject).then(
+    void promise.then(resolve45, reject).then(
       () => signal.removeEventListener("abort", onAbort),
       () => signal.removeEventListener("abort", onAbort)
     );
@@ -69472,8 +69503,8 @@ var init_pty_tmux_attachment_launcher = __esm({
         const lifecycleEpoch = this.#lifecycleEpoch;
         const attemptId = randomUUID28();
         let resolveOutcome;
-        const outcome = new Promise((resolve44) => {
-          resolveOutcome = resolve44;
+        const outcome = new Promise((resolve45) => {
+          resolveOutcome = resolve45;
         });
         const earlyFrames = [];
         let earlyBytes = 0;
@@ -69897,7 +69928,7 @@ function defaultCommandExecutor(executable, argv, options) {
   });
 }
 function defaultReadCommandExecutor(executable, argv, options) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     execFile10(
       executable,
       [...argv],
@@ -69910,7 +69941,7 @@ function defaultReadCommandExecutor(executable, argv, options) {
         signal: options.signal,
         windowsHide: true
       },
-      (error, stdout) => error ? reject(error) : resolve44(stdout)
+      (error, stdout) => error ? reject(error) : resolve45(stdout)
     );
   });
 }
@@ -70482,7 +70513,7 @@ var init_native_runtime = __esm({
       PANE_WIRE_SENTINEL
     ].join(WIRE_SEPARATOR);
     INVENTORY_FENCE_ATTEMPTS = 4;
-    settleDelay = (attempt) => new Promise((resolve44) => setTimeout(resolve44, 25 * 2 ** (attempt - 1)));
+    settleDelay = (attempt) => new Promise((resolve45) => setTimeout(resolve45, 25 * 2 ** (attempt - 1)));
     NativeTerminalAttachmentGeometryResolver = class {
       #catalog;
       #runner;
@@ -71763,13 +71794,13 @@ function createTmuxAgentStatusProbe(deps2) {
       );
       if (!signal) return result2;
       if (signal.aborted) return Promise.reject(signal.reason);
-      return new Promise((resolve44, reject) => {
+      return new Promise((resolve45, reject) => {
         const aborted = () => reject(signal.reason);
         signal.addEventListener("abort", aborted, { once: true });
         void result2.then(
           (value) => {
             signal.removeEventListener("abort", aborted);
-            resolve44(value);
+            resolve45(value);
           },
           (error) => {
             signal.removeEventListener("abort", aborted);
@@ -72187,8 +72218,8 @@ async function compressGraphicsChunk(header, bytes) {
   if (!likelyCompressible(bytes)) return null;
   active++;
   try {
-    const encoded = await new Promise((resolve44) => {
-      deflate(bytes, { level: 1 }, (error, result2) => resolve44(error ? null : result2));
+    const encoded = await new Promise((resolve45) => {
+      deflate(bytes, { level: 1 }, (error, result2) => resolve45(error ? null : result2));
     });
     if (!encoded || encoded.length + 128 > bytes.length * 0.875) return null;
     return encodeTerminalGraphicsCompressed(
@@ -73190,7 +73221,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
         for (const waiters of this.#semanticDrainWaiters.values())
-          for (const resolve44 of waiters) resolve44();
+          for (const resolve45 of waiters) resolve45();
         this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
@@ -73299,8 +73330,8 @@ var init_pane_stream_websocket = __esm({
           this.close(1011, "stream-unavailable");
           return;
         }
-        const expectedPaneIds = [...this.#descriptor.panes].sort();
-        if (expectedPaneIds.some((pane) => !known.has(pane))) {
+        const expectedPaneIds = [...known].sort();
+        if (this.#descriptor.panes.some((pane) => !known.has(pane))) {
           this.#failTopologyChanged();
           return;
         }
@@ -73612,8 +73643,8 @@ var init_pane_stream_websocket = __esm({
         const graphics = channel.delivery?.graphics;
         if (!graphics) return;
         this.#observeSurfaceDemand([channel.semanticPaneId]);
-        const zlib = this.#descriptor.terminalDelivery?.protocolVersions.includes(
-          TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION
+        const zlib = this.#descriptor.terminalDelivery?.protocolVersions.some(
+          (version) => version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION || version === 117
         ) === true;
         channel.graphicsZlib = zlib;
         channel.graphicsLocal = !!this.#localImages && this.#descriptor.terminalDelivery?.protocolVersions.some(
@@ -73767,7 +73798,7 @@ var init_pane_stream_websocket = __esm({
             for (let offset = 0; offset < total; offset += TERMINAL_GRAPHICS_BLOB_CHUNK_BYTES) {
               while ((this.#socket.bufferedAmount ?? 0) > GRAPHICS_SEND_WINDOW_BYTES) {
                 if (this.#closed || channel.closed) return;
-                await new Promise((resolve44) => setTimeout(resolve44, 5));
+                await new Promise((resolve45) => setTimeout(resolve45, 5));
               }
               if (this.#closed || channel.closed) return;
               if (offset > 0 && graphics.image(digest3) !== image) break;
@@ -73834,9 +73865,9 @@ var init_pane_stream_websocket = __esm({
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
-        return new Promise((resolve44) => {
+        return new Promise((resolve45) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
-          waiters.push(resolve44);
+          waiters.push(resolve45);
           this.#semanticDrainWaiters.set(pane, waiters);
           this.#ensureDrainTick();
         });
@@ -74026,6 +74057,7 @@ var init_pane_stream_websocket = __esm({
             pane: pane.semanticPaneId,
             displayName: pane.displayName,
             displayNameSource: pane.displayNameSource,
+            ...this.#descriptor.terminalDelivery?.protocolVersions.includes(117) ? { browserIcon: pane.browserIcon ?? null } : {},
             left: pane.left,
             top: pane.top,
             width: pane.width,
@@ -74154,7 +74186,7 @@ var init_pane_stream_websocket = __esm({
           const waiters = this.#semanticDrainWaiters.get(pane);
           if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
-            for (const resolve44 of waiters) resolve44();
+            for (const resolve45 of waiters) resolve45();
           }
         }
       }
@@ -76435,7 +76467,7 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve44) => wss.close(() => resolve44()));
+      await new Promise((resolve45) => wss.close(() => resolve45()));
     }
   };
 }
@@ -77101,7 +77133,7 @@ function createRuntimeTraceWriter(stream, identity3, closeTimeoutMs = 1e3) {
       if (closing) return closing;
       closed = true;
       if (incomplete) failed = true;
-      closing = new Promise((resolve44, reject) => {
+      closing = new Promise((resolve45, reject) => {
         let settled = false;
         const finish = (error) => {
           if (settled) return;
@@ -77114,7 +77146,7 @@ function createRuntimeTraceWriter(stream, identity3, closeTimeoutMs = 1e3) {
             failed = true;
             stream.destroy();
             reject(error);
-          } else resolve44();
+          } else resolve45();
         };
         const prematureClose = () => finish(new Error("Runtime trace closed before final summary completion"));
         const end = () => {
@@ -77368,14 +77400,14 @@ function parseDaemonMonitorPanes(raw) {
   });
 }
 function execMonitorCommandAsync(executable, args, signal) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     execFile13(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve44(stdout.trim());
+        else resolve45(stdout.trim());
       }
     );
   });
@@ -78524,8 +78556,8 @@ var init_daemon_fleet_facts_observer = __esm({
           }
         }
         let resolveReady;
-        const ready = new Promise((resolve44) => {
-          resolveReady = resolve44;
+        const ready = new Promise((resolve45) => {
+          resolveReady = resolve45;
         });
         const waiter = { demands: unique, resolve: resolveReady };
         this.#waiters.add(waiter);
@@ -78649,8 +78681,8 @@ var init_daemon_fleet_facts_observer = __esm({
         }
         let done;
         let timedOut = false;
-        const cancelled = new Promise((resolve44) => {
-          done = () => resolve44(null);
+        const cancelled = new Promise((resolve45) => {
+          done = () => resolve45(null);
         });
         const controller = new AbortController();
         const abort = () => {
@@ -83004,7 +83036,7 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator(false)?.shutdown();
-      await new Promise((resolve44) => wss.close(() => resolve44()));
+      await new Promise((resolve45) => wss.close(() => resolve45()));
     }
   };
 }
@@ -84385,9 +84417,9 @@ function streamTmuxInteractions(c, server, journal, after, assertCurrent, observ
           cursor2 = next;
           continue;
         }
-        await new Promise((resolve44) => {
-          wake = resolve44;
-          if (dirty || stopped) resolve44();
+        await new Promise((resolve45) => {
+          wake = resolve45;
+          if (dirty || stopped) resolve45();
         });
         wake = null;
       }
@@ -85091,11 +85123,11 @@ function mountTmuxServerRoutes(app, options) {
           let sent = revision;
           let nextIdentityCheck = Date.now() + 5e3;
           while (!stopped) {
-            await new Promise((resolve44) => {
-              const timer = setTimeout(resolve44, 1e3);
+            await new Promise((resolve45) => {
+              const timer = setTimeout(resolve45, 1e3);
               wake = () => {
                 clearTimeout(timer);
-                resolve44();
+                resolve45();
               };
               if (stopped || revision !== sent) wake();
             });
@@ -85318,13 +85350,13 @@ async function streamBoundedLogs(stream, options) {
     while (!closed) {
       const item = queue[0];
       if (!item) {
-        await new Promise((resolve44) => {
-          wake = resolve44;
+        await new Promise((resolve45) => {
+          wake = resolve45;
         });
         continue;
       }
-      const cancelled = new Promise((resolve44) => {
-        cancelWrite = resolve44;
+      const cancelled = new Promise((resolve45) => {
+        cancelWrite = resolve45;
       });
       timer = setTimeout(abort, options.writeTimeoutMs ?? 5e3);
       timer.unref?.();
@@ -85527,7 +85559,7 @@ function mountSavedMachineWatch(app, options) {
       if (query.data.after !== initial.revision)
         return c.json({ daemon: options.daemon, ...initial });
       const signal = c.req.raw.signal;
-      const result2 = await new Promise((resolve44) => {
+      const result2 = await new Promise((resolve45) => {
         let settled = false;
         let stop3 = () => {
         };
@@ -85539,7 +85571,7 @@ function mountSavedMachineWatch(app, options) {
           try {
             stop3();
           } finally {
-            resolve44(result3);
+            resolve45(result3);
           }
         };
         const aborted = () => finish({ status: 408 });
@@ -94299,13 +94331,13 @@ async function retireTerminalAttachmentTransport(runtime, boundary2) {
 }
 async function pickFreePort(hostname4) {
   const probe = createServer2();
-  return await new Promise((resolve44, reject) => {
+  return await new Promise((resolve45, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname4, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve44(port);
+        if (port) resolve45(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -94396,21 +94428,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve44) => wss.close(() => resolve44())), delay2(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve45) => wss.close(() => resolve45())), delay2(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve44();
+      else resolve45();
     });
   });
 }
 function delay2(ms) {
-  return new Promise((resolve44) => setTimeout(resolve44, ms));
+  return new Promise((resolve45) => setTimeout(resolve45, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes9(32).toString("base64url");
@@ -94443,13 +94475,13 @@ function assertTakeoverDeadline(deadline, message) {
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
   const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
-  await new Promise((resolve44) => {
+  await new Promise((resolve45) => {
     const timer = setTimeout(finish, waitMs);
     const onAbort = () => finish();
     function finish() {
       clearTimeout(timer);
       deadline.signal.removeEventListener("abort", onAbort);
-      resolve44();
+      resolve45();
     }
     deadline.signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -94756,7 +94788,7 @@ async function startHttpServer({
   };
   serverOwners.attach(server);
   try {
-    await new Promise((resolve44, reject) => {
+    await new Promise((resolve45, reject) => {
       const onError = (err) => {
         server.off("listening", onListening);
         if (err.code === "EADDRINUSE") {
@@ -94782,7 +94814,7 @@ async function startHttpServer({
             `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
           );
         }
-        resolve44();
+        resolve45();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -95279,7 +95311,7 @@ async function startEmbeddedDaemonGeneration(opts) {
               );
             }
             const semanticPaneId3 = layout.panes.find((pane) => pane.semanticPaneId === preferredPaneId)?.semanticPaneId ?? layout.panes.find((pane) => pane.active)?.semanticPaneId ?? layout.panes[0].semanticPaneId;
-            const seed = await new Promise((resolve44, reject) => {
+            const seed = await new Promise((resolve45, reject) => {
               const timeout = setTimeout(
                 () => reject(new Error("Timed out awaiting first coherent terminal seed.")),
                 5e3
@@ -95287,7 +95319,7 @@ async function startEmbeddedDaemonGeneration(opts) {
               void consumer.subscribeReplica(semanticPaneId3, (update) => {
                 if (update.type !== "terminal.seed") return;
                 clearTimeout(timeout);
-                resolve44({ revision: update.revision, stateHash: update.stateHash });
+                resolve45({ revision: update.revision, stateHash: update.stateHash });
               }).catch((error) => {
                 clearTimeout(timeout);
                 reject(error);
@@ -96289,7 +96321,7 @@ async function findLiveCanonicalDaemon(deps2, options, predecessor) {
   return existing.info;
 }
 function delay3(ms) {
-  return new Promise((resolve44) => setTimeout(resolve44, ms));
+  return new Promise((resolve45) => setTimeout(resolve45, ms));
 }
 function isTransientAttachabilityError(error) {
   return error instanceof IdeError && (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY");
@@ -96414,8 +96446,8 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve44) => {
-      resolveStopped = resolve44;
+    const stopped = new Promise((resolve45) => {
+      resolveStopped = resolve45;
     });
     let stopFailure;
     let ownedPublication;
@@ -96856,14 +96888,177 @@ var init_stop = __esm({
   }
 });
 
+// packages/daemon/src/open-browser.ts
+var open_browser_exports = {};
+__export(open_browser_exports, {
+  createBrowserPane: () => createBrowserPane,
+  openBrowser: () => openBrowser,
+  resolveTerminalBrowser: () => resolveTerminalBrowser,
+  validateBrowserOpen: () => validateBrowserOpen
+});
+import { accessSync as accessSync10, constants as constants16, realpathSync as realpathSync27, statSync as statSync21 } from "node:fs";
+import { delimiter as delimiter4, isAbsolute as isAbsolute27, join as join51, resolve as resolve37 } from "node:path";
+function resolveTerminalBrowser(environment = process.env) {
+  const configured = environment.TMUX_IDE_TERMINAL_BROWSER_BIN;
+  const candidates = configured ? [configured] : (environment.PATH ?? "").split(delimiter4).filter(isAbsolute27).map((dir) => join51(dir, "terminal-browser"));
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute27(candidate)) continue;
+      accessSync10(candidate, constants16.X_OK);
+      const path2 = realpathSync27(candidate);
+      if (statSync21(path2).isFile()) return path2;
+    } catch {
+    }
+  }
+  throw new IdeError(
+    configured ? "TMUX_IDE_TERMINAL_BROWSER_BIN must name an absolute executable browser launcher." : "terminal-browser is not installed or is not on PATH. Install terminal-browser, or set TMUX_IDE_TERMINAL_BROWSER_BIN to its absolute launcher path.",
+    { code: "BROWSER_UNAVAILABLE" }
+  );
+}
+function hasControlCharacter(value) {
+  return Array.from(value).some(
+    (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+  );
+}
+function validateBrowserOpen(url, options) {
+  if (url !== void 0 && (!url || url.length > 16384 || hasControlCharacter(url) || url.startsWith("-")))
+    throw new IdeError("Provide one URL, localhost address, or HTML file path.", {
+      code: "USAGE",
+      exitCode: 2
+    });
+  if (options.split !== void 0 && !["right", "down"].includes(options.split))
+    throw new IdeError("--split must be right or down.", { code: "USAGE", exitCode: 2 });
+  if (options.size !== void 0 && (!/^\d+$/u.test(options.size) || Number(options.size) < 10 || Number(options.size) > 90))
+    throw new IdeError("--size must be a percentage from 10 to 90.", {
+      code: "USAGE",
+      exitCode: 2
+    });
+  if (options.window && (options.split !== void 0 || options.size !== void 0))
+    throw new IdeError("--window cannot be combined with --split or --size.", {
+      code: "USAGE",
+      exitCode: 2
+    });
+  if (options.pane !== void 0 && !/^%\d+$/u.test(options.pane))
+    throw new IdeError("--pane must be an exact tmux pane ID, such as %3.", {
+      code: "USAGE",
+      exitCode: 2
+    });
+  if (options.session !== void 0 && (!options.session || hasControlCharacter(options.session) || options.session.includes(":")))
+    throw new IdeError("--session must be an exact tmux session name.", {
+      code: "USAGE",
+      exitCode: 2
+    });
+}
+function createBrowserPane(run, executable, url, options, environment, cwd, namespace) {
+  validateBrowserOpen(url, options);
+  const inheritedPane = /^%\d+$/u.test(environment.TMUX_PANE ?? "") ? environment.TMUX_PANE : void 0;
+  const inheritedServer = /^(.*),(\d+),(\d+)$/u.exec(environment.TMUX ?? "");
+  const implicit = !options.pane && !options.session;
+  const target = options.pane ?? (options.session ? `=${options.session}:` : inheritedPane && inheritedServer ? `$${inheritedServer[3]}:.${inheritedPane}` : void 0);
+  if (!target)
+    throw new IdeError(
+      "Run tmux-ide open inside a tmux pane, or select a session with --session NAME.",
+      { code: "BROWSER_TARGET_REQUIRED", exitCode: 2 }
+    );
+  const identity3 = run([
+    "display-message",
+    "-p",
+    "-t",
+    target,
+    "#{session_id}	#{window_id}	#{pane_id}	#{pid}"
+  ]).trim().split("	");
+  const [session, window2, sourcePane, serverPid] = identity3;
+  if (identity3.length !== 4 || !/^\$\d+$/u.test(session ?? "") || !/^@\d+$/u.test(window2 ?? "") || !/^%\d+$/u.test(sourcePane ?? ""))
+    throw new IdeError("The browser target is no longer available.", {
+      code: "BROWSER_TARGET_UNAVAILABLE"
+    });
+  if (implicit && serverPid !== inheritedServer?.[2])
+    throw new IdeError(
+      "The current pane belongs to a different tmux server. Select a session explicitly.",
+      { code: "BROWSER_TARGET_MISMATCH", exitCode: 2 }
+    );
+  if (options.session && options.pane) {
+    const selected = run([
+      "display-message",
+      "-p",
+      "-t",
+      `=${options.session}:`,
+      "#{session_id}"
+    ]).trim();
+    if (selected !== session)
+      throw new IdeError("The pane does not belong to the requested session.", {
+        code: "BROWSER_TARGET_MISMATCH",
+        exitCode: 2
+      });
+  }
+  const args = options.window ? ["new-window", "-t", `${session}:`, "-n", "Browser"] : [
+    "split-window",
+    options.split === "down" ? "-v" : "-h",
+    "-t",
+    `${session}:${window2}.${sourcePane}`,
+    "-l",
+    `${options.size ?? "50"}%`
+  ];
+  args.push("-c", resolve37(cwd), "-P", "-F", "#{session_id}	#{window_id}	#{pane_id}");
+  const childEnvironment = { ...namespace };
+  for (const key2 of [
+    "PATH",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR"
+  ])
+    if (environment[key2] !== void 0) childEnvironment[key2] = environment[key2];
+  for (const [key2, value] of Object.entries(childEnvironment)) args.push("-e", `${key2}=${value}`);
+  args.push(executable, "open", ...url === void 0 ? [] : [url], "--no-merge");
+  const [createdSession, createdWindow, pane] = run(args).trim().split("	");
+  if (!/^%\d+$/u.test(pane ?? "") || createdSession !== session || !/^@\d+$/u.test(createdWindow ?? ""))
+    throw new IdeError("tmux did not return the created browser pane ID.", {
+      code: "BROWSER_CREATE_FAILED"
+    });
+  return { pane, session: createdSession, window: createdWindow, status: "created" };
+}
+function openBrowser(url, options = {}) {
+  validateBrowserOpen(url, options);
+  const executable = resolveTerminalBrowser();
+  try {
+    const namespace = { ...runtimeNamespaceEnvironment(resolveRuntimeNamespace()) };
+    const authority2 = resolveWorkspacePaneTmuxAuthority();
+    namespace.TMUX_IDE_BROWSER_TMUX = authority2.executablePath;
+    const run = createPinnedWorkspaceTmuxRunner(authority2, {
+      timeoutMs: 1e4
+    });
+    return createBrowserPane(run, executable, url, options, process.env, process.cwd(), namespace);
+  } catch (error) {
+    if (error instanceof IdeError) throw error;
+    throw new IdeError(
+      "Could not create the browser pane. Check that the target tmux session is running.",
+      {
+        code: "BROWSER_CREATE_FAILED",
+        cause: error instanceof Error ? error : void 0
+      }
+    );
+  }
+}
+var init_open_browser = __esm({
+  "packages/daemon/src/open-browser.ts"() {
+    "use strict";
+    init_errors2();
+    init_runtime_namespace();
+    init_workspace_pane_creation2();
+  }
+});
+
 // packages/daemon/src/attach.ts
 var attach_exports = {};
 __export(attach_exports, {
   attach: () => attach
 });
-import { resolve as resolve37 } from "node:path";
+import { resolve as resolve38 } from "node:path";
 async function attach(targetDir, { json: _json } = {}) {
-  const dir = resolve37(targetDir ?? ".");
+  const dir = resolve38(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const state = getSessionState(session);
   if (!state.running) {
@@ -96978,7 +97173,7 @@ var runCommand, DaemonServiceManagerError;
 var init_daemon_service_manager = __esm({
   "packages/daemon/src/lib/daemon-service-manager.ts"() {
     "use strict";
-    runCommand = (file, args) => new Promise((resolve44) => {
+    runCommand = (file, args) => new Promise((resolve45) => {
       execFile15(
         file,
         [...args],
@@ -96988,7 +97183,7 @@ var init_daemon_service_manager = __esm({
           maxBuffer: 256 * 1024,
           env: { ...process.env, LC_ALL: "C", LANG: "C" }
         },
-        (error, stdout, stderr) => resolve44({
+        (error, stdout, stderr) => resolve45({
           code: error ? typeof error.code === "number" ? error.code : null : 0,
           stdout,
           stderr
@@ -97011,7 +97206,7 @@ var init_daemon_service_manager = __esm({
 
 // packages/daemon/src/lib/daemon-service-plan.ts
 import { createHash as createHash34 } from "node:crypto";
-import { isAbsolute as isAbsolute27, join as join51 } from "node:path";
+import { isAbsolute as isAbsolute28, join as join52 } from "node:path";
 function safeValue(value, name) {
   if (!value || [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
     throw new TypeError(`${name} must be nonempty and contain no control characters`);
@@ -97019,7 +97214,7 @@ function safeValue(value, name) {
 }
 function absolute(value, name) {
   safeValue(value, name);
-  if (!isAbsolute27(value)) throw new TypeError(`${name} must be an absolute path`);
+  if (!isAbsolute28(value)) throw new TypeError(`${name} must be an absolute path`);
   return value;
 }
 function xml(value) {
@@ -97043,8 +97238,8 @@ function planDaemonService(options) {
   const executable = absolute(options.executable, "Stable CLI executable");
   const identity3 = createHash34("sha256").update(absolute(namespace.daemonInfoDir, "Daemon state directory")).digest("hex").slice(0, 24);
   const supervisionId = `tmux-ide.${identity3}`;
-  const stdoutPath = join51(namespace.daemonInfoDir, "service.stdout.log");
-  const stderrPath = join51(namespace.daemonInfoDir, "service.stderr.log");
+  const stdoutPath = join52(namespace.daemonInfoDir, "service.stdout.log");
+  const stderrPath = join52(namespace.daemonInfoDir, "service.stderr.log");
   const environment = {
     HOME: home,
     PATH: safeValue(options.path, "Service PATH"),
@@ -97061,7 +97256,7 @@ function planDaemonService(options) {
   const shared = {
     supervisionId,
     executable,
-    recordPath: join51(namespace.daemonInfoDir, "service.json"),
+    recordPath: join52(namespace.daemonInfoDir, "service.json"),
     stdoutPath,
     stderrPath
   };
@@ -97072,7 +97267,7 @@ function planDaemonService(options) {
       ...shared,
       manager: "launchd",
       target: `gui/${options.uid}/${label4}`,
-      unitPath: join51(home, "Library", "LaunchAgents", `${label4}.plist`),
+      unitPath: join52(home, "Library", "LaunchAgents", `${label4}.plist`),
       contents: `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -97091,14 +97286,14 @@ function planDaemonService(options) {
 `
     });
   }
-  const configHome = absolute(options.configHome ?? join51(home, ".config"), "Config directory");
+  const configHome = absolute(options.configHome ?? join52(home, ".config"), "Config directory");
   const target = `${supervisionId}.service`;
   const workingDirectory = `${home.replace(/%/gu, "%%")}/.`;
   return Object.freeze({
     ...shared,
     manager: "systemd",
     target,
-    unitPath: join51(configHome, "systemd", "user", target),
+    unitPath: join52(configHome, "systemd", "user", target),
     contents: `[Unit]
 Description=tmux-ide canonical user daemon
 StartLimitIntervalSec=60
@@ -97135,8 +97330,8 @@ __export(daemon_service_exports, {
   manageDaemonService: () => manageDaemonService
 });
 import {
-  accessSync as accessSync10,
-  constants as constants16,
+  accessSync as accessSync11,
+  constants as constants17,
   openSync as openSync11,
   closeSync as closeSync11,
   fstatSync as fstatSync9,
@@ -97146,11 +97341,11 @@ import {
   writeFileSync as writeFileSync28,
   renameSync as renameSync19,
   rmSync as rmSync6,
-  realpathSync as realpathSync27,
+  realpathSync as realpathSync28,
   linkSync as linkSync4
 } from "node:fs";
 import { randomUUID as randomUUID47 } from "node:crypto";
-import { dirname as dirname41, join as join52 } from "node:path";
+import { dirname as dirname41, join as join53 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 import { z as z128 } from "zod";
 function defaults() {
@@ -97170,7 +97365,7 @@ function defaults() {
     reserve: reserveCanonicalDaemonSupervision,
     release: releaseCanonicalDaemonSupervision,
     probe: probeCanonicalDaemonIdentity,
-    recordPath: join52(dirname41(getCanonicalDaemonInfoPath()), "service.json"),
+    recordPath: join53(dirname41(getCanonicalDaemonInfoPath()), "service.json"),
     waitMs: 3e4
   };
 }
@@ -97180,7 +97375,7 @@ function refused(message) {
 function ownedFile(path2) {
   let descriptor;
   try {
-    descriptor = openSync11(path2, constants16.O_RDONLY | constants16.O_NOFOLLOW | constants16.O_NONBLOCK);
+    descriptor = openSync11(path2, constants17.O_RDONLY | constants17.O_NOFOLLOW | constants17.O_NONBLOCK);
     const stat3 = fstatSync9(descriptor);
     if (!stat3.isFile() || stat3.uid !== process.getuid?.() || (stat3.mode & 18) !== 0 || stat3.size > 128 * 1024)
       refused(`Service file is not a bounded, user-owned regular file: ${path2}`);
@@ -97223,7 +97418,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
   };
   const inspectManager = async () => {
     const state = await manager.inspect();
-    if (state.loaded && (!state.definitionPath || realpathSync27(state.definitionPath) !== realpathSync27(plan.unitPath)))
+    if (state.loaded && (!state.definitionPath || realpathSync28(state.definitionPath) !== realpathSync28(plan.unitPath)))
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
   };
@@ -97245,7 +97440,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
             instanceId: state.info.instanceId
           };
       }
-      await new Promise((resolve44) => setTimeout(resolve44, 100));
+      await new Promise((resolve45) => setTimeout(resolve45, 100));
     } while (Date.now() < deadline);
     refused(
       "Service did not publish a verified daemon before the deadline; inspect service logs, then retry restart or remove"
@@ -97273,7 +97468,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
   if (record2 && !boundTo(deps2.inspect(), plan.supervisionId) && !(record2.removing && action === "remove" && deps2.inspect().status === "missing"))
     refused("Service reservation is missing or belongs to another owner");
   if (!record2) {
-    accessSync10(plan.executable, constants16.X_OK);
+    accessSync11(plan.executable, constants17.X_OK);
     deps2.reserve(plan.supervisionId);
   }
   const lock = `${plan.recordPath}.lock`;
@@ -97308,7 +97503,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
       let stopped = await inspectManager();
       const stopDeadline = Date.now() + deps2.waitMs;
       while ((stopped.active || stopped.pid !== null) && Date.now() < stopDeadline) {
-        await new Promise((resolve44) => setTimeout(resolve44, 100));
+        await new Promise((resolve45) => setTimeout(resolve45, 100));
         stopped = await inspectManager();
       }
       if (stopped.active || stopped.pid !== null)
@@ -97383,11 +97578,11 @@ async function restartCanonicalDaemon(options = {}, deps2 = defaults2) {
   );
   const timer = setTimeout(() => controller.abort(timeout), timeoutMs);
   const signal = controller.signal;
-  const wait = (operation) => new Promise((resolve44, reject) => {
+  const wait = (operation) => new Promise((resolve45, reject) => {
     const abort = () => reject(signal.reason);
     if (signal.aborted) return abort();
     signal.addEventListener("abort", abort, { once: true });
-    operation.then(resolve44, reject).finally(() => signal.removeEventListener("abort", abort));
+    operation.then(resolve45, reject).finally(() => signal.removeEventListener("abort", abort));
   });
   const verified = async (info) => {
     const read = async (path2) => {
@@ -97493,14 +97688,14 @@ var init_restart_canonical_daemon = __esm({
     defaults2 = {
       inspect: inspectCanonicalDaemonInfo,
       fetch,
-      sleep: (ms, signal) => new Promise((resolve44, reject) => {
+      sleep: (ms, signal) => new Promise((resolve45, reject) => {
         const abort = () => {
           clearTimeout(timer);
           reject(signal.reason);
         };
         const timer = setTimeout(() => {
           signal.removeEventListener("abort", abort);
-          resolve44();
+          resolve45();
         }, ms);
         if (signal.aborted) abort();
         else signal.addEventListener("abort", abort, { once: true });
@@ -97889,23 +98084,23 @@ __export(skill_sync_exports, {
   versionMarker: () => versionMarker
 });
 import { existsSync as existsSync36, mkdirSync as mkdirSync31, readFileSync as readFileSync37, writeFileSync as writeFileSync29 } from "node:fs";
-import { dirname as dirname42, join as join53 } from "node:path";
+import { dirname as dirname42, join as join54 } from "node:path";
 import { fileURLToPath as fileURLToPath12 } from "node:url";
 function claudeDir() {
   return resolveRuntimeNamespace().claudeDir;
 }
 function skillTargetDir() {
-  return runtimeOwnedPath(join53(claudeDir(), "skills", "tmux-ide"));
+  return runtimeOwnedPath(join54(claudeDir(), "skills", "tmux-ide"));
 }
 function skillTargetFile() {
-  return join53(skillTargetDir(), "SKILL.md");
+  return join54(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
   const here = dirname42(fileURLToPath12(import.meta.url));
   const candidates = [
-    join53(here, "../skill/SKILL.md"),
+    join54(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
-    join53(here, "../../../../skill/SKILL.md")
+    join54(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
   return candidates.find((c) => existsSync36(c)) ?? candidates[0];
@@ -97922,7 +98117,7 @@ function rewriteVersionMarker(content, version) {
   return content.replace(VERSION_MARKER_RE, versionMarker(version));
 }
 function installedSkillVersion(dir = skillTargetDir()) {
-  const file = join53(dir, "SKILL.md");
+  const file = join54(dir, "SKILL.md");
   if (!existsSync36(file)) return null;
   try {
     return parseSkillVersion(readFileSync37(file, "utf-8"));
@@ -97938,7 +98133,7 @@ function syncSkill({
     throw new Error("Automatic skill sync is disabled in development instances");
   const rendered = rewriteVersionMarker(readFileSync37(source, "utf-8"), version);
   const dir = skillTargetDir();
-  const target = join53(dir, "SKILL.md");
+  const target = join54(dir, "SKILL.md");
   const existing = existsSync36(target) ? readFileSync37(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
@@ -97971,8 +98166,8 @@ __export(doctor_exports, {
   workspaceConfigRow: () => workspaceConfigRow
 });
 import { execSync as execSync3, execFileSync as execFileSync22 } from "node:child_process";
-import { accessSync as accessSync11, constants as constants17, existsSync as existsSync37 } from "node:fs";
-import { resolve as resolve38, dirname as dirname43 } from "node:path";
+import { accessSync as accessSync12, constants as constants18, existsSync as existsSync37 } from "node:fs";
+import { resolve as resolve39, dirname as dirname43 } from "node:path";
 import { fileURLToPath as fileURLToPath13 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
@@ -98126,15 +98321,15 @@ async function doctor({
       { optional: true }
     )
   );
-  checks.push(await workspaceConfigRow(resolve38(".")));
+  checks.push(await workspaceConfigRow(resolve39(".")));
   checks.push(
     check(
       "TUI surfaces (cockpit / widgets)",
       () => {
         const here = dirname43(fileURLToPath13(import.meta.url));
         const checkoutEntry = [
-          resolve38(here, "../packages/daemon/src/tui/team/index.tsx"),
-          resolve38(here, "tui/team/index.tsx")
+          resolve39(here, "../packages/daemon/src/tui/team/index.tsx"),
+          resolve39(here, "tui/team/index.tsx")
         ].find(existsSync37);
         const binary = findCompiledTui();
         if (checkoutEntry && hasDevelopmentTuiSource(checkoutEntry) && isBunAvailable()) {
@@ -98186,7 +98381,7 @@ async function doctor({
       }
       let writable = false;
       try {
-        accessSync11(probe, constants17.W_OK);
+        accessSync12(probe, constants18.W_OK);
         writable = true;
       } catch {
       }
@@ -98325,8 +98520,8 @@ async function createSshDaemonRelay(options) {
   const requests = /* @__PURE__ */ new Set();
   let disposed = false, starting = false, listenerClosed = false, pending = 0, admitted = 0;
   let finish;
-  const closed = new Promise((resolve44) => {
-    finish = resolve44;
+  const closed = new Promise((resolve45) => {
+    finish = resolve45;
   });
   const maybeClosed = () => {
     if (disposed && listenerClosed && sockets.size === 0 && pending === 0 && requests.size === 0)
@@ -98381,7 +98576,7 @@ async function createSshDaemonRelay(options) {
   const authenticate = async (lease) => {
     const timer = setTimeout(() => lease.controller.abort(), probeTimeout);
     try {
-      const actual = await new Promise((resolve44, reject) => {
+      const actual = await new Promise((resolve45, reject) => {
         const req = ownRequest(
           lease,
           request(
@@ -98410,7 +98605,7 @@ async function createSshDaemonRelay(options) {
                 try {
                   if (response3.statusCode !== 200 || !response3.complete || response3.headers.connection === "close")
                     throw refused2();
-                  resolve44(
+                  resolve45(
                     DaemonIdentitySchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")))
                   );
                 } catch {
@@ -98424,7 +98619,7 @@ async function createSshDaemonRelay(options) {
         req.end();
       });
       if (!sameIdentity(actual, expected)) throw new IdentityMismatch();
-      await new Promise((resolve44) => setImmediate(resolve44));
+      await new Promise((resolve45) => setImmediate(resolve45));
       if (lease.retired || lease.controller.signal.aborted || !lease.agent.socket || lease.agent.socket.destroyed || lease.agent.socket.readableLength !== 0)
         throw refused2();
     } finally {
@@ -98598,13 +98793,13 @@ ${lines.join("")}\r
     throw refused2();
   }
   try {
-    await new Promise((resolve44, reject) => {
+    await new Promise((resolve45, reject) => {
       const cancelled = () => done(refused2());
       const done = (error) => {
         options.signal?.removeEventListener("abort", cancelled);
         server.removeListener("error", done);
         if (error) reject(error);
-        else resolve44();
+        else resolve45();
       };
       server.once("error", done);
       options.signal?.addEventListener("abort", cancelled, { once: true });
@@ -98706,7 +98901,7 @@ function stop2(child) {
 }
 async function allocatePort() {
   const server = createServer4();
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
@@ -98715,7 +98910,7 @@ async function allocatePort() {
         reject(failure3("could not allocate local port"));
         return;
       }
-      server.close((error) => error ? reject(error) : resolve44(address.port));
+      server.close((error) => error ? reject(error) : resolve45(address.port));
     });
   });
 }
@@ -98760,16 +98955,16 @@ async function probeSshDaemonIdentity(baseUrl, daemon, signal, request3 = fetch)
   return parsed.success && parsed.data.status === "ok" && matches(parsed.data.daemon);
 }
 function cancellable(work, signal) {
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     const abort = () => reject(failure3("cancelled or timed out"));
     signal.addEventListener("abort", abort, { once: true });
-    work.then(resolve44, reject).finally(() => signal.removeEventListener("abort", abort));
+    work.then(resolve45, reject).finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
 }
 function discover(child, signal) {
   const sshFailure = observeSshFailure(child);
-  return new Promise((resolve44, reject) => {
+  return new Promise((resolve45, reject) => {
     const chunks = [];
     let bytes = 0;
     let settled = false;
@@ -98781,7 +98976,7 @@ function discover(child, signal) {
       if (error) {
         stop2(child);
         reject(error);
-      } else resolve44(daemon);
+      } else resolve45(daemon);
     };
     const abort = () => finish(failure3("cancelled or timed out"));
     child.stdout?.on("data", (chunk) => {
@@ -98829,11 +99024,11 @@ function discover(child, signal) {
   });
 }
 function delay4(signal) {
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     const done = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", done);
-      resolve44();
+      resolve45();
     };
     const timer = setTimeout(done, 50);
     signal.addEventListener("abort", done, { once: true });
@@ -98908,14 +99103,14 @@ async function openSshDaemonTransport(options, dependencies = defaults3) {
     child.stdout?.resume();
     const sshFailure = observeSshFailure(child);
     child.once("exit", dispose2);
-    const tunnelClosed = new Promise((resolve44) => {
+    const tunnelClosed = new Promise((resolve45) => {
       child.once("close", () => {
         dispose2();
-        resolve44();
+        resolve45();
       });
       child.once("error", () => {
         dispose2();
-        resolve44();
+        resolve45();
       });
     });
     relay = await (dependencies.relay ?? createSshDaemonRelay)({
@@ -99603,7 +99798,7 @@ async function startInstalledRemoteDaemon(alias, options = {}) {
     AbortSignal.timeout(3e4)
   ]);
   if (signal.aborted) throw new Error("Remote daemon start cancelled");
-  await new Promise((resolve44, reject) => {
+  await new Promise((resolve45, reject) => {
     const child = (options.spawn ?? spawn11)(
       "ssh",
       [
@@ -99626,7 +99821,7 @@ async function startInstalledRemoteDaemon(alias, options = {}) {
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", abort);
-      if (ok2) resolve44();
+      if (ok2) resolve45();
       else
         reject(
           new Error(
@@ -99666,7 +99861,7 @@ var machines_exports = {};
 __export(machines_exports, {
   machines: () => machines
 });
-import { readFileSync as readFileSync38, statSync as statSync21 } from "node:fs";
+import { readFileSync as readFileSync38, statSync as statSync22 } from "node:fs";
 import { randomUUID as randomUUID49 } from "node:crypto";
 async function machines(command3, argument, options) {
   const current = loadSavedMachines();
@@ -99743,7 +99938,7 @@ async function machines(command3, argument, options) {
   }
   let incoming;
   if (command3 === "import" && argument) {
-    if (statSync21(argument).size > 64 * 1024) throw new Error("Machine directory exceeds 64 KiB");
+    if (statSync22(argument).size > 64 * 1024) throw new Error("Machine directory exceeds 64 KiB");
     incoming = SavedMachineRegistrySchema.parse(JSON.parse(readFileSync38(argument, "utf8")));
   } else if (command3 === "add" && argument) {
     const existing = current.machines.find((machine) => machine.sshTarget === argument);
@@ -99788,9 +99983,9 @@ var status_exports = {};
 __export(status_exports, {
   status: () => status
 });
-import { resolve as resolve39 } from "node:path";
+import { resolve as resolve40 } from "node:path";
 async function status(targetDir, { json: json3 } = {}) {
-  const dir = resolve39(targetDir ?? ".");
+  const dir = resolve40(targetDir ?? ".");
   const context = await resolveProjectConfigContext(dir);
   const session = context.sessionName;
   const state = getSessionState(session);
@@ -99853,7 +100048,7 @@ __export(inspect_exports, {
   buildInspection: () => buildInspection,
   inspect: () => inspect
 });
-import { resolve as resolve40 } from "node:path";
+import { resolve as resolve41 } from "node:path";
 function buildInspection(dir, {
   config: config2,
   configPath,
@@ -99911,7 +100106,7 @@ function buildInspection(dir, {
   };
 }
 async function inspect(targetDir, { json: json3 } = {}) {
-  const dir = resolve40(targetDir ?? ".");
+  const dir = resolve41(targetDir ?? ".");
   let config2;
   let configPath;
   let configKind;
@@ -100008,7 +100203,7 @@ __export(migrate_exports, {
   migrate: () => migrate
 });
 import { execFileSync as execFileSync23 } from "node:child_process";
-import { dirname as dirname44, resolve as resolve41 } from "node:path";
+import { dirname as dirname44, resolve as resolve42 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync23("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -100054,7 +100249,7 @@ async function migrate(targetDir, {
   write: write2,
   onAfterRead
 } = {}) {
-  const dir = resolve41(targetDir ?? ".");
+  const dir = resolve42(targetDir ?? ".");
   if (!dryRun && !write2) dryRun = true;
   if (dryRun && write2) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -100137,8 +100332,8 @@ function subscribeTmuxServerInteractions(options) {
   const lifetime = new AbortController();
   let resolveReady;
   let rejectReady;
-  const ready = new Promise((resolve44, reject) => {
-    resolveReady = resolve44;
+  const ready = new Promise((resolve45, reject) => {
+    resolveReady = resolve45;
     rejectReady = reject;
   });
   void ready.catch(() => void 0);
@@ -100684,8 +100879,8 @@ function createTmuxIdeMcpServer(client) {
     },
     async ({ resume, waitMs }, context) => call(async () => {
       let resolveBatch;
-      const first = new Promise((resolve44) => {
-        resolveBatch = resolve44;
+      const first = new Promise((resolve45) => {
+        resolveBatch = resolve45;
       });
       const subscription = client.subscribe({
         server: resume.server,
@@ -100748,11 +100943,11 @@ __export(pane_team_exports, {
   assignPaneTeam: () => assignPaneTeam
 });
 import { execFileSync as execFileSync25 } from "node:child_process";
-import { isAbsolute as isAbsolute28 } from "node:path";
+import { isAbsolute as isAbsolute29 } from "node:path";
 function assignPaneTeam(options, run = (args) => execFileSync25("tmux", args, { encoding: "utf8", timeout: 5e3 })) {
   if (!/^%\d+$/u.test(options.paneId)) throw new Error("Use an exact pane ID such as %3");
   if (options.socketPath && options.socketName) throw new Error("Choose one tmux socket selector");
-  if (options.socketPath && !isAbsolute28(options.socketPath))
+  if (options.socketPath && !isAbsolute29(options.socketPath))
     throw new Error("Socket path must be absolute");
   if (options.socketName && !/^[a-zA-Z0-9_.-]+$/u.test(options.socketName))
     throw new Error("Invalid socket name");
@@ -100821,8 +101016,8 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   try {
     const alive = await Promise.race([
       probeAlive(info),
-      new Promise((resolve44) => {
-        probeTimer = setTimeout(() => resolve44(null), remaining());
+      new Promise((resolve45) => {
+        probeTimer = setTimeout(() => resolve45(null), remaining());
         probeTimer.unref?.();
       })
     ]);
@@ -100848,7 +101043,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   } catch {
     return null;
   }
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     let settled = false;
     let subscribed = false;
     let ready = false;
@@ -100866,7 +101061,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
         socket.close();
       } catch {
       }
-      resolve44(result2);
+      resolve45(result2);
     };
     const refreshStatus = () => {
       if (settled) return;
@@ -100984,14 +101179,14 @@ import {
   readFileSync as readFileSync39,
   readdirSync as readdirSync11,
   renameSync as renameSync20,
-  statSync as statSync22,
+  statSync as statSync23,
   copyFileSync as copyFileSync3,
   unlinkSync as unlinkSync10,
   writeFileSync as writeFileSync30,
-  accessSync as accessSync12,
-  constants as constants18
+  accessSync as accessSync13,
+  constants as constants19
 } from "node:fs";
-import { basename as basename21, delimiter as delimiter4, dirname as dirname45, join as join54 } from "node:path";
+import { basename as basename21, delimiter as delimiter5, dirname as dirname45, join as join55 } from "node:path";
 function isOptOut(value) {
   if (value === false || value === 0) return true;
   return typeof value === "string" && /^\s*(0|false|off|no)\s*$/iu.test(value);
@@ -101037,10 +101232,10 @@ function agentTeamsPaths() {
   return { settingsPath: namespace.claudeSettingsPath, claudeDir: namespace.claudeDir };
 }
 function claudeOnPath2(path2 = process.env.PATH ?? "") {
-  return path2.split(delimiter4).filter(Boolean).some((dir) => {
+  return path2.split(delimiter5).filter(Boolean).some((dir) => {
     try {
-      accessSync12(join54(dir, "claude"), constants18.X_OK);
-      return statSync22(join54(dir, "claude")).isFile();
+      accessSync13(join55(dir, "claude"), constants19.X_OK);
+      return statSync23(join55(dir, "claude")).isFile();
     } catch {
       return false;
     }
@@ -101065,7 +101260,7 @@ function existingBackup(settingsPath) {
   const prefix = `${basename21(settingsPath)}${BACKUP_INFIX}`;
   try {
     const found = readdirSync11(dir).find((name) => name.startsWith(prefix));
-    return found ? join54(dir, found) : null;
+    return found ? join55(dir, found) : null;
   } catch {
     return null;
   }
@@ -101081,11 +101276,11 @@ function writeSettings(path2, settings, exists) {
       copyFileSync3(path2, backup);
     }
   }
-  const temporary = join54(dirname45(path2), `.${basename21(path2)}.tmux-ide-${process.pid}.tmp`);
+  const temporary = join55(dirname45(path2), `.${basename21(path2)}.tmux-ide-${process.pid}.tmp`);
   try {
     writeFileSync30(temporary, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });
-    if (exists) chmodSync8(temporary, statSync22(path2).mode & 511);
+    if (exists) chmodSync8(temporary, statSync23(path2).mode & 511);
     renameSync20(temporary, path2);
   } catch (error) {
     try {
@@ -101222,7 +101417,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync26 } from "node:child_process";
-import { basename as basename22, dirname as dirname46, isAbsolute as isAbsolute29, join as join55, resolve as resolve42 } from "node:path";
+import { basename as basename22, dirname as dirname46, isAbsolute as isAbsolute30, join as join56, resolve as resolve43 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -101230,12 +101425,12 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve42(repoDir);
-  return join55(dirname46(abs), `${basename22(abs)}-worktrees`);
+  const abs = resolve43(repoDir);
+  return join56(dirname46(abs), `${basename22(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute29(configuredDir) ? configuredDir : resolve42(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join55(base2, branch);
+  const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute30(configuredDir) ? configuredDir : resolve43(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  return join56(base2, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -101369,8 +101564,8 @@ var init_worktree = __esm({
 });
 
 // packages/daemon/src/lib/managed-installer-update.ts
-import { mkdtempSync, readFileSync as readFileSync40, realpathSync as realpathSync28, rmSync as rmSync7 } from "node:fs";
-import { dirname as dirname47, join as join56 } from "node:path";
+import { mkdtempSync, readFileSync as readFileSync40, realpathSync as realpathSync29, rmSync as rmSync7 } from "node:fs";
+import { dirname as dirname47, join as join57 } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync as execFileSync27 } from "node:child_process";
 function managedInstallerPrefix(cliPath) {
@@ -101379,16 +101574,16 @@ function managedInstallerPrefix(cliPath) {
   );
   if (!match) return null;
   const prefix = match[1] || "/";
-  const root = join56(prefix, "share/tmux-ide");
-  const release = join56(root, "releases", match[2]);
+  const root = join57(prefix, "share/tmux-ide");
+  const release = join57(root, "releases", match[2]);
   try {
-    if (realpathSync28(join56(root, "current")) !== release) return null;
-    if (realpathSync28(release) !== release) return null;
-    if (readFileSync40(join56(root, "installer-v1"), "utf8") !== "1\n") return null;
-    if (readFileSync40(join56(release, ".installer-release-v1"), "utf8") !== "1\n") return null;
-    if (!readFileSync40(join56(prefix, "bin/tmux-ide"), "utf8").split("\n").includes("# tmux-ide universal installer v1"))
+    if (realpathSync29(join57(root, "current")) !== release) return null;
+    if (realpathSync29(release) !== release) return null;
+    if (readFileSync40(join57(root, "installer-v1"), "utf8") !== "1\n") return null;
+    if (readFileSync40(join57(release, ".installer-release-v1"), "utf8") !== "1\n") return null;
+    if (!readFileSync40(join57(prefix, "bin/tmux-ide"), "utf8").split("\n").includes("# tmux-ide universal installer v1"))
       return null;
-    if (JSON.parse(readFileSync40(join56(dirname47(cliPath), "package.json"), "utf8")).name !== "tmux-ide")
+    if (JSON.parse(readFileSync40(join57(dirname47(cliPath), "package.json"), "utf8")).name !== "tmux-ide")
       return null;
     return prefix;
   } catch {
@@ -101396,8 +101591,8 @@ function managedInstallerPrefix(cliPath) {
   }
 }
 function runManagedInstallerUpdate(prefix, channel, json3, execute2 = execFileSync27) {
-  const temporary = mkdtempSync(join56(tmpdir(), "tmux-ide-update-"));
-  const script = join56(temporary, "install.sh");
+  const temporary = mkdtempSync(join57(tmpdir(), "tmux-ide-update-"));
+  const script = join57(temporary, "install.sh");
   try {
     execute2(
       "curl",
@@ -101439,8 +101634,8 @@ var init_managed_installer_update = __esm({
 });
 
 // packages/daemon/src/lib/install-origin.ts
-import { existsSync as existsSync39, readFileSync as readFileSync41, realpathSync as realpathSync29 } from "node:fs";
-import { dirname as dirname48, join as join57 } from "node:path";
+import { existsSync as existsSync39, readFileSync as readFileSync41, realpathSync as realpathSync30 } from "node:fs";
+import { dirname as dirname48, join as join58 } from "node:path";
 import { fileURLToPath as fileURLToPath14 } from "node:url";
 function detectPackageManager(path2) {
   if (/\/share\/tmux-ide\/releases\/install-[^/]+\/npm\/lib\/node_modules\/tmux-ide\/bin$/.test(path2))
@@ -101457,9 +101652,9 @@ function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
     if (dir.endsWith("/node_modules")) return null;
-    if (existsSync39(join57(dir, ".git"))) {
+    if (existsSync39(join58(dir, ".git"))) {
       try {
-        if (JSON.parse(readFileSync41(join57(dir, "package.json"), "utf8")).name === "tmux-ide")
+        if (JSON.parse(readFileSync41(join58(dir, "package.json"), "utf8")).name === "tmux-ide")
           return dir;
       } catch {
       }
@@ -101473,14 +101668,14 @@ function findGitCheckoutRoot(startDir) {
 function installOrigin(cliDir = dirname48(fileURLToPath14(import.meta.url))) {
   let path2;
   try {
-    path2 = realpathSync29(cliDir);
+    path2 = realpathSync30(cliDir);
   } catch {
     return { origin: "unknown", path: cliDir, gitRoot: null };
   }
   let detected2 = detectPackageManager(path2);
   if (detected2 === "npm" || detected2 === "pnpm" || detected2 === "bun") {
     try {
-      if (JSON.parse(readFileSync41(join57(path2, "../package.json"), "utf8")).name !== "tmux-ide")
+      if (JSON.parse(readFileSync41(join58(path2, "../package.json"), "utf8")).name !== "tmux-ide")
         detected2 = "unknown";
     } catch {
       detected2 = "unknown";
@@ -101505,8 +101700,8 @@ __export(update_exports, {
   renderPlan: () => renderPlan,
   runUpdate: () => runUpdate
 });
-import { realpathSync as realpathSync30 } from "node:fs";
-import { dirname as dirname49, join as join58 } from "node:path";
+import { realpathSync as realpathSync31 } from "node:fs";
+import { dirname as dirname49, join as join59 } from "node:path";
 import { execFileSync as execFileSync28 } from "node:child_process";
 function planUpdate(input) {
   const current = input.currentVersion ?? getCurrentVersion();
@@ -101596,7 +101791,7 @@ function runUpdate({ cliDir, dryRun, json: json3 = false }, dependencies = {}) {
         plan.executable === "bun" ? ["pm", "bin", "-g"] : ["root", "-g"]
       ).trim();
       if (!root.startsWith("/")) throw new Error("invalid manager path");
-      const target = plan.executable === "bun" ? dirname49(realpathSync30(join58(root, "tmux-ide"))) : realpathSync30(join58(root, "tmux-ide", "bin"));
+      const target = plan.executable === "bun" ? dirname49(realpathSync31(join59(root, "tmux-ide"))) : realpathSync31(join59(root, "tmux-ide", "bin"));
       if (target !== source.path) throw new Error("different installation");
     } catch {
       plan = {
@@ -101781,10 +101976,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer5(listener);
-  return new Promise((resolve44) => {
+  return new Promise((resolve45) => {
     server.listen(port, hostname4, () => {
       console.log(`Command Center API on http://${hostname4}:${port}`);
-      resolve44(server);
+      resolve45(server);
     });
   });
 }
@@ -101838,11 +102033,11 @@ async function start(port) {
       handlePtyWebSocket(ws, id2);
     });
   });
-  await new Promise((resolve44, reject) => {
+  await new Promise((resolve45, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, SERVER_BIND_HOST, () => {
       server.off("error", reject);
-      resolve44();
+      resolve45();
     });
   });
   console.warn(
@@ -101852,10 +102047,10 @@ async function start(port) {
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve44, reject) => {
+    close: () => new Promise((resolve45, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve44());
+      server.close((err) => err ? reject(err) : resolve45());
     })
   };
 }
@@ -101873,7 +102068,7 @@ var init_server3 = __esm({
 init_src();
 init_tmux_client_execution();
 import { parseArgs as parseArgs2 } from "node:util";
-import { resolve as resolve43, dirname as dirname50, join as join59 } from "node:path";
+import { resolve as resolve44, dirname as dirname50, join as join60 } from "node:path";
 import { execFileSync as execFileSync29 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync40, mkdirSync as mkdirSync33, writeFileSync as writeFileSync31 } from "node:fs";
 import { fileURLToPath as fileURLToPath15 } from "node:url";
@@ -101896,7 +102091,7 @@ init_hosted();
 configureTmuxClientResolver(resolveOrdinaryTmuxClient);
 var __dirname5 = dirname50(fileURLToPath15(import.meta.url));
 var selfPath = fileURLToPath15(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve43(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve44(__dirname5, "cli.js");
 var { positionals, values } = parseArgs2({
   allowPositionals: true,
   strict: false,
@@ -101919,6 +102114,8 @@ var { positionals, values } = parseArgs2({
     title: { type: "string" },
     command: { type: "string" },
     size: { type: "string" },
+    split: { type: "string" },
+    window: { type: "boolean" },
     write: { type: "boolean" },
     template: { type: "string" },
     name: { type: "string" },
@@ -101998,6 +102195,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "settings",
   "team",
   "app",
+  "open",
   "switcher",
   "wait",
   "events",
@@ -102059,6 +102257,13 @@ ${release ? "Release the exact supervisor reservation after removing its service
 IDs: 1\u2013128 characters; start with a letter or digit, then letters, digits, periods, underscores or hyphens.
 Inspect ownership: tmux-ide daemon info --json
 Managed service setup: tmux-ide daemon service install <absolute-stable-launcher>`);
+  } else if (command2 === "open") {
+    console.log(`Usage: tmux-ide open [url] [--session NAME] [--pane %ID] [--split right|down] [--size 10..90] [--window] [--json]
+
+Open terminal-browser in a new pane beside the current pane, or in a new window with --window.
+Without a URL, open the browser's start page. URLs, localhost addresses and HTML files are accepted.
+Outside tmux, select a running session with --session. Native-capable browser builds connect to the GUI automatically; other viewers use Kitty.
+Set TMUX_IDE_TERMINAL_BROWSER_BIN to an absolute launcher path to use a separate browser build.`);
   } else printHelp();
   process.exit(0);
 }
@@ -102085,6 +102290,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim3("Rebuild the fleet from the last snapshot after a tmux crash")}
                               ${dim3("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
+  ${cyan2("tmux-ide open")} [url]          ${dim3("Open terminal-browser in a new pane (--session NAME outside tmux)")}
   ${cyan2("tmux-ide attach")}             ${dim3("Reattach to a running session")}
   ${cyan2("tmux-ide team assign")} %PANE TEAM ${dim3("Group a pane; unassign removes membership")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
@@ -102203,9 +102409,9 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   let automaticDiagnosticLog;
   if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG && !process.env.TMUX_IDE_TUI_LOG) {
     try {
-      const logDirectory = join59(stateHome(), "logs");
+      const logDirectory = join60(stateHome(), "logs");
       mkdirSync33(logDirectory, { recursive: true, mode: 448 });
-      automaticDiagnosticLog = join59(logDirectory, "tui-latest.jsonl");
+      automaticDiagnosticLog = join60(logDirectory, "tui-latest.jsonl");
       writeFileSync31(
         automaticDiagnosticLog,
         `${JSON.stringify({
@@ -102252,7 +102458,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     if (launch2.mode === "bun") {
       execFileSync29(launch2.bin, launch2.argv, {
         stdio: "inherit",
-        cwd: resolve43(__dirname5, ".."),
+        cwd: resolve44(__dirname5, ".."),
         env
       });
       markChildExited();
@@ -102309,7 +102515,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve43(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
+    const cwd = launch2.mode === "bun" ? resolve44(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -102371,8 +102577,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve43(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve43(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve44(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve44(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 async function launchTeamCockpit() {
   await execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -102529,7 +102735,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve43(startTargetDir || ".");
+      const targetDir = resolve44(startTargetDir || ".");
       if (startTargetDir && !existsSync40(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -102563,6 +102769,30 @@ try {
     case "stop":
       await (await Promise.resolve().then(() => (init_stop(), stop_exports))).stop(positionals[1], { json: json2 });
       break;
+    case "open": {
+      const allowed = /* @__PURE__ */ new Set(["json", "verbose", "session", "pane", "split", "size", "window"]);
+      const unsupported = Object.keys(values).find((key2) => !allowed.has(key2));
+      if (unsupported)
+        throw new IdeError(`tmux-ide open does not support --${unsupported}.`, {
+          code: "USAGE",
+          exitCode: 2
+        });
+      if (positionals.length > 2)
+        throw new IdeError("tmux-ide open accepts at most one URL.", {
+          code: "USAGE",
+          exitCode: 2
+        });
+      const { openBrowser: openBrowser2 } = await Promise.resolve().then(() => (init_open_browser(), open_browser_exports));
+      const result2 = openBrowser2(positionals[1], {
+        session: values.session,
+        pane: values.pane,
+        split: values.split,
+        size: values.size,
+        window: values.window
+      });
+      console.log(json2 ? JSON.stringify(result2) : `Created browser pane ${result2.pane}.`);
+      break;
+    }
     case "attach":
       await (await Promise.resolve().then(() => (init_attach(), attach_exports))).attach(positionals[1], { json: json2 });
       break;
@@ -102747,11 +102977,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve43(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve44(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         await execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve43(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve44(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -102760,8 +102990,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve43(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve43(startTargetDir || ".")];
+      const scriptPath = resolve44(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve44(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       await execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -102785,11 +103015,11 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve43(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      const scriptPath = resolve44(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
       await execBunWidget(
         "config",
         scriptPath,
-        ["--dir=" + resolve43(startTargetDir || ".")],
+        ["--dir=" + resolve44(startTargetDir || ".")],
         "settings"
       );
       break;
@@ -102959,7 +103189,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync42, existsSync: existsSync41, statSync: statSync23, openSync: openSync12, readSync: readSync4, closeSync: closeSync12 } = await import("node:fs");
+      const { readFileSync: readFileSync42, existsSync: existsSync41, statSync: statSync24, openSync: openSync12, readSync: readSync4, closeSync: closeSync12 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -103006,12 +103236,12 @@ try {
       const allLines = readFileSync42(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
-      let offset = statSync23(path2).size;
+      let offset = statSync24(path2).size;
       let leftover = "";
       const timer = setInterval(() => {
         let size;
         try {
-          size = statSync23(path2).size;
+          size = statSync24(path2).size;
         } catch {
           return;
         }
@@ -103192,13 +103422,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key2 = await new Promise((resolve44) => {
+            const key2 = await new Promise((resolve45) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve44(data.toString()));
+                process.stdin.once("data", (data) => resolve45(data.toString()));
               } catch {
-                resolve44("");
+                resolve45("");
               }
             });
             try {
@@ -103406,7 +103636,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve43(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve44(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync29("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -103868,7 +104098,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve43(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve44(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync29("node", serverArgs, { stdio: "inherit" });

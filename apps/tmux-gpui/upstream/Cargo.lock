@@ -3481,7 +3481,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "herdr-gpui"
+name = "tmux-ide-gpui"
 version = "0.1.0"
 dependencies = [
  "aes 0.9.3",

@@ -9,5 +9,5 @@ host=$1
 case "$host" in /*) ;; *) host="$PWD/$host" ;; esac
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$project_dir/upstream"
-cargo build --locked -p herdr-gpui --bin tmux-ide-gpui
+cargo build --locked -p tmux-ide-gpui --bin tmux-ide-gpui
 exec node --import tsx "$project_dir/bridge/select-preview.ts" "$project_dir/upstream/target/debug/tmux-ide-gpui" "$host"

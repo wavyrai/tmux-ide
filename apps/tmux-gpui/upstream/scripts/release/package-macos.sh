@@ -40,6 +40,6 @@ cp "$release_root/crates/herdr-protocol/LICENSE-APACHE" "$app/Contents/Resources
 cp "$release_root/crates/herdr-protocol/NOTICE.md" "$app/Contents/Resources/"
 cp "$release_root/LICENSE" "$release_root/NOTICE" "$release_root/assets/icons/LICENSE-octicons" "$app/Contents/Resources/"
 cp "$5" "$app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
-cp "$release_root/crates/herdr-gpui/SOUND-NOTICE.md" "$app/Contents/Resources/"
+cp "$release_root/crates/tmux-ide-gpui/SOUND-NOTICE.md" "$app/Contents/Resources/"
 mv "$app" "$out"
 printf '%s\n' "$out"

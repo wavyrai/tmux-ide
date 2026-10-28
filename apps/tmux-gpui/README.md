@@ -110,20 +110,18 @@ Unknown/Unavailable. Animation is presentation-only: one shared clock updates
 visible working markers without polling the daemon. Native reduced-motion
 preference wiring remains pending; the indicator supports a static rendering.
 
-Use **⋯** in a pane header for Rename, Zoom/Restore, Split right/down, and Close.
+Panes are separate rounded cards with 34-pixel headers, 10-pixel content padding and 10-pixel gutters. Each header shares its terminal background; Close sits at the far right. Painting, pointer input, selection, links, IME placement and divider dragging use the same card coordinate map. Chrome is deducted from the terminal fit before resizing, rather than covering terminal cells. Expand/restore and Close have direct labeled icon buttons; Close always asks for confirmation. Narrow headers keep these actions in **⋯**, alongside Rename and Split right/down.
 Opening another pane's menu first selects that exact pane and waits for its
 current action capability. Close keeps its confirmation. **Back to live** and
-**Restore** appear in the selected pane header when applicable. Compact headers
-reserve control space; lower headers use verified separator cells and preserve
-the remaining divider drag area. The footer continues to show connection status.
+**Restore** appear in the selected pane header when applicable (Restore uses the icon when space allows). Compact headers
+reserve control space; headers occupy dedicated space outside terminal cells, and dividers live in the gutters. Normal mode has no connection footer. Exceptional notices temporarily occupy the titlebar context area without covering terminal cells or changing their geometry. Developer mode retains its diagnostic footer.
 
 ## Preview release gates
 
 See [INTEGRATION.md](INTEGRATION.md). Native session/pane selection, multi-pane
 rendering, keyboard/paste, bounded history navigation, whole-pane copy and initial
 text composition are implemented. Read-only local daemon discovery is available.
-Home and retained session tabs share one titlebar row, separate from tmux window tabs. The workspace
-sidebar lists sessions; each selected session has one window strip above its panes.
+The compact titlebar contains the sidebar toggle, Home, a quiet current-session title, and a new-session button. The sidebar switches sessions; compact rounded window tabs sit above the pane cards.
 Home uses a full-width layout with the current session catalog and loading, empty
 and unavailable states. It hides the workspace sidebar unless a picker is open.
 The native switcher and theme picker are implemented. Remaining release gates include physical comparison
@@ -224,7 +222,7 @@ against its private daemon and confirms that the daemon remains available.
 
 ## Dedicated native entry
 
-`cargo build --locked -p herdr-gpui --bin tmux-ide-gpui` builds the native preview.
+`cargo build --locked -p tmux-ide-gpui --bin tmux-ide-gpui` builds the native preview.
 The upstream package name is retained for provenance; the executable name is
 `tmux-ide-gpui`. No arguments opens the disconnected preview window. `--help`
 describes supported modes; `--version` identifies an unreleased development
@@ -372,6 +370,10 @@ pane in its current window, then displays that window's pane feeds in tmux's arr
 If the current window or active pane cannot be identified uniquely, choose a window
 explicitly. Opening a session does not replay input: click the ready terminal before typing.
 Click another pane directly on the canvas to select it and focus keyboard input.
+On macOS, **Cmd-Option-arrow** focuses an adjacent visible pane without wrapping;
+**Cmd-Shift-Return** zooms or restores the focused pane. Pane menus show these
+shortcuts in key badges; the zoom button also names its shortcut on hover.
+These shortcuts leave text fields, dialogs and active composition in control.
 Clicks in separator gaps are ignored; layout changes must be painted before a
 click can select a pane. Current subscriptions are limited to 24 panes across the
 session. Window tabs and session navigation use verified daemon metadata. Native
@@ -446,12 +448,13 @@ or UI test driver to select panes in both fixture sessions, then click the termi
 and type `echo gpui` followed by Enter. The test checks the exact output row. It uses private fixture
 state and cleans up only its own processes and tmux server.
 
-The sidebar highlights the selected session. Window tabs appear only above the
-terminal canvas; selected-pane context and connection status appear below it.
-The titlebar follows Home or the selected session. Switch, Theme and Refresh live
-in the workspace sidebar footer, with Browse/Theme/Refresh actions on Home.
-The titlebar + opens the session picker. Retained session tabs use verified
-activation capabilities; closing a tab leaves its tmux session running. Broader TUI Home agent-roster
+The sidebar highlights the selected session and owns session navigation. Window tabs
+switch tmux windows within that session, with a separate + to create a window.
+The titlebar + opens local session creation; **Cmd+P** opens the session picker.
+**F9 / Shift+F9** cycle retained sessions using verified activation capabilities.
+Switch, Theme and Refresh remain in the workspace sidebar footer. Routine
+Connected status is shown with the machine in the sidebar; workspace notices
+appear only when there is actionable status. Broader TUI Home agent-roster
 parity remains part of INTEGRATION.md.
 
 Cmd-V pastes up to 64 KiB of UTF-8 text into the focused terminal. Empty,
@@ -599,8 +602,8 @@ bridge checks and isolated startup/replacement/session journeys using supported
 system tmux, plus macOS Rust formatting, file-size checks, both Clippy and test
 feature configurations, the dedicated release executable build and its isolated
 CLI integration tests. Run those release checks from `upstream/` with
-`cargo build --locked --release -p herdr-gpui --bin tmux-ide-gpui` and
-`cargo test --locked --release -p herdr-gpui --test tmux_cli`. The lane does
+`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui` and
+`cargo test --locked --release -p tmux-ide-gpui --test tmux_cli`. The lane does
 not publish artifacts, sign, install, or operate production sessions. Physical UI,
 bundled runtime, display-scale and release/install/update qualification remain
 separate required evidence. A local check does not establish a hosted CI pass.
@@ -1027,7 +1030,7 @@ worker, including its input, action, history and presentation owners. On macOS:
 
 ```bash
 cargo build --locked --manifest-path apps/tmux-gpui/upstream/Cargo.toml \
-  -p herdr-gpui --features integration-test --example tmux_native_journey
+  -p tmux-ide-gpui --features integration-test --example tmux_native_journey
 export TMUX_GPUI_JOURNEY_PROBE="$PWD/apps/tmux-gpui/upstream/target/debug/examples/tmux_native_journey"
 node scripts/build-cli.mjs --outfile "$PWD/.tasks/gpui-journey/cli.mjs"
 export TMUX_GPUI_TEST_CLI="$PWD/.tasks/gpui-journey/cli.mjs"
@@ -1076,3 +1079,22 @@ The client also supports add-only registry imports. The packaged launcher now
 uses native local discovery by default; the metadata helper remains available
 only through the explicit compatibility entry. See `research/README.md` for
 evidence and remaining work; these entries are not a performance-parity claim.
+
+### Native crate identity and session sidebar
+
+The application crate is `tmux-ide-gpui` in `upstream/crates/tmux-ide-gpui`.
+The `herdr-gpui` executable is retained only for upstream reference tests;
+release builds explicitly select `--bin tmux-ide-gpui`. Original provenance
+hashes retain their upstream `crates/herdr-gpui` paths. The `NOTICE` and the
+crate's attribution files continue to credit the original sources.
+
+The workspace sidebar leads with sessions beneath compact machine headings.
+Session rows have compact padding, neutral selection fills, and stable
+favorite/name ordering rather than jumping to the top when selected.
+A single populated server does not add a redundant heading; empty, offline,
+and multiple servers remain visible. Agent activity is nested only when the
+native observation carries the same machine, server generation and live
+session identity. Unmatched activity remains separately accessible. Titles,
+project names, activity and attention counts use observed metadata; branch,
+cwd and free-form task summaries require a future scoped display projection.
+No Git processes, terminal scraping or extra polling are used for sidebar rendering.

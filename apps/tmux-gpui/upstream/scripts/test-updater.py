@@ -99,7 +99,7 @@ def package_identity(package):
 
 def generate(root, temporary):
     workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
-    member = tomllib.loads((root / "crates/herdr-gpui/Cargo.toml").read_text())
+    member = tomllib.loads((root / "crates/tmux-ide-gpui/Cargo.toml").read_text())
     lock = tomllib.loads((root / "Cargo.lock").read_text())
     package = dict(workspace["package"], name=member["package"]["name"])
     locked_root, = [item for item in lock["package"] if item["name"] == package["name"]]
@@ -141,7 +141,7 @@ def generate(root, temporary):
     (temporary / "Cargo.lock").write_text(projected)
     shutil.copyfile(root / "rust-toolchain.toml", temporary / "rust-toolchain.toml")
     (temporary / "src").mkdir()
-    source = root / "crates/herdr-gpui/src/updater.rs"
+    source = root / "crates/tmux-ide-gpui/src/updater.rs"
     # An absolute #[path] to updater.rs searches its children beside that file,
     # not in updater/. A symlinked mod.rs preserves Rust's submodule lookup while
     # compiling the original files, without copying or rewriting their contents.
@@ -154,11 +154,11 @@ def generate(root, temporary):
         (modules / child.name).symlink_to(child, target_is_directory=child.is_dir())
     # The updater names the app's identifiers through constants.rs, which holds
     # only plain constants and so compiles here unchanged.
-    constants = root / "crates/herdr-gpui/src/constants.rs"
+    constants = root / "crates/tmux-ide-gpui/src/constants.rs"
     # Unused UI entry points are expected in this updater-only binary.
     # The updater reads build identities such as the app ID from constants.rs,
     # plain values with no GPUI dependency, compiled here as the app does.
-    constants = root / "crates/herdr-gpui/src/constants.rs"
+    constants = root / "crates/tmux-ide-gpui/src/constants.rs"
     (temporary / "src/main.rs").write_text(
         f"#[allow(dead_code)]\n#[path = {json.dumps(str(modules / 'mod.rs'), ensure_ascii=False)}]\n"
         "mod updater;\n"

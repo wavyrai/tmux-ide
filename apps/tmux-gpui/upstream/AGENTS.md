@@ -24,7 +24,7 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 | --- | --- |
 | `crates/herdr-protocol` | Generation-1 wire types, framing, validation, and atomic surface patches |
 | `crates/herdr-client` | Discovery, socket worker, session transitions, ordered commands, and client-local activity projection |
-| `crates/herdr-gpui` | Native UI, connection bridge, presentation state, semantic input, geometry, and painting |
+| `crates/tmux-ide-gpui` | Native UI, connection bridge, presentation state, semantic input, geometry, and painting |
 | `crates/test-support/sandbox.rs` | Shared isolated process setup for opt-in integration tests; not a production crate |
 
 - Keep dependency direction from UI to client to protocol. Protocol/client code must not depend on GPUI.

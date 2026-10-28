@@ -74,6 +74,8 @@ const { positionals, values } = parseArgs({
     title: { type: "string" },
     command: { type: "string" },
     size: { type: "string" },
+    split: { type: "string" },
+    window: { type: "boolean" },
     write: { type: "boolean" },
     template: { type: "string" },
     name: { type: "string" },
@@ -154,6 +156,7 @@ const knownCommands = new Set([
   "settings",
   "team",
   "app",
+  "open",
   "switcher",
   "wait",
   "events",
@@ -225,6 +228,13 @@ ${release ? "Release the exact supervisor reservation after removing its service
 IDs: 1–128 characters; start with a letter or digit, then letters, digits, periods, underscores or hyphens.
 Inspect ownership: tmux-ide daemon info --json
 Managed service setup: tmux-ide daemon service install <absolute-stable-launcher>`);
+  } else if (command === "open") {
+    console.log(`Usage: tmux-ide open [url] [--session NAME] [--pane %ID] [--split right|down] [--size 10..90] [--window] [--json]
+
+Open terminal-browser in a new pane beside the current pane, or in a new window with --window.
+Without a URL, open the browser's start page. URLs, localhost addresses and HTML files are accepted.
+Outside tmux, select a running session with --session. Native-capable browser builds connect to the GUI automatically; other viewers use Kitty.
+Set TMUX_IDE_TERMINAL_BROWSER_BIN to an absolute launcher path to use a separate browser build.`);
   } else printHelp();
   process.exit(0);
 }
@@ -252,6 +262,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
                               ${dim("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
+  ${cyan("tmux-ide open")} [url]          ${dim("Open terminal-browser in a new pane (--session NAME outside tmux)")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team assign")} %PANE TEAM ${dim("Group a pane; unassign removes membership")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
@@ -856,6 +867,31 @@ try {
     case "stop":
       await (await import("../packages/daemon/src/stop.ts")).stop(positionals[1], { json });
       break;
+
+    case "open": {
+      const allowed = new Set(["json", "verbose", "session", "pane", "split", "size", "window"]);
+      const unsupported = Object.keys(values).find((key) => !allowed.has(key));
+      if (unsupported)
+        throw new IdeError(`tmux-ide open does not support --${unsupported}.`, {
+          code: "USAGE",
+          exitCode: 2,
+        });
+      if (positionals.length > 2)
+        throw new IdeError("tmux-ide open accepts at most one URL.", {
+          code: "USAGE",
+          exitCode: 2,
+        });
+      const { openBrowser } = await import("../packages/daemon/src/open-browser.ts");
+      const result = openBrowser(positionals[1], {
+        session: values.session,
+        pane: values.pane,
+        split: values.split,
+        size: values.size,
+        window: values.window,
+      });
+      console.log(json ? JSON.stringify(result) : `Created browser pane ${result.pane}.`);
+      break;
+    }
 
     case "attach":
       await (await import("../packages/daemon/src/attach.ts")).attach(positionals[1], { json });

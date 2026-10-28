@@ -11,9 +11,9 @@ GPUI 0.3.6. This does not qualify full tmux parity.
 - `cargo test --locked --workspace --all-features`: 2,717 passed, 17 existing
   opt-in tests ignored. No Linux or Windows execution is implied.
 - Canonical TypeScript `TerminalReplicaSnapshotSchemaZ` accepts the synthetic fixture.
-- `cargo test --locked --release -p herdr-gpui --test cli`: all 10 CLI smoke
+- `cargo test --locked --release -p tmux-ide-gpui --test cli`: all 10 CLI smoke
   tests passed.
-- `cargo build --locked --release -p herdr-gpui` passed; the optimized executable
+- `cargo build --locked --release -p tmux-ide-gpui` passed; the optimized executable
   also validates the snapshot fixture successfully.
 - Debug executable accepts the fixture through `--tmux-snapshot FILE --validate-only`.
 - Executable rejects missing arguments, malformed JSON and files larger than 8 MiB.
@@ -1190,7 +1190,7 @@ unmerged and unreleased.
 ## Optimized CLI and npm boundary verified — 9 October 2026
 
 The existing release-profile job completed with exit 0: `cargo test --locked
---release -p herdr-gpui --test tmux_cli` passed all 3 tests (product identity,
+--release -p tmux-ide-gpui --test tmux_cli` passed all 3 tests (product identity,
 argument rejection and offline snapshot validation). The prior running-job
 statement above is superseded by this result. This is executable CLI evidence,
 not a physical GUI acceptance result.

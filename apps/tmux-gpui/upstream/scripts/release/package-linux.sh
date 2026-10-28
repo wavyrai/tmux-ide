@@ -26,7 +26,7 @@ cp "$release_root/scripts/release/so.pen.herdr-gpui.desktop" "$root/share/applic
 cp "$release_root/crates/herdr-protocol/LICENSE-APACHE" "$release_root/crates/herdr-protocol/NOTICE.md" "$root/share/licenses/herdr-gpui/"
 cp "$release_root/LICENSE" "$release_root/NOTICE" "$release_root/assets/icons/LICENSE-octicons" "$root/share/licenses/herdr-gpui/"
 cp "$5" "$root/share/licenses/herdr-gpui/THIRD-PARTY-NOTICES.txt"
-cp "$release_root/crates/herdr-gpui/SOUND-NOTICE.md" "$root/share/licenses/herdr-gpui/"
+cp "$release_root/crates/tmux-ide-gpui/SOUND-NOTICE.md" "$root/share/licenses/herdr-gpui/"
 COPYFILE_DISABLE=1 tar -C "$tmp" -czf "$tmp/archive.tar.gz" "$name"
 mv "$tmp/archive.tar.gz" "$out"
 printf '%s\n' "$out"

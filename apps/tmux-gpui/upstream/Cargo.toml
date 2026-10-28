@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol", "crates/tmux-native-surface-sdk"]
+members  = ["crates/herdr-client", "crates/tmux-ide-gpui", "crates/herdr-protocol", "crates/tmux-native-surface-sdk"]
 resolver = "2"
 
 [workspace.package]

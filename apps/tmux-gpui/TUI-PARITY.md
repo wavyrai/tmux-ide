@@ -226,7 +226,7 @@ comparisons remain a separate measured workstream.
 - TUI native-surface targets: `packages/daemon/src/tui/mirror/features/{home,files,changes,settings,rich-preview}`
   and `runtime/application-machine-*.tsx`.
 - GPUI baseline and limits: `apps/tmux-gpui/README.md`, `INTEGRATION.md`, `VALIDATION.md`.
-- GPUI native action implementation: `upstream/crates/herdr-gpui/src/tmux_snapshot/pane_actions.rs`.
+- GPUI native action implementation: `upstream/crates/tmux-ide-gpui/src/tmux_snapshot/pane_actions.rs`.
 
 ## Zed reference for native machine workflows
 

@@ -173,7 +173,7 @@ try {
     "--jobs",
     "1",
     "-p",
-    "herdr-gpui",
+    "tmux-ide-gpui",
     "--bin",
     "tmux-ide-gpui",
     "--release",
@@ -189,7 +189,7 @@ try {
   )
     throw new Error("Build tool identity changed");
   const packages = metadata.packages.filter(
-    (pkg) => pkg.name === "herdr-gpui" && pkg.source === null,
+    (pkg) => pkg.name === "tmux-ide-gpui" && pkg.source === null,
   );
   if (packages.length !== 1) throw new Error("Ambiguous native package identity");
   const native = await realpath(nativeArtifactFromCargo(artifacts, packages[0].id));

@@ -12,10 +12,10 @@ made to them are recorded in crates/herdr-protocol/NOTICE.md. No upstream
 NOTICE file was present at the revision used.
 
 The native GitHub integration's Arbor references and attribution are recorded
-in crates/herdr-gpui/GITHUB-NOTICE.md.
+in crates/tmux-ide-gpui/GITHUB-NOTICE.md.
 
 The shared settings schema, defaults, theme palettes, and status indicators in
-crates/herdr-gpui/src/herdr_settings.rs, src/herdr_settings/, and src/sidebar/agents.rs
+crates/tmux-ide-gpui/src/herdr_settings.rs, src/herdr_settings/, and src/sidebar/agents.rs
 are adapted from Herdr (https://github.com/herdrdev/herdr), Apache-2.0,
 revision 8ac9542757292f7a8d42a2d532bc6a8a33c7ffce: src/config/{model,sound,theme}.rs,
 src/app/{state,mod}.rs, and src/client/shell.rs. Adaptations include native RGB
@@ -23,7 +23,7 @@ palette projection, bounded parsing, conflict-aware atomic persistence, and
 GPUI indicator rendering. No upstream NOTICE file was present at that revision.
 
 The notification policy and bundled audio assets adapted or copied from Herdr
-are attributed in crates/herdr-gpui/SOUND-NOTICE.md (Apache-2.0).
+are attributed in crates/tmux-ide-gpui/SOUND-NOTICE.md (Apache-2.0).
 Specifically, assets/sounds/done.mp3 and assets/sounds/request.mp3 are unmodified
 copies from https://github.com/herdrdev/herdr at revision
 8ac9542757292f7a8d42a2d532bc6a8a33c7ffce. The sound configuration, notification

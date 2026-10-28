@@ -91,7 +91,7 @@ fn remote_catalog_issue_reaches_identity_verified_terminal_without_helper() {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body["stream"]["terminalDelivery"]["protocolVersions"],
-            json!([1, 101, 113, 102, 103, 104, 105, 106])
+            json!([1, 101, 113, 117, 103, 104, 105, 106])
         );
         let id = body["requestId"].as_str().unwrap().to_owned();
         let host = headers["x-tmux-ide-host-client-id"].clone();

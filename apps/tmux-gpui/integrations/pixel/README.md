@@ -7,7 +7,7 @@ copy into BGRA IOSurface storage, and avoids routing native frame payloads throu
 the tmux-ide Node daemon or tmux. It is not zero-copy Chromium texture sharing.
 
 Status: the maintained terminal-browser checkout builds its native binding and
-TypeScript packages, and passes 257 Rust tests (one ignored) and 92 JavaScript tests. Electron 44.2.0 loads the
+TypeScript packages, and passes 257 Rust tests (one ignored) and 92 JavaScript tests across the Pixel and browser packages. Electron 44.2.0 loads the
 binding, and its browser daemon starts and shuts down cleanly with an isolated
 profile. An isolated GUI run shows the full browser chrome, scrolling and viewport
 expansion. A changing page emits zero terminal bytes on the native path; detaching
@@ -81,18 +81,26 @@ does not negotiate a remote native-surface channel.
 ## Qualification and limits
 
 The patched engine and Node binding build, and the integration patch applies to a
-clean checkout at the pinned revision. Actual GUI checks cover full browser
+clean checkout at the pinned revision. Earlier GUI runs exercised full browser
 chrome, scrolling, viewport expansion, late startup, browser process replacement,
-receiver loss, idle-page Kitty fallback and recovery. The actual-daemon test
+receiver loss, idle-page Kitty fallback and recovery. These are historical checks,
+not proof that the latest browser remains on the native transport after resizing.
+The latest resize run fell back to Kitty; the subsequent stale-handoff fix passes
+its native transport regression, but its final interactive resize check remains
+pending manual zoom/restore because desktop automation cannot deliver clicks.
+An unlocked run loaded the test page, published red/blue/red favicon updates,
+and displayed the favicon in the native pane header. Window-tab appearance after
+focusing the browser pane remains unverified. The actual-daemon test
 holds an old image across provider replacement and verifies that its retirement
 cannot release the replacement frame. Bounded allocation, submission and demand
 limits have regression coverage.
 
 The macOS workspace CI sequence passes formatting, file-size checks, both Clippy
-feature configurations, 3,845 default-feature tests and 3,879 all-feature tests.
+feature configurations, 3,868 default-feature tests and 3,902 all-feature tests.
 There are respectively 26 and 33 ignored external/native tests; the explicit live
 fixtures above are separate evidence. The full terminal release gate passes with
-pinned Bun 1.4.2. Linux workspace Clippy passes both feature configurations.
+pinned Bun 1.4.2. Earlier Linux workspace Clippy checks passed both feature
+configurations; they were not repeated for the favicon addition.
 Windows was not qualified because its Rust target is unavailable on this host.
 
 Mixed native and ordinary tmux-client delivery passes; independently rendered
@@ -100,3 +108,77 @@ fallback pixels, physical typing latency and GPU memory usage are not establishe
 by these captures. This is a local macOS development integration, not a published
 browser or tmux-ide release. It performs an owned CPU copy, not zero-copy Chromium
 texture sharing. Remote browsers retain the existing Kitty transport.
+
+## Open from tmux-ide
+
+The CLI now exposes `tmux-ide open [url]`. It creates a new pane in the current
+session (or `--session NAME` outside tmux) and runs the selected browser there.
+Use `--split down --size 40` for a vertical split or `--window` for a new window.
+The browser receives the new pane's tmux identity and the caller's validated
+namespace. Do not set an explicit native-surface route from the originating pane.
+
+To use this separately built native integration, make a dedicated executable
+launcher with the absolute paths for your build, for example:
+
+```sh
+#!/bin/sh
+export TERMINAL_BROWSER_DIST_ROOT='/absolute/runtime-with-electron'
+exec '/absolute/node' '/absolute/terminal-browser-checkout/cli/dist/main.js' "$@"
+```
+
+Then select that launcher for the command:
+
+```sh
+TMUX_IDE_TERMINAL_BROWSER_BIN=/absolute/native-browser-launcher tmux-ide open http://localhost:3000
+```
+
+A launcher is useful because distribution-specific environment belongs to the
+browser build; `tmux-ide open` forwards namespace and standard user directories,
+not arbitrary environment or a parent pane's explicit native-surface override.
+Without the override, the command resolves `terminal-browser` on PATH. That does
+not make a standard installed browser native-capable. This command does not
+install the patched browser, replace an existing installation, or publish it.
+
+## Browser pane geometry
+
+Use the current bundled, patched tmux when qualifying this integration. An older
+installed tmux can silently ignore `refresh-client -C` pixel metrics: the test
+browser then sees 16×32 cells while the GUI paints approximately 17×40 cells,
+which stretches the canvas. The isolated browser fixture must resolve tmux from
+the checkout being tested, rather than an unrelated installed release.
+
+Pane cards now exclude tmux's reserved border/header row from the content area.
+The Pixel patch also distinguishes terminal font zoom from initial PTY metric
+correction: changing from 23 rows at 32 pixels to 24 rows at 40 pixels must not
+apply a 1.25× page zoom. Font zoom inside an unchanged pixel viewport still works.
+When the only viewer uses native surfaces, the browser removes its old Kitty
+startup images before handing over, preventing doubled transparent toolbar
+controls. Mixed terminal viewers continue to request Kitty output.
+
+The complete-canvas publisher observes its own read-only pane while validating
+the session's full layout. It does not require every neighbouring pane to be
+subscribed by the producer. When retirement removes the last submitted canvas,
+it may republish the latest canvas without exceeding two outstanding frames.
+
+A native transport regression queues a real IOSurface, advances the committed
+pane before delivery, then sends a fresh image on the same connection. The
+receiver discards the obsolete handoff and retires its reservation rather than
+switching the whole connection to fallback. Invalid tickets and unadmitted rights
+still fail closed. The final interactive resize/transport check for this change
+remains pending manual zoom/restore; desktop automation cannot deliver clicks.
+
+## Native browser favicons
+
+The prepared browser publishes the active tab's favicon as fixed 16×16 RGBA
+pixels. `tmux-ide open` passes its pinned tmux executable to the new pane; the
+browser uses that pane's own session environment, including when an existing
+browser daemon hosts it. Updates are coalesced and unchanged icons are skipped.
+The metadata contains no URL or local file path, and is cleared on session close;
+the daemon ignores records whose publishing process has exited.
+
+Native clients offer capability 117 (favicon metadata plus zlib decoding, formerly
+102). Other clients receive the original layout shape. The GUI caches up to 64
+decoded icons, uses them in pane headers and window tabs, and falls back to the
+browser mark when the page has no usable favicon. This remains a development
+integration. The native header and live favicon updates were verified on October
+27; the window-tab icon still needs a browser-pane focus check.

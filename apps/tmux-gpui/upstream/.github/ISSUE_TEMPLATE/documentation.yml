@@ -19,7 +19,7 @@ body:
     id: location
     attributes:
       label: Documentation URL or file
-      placeholder: "README.md, crates/herdr-gpui/README.md, or a URL"
+      placeholder: "README.md, crates/tmux-ide-gpui/README.md, or a URL"
   - type: textarea
     id: problem
     attributes:

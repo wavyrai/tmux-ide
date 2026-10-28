@@ -10,8 +10,35 @@ crash. This page lists every public command in `2.9.5`, matching
 `tmux-ide --help`. Scripting commands that list `--json` below print JSON;
 interactive commands do not.
 
-Version `2.9.13` retains the `2.9.7` command surface. See the
-[2.9.13 release notes](/docs/release-2-9-13).
+Version `2.9.14` retains the `2.9.7` command surface. See the
+[2.9.14 release notes](/docs/release-2-9-14).
+
+## Open a browser pane
+
+```sh
+tmux-ide open                         # Browser start page beside the current pane
+tmux-ide open http://localhost:3000    # URL in a new pane
+tmux-ide open ./preview.html --split down --size 40
+tmux-ide open https://example.com --session Website --window
+```
+
+The command requires `terminal-browser` on PATH. It creates and selects a new
+pane in the current tmux session, leaving the original terminal running. Outside
+tmux, select an existing session with `--session NAME`; `--pane %ID` selects an
+exact split target. `--window` creates a separate tmux window instead of a split.
+The default split is right, using 50% of the available space. `--size` accepts
+10–90 percent. URLs and file paths are passed as literal arguments.
+
+With the native-capable terminal-browser development build and a compatible
+local macOS GUI, the browser automatically connects its pixel surface to the new
+pane. The standard browser and remote sessions retain terminal graphics rendering.
+Native-capable browser distribution is still separate from the npm package.
+Set `TMUX_IDE_TERMINAL_BROWSER_BIN` to an absolute executable launcher path to
+select a different browser build. No browser is downloaded automatically.
+
+`--json` returns `{ "pane": "%3", "session": "$0", "window": "@1", "status": "created" }`.
+This confirms pane creation, not completion of page loading or native rendering.
+Missing executables and invalid targets fail before creating a pane.
 
 ## Open tmux-ide
 

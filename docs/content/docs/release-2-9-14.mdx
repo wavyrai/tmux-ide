@@ -1,0 +1,40 @@
+---
+title: tmux-ide 2.9.14
+metaTitle: "What's new in 2.9.14"
+description: "Native pane cards, compact navigation, keyboard badges and a browser launch command."
+---
+
+`2.9.14` accompanies native macOS alpha `0.1.9`, build `2026102701`.
+The CLI/daemon and native app are separate installations.
+
+## Native workspace
+
+Terminal panes have separate rounded cards with gutters and a continuous header
+and content surface. Close sits on the far right. The compact sidebar handles
+session switching; the top bar no longer duplicates session tabs, and the
+connected footer is removed. Window tabs remain above the pane cards.
+
+Pane dividers activate correctly and content sizing keeps bottom terminal rows
+visible. Use Command–Option–Arrow to focus an adjacent pane and Command–Shift–Enter
+to expand or restore it. Menus display these shortcuts as keyboard badges.
+
+## Open a browser pane
+
+Run `tmux-ide open https://example.com` inside a tmux pane, or select a session
+with `--session NAME`. Add `--window` to create a browser window instead of a split.
+The command requires a separately installed terminal-browser executable and
+reports missing executables or invalid targets before creating a pane.
+
+The prepared development integration supports native pixel surfaces and favicon
+metadata in pane headers and window tabs. It observes only its own pane's cells,
+and native receivers discard obsolete surface handoffs during resize without
+closing the whole image connection. Stock terminal-browser installations retain
+their existing terminal rendering path. tmux-ide does not bundle or automatically
+update the external browser. Native address and navigation controls are planned
+for a subsequent change.
+
+## Updating
+
+Update the CLI/daemon and the [native macOS app](/docs/native-alpha) separately.
+Existing tmux sessions remain intact. No measured GUI/TUI performance-parity claim
+is made.

@@ -3531,7 +3531,7 @@ until retirement; close drops references without returning reusable buffers.
 
 Added an explicit platform discard-unsent operation, which refuses transferred
 frames, and a native producer test exercising the actual Mach handshake and
-surface transfer. `cargo check -p herdr-gpui` passed
+surface transfer. `cargo check -p tmux-ide-gpui` passed
 (`native-surface-producer-check.log`). The focused runtime test was launched in
 `native-surface-producer-tests.log`; its result is pending at this checkpoint.
 The producer owner is an integration API, not yet normal app activation or a
