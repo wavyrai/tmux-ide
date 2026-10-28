@@ -4,6 +4,8 @@ const text = (limit: number) =>
   z
     .string()
     .max(limit)
+    // Intentionally reject control characters in display text and navigation input.
+    // eslint-disable-next-line no-control-regex
     .refine((value) => !/[\x00-\x1f\x7f]/u.test(value));
 const identity = {
   version: z.literal(1),
