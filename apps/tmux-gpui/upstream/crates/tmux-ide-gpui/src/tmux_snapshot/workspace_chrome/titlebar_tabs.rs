@@ -66,3 +66,38 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
         assert!(receiver.try_recv().is_err());
     }
 }
+
+#[gpui::test]
+fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.status = "Connected".into();
+        view
+    });
+    for width in [640., 1000.] {
+        cx.simulate_resize(size(px(width), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let before = cx.debug_bounds("workspace-window-strip").unwrap();
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.retained_preview = true;
+                v.browser_state.input_ready = false;
+                v.browser_state.status = "Switching window…".into();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+        assert!(cx.debug_bounds("tmux-status-viewport").is_none());
+        assert!(!view.read_with(cx, |v, _| v.browser_state.input_ready));
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.retained_preview = false;
+                v.browser_state.input_ready = true;
+                v.browser_state.status = "Connected".into();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+    }
+}

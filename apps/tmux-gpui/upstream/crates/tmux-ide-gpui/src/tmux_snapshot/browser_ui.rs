@@ -764,11 +764,18 @@ impl SnapshotView {
         } else {
             self.browser_state.status.clone()
         };
-        let show_status = super::status_presentation::visible(
-            &status,
-            self.developer_mode.enabled,
-            self.browser_state.input_ready,
-        );
+        // Routine window navigation must not insert a notice beside the tabs:
+        // its width would move the entire strip during every retained frame.
+        // Keep failures and developer diagnostics visible without rearming input.
+        let quiet_window_transition = self.browser_state.retained_preview
+            && self.browser_state.status == "Switching window…"
+            && !self.developer_mode.enabled;
+        let show_status = !quiet_window_transition
+            && super::status_presentation::visible(
+                &status,
+                self.developer_mode.enabled,
+                self.browser_state.input_ready,
+            );
         let terminal = (self.browser_state.surface != browser::Surface::Home).then(|| {
             div()
                 .size_full()
