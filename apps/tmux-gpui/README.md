@@ -121,7 +121,7 @@ reserve control space; headers occupy dedicated space outside terminal cells, an
 See [INTEGRATION.md](INTEGRATION.md). Native session/pane selection, multi-pane
 rendering, keyboard/paste, bounded history navigation, whole-pane copy and initial
 text composition are implemented. Read-only local daemon discovery is available.
-The compact titlebar contains the sidebar toggle, Home, a quiet current-session title, and a new-session button. The sidebar switches sessions; compact rounded window tabs sit above the pane cards.
+The compact titlebar contains the sidebar toggle, Home, horizontally scrolling tmux window tabs, and a new-window button. On Home, the + button creates a local session. The sidebar switches sessions. Rounded pane cards sit directly on the application background with compact gutters; there is no extra workspace background or second tab row.
 Home uses a full-width layout with the current session catalog and loading, empty
 and unavailable states. It hides the workspace sidebar unless a picker is open.
 The native switcher and theme picker are implemented. Remaining release gates include physical comparison
@@ -371,7 +371,10 @@ If the current window or active pane cannot be identified uniquely, choose a win
 explicitly. Opening a session does not replay input: click the ready terminal before typing.
 Click another pane directly on the canvas to select it and focus keyboard input.
 On macOS, **Cmd-Option-arrow** focuses an adjacent visible pane without wrapping;
-**Cmd-Shift-Return** zooms or restores the focused pane. Pane menus show these
+**Cmd-Shift-Return** zooms or restores the focused pane. **Cmd-D** splits right,
+**Cmd-Shift-D** splits down, **Cmd-T** creates a terminal window, and **Cmd-W**
+opens the close-pane confirmation. **Cmd-Shift-[ / ]** switches to the previous
+or next window in the current session. Pane menus show these
 shortcuts in key badges; the zoom button also names its shortcut on hover.
 These shortcuts leave text fields, dialogs and active composition in control.
 Clicks in separator gaps are ignored; layout changes must be painted before a
@@ -450,7 +453,7 @@ state and cleans up only its own processes and tmux server.
 
 The sidebar highlights the selected session and owns session navigation. Window tabs
 switch tmux windows within that session, with a separate + to create a window.
-The titlebar + opens local session creation; **Cmd+P** opens the session picker.
+On Home, the titlebar + opens local session creation; in a workspace it creates a tmux window. **Cmd+P** opens the session picker.
 **F9 / Shift+F9** cycle retained sessions using verified activation capabilities.
 Switch, Theme and Refresh remain in the workspace sidebar footer. Routine
 Connected status is shown with the machine in the sidebar; workspace notices
@@ -829,17 +832,16 @@ It is not full Herdr palette or integration parity.
 
 ### Application and tmux navigation (source preview)
 
-Home and open sessions share one titlebar row. Home uses the full window;
-the workspace sidebar lists sessions, while a single strip above the terminal
-canvas lists tmux windows. The selected pane and connection status sit below
-the canvas. Cmd+K can select individual panes. Exact daemon identities, rather
-than labels, determine the target; stale catalog callbacks are rejected.
+Home and tmux window tabs share one titlebar row. Home uses the full window;
+the workspace sidebar lists sessions. Pane cards sit directly below the titlebar,
+without a second tab row or workspace wrapper. Normal mode has no connection
+footer; exceptional notices use a bounded titlebar area. Cmd+K can select
+individual panes. Exact daemon identities, rather than labels, determine the
+target; stale catalog callbacks are rejected.
 
-The titlebar keeps Home, session browsing (+), and the sidebar toggle accessible
-while retained tabs scroll horizontally. Tmux window tabs stay inside the session.
-The earlier two-row application/session navigation is superseded. See
-`evidence/unified-titlebar-2026-10-16/` for current native checks and the
-remaining full-screen input limitation.
+The titlebar keeps Home, the sidebar toggle and the new-window button accessible
+while tmux window tabs scroll horizontally. On Home, the + button creates a
+local session. Earlier session-tab and two-row navigation previews are superseded.
 
 The source window strip now reveals the selected tmux window after semantic
 selection, tab order/label or width changes. Ordinary redraws preserve manual

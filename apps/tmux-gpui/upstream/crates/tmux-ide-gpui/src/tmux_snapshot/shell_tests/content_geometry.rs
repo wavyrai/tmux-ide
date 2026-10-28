@@ -47,12 +47,12 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
         }
         let expected = view.read_with(cx, |v, _| {
             let canvas = v.input_geometry.unwrap().0;
-            assert_eq!(canvas.left(), windows.left());
-            assert!(canvas.right() >= windows.right());
+            assert_eq!(canvas.left(), content.left());
+            assert_eq!(canvas.right(), content.right());
             assert!(canvas.top() >= windows.bottom());
-            assert!(canvas.left() > content.left());
-            assert!(windows.top() > content.top());
-            assert!(canvas.bottom() < content.bottom());
+            assert!(windows.bottom() <= body.top());
+            assert_eq!(canvas.top(), content.top());
+            assert_eq!(canvas.bottom(), content.bottom());
             v.test_fitted_grid()
         });
         let mut last = None;

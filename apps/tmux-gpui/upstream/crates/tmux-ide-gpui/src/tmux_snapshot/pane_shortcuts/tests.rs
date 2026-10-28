@@ -5,6 +5,14 @@ use core::prelude::v1::test;
 fn only_exact_application_chords_are_reserved() {
     for (key, expected) in [
         ("cmd-shift-enter", Shortcut::Zoom),
+        ("cmd-d", Shortcut::SplitRight),
+        ("cmd-shift-d", Shortcut::SplitDown),
+        ("cmd-t", Shortcut::NewWindow),
+        ("cmd-w", Shortcut::Close),
+        ("cmd-shift-[", Shortcut::Window(false)),
+        ("cmd-shift-]", Shortcut::Window(true)),
+        ("cmd-}", Shortcut::Window(true)),
+        ("cmd-{", Shortcut::Window(false)),
         ("cmd-alt-left", Shortcut::Focus(0)),
         ("cmd-alt-down", Shortcut::Focus(3)),
     ] {

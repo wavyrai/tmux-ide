@@ -2,7 +2,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve, parse, basename } from "node:path";
 
-export async function bridgeNotices(inputs) {
+export async function bridgeNotices(inputs, supplemental = {}) {
   const packages = new Map();
   for (const input of inputs) {
     const absolute = resolve(input);
@@ -29,11 +29,13 @@ export async function bridgeNotices(inputs) {
     const files = (await readdir(directory))
       .filter((name) => /^(licen[cs]e|copying|notice)([.-].*)?$/i.test(name))
       .sort();
-    if (!files.length)
+    const supplement = supplemental[`${metadata.name}@${metadata.version}`];
+    if (!files.length && !supplement)
       throw new Error(`Missing dependency notice: ${metadata.name}@${metadata.version}`);
     const texts = await Promise.all(
       files.map(async (name) => ({ name, text: await readFile(join(directory, name), "utf8") })),
     );
+    if (!files.length && supplement) texts.push(supplement);
     if (texts.some((item) => !item.text.trim()))
       throw new Error(`Empty dependency notice: ${metadata.name}`);
     components.push({

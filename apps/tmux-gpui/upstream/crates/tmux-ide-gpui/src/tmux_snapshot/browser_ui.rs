@@ -363,6 +363,7 @@ impl SnapshotView {
         self.divider = None;
         self.picker = None;
         self.pane_actions = None;
+        self.browser_address = None;
         self.new_session = None;
         self.pending_session_open = None;
         self.header_controls = Default::default();
@@ -480,6 +481,8 @@ impl SnapshotView {
                 opening_session.map(|id| super::session_open::Intent::exact(request, id));
             if let Some(id) = same_window_pane {
                 self.browser_state.selected_pane = Some(id);
+            } else if selecting_pane && self.retain_window_transition(request, cx) {
+                // A non-interactive outgoing presentation bridges the first worker poll.
             } else if !selecting_pane || !self.browser_state.retained_preview {
                 self.frame = None;
                 self.browser_state.retained_preview = false;
@@ -743,7 +746,6 @@ impl SnapshotView {
             .flex_col()
             .child(sidebar)
             .child(self.sidebar_footer(cx));
-        let window_strip = self.workspace_window_strip(window, cx);
         let status = if self.browser_state.retained_preview {
             if self.browser_state.status.starts_with("Restoring terminal…") {
                 self.browser_state.status.clone()
@@ -844,7 +846,7 @@ impl SnapshotView {
             None
         };
         let application_tabs = self.application_tabs(notice, window, cx);
-        let content = super::shell::content_panel(content_background)
+        let content = super::shell::content_panel(content_background, is_home)
             .relative()
             .when(is_home && glass, |panel| {
                 panel.bg(rgba((content_background << 8) | 0x99))
@@ -852,7 +854,6 @@ impl SnapshotView {
             .children(home)
             .when(!is_home, |panel| {
                 panel
-                    .child(window_strip)
                     .when(
                         self.card_layout(self.input_cell_width.unwrap_or(8.))
                             .is_none(),
@@ -877,6 +878,10 @@ impl SnapshotView {
                             .children(
                                 self.pane_actions_panel(window, cx)
                                     .map(|panel| deferred(panel).with_priority(1)),
+                            )
+                            .children(
+                                self.browser_address_panel(cx)
+                                    .map(|panel| deferred(panel).with_priority(2)),
                             ),
                     )
             });

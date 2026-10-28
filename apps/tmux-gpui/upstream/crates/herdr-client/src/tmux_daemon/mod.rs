@@ -42,6 +42,8 @@ pub use create_pane::{
     PaneKind,
 };
 pub use local_session::LocalSessionProof;
+mod browser_controls;
+pub use browser_controls::{BrowserAction, BrowserCommand, BrowserState};
 mod editor;
 mod editor_launch;
 mod history;

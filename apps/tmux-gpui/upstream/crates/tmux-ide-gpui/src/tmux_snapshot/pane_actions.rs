@@ -103,8 +103,8 @@ impl Menu {
             Item::Separator,
             Item::action("Open folder in VS Code"),
             Item::Separator,
-            Item::action("Split pane right"),
-            Item::action("Split pane down"),
+            Item::action("Split pane right").with_keystroke("⌘D"),
+            Item::action("Split pane down").with_keystroke("⌘⇧D"),
             Item::Separator,
             Item::action(super::kbd::FOCUS[0].0).with_keystroke(super::kbd::FOCUS[0].1),
             Item::action(super::kbd::FOCUS[1].0).with_keystroke(super::kbd::FOCUS[1].1),
@@ -320,6 +320,15 @@ impl SnapshotView {
                     super::pane_shortcuts::Shortcut::Zoom => {
                         self.send_pane_action(false, window, cx)
                     }
+                    super::pane_shortcuts::Shortcut::SplitRight => {
+                        self.split_pane(SplitDirection::Right, window, cx)
+                    }
+                    super::pane_shortcuts::Shortcut::SplitDown => {
+                        self.split_pane(SplitDirection::Down, window, cx)
+                    }
+                    super::pane_shortcuts::Shortcut::NewWindow
+                    | super::pane_shortcuts::Shortcut::Close
+                    | super::pane_shortcuts::Shortcut::Window(_) => {}
                     super::pane_shortcuts::Shortcut::Focus(direction) => self.pane_menu_hit(
                         bezel_ui::menu::Hit::Choose(vec![8 + direction]),
                         window,

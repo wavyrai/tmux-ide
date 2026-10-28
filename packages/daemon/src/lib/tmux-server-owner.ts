@@ -1,3 +1,4 @@
+import { createNativeBrowserResolver } from "./tmux-native-browser.ts";
 import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
 import type { LocalImageOwner } from "../terminal/graphics/local-image-owner.ts";
 import { shellEscape } from "./shell.ts";
@@ -619,6 +620,14 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       run: (args, signal) => generationRunAsync(args, signal),
     }),
     resolvePaneEditorContext,
+    nativeBrowser: createNativeBrowserResolver({
+      generation,
+      assertOpen,
+      registry: workspaceRegistry,
+      catalog,
+      inventory: terminalInventoryRuntime,
+      run: generationRunAsync,
+    }),
     catalog,
     readWindowSplitLayout: async (workspaceName: string, input: WindowLinkTarget) => {
       assertOpen();

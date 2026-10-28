@@ -55,6 +55,7 @@ fn make_view(
         workspace_fleet_agents: Default::default(),
         home_filter: None,
         pane_actions: None,
+        browser_address: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
@@ -319,9 +320,10 @@ fn metadata_only_window_tab_actual_click_selects_pane_despite_interrupted_input(
     let application_tab = cx.debug_bounds("application-home").unwrap();
     let status = cx.debug_bounds("tmux-status-viewport").unwrap();
     assert!(tab.size.width > px(0.) && tab.size.height > px(0.));
-    assert!(tab.top() >= application_tab.bottom());
-    assert!(tab.top() >= header.bottom());
-    assert!(status.bottom() <= tab.top());
+    assert_eq!(tab.center().y, application_tab.center().y);
+    assert!(tab.left() >= application_tab.right());
+    assert!(tab.top() >= header.top() && tab.bottom() <= header.bottom());
+    assert!(status.right() <= tab.left());
     cx.simulate_click(tab.center(), Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-a")

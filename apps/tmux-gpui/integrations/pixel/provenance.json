@@ -2,10 +2,10 @@
   "repository": "https://github.com/zenbu-labs/terminal-browser",
   "commit": "660ec51e0ec0e5172338a2920e50089943882af4",
   "patch": "native-surface.patch",
-  "patchSha256": "5cf50505e5f644beb8b00b3e5f4f357b2ddfa9988e504a086cd7b25e784d780d",
+  "patchSha256": "d2b2296c5a7d637dcf1ded4cf728d12ce2d0a83aa587e72904aa6c654eeb0d12",
   "initialReference": {
     "repository": "https://github.com/zenbu-labs/pixel",
     "commit": "cdfdb9d6a424cb2c3774ccb258a9a6f9c4ceff0d"
   },
-  "status": "qualified local macOS development integration; automatic launch, late startup, process replacement, mixed tmux-client delivery and recovery verified; unreleased"
+  "status": "development integration; native surfaces qualified locally; native controls and vendored distribution under qualification; unreleased"
 }

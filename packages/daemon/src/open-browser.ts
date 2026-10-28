@@ -1,5 +1,6 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { IdeError } from "./lib/errors.ts";
 import { resolveRuntimeNamespace, runtimeNamespaceEnvironment } from "./lib/runtime-namespace.ts";
 import {
@@ -16,14 +17,40 @@ export interface OpenBrowserOptions {
 }
 
 /** Resolve once before creating a pane; ignore relative PATH entries. */
-export function resolveTerminalBrowser(environment: NodeJS.ProcessEnv = process.env): string {
+export function resolveTerminalBrowser(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const configured = environment.TMUX_IDE_TERMINAL_BROWSER_BIN;
+  const home = environment.HOME ?? homedir();
+  // Resolve the managed alias on every invocation so an app update selects its
+  // matching browser. Native assets remain outside the universal npm package.
+  const bundled =
+    platform === "darwin" && isAbsolute(home)
+      ? [
+          join(
+            home,
+            "Library",
+            "Application Support",
+            "tmux-ide",
+            "native-alpha",
+            "TmuxIDE.app",
+            "Contents",
+            "Resources",
+            "browser",
+            "terminal-browser",
+          ),
+        ]
+      : [];
   const candidates = configured
     ? [configured]
-    : (environment.PATH ?? "")
-        .split(delimiter)
-        .filter(isAbsolute)
-        .map((dir) => join(dir, "terminal-browser"));
+    : [
+        ...bundled,
+        ...(environment.PATH ?? "")
+          .split(delimiter)
+          .filter(isAbsolute)
+          .map((dir) => join(dir, "terminal-browser")),
+      ];
   for (const candidate of candidates) {
     try {
       if (!isAbsolute(candidate)) continue;

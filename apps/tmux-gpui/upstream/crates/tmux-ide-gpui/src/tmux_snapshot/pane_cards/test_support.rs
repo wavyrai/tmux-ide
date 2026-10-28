@@ -25,9 +25,9 @@ impl SnapshotView {
             col * width + layout.shift(c, true) + PAD
         };
         let y = if layout.y.contains(&(r + 1)) {
-            f32::from(r) * height + layout.shift(r, false) + HEADER + 2. * PAD + GAP / 2.
+            f32::from(r) * height + layout.shift(r, false) + HEADER + 2. * V_PAD + GAP / 2.
         } else {
-            row * height + layout.shift(r, false) + HEADER + PAD
+            row * height + layout.shift(r, false) + HEADER + V_PAD
         };
         origin + point(px(x), px(y))
     }

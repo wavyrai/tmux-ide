@@ -26,6 +26,22 @@ terminal-emulator pixels. These checks do not
 establish native performance.
 Do not replace an installed browser or advertise this as released support.
 
+## Vendored distribution qualification
+
+The patched browser uses the stable `tmux-ide-browser` application/profile identity,
+separate from upstream terminal-browser data. Its upstream self-updater is disabled:
+`upgrade` directs users to `tmux-ide update`, and release checks make no upstream
+request. Upstream usage/crash telemetry is disabled even if old settings enable it.
+The patch includes regression checks for both distribution boundaries.
+
+This is still a development integration, not a bundled release. The signed runtime
+candidate retains cookie encryption. A fresh persistent profile currently stalls
+while initializing its encryption key; a minimal Electron reproduction also waits
+in `safeStorage.isAsyncEncryptionAvailable()`. An ephemeral-profile diagnostic loads
+the same local page, but is not a product fallback. Keychain settings have not been
+reset or deleted. Runtime packaging, managed launch discovery, persistent-profile
+startup and end-to-end native-controls qualification remain release gates.
+
 ## Prepare a separate checkout
 
 Clone the repository and check out the exact commit in `provenance.json`, then:
@@ -135,7 +151,10 @@ TMUX_IDE_TERMINAL_BROWSER_BIN=/absolute/native-browser-launcher tmux-ide open ht
 A launcher is useful because distribution-specific environment belongs to the
 browser build; `tmux-ide open` forwards namespace and standard user directories,
 not arbitrary environment or a parent pane's explicit native-surface override.
-Without the override, the command resolves `terminal-browser` on PATH. That does
+Without the override, macOS checks the managed app’s
+`Contents/Resources/browser/terminal-browser` launcher first, then resolves
+`terminal-browser` on PATH. Builds without a bundled launcher continue to require
+the development override or a PATH installation. A PATH installation does
 not make a standard installed browser native-capable. This command does not
 install the patched browser, replace an existing installation, or publish it.
 
@@ -194,8 +213,105 @@ and revision. Accepted commands invalidate that revision to prevent replay.
 Tab activation, loading changes and shutdown invalidate stale actions; a delayed
 Stop cannot turn into Reload. Navigation text and displayed metadata are bounded.
 
-The GPUI toolbar and its scoped discovery/transport are not connected yet, and
-this API is not included in native alpha 0.1.9. The current patch builds and passes
-47 browser JavaScript tests, including six navigation-control regressions. It
-also applies to a clean checkout at the pinned source revision. These checks do
-not establish live GUI navigation behavior.
+The development GPUI toolbar now uses scoped discovery and transport for these
+commands. This API is not included in native alpha 0.1.9. The current patch builds
+and passes 50 browser JavaScript tests, and applies to a clean checkout at the
+pinned source revision. Signed packaged GUI navigation was verified on October 28 with the checks
+recorded below. These checks do not establish latency or performance parity.
+
+## Browser engine extraction (development)
+
+The engine archive remains a regular file inside the outer application package;
+the native app installer continues to reject symbolic links.
+`scripts/browser-runtime-extract.mjs` is a separate bounded extractor for the
+engine. Its metadata must come from the authenticated application bundle. It
+checks the archive digest before writing, rejects hard links and unsafe paths,
+and creates only the exact approved framework links after extracting all regular
+files. Every resulting link must resolve within the browser app. Failed staging
+is removed without touching an existing installation.
+
+`scripts/browser-runtime-load.mjs` caches the engine by archive digest in an
+existing private, user-owned directory. It verifies the Apple signature, browser
+identifier and Wavyr signing team before activation and on cache reuse. Concurrent
+launches converge on an atomically installed tree. A failed existing cache is
+reported rather than silently deleted or replaced.
+
+Run the extractor tests with Node's test runner. For the real signed engine cache
+test, set `TMUX_IDE_BROWSER_TEST_PAYLOAD` to the qualification directory containing
+`candidate.json` and `browser-runtime.tar.gz`, then run
+`scripts/browser-runtime-load.test.mjs`. The qualification test checks concurrent
+installation, reuse and rejection of modified signed resources.
+
+`scripts/build-browser-payload.mjs PREPARED_SOURCE ENGINE_PAYLOAD NEW_OUTPUT`
+now assembles a standalone development payload, including CLI/browser bundles,
+native binding, assets, JavaScript/Rust dependency notices, font license, engine
+archive and launcher.
+Assembly requires the exact pinned source and integration patch. Install that payload as
+`Contents/Resources/browser` beside the app's Node binary. The launcher resolves
+its own location, verifies/materializes the engine, and forwards arguments
+without shell interpolation. Its internal relaunch entrypoint uses the same
+loader. `assemble-local-app.mjs` accepts `--browser-payload PREPARED_DIRECTORY`
+to copy these resources into a new app; its assembly manifest records every
+browser file's digest. The copy rejects symbolic links and compares the complete
+source and destination inventories. The prepared CLI accepts the launcher's absolute engine path separately
+from the application resources.
+
+Set `TMUX_IDE_BROWSER_LAUNCH_TEST_PAYLOAD` to this output directory and run
+`scripts/browser-launch.test.mjs` to check both entrypoints in a temporary app
+layout and isolated home, including paths with spaces and cache reuse. This test
+runs CLI help/version only and does not establish live page loading.
+
+The payload is explicitly marked non-distributable until final qualification.
+JavaScript/Rust dependency notices and persistent-profile startup are checked.
+The optional upstream `action` automation helper is not bundled; it can be
+selected explicitly through `TERMINAL_BROWSER_AGENT`. The shipped browser assets
+retain the upstream license and the font has a separate pinned license. Final
+publication remains a separate release gate.
+
+### Persistent startup qualification
+
+`browser-runtime-startup.test.mjs` uses the signed engine, its normal persistent
+profile mode, and the managed `tmux-ide-browser` app identity. It requires a real
+loopback HTTP request and successful page load, with an external process deadline.
+Set `TMUX_IDE_BROWSER_TEST_PAYLOAD` as for the cache test. A probe using Electron's
+default app name exercises a different keychain identity and is not equivalent
+to the managed browser. No encryption setting is disabled by this test.
+
+On October 28, this test passed and the assembled browser launched through
+`tmux-ide open` rendered the loopback page in an isolated GPUI pane. The page
+request was observed by the fixture server. Final native toolbar interaction and
+release signing qualification remain separate checks.
+
+The Rust notice generator requires `cargo-about 0.9.2` and uses the locked macOS
+runtime graph with the checked-in `about.toml`. It checks that every reported
+crate is covered by a license text and preserves available source notices.
+Private workspace components retain the separately bundled Pixel/native SDK
+licenses. The font notice is bound to the exact shipped font digest.
+
+The app signer explicitly signs the browser native module and scroll helper
+before the outer app and records their before/after digests. The browser engine
+archive must still be qualified independently; signing-sequence unit tests do
+not establish a notarized release.
+
+On October 28, Apple accepted the separately signed browser engine under submission
+`14c0d6d9-6434-4e5f-8d30-9c2148f1e927`. Its stapled ticket survives the bounded
+archive extraction, and cache integrity and persistent-profile startup checks
+passed against that archive. The final payload also passed both launcher checks;
+the Pixel JavaScript suite passed all 51 tests. These checks do not replace
+notarization and focused navigation verification of the complete Mac app.
+
+The assembled 0.1.10 candidate (build 2026102801) subsequently passed Developer ID
+signing, Apple notarization (`7220b465-3c4a-450e-8d13-cc4d6d5cb593`), stapling,
+Gatekeeper and the installer archive roundtrip. Its archive SHA-256 is
+`2238f70c6c184cb7d296d19cdb3d9b2e1a067fb01805e4ac640a40774f8d6319`.
+It remains unpublished pending final release review; the public native alpha
+is still 0.1.9.
+
+The signed candidate's October 28 GUI check used an isolated tmux server and
+loopback HTTP fixture. Cmd-L navigation, native back/forward and reload, pane
+zoom/restore, divider dragging, Cmd-T creation, Cmd-D splitting and keyboard
+window switching passed. The HTTP fixture recorded the requested pages. The
+browser stayed visible after zoom/restore and returning to its window. A prior
+run waited inside macOS Keychain authorization; the subsequent fresh run loaded
+normally without changing credentials or disabling encryption. These checks are
+single-Mac correctness checks, not frame-by-frame blanking or latency benchmarks.

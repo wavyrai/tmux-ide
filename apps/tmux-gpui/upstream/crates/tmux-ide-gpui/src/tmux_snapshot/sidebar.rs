@@ -151,8 +151,8 @@ pub(super) fn render_row(
             rgba(0)
         })
         .text_color(rgb(theme.foreground))
-        .text_size(px(if session { 14. } else { 12. }))
-        .font_weight(if session || row.selected || row.machine.is_some() {
+        .text_size(px(if session { 12. } else { 11. }))
+        .font_weight(if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
@@ -186,10 +186,10 @@ pub(super) fn render_row(
                     div()
                         .mt(px(3.))
                         .min_w_0()
-                        .max_h(px(36.))
+                        .max_h(px(32.))
                         .overflow_hidden()
-                        .text_size(px(12.))
-                        .line_height(px(18.))
+                        .text_size(px(11.))
+                        .line_height(px(16.))
                         .font_weight(FontWeight::NORMAL)
                         .text_color(rgb(theme.muted))
                         .child(summary.clone())
@@ -199,7 +199,7 @@ pub(super) fn render_row(
                         .debug_selector(move || format!("tmux-sidebar-count-{index}"))
                         .min_w_0()
                         .truncate()
-                        .text_size(px(11.))
+                        .text_size(px(10.))
                         .mt(px(2.))
                         .font_weight(FontWeight::NORMAL)
                         .text_color(rgb(theme.muted))

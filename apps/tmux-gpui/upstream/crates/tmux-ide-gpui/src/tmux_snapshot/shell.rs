@@ -84,19 +84,20 @@ pub(super) fn chrome_fill(color: u32, glass: bool) -> Rgba {
 
 /// Insets keep native material visible while every terminal cell stays opaque.
 pub(super) const CONTENT_INSET: f32 = 8.;
-pub(super) fn content_panel(canvas: u32) -> Stateful<Div> {
+pub(super) fn content_panel(canvas: u32, is_home: bool) -> Stateful<Div> {
     div()
         .id("workspace-content")
         .debug_selector(|| "tmux-workspace-content".into())
         .size_full()
         .min_w_0()
         .min_h_0()
-        .rounded(px(crate::config::corners::PANEL))
-        // Child backgrounds and the rectangular terminal canvas stay inside the
-        // rounded silhouette; GPUI's overflow clip itself is rectangular.
-        .p(px(crate::config::corners::PANEL / 3.))
+        .when(is_home, |panel| {
+            panel
+                .rounded(px(crate::config::corners::PANEL))
+                .p(px(crate::config::corners::PANEL / 3.))
+                .bg(rgb(canvas))
+        })
         .overflow_hidden()
-        .bg(rgb(canvas))
         .flex()
         .flex_col()
 }

@@ -2,6 +2,7 @@
 use super::{SnapshotView, hit_regions::Region};
 use gpui::{Bounds, Pixels, Point, Size, point, px, size};
 pub(super) const PAD: f32 = 10.;
+pub(super) const V_PAD: f32 = 4.;
 pub(super) const HEADER: f32 = 34.;
 pub(super) const GAP: f32 = 10.;
 pub(super) const RADIUS: f32 = 10.;
@@ -78,7 +79,7 @@ impl Layout {
         if axis {
             2. * PAD + GAP - self.width
         } else {
-            HEADER + 2. * PAD + GAP - self.height
+            HEADER + 2. * V_PAD + GAP - self.height
         }
     }
     fn shift(&self, value: u16, axis: bool) -> f32 {
@@ -93,18 +94,18 @@ impl Layout {
     pub fn origin(&self, r: &Region) -> Point<Pixels> {
         point(
             px(f32::from(r.left) * self.width + self.shift(r.left, true) + PAD),
-            px(f32::from(r.top) * self.height + self.shift(r.top, false) + HEADER + PAD),
+            px(f32::from(r.top) * self.height + self.shift(r.top, false) + HEADER + V_PAD),
         )
     }
     pub fn card(&self, r: &Region) -> Bounds<Pixels> {
-        let origin = self.origin(r) - point(px(PAD), px(HEADER + PAD));
+        let origin = self.origin(r) - point(px(PAD), px(HEADER + V_PAD));
         let right = f32::from(r.left + r.width) * self.width
             + self.shift(r.left + r.width, true)
             + 2. * PAD;
         let bottom = f32::from(r.top + r.height) * self.height
             + self.shift(r.top + r.height, false)
             + HEADER
-            + 2. * PAD;
+            + 2. * V_PAD;
         Bounds::new(origin, size(px(right) - origin.x, px(bottom) - origin.y))
     }
     pub fn content(&self, r: &Region) -> Bounds<Pixels> {
@@ -136,11 +137,11 @@ impl Layout {
             let end = f32::from(start + span) * self.height
                 + self.shift(start + span, false)
                 + HEADER
-                + 2. * PAD;
+                + 2. * V_PAD;
             Bounds::new(point(px(x), px(y)), size(px(GAP), px(end - y)))
         } else {
             let x = f32::from(start) * self.width + self.shift(start, true);
-            let y = f32::from(edge) * self.height + self.shift(edge, false) + HEADER + 2. * PAD;
+            let y = f32::from(edge) * self.height + self.shift(edge, false) + HEADER + 2. * V_PAD;
             let end =
                 f32::from(start + span) * self.width + self.shift(start + span, true) + 2. * PAD;
             Bounds::new(point(px(x), px(y)), size(px(end - x), px(GAP)))
@@ -149,8 +150,10 @@ impl Layout {
     pub fn overhead(&self) -> Size<Pixels> {
         size(
             px(2. * PAD + self.x.len() as f32 * self.extra(true)),
-            px(HEADER + 2. * PAD + self.y.len() as f32 * self.extra(false)
-                - self.removed_rows.len() as f32 * self.height),
+            px(
+                HEADER + 2. * V_PAD + self.y.len() as f32 * self.extra(false)
+                    - self.removed_rows.len() as f32 * self.height,
+            ),
         )
     }
     pub fn logical(&self, point: Point<Pixels>) -> Option<Point<Pixels>> {

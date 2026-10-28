@@ -24,6 +24,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             foreground: true,
             presence_revision: 0,
             editor: Default::default(),
+            browser_controls: Default::default(),
             owner: Default::default(),
             uncertain_create: None,
             local_creation: Default::default(),

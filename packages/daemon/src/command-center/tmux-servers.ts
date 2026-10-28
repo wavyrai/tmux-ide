@@ -150,6 +150,17 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     owners: options.owners,
     readBody: (request) => boundedJson(request, 8 * 1024),
   });
+  app.post(
+    `${scoped}/native-browser`,
+    route(async (c) => {
+      const server = scope(c);
+      const input = await boundedJson(c.req.raw, 24 * 1024);
+      const state = await options.owners.withOwner(server, (owner) =>
+        owner.nativeBrowser(input, c.req.raw.signal),
+      );
+      return c.json({ version: 1, state });
+    }),
+  );
   // Structured read only: this never acquires a channel or changes tmux geometry.
   app.post(
     `${scoped}/split-layout/:workspaceName`,

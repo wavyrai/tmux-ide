@@ -155,3 +155,53 @@ fn canonical_segments_reject_content_and_crossings_without_inventing_ancestry() 
     Arc::make_mut((s.frame.as_mut().unwrap()).legacy_mut()).cells[3 * 11 + 5].symbol = "X".into();
     assert!(at(&s, 5.5, 3.5).is_none());
 }
+
+#[gpui::test]
+fn output_updates_do_not_disarm_painted_native_gutters(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state = canonical_state(Axis::Cols);
+        view.frame = view.browser_state.frame.clone();
+        view
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            let point = view.test_cell_point(5.5, 2.);
+            Arc::make_mut(view.browser_state.frame.as_mut().unwrap().legacy_mut()).cells[0]
+                .symbol = "new output".into();
+            view.frame = view.browser_state.frame.clone();
+            assert!(!hit_regions::is_painted(
+                view.frame.as_ref(),
+                view.painted_frame.as_ref()
+            ));
+            assert!(
+                view.begin_divider(point, cx),
+                "unchanged painted gutter must remain draggable"
+            );
+        })
+    });
+}
+#[test]
+fn painted_gutters_reject_changed_authority_geometry_and_content_insets() {
+    let state = canonical_state(Axis::Cols);
+    let mut owner = Owner::default();
+    owner.record_painted_gutters(paint::Painted::capture(&state, 10., 20.));
+    assert!(owner.matches_painted_gutters(&state, 10., 20.));
+    assert!(!owner.matches_painted_gutters(&state, 11., 20.));
+    for change in 0..5 {
+        let mut changed = state.clone();
+        match change {
+            0 => changed.request += 1,
+            1 => changed.presence_revision += 1,
+            2 => {
+                changed.split_layout.as_mut().unwrap().layout_id =
+                    "33333333-3333-4333-8333-333333333333".into()
+            }
+            3 => changed.native_content_regions = vec![region("a", 0, 1, 5, 8)],
+            _ => changed.retained_preview = true,
+        }
+        assert!(!owner.matches_painted_gutters(&changed, 10., 20.));
+    }
+}

@@ -153,6 +153,11 @@ impl SnapshotView {
             return true;
         }
         let action = match shortcut {
+            crate::tmux_snapshot::pane_shortcuts::Shortcut::SplitRight => Action::SplitRight,
+            crate::tmux_snapshot::pane_shortcuts::Shortcut::SplitDown => Action::SplitDown,
+            crate::tmux_snapshot::pane_shortcuts::Shortcut::NewWindow => Action::NewWindow,
+            crate::tmux_snapshot::pane_shortcuts::Shortcut::Close => Action::Close,
+            crate::tmux_snapshot::pane_shortcuts::Shortcut::Window(_) => return true,
             crate::tmux_snapshot::pane_shortcuts::Shortcut::Focus(direction) => {
                 Action::Focus(direction)
             }

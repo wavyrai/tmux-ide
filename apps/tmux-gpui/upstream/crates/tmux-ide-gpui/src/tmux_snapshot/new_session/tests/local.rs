@@ -136,12 +136,12 @@ fn first_local_session_uses_exact_capability_once_and_revokes_dialog(cx: &mut Te
 }
 
 #[gpui::test]
-fn top_bar_plus_from_workspace_opens_creation_on_verified_local_server(cx: &mut TestAppContext) {
+fn home_top_bar_plus_opens_creation_on_verified_local_server(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
         view.browser_state.fleet = Some(fleet());
-        view.browser_state.surface = browser::Surface::Workspace;
+        view.browser_state.surface = browser::Surface::Home;
         view
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));

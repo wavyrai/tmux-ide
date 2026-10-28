@@ -15,7 +15,7 @@ pub struct EditorTarget {
     pub semantic_pane_id: String,
 }
 impl EditorTarget {
-    fn valid(&self) -> bool {
+    pub(super) fn valid(&self) -> bool {
         self.generation.len() == 36
             && uuid::Uuid::parse_str(&self.generation).is_ok()
             && valid_identity(&self.workspace_name)

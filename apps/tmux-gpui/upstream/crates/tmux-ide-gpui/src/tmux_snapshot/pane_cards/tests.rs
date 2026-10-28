@@ -35,7 +35,7 @@ fn cards_reserve_chrome_without_losing_terminal_cells() {
         let content = layout.content(r);
         let card = layout.card(r);
         assert!(content.left() >= card.left() + px(PAD));
-        assert!(content.bottom() <= card.bottom() - px(PAD));
+        assert!(content.bottom() <= card.bottom() - px(V_PAD));
         for (col, row) in [
             (r.left, r.top),
             (r.left + r.width - 1, r.top + r.height - 1),
@@ -74,9 +74,9 @@ fn native_terminal_border_row_is_not_a_second_card_header() {
     let layout = Layout::new(&outer, 8., 20.).with_content(&content);
     let region = &layout.regions[0];
     assert_eq!(layout.card(region).top(), px(0.));
-    assert_eq!(layout.content(region).top(), px(HEADER + PAD));
+    assert_eq!(layout.content(region).top(), px(HEADER + V_PAD));
     assert_eq!(layout.content(region).size.height, px(24. * 20.));
-    assert_eq!(layout.overhead().height, px(HEADER + 2. * PAD - 20.));
+    assert_eq!(layout.overhead().height, px(HEADER + 2. * V_PAD - 20.));
     assert_eq!(
         layout.logical(layout.cursor(0, 1)),
         Some(point(px(0.), px(20.)))

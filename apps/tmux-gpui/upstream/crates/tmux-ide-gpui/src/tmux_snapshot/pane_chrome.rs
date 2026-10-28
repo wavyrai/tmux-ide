@@ -477,7 +477,7 @@ impl SnapshotView {
                 .flatten();
             row = row
                 .child(
-                    self.pane_header_label(&header, width)
+                    self.pane_header_label(&header, width, self.browser_header(&header.id, cx))
                         .id(SharedString::from(format!("pane-header:{}", header.id)))
                         .cursor_pointer()
                         .on_click(cx.listener(move |view, _, window, cx| {
@@ -500,7 +500,7 @@ impl SnapshotView {
         }
         row.into_any_element()
     }
-    fn pane_header_label(&self, header: &Header, width: f32) -> Div {
+    fn pane_header_label(&self, header: &Header, width: f32, browser: Option<AnyElement>) -> Div {
         let agent = self
             .browser_state
             .workspace_agents
@@ -595,13 +595,14 @@ impl SnapshotView {
                 },
             ))
             .children(indicator)
-            .child(
+            .child(browser.unwrap_or_else(|| {
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(label(&self.browser_state, &header.id)),
-            )
+                    .child(label(&self.browser_state, &header.id))
+                    .into_any_element()
+            }))
     }
     pub(super) fn pane_header_labels(&self, width: f32, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if self.card_layout(width).is_none() {
@@ -621,7 +622,7 @@ impl SnapshotView {
                 let frame = self.browser_state.frame.clone();
                 let regions = self.browser_state.regions.clone();
                 let request = self.browser_request;
-                self.pane_header_label(h, width)
+                self.pane_header_label(h, width, self.browser_header(&h.id, cx))
                     .id(SharedString::from(format!("pane-card-header:{id}")))
                     .debug_selector({
                         let id = id.clone();
@@ -659,7 +660,7 @@ impl SnapshotView {
         self.presentation_headers()
             .iter()
             .filter(|h| h.row.is_some())
-            .map(|h| self.pane_header_label(h, width))
+            .map(|h| self.pane_header_label(h, width, None))
             .collect()
     }
     fn presentation_headers(&self) -> Vec<Header> {

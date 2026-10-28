@@ -14,7 +14,9 @@ mod browser_native_owner;
 mod browser_native_preview;
 #[cfg(target_os = "macos")]
 mod browser_native_surfaces;
+mod browser_native_transition;
 mod browser_state;
+mod browser_toolbar;
 mod browser_ui;
 mod composition;
 mod controls;
@@ -401,6 +403,7 @@ fn show_owned(
                         workspace_fleet_agents: Default::default(),
                         home_filter: None,
                         pane_actions: None,
+                        browser_address: None,
                         new_session: None,
                         new_session_queued: None,
                         agent_animation: Default::default(),
@@ -484,6 +487,7 @@ struct SnapshotView {
     workspace_fleet_agents: workspace_fleet_agents::Owner,
     home_filter: Option<home::filters::Controls>,
     pane_actions: Option<pane_actions::Menu>,
+    browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
     agent_animation: agent_indicator::Clock,
@@ -584,7 +588,12 @@ impl SnapshotView {
             .unwrap_or_default();
         let resize_preview = self.divider_content_preview();
         let cards = self.card_layout(width);
-        let card_canvas = self.canvas();
+        let painted_gutters = (cards.is_some()
+            && resize_preview.is_none()
+            && hit_regions::is_painted(Some(&frame), self.browser_state.frame.as_ref()))
+        .then(|| divider::paint::Painted::capture(&self.browser_state, width, height))
+        .flatten();
+        let card_canvas = theme.surface;
         div()
             .relative()
             .size_full()
@@ -643,6 +652,8 @@ impl SnapshotView {
                             // A translated preview is not evidence that canonical
                             // hit coordinates are on screen, including after cancel.
                             view.painted_frame = resize_preview.is_none().then(|| frame.clone());
+                            view.resize_gesture
+                                .record_painted_gutters(painted_gutters.clone());
                             view.record_painted_focus();
                             if let Some((cols, rows)) = geometry::cell_grid(
                                 f32::from(

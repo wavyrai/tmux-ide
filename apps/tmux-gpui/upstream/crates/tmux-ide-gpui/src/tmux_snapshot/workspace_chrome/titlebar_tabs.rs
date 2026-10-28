@@ -44,12 +44,14 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let home = cx.debug_bounds("application-home").unwrap();
         let sidebar = cx.debug_bounds("sidebar-toggle").unwrap();
-        let add = cx.debug_bounds("application-new-session").unwrap();
-        let title = cx.debug_bounds("application-session-title").unwrap();
+        let add = cx.debug_bounds("workspace-new-window").unwrap();
+        let tabs = cx.debug_bounds("workspace-window-strip").unwrap();
         assert!(cx.debug_bounds("retained-session-tabs").is_none());
         assert!(sidebar.right() <= home.left());
-        assert!(home.right() <= title.left());
-        assert!(title.right() <= add.left());
+        assert!(home.right() <= tabs.left());
+        assert_eq!(home.center().y, tabs.center().y);
+        assert!(cx.debug_bounds("application-new-session").is_none());
+        assert!(tabs.right() <= add.left());
         assert!(add.right() <= px(width));
         let canvas = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
         receiver.try_iter().for_each(drop);

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
 import { createBrowserPane, resolveTerminalBrowser, validateBrowserOpen } from "./open-browser.ts";
 
 describe("browser pane creation", () => {
@@ -114,6 +117,38 @@ describe("browser pane creation", () => {
         PATH: process.env.PATH,
       }),
     ).toThrow("absolute executable");
-    expect(() => resolveTerminalBrowser({ PATH: ".:relative" })).toThrow("not installed");
+    expect(() => resolveTerminalBrowser({ PATH: ".:relative" }, "linux")).toThrow("not installed");
+  });
+});
+
+describe("managed native browser discovery", () => {
+  it("prefers the installed app browser while preserving explicit overrides and PATH fallback", () => {
+    const home = mkdtempSync(join(tmpdir(), "tmi-browser-discovery-"));
+    const bundled = join(
+      home,
+      "Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app/Contents/Resources/browser/terminal-browser",
+    );
+    const pathBrowser = join(home, "bin", "terminal-browser");
+    const env = { HOME: home, PATH: dirname(pathBrowser) };
+    try {
+      for (const executable of [bundled, pathBrowser]) {
+        mkdirSync(dirname(executable), { recursive: true });
+        writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      }
+      expect(resolveTerminalBrowser(env, "darwin")).toBe(realpathSync(bundled));
+      expect(
+        resolveTerminalBrowser({ ...env, TMUX_IDE_TERMINAL_BROWSER_BIN: pathBrowser }, "darwin"),
+      ).toBe(realpathSync(pathBrowser));
+      expect(() =>
+        resolveTerminalBrowser({ ...env, TMUX_IDE_TERMINAL_BROWSER_BIN: "/absent" }, "darwin"),
+      ).toThrow("absolute executable");
+      expect(resolveTerminalBrowser(env, "linux")).toBe(realpathSync(pathBrowser));
+      rmSync(bundled);
+      expect(resolveTerminalBrowser(env, "darwin")).toBe(realpathSync(pathBrowser));
+      rmSync(pathBrowser);
+      expect(() => resolveTerminalBrowser(env, "darwin")).toThrow("not installed");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

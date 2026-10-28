@@ -339,6 +339,7 @@ fn make_view(
         workspace_fleet_agents: Default::default(),
         home_filter: None,
         pane_actions: None,
+        browser_address: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),

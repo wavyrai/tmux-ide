@@ -110,6 +110,7 @@ fn focus_and_pane_changes_cancel_editor_without_retiring_terminal() {
         foreground: true,
         presence_revision: 4,
         editor: Default::default(),
+        browser_controls: Default::default(),
         owner: Default::default(),
         uncertain_create: None,
         local_creation: Default::default(),

@@ -8,6 +8,7 @@ use gpui::{prelude::*, *};
 use serde::{Deserialize, Serialize};
 pub(super) mod canonical;
 pub(super) mod gesture;
+pub(super) mod paint;
 pub(super) mod preview;
 pub(super) use gesture::Owner;
 
@@ -531,7 +532,12 @@ impl SnapshotView {
             || (self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some())
             || !self.presence.ready()
             || self.browser_request != self.browser_state.request
-            || !hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref())
+            || (!hit_regions::is_painted(self.frame.as_ref(), self.painted_frame.as_ref())
+                && !self.resize_gesture.matches_painted_gutters(
+                    &self.browser_state,
+                    self.input_cell_width.unwrap_or(0.),
+                    self.terminal_height(),
+                ))
         {
             return false;
         }
