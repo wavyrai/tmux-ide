@@ -41,6 +41,9 @@ it.skipIf(!binary).each(["session", "registry-generation"] as const)(
     const hash = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
     const files = [join(root, "old.bin"), join(root, "replacement.bin")];
     const events: string[] = [];
+    const debugTrace: unknown[] = [];
+    const trace = (kind: string, value: unknown) =>
+      debugTrace.push({ at: Date.now(), kind, value });
     const identities: Array<{ pane: string; session: string; pid: number }> = [];
     const subscriptions: MirrorSubscription[] = [];
     const registries: SessionRuntimeRegistry[] = [];
@@ -97,12 +100,41 @@ it.skipIf(!binary).each(["session", "registry-generation"] as const)(
                   socketName: socket,
                   configFile: "/dev/null",
                   session,
-                  handlers,
+                  handlers: {
+                    onOutput: (...args) => {
+                      trace("output", { pane: args[0], bytes: args[1].length });
+                      handlers.onOutput(...args);
+                    },
+                    onNotify: (...args) => {
+                      trace("notify", args);
+                      handlers.onNotify(...args);
+                    },
+                    onExit: (...args) => {
+                      trace("exit", args);
+                      handlers.onExit(...args);
+                    },
+                  },
                 });
+                const request = io.request.bind(io);
+                io.request = async (...args) => {
+                  trace("request", args[0]);
+                  try {
+                    const reply = await request(...args);
+                    trace("reply", { command: args[0], reply });
+                    return reply;
+                  } catch (error) {
+                    trace("request-error", String(error));
+                    throw error;
+                  }
+                };
                 const send = io.send.bind(io);
                 io.send = (command, callback) => {
                   if (command.startsWith("send-keys")) inputCommands.push(command);
-                  send(command, callback);
+                  trace("send", command);
+                  send(command, (reply) => {
+                    trace("send-reply", { command, reply });
+                    callback?.(reply);
+                  });
                 };
                 return io;
               },
@@ -124,7 +156,9 @@ it.skipIf(!binary).each(["session", "registry-generation"] as const)(
         old.sendInput(oldLease, stamp, { kind: "text", data: "OLD-BASE" });
         old.sendInput(oldLease, stamp, { kind: "key", data: "Enter" });
         await vi.waitFor(() => expect(readFileSync(files[0]!).equals(oldExpected)).toBe(true));
+        trace("dispose-first-start", first.qualificationSnapshot());
         await first.dispose();
+        trace("dispose-first-end", first.qualificationSnapshot());
         events.push("registry-A-disposed-pane-survives");
         expect(absent(identities[0]!.pid)).toBe(false);
         const second = buildRegistry();
@@ -132,6 +166,7 @@ it.skipIf(!binary).each(["session", "registry-generation"] as const)(
         let freshSeed = false;
         subscriptions.push(
           await fresh.subscribe(stamp, (event) => {
+            trace("fresh-event", event);
             if (event.type === "seed") freshSeed = true;
           }),
         );
@@ -320,6 +355,7 @@ it.skipIf(!binary).each(["session", "registry-generation"] as const)(
           scenario === "session"
             ? "MirrorService custom IO, stock-compatible control; post-close retained text/key input only"
             : "SessionRuntimeRegistry public sendInput over actual stock-compatible control IO; surviving pane, replaced registry generation",
+        debugTrace,
         authorityEvidence,
         inputCommands,
         root,
