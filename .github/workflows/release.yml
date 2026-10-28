@@ -79,6 +79,20 @@ jobs:
           export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
           export PATH="$bundle:$PATH"
           pnpm test:tmux-boundary 2>&1 | tee "$proof/boundary.log"
+          # Compare the unchanged release fixture on this same hosted runner.
+          fixture=packages/daemon/src/tui/mirror/runtime/terminal-input-session-replacement-live.test.ts
+          cp "$fixture" "$proof/instrumented-fixture.ts"
+          git fetch --depth=1 origin tag v2.9.15
+          git show v2.9.15:"$fixture" > "$fixture"
+          for attempt in $(seq 1 20); do
+            if ! pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-input-session-replacement-live.test.ts > "$proof/original-$attempt.log" 2>&1; then
+              cat "$proof/original-$attempt.log"
+              cp "$proof/instrumented-fixture.ts" "$fixture"
+              pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-input-session-replacement-live.test.ts > "$proof/instrumented-after-failure.log" 2>&1 || true
+              exit 1
+            fi
+          done
+          cp "$proof/instrumented-fixture.ts" "$fixture"
       - name: Qualify native split ownership and bridge gestures
         timeout-minutes: 15
         shell: bash
