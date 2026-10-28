@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { resolveTmuxExecutable } from "./lib/tmux-client-execution.ts";
@@ -82,6 +82,30 @@ it("the built CLI creates an isolated browser pane with literal argv and its own
     }
     expect(observed.pane).toBe(separate.pane);
     expect(observed.args).toEqual(["open", "--no-merge"]);
+    if (process.platform === "darwin") {
+      const bundled = join(
+        directory,
+        "Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app/Contents/Resources/browser/terminal-browser",
+      );
+      mkdirSync(dirname(bundled), { recursive: true });
+      writeFileSync(bundled, readFileSync(browser), { mode: 0o700 });
+      rmSync(report);
+      const managed = launch([url, "--window"], {
+        HOME: directory,
+        TMUX_IDE_TERMINAL_BROWSER_BIN: undefined,
+      });
+      observed = undefined;
+      for (let attempt = 0; attempt < 250; attempt++) {
+        try {
+          observed = JSON.parse(readFileSync(report, "utf8"));
+          break;
+        } catch {
+          await setTimeout(20);
+        }
+      }
+      expect(observed?.pane).toBe(managed.pane);
+      expect(observed?.args).toEqual(["open", url, "--no-merge"]);
+    }
     const before = run("list-panes", "-a", "-F", "#{pane_id}");
     expect(() => launch(["--unknown-option"])).toThrow();
     expect(() => launch([], { TMUX_IDE_TERMINAL_BROWSER_BIN: "/missing-browser" })).toThrow();

@@ -197,6 +197,22 @@ impl SnapshotView {
                     action: pane_commands::Action::Zoom(_),
                     ..
                 } => Some(super::super::kbd::ZOOM),
+                Target::PaneAction {
+                    action: pane_commands::Action::SplitRight,
+                    ..
+                } => Some("⌘D"),
+                Target::PaneAction {
+                    action: pane_commands::Action::SplitDown,
+                    ..
+                } => Some("⌘⇧D"),
+                Target::PaneAction {
+                    action: pane_commands::Action::NewWindow,
+                    ..
+                } => Some("⌘T"),
+                Target::PaneAction {
+                    action: pane_commands::Action::Close,
+                    ..
+                } => Some("⌘W"),
                 _ => None,
             };
             let label = if hint.is_some() {

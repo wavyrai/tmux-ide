@@ -26,6 +26,8 @@ struct Route {
 mod agents;
 #[path = "browser_native_local_fleet.rs"]
 mod background_fleet;
+#[path = "browser_native_local_browser.rs"]
+mod browser_controls;
 #[path = "browser_native_local_catalog.rs"]
 mod catalog;
 #[path = "browser_native_local_commands.rs"]
@@ -241,6 +243,7 @@ struct Local {
     foreground: bool,
     presence_revision: u64,
     editor: editor::Gate,
+    browser_controls: browser_controls::Gate,
     owner: owner::Gate,
     uncertain_create: Option<uuid::Uuid>,
     local_creation: local_creation::Gate,
@@ -316,6 +319,7 @@ fn start_source(
         foreground: true,
         presence_revision: 0,
         editor: Default::default(),
+        browser_controls: Default::default(),
         owner: Default::default(),
         uncertain_create: None,
         local_creation: Default::default(),
@@ -387,6 +391,8 @@ impl Local {
         self.preferences.visits.detach();
         self.navigation.cancel();
         self.editor = Default::default();
+        self.browser_controls = Default::default();
+        self.state.browser_controls.clear();
         self.owner = Default::default();
         self.split.cancel();
         if let Some(Route { id, request, .. }) = self.active.take() {
@@ -517,6 +523,12 @@ impl Local {
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return self.cancel(),
                 }
+            }
+            if self.browser_controls_tick().is_err() {
+                // Optional browser chrome must never tear down terminal delivery.
+                self.browser_controls = Default::default();
+                self.state.browser_controls.clear();
+                self.publish()?;
             }
             self.setup_tick()?;
             self.watch_tick()?;

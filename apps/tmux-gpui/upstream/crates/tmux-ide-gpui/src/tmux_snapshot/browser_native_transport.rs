@@ -33,6 +33,7 @@ enum NativeError {
 }
 #[path = "browser_native_diagnostics.rs"]
 mod diagnostics;
+use super::super::browser_native_transition as transition;
 enum Incoming {
     NativeOwner(Box<browser_native_owner::Response>),
     Catalog(Box<State>),
@@ -286,6 +287,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let history_cache: Cache = Default::default();
         let mut state = State::default();
         let mut previews = super::super::browser_native_preview::Cache::default();
+        let mut transition = transition::Transition::default();
+        let mut browser_read_at = 0;
         let mut presence = (true, 0);
         let mut pending = std::collections::VecDeque::new();
         let start = Instant::now();
@@ -639,6 +642,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             // mutation until focus returns so its fresh inventory request is not lost.
             if presence.0 && active.as_ref().is_some_and(|a| a.reissue) {
                 if let Some(current) = active.as_ref() {
+                    transition.begin(&state, current.request, now);
                     let command = Command::NativeTerminalRefresh {
                         id: current.id.clone(),
                         request: current.request,
@@ -649,6 +653,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     }
                 }
                 revoke_connection(&mut active, &mut state, &mut output);
+                state.status = "Opening terminal".into();
                 changed = true;
             }
             // Leave queued commands bounded while one scheduler admission waits for an ACK.
@@ -701,6 +706,15 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     .or_else(|| pending.pop_front())
             {
                 admitted = true;
+                if matches!(
+                    &command,
+                    Command::PaneAction {
+                        action: super::super::pane_actions::Action::NewWindow,
+                        ..
+                    }
+                ) {
+                    transition.begin(&state, state.request, now);
+                }
                 if navigates(&command)
                     && let Some(value) = active.as_mut().and_then(|a| a.editor.cancel())
                     && output(Command::NativeEditorCancel { value }).is_err()
@@ -831,6 +845,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     }
                     other => {
                         if navigates(&other) {
+                            if let Command::Pane { request, .. } = &other {
+                                transition.begin(&state, *request, now);
+                            } else {
+                                transition.clear();
+                            }
                             revoke_connection(&mut active, &mut state, &mut output);
                             changed = true;
                         }
@@ -869,6 +888,25 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     changed = true;
                 }
             }
+            if presence.0 && state.input_ready && now >= browser_read_at {
+                for pane in state
+                    .panes
+                    .iter()
+                    .filter(|p| p.browser_icon.is_some() && state.browser_pane_visible(&p.id))
+                    .take(24)
+                {
+                    if output(Command::BrowserControls {
+                        request: state.request,
+                        id: pane.id.clone(),
+                        command: None,
+                    })
+                    .is_err()
+                    {
+                        break 'worker;
+                    }
+                }
+                browser_read_at = now.saturating_add(750);
+            }
             if let Some(route) = state.native_frame_scope.as_ref() {
                 previews.remember(route, &state);
             }
@@ -885,8 +923,10 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     (None, None) => false,
                     _ => true,
                 };
-            if changed {
-                send_state(&incoming, &state);
+            let expired = transition.expire(now);
+            if changed || expired {
+                let publication = transition.publication(&state, presence.0, now);
+                send_state(&incoming, &publication);
             }
             if !changed && !admitted {
                 std::thread::sleep(Duration::from_millis(5));

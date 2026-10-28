@@ -243,3 +243,24 @@ test("extracted app must independently pass Apple verification", () =>
     assert.deepEqual(result, { ok: false, stage: "roundtrip-verify" });
     assert.deepEqual(await readdir(options.output), ["failure.json"]);
   }));
+
+test("browser native helpers are signed before the app and recorded in the receipt", () =>
+  fixture(async ({ options, runner, calls }) => {
+    const paths = [
+      "Contents/Resources/browser/terminal-browser",
+      "Contents/Resources/browser/browser/node_modules/@zenbu-labs/pixel-native-darwin-arm64/pixel.node",
+      "Contents/Resources/browser/bin/native-scroll-helper",
+    ];
+    for (const path of paths) {
+      await mkdir(join(options.app, path, ".."), { recursive: true });
+      await writeFile(join(options.app, path), "synthetic browser bytes");
+    }
+    const result = await signPreviewApp(options, { runner });
+    assert.equal(result.ok, true);
+    const signs = calls.filter((c) => c.args[0] === "--force");
+    assert.equal(signs.length, 5);
+    assert.ok(signs[2].args.at(-1).endsWith("/pixel.node"));
+    assert.ok(signs[3].args.at(-1).endsWith("/native-scroll-helper"));
+    assert.ok(signs[4].args.at(-1).endsWith(".app"));
+    assert.equal(result.receipt.executables.length, 4);
+  }));

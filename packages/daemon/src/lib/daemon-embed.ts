@@ -1,3 +1,4 @@
+import { createNativeBrowserResolver } from "./tmux-native-browser.ts";
 import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
 import { NativeSurfaceProviderRegistry } from "../terminal/graphics/native-surface-provider.ts";
 import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
@@ -1935,6 +1936,22 @@ async function startEmbeddedDaemonGeneration(
                 terminalInventoryRuntime?.lifecycleState() !== "ready"
               )
                 throw new Error("Default tmux editor context owner is unavailable");
+            },
+          }),
+          nativeBrowser: createNativeBrowserResolver({
+            generation: instanceId,
+            run: fleetFactsTmuxRunner,
+            registry: workspaceRegistry,
+            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            inventory: terminalInventoryRuntime,
+            assertOpen: () => {
+              if (
+                defaultEditorContextRetired ||
+                serverOwners?.defaultRetired ||
+                !initialNativeServerIdentity ||
+                terminalInventoryRuntime?.lifecycleState() !== "ready"
+              )
+                throw new Error("Default native browser owner is unavailable");
             },
           }),
           catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),

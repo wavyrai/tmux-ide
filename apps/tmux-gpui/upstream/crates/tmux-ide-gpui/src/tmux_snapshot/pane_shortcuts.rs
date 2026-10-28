@@ -4,12 +4,28 @@ use gpui::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Shortcut {
     Zoom,
+    SplitRight,
+    SplitDown,
+    NewWindow,
+    Close,
+    Window(bool),
     Focus(usize),
 }
 pub(super) fn shortcut(key: &Keystroke) -> Option<Shortcut> {
     let m = key.modifiers;
     if !m.platform || m.control {
         return None;
+    }
+    if !m.alt {
+        match (key.key.as_str(), m.shift) {
+            ("d", false) => return Some(Shortcut::SplitRight),
+            ("d", true) => return Some(Shortcut::SplitDown),
+            ("t", false) => return Some(Shortcut::NewWindow),
+            ("w", false) => return Some(Shortcut::Close),
+            ("[", true) | ("{", _) => return Some(Shortcut::Window(false)),
+            ("]", true) | ("}", _) => return Some(Shortcut::Window(true)),
+            _ => {}
+        }
     }
     if m.shift && !m.alt && key.key == "enter" {
         return Some(Shortcut::Zoom);
@@ -90,10 +106,14 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.browser_shortcut_key(event, window, cx) {
+            return true;
+        }
         let Some(shortcut) = shortcut(&event.keystroke) else {
             return false;
         };
-        if self.pane_actions.is_some() || !self.marked.is_empty() {
+        if self.browser_address.is_some() || self.pane_actions.is_some() || !self.marked.is_empty()
+        {
             return false;
         }
         cx.stop_propagation();
@@ -111,6 +131,43 @@ impl SnapshotView {
             return true;
         }
         match shortcut {
+            Shortcut::Window(forward) => {
+                let choices = super::navigation::windows(
+                    &self.browser_state.panes,
+                    self.browser_state.selected_pane.as_deref(),
+                );
+                let Some(index) = choices.iter().position(|choice| choice.selected) else {
+                    return true;
+                };
+                let next = if forward {
+                    (index + 1) % choices.len()
+                } else {
+                    (index + choices.len() - 1) % choices.len()
+                };
+                if let Some(session) = self.browser_state.selected_session.clone() {
+                    self.select_window(self.browser_request, &session, &choices[next], window, cx);
+                }
+            }
+            Shortcut::SplitRight | Shortcut::SplitDown | Shortcut::NewWindow | Shortcut::Close => {
+                let Some(target) = pane_actions::Target::capture(&self.browser_state) else {
+                    return true;
+                };
+                if shortcut == Shortcut::Close {
+                    self.open_header_actions(window, cx);
+                    self.picker_pane_shortcut(Shortcut::Close, window, cx);
+                } else {
+                    let action = match shortcut {
+                        Shortcut::SplitRight => pane_actions::Action::Split {
+                            direction: pane_actions::SplitDirection::Right,
+                        },
+                        Shortcut::SplitDown => pane_actions::Action::Split {
+                            direction: pane_actions::SplitDirection::Down,
+                        },
+                        _ => pane_actions::Action::NewWindow,
+                    };
+                    self.dispatch_captured_pane_action(&target, action, window, cx);
+                }
+            }
             Shortcut::Focus(direction) => self.focus_neighbor(direction, window, cx),
             Shortcut::Zoom => {
                 let Some(target) = pane_actions::Target::capture(&self.browser_state) else {

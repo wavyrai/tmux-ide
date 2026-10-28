@@ -83,22 +83,15 @@ impl SnapshotView {
     }
 
     pub(super) fn application_tabs(
-        &self,
+        &mut self,
         notice: Option<AnyElement>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme();
         let request = self.browser_request;
-        let title = self
-            .browser_state
-            .selected_session
-            .as_ref()
-            .filter(|_| self.browser_state.surface == browser::Surface::Workspace)
-            .and_then(|id| self.browser_state.sessions.iter().find(|s| &s.id == id))
-            .map(|s| s.label.clone())
-            .unwrap_or_default();
-        let show_title = notice.is_none();
+        let workspace = self.browser_state.surface == browser::Surface::Workspace;
+        let window_tabs = workspace.then(|| self.workspace_window_strip(window, cx));
         let tabs = div()
             .id("application-tabs")
             .when(window.is_fullscreen(), |bar| {
@@ -160,36 +153,36 @@ impl SnapshotView {
                     .items_center()
                     .justify_center()
                     .debug_selector(|| "application-drag-region".into())
-                    .children(notice)
-                    .when(show_title, |bar| {
-                        bar.child(
-                            div()
-                                .truncate()
-                                .text_color(rgb(theme.muted))
-                                .debug_selector(|| "application-session-title".into())
-                                .child(title),
-                        )
-                    }),
+                    .children(notice.map(|notice| {
+                        div()
+                            .max_w(px(200.))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(notice)
+                    }))
+                    .children(window_tabs),
             )
-            .child(
-                controls::action_button(
-                    "application-new-session",
-                    None,
-                    "New session on this Mac",
-                    controls::Icon::Plus,
-                    if self.local_session_available() {
-                        controls::ButtonStyle::Quiet
-                    } else {
-                        controls::ButtonStyle::Unavailable
-                    },
-                    &theme,
+            .when(!workspace, |bar| {
+                bar.child(
+                    controls::action_button(
+                        "application-new-session",
+                        None,
+                        "New session on this Mac",
+                        controls::Icon::Plus,
+                        if self.local_session_available() {
+                            controls::ButtonStyle::Quiet
+                        } else {
+                            controls::ButtonStyle::Unavailable
+                        },
+                        &theme,
+                    )
+                    .debug_selector(|| "application-new-session".into())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.open_local_session(request, window, cx);
+                    })),
                 )
-                .debug_selector(|| "application-new-session".into())
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.open_local_session(request, window, cx);
-                })),
-            );
+            });
         tabs.into_any_element()
     }
 
@@ -322,6 +315,7 @@ impl SnapshotView {
                     rgba(0)
                 })
                 .max_w(px(200.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .overflow_hidden()
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.select_window(request, &session, &choice, window, cx);
@@ -353,14 +347,15 @@ impl SnapshotView {
         } else {
             add = add.aria_description("Unavailable until the selected terminal is ready");
         }
-        let add = self.sidebar_focus_control(add, 4, &theme);
+        let add = self
+            .sidebar_focus_control(add, 4, &theme)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         div()
-            .w_full()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .flex()
-            .flex_shrink_0()
-            .h(px(36.))
             .items_center()
-            .mb(px(4.))
             .child(strip)
             .child(add)
             .into_any_element()

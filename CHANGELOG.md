@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.15
+
+- Discover the browser bundled with the managed Mac app when running `tmux-ide open`, while preserving explicit browser overrides and PATH fallback.
+- Add scoped native browser navigation with back, forward, reload/stop and a Cmd-L address editor. Browser commands validate the live pane and browser instance before execution.
+- Add Cmd-T for terminal windows, Cmd-D / Cmd-Shift-D for splits, Cmd-W for close confirmation and Cmd-Shift-[ / ] for window switching.
+- Preserve the previous frame briefly during verified window transitions, and stabilize divider dragging while terminal output changes.
+- Put window tabs in the top bar, reduce sidebar typography and remove excess pane padding.
+
+Native changes require the separately distributed alpha **0.1.10, build 2026102801** and the updated daemon. The Mac app includes the managed terminal browser; native assets remain outside npm. The browser's optional `action` automation helper is not bundled. This release makes no measured GUI/TUI performance-parity claim.
+
 ## 2.9.14
 
 - Add `tmux-ide open [url]` to open an installed terminal-browser in an explicitly targeted tmux pane or window, with safe argument handling and clear missing-browser errors.

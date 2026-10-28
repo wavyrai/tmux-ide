@@ -44,12 +44,14 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let home = cx.debug_bounds("application-home").unwrap();
         let sidebar = cx.debug_bounds("sidebar-toggle").unwrap();
-        let add = cx.debug_bounds("application-new-session").unwrap();
-        let title = cx.debug_bounds("application-session-title").unwrap();
+        let add = cx.debug_bounds("workspace-new-window").unwrap();
+        let tabs = cx.debug_bounds("workspace-window-strip").unwrap();
         assert!(cx.debug_bounds("retained-session-tabs").is_none());
         assert!(sidebar.right() <= home.left());
-        assert!(home.right() <= title.left());
-        assert!(title.right() <= add.left());
+        assert!(home.right() <= tabs.left());
+        assert_eq!(home.center().y, tabs.center().y);
+        assert!(cx.debug_bounds("application-new-session").is_none());
+        assert!(tabs.right() <= add.left());
         assert!(add.right() <= px(width));
         let canvas = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
         receiver.try_iter().for_each(drop);
@@ -62,5 +64,40 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
             canvas
         );
         assert!(receiver.try_recv().is_err());
+    }
+}
+
+#[gpui::test]
+fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.status = "Connected".into();
+        view
+    });
+    for width in [640., 1000.] {
+        cx.simulate_resize(size(px(width), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let before = cx.debug_bounds("workspace-window-strip").unwrap();
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.retained_preview = true;
+                v.browser_state.input_ready = false;
+                v.browser_state.status = "Switching window…".into();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+        assert!(cx.debug_bounds("tmux-status-viewport").is_none());
+        assert!(!view.read_with(cx, |v, _| v.browser_state.input_ready));
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.retained_preview = false;
+                v.browser_state.input_ready = true;
+                v.browser_state.status = "Connected".into();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
     }
 }

@@ -130,3 +130,64 @@ fn header_focus_shortcut_selects_adjacent_pane_without_terminal_keys(cx: &mut Te
     )));
     view.read_with(cx, |view, _| assert!(view.picker.is_none()));
 }
+
+#[gpui::test]
+fn split_and_new_window_shortcuts_send_actions_without_typing(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::pane_actions::{Action, SplitDirection};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    for (chord, expected) in [
+        (
+            "cmd-d",
+            Action::Split {
+                direction: SplitDirection::Right,
+            },
+        ),
+        (
+            "cmd-shift-d",
+            Action::Split {
+                direction: SplitDirection::Down,
+            },
+        ),
+        ("cmd-t", Action::NewWindow),
+    ] {
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| ready(view));
+            window.draw(cx).clear(cx);
+        });
+        receiver.try_iter().for_each(drop);
+        cx.simulate_keystrokes(chord);
+        let commands: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(commands.len(), 1, "{chord}");
+        match &commands[0] {
+            browser::Command::PaneAction { action, id, .. } => {
+                assert_eq!(
+                    serde_json::to_value(action).unwrap(),
+                    serde_json::to_value(expected).unwrap()
+                );
+                assert_eq!(id, "pane-a");
+            }
+            _ => panic!("Shortcut emitted a non-action command"),
+        }
+    }
+}
+#[gpui::test]
+fn close_shortcut_requires_confirmation_and_escape_keeps_pane(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| ready(view));
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("cmd-w");
+    view.read_with(cx, |view, _| {
+        assert!(view.picker.as_ref().unwrap().closing.is_some())
+    });
+    assert!(receiver.try_recv().is_err());
+    cx.simulate_keystrokes("escape");
+    assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |view, _| {
+        assert!(view.picker.as_ref().is_none_or(|p| p.closing.is_none()))
+    });
+}

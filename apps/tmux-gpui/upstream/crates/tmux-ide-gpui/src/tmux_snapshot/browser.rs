@@ -77,6 +77,8 @@ pub(super) struct CreateSession {
 }
 #[derive(Clone, Default)]
 pub(super) struct State {
+    pub browser_controls:
+        std::collections::BTreeMap<String, herdr_client::tmux_daemon::BrowserState>,
     pub renderer_probe_scope: Option<super::renderer_probe::Scope>,
     pub diagnostics: Option<super::diagnostics::Versions>,
     pub native_diagnostics: Option<super::browser_native_editor::Diagnostics>,
@@ -140,6 +142,23 @@ pub(super) struct State {
     /// Prepared only by native transport; pipe publications cannot supply storage.
     #[cfg(target_os = "macos")]
     pub native_surfaces: Option<(DisplayFrame, Vec<crate::tmux_native_surface::Paint>)>,
+}
+impl State {
+    /// Browser chrome belongs to the visible window, independently of keyboard focus.
+    pub(super) fn browser_pane_visible(&self, pane: &str) -> bool {
+        let Some(selected) = self
+            .panes
+            .iter()
+            .find(|p| Some(&p.id) == self.selected_pane.as_ref())
+        else {
+            return false;
+        };
+        self.panes.iter().any(|p| {
+            p.id == pane
+                && (p.id == selected.id
+                    || (p.window_id.is_some() && p.window_id == selected.window_id))
+        })
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -473,6 +492,7 @@ impl Reader {
         self.sequence = p.sequence;
         self.request = p.request;
         Ok(State {
+            browser_controls: Default::default(),
             diagnostics: p.diagnostics,
             native_diagnostics: p.native_diagnostics,
             pointer_modes: None,

@@ -1,0 +1,14 @@
+{
+  "drizzle-orm@0.44.7": {
+    "file": "drizzle-orm-0.44.7-LICENSE",
+    "source": "https://raw.githubusercontent.com/drizzle-team/drizzle-orm/0.44.7/LICENSE",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  "JetBrainsMono@2.305": {
+    "file": "JetBrainsMono-OFL.txt",
+    "source": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/19371302b95d218af43299bce79ddbddd0bc364d/OFL.txt",
+    "sha256": "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697",
+    "asset": "assets/fonts/JetBrainsMono-Regular.ttf",
+    "assetSha256": "e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1"
+  }
+}

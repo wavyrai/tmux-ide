@@ -29,6 +29,10 @@ const execute = promisify(execFile);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const native = "Contents/MacOS/tmux-ide-gpui";
 const node = "Contents/Resources/node";
+const browserExecutables = [
+  "Contents/Resources/browser/browser/node_modules/@zenbu-labs/pixel-native-darwin-arm64/pixel.node",
+  "Contents/Resources/browser/bin/native-scroll-helper",
+];
 const historical = [
   "Contents/Resources/native-build-receipt.json",
   "Contents/Resources/assembly-manifest.json",
@@ -122,6 +126,14 @@ export async function signPreviewApp(
     const before = await inventory(source);
     for (const name of [native, node, ...historical])
       if (!before.some((r) => r[0] === name && r[2])) throw new Error("Missing assembly input");
+    const hasBrowser = before.some(
+      (r) => r[0] === "Contents/Resources/browser/terminal-browser" && r[2],
+    );
+    const browserCode = hasBrowser ? browserExecutables : [];
+    for (const name of browserCode)
+      if (!before.some((r) => r[0] === name && r[2]))
+        throw new Error("Missing browser assembly input");
+    const executables = [native, node, ...browserCode];
     await mkdir(destination, { mode: 0o700 });
     output = destination;
     outputIdentity = await lstat(output);
@@ -198,6 +210,11 @@ export async function signPreviewApp(
       entitlementPath,
       join(app, node),
     ]);
+    stage = "sign-browser";
+    for (const path of browserCode) {
+      await run("/usr/bin/codesign", [...signing, join(app, path)]);
+      await run("/usr/bin/codesign", ["--verify", "--strict", join(app, path)]);
+    }
     stage = "sign-bundle";
     await run("/usr/bin/codesign", [...signing, app]);
     await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
@@ -309,7 +326,7 @@ export async function signPreviewApp(
         sha256: before.find((row) => row[0] === path)[2],
       })),
       executables: await Promise.all(
-        [native, node].map(async (path) => ({
+        executables.map(async (path) => ({
           path,
           beforeSha256: before.find((r) => r[0] === path)[2],
           afterSha256: hash(await readFile(join(app, path))),

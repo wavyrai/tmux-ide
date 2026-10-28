@@ -73,8 +73,17 @@ struct Active {
 #[derive(Default)]
 pub(in crate::tmux_snapshot) struct Owner {
     active: Option<Active>,
+    painted: Option<paint::Painted>,
 }
 impl Owner {
+    pub fn record_painted_gutters(&mut self, painted: Option<paint::Painted>) {
+        self.painted = painted;
+    }
+    pub fn matches_painted_gutters(&self, state: &browser::State, width: f32, height: f32) -> bool {
+        self.painted.as_ref().is_some_and(|painted| {
+            paint::Painted::capture(state, width, height).as_ref() == Some(painted)
+        })
+    }
     pub fn busy(&self) -> bool {
         self.active.is_some()
     }

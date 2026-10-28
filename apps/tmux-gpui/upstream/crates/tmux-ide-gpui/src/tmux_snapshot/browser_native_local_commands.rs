@@ -4,6 +4,18 @@ impl Local {
     pub(super) fn command(&mut self, command: Command) -> Result<(), Error> {
         self.preempt_background_preference(&command)?;
         match command {
+            Command::BrowserControls {
+                request,
+                id,
+                command,
+            } => {
+                if self.browser_controls(request, id, command).is_err() {
+                    self.browser_controls = Default::default();
+                    self.state.browser_controls.clear();
+                    self.publish()?;
+                }
+                Ok(())
+            }
             command @ Command::OpenWorkspaceFleetAgent { .. } => {
                 self.open_workspace_fleet_agent(command)
             }

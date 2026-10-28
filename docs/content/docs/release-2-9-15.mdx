@@ -1,0 +1,44 @@
+---
+title: tmux-ide 2.9.15
+metaTitle: "What's new in 2.9.15"
+description: "Managed browser navigation, keyboard workspace controls and compact native chrome."
+---
+
+`2.9.15` accompanies native macOS alpha `0.1.10`, build `2026102801`.
+The CLI/daemon and native app remain separate installations. Install links are
+updated after the matching release assets are published.
+
+## Managed browser
+
+`tmux-ide open https://example.com` discovers the terminal browser bundled with
+the standard managed Mac app installation. An explicit
+`TMUX_IDE_TERMINAL_BROWSER_BIN` still takes precedence; an installed browser on
+PATH remains a fallback. Native browser files are not part of the npm package.
+
+The native pane header provides back, forward and reload/stop. Use Command-L to
+edit the URL and Command-R to reload. Each command validates the current pane,
+browser instance, tab and state revision. The optional upstream browser `action`
+automation helper is not bundled and is not needed for native controls.
+
+## Workspace controls
+
+Window tabs now share the top bar. Sidebar text and pane padding are smaller.
+Drag the gutter to resize panes. Window transitions briefly retain the previous
+frame while the new selection is verified; retained frames never authorize input.
+
+Use Command-T for a new terminal window, Command-D to split right,
+Command-Shift-D to split down, Command-W for close confirmation and
+Command-Shift-[ / ] to switch windows. Command-Option-Arrow focuses a pane;
+Command-Shift-Enter expands or restores it.
+
+## Qualification
+
+The signed Mac candidate passed Apple notarization, Gatekeeper, archive
+verification and isolated install/upgrade/rollback checks. Native navigation,
+zoom/restore, divider dragging and keyboard window/split controls were exercised
+on the release Mac. A fresh second-Mac check remains outstanding. A prior browser
+startup waited on Keychain authorization; a subsequent fresh run loaded without
+credential changes or disabling encryption.
+
+Update the CLI/daemon and [native app](/docs/native-alpha) separately. Existing
+tmux sessions are preserved. No measured GUI/TUI performance-parity claim is made.

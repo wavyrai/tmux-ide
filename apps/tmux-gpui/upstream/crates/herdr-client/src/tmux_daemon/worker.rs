@@ -60,6 +60,11 @@ pub enum CatalogAction {
         scope: ServerScope,
         target: super::EditorTarget,
     },
+    NativeBrowser {
+        scope: ServerScope,
+        target: super::EditorTarget,
+        command: Option<super::BrowserCommand>,
+    },
     EditorContext {
         scope: ServerScope,
         target: super::EditorTarget,
@@ -107,6 +112,7 @@ pub enum CatalogResult {
     PaneCreated(super::CreatedPane),
     EditorOpened,
     EditorContext(super::EditorContext),
+    NativeBrowser(Option<super::BrowserState>),
     Servers(Vec<ServerRegistration>),
     History(Option<crate::tmux_history::AnchorResult>),
     SplitLayout(crate::tmux_control::SplitLayout),
@@ -391,6 +397,7 @@ fn execute(
         | CatalogAction::CreatePane { scope, .. }
         | CatalogAction::OpenEditor { scope, .. }
         | CatalogAction::EditorContext { scope, .. }
+        | CatalogAction::NativeBrowser { scope, .. }
         | CatalogAction::Sessions { scope }
         | CatalogAction::Open { scope, .. }
         | CatalogAction::Create { scope, .. }
@@ -457,6 +464,11 @@ fn execute(
         CatalogAction::OpenEditor { target, .. } => client
             .open_editor(&target)
             .map(|()| CatalogResult::EditorOpened),
+        CatalogAction::NativeBrowser {
+            target, command, ..
+        } => client
+            .native_browser(&target, command.as_ref())
+            .map(CatalogResult::NativeBrowser),
         CatalogAction::EditorContext { target, .. } => client
             .editor_context(&target)
             .map(CatalogResult::EditorContext),

@@ -45,6 +45,7 @@ fn make_view(
         workspace_fleet_agents: Default::default(),
         home_filter: None,
         pane_actions: None,
+        browser_address: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
@@ -189,6 +190,49 @@ fn ready_click_and_application_shortcuts_do_not_interrupt_input(cx: &mut TestApp
         assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Input { input:Input::Text(t), .. } if t=="complete"));
         assert!(receiver.try_recv().is_err());
     }));
+}
+#[gpui::test]
+fn native_window_navigation_keeps_cards_but_cannot_send_text(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    while receiver.try_recv().is_ok() {}
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let native = crate::terminal_painter::NativeFrame {
+                width: 1,
+                height: 1,
+                cursor: None,
+                rows: vec![Arc::from([herdr_client::protocol::CellData {
+                    symbol: "x".into(),
+                    fg: 0,
+                    bg: 0,
+                    modifier: 0,
+                    skip: false,
+                    hyperlink: None,
+                }])],
+            };
+            view.frame = Some(crate::tmux_snapshot::display_frame::DisplayFrame::Native(
+                Arc::new(native),
+            ));
+            view.browser_state.frame = view.frame.clone();
+            view.browser_state.input_ready = true;
+            view.select(Selection::Pane("another-window-pane".into()), window, cx);
+            assert!(
+                view.frame.is_some(),
+                "navigation must not clear the outgoing pixels before the worker replies"
+            );
+            assert!(view.browser_state.retained_preview);
+            assert!(!view.browser_state.input_ready);
+            assert!(view.browser_state.input_targets.is_empty());
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                browser::Command::Pane { .. }
+            ));
+            view.replace_text_in_range(None, "must-not-replay", window, cx);
+            assert!(receiver.try_recv().is_err());
+            assert!(view.pending_input.is_none());
+        })
+    });
 }
 #[gpui::test]
 fn interrupted_input_survives_target_and_readiness_changes_but_local_scroll_remains(
@@ -345,3 +389,72 @@ mod focus_reclaim;
 
 #[path = "input_interruption_tests/viewport.rs"]
 mod viewport;
+
+#[gpui::test]
+fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext) {
+    use herdr_client::tmux_daemon::{BrowserAction, BrowserState};
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let state = BrowserState {
+                version: 1,
+                instance: "12345678-1234-4234-8234-123456789abc".into(),
+                pane: "%1".into(),
+                tab: 1,
+                revision: 7,
+                enabled: true,
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                loading: false,
+                can_go_back: false,
+                can_go_forward: false,
+            };
+            view.browser_state.request = view.browser_request;
+            view.browser_state.input_ready = true;
+            view.browser_state.panes = ["pane-a", "pane-b"]
+                .into_iter()
+                .map(|id| browser::Choice {
+                    id: id.into(),
+                    label: id.into(),
+                    pane_count: None,
+                    window_id: Some("window-a".into()),
+                    window_label: None,
+                    browser_icon: None,
+                })
+                .collect();
+            view.browser_state
+                .browser_controls
+                .insert("pane-a".into(), state.clone());
+            // Focusing a terminal sibling keeps native chrome on the browser,
+            // while browser keyboard shortcuts still belong to the focused pane.
+            view.browser_state.selected_pane = Some("pane-b".into());
+            assert!(view.browser_header("pane-a", cx).is_some());
+            assert!(!view.browser_shortcut_key(&key("cmd-r"), window, cx));
+            view.browser_state.panes[1].window_id = Some("other-window".into());
+            assert!(view.browser_header("pane-a", cx).is_none());
+            view.browser_state.selected_pane = Some("pane-a".into());
+            assert!(view.browser_shortcut_key(&key("cmd-r"), window, cx));
+            assert!(
+                matches!(receiver.try_recv().unwrap(), browser::Command::BrowserControls {
+            request: 7, id, command: Some(command)
+        } if id == "pane-a" && command.action == BrowserAction::Reload && command.revision == 7)
+            );
+            assert!(receiver.try_recv().is_err());
+            // A held command cannot replay while waiting for fresh state.
+            assert!(!view.browser_shortcut_key(&key("cmd-r"), window, cx));
+            view.browser_state
+                .browser_controls
+                .insert("pane-a".into(), state);
+            view.browser_state.retained_preview = true;
+            assert!(!view.browser_shortcut_key(&key("cmd-l"), window, cx));
+            assert!(view.browser_address.is_none());
+            view.browser_state.retained_preview = false;
+            assert!(view.browser_shortcut_key(&key("cmd-l"), window, cx));
+            assert!(view.browser_address.is_some());
+            assert!(!view.terminal_focus.is_focused(window));
+            assert!(receiver.try_recv().is_err());
+        })
+    });
+}

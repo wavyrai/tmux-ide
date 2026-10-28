@@ -207,6 +207,12 @@ pub(in crate::tmux_snapshot) enum Command {
         id: String,
         token: String,
     },
+    #[serde(rename = "native-browser-controls")]
+    BrowserControls {
+        request: u64,
+        id: String,
+        command: Option<herdr_client::tmux_daemon::BrowserCommand>,
+    },
     #[serde(rename = "pane-action")]
     PaneAction {
         request: u64,

@@ -8,21 +8,30 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { verifyNativeBuildReceipt } from "./native-build-receipt.mjs";
 import { readBundleMetadata, bundlePlist } from "./app-bundle-metadata.mjs";
+import { copyBrowserPayload } from "./browser-payload.mjs";
 const run = promisify(execFile);
-if (
-  process.platform !== "darwin" ||
-  ![7, 9].includes(process.argv.length) ||
-  (process.argv.length === 9 && process.argv[7] !== "--metadata")
-)
+const flags = process.argv.slice(7);
+const options = new Map();
+for (let i = 0; i < flags.length; i += 2) {
+  if (
+    !["--metadata", "--browser-payload"].includes(flags[i]) ||
+    !flags[i + 1] ||
+    options.has(flags[i])
+  )
+    throw new Error("Invalid or duplicate app assembly option");
+  options.set(flags[i], resolve(flags[i + 1]));
+}
+if (process.platform !== "darwin" || process.argv.length < 7)
   throw new Error(
-    "macOS only: assemble-local-app.mjs NATIVE_BINARY NODE24_BINARY NODE_LICENSE BUILD_RECEIPT.json NEW_APP.app [--metadata METADATA.json]",
+    "macOS only: assemble-local-app.mjs NATIVE_BINARY NODE24_BINARY NODE_LICENSE BUILD_RECEIPT.json NEW_APP.app [--metadata METADATA.json] [--browser-payload PREPARED_DIRECTORY]",
   );
 const [native, node, nodeLicense, receipt, output] = process.argv
   .slice(2, 7)
   .map((p) => resolve(p));
 if (!output.endsWith(".app")) throw new Error("Output must be a new .app directory");
-const metadata =
-  process.argv.length === 9 ? await readBundleMetadata(resolve(process.argv[8])) : undefined;
+const metadata = options.has("--metadata")
+  ? await readBundleMetadata(options.get("--metadata"))
+  : undefined;
 const project = fileURLToPath(new URL("../", import.meta.url));
 // Verify source/binary consistency before executing either supplied binary.
 await verifyNativeBuildReceipt(receipt, native, join(project, "upstream"));
@@ -113,6 +122,9 @@ exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resour
 `,
     { mode: 0o755 },
   );
+  const browserFiles = options.has("--browser-payload")
+    ? await copyBrowserPayload(options.get("--browser-payload"), join(resources, "browser"))
+    : undefined;
   await writeFile(join(output, "Contents/Info.plist"), bundlePlist(metadata));
   const digest = async (path) =>
     createHash("sha256")
@@ -124,6 +136,14 @@ exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resour
       {
         version: 1,
         distribution: false,
+        ...(browserFiles
+          ? {
+              browser: {
+                files: browserFiles,
+                scope: "development payload; separate browser qualification required",
+              },
+            }
+          : {}),
         ...(metadata ? { metadata, scope: "pre-signing assembly; not a qualified release" } : {}),
         signing: "not-qualified",
         nativeIdentity: identity,

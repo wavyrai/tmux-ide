@@ -1,27 +1,156 @@
+diff --git a/browser/src/main.tsx b/browser/src/main.tsx
+index dbd439f..57b50c6 100644
+--- a/browser/src/main.tsx
++++ b/browser/src/main.tsx
+@@ -25,7 +25,7 @@ try {
+ } catch {}
+ app.commandLine.appendSwitch("enable-logging", "file");
+ app.commandLine.appendSwitch("log-file", path.join(LOGS_DIR, "chromium.log"));
+-app.setName("terminal-browser");
++app.setName("tmux-ide-browser");
+ claimProfile();
+ registerScheme();
+ 
+diff --git a/browser/src/registry.ts b/browser/src/registry.ts
+index 2f6c6c4..8f2eb01 100644
+--- a/browser/src/registry.ts
++++ b/browser/src/registry.ts
+@@ -29,6 +29,8 @@ export interface ControlHost {
+   splitDir: InstanceRow["splitDir"];
+   parentTty: string | null;
+   state(): WebViewState;
++  nativeState?(): unknown;
++  nativeCommand?(request: unknown): unknown;
+   openTab(url?: string, cwd?: string): number;
+   activateTab(id: number): boolean;
+   closeTab(id: number): boolean;
+@@ -42,6 +44,7 @@ export interface ControlHost {
+ interface ControlRequest {
+   id?: string;
+   cmd: string;
++  payload?: unknown;
+   url?: string;
+   cwd?: string;
+   tab?: number;
+@@ -159,6 +162,12 @@ export class Registry {
+ 
+   private async handle(request: ControlRequest): Promise<unknown> {
+     switch (request.cmd) {
++      case "native/1/state":
++        if (!this.host.nativeState) throw new Error("native controls unavailable");
++        return this.host.nativeState();
++      case "native/1/command":
++        if (!this.host.nativeCommand) throw new Error("native controls unavailable");
++        return this.host.nativeCommand(request.payload);
+       case "state":
+         return this.record();
+       case "where":
+diff --git a/browser/src/session/layout.ts b/browser/src/session/layout.ts
+index 8a3a04f..f798f7a 100644
+--- a/browser/src/session/layout.ts
++++ b/browser/src/session/layout.ts
+@@ -91,11 +91,12 @@ export function computeLayout(
+   scale: number,
+   devtools: DevtoolsPlacement | null,
+   recordBar = 0,
++  nativeChrome = false,
+ ): SessionLayout {
+-  const toolbarHeight = Math.min(info.height - info.cellHeight, Math.round(info.basePx * 2.1));
+-  const pad = Math.round(info.basePx * 0.45);
+-  const padLeft = Math.round(info.basePx * 0.2);
+-  const padBottom = Math.round(info.basePx * 0.2);
++  const toolbarHeight = nativeChrome ? 0 : Math.min(info.height - info.cellHeight, Math.round(info.basePx * 2.1));
++  const pad = nativeChrome ? 0 : Math.round(info.basePx * 0.45);
++  const padLeft = nativeChrome ? 0 : Math.round(info.basePx * 0.2);
++  const padBottom = nativeChrome ? 0 : Math.round(info.basePx * 0.2);
+   const chrome: ChromeLayout = {
+     width: info.width,
+     height: info.height,
 diff --git a/browser/src/session/session.tsx b/browser/src/session/session.tsx
-index 803c1f6..f2db23b 100644
+index 803c1f6..2ed4498 100644
 --- a/browser/src/session/session.tsx
 +++ b/browser/src/session/session.tsx
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,6 @@
++import { NativeControls } from "./native-controls";
++import { publishNativeEndpoint } from "./native-endpoint";
 +import { NativeIcon } from "./native-icon";
  import { spawn } from "node:child_process";
  import net from "node:net";
  import path from "node:path";
-@@ -269,6 +270,7 @@ class Session {
+@@ -269,6 +272,19 @@ class Session {
  
    constructor(ctx: SessionContext) {
      this.ctx = ctx;
 +    this.nativeIcon = new NativeIcon(ctx.env);
++    this.nativeControls = ctx.env.TMUX_IDE_BROWSER_TMUX?.startsWith("/") && /^%[0-9]+$/.test(ctx.env.TMUX_PANE ?? "")
++      ? new NativeControls(ctx.env.TMUX_PANE!, {
++          current: () => {
++            const tab = this.tabs.active;
++            return tab ? { ...tab.state, id: tab.id,
++              enabled: !!this.tabs.activeHandle && !this.activeRecord()?.reviewing && !this.shuttingDown } : null;
++          },
++          back: () => this.actions.back(),
++          forward: () => this.actions.forward(),
++          reload: () => this.actions.reload(),
++          navigate: text => this.actions.urlSubmit(text),
++        }) : null;
      this.defaultUrl = ctx.env.TERMINAL_BROWSER_START_PAGE === "1" ? START_URL : HOME_URL;
      const socket = ctx.env[TERMINAL_SOCKET_ENV];
      this.terminal = socket ? socketTerminal(socket) : detect(ctx.env);
-@@ -437,14 +439,18 @@ class Session {
+@@ -295,6 +311,7 @@ class Session {
+     this.tabs = new TabManager(
+       {
+         onActivated: () => {
++          this.nativeControls?.invalidate();
+           this.pageMenu = null;
+           this.reconcileRecord();
+           this.recalculateLayout();
+@@ -386,6 +403,10 @@ class Session {
+       splitDir: splitDirection(flagValue(this.argv, "--split-dir")),
+       parentTty: flagValue(this.argv, "--parent-tty"),
+       state: () => this.tabs.activeState ?? this.fallbackState,
++      ...(this.nativeControls ? {
++        nativeState: () => { this.renewNativeChrome(); return this.nativeControls!.snapshot(); },
++        nativeCommand: (request: unknown) => this.nativeControls!.execute(request),
++      } : {}),
+       openTab: (url, cwd) =>
+         this.tabs.create(url ? normalizeUrl(url, cwd, this.searchUrl()) : this.defaultUrl).id,
+       activateTab: (id) => {
+@@ -406,6 +427,7 @@ class Session {
+       targets: () => this.tabs.targets(),
+     });
+     this.registry.setCdpPort(this.ctx.cdpPort);
++    if (this.nativeControls) publishNativeEndpoint(this.ctx.env, this.registry.socketPath, this.nativeControls.identity());
+     void this.findOwnPane();
+     this.render();
+   }
+@@ -437,14 +459,40 @@ class Session {
      else this.tabs.close(id);
    }
  
++  private nativeChrome = false;
++  private nativeChromeTimer: ReturnType<typeof setTimeout> | null = null;
++  private renewNativeChrome() {
++    if (this.nativeChromeTimer) clearTimeout(this.nativeChromeTimer);
++    const enabled = this.root?.nativeOnly?.() === true && !this.activeRecord()?.reviewing;
++    if (this.nativeChrome !== enabled) {
++      this.nativeChrome = enabled;
++      this.recalculateLayout();
++      this.render();
++    }
++    this.nativeChromeTimer = setTimeout(() => {
++      this.nativeChromeTimer = null;
++      if (!this.nativeChrome || this.shuttingDown) return;
++      this.nativeChrome = false;
++      this.recalculateLayout();
++      this.render();
++    }, 3000);
++  }
 +  private readonly nativeIcon: NativeIcon;
++  private readonly nativeControls: NativeControls | null;
 +
    private syncTitle() {
++    this.nativeControls?.snapshot();
      const state = this.tabs.activeState;
 +    this.nativeIcon.update(state?.favicon ?? null);
      this.root?.setTitle(state ? state.title || displayUrl(state.url) : "");
@@ -30,10 +159,120 @@ index 803c1f6..f2db23b 100644
    shutdown(code = 0) {
      if (this.shuttingDown) return;
      this.shuttingDown = true;
++    if (this.nativeChromeTimer) clearTimeout(this.nativeChromeTimer);
 +    this.nativeIcon.dispose();
++    this.nativeControls?.dispose();
      for (const record of this.records.values()) record.dispose();
      this.records.clear();
      this.shownRecord = null;
+@@ -1563,6 +1611,7 @@ class Session {
+       this.root.displayScale,
+       reviewing ? null : placement,
+       reviewing ? recordBarHeight(info) : 0,
++      this.nativeChrome && !reviewing,
+     );
+     this.layout = result.chrome;
+     this.surfaceLayout = result.surface;
+diff --git a/browser/src/telemetry.ts b/browser/src/telemetry.ts
+index a1c3494..3b8996d 100644
+--- a/browser/src/telemetry.ts
++++ b/browser/src/telemetry.ts
+@@ -14,7 +14,8 @@ import {
+   telemetryOptedOutByEnv,
+ } from "shared";
+ 
+-const POSTHOG_PROJECT_KEY = "phc_CGHn2kUdTTqGJJNR3td6hRwzE4KexxdssMsGtTMtyZXk";
++// The vendored distribution must not send tmux-ide usage to the upstream service.
++const POSTHOG_PROJECT_KEY = "";
+ const POSTHOG_ORIGIN = process.env.TERMINAL_BROWSER_TELEMETRY_ORIGIN ?? "https://eu.i.posthog.com";
+ const PERSON_PROFILES = false;
+ const SEND_TIMEOUT_MS = 5000;
+diff --git a/cli/src/main.ts b/cli/src/main.ts
+index dc6b9f5..02f769c 100644
+--- a/cli/src/main.ts
++++ b/cli/src/main.ts
+@@ -91,6 +91,13 @@ function browserDirectory(): string {
+ }
+ 
+ function electronBinary(): string {
++  // The managed launcher verifies and materializes the signed engine separately
++  // from the application's link-free resources.
++  const managed = process.env.TMUX_IDE_BROWSER_ENGINE;
++  if (managed) {
++    if (!path.isAbsolute(managed)) fail("managed browser engine must be absolute");
++    return managed;
++  }
+   if (DIST_ROOT) return path.join(DIST_ROOT, "electron", ...ELECTRON_DIST_BIN);
+   const library = require.resolve("@zenbu-labs/pixel/package.json", { paths: [browserDirectory()] });
+   return path.join(path.dirname(library), "electron", "dist", ...ELECTRON_DEV_BIN);
+diff --git a/cli/src/upgrade.ts b/cli/src/upgrade.ts
+index 781e9ff..4ad1281 100644
+--- a/cli/src/upgrade.ts
++++ b/cli/src/upgrade.ts
+@@ -1,59 +1,7 @@
+-import { spawn } from "node:child_process";
+-import readline from "node:readline";
+-
+-import { fetchLatestRelease, installedByHomebrew, installedChannel, installedVersion } from "shared";
+-
+-import { instances } from "./registry";
+-import type { InstanceRecord } from "./registry";
+-
+-export { installedVersion };
+-
+-function describeInstance(record: InstanceRecord): string {
+-  const page = record.title && record.title !== record.url ? `${record.title}  ${record.url}` : record.url;
+-  return `  ${record.key}  ${page}`;
+-}
+-
+-async function confirmClose(version: string, open: InstanceRecord[]): Promise<boolean> {
+-  process.stdout.write(`upgrading to ${version} closes these open browsers:\n`);
+-  process.stdout.write(`${open.map(describeInstance).join("\n")}\n`);
+-  const ask = readline.createInterface({ input: process.stdin, output: process.stdout });
+-  const answer = await new Promise<string>((resolve) => {
+-    ask.question("continue? [Y/n] ", resolve);
+-    ask.on("close", () => resolve("n"));
+-  });
+-  ask.close();
+-  return /^(y|yes|)$/i.test(answer.trim());
+-}
+-
+-function runInstaller(url: string): Promise<number> {
+-  const child = spawn("bash", ["-c", `curl -fsSL '${url}' | bash`], { stdio: "inherit" });
+-  return new Promise((resolve, reject) => {
+-    child.on("error", reject);
+-    child.on("exit", (code) => resolve(code ?? 1));
+-  });
+-}
++export { installedVersion } from "shared";
+ 
++// Never let the upstream installer overwrite the vendored native integration.
+ export async function upgradeCommand(): Promise<number> {
+-  const current = installedVersion();
+-  if (!current) {
+-    throw new Error("Could not perform upgrade: please file an issue https://github.com/zenbu-labs/terminal-browser/issues");
+-  }
+-  const latest = await fetchLatestRelease(installedChannel());
+-  if (latest.version === current) {
+-    process.stdout.write(`already up to date (${current})\n`);
+-    return 0;
+-  }
+-  if (installedByHomebrew()) {
+-    process.stdout.write(`${latest.version} is available. This install is managed by Homebrew, run:\n`);
+-    process.stdout.write("  brew upgrade --cask terminal-browser\n");
+-    return 0;
+-  }
+-  const open = await instances();
+-  if (open.length > 0 && process.stdin.isTTY && process.stdout.isTTY) {
+-    if (!(await confirmClose(latest.version, open))) {
+-      process.stdout.write("cancelled\n");
+-      return 0;
+-    }
+-  }
+-  return runInstaller(latest.install);
++  process.stdout.write("This browser is managed by tmux-ide. Run tmux-ide update to update it.\n");
++  return 0;
+ }
 diff --git a/pixel/engine/Cargo.lock b/pixel/engine/Cargo.lock
 index 710ec9d..f7c0754 100644
 --- a/pixel/engine/Cargo.lock
@@ -5091,7 +5330,7 @@ index e1f0543..9d5d943 100644
  mod throttle;
  pub mod wrapper;
 diff --git a/pixel/engine/crates/pixel-core/src/terminal.rs b/pixel/engine/crates/pixel-core/src/terminal.rs
-index 7670827..c30799b 100644
+index 7670827..c508598 100644
 --- a/pixel/engine/crates/pixel-core/src/terminal.rs
 +++ b/pixel/engine/crates/pixel-core/src/terminal.rs
 @@ -16,6 +16,7 @@ use present::{Identity, Presenter};
@@ -5186,9 +5425,17 @@ index 7670827..c30799b 100644
          let canvas = frame.canvas;
          let embedded = self.is_embedded();
          if let Some(state) = &self.hosted {
-@@ -938,6 +983,14 @@ impl Terminal {
+@@ -937,7 +982,22 @@ impl Terminal {
+         }
      }
  
++    pub fn native_only(&self) -> bool {
++        #[cfg(target_os = "macos")]
++        { return self.tmux_surface.as_ref().is_some_and(|n| n.active() && !n.kitty_required()); }
++        #[cfg(not(target_os = "macos"))]
++        { false }
++    }
++
      pub fn poll_event(&mut self, timeout: Option<Duration>) -> io::Result<Option<Event>> {
 +        #[cfg(target_os = "macos")]
 +        let timeout = if let Some(native) = &mut self.tmux_surface {
@@ -5232,6 +5479,93 @@ index ecf0a9e..2e91e75 100644
      pub(super) fn opaque_rects(&self) -> Vec<Rect> {
          self.opaque.iter().map(|area| area.rect).collect()
      }
+diff --git a/pixel/engine/crates/pixel-node/src/lib.rs b/pixel/engine/crates/pixel-node/src/lib.rs
+index 0ba07af..653dc88 100644
+--- a/pixel/engine/crates/pixel-node/src/lib.rs
++++ b/pixel/engine/crates/pixel-node/src/lib.rs
+@@ -284,6 +284,7 @@ pub(crate) fn engine_info(engine: &Engine) -> serde_json::Value {
+         "basePx": engine.base_px,
+         "kittyKeyboard": engine.term.kitty_keyboard(),
+         "hosted": engine.term.is_hosted(),
++        "nativeOnly": engine.term.native_only(),
+         "colors": colors_json(&engine.colors),
+     })
+ }
+@@ -301,6 +302,7 @@ pub(crate) fn colors_json(colors: &TerminalColors) -> serde_json::Value {
+ pub struct PixelEngine {
+     engine: Option<Engine>,
+     info: String,
++    native_only: Arc<AtomicBool>,
+     tx: Sender<String>,
+     rx: Option<Receiver<String>>,
+     waker: Waker,
+@@ -351,6 +353,7 @@ impl PixelEngine {
+         Ok(Self {
+             engine: Some(engine),
+             info,
++            native_only: Arc::new(AtomicBool::new(false)),
+             tx,
+             rx: Some(rx),
+             waker,
+@@ -364,7 +367,9 @@ impl PixelEngine {
+ 
+     #[napi]
+     pub fn info(&self) -> String {
+-        self.info.clone()
++        let mut info: serde_json::Value = serde_json::from_str(&self.info).expect("engine info JSON");
++        info["nativeOnly"] = json!(self.native_only.load(Ordering::Relaxed));
++        info.to_string()
+     }
+ 
+     #[napi]
+@@ -515,6 +520,7 @@ impl PixelEngine {
+             .take()
+             .ok_or_else(|| Error::from_reason("engine already started"))?;
+         let stop = self.stop.clone();
++        let native_only = self.native_only.clone();
+         let surfaces = self.surfaces.clone();
+         let cell = SendEngine(engine);
+         self.thread = Some(std::thread::spawn(move || {
+@@ -532,6 +538,7 @@ impl PixelEngine {
+                     Ok(events) => events,
+                     Err(e) => break Some(e.to_string()),
+                 };
++                native_only.store(engine.term.native_only(), Ordering::Relaxed);
+                 autoprofile.tick(&mut engine);
+                 if stop.load(Ordering::Relaxed) {
+                     break None;
+diff --git a/pixel/packages/pixel/src/react/index.ts b/pixel/packages/pixel/src/react/index.ts
+index 32899a9..410b500 100644
+--- a/pixel/packages/pixel/src/react/index.ts
++++ b/pixel/packages/pixel/src/react/index.ts
+@@ -193,6 +193,7 @@ export interface RenderSettings {
+ }
+ 
+ export interface PixelRoot {
++  nativeOnly?(): boolean;
+   info: EngineInfo;
+   sharedTextures: boolean;
+   render(element: ReactNode): void;
+@@ -689,6 +690,7 @@ export function createRoot(options: RootOptions = {}): PixelRoot {
+   let nextSurfaceId = 1;
+ 
+   return {
++    nativeOnly: () => (JSON.parse(bridge.engine.info()) as EngineInfo).nativeOnly === true,
+     info,
+     sharedTextures: typeof bridge.engine.updateSurfaceTexture === "function",
+     render(element: ReactNode) {
+diff --git a/pixel/packages/pixel/src/react/native.ts b/pixel/packages/pixel/src/react/native.ts
+index a09ca7c..b59d145 100644
+--- a/pixel/packages/pixel/src/react/native.ts
++++ b/pixel/packages/pixel/src/react/native.ts
+@@ -68,6 +68,7 @@ export interface EngineInfo {
+   basePx: number;
+   kittyKeyboard: boolean;
+   hosted: boolean;
++  nativeOnly?: boolean;
+   colors: TerminalColors;
+ }
+ 
 diff --git a/pixel/packages/pixel/src/scale.ts b/pixel/packages/pixel/src/scale.ts
 index 843a208..4c8397e 100644
 --- a/pixel/packages/pixel/src/scale.ts
@@ -5263,6 +5597,450 @@ index 843a208..4c8397e 100644
 -  }
 -}
 +export { CellZoomFollower } from "./cell-zoom";
+diff --git a/shared/src/paths.ts b/shared/src/paths.ts
+index fa31aec..1a849b1 100644
+--- a/shared/src/paths.ts
++++ b/shared/src/paths.ts
+@@ -1,4 +1,3 @@
+-import crypto from "node:crypto";
+ import fs from "node:fs";
+ import os from "node:os";
+ import path from "node:path";
+@@ -37,13 +36,9 @@ function physical(dir: string): string {
+ 
+ export const INSTALL_ROOT = installRoot();
+ 
+-function stableIdentity(root: string): string {
+-  return root.replace(/([/\\]Caskroom[/\\]terminal-browser[/\\])[^/\\]+/, "$1");
+-}
+-
+-const suffix = crypto.createHash("sha256").update(stableIdentity(INSTALL_ROOT.root)).digest("hex").slice(0, 8);
+-
+-export const APP_DIR_NAME = `terminal-browser${INSTALL_ROOT.dev ? "-dev" : ""}-${suffix}`;
++// Vendored identity is stable across app versions and independent of upstream
++// terminal-browser profiles. Never migrate or overwrite the upstream store.
++export const APP_DIR_NAME = "tmux-ide-browser";
+ 
+ export const DATA_DIR = path.join(DATA_HOME, APP_DIR_NAME);
+ export const LOGS_DIR = path.join(STATE_HOME, APP_DIR_NAME, "logs");
+@@ -55,7 +50,7 @@ export const DB_FILE = path.join(DATA_DIR, "terminal-browser.db");
+ 
+ function configDir(): string {
+   const override = process.env.TERMINAL_BROWSER_CONFIG_DIR;
+-  return override && path.isAbsolute(override) ? override : path.join(CONFIG_HOME, "terminal-browser");
++  return override && path.isAbsolute(override) ? override : path.join(CONFIG_HOME, APP_DIR_NAME);
+ }
+ 
+ export const CONFIG_DIR = configDir();
+diff --git a/shared/src/release.ts b/shared/src/release.ts
+index 9cc3ad6..b44c600 100644
+--- a/shared/src/release.ts
++++ b/shared/src/release.ts
+@@ -1,7 +1,6 @@
+ import fs from "node:fs";
+ import path from "node:path";
+ 
+-const RELEASE_ORIGIN = process.env.TERMINAL_BROWSER_RELEASE_ORIGIN ?? "https://terminal-browser.sh/install";
+ 
+ export interface LatestRelease {
+   version: string;
+@@ -30,15 +29,12 @@ export function installedByHomebrew(): boolean {
+   return process.env.TERMINAL_BROWSER_DIST_ROOT?.split(path.sep).includes("Caskroom") ?? false;
+ }
+ 
++// This pinned browser is shipped and updated with tmux-ide. Fetching an
++// upstream installer would discard the native surface and control protocol.
+ export function upgradeCommand(): string {
+-  return installedByHomebrew() ? "brew upgrade --cask terminal-browser" : "terminal-browser upgrade";
++  return "tmux-ide update";
+ }
+ 
+-export async function fetchLatestRelease(channel: string, signal?: AbortSignal): Promise<LatestRelease> {
+-  const url = channel === "stable" ? `${RELEASE_ORIGIN}/latest.json` : `${RELEASE_ORIGIN}/${channel}/latest.json`;
+-  const response = await fetch(url, { signal });
+-  if (!response.ok) throw new Error(`release check failed (${response.status} from ${url})`);
+-  const latest = (await response.json()) as LatestRelease;
+-  if (!latest.version || !latest.install) throw new Error(`release check failed (bad manifest from ${url})`);
+-  return latest;
++export async function fetchLatestRelease(_channel: string, _signal?: AbortSignal): Promise<LatestRelease> {
++  throw new Error("This browser is managed by tmux-ide; use tmux-ide update.");
+ }
+diff --git a/browser/src/session/native-controls.ts b/browser/src/session/native-controls.ts
+new file mode 100644
+index 0000000..87ffd31
+--- /dev/null
++++ b/browser/src/session/native-controls.ts
+@@ -0,0 +1,95 @@
++import { randomUUID } from "node:crypto";
++import { z } from "zod";
++
++interface Page {
++  id: number;
++  enabled: boolean;
++  url: string;
++  title: string;
++  loading: boolean;
++  canGoBack: boolean;
++  canGoForward: boolean;
++}
++interface Host {
++  current(): Page | null;
++  back(): void;
++  forward(): void;
++  reload(): void;
++  navigate(text: string): void;
++}
++const identity = {
++  version: z.literal(1),
++  instance: z.string().uuid(),
++  pane: z.string().regex(/^%[0-9]+$/),
++  tab: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
++  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
++};
++const command = z.discriminatedUnion("action", [
++  z.object({ ...identity, action: z.enum(["back", "forward", "reload", "stop"]) }).strict(),
++  z.object({ ...identity, action: z.literal("navigate"), text: z.string().min(1).max(16384)
++    .refine(value => value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value)) }).strict(),
++]);
++const display = (value: string, max: number) => value.replace(/[\x00-\x1f\x7f]/g, "").slice(0, max);
++
++export class NativeControls {
++  private readonly instance = randomUUID();
++  private revision = 1;
++  private previous: string | null = null;
++  private disposed = false;
++  constructor(private readonly pane: string, private readonly host: Host) {
++    if (!/^%[0-9]+$/.test(pane)) throw new Error("invalid native browser pane");
++  }
++
++  identity() { return { instance: this.instance, pane: this.pane }; }
++
++  invalidate() {
++    this.revision++;
++    this.previous = null;
++  }
++
++  dispose() {
++    this.disposed = true;
++    this.invalidate();
++  }
++
++  snapshot() {
++    const page = this.disposed ? null : this.host.current();
++    if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 ||
++        !Number.isSafeInteger(this.revision)) {
++      if (this.previous !== null) this.invalidate();
++      return null;
++    }
++    const state = {
++      tab: page.id, enabled: page.enabled,
++      url: display(page.url, 16384), title: display(page.title, 512),
++      loading: page.loading, canGoBack: page.canGoBack, canGoForward: page.canGoForward,
++    };
++    const signature = JSON.stringify(state);
++    if (this.previous !== null && this.previous !== signature) this.revision++;
++    this.previous = signature;
++    if (!Number.isSafeInteger(this.revision)) return null;
++    return { version: 1 as const, instance: this.instance, pane: this.pane,
++      revision: this.revision, ...state };
++  }
++
++  execute(input: unknown) {
++    const request = command.parse(input);
++    const state = this.snapshot();
++    if (!state || !state.enabled || request.instance !== state.instance ||
++        request.pane !== state.pane || request.tab !== state.tab ||
++        request.revision !== state.revision) throw new Error("browser target changed");
++    if ((request.action === "back" && !state.canGoBack) ||
++        (request.action === "forward" && !state.canGoForward) ||
++        (request.action === "reload" && state.loading) ||
++        (request.action === "stop" && !state.loading)) throw new Error("browser action unavailable");
++    this.invalidate();
++    switch (request.action) {
++      case "back": this.host.back(); break;
++      case "forward": this.host.forward(); break;
++      case "reload":
++      case "stop": this.host.reload(); break;
++      case "navigate": this.host.navigate(request.text); break;
++    }
++    return this.snapshot();
++  }
++}
+diff --git a/browser/src/session/native-endpoint.ts b/browser/src/session/native-endpoint.ts
+new file mode 100644
+index 0000000..1468af1
+--- /dev/null
++++ b/browser/src/session/native-endpoint.ts
+@@ -0,0 +1,16 @@
++import { execFile } from "node:child_process";
++
++/** Publish only into the exact pane namespace supplied by tmux-ide open. */
++export function publishNativeEndpoint(env: NodeJS.ProcessEnv, socket: string,
++  identity: { instance: string; pane: string }) {
++  const binary = env.TMUX_IDE_BROWSER_TMUX;
++  const tmuxSocket = /^(.*),[0-9]+,[0-9]+$/.exec(env.TMUX ?? "")?.[1];
++  if (!binary?.startsWith("/") || !tmuxSocket?.startsWith("/") ||
++      !socket.startsWith("/") || socket.length > 1024 || identity.pane !== env.TMUX_PANE ||
++      !/^%[0-9]+$/.test(identity.pane)) return;
++  const value = JSON.stringify({version: 1, pid: process.pid, socket, ...identity});
++  execFile(binary, ["-S", tmuxSocket, "set-option", "-p", "-t", identity.pane,
++    "@tmux_ide_browser_control", value], {timeout: 2000, maxBuffer: 4096}, () => {});
++  // Do not clear a possibly replaced publisher on shutdown. The daemon checks PID
++  // liveness and the instance RPC refuses commands after its session is disposed.
++}
+diff --git a/browser/src/session/native-icon.ts b/browser/src/session/native-icon.ts
+new file mode 100644
+index 0000000..1910281
+--- /dev/null
++++ b/browser/src/session/native-icon.ts
+@@ -0,0 +1,64 @@
++import { execFile } from "node:child_process";
++import { nativeImage } from "electron";
++
++/** Only tmux-ide's launcher opts into pane metadata publication. */
++export class NativeIcon {
++  private last: string | null | undefined;
++  private pending: string | undefined;
++  private running = false;
++  private disposed = false;
++  private readonly binary: string | undefined;
++  private readonly pane: string | undefined;
++  private readonly socket: string | undefined;
++  constructor(env: NodeJS.ProcessEnv) {
++    this.binary = env.TMUX_IDE_BROWSER_TMUX;
++    this.pane = env.TMUX_PANE;
++    this.socket = /^(.*),[0-9]+,[0-9]+$/.exec(env.TMUX ?? "")?.[1];
++  }
++
++  update(file: string | null) {
++    if (this.disposed || this.last === file) return;
++    this.last = file;
++    let rgba = "";
++    try {
++      if (file) {
++        const icon = nativeImage.createFromPath(file);
++        if (!icon.isEmpty()) {
++          const bitmap = icon.resize({ width: 16, height: 16 }).toBitmap();
++          if (bitmap.length === 1024) {
++            // Electron's native bitmap is premultiplied BGRA on macOS.
++            // The wire pixels are straight-alpha RGBA, like decoded PNG pixels.
++            for (let i = 0; i < bitmap.length; i += 4) {
++              const blue = bitmap[i]!;
++              const alpha = bitmap[i + 3]!;
++              const straight = (value: number) => alpha ? Math.min(255, Math.round(value * 255 / alpha)) : 0;
++              bitmap[i] = straight(bitmap[i + 2]!);
++              bitmap[i + 1] = straight(bitmap[i + 1]!);
++              bitmap[i + 2] = straight(blue);
++            }
++            rgba = bitmap.toString("hex");
++          }
++        }
++      }
++    } catch { /* A missing or unreadable favicon retains the browser fallback. */ }
++    this.pending = `${process.pid}:${rgba}`;
++    this.flush();
++  }
++  dispose() {
++    this.disposed = true;
++    this.pending = "";
++    this.flush();
++  }
++  private flush() {
++    if (this.running || this.pending === undefined || !this.binary?.startsWith("/") ||
++        !this.socket?.startsWith("/") || !/^%[0-9]+$/.test(this.pane ?? "")) return;
++    const value = this.pending;
++    this.pending = undefined;
++    this.running = true;
++    execFile(this.binary, ["-S", this.socket, "set-option", "-p", "-t", this.pane!,
++      "@tmux_ide_browser_icon", value], { timeout: 2000, maxBuffer: 4096 }, () => {
++        this.running = false;
++        this.flush();
++      });
++  }
++}
+diff --git a/browser/test/managed-telemetry.test.js b/browser/test/managed-telemetry.test.js
+new file mode 100644
+index 0000000..ef8d230
+--- /dev/null
++++ b/browser/test/managed-telemetry.test.js
+@@ -0,0 +1,28 @@
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const { readFileSync } = require('node:fs');
++const vm = require('node:vm');
++
++test('vendored browser sends no upstream telemetry even when old settings enable it', async () => {
++  const exports = {};
++  let requests = 0;
++  const shared = {
++    LOGS_DIR: '/unused', lastSeenVersion: () => null, setLastSeenVersion: () => {},
++    lastLaunchDay: () => null, lastActiveDay: () => null,
++    setLastLaunchDay: () => {}, setLastActiveDay: () => {},
++    telemetryOptedOutByEnv: () => false,
++  };
++  vm.runInNewContext(readFileSync(require.resolve('../dist/telemetry.js'), 'utf8'), {
++    exports, process: { env: { TERMINAL_BROWSER_TELEMETRY_ORIGIN: 'https://example.invalid' } },
++    require: name => name === 'shared' ? shared : require(name),
++    fetch: async () => { requests++; throw new Error('must not send'); },
++    AbortSignal,
++  });
++  const telemetry = new exports.Telemetry({
++    version: '1.0.0', usageEnabled: () => true, crashReportsEnabled: () => true, terminal: () => 'fixture',
++  });
++  telemetry.launched();
++  telemetry.used();
++  await telemetry.crashed(new Error('fixture'), 'startup');
++  assert.equal(requests, 0);
++});
+diff --git a/browser/test/native-controls.test.js b/browser/test/native-controls.test.js
+new file mode 100644
+index 0000000..5c3a447
+--- /dev/null
++++ b/browser/test/native-controls.test.js
+@@ -0,0 +1,92 @@
++const {test} = require('node:test');
++const assert = require('node:assert/strict');
++const {NativeControls} = require('../dist/session/native-controls.js');
++function fixture() {
++  let page = {id: 1, enabled: true, url: 'https://example.test/', title: 'Example', loading: false, canGoBack: true, canGoForward: true};
++  const calls = [];
++  const controls = new NativeControls('%3', {
++    current: () => page,
++    back: () => calls.push('back'), forward: () => calls.push('forward'),
++    reload: () => calls.push(page.loading ? 'stop' : 'reload'),
++    navigate: text => calls.push(['navigate', text]),
++  });
++  const request = (action, extra = {}) => {
++    const {version, instance, pane, tab, revision} = controls.snapshot();
++    return {version, instance, pane, tab, revision, action, ...extra};
++  };
++  return {controls, calls, request, set: next => page = next, page};
++}
++test('routes each navigation action directly and rejects replay', () => {
++  const f = fixture();
++  for (const action of ['back','forward','reload']) {
++    const req = f.request(action); f.controls.execute(req);
++    assert.throws(() => f.controls.execute(req), /target changed/);
++  }
++  f.page.loading = true;
++  f.controls.execute(f.request('stop'));
++  f.controls.execute(f.request('navigate', {text: 'localhost:3000/a?q=x'}));
++  assert.deepEqual(f.calls, ['back','forward','reload','stop',['navigate','localhost:3000/a?q=x']]);
++});
++test('snapshot only advances for changed chrome, and bounds display strings', () => {
++  const f = fixture(); const first = f.controls.snapshot();
++  assert.deepEqual(f.controls.snapshot(), first);
++  f.page.title = 'new\n' + 'x'.repeat(2000); f.page.url = 'x'.repeat(20000);
++  const next = f.controls.snapshot();
++  assert.equal(next.revision, first.revision + 1);
++  assert.equal(next.title.length, 512); assert.equal(next.url.length, 16384);
++  assert.equal(next.title.includes('\n'), false);
++});
++test('tab activation, replacement and shutdown invalidate captured actions', () => {
++  const f = fixture(); let req = f.request('back');
++  f.page.id = 2; assert.throws(() => f.controls.execute(req), /target changed/);
++  req = f.request('back'); f.controls.invalidate();
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  req = f.request('back'); f.controls.dispose();
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  assert.equal(f.controls.snapshot(), null); assert.deepEqual(f.calls, []);
++});
++test('pane and instance identity never fall back to the current page', () => {
++  const f = fixture(); const other = fixture();
++  assert.throws(() => f.controls.execute({...f.request('back'), pane: '%4'}));
++  assert.throws(() => f.controls.execute(other.request('back')));
++  assert.deepEqual(f.calls, []);
++});
++test('loading transition cannot turn a delayed stop into reload', () => {
++  const f = fixture(); f.page.loading = true;
++  const req = f.request('stop'); f.page.loading = false;
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  assert.throws(() => f.controls.execute(f.request('stop')), /unavailable/);
++  f.page.canGoBack = false;
++  assert.throws(() => f.controls.execute(f.request('back')), /unavailable/);
++  f.page.enabled = false;
++  assert.throws(() => f.controls.execute(f.request('forward')), /target changed/);
++  assert.deepEqual(f.calls, []);
++});
++test('malformed and oversized commands cause no browser operation', () => {
++  const f = fixture();
++  for (const req of [null, {}, {...f.request('back'), unexpected: true},
++    f.request('navigate', {text: ''}), f.request('navigate', {text: 'a\nb'}),
++    f.request('navigate', {text: 'x'.repeat(16385)}), f.request('navigate', {text: '   '}),
++    {...f.request('back'), revision: 1.5}, {...f.request('back'), action: 'execute-script'}]) {
++    assert.throws(() => f.controls.execute(req));
++  }
++  assert.deepEqual(f.calls, []);
++});
++test('native controls expose stable endpoint identity without command authority', () => {
++  const f = fixture();
++  const identity = f.controls.identity();
++  assert.equal(identity.pane, '%3');
++  assert.equal(identity.instance, f.controls.snapshot().instance);
++  assert.throws(() => f.controls.execute({...identity, action:'reload'}));
++  assert.deepEqual(f.calls, []);
++});
++test('native chrome uses the whole pane and fallback restores browser chrome', () => {
++  const {computeLayout} = require('../dist/session/layout.js');
++  const info = {width:800,height:600,cellHeight:20,basePx:16};
++  const native = computeLayout(info, 1, null, 0, true);
++  assert.equal(native.chrome.toolbarHeight, 0);
++  assert.deepEqual(native.chrome.page, {x:0,y:0,width:800,height:600});
++  const fallback = computeLayout(info, 1, null);
++  assert.ok(fallback.chrome.toolbarHeight > 0);
++  assert.ok(fallback.chrome.page.y > 0);
++});
+diff --git a/browser/test/native-icon.test.js b/browser/test/native-icon.test.js
+new file mode 100644
+index 0000000..83401d1
+--- /dev/null
++++ b/browser/test/native-icon.test.js
+@@ -0,0 +1,45 @@
++const assert = require('node:assert/strict');
++const { test } = require('node:test');
++const { readFileSync } = require('node:fs');
++const vm = require('node:vm');
++function fixture(env = {}) {
++  const calls = [], callbacks = [];
++  const exports = {};
++  vm.runInNewContext(readFileSync(require.resolve('../dist/session/native-icon.js'), 'utf8'), {
++    exports, Buffer, process: { pid: 123, env: { TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env } },
++    require: name => name === 'electron' ? { nativeImage: { createFromPath: file => ({
++      isEmpty: () => file === 'missing', resize: () => ({ toBitmap: () => Buffer.from(Array(256).fill([10, 20, 30, file === 'translucent' ? 128 : 255]).flat()) })
++    }) } } : { execFile: (binary, args, options, done) => { calls.push({ binary, args: Array.from(args), options }); callbacks.push(done); } },
++  });
++  return { icon: new exports.NativeIcon({ TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env }), calls, callbacks };
++}
++test('publishes active favicon pixels once and coalesces tab switches', () => {
++  const { icon, calls, callbacks } = fixture();
++  icon.update('one.png');
++  assert.equal(calls.length, 1);
++  assert.equal(calls[0].args.at(-1), '123:' + '1e140aff'.repeat(256));
++  icon.update('one.png');
++  icon.update('two.png');
++  icon.update(null);
++  assert.equal(calls.length, 1);
++  callbacks.shift()();
++  assert.equal(calls.length, 2);
++  assert.equal(calls[1].args.at(-1), '123:');
++  icon.dispose();
++  callbacks.shift()();
++  assert.equal(calls[2].args.at(-1), '');
++  icon.update('three.png');
++  assert.equal(calls.length, 3);
++});
++test('missing favicon falls back; absent launcher authority cannot mutate tmux', () => {
++  const a = fixture(); a.icon.update('missing');
++  assert.equal(a.calls[0].args.at(-1), '123:');
++  for (const env of [{ TMUX_IDE_BROWSER_TMUX: undefined }, { TMUX_PANE: '%2;kill-server' }, { TMUX: 'invalid' }]) {
++    const b = fixture(env); b.icon.update('one.png'); assert.equal(b.calls.length, 0);
++  }
++});
++
++test('preserves straight-alpha favicon colours', () => {
++  const { icon, calls } = fixture(); icon.update('translucent');
++  assert.equal(calls[0].args.at(-1), '123:' + '3c281480'.repeat(256));
++});
 diff --git a/pixel/engine/crates/pixel-core/src/tmux_surface.rs b/pixel/engine/crates/pixel-core/src/tmux_surface.rs
 new file mode 100644
 index 0000000..f4cb2cc
@@ -5531,124 +6309,24 @@ index 0000000..7a11c3f
 +  assert.equal(zoom.ratio(info(24, 40)), 1.25);
 +  assert.equal(zoom.ratio(info(30, 32)), 0.8);
 +});
-diff --git a/browser/src/session/native-icon.ts b/browser/src/session/native-icon.ts
+diff --git a/shared/test/managed-release.test.js b/shared/test/managed-release.test.js
 new file mode 100644
-index 0000000..1910281
+index 0000000..e77db28
 --- /dev/null
-+++ b/browser/src/session/native-icon.ts
-@@ -0,0 +1,64 @@
-+import { execFile } from "node:child_process";
-+import { nativeImage } from "electron";
++++ b/shared/test/managed-release.test.js
+@@ -0,0 +1,15 @@
++const assert = require("node:assert/strict");
++const { test } = require("node:test");
++const { fetchLatestRelease, upgradeCommand } = require("../dist/release.js");
 +
-+/** Only tmux-ide's launcher opts into pane metadata publication. */
-+export class NativeIcon {
-+  private last: string | null | undefined;
-+  private pending: string | undefined;
-+  private running = false;
-+  private disposed = false;
-+  private readonly binary: string | undefined;
-+  private readonly pane: string | undefined;
-+  private readonly socket: string | undefined;
-+  constructor(env: NodeJS.ProcessEnv) {
-+    this.binary = env.TMUX_IDE_BROWSER_TMUX;
-+    this.pane = env.TMUX_PANE;
-+    this.socket = /^(.*),[0-9]+,[0-9]+$/.exec(env.TMUX ?? "")?.[1];
-+  }
-+
-+  update(file: string | null) {
-+    if (this.disposed || this.last === file) return;
-+    this.last = file;
-+    let rgba = "";
-+    try {
-+      if (file) {
-+        const icon = nativeImage.createFromPath(file);
-+        if (!icon.isEmpty()) {
-+          const bitmap = icon.resize({ width: 16, height: 16 }).toBitmap();
-+          if (bitmap.length === 1024) {
-+            // Electron's native bitmap is premultiplied BGRA on macOS.
-+            // The wire pixels are straight-alpha RGBA, like decoded PNG pixels.
-+            for (let i = 0; i < bitmap.length; i += 4) {
-+              const blue = bitmap[i]!;
-+              const alpha = bitmap[i + 3]!;
-+              const straight = (value: number) => alpha ? Math.min(255, Math.round(value * 255 / alpha)) : 0;
-+              bitmap[i] = straight(bitmap[i + 2]!);
-+              bitmap[i + 1] = straight(bitmap[i + 1]!);
-+              bitmap[i + 2] = straight(blue);
-+            }
-+            rgba = bitmap.toString("hex");
-+          }
-+        }
-+      }
-+    } catch { /* A missing or unreadable favicon retains the browser fallback. */ }
-+    this.pending = `${process.pid}:${rgba}`;
-+    this.flush();
-+  }
-+  dispose() {
-+    this.disposed = true;
-+    this.pending = "";
-+    this.flush();
-+  }
-+  private flush() {
-+    if (this.running || this.pending === undefined || !this.binary?.startsWith("/") ||
-+        !this.socket?.startsWith("/") || !/^%[0-9]+$/.test(this.pane ?? "")) return;
-+    const value = this.pending;
-+    this.pending = undefined;
-+    this.running = true;
-+    execFile(this.binary, ["-S", this.socket, "set-option", "-p", "-t", this.pane!,
-+      "@tmux_ide_browser_icon", value], { timeout: 2000, maxBuffer: 4096 }, () => {
-+        this.running = false;
-+        this.flush();
-+      });
-+  }
-+}
-diff --git a/browser/test/native-icon.test.js b/browser/test/native-icon.test.js
-new file mode 100644
-index 0000000..83401d1
---- /dev/null
-+++ b/browser/test/native-icon.test.js
-@@ -0,0 +1,45 @@
-+const assert = require('node:assert/strict');
-+const { test } = require('node:test');
-+const { readFileSync } = require('node:fs');
-+const vm = require('node:vm');
-+function fixture(env = {}) {
-+  const calls = [], callbacks = [];
-+  const exports = {};
-+  vm.runInNewContext(readFileSync(require.resolve('../dist/session/native-icon.js'), 'utf8'), {
-+    exports, Buffer, process: { pid: 123, env: { TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env } },
-+    require: name => name === 'electron' ? { nativeImage: { createFromPath: file => ({
-+      isEmpty: () => file === 'missing', resize: () => ({ toBitmap: () => Buffer.from(Array(256).fill([10, 20, 30, file === 'translucent' ? 128 : 255]).flat()) })
-+    }) } } : { execFile: (binary, args, options, done) => { calls.push({ binary, args: Array.from(args), options }); callbacks.push(done); } },
-+  });
-+  return { icon: new exports.NativeIcon({ TMUX_IDE_BROWSER_TMUX: '/bin/tmux', TMUX: '/tmp/private.sock,42,0', TMUX_PANE: '%2', ...env }), calls, callbacks };
-+}
-+test('publishes active favicon pixels once and coalesces tab switches', () => {
-+  const { icon, calls, callbacks } = fixture();
-+  icon.update('one.png');
-+  assert.equal(calls.length, 1);
-+  assert.equal(calls[0].args.at(-1), '123:' + '1e140aff'.repeat(256));
-+  icon.update('one.png');
-+  icon.update('two.png');
-+  icon.update(null);
-+  assert.equal(calls.length, 1);
-+  callbacks.shift()();
-+  assert.equal(calls.length, 2);
-+  assert.equal(calls[1].args.at(-1), '123:');
-+  icon.dispose();
-+  callbacks.shift()();
-+  assert.equal(calls[2].args.at(-1), '');
-+  icon.update('three.png');
-+  assert.equal(calls.length, 3);
-+});
-+test('missing favicon falls back; absent launcher authority cannot mutate tmux', () => {
-+  const a = fixture(); a.icon.update('missing');
-+  assert.equal(a.calls[0].args.at(-1), '123:');
-+  for (const env of [{ TMUX_IDE_BROWSER_TMUX: undefined }, { TMUX_PANE: '%2;kill-server' }, { TMUX: 'invalid' }]) {
-+    const b = fixture(env); b.icon.update('one.png'); assert.equal(b.calls.length, 0);
-+  }
-+});
-+
-+test('preserves straight-alpha favicon colours', () => {
-+  const { icon, calls } = fixture(); icon.update('translucent');
-+  assert.equal(calls[0].args.at(-1), '123:' + '3c281480'.repeat(256));
++test("managed browser updates cannot fetch or execute an upstream installer", async () => {
++  const original = globalThis.fetch;
++  let requests = 0;
++  globalThis.fetch = async () => { requests++; throw new Error("network must not be used"); };
++  try {
++    assert.equal(upgradeCommand(), "tmux-ide update");
++    await assert.rejects(fetchLatestRelease("stable"), /managed by tmux-ide/);
++    await assert.rejects(fetchLatestRelease("nightly"), /managed by tmux-ide/);
++    assert.equal(requests, 0);
++  } finally { globalThis.fetch = original; }
 +});

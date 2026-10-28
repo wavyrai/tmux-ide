@@ -1,1 +1,3 @@
 *.patch whitespace=-trailing-space
+# Preserve the checksum-pinned upstream font license verbatim.
+apps/tmux-gpui/integrations/pixel/licenses/JetBrainsMono-OFL.txt whitespace=-trailing-space
