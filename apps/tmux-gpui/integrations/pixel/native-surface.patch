@@ -1,27 +1,95 @@
+diff --git a/browser/src/registry.ts b/browser/src/registry.ts
+index 2f6c6c4..8f2eb01 100644
+--- a/browser/src/registry.ts
++++ b/browser/src/registry.ts
+@@ -29,6 +29,8 @@ export interface ControlHost {
+   splitDir: InstanceRow["splitDir"];
+   parentTty: string | null;
+   state(): WebViewState;
++  nativeState?(): unknown;
++  nativeCommand?(request: unknown): unknown;
+   openTab(url?: string, cwd?: string): number;
+   activateTab(id: number): boolean;
+   closeTab(id: number): boolean;
+@@ -42,6 +44,7 @@ export interface ControlHost {
+ interface ControlRequest {
+   id?: string;
+   cmd: string;
++  payload?: unknown;
+   url?: string;
+   cwd?: string;
+   tab?: number;
+@@ -159,6 +162,12 @@ export class Registry {
+ 
+   private async handle(request: ControlRequest): Promise<unknown> {
+     switch (request.cmd) {
++      case "native/1/state":
++        if (!this.host.nativeState) throw new Error("native controls unavailable");
++        return this.host.nativeState();
++      case "native/1/command":
++        if (!this.host.nativeCommand) throw new Error("native controls unavailable");
++        return this.host.nativeCommand(request.payload);
+       case "state":
+         return this.record();
+       case "where":
 diff --git a/browser/src/session/session.tsx b/browser/src/session/session.tsx
-index 803c1f6..f2db23b 100644
+index 803c1f6..23e7f6b 100644
 --- a/browser/src/session/session.tsx
 +++ b/browser/src/session/session.tsx
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
++import { NativeControls } from "./native-controls";
 +import { NativeIcon } from "./native-icon";
  import { spawn } from "node:child_process";
  import net from "node:net";
  import path from "node:path";
-@@ -269,6 +270,7 @@ class Session {
+@@ -269,6 +271,19 @@ class Session {
  
    constructor(ctx: SessionContext) {
      this.ctx = ctx;
 +    this.nativeIcon = new NativeIcon(ctx.env);
++    this.nativeControls = ctx.env.TMUX_IDE_BROWSER_TMUX?.startsWith("/") && /^%[0-9]+$/.test(ctx.env.TMUX_PANE ?? "")
++      ? new NativeControls(ctx.env.TMUX_PANE!, {
++          current: () => {
++            const tab = this.tabs.active;
++            return tab ? { ...tab.state, id: tab.id,
++              enabled: !!this.tabs.activeHandle && !this.activeRecord()?.reviewing && !this.shuttingDown } : null;
++          },
++          back: () => this.actions.back(),
++          forward: () => this.actions.forward(),
++          reload: () => this.actions.reload(),
++          navigate: text => this.actions.urlSubmit(text),
++        }) : null;
      this.defaultUrl = ctx.env.TERMINAL_BROWSER_START_PAGE === "1" ? START_URL : HOME_URL;
      const socket = ctx.env[TERMINAL_SOCKET_ENV];
      this.terminal = socket ? socketTerminal(socket) : detect(ctx.env);
-@@ -437,14 +439,18 @@ class Session {
+@@ -295,6 +310,7 @@ class Session {
+     this.tabs = new TabManager(
+       {
+         onActivated: () => {
++          this.nativeControls?.invalidate();
+           this.pageMenu = null;
+           this.reconcileRecord();
+           this.recalculateLayout();
+@@ -386,6 +402,10 @@ class Session {
+       splitDir: splitDirection(flagValue(this.argv, "--split-dir")),
+       parentTty: flagValue(this.argv, "--parent-tty"),
+       state: () => this.tabs.activeState ?? this.fallbackState,
++      ...(this.nativeControls ? {
++        nativeState: () => this.nativeControls!.snapshot(),
++        nativeCommand: (request: unknown) => this.nativeControls!.execute(request),
++      } : {}),
+       openTab: (url, cwd) =>
+         this.tabs.create(url ? normalizeUrl(url, cwd, this.searchUrl()) : this.defaultUrl).id,
+       activateTab: (id) => {
+@@ -437,14 +457,21 @@ class Session {
      else this.tabs.close(id);
    }
  
 +  private readonly nativeIcon: NativeIcon;
++  private readonly nativeControls: NativeControls | null;
 +
    private syncTitle() {
++    this.nativeControls?.snapshot();
      const state = this.tabs.activeState;
 +    this.nativeIcon.update(state?.favicon ?? null);
      this.root?.setTitle(state ? state.title || displayUrl(state.url) : "");
@@ -31,6 +99,7 @@ index 803c1f6..f2db23b 100644
      if (this.shuttingDown) return;
      this.shuttingDown = true;
 +    this.nativeIcon.dispose();
++    this.nativeControls?.dispose();
      for (const record of this.records.values()) record.dispose();
      this.records.clear();
      this.shownRecord = null;
@@ -5651,4 +5720,183 @@ index 0000000..83401d1
 +test('preserves straight-alpha favicon colours', () => {
 +  const { icon, calls } = fixture(); icon.update('translucent');
 +  assert.equal(calls[0].args.at(-1), '123:' + '3c281480'.repeat(256));
++});
+diff --git a/browser/src/session/native-controls.ts b/browser/src/session/native-controls.ts
+new file mode 100644
+index 0000000..0362d0b
+--- /dev/null
++++ b/browser/src/session/native-controls.ts
+@@ -0,0 +1,93 @@
++import { randomUUID } from "node:crypto";
++import { z } from "zod";
++
++interface Page {
++  id: number;
++  enabled: boolean;
++  url: string;
++  title: string;
++  loading: boolean;
++  canGoBack: boolean;
++  canGoForward: boolean;
++}
++interface Host {
++  current(): Page | null;
++  back(): void;
++  forward(): void;
++  reload(): void;
++  navigate(text: string): void;
++}
++const identity = {
++  version: z.literal(1),
++  instance: z.string().uuid(),
++  pane: z.string().regex(/^%[0-9]+$/),
++  tab: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
++  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
++};
++const command = z.discriminatedUnion("action", [
++  z.object({ ...identity, action: z.enum(["back", "forward", "reload", "stop"]) }).strict(),
++  z.object({ ...identity, action: z.literal("navigate"), text: z.string().min(1).max(16384)
++    .refine(value => value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value)) }).strict(),
++]);
++const display = (value: string, max: number) => value.replace(/[\x00-\x1f\x7f]/g, "").slice(0, max);
++
++export class NativeControls {
++  private readonly instance = randomUUID();
++  private revision = 1;
++  private previous: string | null = null;
++  private disposed = false;
++  constructor(private readonly pane: string, private readonly host: Host) {
++    if (!/^%[0-9]+$/.test(pane)) throw new Error("invalid native browser pane");
++  }
++
++  invalidate() {
++    this.revision++;
++    this.previous = null;
++  }
++
++  dispose() {
++    this.disposed = true;
++    this.invalidate();
++  }
++
++  snapshot() {
++    const page = this.disposed ? null : this.host.current();
++    if (!page || !Number.isSafeInteger(page.id) || page.id <= 0 ||
++        !Number.isSafeInteger(this.revision)) {
++      if (this.previous !== null) this.invalidate();
++      return null;
++    }
++    const state = {
++      tab: page.id, enabled: page.enabled,
++      url: display(page.url, 16384), title: display(page.title, 512),
++      loading: page.loading, canGoBack: page.canGoBack, canGoForward: page.canGoForward,
++    };
++    const signature = JSON.stringify(state);
++    if (this.previous !== null && this.previous !== signature) this.revision++;
++    this.previous = signature;
++    if (!Number.isSafeInteger(this.revision)) return null;
++    return { version: 1 as const, instance: this.instance, pane: this.pane,
++      revision: this.revision, ...state };
++  }
++
++  execute(input: unknown) {
++    const request = command.parse(input);
++    const state = this.snapshot();
++    if (!state || !state.enabled || request.instance !== state.instance ||
++        request.pane !== state.pane || request.tab !== state.tab ||
++        request.revision !== state.revision) throw new Error("browser target changed");
++    if ((request.action === "back" && !state.canGoBack) ||
++        (request.action === "forward" && !state.canGoForward) ||
++        (request.action === "reload" && state.loading) ||
++        (request.action === "stop" && !state.loading)) throw new Error("browser action unavailable");
++    this.invalidate();
++    switch (request.action) {
++      case "back": this.host.back(); break;
++      case "forward": this.host.forward(); break;
++      case "reload":
++      case "stop": this.host.reload(); break;
++      case "navigate": this.host.navigate(request.text); break;
++    }
++    return this.snapshot();
++  }
++}
+diff --git a/browser/test/native-controls.test.js b/browser/test/native-controls.test.js
+new file mode 100644
+index 0000000..7a896f6
+--- /dev/null
++++ b/browser/test/native-controls.test.js
+@@ -0,0 +1,74 @@
++const {test} = require('node:test');
++const assert = require('node:assert/strict');
++const {NativeControls} = require('../dist/session/native-controls.js');
++function fixture() {
++  let page = {id: 1, enabled: true, url: 'https://example.test/', title: 'Example', loading: false, canGoBack: true, canGoForward: true};
++  const calls = [];
++  const controls = new NativeControls('%3', {
++    current: () => page,
++    back: () => calls.push('back'), forward: () => calls.push('forward'),
++    reload: () => calls.push(page.loading ? 'stop' : 'reload'),
++    navigate: text => calls.push(['navigate', text]),
++  });
++  const request = (action, extra = {}) => {
++    const {version, instance, pane, tab, revision} = controls.snapshot();
++    return {version, instance, pane, tab, revision, action, ...extra};
++  };
++  return {controls, calls, request, set: next => page = next, page};
++}
++test('routes each navigation action directly and rejects replay', () => {
++  const f = fixture();
++  for (const action of ['back','forward','reload']) {
++    const req = f.request(action); f.controls.execute(req);
++    assert.throws(() => f.controls.execute(req), /target changed/);
++  }
++  f.page.loading = true;
++  f.controls.execute(f.request('stop'));
++  f.controls.execute(f.request('navigate', {text: 'localhost:3000/a?q=x'}));
++  assert.deepEqual(f.calls, ['back','forward','reload','stop',['navigate','localhost:3000/a?q=x']]);
++});
++test('snapshot only advances for changed chrome, and bounds display strings', () => {
++  const f = fixture(); const first = f.controls.snapshot();
++  assert.deepEqual(f.controls.snapshot(), first);
++  f.page.title = 'new\n' + 'x'.repeat(2000); f.page.url = 'x'.repeat(20000);
++  const next = f.controls.snapshot();
++  assert.equal(next.revision, first.revision + 1);
++  assert.equal(next.title.length, 512); assert.equal(next.url.length, 16384);
++  assert.equal(next.title.includes('\n'), false);
++});
++test('tab activation, replacement and shutdown invalidate captured actions', () => {
++  const f = fixture(); let req = f.request('back');
++  f.page.id = 2; assert.throws(() => f.controls.execute(req), /target changed/);
++  req = f.request('back'); f.controls.invalidate();
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  req = f.request('back'); f.controls.dispose();
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  assert.equal(f.controls.snapshot(), null); assert.deepEqual(f.calls, []);
++});
++test('pane and instance identity never fall back to the current page', () => {
++  const f = fixture(); const other = fixture();
++  assert.throws(() => f.controls.execute({...f.request('back'), pane: '%4'}));
++  assert.throws(() => f.controls.execute(other.request('back')));
++  assert.deepEqual(f.calls, []);
++});
++test('loading transition cannot turn a delayed stop into reload', () => {
++  const f = fixture(); f.page.loading = true;
++  const req = f.request('stop'); f.page.loading = false;
++  assert.throws(() => f.controls.execute(req), /target changed/);
++  assert.throws(() => f.controls.execute(f.request('stop')), /unavailable/);
++  f.page.canGoBack = false;
++  assert.throws(() => f.controls.execute(f.request('back')), /unavailable/);
++  f.page.enabled = false;
++  assert.throws(() => f.controls.execute(f.request('forward')), /target changed/);
++  assert.deepEqual(f.calls, []);
++});
++test('malformed and oversized commands cause no browser operation', () => {
++  const f = fixture();
++  for (const req of [null, {}, {...f.request('back'), unexpected: true},
++    f.request('navigate', {text: ''}), f.request('navigate', {text: 'a\nb'}),
++    f.request('navigate', {text: 'x'.repeat(16385)}), f.request('navigate', {text: '   '}),
++    {...f.request('back'), revision: 1.5}, {...f.request('back'), action: 'execute-script'}]) {
++    assert.throws(() => f.controls.execute(req));
++  }
++  assert.deepEqual(f.calls, []);
 +});

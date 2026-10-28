@@ -182,3 +182,20 @@ decoded icons, uses them in pane headers and window tabs, and falls back to the
 browser mark when the page has no usable favicon. This remains a development
 integration. The native header and live favicon updates were verified on October
 27; the window-tab icon still needs a browser-pane focus check.
+
+## Native navigation controls (in progress)
+
+The prepared browser now accepts `native/1/state` and `native/1/command` on its
+existing instance socket when launched with tmux-ide's pane environment. Commands
+call the existing browser methods directly; no terminal key sequences are used.
+State includes a fresh browser instance ID, pane, active tab, revision, URL,
+title and back/forward/loading flags. Commands must echo the current identity
+and revision. Accepted commands invalidate that revision to prevent replay.
+Tab activation, loading changes and shutdown invalidate stale actions; a delayed
+Stop cannot turn into Reload. Navigation text and displayed metadata are bounded.
+
+The GPUI toolbar and its scoped discovery/transport are not connected yet, and
+this API is not included in native alpha 0.1.9. The current patch builds and passes
+47 browser JavaScript tests, including six navigation-control regressions. It
+also applies to a clean checkout at the pinned source revision. These checks do
+not establish live GUI navigation behavior.

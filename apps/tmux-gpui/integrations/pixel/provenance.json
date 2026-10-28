@@ -2,7 +2,7 @@
   "repository": "https://github.com/zenbu-labs/terminal-browser",
   "commit": "660ec51e0ec0e5172338a2920e50089943882af4",
   "patch": "native-surface.patch",
-  "patchSha256": "8acfad76a27a01949c8f4689107dff522ed72aaf043996010ba189dc701352f9",
+  "patchSha256": "5cf50505e5f644beb8b00b3e5f4f357b2ddfa9988e504a086cd7b25e784d780d",
   "initialReference": {
     "repository": "https://github.com/zenbu-labs/pixel",
     "commit": "cdfdb9d6a424cb2c3774ccb258a9a6f9c4ceff0d"
