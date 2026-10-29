@@ -111,6 +111,16 @@ uuid                 = { features = ["serde"], version = "1" }
 windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
 zeroize              = "=1.9.0"
 
+# Shipped build: whole-program optimisation, one codegen unit, and debug info
+# moved out of the executable into a packed dSYM next to it in target/release
+# for crash symbolication. The panic strategy stays the default (unwind).
+[profile.release]
+codegen-units   = 1
+debug           = "line-tables-only"
+lto             = "fat"
+split-debuginfo = "packed"
+strip           = "debuginfo"
+
 # Repository-owned Apple surface support; pinned source and modifications live in ../vendor.
 [patch.crates-io]
 bezel-gpui-apple = { path = "../vendor/bezel-gpui-apple" }

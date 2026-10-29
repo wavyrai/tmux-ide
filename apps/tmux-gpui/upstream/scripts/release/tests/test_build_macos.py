@@ -1,5 +1,6 @@
 """Local build orchestration only: never compile or sign real artifacts."""
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -169,6 +170,27 @@ class BuildMacosTests(unittest.TestCase):
         self.assertIn("Output already exists", self.run_build())
         self.assertTrue(output.is_symlink())
         self.assertFalse((self.root / "calls").exists())
+
+
+class ReleaseProfileTests(unittest.TestCase):
+    """The shipped executable's size policy lives in the workspace manifest."""
+
+    def test_release_profile_optimises_and_keeps_a_dsym(self):
+        manifest = (SCRIPTS.parents[1] / "Cargo.toml").read_text()
+        section = re.search(r"^\[profile\.release\]\n((?:[^\[\n].*\n|\n)*)", manifest, re.M)
+        self.assertIsNotNone(section, "missing [profile.release]")
+        settings = dict(
+            (key.strip(), value.strip())
+            for key, value in (line.split("=", 1) for line in section.group(1).splitlines()
+                               if "=" in line and not line.lstrip().startswith("#"))
+        )
+        self.assertEqual(settings, {
+            "codegen-units": "1",
+            "debug": '"line-tables-only"',
+            "lto": '"fat"',
+            "split-debuginfo": '"packed"',
+            "strip": '"debuginfo"',
+        })
 
 
 if __name__ == "__main__":
