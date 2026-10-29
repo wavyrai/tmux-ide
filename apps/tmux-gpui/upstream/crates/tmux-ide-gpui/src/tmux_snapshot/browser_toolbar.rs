@@ -50,15 +50,16 @@ impl SnapshotView {
         }
         true
     }
-    fn current_browser(&self, pane: &str) -> Option<&BrowserState> {
+    fn observed_browser(&self, pane: &str) -> Option<&BrowserState> {
         let state = self.browser_state.browser_controls.get(pane)?;
         (self.browser_state.browser_pane_visible(pane)
             && self.browser_request == self.browser_state.request
-            && self.presence.ready()
-            && self.browser_state.input_ready
-            && !self.browser_state.retained_preview
-            && state.enabled)
+            && !self.browser_state.retained_preview)
             .then_some(state)
+    }
+    fn current_browser(&self, pane: &str) -> Option<&BrowserState> {
+        let state = self.observed_browser(pane)?;
+        (self.presence.ready() && self.browser_state.input_ready && state.enabled).then_some(state)
     }
     fn send_browser(&mut self, pane: &str, command: BrowserCommand, cx: &mut Context<Self>) {
         let Some(state) = self.current_browser(pane) else {
@@ -132,7 +133,9 @@ impl SnapshotView {
         cx.notify();
     }
     pub(super) fn browser_header(&self, pane: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let state = self.current_browser(pane)?;
+        // Observation owns the layout; input authority only enables its actions.
+        let state = self.observed_browser(pane)?;
+        let ready = self.current_browser(pane).is_some();
         let mut row = div().flex().items_center().gap_1().flex_1().min_w_0();
         for (name, label, action, available) in [
             (
@@ -158,6 +161,7 @@ impl SnapshotView {
                 true,
             ),
         ] {
+            let available = ready && available;
             let command = BrowserCommand::new(state, action, None);
             let pane = pane.to_owned();
             let icon = match action {
@@ -203,12 +207,15 @@ impl SnapshotView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .cursor_pointer()
                     .child(state.url.clone())
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        cx.stop_propagation();
-                        view.open_browser_address(pane.clone(), window, cx);
-                    })),
+                    .when(ready, |address| {
+                        address.cursor_pointer().on_click(cx.listener(
+                            move |view, _, window, cx| {
+                                cx.stop_propagation();
+                                view.open_browser_address(pane.clone(), window, cx);
+                            },
+                        ))
+                    }),
             )
             .into_any_element(),
         )

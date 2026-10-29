@@ -593,15 +593,13 @@ impl SnapshotView {
             && hit_regions::is_painted(Some(&frame), self.browser_state.frame.as_ref()))
         .then(|| divider::paint::Painted::capture(&self.browser_state, width, height))
         .flatten();
-        let card_canvas = theme.surface;
         div()
             .relative()
             .size_full()
-            .bg(rgb(if cards.is_some() {
-                card_canvas
-            } else {
-                theme.background
-            }))
+            // Cards own their opaque surfaces; gutters expose the shell material.
+            .when(cards.is_none(), |terminal| {
+                terminal.bg(rgb(theme.background))
+            })
             .overflow_hidden()
             .children(self.card_surfaces(width))
             .child(

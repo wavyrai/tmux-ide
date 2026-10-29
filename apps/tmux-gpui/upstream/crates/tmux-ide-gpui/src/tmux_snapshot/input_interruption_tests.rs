@@ -431,6 +431,14 @@ fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext)
             // while browser keyboard shortcuts still belong to the focused pane.
             view.browser_state.selected_pane = Some("pane-b".into());
             assert!(view.browser_header("pane-a", cx).is_some());
+            // Losing input authority must not replace native chrome with a title.
+            view.browser_state.input_ready = false;
+            view.browser_state.selected_pane = Some("pane-a".into());
+            assert!(view.browser_header("pane-a", cx).is_some());
+            assert!(!view.browser_shortcut_key(&key("cmd-r"), window, cx));
+            assert!(receiver.try_recv().is_err());
+            view.browser_state.input_ready = true;
+            view.browser_state.selected_pane = Some("pane-b".into());
             assert!(!view.browser_shortcut_key(&key("cmd-r"), window, cx));
             view.browser_state.panes[1].window_id = Some("other-window".into());
             assert!(view.browser_header("pane-a", cx).is_none());

@@ -488,7 +488,14 @@ impl SnapshotView {
                 self.browser_state.retained_preview = false;
             }
             self.browser_state.input_ready = false;
-            self.browser_state.status = "Loading selection".into();
+            // retain_window_transition already assigned the quiet navigation status.
+            // Replacing it here inserts a notice into the titlebar for the first
+            // click frame, before the worker publishes the same retained preview.
+            if !(self.browser_state.retained_preview
+                && self.browser_state.status == "Switching window…")
+            {
+                self.browser_state.status = "Loading selection".into();
+            }
             self.browser_state.surface = if going_home {
                 browser::Surface::Home
             } else {
