@@ -211,3 +211,74 @@ fn a_corrupt_remembered_font_falls_back_to_listing_at_launch(cx: &mut TestAppCon
         serde_json::from_str::<serde_json::Value>(REMEMBERED).unwrap()
     );
 }
+
+#[gpui::test]
+fn reopening_the_picker_while_fonts_are_listed_does_not_list_them_again(cx: &mut TestAppContext) {
+    let fixture = Fixture::new(Some(REMEMBERED)).unwrap();
+    let (view, cx) = fixture.launch(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_picker_mode(Mode::Font, window, cx);
+            view.close_picker(window, cx);
+            view.open_picker_mode(Mode::Font, window, cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(fixture.calls(), 1);
+}
+
+#[gpui::test]
+fn the_picker_resolves_the_saved_family_rather_than_its_remembered_substitute(
+    cx: &mut TestAppContext,
+) {
+    let fixture = Fixture::new(Some(
+        r#"{"version":1,"family":"Test Mono","resolved":"A Mono","fallbacks":[]}"#,
+    ))
+    .unwrap();
+    let (view, cx) = fixture.launch(cx);
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.terminal_font.config.family, "A Mono");
+    });
+    open_font_picker(&view, cx);
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.terminal_font.config.family, "Test Mono");
+    });
+    assert_eq!(fixture.cache().unwrap()["resolved"], "Test Mono");
+}
+
+#[gpui::test]
+fn a_picker_opened_before_the_saved_font_loads_keeps_its_listing(cx: &mut TestAppContext) {
+    let fixture = Fixture::new(Some(REMEMBERED)).unwrap();
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    let calls = fixture.calls.clone();
+    let path = fixture.dir.path().join("gpui-fonts.json");
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.terminal_font = crate::tmux_snapshot::terminal_font::Settings::pending();
+            view.terminal_font.path = Some(path);
+            view.terminal_font.source = Some(Arc::new(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                INSTALLED.iter().map(|name| (*name).to_owned()).collect()
+            }));
+            view.open_picker_mode(Mode::Font, window, cx);
+        })
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(
+            !view.terminal_font.ready,
+            "chosen before the saved font loaded"
+        )
+    });
+    cx.update(|_, cx| view.update(cx, |view, cx| view.discover_terminal_fonts(cx)));
+    cx.run_until_parked();
+    open_font_picker(&view, cx);
+    assert_eq!(fixture.calls(), 1);
+    view.read_with(cx, |view, _| {
+        assert!(view.terminal_font.ready);
+        assert_eq!(view.terminal_font.names, LISTED);
+        assert_eq!(view.terminal_font.config.family, "Test Mono");
+        assert_eq!(view.terminal_font.config.size, 15.);
+    });
+}

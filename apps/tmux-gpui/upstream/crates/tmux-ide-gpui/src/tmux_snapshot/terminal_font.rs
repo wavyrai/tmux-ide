@@ -43,7 +43,10 @@ pub(super) struct Settings {
     /// `names` is listed, so a family can be chosen.
     pub ready: bool,
     discovery_started: bool,
+    /// The preferences file has been read; until then the family is a default.
+    loaded: bool,
     listing_started: bool,
+    listed: bool,
     /// The family the preferences file names, before resolution.
     requested: String,
     pub revision: u64,
@@ -61,11 +64,22 @@ impl Default for Settings {
             saving: false,
             ready: false,
             discovery_started: false,
+            loaded: true,
             listing_started: false,
+            listed: false,
             revision: 0,
             note: None,
             path: None,
             source: None,
+        }
+    }
+}
+impl Settings {
+    /// The window's state until the launch step has read the preferences file.
+    pub(super) fn pending() -> Self {
+        Self {
+            loaded: false,
+            ..Self::default()
         }
     }
 }
@@ -174,6 +188,7 @@ impl Settings {
             }
         }
         result.requested = result.config.family.clone();
+        result.loaded = true;
         result
     }
     /// Resolves the requested family against `names`, now the picker's list,
@@ -186,6 +201,7 @@ impl Settings {
         self.names = names;
         self.ready = true;
         self.listing_started = true;
+        self.listed = true;
     }
     fn remembered(&self) -> Option<(PathBuf, cache::Resolved)> {
         Some((
@@ -254,11 +270,10 @@ impl SnapshotView {
                 settings.discovery_started = true;
                 settings.source = current.source;
                 settings.revision = current.revision;
-                if current.listing_started && !settings.ready {
+                if current.listed && !settings.ready {
+                    settings.list(current.names);
+                } else if current.listing_started {
                     settings.listing_started = true;
-                    if current.ready {
-                        settings.list(current.names);
-                    }
                 }
                 view.terminal_font = settings;
                 view.invalidate_font_geometry(cx);
@@ -280,6 +295,12 @@ impl SnapshotView {
         cx.spawn(async move |view, cx| {
             let names = task.await;
             let _ = view.update(cx, |view, cx| {
+                if !view.terminal_font.loaded {
+                    // The launch step resolves the saved family against these.
+                    view.terminal_font.names = names;
+                    view.terminal_font.listed = true;
+                    return;
+                }
                 let before = view.terminal_font.config.clone();
                 view.terminal_font.list(names);
                 let after = &view.terminal_font.config;
@@ -344,7 +365,6 @@ impl SnapshotView {
             let _ = view.update(cx, |view, cx| {
                 view.terminal_font.saving = false;
                 if let Ok(config) = result {
-                    view.terminal_font.requested = config.family.clone();
                     view.terminal_font.config = config;
                     view.terminal_font.note = Some("Terminal font saved");
                     view.invalidate_font_geometry(cx);

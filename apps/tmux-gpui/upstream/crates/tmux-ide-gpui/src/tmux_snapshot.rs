@@ -413,7 +413,7 @@ fn show_owned(
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
-                        terminal_font: Default::default(),
+                        terminal_font: terminal_font::Settings::pending(),
                         window_reveal: Default::default(),
                         resize_gesture: Default::default(),
                         last_resize: None,
