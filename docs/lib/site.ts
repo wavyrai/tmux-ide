@@ -4,7 +4,7 @@ const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 
 export const SITE_URL = (configuredUrl || "https://tmux-ide.com").replace(/\/+$/u, "");
 export const SITE_NAME = "tmux-ide";
-export const SITE_TAGLINE = "The open-source workspace for coding agents.";
+export const SITE_TAGLINE = "The open-source tmux workspace for coding agents.";
 export const SITE_TITLE = "tmux-ide: terminal multiplexer workspace for coding agents";
 export const SITE_DESCRIPTION =
   "tmux for coding agents: run Claude Code and Codex in the terminal multiplexer you already use, see each agent's status and jump to the one that needs you.";

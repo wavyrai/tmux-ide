@@ -1,10 +1,10 @@
-import { INSTALL_COMMAND } from "@/lib/site";
+import { INSTALL_COMMAND, SITE_TAGLINE } from "@/lib/site";
 
 /**
  * The hero is one constant so the headline can change in a single place.
  */
 export const LANDING_HERO = {
-  title: "The open-source tmux workspace for coding agents.",
+  title: SITE_TAGLINE,
   // The lede leads with one foreground sentence; the rest reads in the muted tone.
   ledeLead:
     "Run and coordinate a team of coding agents, such as Claude Code and Codex, in the tmux sessions you already use.",
