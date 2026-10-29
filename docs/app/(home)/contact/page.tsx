@@ -4,7 +4,7 @@ import { TrustLink, TrustPage, TrustSection } from "@/components/trust/trust-pag
 import { SITE_REPOSITORY } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Contact tmux-ide",
+  title: "Contact",
   description:
     "How to report a bug, ask a question or send a security report about tmux-ide: GitHub issues for support, GitHub Security Advisories for security.",
   alternates: { canonical: "/contact" },

@@ -12,7 +12,7 @@ import {
 } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "About tmux-ide",
+  title: "About",
   description:
     "What tmux-ide is, who builds it, its MIT license and source code, and how each release reaches npm and the tmux-ide.com installer.",
   alternates: { canonical: "/about" },
