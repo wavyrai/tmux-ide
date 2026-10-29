@@ -1419,4 +1419,6 @@ route. `check-packaged-app.sh` now checks both apps: 4 of 4 package tests on the
 default app, 10 passed and 1 skipped (the no-Node check) on the development app.
 That run replaced cargo-about notice generation with a stub in a scratch copy,
 because cargo-about 0.9.2 was not installed; notice generation was not qualified.
-Signing and the installer verifier still expect `Resources/node`.
+The preview signer and the installer's app verifier now sign and verify `Resources/node`
+only when it is present; a present Node must still be a signed regular file. Neither
+was run against real Apple tools.

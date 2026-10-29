@@ -264,3 +264,28 @@ test("browser native helpers are signed before the app and recorded in the recei
     assert.ok(signs[4].args.at(-1).endsWith(".app"));
     assert.equal(result.receipt.executables.length, 4);
   }));
+
+test("an app without bundled Node signs and records only its native executable", () =>
+  fixture(async ({ options, runner, calls }) => {
+    await rm(join(options.app, "Contents/Resources/node"));
+    const result = await signPreviewApp(options, { runner });
+    assert.equal(result.ok, true);
+    const signs = calls.filter((c) => c.args[0] === "--force");
+    assert.equal(signs.length, 2);
+    assert.ok(signs[0].args.at(-1).endsWith("/TmuxIDE.app/Contents/MacOS/tmux-ide-gpui"));
+    assert.ok(signs[1].args.at(-1).endsWith("/TmuxIDE.app"));
+    assert.ok(signs.every((c) => !c.args.includes("--entitlements")));
+    assert.deepEqual(
+      result.receipt.executables.map((e) => e.path),
+      ["Contents/MacOS/tmux-ide-gpui"],
+    );
+  }));
+
+test("a bundled Node that is not a regular file is refused before signing", () =>
+  fixture(async ({ options, runner, calls }) => {
+    await rm(join(options.app, "Contents/Resources/node"));
+    await mkdir(join(options.app, "Contents/Resources/node"));
+    const result = await signPreviewApp(options, { runner });
+    assert.deepEqual(result, { ok: false, stage: "inputs" });
+    assert.equal(calls.length, 0);
+  }));
