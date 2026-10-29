@@ -126,7 +126,7 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 
 ## Agent resources and discovery files
 
-- Agent skill: ${SKILL_TREE_URL} (\`skill/SKILL.md\`)
+- Agent skill: ${SKILL_TREE_URL} (\`skill/SKILL.md\`); install it with \`npx skills add wavyrai/tmux-ide\` (skills.sh), or \`tmux-ide integration install claude\` for Claude Code
 - Rules for coding agents working in the repository: ${SITE_REPOSITORY}/blob/main/AGENTS.md
 - MCP server card for \`tmux-ide mcp\`: ${SITE_URL}/.well-known/mcp/server-card.json
 - Agentic Resource Discovery catalog: ${SITE_URL}/.well-known/ard.json

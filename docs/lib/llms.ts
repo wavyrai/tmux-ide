@@ -74,7 +74,7 @@ export function llmsIndex(): string {
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
     `- [AGENTS.md](${SITE_REPOSITORY}/blob/main/AGENTS.md): instructions for AI coding agents working in the tmux-ide repository`,
-    `- [Agent skill](${SITE_REPOSITORY}/tree/main/skill): \`skill/SKILL.md\`, how an agent uses tmux-ide (status contract, fleet, send, restore)`,
+    `- [Agent skill](${SITE_REPOSITORY}/tree/main/skill): \`skill/SKILL.md\`, how an agent uses tmux-ide (status contract, fleet, send, restore); install with \`npx skills add wavyrai/tmux-ide\``,
   ]);
   add("Agent discovery", [
     link(
