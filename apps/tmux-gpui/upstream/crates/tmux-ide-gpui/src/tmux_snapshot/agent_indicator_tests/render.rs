@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
 use super::mount::{frame, mount, slot_colors};
