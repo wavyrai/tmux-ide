@@ -38,6 +38,12 @@ const columns = [
   },
 ] as const;
 
+const trustLinks = [
+  ["About", "/about"],
+  ["Contact", "/contact"],
+  ["Privacy", "/privacy"],
+] as const;
+
 export function SiteFooter() {
   return (
     <footer className="marketing-dark-footer overflow-hidden border-t">
@@ -75,6 +81,13 @@ export function SiteFooter() {
             <span>An open-source project by Prototyper · MIT license</span>
           </div>
           <div className="footer-muted footer-surface type-caption-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-(--site-gutter) py-6 sm:justify-end">
+            <nav aria-label="About tmux-ide" className="flex gap-x-5">
+              {trustLinks.map(([label, href]) => (
+                <Link key={href} href={href} className="footer-foreground marketing-color-action">
+                  {label}
+                </Link>
+              ))}
+            </nav>
             <span>© {new Date().getFullYear()} tmux-ide</span>
             <span>tmux owns the processes. tmux-ide gives them a workspace.</span>
           </div>
