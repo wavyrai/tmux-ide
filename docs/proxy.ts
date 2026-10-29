@@ -65,7 +65,13 @@ function wantsMarkdown(request: NextRequest): boolean {
 }
 
 // HTML pages with no markdown twin: a markdown request gets the HTML page.
-const HTML_ONLY_PAGES = new Set(["/themes"]);
+const HTML_ONLY_PAGES = new Set([
+  "/about",
+  "/contact",
+  "/privacy",
+  "/tmux-for-coding-agents",
+  "/themes",
+]);
 
 /** The markdown route behind an HTML page path, or null for a path this site has no page for. */
 function markdownRoute(pathname: string): string | null {
