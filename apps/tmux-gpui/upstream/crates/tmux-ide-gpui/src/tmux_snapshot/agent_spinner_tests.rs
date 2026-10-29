@@ -23,7 +23,13 @@ fn the_tick_is_scheduled_only_while_visible_allowed_and_reserved(cx: &mut TestAp
         cx.executor().advance_clock(period);
         cx.run_until_parked();
     };
+    // Moves the clock to the next pending timer, if there is one.
+    let timer_pending = |cx: &mut VisualTestContext| {
+        cx.run_until_parked();
+        cx.dispatcher.advance_clock_to_next_timer()
+    };
     assert!(slots.attached());
+    assert!(!timer_pending(cx), "control: an idle spinner has no timer");
     cx.update(|_, cx| slots.sync(true, cx));
     assert!(!ticking(cx), "nothing painted, so nothing to animate");
     reserve(&slots);
@@ -34,7 +40,8 @@ fn the_tick_is_scheduled_only_while_visible_allowed_and_reserved(cx: &mut TestAp
     );
     cx.update(|_, cx| slots.sync(true, cx));
     assert!(ticking(cx));
-    wait(cx, TICK);
+    assert!(timer_pending(cx), "control: a running spinner has a timer");
+    cx.run_until_parked();
     assert_eq!(slots.frame(), 1);
     cx.simulate_visibility_change(WindowVisibility::Hidden);
     assert!(!ticking(cx), "an occluded window keeps a tick scheduled");
