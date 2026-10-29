@@ -188,7 +188,6 @@ impl Settings {
             }
         }
         result.requested = result.config.family.clone();
-        result.loaded = true;
         result
     }
     /// Resolves the requested family against `names`, now the picker's list,
