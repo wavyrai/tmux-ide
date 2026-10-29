@@ -1,6 +1,7 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
 mod agent_indicator;
+mod agent_spinner;
 mod appearance;
 mod browser;
 mod browser_direct;
@@ -267,7 +268,7 @@ fn show_owned(
                 }
             },
             |window, cx| {
-                cx.new(|cx: &mut Context<SnapshotView>| {
+                let snapshot = cx.new(|cx: &mut Context<SnapshotView>| {
                     let task = mailbox.map(|mailbox| {
                         cx.spawn(async move |entity, cx| {
                             loop {
@@ -433,7 +434,8 @@ fn show_owned(
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
                     view
-                })
+                });
+                agent_spinner::window_root(snapshot, window, cx)
             },
         );
         if let Err(error) = result {
@@ -490,7 +492,7 @@ struct SnapshotView {
     browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
-    agent_animation: agent_indicator::Clock,
+    agent_animation: agent_spinner::Slots,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
