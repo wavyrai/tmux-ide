@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OFF_SITE_CASES } from "./off-site-cases.mjs";
 
 // The About, Contact and Privacy pages that tell people and agents who runs
 // tmux-ide.com and how to reach them. Each must be a real, indexable page with
@@ -110,75 +111,113 @@ if (contact) {
     );
 }
 
-// The Privacy page says the site loads nothing from other sites: no built page or
-// stylesheet may pull a script, stylesheet, font, image, media, frame, preload or
-// icon from another origin.
+// The Privacy page says the site loads nothing from other sites. Deny by default:
+// an off-site URL anywhere in built HTML attributes, inline CSS or built CSS fails,
+// unless the attribute only navigates or describes (a link, a form, metadata).
 const filesUnder = (dir, extension) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = resolve(dir, entry.name);
     if (entry.isDirectory()) return filesUnder(full, extension);
     return entry.name.endsWith(extension) ? [full] : [];
   });
-const LOADING_RELS = new Set([
-  "stylesheet",
-  "preload",
-  "modulepreload",
-  "prefetch",
-  "preconnect",
-  "dns-prefetch",
-  "icon",
-  "apple-touch-icon",
-  "mask-icon",
-  "manifest",
+const NAVIGATION_RELS = new Set([
+  "alternate",
+  "author",
+  "bookmark",
+  "canonical",
+  "external",
+  "help",
+  "license",
+  "me",
+  "nofollow",
+  "noopener",
+  "noreferrer",
+  "opener",
+  "pingback",
+  "prev",
+  "privacy-policy",
+  "search",
+  "sitemap",
+  "tag",
+  "terms-of-service",
 ]);
-const attribute = (tag, name) =>
-  tag
-    .match(new RegExp(`\\s${name}=(?:"([^"]*)"|'([^']*)')`, "iu"))
-    ?.slice(1)
-    .map((value) => (value === undefined ? value : decode(value)))
-    .find(Boolean);
-// Absolute URLs in CSS text after url(, image-set(, @import or a quote; comments dropped.
-const cssUrls = (css) =>
-  [
-    ...css
-      .replace(/\/\*[\s\S]*?\*\//gu, " ")
-      .matchAll(/(?:url\(|image-set\(|@import|["'])\s*["']?((?:https?:)?\/\/[^"')\s;,]+)/giu),
-  ].map((match) => match[1]);
-const htmlUrls = (html) => {
+const absoluteUrls = (text) =>
+  [...text.matchAll(/(?:^|[\s,("'=;:>])((?:https?:)?\/\/[^\s"'(),;<>]+)/giu)].map(
+    (match) => match[1],
+  );
+const offSite = (url) => new URL(url, origin).origin !== origin;
+// CSS escapes (`https\:\/\/`) unescaped; comments and @namespace (not a load) dropped.
+const cssText = (css) =>
+  css
+    .replace(/\\([^0-9a-f\n])/giu, "$1")
+    .replace(/\/\*[\s\S]*?\*\//gu, " ")
+    .replace(/@namespace\b[^;]*;/giu, " ")
+    .replace(/url\(\s*(["']?)data:[\s\S]*?\1\s*\)/giu, " ");
+const navigationOnly = (tag, name, attributes) => {
+  if (name.startsWith("data-") || name.startsWith("aria-") || name.startsWith("xmlns")) return true;
+  if (
+    ["title", "alt", "itemtype", "itemid", "itemprop", "cite", "action", "formaction"].includes(
+      name,
+    )
+  )
+    return true;
+  if (name === "href" && ["a", "area"].includes(tag)) return true;
+  if (name === "content" && tag === "meta")
+    return !/^refresh$/iu.test(attributes["http-equiv"] ?? "");
+  if (name === "href" && tag === "link") {
+    const rels = (attributes.rel ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+    return rels.length > 0 && rels.every((rel) => NAVIGATION_RELS.has(rel));
+  }
+  return false;
+};
+const htmlLoads = (html) => {
   const urls = [];
-  for (const [tag] of html.matchAll(/<[a-z][\w:-]*\b[^>]*>/giu)) {
-    for (const name of ["src", "poster", "data"]) {
-      const value = attribute(tag, name);
-      if (value) urls.push(value);
+  for (const [tagText, rawName] of html.matchAll(
+    /<([a-z][\w:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/giu,
+  )) {
+    const tag = rawName.toLowerCase();
+    const attributes = {};
+    for (const match of tagText.matchAll(
+      /\s([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/gu,
+    ))
+      attributes[match[1].toLowerCase()] = decode(match[2] ?? match[3] ?? match[4] ?? "");
+    for (const [name, value] of Object.entries(attributes)) {
+      if (navigationOnly(tag, name, attributes)) continue;
+      if (name === "srcdoc") urls.push(...htmlLoads(value));
+      else if (!/^\s*data:/iu.test(value))
+        urls.push(...absoluteUrls(name === "style" ? cssText(value) : value));
     }
-    const srcset = attribute(tag, "srcset");
-    if (srcset) urls.push(...srcset.split(",").map((part) => part.trim().split(/\s+/u)[0]));
-    if (/^<(?:image|use|feimage)\b/iu.test(tag))
-      urls.push(attribute(tag, "href") ?? "", attribute(tag, "xlink:href") ?? "");
-    if (/^<link\b/iu.test(tag)) {
-      const rels = (attribute(tag, "rel") ?? "").toLowerCase().split(/\s+/u);
-      if (rels.some((rel) => LOADING_RELS.has(rel))) urls.push(attribute(tag, "href") ?? "");
-    }
-    const style = attribute(tag, "style");
-    if (style) urls.push(...cssUrls(style));
   }
   for (const [, css] of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/giu))
-    urls.push(...cssUrls(css));
+    urls.push(...absoluteUrls(cssText(css)));
+  // Script bodies are code (N8: runtime loads), except the two JSON types the browser acts on.
+  for (const [, json] of html.matchAll(
+    /<script\b[^>]*\stype="(?:speculationrules|importmap)"[^>]*>([\s\S]*?)<\/script>/giu,
+  ))
+    urls.push(...absoluteUrls(json));
   return urls;
 };
-const offSite = (url) => {
-  if (!/^(?:https?:)?\/\//iu.test(url.trim())) return false;
-  return new URL(url.trim(), origin).origin !== origin;
-};
+// The guard against its catalogue: every "fail" case must report an off-site load
+// and every "pass" case must not, before the built output is trusted to it.
+for (const testCase of OFF_SITE_CASES) {
+  const urls =
+    testCase.kind === "html" ? htmlLoads(testCase.input) : absoluteUrls(cssText(testCase.input));
+  const got = urls.some(offSite) ? "fail" : "pass";
+  if (got !== testCase.expect)
+    fail(
+      `off-site guard case ${testCase.id} (${testCase.what}): expected ${testCase.expect}, got ${got}`,
+    );
+}
+
 const loadSources = [
-  ...filesUnder(appDir, ".html").map((file) => [file, htmlUrls(readFileSync(file, "utf8"))]),
+  ...filesUnder(appDir, ".html").map((file) => [file, htmlLoads(readFileSync(file, "utf8"))]),
   ...filesUnder(resolve(docsDir, ".next/static"), ".css").map((file) => [
     file,
-    cssUrls(readFileSync(file, "utf8")),
+    absoluteUrls(cssText(readFileSync(file, "utf8"))),
   ]),
 ];
 for (const [file, urls] of loadSources) {
-  for (const url of urls.filter(offSite))
+  for (const url of new Set(urls.filter(offSite)))
     fail(`${relative(resolve(docsDir, ".next"), file)} loads ${url} from another site`);
 }
 
