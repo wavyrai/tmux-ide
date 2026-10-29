@@ -44,12 +44,28 @@ const config = {
     const canonicalLink = (path) => [
       { key: "Link", value: `<${siteUrl}${path}>; rel="canonical"` },
     ];
+    const negotiatedVary = [
+      {
+        key: "Vary",
+        value:
+          "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept, User-Agent",
+      },
+    ];
     return [
       { source: "/:path*", headers: securityHeaders },
       { source: "/docs/:path+.mdx", headers: canonicalLink("/docs/:path+") },
       { source: "/docs/:path+.md", headers: canonicalLink("/docs/:path+") },
       { source: "/docs.mdx", headers: canonicalLink("/docs") },
       { source: "/docs.md", headers: canonicalLink("/docs") },
+      // proxy.ts serves these HTML routes as markdown on request. Next's own list
+      // is repeated so the value is complete whichever header a host keeps.
+      { source: "/", headers: negotiatedVary },
+      { source: "/docs/:path*", headers: negotiatedVary },
+      // The homepage's markdown twin, for agents that look for an alternate.
+      {
+        source: "/",
+        headers: [{ key: "Link", value: '</index.md>; rel="alternate"; type="text/markdown"' }],
+      },
     ];
   },
   async redirects() {
