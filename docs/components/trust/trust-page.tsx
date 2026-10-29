@@ -62,7 +62,7 @@ export function TrustLink({ href, children }: { href: string; children: ReactNod
   return (
     <Link
       href={href}
-      className="marketing-link-action text-fd-primary"
+      className="marketing-link-action text-fd-primary underline decoration-fd-border underline-offset-4"
       {...(external ? { rel: "noreferrer" } : {})}
     >
       {children}
