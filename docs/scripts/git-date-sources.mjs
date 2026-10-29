@@ -8,10 +8,17 @@ export const docsDir = resolve(import.meta.dirname, "..");
 export const contentDir = "content/docs";
 /** Sources that render the marketing homepage. */
 export const homeSources = ["app/(home)", "lib/landing-content.ts", "components/marketing"];
+/** Sources that render each About, Contact and Privacy page. */
+export const trustSources = {
+  "/about": ["app/(home)/about", "components/trust"],
+  "/contact": ["app/(home)/contact", "components/trust"],
+  "/privacy": ["app/(home)/privacy", "components/trust"],
+};
 
 /** Source paths (relative to docs/) for a site pathname, or null when unknown. */
 export function sourcesForPath(pathname) {
   if (pathname === "/") return homeSources;
+  if (Object.hasOwn(trustSources, pathname)) return trustSources[pathname];
   const match = /^\/docs(?:\/(.+))?$/u.exec(pathname);
   if (!match) return null;
   const slug = match[1];
