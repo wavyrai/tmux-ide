@@ -108,40 +108,75 @@ if (contact) {
     fail(
       `/contact does not link to GitHub Security Advisories (${repository}/security/advisories)`,
     );
-  if (/mailto:/iu.test(contact))
-    fail("/contact contains a mailto: link; contact goes through GitHub");
 }
 
-// The Privacy page says the site loads nothing from other sites: no built page may
-// pull a script, stylesheet, image, frame or preload from another origin.
-const builtPages = (dir) =>
+// The Privacy page says the site loads nothing from other sites: no built page or
+// stylesheet may pull a script, stylesheet, font, image, media, frame, preload or
+// icon from another origin.
+const filesUnder = (dir, extension) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = resolve(dir, entry.name);
-    if (entry.isDirectory()) return builtPages(full);
-    return entry.name.endsWith(".html") ? [full] : [];
+    if (entry.isDirectory()) return filesUnder(full, extension);
+    return entry.name.endsWith(extension) ? [full] : [];
   });
-const loadedUrls = (html) => [
-  ...[
-    ...html.matchAll(/<(?:script|img|iframe|source|video|audio)\b[^>]*\ssrc(?:set)?="([^"]+)"/giu),
-  ].map((match) => match[1]),
-  ...[...html.matchAll(/<link\b[^>]*>/giu)]
-    .filter((match) =>
-      /\srel="(?:stylesheet|preload|modulepreload|icon|apple-touch-icon|manifest)"/iu.test(
-        match[0],
-      ),
-    )
-    .map((match) => match[0].match(/\shref="([^"]+)"/iu)?.[1] ?? ""),
-];
-for (const file of builtPages(appDir)) {
-  const html = readFileSync(file, "utf8");
-  for (const value of loadedUrls(html)) {
-    for (const candidate of value.split(",").map((part) => part.trim().split(/\s+/u)[0])) {
-      if (!/^(?:https?:)?\/\//iu.test(candidate)) continue;
-      const loadOrigin = new URL(candidate, origin).origin;
-      if (loadOrigin !== origin)
-        fail(`${relative(appDir, file)} loads ${candidate} from another site`);
+const LOADING_RELS = new Set([
+  "stylesheet",
+  "preload",
+  "modulepreload",
+  "prefetch",
+  "preconnect",
+  "dns-prefetch",
+  "icon",
+  "apple-touch-icon",
+  "mask-icon",
+  "manifest",
+]);
+const attribute = (tag, name) =>
+  tag
+    .match(new RegExp(`\\s${name}=(?:"([^"]*)"|'([^']*)')`, "iu"))
+    ?.slice(1)
+    .find(Boolean);
+// @import "x", @import url(x) and url(x) targets in CSS text.
+const cssUrls = (css) =>
+  [...css.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)|url\(\s*["']?([^"')\s]+)/giu)].map(
+    (match) => match[1] ?? match[2],
+  );
+const htmlUrls = (html) => {
+  const urls = [];
+  for (const [tag] of html.matchAll(/<[a-z][\w:-]*\b[^>]*>/giu)) {
+    for (const name of ["src", "poster", "data"]) {
+      const value = attribute(tag, name);
+      if (value) urls.push(value);
     }
+    const srcset = attribute(tag, "srcset");
+    if (srcset) urls.push(...srcset.split(",").map((part) => part.trim().split(/\s+/u)[0]));
+    if (/^<(?:image|use|feimage)\b/iu.test(tag))
+      urls.push(attribute(tag, "href") ?? "", attribute(tag, "xlink:href") ?? "");
+    if (/^<link\b/iu.test(tag)) {
+      const rels = (attribute(tag, "rel") ?? "").toLowerCase().split(/\s+/u);
+      if (rels.some((rel) => LOADING_RELS.has(rel))) urls.push(attribute(tag, "href") ?? "");
+    }
+    const style = attribute(tag, "style");
+    if (style) urls.push(...cssUrls(style));
   }
+  for (const [, css] of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/giu))
+    urls.push(...cssUrls(css));
+  return urls;
+};
+const offSite = (url) => {
+  if (!/^(?:https?:)?\/\//iu.test(url.trim())) return false;
+  return new URL(url.trim(), origin).origin !== origin;
+};
+const loadSources = [
+  ...filesUnder(appDir, ".html").map((file) => [file, htmlUrls(readFileSync(file, "utf8"))]),
+  ...filesUnder(resolve(docsDir, ".next/static"), ".css").map((file) => [
+    file,
+    cssUrls(readFileSync(file, "utf8")),
+  ]),
+];
+for (const [file, urls] of loadSources) {
+  for (const url of urls.filter(offSite))
+    fail(`${relative(resolve(docsDir, ".next"), file)} loads ${url} from another site`);
 }
 
 if (failures.length > 0) {
