@@ -122,6 +122,7 @@ export const LANDING_AGENT_FEATURES = [
     eyebrow: "Navigate",
     title: "Exact agent-to-pane navigation",
     body: "Click an agent or choose it from the keyboard. tmux-ide resolves the exact session, window, and pane before transferring focus—no scanning a wall of terminals.",
+    link: { label: "tmux for coding agents", href: "/tmux-for-coding-agents" },
     figure: { number: "4", label: "Agent routing / exact pane focus" },
   },
 ] as const;
