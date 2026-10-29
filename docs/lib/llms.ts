@@ -94,6 +94,31 @@ export function llmsIndex(): string {
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
+    `- [AGENTS.md](${SITE_REPOSITORY}/blob/main/AGENTS.md): instructions for AI coding agents working in the tmux-ide repository`,
+    `- [Agent skill](${SITE_REPOSITORY}/tree/main/skill): \`skill/SKILL.md\`, how an agent uses tmux-ide (status contract, fleet, send, restore); install with \`npx skills add wavyrai/tmux-ide\``,
+  ]);
+  add("Agent discovery", [
+    link(
+      "Agentic Resource Discovery catalog",
+      "/.well-known/ard.json",
+      "the MCP server, the agent skill, agents.md and llms.txt",
+    ),
+    link(
+      "AI Catalog",
+      "/.well-known/ai-catalog.json",
+      "the same entries in the AI Catalog 1.0 format",
+    ),
+    link(
+      "MCP server card",
+      "/.well-known/mcp/server-card.json",
+      "the local `tmux-ide mcp` stdio server",
+    ),
+    link("API catalog (RFC 9727)", "/.well-known/api-catalog", "links to the automation docs"),
+    link(
+      "Agent skills index",
+      "/.well-known/agent-skills/index.json",
+      "the skill's URL and sha256 digest",
+    ),
   ]);
   add("Markdown", [
     link("Docs index", "/docs/llms.txt", "every docs page in sidebar order"),

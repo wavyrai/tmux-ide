@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tmux-ide",
+  "description": "The open-source workspace for coding agents, built on tmux: live agent status, pane messaging and crash-proof restore.",
+  "author": { "name": "Prototyper", "url": "https://www.prototyper.co" },
+  "homepage": "https://tmux-ide.com",
+  "repository": "https://github.com/wavyrai/tmux-ide",
+  "license": "MIT",
+  "keywords": ["tmux", "coding-agents", "agent-status", "mcp", "agent-skills"]
+}
