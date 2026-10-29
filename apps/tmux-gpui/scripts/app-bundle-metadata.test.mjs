@@ -69,8 +69,6 @@ test("bounded metadata file rejects links/oversize; invalid explicit assembly me
             [
               fileURLToPath(new URL("./assemble-local-app.mjs", import.meta.url)),
               "/nonexistent-native",
-              "/nonexistent-node",
-              "/nonexistent-license",
               "/nonexistent-receipt",
               output,
               "--metadata",

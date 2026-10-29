@@ -491,7 +491,8 @@ compatibility checks. Maintained Home machine-filter/context and empty-server
 creation fixtures now support strict explicit packaged-app mode: bundled Node and
 browser, private scratch cwd, no source fallback. Source and exact-package paths
 both passed with unchanged source sessions. Evidence and exact artifact hashes:
-`evidence/packaged-fleet-home-2026-10-11/`. This narrows the packaging gap for those
+`evidence/packaged-fleet-home-2026-10-11/`. (Since 29 October the default app has no
+Node; this packaged mode applies to development apps assembled with `--node`.) This narrows the packaging gap for those
 bridge workflows only; no native UI, real remote SSH, signing or install/update
 acceptance is claimed. Saved-machine removal is still source-process qualified.
 
