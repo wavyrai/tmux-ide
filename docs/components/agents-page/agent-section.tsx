@@ -17,7 +17,7 @@ const figureCursorWithoutLabel = "[&_.tui-cursor-label]:hidden";
 function withCode(text: string) {
   return text.split(/(`[^`]+`)/u).map((part, index) =>
     part.startsWith("`") ? (
-      <code key={index} className="font-mono text-fd-foreground">
+      <code key={index} className="whitespace-nowrap font-mono text-fd-foreground">
         {part.slice(1, -1)}
       </code>
     ) : (
@@ -90,7 +90,7 @@ export function AgentSectionBand({
       <Band>
         <BandBody>
           <SectionHeading section={section} />
-          <div className="mt-4 grid gap-x-6 lg:grid-cols-2">
+          <div className="grid gap-x-6 lg:grid-cols-2">
             {section.body.map((paragraph) => (
               <p key={paragraph} className={`mt-4 ${bodyCopy}`}>
                 {withCode(paragraph)}
