@@ -1,5 +1,4 @@
-import type { Metadata } from "next";
-
+import { trustMetadata } from "@/components/trust/metadata";
 import { TrustLink, TrustPage, TrustSection } from "@/components/trust/trust-page";
 import {
   CURRENT_RELEASE_PATH,
@@ -11,12 +10,12 @@ import {
   SOFTWARE_VERSION,
 } from "@/lib/site";
 
-export const metadata: Metadata = {
+export const metadata = trustMetadata({
   title: "About",
   description:
     "What tmux-ide is, who builds it, its MIT license and source code, and how each release reaches npm and the tmux-ide.com installer.",
-  alternates: { canonical: "/about" },
-};
+  path: "/about",
+});
 
 export default function AboutPage() {
   return (

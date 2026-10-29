@@ -1,14 +1,13 @@
-import type { Metadata } from "next";
-
+import { trustMetadata } from "@/components/trust/metadata";
 import { TrustLink, TrustPage, TrustSection } from "@/components/trust/trust-page";
 import { SITE_REPOSITORY } from "@/lib/site";
 
-export const metadata: Metadata = {
+export const metadata = trustMetadata({
   title: "Contact",
   description:
     "How to report a bug, ask a question or send a security report about tmux-ide: GitHub issues for support, GitHub Security Advisories for security.",
-  alternates: { canonical: "/contact" },
-};
+  path: "/contact",
+});
 
 const NEW_ISSUE_URL = `${SITE_REPOSITORY}/issues/new/choose`;
 const ISSUES_URL = `${SITE_REPOSITORY}/issues`;

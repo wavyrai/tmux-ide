@@ -1,14 +1,13 @@
-import type { Metadata } from "next";
-
+import { trustMetadata } from "@/components/trust/metadata";
 import { TrustLink, TrustPage, TrustSection } from "@/components/trust/trust-page";
 import { SITE_REPOSITORY } from "@/lib/site";
 
-export const metadata: Metadata = {
+export const metadata = trustMetadata({
   title: "Privacy",
   description:
     "What tmux-ide.com and the tmux-ide software collect: no cookies, cookieless Vercel Web Analytics page views, and a daily npm version check.",
-  alternates: { canonical: "/privacy" },
-};
+  path: "/privacy",
+});
 
 const VERCEL_ANALYTICS_PRIVACY = "https://vercel.com/docs/analytics/privacy-policy";
 const source = (path: string) => `${SITE_REPOSITORY}/blob/main/${path}`;
