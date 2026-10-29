@@ -143,6 +143,7 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 - Use \`tmux-ide send\`, not raw \`tmux send-keys\`, so the target resolves by id, title or name and long
   messages go through a dispatch file.
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
+- Theme presets for the app, each with the config line that selects it: ${SITE_URL}/themes
 - Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
   ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
 `;

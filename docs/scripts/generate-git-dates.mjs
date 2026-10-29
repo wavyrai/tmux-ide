@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { contentDir, docsDir, homeSources } from "./git-date-sources.mjs";
+import { contentDir, docsDir, homeSources, themesSources } from "./git-date-sources.mjs";
 
 // Source-backed modification dates for sitemap <lastmod> and dateModified,
 // computed once at build time so server code never touches git or the
@@ -64,6 +64,11 @@ const known = (dates) =>
 
 const dates = {
   home: lastCommitDate(homeSources),
+  routes: known(
+    Object.fromEntries(
+      Object.entries(themesSources).map(([path, sources]) => [path, lastCommitDate(sources)]),
+    ),
+  ),
   pages: known(pages),
   published: known(published),
 };

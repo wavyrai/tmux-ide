@@ -89,6 +89,11 @@ export function llmsIndex(): string {
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
+    link(
+      "tmux themes",
+      "/themes",
+      "the app's light and dark theme presets, each with the line that selects it",
+    ),
   ]);
   add("Markdown", [
     link("Docs index", "/docs/llms.txt", "every docs page in sidebar order"),

@@ -5,9 +5,10 @@ import { absoluteUrl } from "@/lib/site";
 /**
  * Markdown for agents on the HTML routes: `/` and the docs pages answer with
  * their markdown twin when the request asks for markdown. The matcher leaves
- * only extensionless page paths, and this site's only extensionless pages are
- * `/` and `/docs/**`, so any other path asked for as markdown gets a markdown
- * 404 here (check-agent-markdown.mjs fails if a new page route breaks that).
+ * only extensionless page paths. `/` and `/docs/**` have markdown twins, the
+ * pages in HTML_ONLY_PAGES answer with HTML, and any other path asked for as
+ * markdown gets a markdown 404 here (check-agent-markdown.mjs fails if a new
+ * page route is in neither list).
  */
 
 // User-initiated fetchers only. Search crawlers (Googlebot, Bingbot, GPTBot,
@@ -63,6 +64,9 @@ function wantsMarkdown(request: NextRequest): boolean {
   );
 }
 
+// HTML pages with no markdown twin: a markdown request gets the HTML page.
+const HTML_ONLY_PAGES = new Set(["/themes"]);
+
 /** The markdown route behind an HTML page path, or null for a path this site has no page for. */
 function markdownRoute(pathname: string): string | null {
   if (pathname === "/") return "/index.md";
@@ -82,6 +86,7 @@ export function proxy(request: NextRequest): NextResponse {
   // Next replaces a proxy's Vary on a rendered page or route handler.
   if (!agentMode && !wantsMarkdown(request)) return NextResponse.next();
 
+  if (HTML_ONLY_PAGES.has(pathname.replace(/\/+$/u, ""))) return NextResponse.next();
   const route = markdownRoute(pathname);
   if (!route) {
     return new NextResponse(notFoundMarkdown(pathname), {
