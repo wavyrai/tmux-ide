@@ -101,3 +101,45 @@ fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
         assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
     }
 }
+
+#[gpui::test]
+fn actual_window_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        let frame = crate::tmux_snapshot::display_frame::DisplayFrame::Native(Arc::new(
+            crate::terminal_painter::NativeFrame {
+                width: 1,
+                height: 1,
+                cursor: None,
+                rows: vec![Arc::from([herdr_client::protocol::CellData {
+                    symbol: "x".into(),
+                    fg: 0,
+                    bg: 0,
+                    modifier: 0,
+                    skip: false,
+                    hyperlink: None,
+                }])],
+            },
+        ));
+        view.frame = Some(frame.clone());
+        view.browser_state.frame = Some(frame);
+        view.browser_state.status = "Connected".into();
+        view
+    });
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let before = cx.debug_bounds("workspace-window-strip").unwrap();
+    let target = cx.debug_bounds("workspace-window-1").unwrap();
+    cx.simulate_click(target.center(), Modifiers::default());
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::Pane { request: 8, .. }
+    ));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+    assert!(cx.debug_bounds("tmux-status-viewport").is_none());
+    assert!(view.read_with(cx, |v, _| v.browser_state.retained_preview));
+    assert!(!view.read_with(cx, |v, _| v.browser_state.input_ready));
+}
