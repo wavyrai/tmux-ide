@@ -67,17 +67,18 @@ index 8a3a04f..f798f7a 100644
      width: info.width,
      height: info.height,
 diff --git a/browser/src/session/session.tsx b/browser/src/session/session.tsx
-index 803c1f6..2ed4498 100644
+index 803c1f6..5890976 100644
 --- a/browser/src/session/session.tsx
 +++ b/browser/src/session/session.tsx
-@@ -1,3 +1,6 @@
+@@ -1,3 +1,7 @@
 +import { NativeControls } from "./native-controls";
++import { NativeChrome } from "./native-chrome";
 +import { publishNativeEndpoint } from "./native-endpoint";
 +import { NativeIcon } from "./native-icon";
  import { spawn } from "node:child_process";
  import net from "node:net";
  import path from "node:path";
-@@ -269,6 +272,19 @@ class Session {
+@@ -269,6 +273,19 @@ class Session {
  
    constructor(ctx: SessionContext) {
      this.ctx = ctx;
@@ -97,7 +98,7 @@ index 803c1f6..2ed4498 100644
      this.defaultUrl = ctx.env.TERMINAL_BROWSER_START_PAGE === "1" ? START_URL : HOME_URL;
      const socket = ctx.env[TERMINAL_SOCKET_ENV];
      this.terminal = socket ? socketTerminal(socket) : detect(ctx.env);
-@@ -295,6 +311,7 @@ class Session {
+@@ -295,6 +312,7 @@ class Session {
      this.tabs = new TabManager(
        {
          onActivated: () => {
@@ -105,7 +106,7 @@ index 803c1f6..2ed4498 100644
            this.pageMenu = null;
            this.reconcileRecord();
            this.recalculateLayout();
-@@ -386,6 +403,10 @@ class Session {
+@@ -386,6 +404,10 @@ class Session {
        splitDir: splitDirection(flagValue(this.argv, "--split-dir")),
        parentTty: flagValue(this.argv, "--parent-tty"),
        state: () => this.tabs.activeState ?? this.fallbackState,
@@ -116,7 +117,7 @@ index 803c1f6..2ed4498 100644
        openTab: (url, cwd) =>
          this.tabs.create(url ? normalizeUrl(url, cwd, this.searchUrl()) : this.defaultUrl).id,
        activateTab: (id) => {
-@@ -406,6 +427,7 @@ class Session {
+@@ -406,6 +428,7 @@ class Session {
        targets: () => this.tabs.targets(),
      });
      this.registry.setCdpPort(this.ctx.cdpPort);
@@ -124,28 +125,20 @@ index 803c1f6..2ed4498 100644
      void this.findOwnPane();
      this.render();
    }
-@@ -437,14 +459,40 @@ class Session {
+@@ -437,14 +460,32 @@ class Session {
      else this.tabs.close(id);
    }
  
 +  private nativeChrome = false;
-+  private nativeChromeTimer: ReturnType<typeof setTimeout> | null = null;
-+  private renewNativeChrome() {
-+    if (this.nativeChromeTimer) clearTimeout(this.nativeChromeTimer);
-+    const enabled = this.root?.nativeOnly?.() === true && !this.activeRecord()?.reviewing;
-+    if (this.nativeChrome !== enabled) {
++  private readonly nativeChromeLease = new NativeChrome(
++    () => this.root?.nativeOnly?.() === true && !this.activeRecord()?.reviewing && !this.shuttingDown,
++    enabled => {
 +      this.nativeChrome = enabled;
 +      this.recalculateLayout();
 +      this.render();
-+    }
-+    this.nativeChromeTimer = setTimeout(() => {
-+      this.nativeChromeTimer = null;
-+      if (!this.nativeChrome || this.shuttingDown) return;
-+      this.nativeChrome = false;
-+      this.recalculateLayout();
-+      this.render();
-+    }, 3000);
-+  }
++    },
++  );
++  private renewNativeChrome() { this.nativeChromeLease.renew(); }
 +  private readonly nativeIcon: NativeIcon;
 +  private readonly nativeControls: NativeControls | null;
 +
@@ -159,13 +152,13 @@ index 803c1f6..2ed4498 100644
    shutdown(code = 0) {
      if (this.shuttingDown) return;
      this.shuttingDown = true;
-+    if (this.nativeChromeTimer) clearTimeout(this.nativeChromeTimer);
++    this.nativeChromeLease.dispose();
 +    this.nativeIcon.dispose();
 +    this.nativeControls?.dispose();
      for (const record of this.records.values()) record.dispose();
      this.records.clear();
      this.shownRecord = null;
-@@ -1563,6 +1611,7 @@ class Session {
+@@ -1563,6 +1604,7 @@ class Session {
        this.root.displayScale,
        reviewing ? null : placement,
        reviewing ? recordBarHeight(info) : 0,
@@ -5665,6 +5658,34 @@ index 9cc3ad6..b44c600 100644
 +export async function fetchLatestRelease(_channel: string, _signal?: AbortSignal): Promise<LatestRelease> {
 +  throw new Error("This browser is managed by tmux-ide; use tmux-ide update.");
  }
+diff --git a/browser/src/session/native-chrome.ts b/browser/src/session/native-chrome.ts
+new file mode 100644
+index 0000000..01be132
+--- /dev/null
++++ b/browser/src/session/native-chrome.ts
+@@ -0,0 +1,22 @@
++/** Once a native host claims chrome, retain it while its surface route is live.
++ * Input-focus/control polling is not the lifetime of the native renderer. */
++export class NativeChrome {
++  private timer: ReturnType<typeof setTimeout> | null = null;
++  private enabled = false;
++  constructor(private nativeOnly: () => boolean, private changed: (enabled: boolean) => void) {}
++  renew() {
++    if (this.timer) clearTimeout(this.timer);
++    this.timer = null;
++    const enabled = this.nativeOnly();
++    if (enabled !== this.enabled) {
++      this.enabled = enabled;
++      this.changed(enabled);
++    }
++    // An expired/departed native route or a TUI reader restores browser chrome.
++    if (enabled) this.timer = setTimeout(() => this.renew(), 3000);
++  }
++  dispose() {
++    if (this.timer) clearTimeout(this.timer);
++    this.timer = null;
++  }
++}
 diff --git a/browser/src/session/native-controls.ts b/browser/src/session/native-controls.ts
 new file mode 100644
 index 0000000..87ffd31
@@ -5891,6 +5912,46 @@ index 0000000..ef8d230
 +  telemetry.used();
 +  await telemetry.crashed(new Error('fixture'), 'startup');
 +  assert.equal(requests, 0);
++});
+diff --git a/browser/test/native-chrome.test.js b/browser/test/native-chrome.test.js
+new file mode 100644
+index 0000000..9a5e793
+--- /dev/null
++++ b/browser/test/native-chrome.test.js
+@@ -0,0 +1,34 @@
++const {test} = require('node:test');
++const assert = require('node:assert/strict');
++const {NativeChrome} = require('../dist/session/native-chrome.js');
++test('native chrome survives absent control polls, then restores on route loss', t => {
++  t.mock.timers.enable({apis: ['setTimeout']});
++  let native = true;
++  const changes = [];
++  const chrome = new NativeChrome(() => native, value => changes.push(value));
++  chrome.renew();
++  t.mock.timers.tick(3000);
++  t.mock.timers.tick(3000);
++  assert.deepEqual(changes, [true]);
++  native = false;
++  t.mock.timers.tick(3000);
++  assert.deepEqual(changes, [true, false]);
++  native = true;
++  t.mock.timers.tick(3000);
++  assert.deepEqual(changes, [true, false]); // Requires a new host handshake.
++  chrome.renew();
++  assert.deepEqual(changes, [true, false, true]);
++  chrome.dispose();
++  native = false;
++  t.mock.timers.tick(6000);
++  assert.deepEqual(changes, [true, false, true]);
++});
++test('a plain terminal never claims native chrome', t => {
++  t.mock.timers.enable({apis: ['setTimeout']});
++  const changes = [];
++  const chrome = new NativeChrome(() => false, value => changes.push(value));
++  chrome.renew();
++  t.mock.timers.tick(6000);
++  assert.deepEqual(changes, []);
++  chrome.dispose();
 +});
 diff --git a/browser/test/native-controls.test.js b/browser/test/native-controls.test.js
 new file mode 100644
