@@ -147,6 +147,7 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
 - Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
   ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
+- Overview of running coding agents in tmux, for people: ${SITE_URL}/tmux-for-coding-agents
 
 ## Agent resources and discovery files
 

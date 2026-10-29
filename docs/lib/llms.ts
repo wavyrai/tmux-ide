@@ -82,6 +82,11 @@ export function llmsIndex(): string {
   for (const group of groups) add(group.title, pageLines(group.nodes));
   add("Project", [
     link(
+      "tmux for coding agents",
+      "/tmux-for-coding-agents",
+      "Claude Code, Codex and other agents in tmux: status, teams, and restore and resume",
+    ),
+    link(
       "Manual for AI agents",
       "/agents.md",
       "install, the agent status contract, and the commands agents use to coordinate",
