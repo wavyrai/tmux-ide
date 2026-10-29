@@ -568,7 +568,7 @@ impl SnapshotView {
             let guidance = if self.browsing && self.browser_commands.is_some() {
                 "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
             } else {
-                "Waiting for a verified pane, or connection unavailable. Restart the preview to reconnect."
+                "Waiting for a pane. If the connection was lost, reopen tmux-ide to reconnect."
             };
             return div()
                 .size_full()

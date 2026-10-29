@@ -133,8 +133,9 @@ pub(super) fn rows(state: &browser::State) -> Vec<Row> {
     if p.roster.truncated_sessions > 0 || p.roster.truncated_rows > 0 {
         out.push(row(
             format!(
-                "{} sessions · {} agents omitted",
-                p.roster.truncated_sessions, p.roster.truncated_rows
+                "{} · {} omitted",
+                crate::plural::count(p.roster.truncated_sessions, "session", "sessions"),
+                crate::plural::count(p.roster.truncated_rows, "agent", "agents")
             ),
             None,
         ));

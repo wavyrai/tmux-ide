@@ -76,13 +76,14 @@ impl SnapshotView {
                     .child(heading),
             )
             .child(div().text_sm().text_color(rgb(theme.muted)).child(format!(
-                "{} of {} sessions observed{}",
+                "{} of {} observed{}",
                 roster.observed_sessions,
-                roster.total_sessions,
+                crate::plural::count(roster.total_sessions, "session", "sessions"),
                 if roster.truncated_sessions > 0 || roster.truncated_rows > 0 {
                     format!(
-                        " · {} sessions and {} rows omitted",
-                        roster.truncated_sessions, roster.truncated_rows
+                        " · {} and {} omitted",
+                        crate::plural::count(roster.truncated_sessions, "session", "sessions"),
+                        crate::plural::count(roster.truncated_rows, "row", "rows")
                     )
                 } else {
                     String::new()

@@ -513,7 +513,7 @@ impl NativePresentation {
         } else if !coherent {
             "Waiting for coherent terminal geometry"
         } else if !input_authority {
-            "Waiting for input authority"
+            "Connecting…"
         } else {
             "Connected"
         }
