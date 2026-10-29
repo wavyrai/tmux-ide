@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The About, Contact and Privacy pages that tell people and agents who runs
@@ -50,6 +50,8 @@ const hrefs = (fragment) =>
 const sitemap = read("sitemap.xml.body") ?? "";
 const locations = new Set([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map((match) => match[1]));
 
+const emailPattern = /mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/iu;
+
 const footerPages = [
   ["homepage", read("index.html")],
   ["docs page", read("docs/getting-started.html")],
@@ -72,6 +74,9 @@ for (const path of trustPaths) {
     const length = visibleText(pageOnly).length;
     if (length < minMainText)
       fail(`${path} has ${length} characters of visible text in <main> (min ${minMainText})`);
+    // PM decision: no email address on any trust page, as text or as a link.
+    if (emailPattern.test(`${visibleText(main[1])} ${hrefs(main[1]).join(" ")}`))
+      fail(`${path} shows an email address; contact goes through GitHub`);
   }
 
   const canonical = html.match(/<link rel="canonical" href="([^"]*)"/u)?.[1];
@@ -107,6 +112,38 @@ if (contact) {
     fail("/contact contains a mailto: link; contact goes through GitHub");
 }
 
+// The Privacy page says the site loads nothing from other sites: no built page may
+// pull a script, stylesheet, image, frame or preload from another origin.
+const builtPages = (dir) =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) return builtPages(full);
+    return entry.name.endsWith(".html") ? [full] : [];
+  });
+const loadedUrls = (html) => [
+  ...[
+    ...html.matchAll(/<(?:script|img|iframe|source|video|audio)\b[^>]*\ssrc(?:set)?="([^"]+)"/giu),
+  ].map((match) => match[1]),
+  ...[...html.matchAll(/<link\b[^>]*>/giu)]
+    .filter((match) =>
+      /\srel="(?:stylesheet|preload|modulepreload|icon|apple-touch-icon|manifest)"/iu.test(
+        match[0],
+      ),
+    )
+    .map((match) => match[0].match(/\shref="([^"]+)"/iu)?.[1] ?? ""),
+];
+for (const file of builtPages(appDir)) {
+  const html = readFileSync(file, "utf8");
+  for (const value of loadedUrls(html)) {
+    for (const candidate of value.split(",").map((part) => part.trim().split(/\s+/u)[0])) {
+      if (!/^(?:https?:)?\/\//iu.test(candidate)) continue;
+      const loadOrigin = new URL(candidate, origin).origin;
+      if (loadOrigin !== origin)
+        fail(`${relative(appDir, file)} loads ${candidate} from another site`);
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error(`Trust pages check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
@@ -114,5 +151,5 @@ if (failures.length > 0) {
 console.log(
   `Trust pages verified: ${trustPaths.join(", ")} each have ≥ ${minMainText} characters in <main>, ` +
     `a self-canonical on ${origin}, title and description within limits, a sitemap entry and ` +
-    `footer links from the homepage and docs; /contact links GitHub issues and security advisories with no mailto:.`,
+    `footer links from the homepage and docs, and no email address; /contact links GitHub issues and security advisories; no built page loads anything from another site.`,
 );

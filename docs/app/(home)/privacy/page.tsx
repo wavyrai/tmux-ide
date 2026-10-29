@@ -47,7 +47,8 @@ export default function PrivacyPage() {
         <p>
           The site uses <TrustLink href={VERCEL_ANALYTICS_PRIVACY}>Vercel Web Analytics</TrustLink>{" "}
           to count page views. For each page you open, the script sends one request to tmux-ide.com
-          with the page address, the page&apos;s route pattern (such as <code>/docs/[...slug]</code>
+          with the page address, the page&apos;s route pattern (such as{" "}
+          <code>/docs/[[...slug]]</code>
           ), the address of the site that linked you here, and the script&apos;s version. It sends
           no cookie and stores nothing in your browser.
         </p>
