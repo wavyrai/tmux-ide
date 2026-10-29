@@ -213,6 +213,36 @@ async function checkHandlers(page) {
   );
 }
 
+// Playwright's Chromium ships an early WebMCP build behind this flag. When it
+// exposes a way to list tools, the real API must accept and list all three;
+// when it does not, the case is skipped rather than failed.
+async function checkNativeApi(url) {
+  const native = await chromium.launch({ args: ["--enable-experimental-web-platform-features"] });
+  try {
+    const page = await native.newPage();
+    await page.goto(url, { waitUntil: "networkidle" });
+    await page.waitForTimeout(1000);
+    const listed = await page.evaluate(async () => {
+      if (typeof document.modelContext?.getTools === "function")
+        return (await document.modelContext.getTools()).map((tool) => tool.name);
+      if (typeof navigator.modelContextTesting?.listTools === "function")
+        return (await navigator.modelContextTesting.listTools()).map((tool) => tool.name);
+      return null;
+    });
+    if (listed === null) {
+      console.log(`  skip Chromium ${native.version()} exposes no WebMCP tool listing`);
+      return;
+    }
+    expect(
+      JSON.stringify([...listed].sort()) === JSON.stringify(TOOL_NAMES),
+      `Chromium ${native.version()}'s own WebMCP API lists the three tools`,
+      JSON.stringify(listed),
+    );
+  } finally {
+    await native.close();
+  }
+}
+
 async function checkWithoutWebMcp(browser, url) {
   const page = await browser.newPage();
   const errors = [];
@@ -291,6 +321,9 @@ try {
     JSON.stringify(fallbackCounts),
   );
   await fallback.close();
+
+  console.log("Chromium's own WebMCP API, on /:");
+  await checkNativeApi(base);
 
   console.log("no WebMCP:");
   await checkWithoutWebMcp(browser, base);
