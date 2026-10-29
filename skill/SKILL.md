@@ -1,3 +1,8 @@
+---
+name: tmux-ide
+description: "Use tmux-ide from a coding agent to report your own working/blocked/done status, read the agent fleet, message other panes, restore sessions after a crash, and set up worktrees and workspace layouts."
+---
+
 # tmux-ide — Claude Code Skill
 
 <!-- tmux-ide-skill-version: 2.6.0 -->
