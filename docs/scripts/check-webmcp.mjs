@@ -191,6 +191,8 @@ async function checkHandlers(page) {
     "https://example.com/docs/getting-started",
     "//example.com/docs/getting-started",
     "/llms.txt",
+    // /agents.md exists, so only the /docs guard rejects it.
+    "/agents",
   ]) {
     const result = await call(page, "get_page_markdown", { path });
     expect(
