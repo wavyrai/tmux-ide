@@ -109,7 +109,10 @@ for (const [id, name] of Object.entries(HELD_BACK)) {
 
 // The links into the gallery.
 const theming = read(resolve(appDir, "docs/theming.html"));
-if (!/href="\/themes"/u.test(theming)) fail("/docs/theming must link to /themes");
+// The docs layout renders the site footer too, so look outside it.
+const themingBody = theming.replace(/<footer[\s\S]*<\/footer>/u, "");
+if (!/href="\/themes"/u.test(themingBody))
+  fail("/docs/theming must link to /themes in its own content");
 if (!/href="\/docs\/theming"/u.test(html)) fail("/themes must link back to /docs/theming");
 const home = read(resolve(appDir, "index.html"));
 if (!/<footer[\s\S]*href="\/themes"[\s\S]*<\/footer>/u.test(home))
