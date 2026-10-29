@@ -180,7 +180,8 @@ try {
     "--message-format=json-render-diagnostics",
   ];
   console.log("Building local native release; cached, nonhermetic scope.");
-  const artifacts = await run(cargo, command, 600000, 8 * 1024 * 1024);
+  // Hang guard, not a budget: a fat-LTO, one-codegen-unit app crate at --jobs 1 needs ~400 s of CPU.
+  const artifacts = await run(cargo, command, 1200000, 8 * 1024 * 1024);
   if (JSON.stringify(git) !== JSON.stringify(await gitIdentity()))
     throw new Error("Git build identity changed");
   if (
