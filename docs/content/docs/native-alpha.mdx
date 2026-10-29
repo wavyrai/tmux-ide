@@ -8,7 +8,7 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.10, build 2026102801.** The app is Developer ID
+**Public alpha — version 0.1.11, build 2026102901.** The app is Developer ID
 signed and Apple notarized, and its packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
 
@@ -31,7 +31,13 @@ discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
 
-Window tabs share the top bar and remain steady during normal window switching.
+In 0.1.11, pane gutters share the surrounding app background. Native browser
+controls remain in the pane header while the app is in the background, disabled
+until input authority returns. The terminal toolbar no longer reappears simply
+because native control polling pauses.
+
+Window tabs share the top bar and remain steady from the first click during
+normal window switching; selection progress does not insert a notice beside them.
 Keyboard controls include Cmd-T for a new window, Cmd-D / Cmd-Shift-D for splits,
 and Cmd-Shift-[ / ] for window switching.
 
@@ -64,8 +70,8 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026102801)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102801/tmux-ide-gpui-0.1.10-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026102901)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026102901/tmux-ide-gpui-0.1.11-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
 Install the native alpha with one command. This also installs CLI 2.9.15 at
