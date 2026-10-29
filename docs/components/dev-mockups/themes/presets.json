@@ -1,0 +1,288 @@
+[
+  {
+    "id": "amber",
+    "name": "Amber",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#ff8800",
+      "accent": "#ff8800",
+      "success": "#00cc66",
+      "warning": "#ffaa00",
+      "danger": "#ff3333"
+    }
+  },
+  {
+    "id": "green",
+    "name": "Green Phosphor",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#00cc00",
+      "accent": "#00ff00",
+      "success": "#00ff66",
+      "warning": "#cccc00",
+      "danger": "#ff4444"
+    }
+  },
+  {
+    "id": "cyan",
+    "name": "Cyan",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#00bbbb",
+      "accent": "#00dddd",
+      "success": "#00ff88",
+      "warning": "#ddcc00",
+      "danger": "#ff4444"
+    }
+  },
+  {
+    "id": "red",
+    "name": "Red Phosphor",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#d44c4c",
+      "accent": "#ff2222",
+      "success": "#44cc44",
+      "warning": "#ddaa00",
+      "danger": "#ff6666"
+    }
+  },
+  {
+    "id": "blue",
+    "name": "Blue Phosphor",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#3377ee",
+      "accent": "#4488ff",
+      "success": "#00cc66",
+      "warning": "#ddaa00",
+      "danger": "#ff4444"
+    }
+  },
+  {
+    "id": "purple",
+    "name": "Purple Phosphor",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#a052df",
+      "accent": "#bb55ff",
+      "success": "#44dd66",
+      "warning": "#ddaa00",
+      "danger": "#ff4444"
+    }
+  },
+  {
+    "id": "pink",
+    "name": "Hot Pink",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#dd3399",
+      "accent": "#ff44aa",
+      "success": "#44dd66",
+      "warning": "#ddaa00",
+      "danger": "#ff5555"
+    }
+  },
+  {
+    "id": "white",
+    "name": "White Phosphor",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000000",
+      "text": "#cccccc",
+      "accent": "#ffffff",
+      "success": "#00cc66",
+      "warning": "#ddaa00",
+      "danger": "#ff3333"
+    }
+  },
+  {
+    "id": "paper",
+    "name": "Paper",
+    "appearance": "light",
+    "swatches": {
+      "background": "#f7f3e8",
+      "text": "#2f2a23",
+      "accent": "#a05a2c",
+      "success": "#2f7d4a",
+      "warning": "#946200",
+      "danger": "#b33630"
+    }
+  },
+  {
+    "id": "github-light",
+    "name": "GitHub Light",
+    "appearance": "light",
+    "swatches": {
+      "background": "#ffffff",
+      "text": "#24292f",
+      "accent": "#0969da",
+      "success": "#1a7f37",
+      "warning": "#9a6700",
+      "danger": "#cf222e"
+    }
+  },
+  {
+    "id": "solarized-light",
+    "name": "Solarized Light",
+    "appearance": "light",
+    "swatches": {
+      "background": "#fdf6e3",
+      "text": "#526a71",
+      "accent": "#b58900",
+      "success": "#678110",
+      "warning": "#8b7510",
+      "danger": "#dc322f"
+    }
+  },
+  {
+    "id": "gruvbox-light",
+    "name": "Gruvbox Light",
+    "appearance": "light",
+    "swatches": {
+      "background": "#fbf1c7",
+      "text": "#3c3836",
+      "accent": "#af3a03",
+      "success": "#79740e",
+      "warning": "#a16b17",
+      "danger": "#9d0006"
+    }
+  },
+  {
+    "id": "nord-light",
+    "name": "Nord Light",
+    "appearance": "light",
+    "swatches": {
+      "background": "#eceff4",
+      "text": "#2e3440",
+      "accent": "#5e81ac",
+      "success": "#4b7f36",
+      "warning": "#957202",
+      "danger": "#b55d66"
+    }
+  },
+  {
+    "id": "tokyo",
+    "name": "Tokyo Night",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#1a1b26",
+      "text": "#c0caf5",
+      "accent": "#7aa2f7",
+      "success": "#9ece6a",
+      "warning": "#e0af68",
+      "danger": "#f7768e"
+    }
+  },
+  {
+    "id": "solarized",
+    "name": "Solarized Dark",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#002b36",
+      "text": "#8d9c9c",
+      "accent": "#b58900",
+      "success": "#859900",
+      "warning": "#b58900",
+      "danger": "#e35c56"
+    }
+  },
+  {
+    "id": "dracula",
+    "name": "Dracula",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#282a36",
+      "text": "#f8f8f2",
+      "accent": "#bd93f9",
+      "success": "#50fa7b",
+      "warning": "#f1fa8c",
+      "danger": "#ff5555"
+    }
+  },
+  {
+    "id": "nord",
+    "name": "Nord",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#2e3440",
+      "text": "#d8dee9",
+      "accent": "#88c0d0",
+      "success": "#a3be8c",
+      "warning": "#ebcb8b",
+      "danger": "#cb8990"
+    }
+  },
+  {
+    "id": "monokai",
+    "name": "Monokai",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#272822",
+      "text": "#f8f8f2",
+      "accent": "#f92672",
+      "success": "#a6e22e",
+      "warning": "#e6db74",
+      "danger": "#f92672"
+    }
+  },
+  {
+    "id": "catppuccin",
+    "name": "Catppuccin Mocha",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#1e1e2e",
+      "text": "#cdd6f4",
+      "accent": "#cba6f7",
+      "success": "#a6e3a1",
+      "warning": "#f9e2af",
+      "danger": "#f38ba8"
+    }
+  },
+  {
+    "id": "gruvbox",
+    "name": "Gruvbox Dark",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#282828",
+      "text": "#ebdbb2",
+      "accent": "#fe8019",
+      "success": "#b8bb26",
+      "warning": "#fabd2f",
+      "danger": "#fb4934"
+    }
+  },
+  {
+    "id": "rosepine",
+    "name": "Rose Pine",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#191724",
+      "text": "#e0def4",
+      "accent": "#c4a7e7",
+      "success": "#3f7e97",
+      "warning": "#f6c177",
+      "danger": "#eb6f92"
+    }
+  },
+  {
+    "id": "midnight",
+    "name": "Midnight Blue",
+    "appearance": "dark",
+    "swatches": {
+      "background": "#000022",
+      "text": "#ccddff",
+      "accent": "#ff6600",
+      "success": "#00cc66",
+      "warning": "#ff9900",
+      "danger": "#ff3333"
+    }
+  }
+]
