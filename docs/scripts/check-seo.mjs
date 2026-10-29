@@ -168,18 +168,17 @@ function isFullHistory() {
 }
 
 // Every built page: a <title> of at most 60 characters, unique across the
-// site, and a meta description of at most 160. noindex pages stay out of the
-// sitemap, and every page in the sitemap is indexable.
-const builtPages = [
-  ["/", html],
-  ...readdirSync(resolve(appDir, "docs"))
-    .filter((file) => file.endsWith(".html"))
-    .map((file) => [
-      `/docs/${file.slice(0, -5)}`,
-      readFileSync(resolve(appDir, "docs", file), "utf8"),
-    ]),
-  ["/docs", readFileSync(resolve(appDir, "docs.html"), "utf8")],
-];
+// site, and a meta description of at most 155. noindex pages stay out of the
+// sitemap, and every page in the sitemap is indexable. Next's own error
+// documents are not URLs anyone can link to, so they are left out.
+const nextErrorDocuments = new Set(["_not-found.html", "_global-error.html"]);
+const builtPages = readdirSync(appDir, { recursive: true })
+  .filter((file) => file.endsWith(".html") && !nextErrorDocuments.has(file))
+  .sort()
+  .map((file) => [
+    file === "index.html" ? "/" : `/${file.slice(0, -5)}`,
+    readFileSync(resolve(appDir, file), "utf8"),
+  ]);
 const decode = (text) =>
   text
     .replaceAll("&amp;", "&")
@@ -200,8 +199,8 @@ for (const [path, page] of builtPages) {
     throw new Error(`${path} and ${titleOwners.get(title)} share the <title> "${title}"`);
   titleOwners.set(title, path);
   const description = decode(page.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "");
-  if (!description || description.length > 160)
-    throw new Error(`${path} meta description must be 1–160 chars (is ${description.length})`);
+  if (!description || description.length > 155)
+    throw new Error(`${path} meta description must be 1–155 chars (is ${description.length})`);
   const published = page.match(/"datePublished":"([^"]+)"/u)?.[1];
   const modified = page.match(/"dateModified":"([^"]+)"/u)?.[1];
   if (published && modified && Date.parse(published) > Date.parse(modified))
@@ -212,6 +211,75 @@ for (const [path, page] of builtPages) {
   if (!noindex && !sitemapPaths.has(path))
     throw new Error(`${path} is indexable but missing from the sitemap`);
 }
+
+// Search ranking (#640). Google ranked www and apex copies of the same pages,
+// so every page names exactly one URL for itself, on the apex host. The
+// expected origin mirrors SITE_URL in lib/site.ts without importing it, so a
+// wrong default there fails here.
+const apexOrigin = new URL(process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://tmux-ide.com")
+  .origin;
+const ownUrl = (href, path) => {
+  try {
+    const url = new URL(decode(href));
+    return (
+      url.origin === apexOrigin &&
+      url.pathname.replace(/(.)\/$/u, "$1") === path &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+};
+const rankingProblems = [];
+for (const [path, page] of builtPages) {
+  const canonicals = [...page.matchAll(/<link rel="canonical" href="([^"]*)"/gu)].map((m) => m[1]);
+  if (canonicals.length !== 1 || !ownUrl(canonicals[0], path))
+    rankingProblems.push(
+      `${path} must have one canonical, ${apexOrigin}${path === "/" ? "" : path}; has [${canonicals.join(", ")}]`,
+    );
+  const ogUrls = [...page.matchAll(/<meta property="og:url" content="([^"]*)"/gu)].map((m) => m[1]);
+  if (ogUrls.length !== 1 || !ownUrl(ogUrls[0], path))
+    rankingProblems.push(
+      `${path} must have one og:url on its own apex URL; has [${ogUrls.join(", ")}]`,
+    );
+}
+for (const location of locations) {
+  if (new URL(location).origin !== apexOrigin)
+    rankingProblems.push(`Sitemap URL ${location} is not on ${apexOrigin}`);
+}
+// The exact phrase "tmux for coding agents" as a title belongs to the
+// /tmux-for-coding-agents landing page (#643); docs pages must not compete for it.
+const agentsPhrase = /tmux for coding agents/iu;
+for (const [path, page] of builtPages) {
+  if (!path.startsWith("/docs")) continue;
+  for (const pattern of [
+    /<title>([^<]*)<\/title>/u,
+    /<meta property="og:title" content="([^"]*)"/u,
+  ]) {
+    const title = decode(page.match(pattern)?.[1] ?? "");
+    if (agentsPhrase.test(title))
+      rankingProblems.push(
+        `${path} title uses "tmux for coding agents", which #643's page owns: ${title}`,
+      );
+  }
+}
+const homeTitle = decode(html.match(/<title>([^<]*)<\/title>/u)?.[1] ?? "");
+const homeDescription = decode(
+  html.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "",
+);
+if (!homeTitle.startsWith("tmux-ide"))
+  rankingProblems.push(`Homepage title must lead with the brand "tmux-ide": ${homeTitle}`);
+for (const phrase of ["terminal multiplexer", "coding agents"]) {
+  if (!homeTitle.toLowerCase().includes(phrase))
+    rankingProblems.push(`Homepage title must name "${phrase}": ${homeTitle}`);
+}
+for (const phrase of ["tmux for coding agents", "terminal multiplexer", "Claude Code", "Codex"]) {
+  if (!homeDescription.toLowerCase().includes(phrase.toLowerCase()))
+    rankingProblems.push(`Homepage description must name "${phrase}": ${homeDescription}`);
+}
+if (rankingProblems.length > 0)
+  throw new Error(`Search ranking checks failed:\n- ${rankingProblems.join("\n- ")}`);
 
 // Links from the homepage into the docs live in TypeScript, out of reach of
 // check:product-docs, so verify each target page and #anchor here.
