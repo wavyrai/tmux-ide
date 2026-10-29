@@ -49,6 +49,12 @@ fn remembered_resolution_rejects_malformed_files() -> anyhow::Result<()> {
     assert!(cache::read(&preferences).is_some_and(|r| r.apply("A", &mut config)));
     assert_eq!(config.family, "B");
     assert_eq!(config.fallbacks.as_deref(), Some(&["C".to_owned()][..]));
+    let most = format!(
+        r#"{{"version":1,"family":"A","resolved":"B","fallbacks":{}}}"#,
+        serde_json::to_string(&vec!["C"; 16])?
+    );
+    std::fs::write(&at, &most)?;
+    assert!(cache::read(&preferences).is_some());
     let many = format!(
         r#"{{"version":1,"family":"A","resolved":"B","fallbacks":{}}}"#,
         serde_json::to_string(&vec!["C"; 17])?
@@ -63,6 +69,10 @@ fn remembered_resolution_rejects_malformed_files() -> anyhow::Result<()> {
         std::fs::write(&at, bad)?;
         assert!(cache::read(&preferences).is_none(), "accepted {bad}");
     }
+    std::fs::write(&at, format!("{ok}{}", " ".repeat(8193 - ok.len())))?;
+    assert!(cache::read(&preferences).is_none());
+    std::fs::write(&at, format!("{ok}{}", " ".repeat(8192 - ok.len())))?;
+    assert!(cache::read(&preferences).is_some());
     std::fs::write(&at, " ".repeat(8193))?;
     assert!(cache::read(&preferences).is_none());
     Ok(())
