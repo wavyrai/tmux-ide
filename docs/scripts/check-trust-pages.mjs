@@ -135,12 +135,15 @@ const attribute = (tag, name) =>
   tag
     .match(new RegExp(`\\s${name}=(?:"([^"]*)"|'([^']*)')`, "iu"))
     ?.slice(1)
+    .map((value) => (value === undefined ? value : decode(value)))
     .find(Boolean);
-// @import "x", @import url(x) and url(x) targets in CSS text.
+// Absolute URLs in CSS text after url(, image-set(, @import or a quote; comments dropped.
 const cssUrls = (css) =>
-  [...css.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)|url\(\s*["']?([^"')\s]+)/giu)].map(
-    (match) => match[1] ?? match[2],
-  );
+  [
+    ...css
+      .replace(/\/\*[\s\S]*?\*\//gu, " ")
+      .matchAll(/(?:url\(|image-set\(|@import|["'])\s*["']?((?:https?:)?\/\/[^"')\s;,]+)/giu),
+  ].map((match) => match[1]);
 const htmlUrls = (html) => {
   const urls = [];
   for (const [tag] of html.matchAll(/<[a-z][\w:-]*\b[^>]*>/giu)) {
@@ -186,5 +189,5 @@ if (failures.length > 0) {
 console.log(
   `Trust pages verified: ${trustPaths.join(", ")} each have ≥ ${minMainText} characters in <main>, ` +
     `a self-canonical on ${origin}, title and description within limits, a sitemap entry and ` +
-    `footer links from the homepage and docs, and no email address; /contact links GitHub issues and security advisories; no built page loads anything from another site.`,
+    `footer links from the homepage and docs, and no email address; /contact links GitHub issues and security advisories; no built page or stylesheet references a load from another site.`,
 );
