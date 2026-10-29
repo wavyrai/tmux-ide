@@ -157,6 +157,12 @@ function checkEntries(name, entries, { requireDisplayName }) {
       fail("catalog-entries", `${label}: identifier is not a urn:air id on tmux-ide.com`);
     if (requireDisplayName && typeof entry.displayName !== "string")
       fail("catalog-entries", `${label}: displayName is required`);
+    if (
+      !Array.isArray(entry.representativeQueries) ||
+      entry.representativeQueries.length === 0 ||
+      !entry.representativeQueries.every((query) => typeof query === "string" && query.trim())
+    )
+      fail("catalog-entries", `${label}: representativeQueries must list at least one query`);
     if (typeof entry.type !== "string" || !/^[a-z]+\/[a-z0-9.+-]+$/u.test(entry.type))
       fail("catalog-entries", `${label}: type is not a media type`);
     if ("url" in entry === "data" in entry)
@@ -220,7 +226,7 @@ try {
   if (catalog) {
     if (catalog.specVersion !== "1.0")
       fail("ai-catalog", `specVersion is ${catalog.specVersion}, expected "1.0"`);
-    const entries = checkEntries("ai-catalog.json", catalog.entries, { requireDisplayName: false });
+    const entries = checkEntries("ai-catalog.json", catalog.entries, { requireDisplayName: true });
     await checkEntryTargets("ai-catalog.json", entries);
     if (
       ard?.entries &&
@@ -266,6 +272,23 @@ try {
     const stdio = card._meta?.["com.tmux-ide/stdio"];
     if (stdio?.command !== "tmux-ide" || JSON.stringify(stdio?.args) !== '["mcp"]')
       fail("server-card", `stdio launch is ${JSON.stringify(stdio)}, expected tmux-ide mcp`);
+    // The launch the card names must be one the CLI and the plugin's mcp.json really use.
+    if (!/^\s*case "mcp":/mu.test(readFileSync(resolve(repoRoot, "bin/cli.ts"), "utf8")))
+      fail("launch-command", 'bin/cli.ts has no `case "mcp":`, so `tmux-ide mcp` does not exist');
+    try {
+      const pluginMcp = JSON.parse(readFileSync(resolve(repoRoot, "mcp.json"), "utf8"));
+      const server = pluginMcp.mcpServers?.["tmux-ide"];
+      if (
+        server?.command !== stdio?.command ||
+        JSON.stringify(server?.args) !== JSON.stringify(stdio?.args)
+      )
+        fail(
+          "launch-command",
+          `mcp.json runs ${JSON.stringify(server)}, the card runs ${JSON.stringify(stdio)}`,
+        );
+    } catch (error) {
+      fail("launch-command", `no readable mcp.json at the repo root: ${error.message}`);
+    }
     const cardTools = card._meta?.["com.tmux-ide/tools"];
     if (!Array.isArray(cardTools) || !sameSet(cardTools, tools))
       fail(

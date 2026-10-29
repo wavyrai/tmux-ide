@@ -17,19 +17,27 @@ export const SERVER_CARD_PATH = "/.well-known/mcp/server-card.json";
 export const API_CATALOG_PATH = "/.well-known/api-catalog";
 export const SKILL_URL = "https://raw.githubusercontent.com/wavyrai/tmux-ide/main/skill/SKILL.md";
 export const SKILL_NAME = "tmux-ide";
-export const SKILL_DESCRIPTION =
-  "Use tmux-ide from a coding agent: report your own working/blocked/done status, read the agent fleet, message other panes, restore sessions after a crash, and set up worktrees and workspace layouts.";
-
 export const SERVER_CARD_TYPE = "application/mcp-server-card+json";
 export const AI_CATALOG_TYPE = "application/ai-catalog+json";
 export const LINKSET_TYPE =
   'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"';
 
 /** The committed skill/SKILL.md, read at build time so the digest is always the file's. */
-function skillDigest(): string {
-  const bytes = readFileSync(resolve(process.cwd(), "../skill/SKILL.md"));
-  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+function skillFile(): Buffer {
+  return readFileSync(resolve(process.cwd(), "../skill/SKILL.md"));
 }
+
+function skillDigest(): string {
+  return `sha256:${createHash("sha256").update(skillFile()).digest("hex")}`;
+}
+
+/** The skill's frontmatter `description`, so every catalog says what skills.sh says. */
+export const SKILL_DESCRIPTION = (() => {
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/u.exec(skillFile().toString("utf8"))?.[1] ?? "";
+  const value = /^description:\s*(.+)$/mu.exec(frontmatter)?.[1]?.trim();
+  if (!value) throw new Error("skill/SKILL.md has no frontmatter description");
+  return value.startsWith('"') ? (JSON.parse(value) as string) : value;
+})();
 
 export function jsonResponse(body: unknown, contentType: string, extra?: HeadersInit): Response {
   const headers = new Headers(extra);
@@ -120,18 +128,9 @@ export function aiCatalog() {
       documentationUrl: absoluteUrl("/docs"),
       logoUrl: absoluteUrl("/icon.png"),
     },
-    entries: resources().map(({ representativeQueries: _queries, capabilities: _caps, ...entry }) =>
-      // The server card carries its own title and description (AI Catalog: omit them here).
-      entry.type === SERVER_CARD_TYPE
-        ? {
-            identifier: entry.identifier,
-            type: entry.type,
-            url: entry.url,
-            tags: entry.tags,
-            publisher,
-          }
-        : { ...entry, publisher },
-    ),
+    // displayName and representativeQueries stay on every entry: ARD consumers read
+    // ai-catalog.json as an entry source and require them (PM decision, 29 Oct).
+    entries: resources().map(({ capabilities: _caps, ...entry }) => ({ ...entry, publisher })),
   };
 }
 
