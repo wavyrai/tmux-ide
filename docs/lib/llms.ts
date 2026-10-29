@@ -43,6 +43,22 @@ function isOptional(node: Node): boolean {
   );
 }
 
+/** Jobs tmux-ide is right for, and where it is not, from the docs and `tmux-ide --help`. */
+const WHEN_TO_USE = [
+  "- Several coding agents run in tmux and you need to know which one is working, blocked or done, " +
+    "and which one needs the user: `tmux-ide team --json`.",
+  "- You run inside a tmux pane and want to report your own state: " +
+    '`tmux set-option -p @agent_state "working:$(date +%s)"`.',
+  "- You need to wait for another agent or type into its pane: `tmux-ide wait agent-status`, " +
+    "`tmux-ide wait output`, `tmux-ide send`.",
+  "- The tmux server crashed and the sessions need rebuilding: `tmux-ide restore --resume-agents`.",
+  "- You want a git worktree on a new branch with its own session: `tmux-ide worktree create <branch>`.",
+  "",
+  "It does not run on native Windows (use WSL), Alpine or other musl Linux, or Intel Macs. A tmux " +
+    "server you started yourself must be tmux 3.7 or newer. Task or mission orchestration is not " +
+    "part of this release.",
+];
+
 /** The /llms.txt index (llmstxt.org): H1, summary, then link sections in sidebar order. */
 export function llmsIndex(): string {
   const groups: { title: string; nodes: Node[] }[] = [{ title: "Docs", nodes: [] }];
@@ -66,6 +82,11 @@ export function llmsIndex(): string {
   for (const group of groups) add(group.title, pageLines(group.nodes));
   add("Project", [
     link(
+      "tmux for coding agents",
+      "/tmux-for-coding-agents",
+      "Claude Code, Codex and other agents in tmux: status, teams, and restore and resume",
+    ),
+    link(
       "Manual for AI agents",
       "/agents.md",
       "install, the agent status contract, and the commands agents use to coordinate",
@@ -73,6 +94,10 @@ export function llmsIndex(): string {
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
+  ]);
+  add("Markdown", [
+    link("Docs index", "/docs/llms.txt", "every docs page in sidebar order"),
+    link("Homepage as Markdown", "/index.md", "what tmux-ide is, install, and the FAQ"),
   ]);
   add("Optional", [
     link("Full documentation as one file", "/llms-full.txt", "every docs page in Markdown"),
@@ -104,9 +129,52 @@ export function llmsIndex(): string {
       `Docs: ${absoluteUrl("/docs/claude-code-agent-teams")}`,
     "",
     "Every documentation page is also available as Markdown: append `.md` (or `.mdx`) to its URL " +
-      `(for example ${absoluteUrl("/docs/getting-started.md")}).`,
+      `(for example ${absoluteUrl("/docs/getting-started.md")}), or request the page with ` +
+      "`Accept: text/markdown`. Each Markdown page opens with `---` frontmatter: title, description, " +
+      `canonical URL and last update. The homepage is ${absoluteUrl("/index.md")}.`,
+    "",
+    "## When to use tmux-ide",
+    "",
+    ...WHEN_TO_USE,
   ];
   for (const [title, lines] of sections) out.push("", `## ${title}`, "", ...lines);
+  out.push("");
+  return out.join("\n");
+}
+
+/** Sidebar groups of the docs: the separators' titles, each with the pages under it. */
+function docsSections(): Map<string, string[]> {
+  const sections = new Map<string, string[]>();
+  let title = "Docs";
+  const optional: Node[] = [];
+  for (const node of source.pageTree.children) {
+    if (node.type === "separator") {
+      title = typeof node.name === "string" ? node.name : "More";
+    } else if (isOptional(node)) {
+      optional.push(node);
+    } else {
+      sections.set(title, [...(sections.get(title) ?? []), ...pageLines([node])]);
+    }
+  }
+  sections.set("Optional", pageLines(optional));
+  return sections;
+}
+
+/** The /docs/llms.txt index (llmstxt.org): the documentation section only, in sidebar order. */
+export function docsLlmsIndex(): string {
+  const out = [
+    `# ${SITE_NAME} documentation`,
+    "",
+    `> The ${SITE_NAME} docs: install, the app, agent status detection, configuration, ` +
+      "automation and multi-agent coordination, restore, worktrees, and release notes.",
+    "",
+    "Every page is also available as Markdown: append `.md` to its URL " +
+      `(for example ${absoluteUrl("/docs/getting-started.md")}). ` +
+      `The site-wide index is ${absoluteUrl("/llms.txt")}; the manual for AI agents is ${absoluteUrl("/agents.md")}.`,
+  ];
+  for (const [title, lines] of docsSections()) {
+    if (lines.length) out.push("", `## ${title}`, "", ...lines);
+  }
   out.push("");
   return out.join("\n");
 }
