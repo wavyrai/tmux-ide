@@ -2,18 +2,18 @@
 
 import { useEffect } from "react";
 
-declare global {
-  interface Document {
-    readonly modelContext?: unknown;
-  }
-  interface Navigator {
-    readonly modelContext?: unknown;
-  }
-}
-
 interface ModelContextLike {
   registerTool(tool: object, options: { signal: AbortSignal }): unknown;
   unregisterTool?: (name: string) => unknown;
+}
+
+declare global {
+  interface Document {
+    readonly modelContext?: ModelContextLike;
+  }
+  interface Navigator {
+    readonly modelContext?: ModelContextLike;
+  }
 }
 
 function isModelContext(value: unknown): value is ModelContextLike {
@@ -36,8 +36,14 @@ function ignoreRejection(result: unknown): void {
  */
 export function WebMcpTools() {
   useEffect(() => {
-    const context = document.modelContext ?? navigator.modelContext;
-    if (!isModelContext(context)) return;
+    // The spec's entry point is document.modelContext; navigator.modelContext is the
+    // older shape some browsers still ship.
+    const context = isModelContext(document.modelContext)
+      ? document.modelContext
+      : isModelContext(navigator.modelContext)
+        ? navigator.modelContext
+        : null;
+    if (!context) return;
     const controller = new AbortController();
     const { signal } = controller;
     import("@/lib/webmcp-tools")
@@ -45,7 +51,11 @@ export function WebMcpTools() {
         for (const tool of createDocsTools(window.location.origin)) {
           if (signal.aborted) return;
           try {
-            ignoreRejection(context.registerTool(tool, { signal }));
+            ignoreRejection(
+              document.modelContext === context
+                ? document.modelContext.registerTool(tool, { signal })
+                : context.registerTool(tool, { signal }),
+            );
           } catch {
             continue;
           }

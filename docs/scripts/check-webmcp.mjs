@@ -26,6 +26,13 @@ if (!INSTALL_COMMAND) throw new Error("INSTALL_COMMAND not found in lib/site.ts"
 const require = createRequire(resolve(docsDir, "package.json"));
 const { chromium } = require("@playwright/test");
 
+// Vercel's build image has no browser; CI and local builds install Chromium, so a
+// missing browser fails everywhere else.
+if (process.env.VERCEL && !existsSync(chromium.executablePath())) {
+  console.log("check-webmcp: skipped on Vercel (no Chromium in the build image)");
+  process.exit(0);
+}
+
 const freePort = () =>
   new Promise((done) => {
     const server = createServer().listen(0, "127.0.0.1", () => {
