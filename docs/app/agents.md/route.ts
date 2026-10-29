@@ -1,4 +1,6 @@
-import { SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+import { SITE_REPOSITORY, SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+
+const SKILL_TREE_URL = `${SITE_REPOSITORY}/tree/main/skill`;
 
 export const revalidate = false;
 
@@ -121,6 +123,16 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
 - Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
   ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
+
+## Agent resources and discovery files
+
+- Agent skill: ${SKILL_TREE_URL} (\`skill/SKILL.md\`)
+- Rules for coding agents working in the repository: ${SITE_REPOSITORY}/blob/main/AGENTS.md
+- MCP server card for \`tmux-ide mcp\`: ${SITE_URL}/.well-known/mcp/server-card.json
+- Agentic Resource Discovery catalog: ${SITE_URL}/.well-known/ard.json
+- AI Catalog: ${SITE_URL}/.well-known/ai-catalog.json
+- API catalog (RFC 9727): ${SITE_URL}/.well-known/api-catalog
+- Agent skills index: ${SITE_URL}/.well-known/agent-skills/index.json
 `;
 
 export function GET() {

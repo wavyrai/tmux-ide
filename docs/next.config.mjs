@@ -44,8 +44,17 @@ const config = {
     const canonicalLink = (path) => [
       { key: "Link", value: `<${siteUrl}${path}>; rel="canonical"` },
     ];
+    // RFC 8288 Link header on the homepage: where agents find the machine-readable files.
+    const discoveryLinks = [
+      `<${siteUrl}/llms.txt>; rel="describedby"; type="text/plain"; title="llms.txt"`,
+      `<${siteUrl}/agents.md>; rel="describedby"; type="text/markdown"; title="Manual for AI agents"`,
+      `<${siteUrl}/.well-known/ard.json>; rel="ard"; type="application/json"`,
+      `<${siteUrl}/.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"`,
+      `<${siteUrl}/sitemap.xml>; rel="sitemap"; type="application/xml"`,
+    ];
     return [
       { source: "/:path*", headers: securityHeaders },
+      { source: "/", headers: [{ key: "Link", value: discoveryLinks.join(", ") }] },
       { source: "/docs/:path+.mdx", headers: canonicalLink("/docs/:path+") },
       { source: "/docs/:path+.md", headers: canonicalLink("/docs/:path+") },
       { source: "/docs.mdx", headers: canonicalLink("/docs") },

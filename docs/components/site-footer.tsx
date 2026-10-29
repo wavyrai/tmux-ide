@@ -31,6 +31,7 @@ const columns = [
       ["GitHub", "https://github.com/wavyrai/tmux-ide"],
       ["npm package", "https://www.npmjs.com/package/tmux-ide"],
       ["Contributing", "/docs/contributing"],
+      ["AGENTS.md", "https://github.com/wavyrai/tmux-ide/blob/main/AGENTS.md"],
       ["Prototyper", "https://www.prototyper.co"],
       ["X · @prototyper_co", "https://x.com/prototyper_co"],
     ],
