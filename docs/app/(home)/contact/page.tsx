@@ -6,7 +6,7 @@ import { SITE_REPOSITORY } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Contact tmux-ide",
   description:
-    "Report a bug, ask a question or send a security report about tmux-ide. Support runs through GitHub issues; security reports go to GitHub Security Advisories.",
+    "How to report a bug, ask a question or send a security report about tmux-ide: GitHub issues for support, GitHub Security Advisories for security.",
   alternates: { canonical: "/contact" },
 };
 

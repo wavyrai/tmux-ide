@@ -6,7 +6,7 @@ import { SITE_REPOSITORY } from "@/lib/site";
 export const metadata: Metadata = {
   title: "Privacy",
   description:
-    "What tmux-ide.com and the tmux-ide software collect: no cookies, cookieless Vercel Web Analytics page views, and a daily npm version check you can turn off.",
+    "What tmux-ide.com and the tmux-ide software collect: no cookies, cookieless Vercel Web Analytics page views, and a daily npm version check.",
   alternates: { canonical: "/privacy" },
 };
 
