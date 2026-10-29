@@ -7,3 +7,7 @@ pub(super) fn mount(snapshot: Entity<SnapshotView>, window: &mut Window, cx: &mu
 pub(super) fn frame(view: &SnapshotView) -> usize {
     view.agent_animation.frame()
 }
+/// The colours the spinner overlay paints, one per reserved slot.
+pub(super) fn slot_colors(view: &SnapshotView) -> Vec<gpui::Hsla> {
+    view.agent_animation.colors()
+}

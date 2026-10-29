@@ -80,6 +80,15 @@ impl Slots {
             color: style.color,
         });
     }
+    #[cfg(test)]
+    pub(super) fn colors(&self) -> Vec<Hsla> {
+        self.0
+            .slots
+            .borrow()
+            .iter()
+            .map(|slot| slot.color)
+            .collect()
+    }
     fn reserved(&self) -> bool {
         !self.0.slots.borrow().is_empty()
     }

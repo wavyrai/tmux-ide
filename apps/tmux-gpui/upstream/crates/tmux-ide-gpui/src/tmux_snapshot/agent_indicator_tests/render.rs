@@ -1,6 +1,6 @@
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
-use super::mount::{frame, mount};
+use super::mount::{frame, mount, slot_colors};
 use crate::tmux_snapshot::{SnapshotView, browser, decode, presence::Presence};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
@@ -190,4 +190,57 @@ fn an_occluded_window_does_not_tick_and_resumes_when_shown(cx: &mut TestAppConte
     cx.run_until_parked();
     let (shown, _) = period(&snapshot, cx);
     assert_ne!(shown, hidden, "the spinner did not resume when shown");
+}
+/// Draws once and reports whether `SnapshotView` rendered (see `period`).
+fn rendered_after(
+    snapshot: &Entity<SnapshotView>,
+    cx: &mut VisualTestContext,
+    change: impl FnOnce(&mut SnapshotView, &mut Context<SnapshotView>),
+) -> bool {
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            view.home_filter = None;
+            change(view, cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|_, cx| snapshot.read(cx).home_filter.is_some())
+}
+// The cached root only re-renders SnapshotView when it is notified. These pin
+// the paths that change what it draws without a spinner tick.
+#[gpui::test]
+fn a_published_theme_change_repaints_the_cached_view_and_the_spinner(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    period(&snapshot, cx);
+    let before = cx.update(|_, cx| slot_colors(snapshot.read(cx)));
+    let appearance: crate::tmux_snapshot::appearance::Appearance = serde_json::from_value(serde_json::json!({
+        "selected":"custom","system":"dark","options":[],"error":null,
+        "theme":{"canvas":1,"background":2,"foreground":3,"cursor":4,"surface":5,"active":6,"muted":7,"accent":8,"palette":vec![0x00c853u32;256]}
+    })).unwrap();
+    assert!(
+        rendered_after(&snapshot, cx, |view, cx| {
+            let mut state = view.browser_state.clone();
+            state.appearance = Some(appearance);
+            view.apply_browser_state(Some(state), cx);
+        }),
+        "a theme publication did not re-render SnapshotView"
+    );
+    let (theme, after) = cx.update(|_, cx| {
+        let view = snapshot.read(cx);
+        (view.theme(), slot_colors(view))
+    });
+    let working: Hsla = rgb(theme.ink(theme.palette[4])).into();
+    assert_eq!(after, vec![working]);
+    assert_ne!(before, after, "the spinner kept the old theme's colour");
+}
+#[gpui::test]
+fn a_terminal_font_change_re_renders_the_cached_view(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    period(&snapshot, cx);
+    assert!(rendered_after(&snapshot, cx, |view, cx| view.invalidate_font_geometry(cx)));
+    assert!(
+        !rendered_after(&snapshot, cx, |_, _| {}),
+        "control: no change, no render"
+    );
 }
