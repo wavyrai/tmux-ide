@@ -70,3 +70,23 @@ fn current_font_row_is_visible_but_pointer_cannot_queue_a_noop(cx: &mut TestAppC
     });
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn opening_the_font_picker_lists_installed_fonts(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(!view.terminal_font.ready, "listed before the picker opened");
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| view.open_picker_mode(Mode::Font, window, cx));
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(
+            view.terminal_font.ready,
+            "opening the font picker did not list installed fonts"
+        );
+    });
+}

@@ -231,7 +231,10 @@ fn show_owned(
 ) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
-    let application = gpui_platform::application().with_assets(crate::icons::Icons);
+    // `gpui_platform::application()` also builds a reqwest client for remote
+    // images; this window paints only local ones, so it starts without one.
+    let application = Application::with_platform(gpui_platform::current_platform(false))
+        .with_assets(crate::icons::Icons);
     application.run(move |cx| {
         let closing = Rc::new(std::cell::Cell::new(false));
         let quit_owner = owner.clone();

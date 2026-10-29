@@ -38,3 +38,32 @@ fn fontconfig_line_height_scales_with_size_and_preserves_fallbacks() {
 
 #[path = "tests/choices.rs"]
 mod choices;
+#[test]
+fn remembered_resolution_rejects_malformed_files() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let preferences = dir.path().join("gpui-fonts.json");
+    let at = cache::path(&preferences);
+    let ok = r#"{"version":1,"family":"A","resolved":"B","fallbacks":["C"]}"#;
+    std::fs::write(&at, ok)?;
+    let mut config = Settings::default().config;
+    assert!(cache::read(&preferences).is_some_and(|r| r.apply("A", &mut config)));
+    assert_eq!(config.family, "B");
+    assert_eq!(config.fallbacks.as_deref(), Some(&["C".to_owned()][..]));
+    let many = format!(
+        r#"{{"version":1,"family":"A","resolved":"B","fallbacks":{}}}"#,
+        serde_json::to_string(&vec!["C"; 17])?
+    );
+    for bad in [
+        r#"{"version":2,"family":"A","resolved":"B","fallbacks":[]}"#,
+        r#"{"version":1,"family":"A","resolved":"","fallbacks":[]}"#,
+        r#"{"version":1,"family":"A","resolved":"B","fallbacks":["bad\nname"]}"#,
+        r#"{"version":1,"family":"A","resolved":"B","fallbacks":[],"extra":1}"#,
+        many.as_str(),
+    ] {
+        std::fs::write(&at, bad)?;
+        assert!(cache::read(&preferences).is_none(), "accepted {bad}");
+    }
+    std::fs::write(&at, " ".repeat(8193))?;
+    assert!(cache::read(&preferences).is_none());
+    Ok(())
+}
