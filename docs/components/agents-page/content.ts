@@ -1,10 +1,12 @@
 import type { TuiFigureVariant } from "@/components/marketing/tui-mini-figure";
 
-/** The final page title and description, measured by the mockup's own review. */
+/** Path, title and description of the page; check-agents-page.mjs asserts them in the build. */
 export const AGENTS_PAGE = {
+  path: "/tmux-for-coding-agents",
   title: "tmux for coding agents: Claude Code, Codex, more",
   description:
     "Run Claude Code, Codex and other coding agents in tmux panes. See each agent's status, jump to the one that needs you, and resume after a crash.",
+  eyebrow: "Claude Code, Codex, Aider and other agent CLIs",
   lede: "tmux-ide runs Claude Code, Codex and other coding agents in your tmux sessions, shows each one's live status, and can resume their conversations after a crash.",
 } as const;
 
@@ -36,7 +38,7 @@ export const AGENT_SECTIONS: readonly AgentSection[] = [
     eyebrow: "Claude Code and Codex",
     title: "Run Claude Code and Codex in tmux",
     body: [
-      "Start `claude` or `codex` in any tmux pane. tmux-ide finds the agent from the pane's process and screen, so you don't need a config file. Detection is tuned for Claude Code, Codex and Aider, with conservative rules for 14 other agent CLIs.",
+      "Start `claude` or `codex` in any tmux pane. tmux-ide finds the agent from the pane's process and screen, so you don't need a config file. Detection is tuned for Claude Code, Codex and Aider, and conservative rules cover other agent CLIs.",
       "tmux keeps owning every process, so closing tmux-ide never stops an agent.",
     ],
     commands: [
