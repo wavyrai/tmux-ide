@@ -5925,6 +5925,7 @@ dependencies = [
  "bezel-gpui",
  "bezel-gpui-apple",
  "bezel-gpui-platform",
+ "bezel-motion",
  "bezel-theme",
  "bezel-ui",
  "block2 0.6.2",

@@ -36,6 +36,7 @@ objc2-core-video     = { default-features = false, features = ["std", "CVPixelBu
 gpui_platform        = { package = "bezel-gpui-platform", version = "=0.3.21" }
 bezel_theme          = { package = "bezel-theme", version = "=0.2.22" }
 bezel_ui             = { package = "bezel-ui", version = "=0.2.22" }
+bezel_motion         = { package = "bezel-motion", version = "=0.2.22" }
 herdr-client         = { path = "crates/herdr-client" }
 tmux-native-surface-sdk = { path = "crates/tmux-native-surface-sdk" }
 herdr-protocol       = { path = "crates/herdr-protocol" }

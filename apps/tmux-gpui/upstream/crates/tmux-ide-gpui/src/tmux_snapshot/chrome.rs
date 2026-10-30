@@ -6,6 +6,26 @@ use gpui::{App, Window, WindowBackgroundAppearance};
 #[cfg(target_os = "macos")]
 mod macos;
 
+/// The one place the window's background is set, so tests can see what the
+/// window was actually told.
+fn set_window_background(window: &mut Window, background: WindowBackgroundAppearance) {
+    #[cfg(test)]
+    PASSED.with(|passed| passed.set(Some(background)));
+    window.set_background_appearance(background);
+}
+
+#[cfg(test)]
+thread_local! {
+    static PASSED: std::cell::Cell<Option<WindowBackgroundAppearance>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The background last passed to a window on this thread.
+#[cfg(test)]
+pub(super) fn passed_to_window() -> Option<WindowBackgroundAppearance> {
+    PASSED.with(std::cell::Cell::get)
+}
+
 #[derive(Default)]
 pub(super) struct Chrome {
     applied: Option<WindowBackgroundAppearance>,
@@ -49,7 +69,7 @@ impl Chrome {
         let theme = bezel_theme::Theme::of(cx);
         let wanted = theme.window_background_appearance();
         if self.applied != Some(wanted) {
-            window.set_background_appearance(wanted);
+            set_window_background(window, wanted);
             self.applied = Some(wanted);
         }
         theme.vibrancy

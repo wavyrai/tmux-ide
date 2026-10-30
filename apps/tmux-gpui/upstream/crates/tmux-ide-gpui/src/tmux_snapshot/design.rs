@@ -64,6 +64,7 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // The frost is the theme's own surface at Bezel's coverage; text drawn on
     // it goes through `chrome_text`.
     result.vibrancy_tone = color(theme.surface);
+    result.vibrancy_alpha = frost_alpha(theme);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
     result.selection = color(theme.active);
@@ -131,13 +132,130 @@ pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
     crate::contrast::ink_on_chrome(color, chrome_plates(theme), 4.6)
 }
 
+/// What row text is inked to. Further over 4.5 than `chrome_text`'s 4.6: a
+/// row's plates are two flattenings deep (wash over frost over desktop), and
+/// rounding each to 8-bit channels moves a dark plate by enough to cost 0.1:1
+/// against a saturated label (Amber's selected row measured 4.49 at 4.6).
+const ROW_TARGET: f32 = 4.75;
+
+/// `color` as text on a sidebar row: [`chrome_text`]'s rule, also over the
+/// fills a row paints under it, the selected wash and the hover wash, on each
+/// of the chrome plates. The current session's row is always selected, so
+/// this is the most-read text in the sidebar.
+pub(crate) fn row_text(theme: &Theme, color: u32) -> u32 {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<(u32, u32, u32), u32>> =
+            Default::default();
+    }
+    let key = (color, theme.surface, theme.background);
+    if let Some(inked) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
+        return inked;
+    }
+    let inked = crate::contrast::ink(color, &row_plates(theme), ROW_TARGET);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        // A theme inks a handful of colours; a long session of theme switching
+        // starts over rather than growing without bound.
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, inked);
+    });
+    inked
+}
+
+/// The frost's coverage: Bezel's 0.80, raised just far enough that the
+/// theme's foreground and muted text, inked, can still reach 4.6:1 on a
+/// selected or hovered row over a white desktop. A light frost under a 12% light wash otherwise leaves no colour
+/// that reads there (Nord's selected row topped out at 4.31:1).
+fn frost_alpha(theme: &Theme) -> f32 {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<(u32, u32), f32>> =
+            Default::default();
+    }
+    let key = (theme.surface, theme.background);
+    if let Some(alpha) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
+        return alpha;
+    }
+    let start = (bezel_theme::Theme::VIBRANCY_ALPHA * 100.).round() as u32;
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    let alpha = (start..=100)
+        .filter(|_| dark)
+        .map(|step| step as f32 / 100.)
+        .find(|&alpha| {
+            let plates = row_plates_at(theme, alpha);
+            [theme.foreground, theme.muted].iter().all(|&text| {
+                let inked = crate::contrast::ink(text, &plates, ROW_TARGET);
+                plates
+                    .iter()
+                    .all(|&plate| crate::contrast::ratio(inked, plate) >= ROW_TARGET)
+            })
+        })
+        .unwrap_or(if dark {
+            1.0
+        } else {
+            bezel_theme::Theme::VIBRANCY_ALPHA
+        });
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, alpha);
+    });
+    alpha
+}
+
+/// The chrome plates, bare and under a row's selected and hover washes.
+fn row_plates(theme: &Theme) -> Vec<u32> {
+    row_plates_at(theme, frost_alpha(theme))
+}
+
+fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
+    let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
+        bezel_theme::Appearance::Dark
+    } else {
+        bezel_theme::Appearance::Light
+    };
+    let stock = bezel_theme::Theme::for_appearance(appearance);
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    plates_at(theme, alpha)
+        .into_iter()
+        .flat_map(|plate| {
+            let under: Hsla = rgb(plate).into();
+            [
+                plate,
+                pack(bezel_theme::flatten(stock.card_selected_bg(), under)),
+                pack(bezel_theme::flatten(stock.element_hover, under)),
+            ]
+        })
+        .collect()
+}
+
+/// A sidebar row's label and caption colours, as `render_row` paints them.
+pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
+    (
+        row_text(theme, theme.foreground),
+        row_text(theme, theme.muted),
+    )
+}
+
+/// The attention badge's count, on its filled `theme.active` pill.
+pub(crate) fn badge_text(theme: &Theme) -> u32 {
+    crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
+}
+
 /// What chrome text is drawn on: the opaque surface and, in a dark theme (the
 /// one Bezel frosts), the frost over a white and over a black desktop.
 fn chrome_plates(theme: &Theme) -> [u32; 3] {
+    plates_at(theme, frost_alpha(theme))
+}
+
+fn plates_at(theme: &Theme, alpha: f32) -> [u32; 3] {
     let mut plates = [theme.surface; 3];
     if crate::contrast::luminance(theme.background) < 0.5 {
         let frost = Hsla {
-            a: bezel_theme::Theme::VIBRANCY_ALPHA,
+            a: alpha,
             ..rgb(theme.surface).into()
         };
         let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
@@ -224,7 +342,7 @@ pub(super) fn floating<E: Styled>(element: E, theme: &Theme) -> E {
 
 #[cfg(test)]
 mod tests {
-    use super::{Palette, chrome_text, palette, prepare};
+    use super::{Palette, badge_text, chrome_text, palette, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, Rgba, TestAppContext, black, rgb, white};
 
@@ -447,6 +565,33 @@ mod tests {
                         ));
                     }
                 }
+            }
+            // Row text over the selected and hover washes, on every plate.
+            let mut row_plates = Vec::new();
+            for (plate, plate_name) in &plates {
+                row_plates.push((*plate, plate_name.to_string()));
+                row_plates.push((
+                    bezel_theme::flatten(bezel.card_selected_bg(), *plate),
+                    format!("selected row on {plate_name}"),
+                ));
+                row_plates.push((
+                    bezel_theme::flatten(bezel.element_hover, *plate),
+                    format!("hovered row on {plate_name}"),
+                ));
+            }
+            let (label, caption) = row_ink(&theme);
+            for (role, value) in [("row label", label), ("row caption", caption)] {
+                let text = color(value);
+                for (plate, plate_name) in &row_plates {
+                    let ratio = bezel_theme::contrast_ratio(text, *plate);
+                    if ratio < 4.5 {
+                        failures.push(format!("{name}: {role} on {plate_name} is {ratio:.2}:1"));
+                    }
+                }
+            }
+            let badge = bezel_theme::contrast_ratio(color(badge_text(&theme)), color(theme.active));
+            if badge < 4.5 {
+                failures.push(format!("{name}: badge count on its pill is {badge:.2}:1"));
             }
             for (role, value) in [("foreground", theme.foreground), ("muted", theme.muted)] {
                 let text = color(chrome_text(&theme, value));

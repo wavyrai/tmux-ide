@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 bezel_theme.workspace = true
 bezel_ui.workspace = true
+bezel_motion.workspace = true
 url.workspace = true
 anyhow.workspace               = true
 flate2.workspace               = true

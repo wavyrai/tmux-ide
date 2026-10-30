@@ -282,12 +282,21 @@ fn accessibility_policy_reaches_the_rendered_window(cx: &mut TestAppContext) {
             WindowBackgroundAppearance::Opaque
         );
     });
+    // And the window itself was told, not just the palette.
+    assert_eq!(
+        super::super::chrome::passed_to_window(),
+        Some(WindowBackgroundAppearance::Opaque)
+    );
     cx.update(|window, cx| {
         view.update(cx, |view, _| view.chrome.force(true));
         window.refresh();
         window.draw(cx).clear(cx);
     });
     cx.update(|_, cx| assert!(bezel_theme::Theme::of(cx).vibrancy));
+    assert_eq!(
+        super::super::chrome::passed_to_window(),
+        Some(WindowBackgroundAppearance::Blurred)
+    );
 }
 
 #[path = "shell_tests/fullscreen.rs"]
