@@ -25,11 +25,17 @@ function fallbackCopy(text: string): boolean {
 export function CopyButton({
   text,
   label = "Copy install command",
+  announcement = "Install command copied to clipboard.",
+  failedAnnouncement = "Could not copy the install command. Select the command and copy it manually.",
   className,
   children,
 }: {
   text: string;
   label?: string;
+  /** What screen readers hear after a successful copy. */
+  announcement?: string;
+  /** What screen readers hear when the copy fails. */
+  failedAnnouncement?: string;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -81,11 +87,7 @@ export function CopyButton({
         children
       )}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
-        {status === "copied"
-          ? "Install command copied to clipboard."
-          : status === "error"
-            ? "Could not copy the install command. Select the command and copy it manually."
-            : ""}
+        {status === "copied" ? announcement : status === "error" ? failedAnnouncement : ""}
       </span>
     </button>
   );
