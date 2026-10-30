@@ -6,7 +6,8 @@
 //! ```
 //!
 //! Flags: `--appearance dark|light`, `--vibrancy auto|on|off`, `--no-palette`,
-//! `--palette-surface glass|material`, `--capture <png>` (saves the frame straight from the renderer, then quits;
+//! `--palette-surface glass|material`, `--theme <catalog id>` (the app's own
+//! palette for that preset, with opaque panes and frost only in dark), `--capture <png>` (saves the frame straight from the renderer, then quits;
 //! no screen-recording permission needed). A capture opens a borderless
 //! window, since macOS clamps a titled one to a smaller screen, and paints
 //! stand-ins for the traffic lights, which the renderer does not draw.
@@ -84,6 +85,7 @@ struct Args {
     palette: bool,
     capture: Option<std::path::PathBuf>,
     material_palette: bool,
+    theme: Option<String>,
 }
 
 fn args() -> Args {
@@ -93,6 +95,7 @@ fn args() -> Args {
         palette: true,
         capture: None,
         material_palette: false,
+        theme: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -115,6 +118,7 @@ fn args() -> Args {
             "--palette-surface" => {
                 parsed.material_palette = iter.next().as_deref() == Some("material")
             }
+            "--theme" => parsed.theme = iter.next(),
             "--capture" => parsed.capture = iter.next().map(Into::into),
             other => eprintln!("bezel_mockup: ignoring {other}"),
         }
@@ -140,6 +144,19 @@ fn main() {
                 });
             }
             appearance::init(args.mode, cx);
+            if let Some(id) = args.theme.as_deref() {
+                let dark = args.mode != AppearanceMode::Light;
+                let Some(mut theme) = tmux_ide_gpui::bezel_mockup_themes::palette(id, dark) else {
+                    eprintln!("bezel_mockup: no catalog theme {id}");
+                    std::process::exit(2);
+                };
+                // The owner's #666 decisions: panes opaque, frost on the
+                // sidebar and titlebar in dark only, glass on floating controls.
+                theme.vibrancy = theme.appearance == bezel_theme::Appearance::Dark;
+                theme.content_opacity = 1.0;
+                theme.glass = true;
+                Theme::install_custom(theme, cx);
+            }
             cx.on_window_closed(|cx, _| cx.quit()).detach();
 
             let capturing = args.capture.is_some();

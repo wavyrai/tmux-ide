@@ -74,6 +74,34 @@ mod menu;
 mod menus;
 #[cfg(feature = "mockup")]
 mod mockup;
+/// Card #666/#667 mockups only: the Bezel palette the app builds for a
+/// catalog theme, so the `bezel_mockup` example renders the real bridge.
+#[cfg(feature = "mockup")]
+#[doc(hidden)]
+pub mod bezel_mockup_themes {
+    /// The palette `design::palette` builds for catalog preset `id`, in its
+    /// `dark` or `light` variant, or `None` for an unknown id.
+    pub fn palette(id: &str, dark: bool) -> Option<bezel_theme::Theme> {
+        let presets: serde_json::Value =
+            serde_json::from_str(include_str!("tmux_snapshot/appearance/catalog.json")).ok()?;
+        let preset = presets.as_array()?.iter().find(|p| p["id"] == id)?;
+        let colors = &preset[if dark { "dark" } else { "light" }];
+        let field = |key: &str| colors[key].as_u64().map(|v| v as u32);
+        let mut theme = crate::config::Theme {
+            background: field("background")?,
+            foreground: field("foreground")?,
+            cursor: field("cursor")?,
+            surface: field("surface")?,
+            active: field("active")?,
+            muted: field("muted")?,
+            ..crate::config::Theme::default()
+        };
+        for (slot, value) in theme.palette.iter_mut().zip(colors["palette"].as_array()?) {
+            *slot = value.as_u64()? as u32;
+        }
+        Some(crate::tmux_snapshot::design::palette(&theme))
+    }
+}
 mod motion;
 mod navigation;
 mod notifications;
