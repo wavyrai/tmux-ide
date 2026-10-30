@@ -115,12 +115,7 @@ fn history_guards_do_not_leak_terminal_keys(cx: &mut TestAppContext) {
             assert!(receiver.try_recv().is_err());
             v.open_commands(w, cx);
             v.picker_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f8").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f8"),
                 w,
                 cx,
             );

@@ -149,30 +149,12 @@ fn save_footer_activates_once_and_pending_skips_save_but_keeps_cancel(cx: &mut T
 
 #[gpui::test]
 fn stale_request_footer_keyup_and_pointer_cannot_close_or_save(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|w, cx| tests::make_view(w, cx, sender));
-    cx.update(|w, cx| {
-        view.update(cx, |v, cx| prepare(v, w, cx));
-        w.draw(cx).clear(cx);
-    });
-    receiver.try_iter().for_each(drop);
-    cx.simulate_input("Renamed");
-    cx.simulate_keystrokes("shift-tab enter");
-    cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
-    cx.simulate_event(KeyUpEvent {
-        layout: None,
-        keystroke: Keystroke::parse("enter").unwrap(),
-    });
-    view.read_with(cx, |v, _| {
-        assert!(v.picker.as_ref().unwrap().edit.is_some())
-    });
-    cx.update(|w, cx| w.draw(cx).clear(cx));
-    let cancel = cx.debug_bounds("machine-edit-cancel").unwrap();
-    cx.simulate_click(cancel.center(), Modifiers::default());
-    view.read_with(cx, |v, _| {
-        assert!(v.picker.as_ref().unwrap().edit.is_some())
-    });
-    let save = cx.debug_bounds("machine-edit-save").unwrap();
-    cx.simulate_click(save.center(), Modifiers::default());
-    assert!(receiver.try_recv().is_err());
+    tests::assert_stale_form_inert(
+        cx,
+        prepare,
+        Some("Renamed"),
+        "shift-tab enter",
+        &["machine-edit-cancel", "machine-edit-save"],
+        |v| v.picker.as_ref().unwrap().edit.is_some(),
+    );
 }

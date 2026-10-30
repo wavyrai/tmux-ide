@@ -219,12 +219,7 @@ fn recovery_shortcuts_preserve_marked_text_and_modal_isolation(cx: &mut TestAppC
             });
             for key in ["r", "m"] {
                 assert!(!view.home_filter_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx
                 ));
@@ -236,4 +231,27 @@ fn recovery_shortcuts_preserve_marked_text_and_modal_isolation(cx: &mut TestAppC
         });
     });
     assert!(receiver.try_recv().is_err());
+}
+
+/// `select` moves `browser_request` before the publication for it arrives: a
+/// recovery from either side of that gap must wait for the publication.
+#[gpui::test]
+fn recovery_waits_until_the_publication_catches_up(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        prepare(&mut view, window, cx);
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    view.update(cx, |view, cx| {
+        view.browser_request = 8;
+        view.recover_home_agents(7, 9, Action::Retry, cx);
+        assert!(receiver.try_recv().is_err(), "old request");
+        view.recover_home_agents(8, 9, Action::Retry, cx);
+        assert!(receiver.try_recv().is_err(), "unpublished request");
+        view.browser_state.request = 8;
+        view.recover_home_agents(8, 9, Action::Retry, cx);
+        assert!(receiver.try_recv().is_ok(), "current request");
+    });
 }

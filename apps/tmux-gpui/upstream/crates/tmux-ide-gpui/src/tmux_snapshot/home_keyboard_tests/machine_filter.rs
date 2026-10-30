@@ -125,12 +125,7 @@ fn machine_filter_preserves_composition_and_refuses_background_modal(cx: &mut Te
                 input.replace_and_mark_text_in_range(None, "界", Some(1..1), window, cx)
             });
             assert!(!v.home_filter_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f"),
                 window,
                 cx
             ));

@@ -101,29 +101,15 @@ fn add_machine_footer_validates_then_submits_once_on_keyup(cx: &mut TestAppConte
 
 #[gpui::test]
 fn add_machine_stale_keyup_and_pointer_cannot_submit_or_cancel(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
     for keys in ["tab enter", "shift-tab enter"] {
-        cx.update(|w, cx| {
-            view.update(cx, |v, cx| prepare(v, w, cx));
-            w.draw(cx).clear(cx);
-        });
-        receiver.try_iter().for_each(drop);
-        cx.simulate_input("spark");
-        cx.simulate_keystrokes(keys);
-        cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
-        cx.simulate_event(KeyUpEvent {
-            layout: None,
-            keystroke: Keystroke::parse("enter").unwrap(),
-        });
-        assert!(view.read_with(cx, |v, _| v.picker.is_some()));
-        cx.update(|w, cx| w.draw(cx).clear(cx));
-        for id in ["machine-connect", "machine-cancel"] {
-            let bounds = cx.debug_bounds(id).unwrap();
-            cx.simulate_click(bounds.center(), Modifiers::default());
-            assert!(view.read_with(cx, |v, _| v.picker.is_some()));
-        }
-        assert!(receiver.try_recv().is_err());
+        crate::tmux_snapshot::picker::tests::assert_stale_form_inert(
+            cx,
+            prepare,
+            Some("spark"),
+            keys,
+            &["machine-connect", "machine-cancel"],
+            |v| v.picker.is_some(),
+        );
     }
 }
 
@@ -162,12 +148,7 @@ fn add_machine_reopened_form_and_composition_reject_captured_actions(cx: &mut Te
             assert!(!v.machine_identity_current(&current, cx));
             for key in ["tab", "enter", "escape"] {
                 v.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     w,
                     cx,
                 );
