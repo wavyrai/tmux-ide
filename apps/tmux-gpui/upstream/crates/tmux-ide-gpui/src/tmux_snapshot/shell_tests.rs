@@ -6,7 +6,7 @@ use gpui::{prelude::*, *};
 mod status_geometry;
 struct Fixture;
 impl Render for Fixture {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         frame(
             div()
                 .size_full()
@@ -26,6 +26,7 @@ impl Render for Fixture {
                         .h_full(),
                 ),
             window,
+            cx,
         )
     }
 }
@@ -85,7 +86,7 @@ fn browser_fixture(
         _activation: None,
         _appearance: None,
         last_system: None,
-        glass: Default::default(),
+        chrome: Default::default(),
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
@@ -260,19 +261,6 @@ fn normal_ready_workspace_reserves_status_lane_without_hiding_errors(cx: &mut Te
             ),
             "presentation may resize but must not send text or navigate"
         );
-    }
-}
-
-#[test]
-fn glass_tint_is_confined_to_chrome_and_fallback_is_opaque() {
-    for color in [0x111111, 0xffffff, 0x2e3440] {
-        let solid = super::chrome_fill(color, false);
-        let glass = super::chrome_fill(color, true);
-        assert_eq!(solid, rgb(color));
-        assert_eq!(glass.r, solid.r);
-        assert_eq!(glass.g, solid.g);
-        assert_eq!(glass.b, solid.b);
-        assert!(glass.a > 0. && glass.a < solid.a);
     }
 }
 

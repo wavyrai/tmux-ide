@@ -59,6 +59,12 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // own background, not Bezel's grey, so panes stay the theme's colour.
     result.content_background = color(theme.background);
     result.surface = color(theme.surface);
+    // Terminal panes stay opaque under frosted chrome (owner, #666).
+    result.content_opacity = 1.0;
+    // The frost is the theme's own surface, thick enough that the sidebar's
+    // labels and muted lines keep 4.5:1 over any desktop behind the window.
+    result.vibrancy_tone = color(theme.surface);
+    result.vibrancy_alpha = frost_alpha(theme);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
     result.selection = color(theme.active);
@@ -95,6 +101,26 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.vibrancy = false;
     }
     result
+}
+
+/// The least frost coverage, from Bezel's own 0.80 up, at which the theme's
+/// foreground and muted text read at 4.5:1 or more on the frost over both a
+/// white and a black desktop. Opaque when no coverage manages it.
+fn frost_alpha(theme: &Theme) -> f32 {
+    let surface: Hsla = rgb(theme.surface).into();
+    let ink = [theme.foreground, theme.muted].map(|value| -> Hsla { rgb(value).into() });
+    let reads = |alpha: f32| {
+        [white(), black()].iter().all(|&desktop| {
+            let plate = bezel_theme::flatten(surface.opacity(alpha), desktop);
+            ink.iter()
+                .all(|&text| bezel_theme::contrast_ratio(text, plate) >= 4.5)
+        })
+    };
+    let start = (bezel_theme::Theme::VIBRANCY_ALPHA * 100.).round() as u32;
+    (start..100)
+        .map(|step| step as f32 / 100.)
+        .find(|&alpha| reads(alpha))
+        .unwrap_or(1.0)
 }
 
 /// The oklch hue (degrees) and chroma of a packed sRGB colour, which is what a
@@ -357,6 +383,28 @@ mod tests {
                 let ratio = bezel_theme::contrast_ratio(text, plate);
                 if ratio < 4.5 {
                     failures.push(format!("{name}: text on {plate_name} is {ratio:.2}:1"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn frosted_chrome_keeps_sidebar_text_readable_over_any_desktop() {
+        let mut failures = Vec::new();
+        for (name, _, theme) in catalog() {
+            let bezel = palette(&theme);
+            assert_eq!(bezel.content_opacity, 1.0, "{name}: panes must stay opaque");
+            assert_eq!(bezel.vibrancy_tone, color(theme.surface), "{name}");
+            for (desktop, desktop_name) in [(gpui::white(), "white"), (gpui::black(), "black")] {
+                let plate = bezel_theme::flatten(bezel.vibrancy_tint(), desktop);
+                for (text, role) in [(theme.foreground, "foreground"), (theme.muted, "muted")] {
+                    let ratio = bezel_theme::contrast_ratio(color(text), plate);
+                    if ratio < 4.5 {
+                        failures.push(format!(
+                            "{name}: {role} on frost over a {desktop_name} desktop is {ratio:.2}:1"
+                        ));
+                    }
                 }
             }
         }
