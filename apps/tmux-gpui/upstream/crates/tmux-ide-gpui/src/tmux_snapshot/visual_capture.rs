@@ -316,6 +316,16 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
     let mut state = if fleet { with_fleet(state)? } else { state };
+    if extras.contains(&"agents") {
+        state.workspace_agents = Some(serde_json::from_value(serde_json::json!({
+            "sessionId": "session-a", "revision": 1, "phase": "loading",
+            "rows": [{"key": "agent-a", "sessionId": "session-a", "paneId": "pane-a",
+                "name": "Claude", "sessionLabel": "tmux-ide", "status": "WORKING",
+                "attention": false, "available": true}],
+            "observedSessions": 1, "totalSessions": 3, "truncatedSessions": 2,
+            "truncatedRows": 4, "note": "Two servers did not answer"
+        }))?);
+    }
     if home {
         state.surface = browser::Surface::Home;
     }
