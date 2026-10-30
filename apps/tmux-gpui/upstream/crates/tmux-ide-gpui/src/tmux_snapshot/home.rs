@@ -231,6 +231,7 @@ impl SnapshotView {
             .bg(rgb(self.canvas()))
             .text_color(bezel.text)
             .text_style(TextStyle::Body)
+            .children(design::ink_probe(|| "home-text".into()))
             .child(bezel.page_header("tmux-ide", None))
             .child(
                 bezel

@@ -74,12 +74,12 @@ fn home_text_reads_on_every_plate_in_every_catalog_theme() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// A dark theme on a lighter canvas than its surface: Bezel's muted, inked
-/// for the surface, drops under 4.5:1 on Home's canvas.
+/// A dark theme on a lighter canvas than its surface: Bezel's text and muted,
+/// made to read on the surface, drop under 4.5:1 on Home's canvas.
 fn faint_muted() -> serde_json::Value {
     serde_json::json!({
         "selected":"dark","system":"dark","error":null,
-        "theme":{"canvas":0x404040,"background":0x0b0b10,"foreground":0xdedee6,
+        "theme":{"canvas":0x404040,"background":0x0b0b10,"foreground":0x8a8a8a,
             "cursor":0x222b38,"surface":0x212121,"active":0x303030,"muted":0x5c5c5c,
             "accent":0x68a8ff,"palette":vec![0x808080;256]},
         "options":[{"id":"dark","name":"Dark"}]
@@ -87,7 +87,7 @@ fn faint_muted() -> serde_json::Value {
 }
 
 #[gpui::test]
-fn home_secondary_text_reads_on_a_faint_muted_theme(cx: &mut TestAppContext) {
+fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -106,13 +106,15 @@ fn home_secondary_text_reads_on_a_faint_muted_theme(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     let (theme, canvas) = view.read_with(cx, |v, _| (v.theme(), v.canvas()));
     let plates = plates_under_text(&theme, canvas);
-    let stock = design::palette(&theme).text_muted;
-    assert!(
-        plates.iter().any(|(plate, _)| {
-            bezel_theme::contrast_ratio(bezel_theme::flatten(stock, *plate), *plate) < 4.5
-        }),
-        "Bezel's muted must fail on Home's plates here, or the test proves nothing"
-    );
+    let stock = design::palette(&theme);
+    for (role, color) in [("text", stock.text), ("muted", stock.text_muted)] {
+        assert!(
+            plates.iter().any(|(plate, _)| {
+                bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
+            }),
+            "Bezel's {role} must fail on Home's plates here, or the test proves nothing"
+        );
+    }
     cx.update(|_, cx| cx.set_global(InkProbes::default()));
     cx.simulate_resize(size(px(1400.), px(1800.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -120,6 +122,7 @@ fn home_secondary_text_reads_on_a_faint_muted_theme(cx: &mut TestAppContext) {
         let probes = &cx.global::<InkProbes>().0;
         let mut failures = Vec::new();
         for key in [
+            "home-text",
             "home-summary",
             "home-agent-counts",
             "home-agent-context-0",
