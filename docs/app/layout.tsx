@@ -4,6 +4,7 @@ import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { GeistPixelSquare } from "geist/font/pixel";
 import { Analytics } from "@vercel/analytics/next";
+import { WebMcpTools } from "@/components/webmcp-tools";
 import type { Metadata, Viewport } from "next";
 import {
   CURRENT_RELEASE_PATH,
@@ -182,6 +183,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             server component provider-light; page content remains statically rendered. */}
         <RootProvider>{children}</RootProvider>
         <Analytics />
+        <WebMcpTools />
       </body>
     </html>
   );
