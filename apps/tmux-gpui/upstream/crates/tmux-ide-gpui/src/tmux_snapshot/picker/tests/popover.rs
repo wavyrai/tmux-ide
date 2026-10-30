@@ -171,6 +171,11 @@ fn palette_paints_bezels_selected_row_and_lighter_scrim(cx: &mut TestAppContext)
     };
     // The selected row is Bezel's menu row wash.
     assert!(at(row).contains(&bezel.card_selected_bg()), "{:?}", at(row));
+    // The card is an opaque plate, not glass: it floats over terminal output.
+    let card = cx.debug_bounds("commands-popover").unwrap();
+    let plate = crate::tmux_snapshot::design::popover_ink(&theme).plate;
+    assert!(at(card).contains(&plate), "{:?}", at(card));
+    assert_eq!(plate.a, 1.0);
     // The overlay dims with modal_glass's lighter scrim.
     assert!(
         at(overlay).contains(&bezel_theme::scrim(0.35)),

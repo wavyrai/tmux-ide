@@ -23,6 +23,7 @@ impl SnapshotView {
         })?;
         let theme = self.theme();
         super::super::design::prepare(&theme, self.chrome.allowed(), cx);
+        let ink = super::super::design::popover_ink(&theme);
         let viewport = window.viewport_size();
         let pane_scope = self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some());
         // Pane rows are single-line. Budget heading/search/padding separately,
@@ -60,9 +61,15 @@ impl SnapshotView {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .child(
-                    // Bezel's popover card on its popover surface (the
-                    // surface owns fill, border and shadow), sized here.
+                    // Bezel's popover card, on an opaque plate rather than
+                    // glass: it floats over live terminal output (PM, #671
+                    // round 2). Glass stays on the sidebar and titlebar.
                     bezel_ui::popover::popover_card(&super::super::design::palette(&theme))
+                        .bg(ink.plate)
+                        .border_1()
+                        .border_color(super::super::design::palette(&theme).border)
+                        .shadow(bezel_theme::surface_shadows())
+                        .text_color(ink.text)
                         .id("commands-popover")
                         .debug_selector(|| "commands-popover".into())
                         .w((viewport.width - px(24.))
@@ -77,8 +84,7 @@ impl SnapshotView {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(self.picker_render(cx))
-                        .map(|panel| super::super::design::popover(panel, cx)),
+                        .child(self.picker_render(cx)),
                 )
                 .into_any_element(),
         )
@@ -118,7 +124,7 @@ impl SnapshotView {
                     )))
                     .child(
                         div()
-                            .text_color(super::super::design::palette(&theme).text_muted)
+                            .text_color(super::super::design::popover_ink(&theme).muted)
                             .child(
                                 self.terminal_font
                                     .note
@@ -190,6 +196,7 @@ impl SnapshotView {
                 continue;
             }
             let bezel = super::super::design::palette(&theme);
+            let ink = super::super::design::popover_ink(&theme);
             let hint = match &target {
                 Target::Command(Action::Home) => Some("F1"),
                 Target::Command(Action::Terminals) => Some("F2"),
@@ -240,8 +247,10 @@ impl SnapshotView {
                         row.w_full().whitespace_normal()
                     })
                     .when(enabled, |row| row.cursor_pointer())
-                    .when(!enabled && !picker.mode.is_reference(), |row| {
-                        row.text_color(bezel.text_muted)
+                    .text_color(if enabled || picker.mode.is_reference() {
+                        ink.text
+                    } else {
+                        ink.muted
                     })
                     .when(picker.mode == Mode::Font, |row| {
                         row.min_h(px(super::super::controls::CONTROL_HEIGHT))
@@ -252,7 +261,7 @@ impl SnapshotView {
                             ))
                     })
                     .child(div().flex_1().min_w_0().when(!picker.mode.is_reference(), |label| label.truncate()).child(label.to_owned()))
-                    .children(hint.map(|hint| super::super::kbd::badge(&bezel, hint)))
+                    .children(hint.map(|hint| keycap(&bezel, ink, hint)))
                     .when(enabled, |row| {
                         row.on_click(cx.listener(move |view, _, window, cx| {
                             view.choose_picker(target.clone(), window, cx)
@@ -268,9 +277,10 @@ impl SnapshotView {
                     .pt_2()
                     .flex()
                     .gap(px(14.))
-                    .child(bezel_ui::popover::key_hint_text(&bezel, "↑↓", "Browse"))
-                    .child(bezel_ui::popover::key_hint_text(&bezel, "↩", "Apply"))
-                    .child(bezel_ui::popover::key_hint_text(&bezel, "esc", "Close")),
+                    .children(
+                        [("↑↓", "Browse"), ("↩", "Apply"), ("esc", "Close")]
+                            .map(|(cap, label)| key_hint(&bezel, &theme, cap, label)),
+                    ),
             )
         });
         panel.into_any_element()
@@ -285,9 +295,43 @@ fn section_heading(
     key: Option<&'static str>,
 ) -> Div {
     let bezel = super::super::design::palette(theme);
+    let ink = super::super::design::popover_ink(theme);
     bezel_ui::popover::menu_heading(&bezel, label)
+        .text_color(ink.muted)
         .flex()
         .items_center()
         .justify_between()
-        .children(key.map(|key| super::super::kbd::badge(&bezel, key)))
+        .children(key.map(|key| keycap(&bezel, ink, key)))
+}
+
+/// Bezel's keycap, inked on the palette plate.
+fn keycap(
+    bezel: &bezel_theme::Theme,
+    ink: super::super::design::PopoverInk,
+    key: &'static str,
+) -> Div {
+    super::super::kbd::badge(bezel, key).text_color(ink.muted)
+}
+
+/// Bezel's `key_hint_text` (a keycap and its label), with both inked on the
+/// palette plate; Bezel paints the label at 45% of muted.
+fn key_hint(
+    bezel: &bezel_theme::Theme,
+    theme: &crate::config::Theme,
+    cap: &'static str,
+    label: &'static str,
+) -> Div {
+    let ink = super::super::design::popover_ink(theme);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(5.))
+        .child(
+            bezel_ui::popover::key_cap(bezel)
+                .font_family(bezel.font_mono.clone())
+                .text_color(ink.muted)
+                .child(cap),
+        )
+        .child(div().text_color(ink.muted).child(label))
 }

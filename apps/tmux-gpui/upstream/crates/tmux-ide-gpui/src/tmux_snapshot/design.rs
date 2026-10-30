@@ -216,6 +216,41 @@ pub(crate) fn badge_text(theme: &Theme) -> u32 {
     crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
 }
 
+/// The palette's text, inked on its opaque plate (`surface_overlay`) and on
+/// the selected row's wash over it. The palette floats over live terminal
+/// content, so its plate is opaque rather than glass (PM, #671 round 2), and
+/// Bezel's deliberately faint popover roles are lifted to 4.5:1 on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PopoverInk {
+    /// The plate itself, opaque.
+    pub plate: Hsla,
+    /// Row labels and the card's own text.
+    pub text: Hsla,
+    /// Headings, keycaps, legends, notes and disabled rows.
+    pub muted: Hsla,
+}
+
+pub(crate) fn popover_ink(theme: &Theme) -> PopoverInk {
+    let bezel = palette(theme);
+    let plate = Hsla {
+        a: 1.0,
+        ..bezel.surface_overlay
+    };
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let plates = [
+        pack(plate),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+        pack(bezel_theme::flatten(bezel.element_hover, plate)),
+    ];
+    let ink =
+        |color: u32| -> Hsla { rgb(crate::contrast::ink_on_chrome(color, plates, 4.6)).into() };
+    PopoverInk {
+        plate,
+        text: ink(theme.foreground),
+        muted: ink(theme.muted),
+    }
+}
+
 /// What chrome text is drawn on: the opaque surface and, in a dark theme (the
 /// one Bezel frosts), the frost over a white and over a black desktop.
 fn chrome_plates(theme: &Theme) -> [u32; 3] {
@@ -293,15 +328,9 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
     cx.set_global(next);
 }
 
-pub(super) fn popover(element: Stateful<Div>, cx: &App) -> bezel_ui::surface::Surface {
-    use bezel_ui::surface::Surfaced;
-    let theme = bezel_theme::Theme::of(cx);
-    element.surface(theme, theme.popover_surface)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{badge_text, chrome_text, palette, prepare, row_ink};
+    use super::{badge_text, chrome_text, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, TestAppContext, black, rgb, white};
 
@@ -558,6 +587,37 @@ mod tests {
                     let ratio = bezel_theme::contrast_ratio(text, *plate);
                     if ratio < 4.5 {
                         failures.push(format!("{name}: {role} on {plate_name} is {ratio:.2}:1"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn every_palette_text_role_reads_on_its_plate() {
+        let mut failures = Vec::new();
+        for (name, _, theme) in catalog() {
+            let bezel = palette(&theme);
+            let ink = popover_ink(&theme);
+            assert_eq!(ink.plate.a, 1.0, "{name}: the palette plate is opaque");
+            for (plate, plate_name) in [
+                (ink.plate, "plate"),
+                (
+                    bezel_theme::flatten(bezel.card_selected_bg(), ink.plate),
+                    "selected row",
+                ),
+                (
+                    bezel_theme::flatten(bezel.element_hover, ink.plate),
+                    "hovered row",
+                ),
+            ] {
+                for (role, text) in [("text", ink.text), ("muted", ink.muted)] {
+                    let ratio = bezel_theme::contrast_ratio(text, plate);
+                    if ratio < 4.5 {
+                        failures.push(format!(
+                            "{name}: palette {role} on {plate_name} is {ratio:.2}:1"
+                        ));
                     }
                 }
             }
