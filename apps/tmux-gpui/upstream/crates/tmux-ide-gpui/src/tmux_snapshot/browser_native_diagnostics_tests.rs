@@ -69,3 +69,28 @@ fn the_stop_status_survives_catalog_republication_until_a_newer_request() {
     assert_eq!(newer.status, "Opening terminal");
     assert!(stop.is_none());
 }
+
+#[test]
+fn the_daemon_version_is_trimmed_bounded_and_limited_to_version_characters() {
+    let named = |v: &str| daemon_too_old(Some(v)).contains(&format!("({v})"));
+    assert_eq!(
+        daemon_too_old(Some("  2.9.7 ")),
+        daemon_too_old(Some("2.9.7"))
+    );
+    assert!(named("2.9.7"));
+    assert!(named("2.9.0-beta.50+build.7"));
+    assert!(named(&"9".repeat(32)));
+    assert_eq!(daemon_too_old(Some(&"9".repeat(33))), daemon_too_old(None));
+    assert_eq!(daemon_too_old(Some("")), daemon_too_old(None));
+    assert_eq!(daemon_too_old(Some("   ")), daemon_too_old(None));
+    for bad in [
+        "2.9.7 beta",
+        "2.9.7)",
+        "2.9_7",
+        "v2/9",
+        "2.9.7\u{0}",
+        "2.9.é",
+    ] {
+        assert_eq!(daemon_too_old(Some(bad)), daemon_too_old(None), "{bad:?}");
+    }
+}
