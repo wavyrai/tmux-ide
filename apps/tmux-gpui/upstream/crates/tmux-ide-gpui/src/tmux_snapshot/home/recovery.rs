@@ -90,12 +90,12 @@ impl SnapshotView {
             ] {
                 if self.recovery_available(request, revision, action) {
                     row = row.child(
-                        super::super::controls::button(
+                        super::super::controls::button_on(
                             id,
                             Some(label),
                             label,
                             super::super::controls::Icon::Refresh,
-                            &self.theme(),
+                            &self.home_palette(),
                         )
                         .on_click(cx.listener(move |view, _, _, cx| {
                             cx.stop_propagation();

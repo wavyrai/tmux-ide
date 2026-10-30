@@ -146,7 +146,6 @@ impl SnapshotView {
     }
     pub(super) fn fleet_cards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let fleet = self.browser_state.fleet.as_ref()?;
-        let theme = self.theme();
         let bezel = self.home_palette();
         let (hover, muted) = (bezel.element_hover, bezel.text_muted);
         let request = self.browser_request;
@@ -229,13 +228,13 @@ impl SnapshotView {
             if let Some(token) = group.retry.clone() {
                 actions = actions.child(
                     div().id(("fleet-retry", index)).child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "fleet-retry-action",
                             Some("Retry connection"),
                             "Retry connection",
                             native_controls::Icon::Refresh,
                             native_controls::ButtonStyle::Secondary,
-                            &theme,
+                            &self.home_palette(),
                         )
                         .accessibility_id(format!("fleet-retry-{index}"))
                         .debug_selector(move || format!("fleet-retry-{index}"))
@@ -251,13 +250,13 @@ impl SnapshotView {
             if let Some(token) = group.disconnect.clone() {
                 actions = actions.child(
                     div().id(("fleet-disconnect", index)).child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "fleet-disconnect-action",
                             Some("Disconnect"),
                             "Disconnect",
                             native_controls::Icon::Close,
                             native_controls::ButtonStyle::Quiet,
-                            &theme,
+                            &self.home_palette(),
                         )
                         .accessibility_id(format!("fleet-disconnect-{index}"))
                         .debug_selector(move || format!("fleet-disconnect-{index}"))

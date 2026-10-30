@@ -78,7 +78,6 @@ impl SnapshotView {
         let Some(capability) = &self.browser_state.home_agent_filter else {
             return div().into_any_element();
         };
-        let theme = self.theme();
         let label = capability
             .machine_id
             .as_ref()
@@ -94,12 +93,12 @@ impl SnapshotView {
         let request = self.browser_request;
         let revision = capability.revision;
         let enabled = self.machine_filter_ready(request, revision);
-        let mut button = super::super::controls::button(
+        let mut button = super::super::controls::button_on(
             "home-machine-filter",
             None,
             "Cycle machine filter (f)",
             super::super::controls::Icon::Sessions,
-            &theme,
+            &self.home_palette(),
         )
         .w_auto()
         .max_w(px(240.))

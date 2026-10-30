@@ -151,6 +151,11 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "home-agent-action-0",
             "home-filter-hints",
             "fleet-machine-guidance-3",
+            // The shared quiet buttons, painted from Home's palette.
+            "control-home-theme",
+            "control-tmux-home-refresh",
+            "control-icon-home-theme",
+            "control-icon-tmux-home-refresh",
         ] {
             let Some(&text) = probes.get(key) else {
                 failures.push(format!("{key}: not painted"));

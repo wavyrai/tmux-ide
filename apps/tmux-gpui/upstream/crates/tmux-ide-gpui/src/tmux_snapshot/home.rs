@@ -249,12 +249,12 @@ impl SnapshotView {
         }
         if self.home_diagnostics_available() {
             body = body.child(
-                native_controls::button(
+                native_controls::button_on(
                     "home-copy-diagnostics",
                     Some("Copy diagnostics"),
                     "Copy safe error details",
                     native_controls::Icon::Copy,
-                    &theme,
+                    &bezel,
                 )
                 .when_some(self.home_filter.as_ref(), |control, filter| {
                     action_focus::focus_control(
@@ -284,13 +284,13 @@ impl SnapshotView {
                     .flex_wrap()
                     .gap_2()
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "home-browse",
                             Some("Browse sessions"),
                             "Browse sessions (⌘K)",
                             native_controls::Icon::Sessions,
                             native_controls::ButtonStyle::Primary,
-                            &theme,
+                            &bezel,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
                             action_focus::focus_control(
@@ -310,7 +310,7 @@ impl SnapshotView {
                         )),
                     )
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "home-theme",
                             Some("Theme…"),
                             "Choose a theme",
@@ -320,7 +320,7 @@ impl SnapshotView {
                             } else {
                                 native_controls::ButtonStyle::Unavailable
                             },
-                            &theme,
+                            &bezel,
                         )
                         .when(!theme_ready, |control| {
                             control.aria_description("Appearance settings are not available yet")
@@ -344,7 +344,7 @@ impl SnapshotView {
                         }),
                     )
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "tmux-home-refresh",
                             Some(refresh_label),
                             refresh_label,
@@ -354,7 +354,7 @@ impl SnapshotView {
                             } else {
                                 native_controls::ButtonStyle::Quiet
                             },
-                            &theme,
+                            &bezel,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
                             action_focus::focus_control(

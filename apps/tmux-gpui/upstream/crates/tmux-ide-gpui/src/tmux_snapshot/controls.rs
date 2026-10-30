@@ -73,6 +73,18 @@ pub(super) fn button(
     action_button(id, label, hint, icon, ButtonStyle::Quiet, theme)
 }
 
+/// [`button`] painted from `bezel`: a surface with its own inked palette
+/// (Home) passes it, so the button's text and icon read on that surface.
+pub(super) fn button_on(
+    id: &'static str,
+    label: Option<&'static str>,
+    hint: &'static str,
+    icon: Icon,
+    bezel: &bezel_theme::Theme,
+) -> Stateful<Div> {
+    action_button_on(id, label, hint, icon, ButtonStyle::Quiet, bezel)
+}
+
 pub(super) fn action_button(
     id: &'static str,
     label: Option<&'static str>,
@@ -81,8 +93,19 @@ pub(super) fn action_button(
     style: ButtonStyle,
     theme: &Theme,
 ) -> Stateful<Div> {
+    action_button_on(id, label, hint, icon, style, &super::design::palette(theme))
+}
+
+/// [`action_button`] painted from `bezel`; see [`button_on`].
+pub(super) fn action_button_on(
+    id: &'static str,
+    label: Option<&'static str>,
+    hint: &'static str,
+    icon: Icon,
+    style: ButtonStyle,
+    bezel: &bezel_theme::Theme,
+) -> Stateful<Div> {
     use bezel_ui::widgets::ButtonStyle as BezelStyle;
-    let bezel = super::design::palette(theme);
     let asset = bezel_ui::icons::Icon::asset(icon.path());
     let base = match style {
         ButtonStyle::Primary => bezel.icon_button(asset, BezelStyle::Prominent, None).id(id),
@@ -91,10 +114,21 @@ pub(super) fn action_button(
             .id(id),
         ButtonStyle::Unavailable => bezel.icon_button(asset, BezelStyle::Ghost, None).id(id),
         ButtonStyle::Secondary | ButtonStyle::Quiet => bezel.ghost(id).child(
-            bezel_ui::icons::icon(asset)
-                .size(px(bezel_ui::widgets::ICON_GLYPH))
+            // The wrapper carries the icon's colour too, so a test probe
+            // can read what the glyph is painted in.
+            div()
+                .flex()
                 .flex_shrink_0()
-                .text_color(bezel.text_muted),
+                .text_color(bezel.text_muted)
+                .child(
+                    bezel_ui::icons::icon(asset)
+                        .size(px(bezel_ui::widgets::ICON_GLYPH))
+                        .flex_shrink_0()
+                        .text_color(bezel.text_muted),
+                )
+                .children(super::design::ink_probe(move || {
+                    format!("control-icon-{id}")
+                })),
         ),
     };
     base.control_size(ControlSize::Regular)
@@ -121,7 +155,13 @@ pub(super) fn action_button(
         .when(matches!(style, ButtonStyle::Unavailable), |control| {
             control.opacity(0.5).cursor_default()
         })
-        .children(label.map(|label| div().min_w_0().truncate().child(label)))
+        .children(label.map(|label| {
+            div()
+                .min_w_0()
+                .truncate()
+                .child(label)
+                .children(super::design::ink_probe(move || format!("control-{id}")))
+        }))
         .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
 }
 
