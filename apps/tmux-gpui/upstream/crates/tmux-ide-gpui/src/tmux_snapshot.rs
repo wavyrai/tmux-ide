@@ -60,8 +60,8 @@ mod terminal_font;
 mod terminal_links;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod visual_capture_tests;
+#[cfg(feature = "visual-capture")]
+pub(crate) mod visual_capture;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 

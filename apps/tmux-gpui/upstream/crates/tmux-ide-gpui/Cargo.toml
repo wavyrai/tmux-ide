@@ -39,11 +39,12 @@ uuid.workspace                 = true
 base64.workspace = true
 tungstenite.workspace = true
 gpui = { features = ["test-support"], workspace = true }
-gpui_platform = { features = ["test-support"], workspace = true }
 
 [features]
 default = []
 integration-test = ["objc2-app-kit/NSPasteboardItem"]
+# Dev-only offscreen window screenshots (examples/capture_window.rs). Never in release.
+visual-capture = ["gpui_platform/test-support"]
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
@@ -70,3 +71,7 @@ path = "src/tmux_main.rs"
 [[example]]
 name = "tmux_native_journey"
 required-features = ["integration-test"]
+
+[[example]]
+name = "capture_window"
+required-features = ["visual-capture"]

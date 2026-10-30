@@ -32,6 +32,10 @@ pub use error::{Error, Result};
 
 pub(crate) use actions::{Quit, RunCommand};
 
+#[cfg(feature = "visual-capture")]
+#[doc(hidden)]
+pub use tmux_snapshot::visual_capture::capture_catalog_themes;
+
 pub fn run_tmux() -> std::process::ExitCode {
     tmux_cli::run(std::env::args_os().skip(1).collect())
 }
