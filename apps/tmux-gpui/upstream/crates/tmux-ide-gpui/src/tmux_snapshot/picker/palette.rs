@@ -157,16 +157,14 @@ impl SnapshotView {
         });
         match publication {
             Some(p) => format!(
-                "{} · {} observed · {} and {} omitted",
+                "{} · {}",
                 match p.roster.phase {
                     browser::home_agents::Phase::Loading => "Loading fleet agents",
                     browser::home_agents::Phase::Unavailable => "Fleet agents unavailable",
                     browser::home_agents::Phase::Partial => "Partial fleet observations",
                     browser::home_agents::Phase::Live => "Fleet agents",
                 },
-                crate::plural::count(p.roster.observed_sessions, "session", "sessions"),
-                crate::plural::count(p.roster.truncated_sessions, "session", "sessions"),
-                crate::plural::count(p.roster.truncated_rows, "matching row", "matching rows")
+                crate::tmux_snapshot::roster_counts::palette(&p.roster)
             ),
             None => "Loading fleet search…".into(),
         }

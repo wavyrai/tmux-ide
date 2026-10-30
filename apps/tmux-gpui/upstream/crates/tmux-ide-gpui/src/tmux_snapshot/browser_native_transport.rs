@@ -558,7 +558,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 }
             }
             if let Some(current) = active.as_mut().filter(|a| !a.reissue) {
-                match current.poll(&mut state, now) {
+                match current.poll(&mut state, presence.0, now) {
                     Ok(dirty) => changed |= dirty,
                     Err(error) => {
                         eprintln!(

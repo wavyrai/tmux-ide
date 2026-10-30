@@ -75,20 +75,12 @@ impl SnapshotView {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(heading),
             )
-            .child(div().text_sm().text_color(rgb(theme.muted)).child(format!(
-                "{} of {} observed{}",
-                roster.observed_sessions,
-                crate::plural::count(roster.total_sessions, "session", "sessions"),
-                if roster.truncated_sessions > 0 || roster.truncated_rows > 0 {
-                    format!(
-                        " · {} and {} omitted",
-                        crate::plural::count(roster.truncated_sessions, "session", "sessions"),
-                        crate::plural::count(roster.truncated_rows, "row", "rows")
-                    )
-                } else {
-                    String::new()
-                }
-            )));
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme.muted))
+                    .child(crate::tmux_snapshot::roster_counts::home(roster)),
+            );
         body = body.child(self.home_filter_controls(cx));
         body = body.child(self.home_recovery_controls(cx));
         if let Some(note) = &roster.note {

@@ -254,13 +254,9 @@ impl SnapshotView {
                     }
                 }
             };
-            heading = heading.child(phase).child(format!(
-                "{} of {} observed · {} and {} omitted",
-                p.roster.observed_sessions,
-                crate::plural::count(p.roster.total_sessions, "session", "sessions"),
-                crate::plural::count(p.roster.truncated_sessions, "session", "sessions"),
-                crate::plural::count(p.roster.truncated_rows, "row", "rows")
-            ));
+            heading = heading
+                .child(phase)
+                .child(crate::tmux_snapshot::roster_counts::attention(&p.roster));
             if let Some(note) = &p.roster.note {
                 heading = heading.child(note.clone());
             }

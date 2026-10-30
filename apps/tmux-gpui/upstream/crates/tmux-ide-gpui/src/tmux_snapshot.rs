@@ -47,6 +47,7 @@ mod picker;
 mod pointer;
 mod presence;
 mod renderer_probe;
+mod roster_counts;
 mod selection;
 mod session_history;
 mod session_open;

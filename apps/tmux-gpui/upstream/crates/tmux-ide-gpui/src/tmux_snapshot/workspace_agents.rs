@@ -86,10 +86,9 @@ impl SnapshotView {
             body = body.child(div().px_2().text_sm().child(note.clone()));
         }
         if w.roster.truncated_rows > 0 {
-            body = body.child(div().px_2().text_sm().child(format!(
-                "{} omitted",
-                crate::plural::count(w.roster.truncated_rows, "agent", "agents")
-            )));
+            body = body.child(div().px_2().text_sm().child(
+                crate::tmux_snapshot::roster_counts::workspace_agents(&w.roster),
+            ));
         }
         for (index, agent) in w.roster.rows.iter().enumerate() {
             let key = agent.key.clone();

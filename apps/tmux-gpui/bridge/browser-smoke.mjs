@@ -504,7 +504,7 @@ try {
     assert.equal(events.at(-1).inputReady, false);
     assert.match(
       events.at(-1).status,
-      /^(Window inactive — activate tmux-ide to type|Connecting…)$/,
+      /^Window inactive — activate tmux-ide to type$/,
     );
     send({ type: "presence", active: true, revision: 4 });
     await until(
