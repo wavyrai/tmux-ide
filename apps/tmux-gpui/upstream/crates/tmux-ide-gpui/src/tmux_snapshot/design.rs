@@ -1,36 +1,7 @@
 //! Bezel-derived native component tokens. See BEZEL-NOTICE.md for provenance.
 //! These colors belong to chrome; never use them to recolor canonical terminal cells.
 use crate::{config::Theme, contrast::Contrast};
-use gpui::{prelude::*, *};
-
-pub(super) const SURFACE_RADIUS: f32 = 12.;
-
-#[derive(Clone, Copy)]
-pub(super) struct Palette {
-    pub overlay: Rgba,
-    pub text: Rgba,
-    pub muted: Rgba,
-    pub selected: Rgba,
-    pub border: Rgba,
-}
-impl Palette {
-    pub fn for_theme(theme: &Theme) -> Self {
-        let source = palette(theme);
-        let overlay: Rgba = source.surface_overlay.into();
-        Self {
-            overlay,
-            text: source.text.into(),
-            muted: source.text_muted.into(),
-            selected: source.element_active.into(),
-            border: source.border.into(),
-        }
-    }
-}
-
-/// Bezel paint::surface_shadows. A single elevation recipe for floating cards.
-pub(super) fn shadows() -> Vec<BoxShadow> {
-    bezel_theme::surface_shadows()
-}
+use gpui::*;
 
 /// The tmux theme as the one Bezel palette. The terminal's background, surface,
 /// text, cursor, selection and 16 ANSI colours are taken as they are; every
@@ -328,23 +299,11 @@ pub(super) fn popover(element: Stateful<Div>, cx: &App) -> bezel_ui::surface::Su
     element.surface(theme, theme.popover_surface)
 }
 
-/// Shared floating-surface component. Owners retain positioning, occlusion and focus.
-pub(super) fn floating<E: Styled>(element: E, theme: &Theme) -> E {
-    let palette = Palette::for_theme(theme);
-    element
-        .rounded(px(SURFACE_RADIUS))
-        .border_1()
-        .border_color(palette.border)
-        .bg(palette.overlay)
-        .text_color(palette.text)
-        .shadow(shadows())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Palette, badge_text, chrome_text, palette, prepare, row_ink};
+    use super::{badge_text, chrome_text, palette, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
-    use gpui::{Hsla, Rgba, TestAppContext, black, rgb, white};
+    use gpui::{Hsla, TestAppContext, black, rgb, white};
 
     fn color(value: u32) -> Hsla {
         rgb(value).into()
@@ -364,17 +323,17 @@ mod tests {
     }
 
     #[test]
-    fn floating_text_is_legible_in_both_appearances() {
+    fn popover_text_is_legible_in_both_appearances() {
         for background in [0x000000, 0xffffff] {
             let theme = Theme {
                 background,
                 ..Theme::default()
             };
-            let p = Palette::for_theme(&theme);
-            let luminance = |c: Rgba| crate::contrast::luminance(u32::from(c) >> 8);
-            let (a, b) = (luminance(p.text), luminance(p.overlay));
-            assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
-            assert_eq!(p.overlay.a, 1.0, "No fake blur over live terminal text");
+            let bezel = palette(&theme);
+            let overlay = bezel.surface_overlay;
+            let text = bezel_theme::flatten(bezel.text, overlay);
+            assert!(bezel_theme::contrast_ratio(text, overlay) >= 4.5);
+            assert_eq!(overlay.a, 1.0, "No fake blur over live terminal text");
         }
     }
 

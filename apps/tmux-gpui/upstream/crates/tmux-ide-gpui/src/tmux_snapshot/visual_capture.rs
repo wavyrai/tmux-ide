@@ -301,11 +301,13 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
 }
 
 fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<PathBuf> {
-    // `<theme>+fleet` shows the fleet sidebar with an attention badge.
-    let (theme, fleet) = match id.strip_suffix("+fleet") {
-        Some(theme) => (theme, true),
-        None => (id, false),
-    };
+    // `<theme>+fleet` shows the fleet sidebar with an attention badge, and
+    // `<theme>+palette` the command palette open over the workspace.
+    let mut parts = id.split('+');
+    let theme = parts.next().unwrap_or(id);
+    let extras: Vec<&str> = parts.collect();
+    let fleet = extras.contains(&"fleet");
+    let palette = extras.contains(&"palette");
     let appearance = catalog_appearance(theme)?;
     // Transparent where the theme is vibrant, so translucent chrome keeps its alpha.
     let background = super::design::palette(&appearance.native()).window_background_appearance();
@@ -327,6 +329,9 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             },
             |window, cx| {
                 let view = cx.new(|cx| capture_view(window, cx, sender, state));
+                if palette {
+                    view.update(cx, |view, cx| view.open_picker(window, cx));
+                }
                 super::agent_spinner::window_root(view, window, cx)
             },
         )

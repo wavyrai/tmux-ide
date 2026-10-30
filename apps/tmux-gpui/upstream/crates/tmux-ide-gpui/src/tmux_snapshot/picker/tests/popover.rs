@@ -145,3 +145,36 @@ fn command_popover_marked_composition_owns_escape_and_return(cx: &mut TestAppCon
     });
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn palette_paints_bezels_selected_row_and_lighter_scrim(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let row = cx.debug_bounds("picker-row-0").unwrap();
+    let overlay = cx.debug_bounds("commands-overlay").unwrap();
+    let theme = view.read_with(cx, |view, _| view.theme());
+    let bezel = crate::tmux_snapshot::design::palette(&theme);
+    let quads = cx.update(|window, _| (window.painted_quads(), window.scale_factor()));
+    let (quads, scale) = quads;
+    let at = |bounds: Bounds<Pixels>| {
+        let scaled = bounds.scale(scale);
+        quads
+            .iter()
+            .filter(move |quad| quad.bounds == scaled)
+            .filter_map(|quad| quad.background.as_solid())
+            .collect::<Vec<_>>()
+    };
+    // The selected row is Bezel's menu row wash.
+    assert!(at(row).contains(&bezel.card_selected_bg()), "{:?}", at(row));
+    // The overlay dims with modal_glass's lighter scrim.
+    assert!(
+        at(overlay).contains(&bezel_theme::scrim(0.35)),
+        "{:?}",
+        at(overlay)
+    );
+}
