@@ -182,6 +182,12 @@ mod local_setup;
 #[path = "tests/ink.rs"]
 mod ink;
 
+#[path = "tests/states.rs"]
+mod states;
+
+#[path = "tests/state_ink.rs"]
+mod state_ink;
+
 #[test]
 fn fleet_summary_counts_use_singular_for_one() {
     let fleet = |machines: usize, sessions: usize| {

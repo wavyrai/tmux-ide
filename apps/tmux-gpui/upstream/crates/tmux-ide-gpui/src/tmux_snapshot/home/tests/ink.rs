@@ -2,7 +2,10 @@ use super::*;
 use crate::tmux_snapshot::design::{self, InkProbes};
 
 /// What Home paints text on, worked out here rather than read from `plates`.
-fn plates_under_text(theme: &crate::config::Theme, canvas: u32) -> Vec<(Hsla, &'static str)> {
+pub(super) fn plates_under_text(
+    theme: &crate::config::Theme,
+    canvas: u32,
+) -> Vec<(Hsla, &'static str)> {
     let bezel = design::palette(theme);
     let canvas: Hsla = rgb(canvas).into();
     let card = bezel_theme::flatten(bezel.card_glass_bg(), canvas);
@@ -21,17 +24,18 @@ fn plates_under_text(theme: &crate::config::Theme, canvas: u32) -> Vec<(Hsla, &'
             bezel_theme::flatten(bezel.card_selected_bg(), canvas),
             "selected row",
         ),
+        (bezel_theme::flatten(bezel.ink(0.05), canvas), "key cap"),
     ]
 }
 
 #[derive(serde::Deserialize)]
-struct Preset {
-    id: String,
-    dark: crate::tmux_snapshot::appearance::Colors,
-    light: crate::tmux_snapshot::appearance::Colors,
+pub(super) struct Preset {
+    pub id: String,
+    pub dark: crate::tmux_snapshot::appearance::Colors,
+    pub light: crate::tmux_snapshot::appearance::Colors,
 }
 
-fn theme_of(colors: &crate::tmux_snapshot::appearance::Colors) -> crate::config::Theme {
+pub(super) fn theme_of(colors: &crate::tmux_snapshot::appearance::Colors) -> crate::config::Theme {
     let mut theme = crate::config::Theme {
         background: colors.background,
         foreground: colors.foreground,
@@ -98,7 +102,7 @@ fn home_ink_follows_the_canvas() {
 
 /// A dark theme on a lighter canvas than its surface: Bezel's text and muted,
 /// made to read on the surface, drop under 4.5:1 on Home's canvas.
-fn faint_muted() -> serde_json::Value {
+pub(super) fn faint_muted() -> serde_json::Value {
     serde_json::json!({
         "selected":"dark","system":"dark","error":null,
         "theme":{"canvas":0x404040,"background":0x0b0b10,"foreground":0x8a8a8a,
