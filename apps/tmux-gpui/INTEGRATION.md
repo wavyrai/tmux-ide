@@ -7,6 +7,10 @@ terminal capture, input routing and resize authority. The Rust client consumes
 its supported contracts and paints cells through GPUI. It does not start another
 tmux server, emulate the terminal again, or infer authority from display names.
 
+The Herdr source paths below name files at the pinned upstream revisions this
+plan cites. Most of those modules were later removed from this tree; read them
+from git history.
+
 Herdr's framed bincode protocol is not the tmux-ide protocol. Reusing the painter
 requires an explicit adapter, not a socket address replacement. Keep upstream
 source changes small and documented for possible contribution back.

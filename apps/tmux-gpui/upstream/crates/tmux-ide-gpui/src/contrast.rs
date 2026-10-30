@@ -30,14 +30,6 @@ impl Contrast {
             Self::High => 4.5,
         }
     }
-
-    /// The config file spelling.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::High => "high",
-        }
-    }
 }
 
 fn channels(color: u32) -> [f32; 3] {
@@ -257,19 +249,5 @@ mod tests {
             assert_eq!(ink_on_chrome(color, chrome, 4.5), ink(color, &chrome, 4.5));
         }
         CACHE.with(|cache| assert!(cache.borrow().len() <= CACHE_LIMIT));
-    }
-
-    #[test]
-    fn contrast_parses_its_config_names() {
-        #[derive(Deserialize)]
-        struct Value {
-            contrast: Contrast,
-        }
-        for contrast in [Contrast::Standard, Contrast::High] {
-            let text = format!("contrast = \"{}\"", contrast.name());
-            let parsed: Value = toml::from_str(&text).unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(parsed.contrast, contrast);
-        }
-        assert!(toml::from_str::<Value>("contrast = \"loud\"").is_err());
     }
 }

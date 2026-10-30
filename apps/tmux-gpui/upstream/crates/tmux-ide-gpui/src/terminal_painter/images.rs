@@ -41,32 +41,22 @@ pub(crate) fn below_text(z: i32) -> bool {
     z < 0
 }
 
-/// Which frame's placements to paint: the main grid's or one popup's.
+/// Which frame's placements to paint: the main grid's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImageTarget<'a> {
+pub(crate) enum ImageTarget {
     Main,
-    Popup(&'a str),
 }
 
-impl ImageTarget<'_> {
+impl ImageTarget {
     fn places(self, source: &SurfaceGraphicsSource) -> bool {
-        match (self, source) {
-            (
-                Self::Main,
+        match self {
+            Self::Main => matches!(
+                source,
                 SurfaceGraphicsSource::Terminal {
                     target: SurfaceGraphicsTarget::Pane { .. },
                     ..
-                }
-                | SurfaceGraphicsSource::PaneLayer { .. },
-            ) => true,
-            (
-                Self::Popup(id),
-                SurfaceGraphicsSource::Terminal {
-                    target: SurfaceGraphicsTarget::Popup { terminal_id },
-                    ..
-                },
-            ) => id == terminal_id,
-            _ => false,
+                } | SurfaceGraphicsSource::PaneLayer { .. }
+            ),
         }
     }
 }
@@ -76,7 +66,7 @@ impl ImageTarget<'_> {
 pub(crate) struct PlacedImages<'a> {
     pub(crate) placements: &'a [SurfaceGraphicsPlacement],
     pub(crate) images: &'a SurfaceImages,
-    pub(crate) target: ImageTarget<'a>,
+    pub(crate) target: ImageTarget,
     /// The cell size the program was told in device pixels, when it was.
     pub(crate) cell_pixels: Option<CellPixels>,
 }

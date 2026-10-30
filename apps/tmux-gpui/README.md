@@ -46,9 +46,8 @@ Cargo workspace is outside pnpm and npm publication; native alpha distribution
 and validation are separate. No Rust rewrite of the daemon is
 required.
 
-Use the dedicated `tmux-ide-gpui` binary. Do not launch the retained `herdr-gpui`
-reference binary against personal state: it still has Herdr
-connection/bootstrap behavior, update endpoints, branding, and product actions.
+The crate builds one binary, `tmux-ide-gpui`. The Herdr reference binary and the
+Herdr modules only it used were removed; git history keeps them.
 Do not run its installer, release scripts, or hook setup in this monorepo.
 Some upstream scripts resolve the Git root and must be adapted before use here.
 Nested `.github` workflows are source reference only; GitHub does not run them.
@@ -234,9 +233,9 @@ The upstream package name is retained for provenance; the executable name is
 describes supported modes; `--version` identifies an unreleased development
 preview rather than copying upstream's version as a tmux-ide release.
 
-The original `herdr-gpui` executable remains for reference checks only. Shared
-modules currently compile through a library; this isolates startup dispatch but
-does not constitute dependency trimming or a signed application package.
+Only the tmux path and the few helpers it shares remain in the crate's library;
+the Herdr window, settings, browser tabs, updater and cloud modules were removed
+with their dependencies.
 
 ## Native terminal data path
 
@@ -1088,9 +1087,8 @@ evidence and remaining work; these entries are not a performance-parity claim.
 ### Native crate identity and session sidebar
 
 The application crate is `tmux-ide-gpui` in `upstream/crates/tmux-ide-gpui`.
-The `herdr-gpui` executable is retained only for upstream reference tests;
-release builds explicitly select `--bin tmux-ide-gpui`. Original provenance
-hashes retain their upstream `crates/herdr-gpui` paths. The `NOTICE` and the
+Release builds select `--bin tmux-ide-gpui`, the crate's only binary. Original
+provenance hashes retain their upstream `crates/herdr-gpui` paths. The `NOTICE` and the
 crate's attribution files continue to credit the original sources.
 
 The workspace sidebar leads with sessions beneath compact machine headings.

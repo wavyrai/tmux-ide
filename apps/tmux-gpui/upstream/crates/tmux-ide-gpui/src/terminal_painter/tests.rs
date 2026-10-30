@@ -1,5 +1,6 @@
 use super::*;
 use core::prelude::v1::test;
+use herdr_client::protocol::FrameData;
 
 mod cells;
 mod composition;

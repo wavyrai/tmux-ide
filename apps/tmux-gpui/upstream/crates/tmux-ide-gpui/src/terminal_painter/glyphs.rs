@@ -78,13 +78,13 @@ impl GlyphCache {
         *self = Self::default();
     }
 
-    #[cfg(any(test, feature = "integration-test"))]
+    #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.lines.len()
     }
 
     /// Every cached symbol with its style index.
-    #[cfg(any(test, feature = "integration-test"))]
+    #[cfg(test)]
     pub(super) fn iter(&self) -> impl Iterator<Item = (usize, String, &ShapedLine)> {
         let ascii = self.ascii.iter().enumerate().filter_map(|(index, id)| {
             let byte = u8::try_from(index % 128).ok()?;

@@ -186,7 +186,7 @@ fn placements_are_clipped_to_their_grid_and_bad_sources_skipped() {
 }
 
 #[test]
-fn targets_select_main_or_their_own_popup() {
+fn the_main_target_ignores_popup_placements() {
     let pane = key(SurfaceGraphicsFormat::Rgba, 1, 1);
     let mut popup = pane.clone();
     popup.source = SurfaceGraphicsSource::Terminal {
@@ -197,9 +197,6 @@ fn targets_select_main_or_their_own_popup() {
     };
     assert!(ImageTarget::Main.places(&pane.source));
     assert!(!ImageTarget::Main.places(&popup.source));
-    assert!(ImageTarget::Popup("t").places(&popup.source));
-    assert!(!ImageTarget::Popup("other").places(&popup.source));
-    assert!(!ImageTarget::Popup("t").places(&pane.source));
 }
 
 fn ready(cache: &mut ImageCache, serial: u64, side: u32, now: Instant) {
