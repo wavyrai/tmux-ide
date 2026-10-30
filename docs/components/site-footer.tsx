@@ -13,6 +13,7 @@ const columns = [
       ["Getting started", "/docs/getting-started"],
       ["Documentation", "/docs"],
       ["App demo", "/docs/demo"],
+      ["Themes", "/themes"],
       ["CLI reference", "/docs/commands"],
     ],
   },
@@ -31,10 +32,17 @@ const columns = [
       ["GitHub", "https://github.com/wavyrai/tmux-ide"],
       ["npm package", "https://www.npmjs.com/package/tmux-ide"],
       ["Contributing", "/docs/contributing"],
+      ["AGENTS.md", "https://github.com/wavyrai/tmux-ide/blob/main/AGENTS.md"],
       ["Prototyper", "https://www.prototyper.co"],
       ["X · @prototyper_co", "https://x.com/prototyper_co"],
     ],
   },
+] as const;
+
+const trustLinks = [
+  ["About", "/about"],
+  ["Contact", "/contact"],
+  ["Privacy", "/privacy"],
 ] as const;
 
 export function SiteFooter() {
@@ -74,6 +82,13 @@ export function SiteFooter() {
             <span>An open-source project by Prototyper · MIT license</span>
           </div>
           <div className="footer-muted footer-surface type-caption-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-(--site-gutter) py-6 sm:justify-end">
+            <nav aria-label="About tmux-ide" className="flex gap-x-5">
+              {trustLinks.map(([label, href]) => (
+                <Link key={href} href={href} className="footer-foreground marketing-color-action">
+                  {label}
+                </Link>
+              ))}
+            </nav>
             <span>© {new Date().getFullYear()} tmux-ide</span>
             <span>tmux owns the processes. tmux-ide gives them a workspace.</span>
           </div>

@@ -8,6 +8,7 @@ import dates from "@/.source/git-dates.json";
 
 const pages: Record<string, string | undefined> = dates.pages;
 const published: Record<string, string | undefined> = dates.published;
+const routes: Record<string, string | undefined> = dates.routes;
 
 function toDate(iso: string | null | undefined): Date | undefined {
   return iso ? new Date(iso) : undefined;
@@ -26,4 +27,9 @@ export function docPublished(pagePath: string): Date | undefined {
 /** Last commit date of the sources that render the marketing homepage. */
 export function homeLastModified(): Date | undefined {
   return toDate(dates.home);
+}
+
+/** Last commit date of the sources that render a site route outside the docs, such as /about. */
+export function routeLastModified(path: string): Date | undefined {
+  return toDate(routes[path]);
 }

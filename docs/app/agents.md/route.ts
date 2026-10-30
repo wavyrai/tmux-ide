@@ -1,4 +1,6 @@
-import { SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+import { SITE_REPOSITORY, SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+
+const SKILL_TREE_URL = `${SITE_REPOSITORY}/tree/main/skill`;
 
 export const revalidate = false;
 
@@ -27,6 +29,30 @@ tmux-ide is an open-source (MIT) agent workspace built around tmux, by Prototype
 owning processes, PTYs, sessions, windows and panes; tmux-ide adds a terminal app with live
 agent status, named agents and panes, and exact pane navigation, plus an optional status-bar chrome
 for plain tmux clients. If tmux-ide stops, every session is still ordinary tmux.
+
+## When to use tmux-ide
+
+- You run several coding agents in tmux and need to see which one is working, blocked or done,
+  and which one needs the user: \`tmux-ide team --json\`, or Home in \`tmux-ide app\`.
+- You run inside a tmux pane and want the user to see your state: set \`@agent_state\` (see
+  "Report your own state" below).
+- You need to wait for another agent or message it: \`tmux-ide wait agent-status\`,
+  \`tmux-ide wait output\` and \`tmux-ide send\`.
+- The tmux server crashed and the user wants the sessions back: \`tmux-ide restore --resume-agents\`
+  rebuilds windows, layouts and directories from the last snapshot and resumes supported agent
+  conversations.
+- You want a git worktree on a new branch with its own session: \`tmux-ide worktree create <branch>\`.
+
+## When not to use tmux-ide
+
+- Native Windows: use a supported Linux distribution inside WSL. Alpine and other musl Linux, and
+  Intel Macs, are not supported either. Supported: macOS 26+ on Apple Silicon and glibc Linux on
+  x64 and arm64.
+- A tmux server the user already runs that is older than tmux 3.7. The installer never replaces a
+  running server; tmux-ide's own bundled tmux is 3.7c.
+- Your agent does not run in a tmux pane and you will not start one: the status contract,
+  \`send\` and \`wait\` all work on tmux panes.
+- Task or mission orchestration: it is not part of this release.
 
 ## Install
 
@@ -119,8 +145,20 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 - Use \`tmux-ide send\`, not raw \`tmux send-keys\`, so the target resolves by id, title or name and long
   messages go through a dispatch file.
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
+- Theme presets for the app, each with the config line that selects it: ${SITE_URL}/themes
 - Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
   ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
+- Overview of running coding agents in tmux, for people: ${SITE_URL}/tmux-for-coding-agents
+
+## Agent resources and discovery files
+
+- Agent skill: ${SKILL_TREE_URL} (\`skill/SKILL.md\`); install it with \`npx skills add wavyrai/tmux-ide\` (skills.sh), or \`tmux-ide integration install claude\` for Claude Code
+- Rules for coding agents working in the repository: ${SITE_REPOSITORY}/blob/main/AGENTS.md
+- MCP server card for \`tmux-ide mcp\`: ${SITE_URL}/.well-known/mcp/server-card.json
+- Agentic Resource Discovery catalog: ${SITE_URL}/.well-known/ard.json
+- AI Catalog: ${SITE_URL}/.well-known/ai-catalog.json
+- API catalog (RFC 9727): ${SITE_URL}/.well-known/api-catalog
+- Agent skills index: ${SITE_URL}/.well-known/agent-skills/index.json
 `;
 
 export function GET() {
