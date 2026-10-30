@@ -1,7 +1,6 @@
 //! Each menu item carries the action its title names and has the effect of
 //! the key written next to it in `table`, and a held key still doesn't
 //! repeat (the menu adds no key bindings).
-use super::pane_shortcuts::ready;
 use super::*;
 use crate::tmux_snapshot::menu_bar::*;
 
@@ -9,7 +8,8 @@ use crate::tmux_snapshot::menu_bar::*;
 /// windows, so every Focus direction, Next and Previous Window goes somewhere
 /// different.
 fn layout(view: &mut SnapshotView, surface: browser::Surface) {
-    ready(view);
+    ready_pane(view, false);
+    view.input_interrupted = false;
     view.browser_state.surface = surface;
     view.browser_state.input_ready = true;
     view.browser_state.selected_pane = Some("pane-c".into());

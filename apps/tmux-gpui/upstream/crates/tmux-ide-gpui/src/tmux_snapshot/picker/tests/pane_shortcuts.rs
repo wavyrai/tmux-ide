@@ -1,13 +1,7 @@
 use super::*;
-pub(super) fn ready(view: &mut SnapshotView) {
-    view.browser_state.surface = browser::Surface::Workspace;
-    view.browser_state.request = view.browser_request;
-    view.browser_state.selected_session = Some("session-a".into());
-    view.browser_state.pane_actions = Some(browser::PaneActions {
-        token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-        id: "pane-a".into(),
-        zoomed: false,
-    });
+fn ready(view: &mut SnapshotView) {
+    ready_pane(view, false);
+    view.input_interrupted = false;
 }
 #[gpui::test]
 fn zoom_shortcut_uses_capability_once_and_never_types(cx: &mut TestAppContext) {

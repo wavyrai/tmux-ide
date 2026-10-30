@@ -142,28 +142,15 @@ fn removal_footer_waits_for_keyup_submits_once_and_pending_keeps_cancel(cx: &mut
 
 #[gpui::test]
 fn removal_stale_request_keyup_and_pointer_cannot_confirm_or_cancel(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|w, cx| tests::make_view(w, cx, sender));
     for keys in ["tab enter", "shift-tab enter"] {
-        cx.update(|w, cx| {
-            view.update(cx, |v, cx| prepare(v, w, cx));
-            w.draw(cx).clear(cx);
-        });
-        receiver.try_iter().for_each(drop);
-        cx.simulate_keystrokes(keys);
-        cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
-        cx.simulate_event(KeyUpEvent {
-            layout: None,
-            keystroke: Keystroke::parse("enter").unwrap(),
-        });
-        assert!(view.read_with(cx, |v, _| v.picker.as_ref().unwrap().removal.is_some()));
-        cx.update(|w, cx| w.draw(cx).clear(cx));
-        for id in ["machine-remove-confirm", "machine-remove-cancel"] {
-            let bounds = cx.debug_bounds(id).unwrap();
-            cx.simulate_click(bounds.center(), Modifiers::default());
-            assert!(view.read_with(cx, |v, _| v.picker.as_ref().unwrap().removal.is_some()));
-        }
-        assert!(receiver.try_recv().is_err());
+        tests::assert_stale_form_inert(
+            cx,
+            prepare,
+            None,
+            keys,
+            &["machine-remove-confirm", "machine-remove-cancel"],
+            |v| v.picker.as_ref().unwrap().removal.is_some(),
+        );
     }
 }
 

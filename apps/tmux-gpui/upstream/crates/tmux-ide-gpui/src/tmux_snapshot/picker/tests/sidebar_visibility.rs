@@ -62,12 +62,7 @@ fn sidebar_shortcut_ignores_modal_modifiers_and_held_keys(cx: &mut TestAppContex
         view.update(cx, |v, cx| {
             for key in ["shift-f10", "ctrl-f10", "alt-f10", "cmd-f10"] {
                 v.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );
@@ -86,12 +81,7 @@ fn sidebar_shortcut_ignores_modal_modifiers_and_held_keys(cx: &mut TestAppContex
             assert!(!v.sidebar_hidden);
             v.marked = "未".into();
             v.picker_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f10").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f10"),
                 window,
                 cx,
             );
@@ -100,12 +90,7 @@ fn sidebar_shortcut_ignores_modal_modifiers_and_held_keys(cx: &mut TestAppContex
             v.marked.clear();
             v.open_commands(window, cx);
             v.picker_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f10").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f10"),
                 window,
                 cx,
             );
