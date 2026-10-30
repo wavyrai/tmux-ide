@@ -66,7 +66,7 @@ impl SnapshotView {
             ),
             HeaderIntent::Menu => return None,
         };
-        let theme = self.theme();
+        let bezel = super::super::design::palette(&self.theme());
         Some(
             div()
                 .id(SharedString::from(format!("pane-{name}:{id}")))
@@ -86,8 +86,6 @@ impl SnapshotView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(crate::config::corners::CONTROL))
-                .hover(move |s| s.bg(rgb(theme.muted).opacity(0.12)))
                 .cursor_pointer()
                 .occlude()
                 .tooltip(move |window, cx| {
@@ -102,12 +100,18 @@ impl SnapshotView {
                         bezel_ui::tooltip::Tooltip::text(hint, window, cx)
                     }
                 })
-                .child(
-                    svg()
-                        .path(icon)
-                        .size(px(14.).min(px(self.terminal_height())))
-                        .text_color(rgb(theme.muted)),
-                )
+                // Bezel's ghost icon button, sized to the cell-aligned header.
+                .child({
+                    use bezel_ui::widgets::Buttons as _;
+                    let side = px(24.).min(self.header_rect(header, width).size.height);
+                    bezel
+                        .icon_button(
+                            bezel_ui::icons::Icon::asset(icon),
+                            bezel_ui::widgets::ButtonStyle::Ghost,
+                            None,
+                        )
+                        .size(side)
+                })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
                     cx.stop_propagation();

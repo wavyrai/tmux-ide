@@ -301,20 +301,6 @@ impl SnapshotView {
                     &theme,
                 )
                 .debug_selector(move || format!("workspace-window-{index}"))
-                .h(px(28.))
-                .rounded(px(8.))
-                .bg(if choice.selected {
-                    rgb(theme.background)
-                } else {
-                    rgba(0)
-                })
-                .border_1()
-                .border_color(if choice.selected {
-                    controls::separator(&theme)
-                } else {
-                    rgba(0)
-                })
-                .max_w(px(200.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .overflow_hidden()
                 .on_click(cx.listener(move |view, _, window, cx| {
