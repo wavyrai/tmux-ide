@@ -66,6 +66,7 @@ mod workspace_chrome;
 mod workspace_fleet_agents;
 
 use crate::terminal_painter::{CellPixels, ImageTarget, PlacedImages, TerminalPainter};
+use bezel_ui::widgets::Content as _;
 use display_frame::DisplayFrame;
 use gpui::{prelude::*, *};
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
@@ -582,18 +583,36 @@ impl SnapshotView {
         };
         let kitty_store = self.graphics.store.clone();
         let kitty_cell_pixels = self.graphics.cell_pixels.clone();
+        let bezel = bezel_theme::Theme::of(cx).clone();
         let Some(frame) = self.frame.clone() else {
-            let guidance = if self.browsing && self.browser_commands.is_some() {
-                "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
+            let (title, hint) = if self.browsing && self.browser_commands.is_some() {
+                (
+                    "No pane selected",
+                    "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect.",
+                )
             } else {
-                "Waiting for a pane. If the connection was lost, reopen tmux-ide to reconnect."
+                (
+                    "Waiting for a pane",
+                    "If the connection was lost, reopen tmux-ide to reconnect.",
+                )
             };
             return div()
+                .debug_selector(|| "tmux-pane-empty".into())
                 .size_full()
-                .bg(rgb(theme.background))
-                .text_color(rgb(theme.foreground))
-                .p_4()
-                .child(guidance)
+                .flex()
+                .items_center()
+                .bg(bezel.terminal_bg)
+                .text_color(bezel.text)
+                .children(design::ink_probe(|| "pane-empty".into()))
+                .child(
+                    pane_empty_ink(&bezel)
+                        .empty_state(
+                            bezel_ui::icons::Icon::asset("icons/terminal.svg"),
+                            title,
+                            hint,
+                        )
+                        .debug_selector(|| "tmux-pane-empty-state".into()),
+                )
                 .into_any_element();
         };
         #[cfg(target_os = "macos")]
@@ -615,9 +634,7 @@ impl SnapshotView {
             .relative()
             .size_full()
             // Cards own their opaque surfaces; gutters expose the shell material.
-            .when(cards.is_none(), |terminal| {
-                terminal.bg(rgb(theme.background))
-            })
+            .when(cards.is_none(), |terminal| terminal.bg(bezel.terminal_bg))
             .overflow_hidden()
             .children(self.card_surfaces(width))
             .child(
@@ -989,4 +1006,15 @@ fn request_native_quit(
         }
     })
     .detach();
+}
+
+/// Bezel's palette for the empty pane: its secondary text inked on the
+/// opaque terminal fill, which the bridge does not ink it for.
+fn pane_empty_ink(bezel: &bezel_theme::Theme) -> bezel_theme::Theme {
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let plate = pack(bezel.terminal_bg);
+    let muted = pack(bezel_theme::flatten(bezel.text_muted, bezel.terminal_bg));
+    let mut ink = bezel.clone();
+    ink.text_muted = rgb(crate::contrast::ink_on_chrome(muted, [plate; 3], 4.6)).into();
+    ink
 }

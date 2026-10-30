@@ -1,8 +1,5 @@
 //! Herdr's reusable native chrome, without its daemon, settings or updater.
-use crate::{
-    config::{Config, Theme},
-    fonts::StyledFont,
-};
+use crate::{config::Config, fonts::StyledFont};
 use gpui::{prelude::*, *};
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
@@ -26,8 +23,8 @@ pub(super) fn options() -> WindowOptions {
 }
 #[cfg(test)]
 pub(super) fn frame(body: impl IntoElement, window: &mut Window, cx: &mut App) -> AnyElement {
-    super::design::prepare(&Theme::default(), false, cx);
-    themed_frame(body, window, cx, &Theme::default(), "Home")
+    super::design::prepare(&crate::config::Theme::default(), false, cx);
+    themed_frame(body, window, cx, "Home")
 }
 /// The window: Bezel's frame around the chrome material, the title bar band
 /// and `body`. The chrome is the palette's sidebar fill, which is frost over
@@ -37,11 +34,10 @@ pub(super) fn themed_frame(
     body: impl IntoElement,
     window: &mut Window,
     cx: &App,
-    theme: &Theme,
     navigation: impl IntoElement,
 ) -> AnyElement {
     let font = Config::default().ui;
-    let chrome = bezel_theme::Theme::of(cx).sidebar_bg();
+    let bezel = bezel_theme::Theme::of(cx);
     let header = crate::titlebar::navigation_header(window, navigation.into_any_element(), cx);
     let content = div()
         .on_action(|action: &crate::RunCommand, window, cx| {
@@ -57,8 +53,8 @@ pub(super) fn themed_frame(
         .overflow_hidden()
         .text_font(&font)
         .text_size(px(font.size))
-        .bg(chrome)
-        .text_color(rgb(theme.foreground))
+        .bg(bezel.sidebar_bg())
+        .text_color(bezel.text)
         .child(header)
         .child(
             div()
@@ -86,8 +82,8 @@ pub(super) fn content_panel(canvas: u32, is_home: bool) -> Stateful<Div> {
         .min_h_0()
         .when(is_home, |panel| {
             panel
-                .rounded(px(crate::config::corners::PANEL))
-                .p(px(crate::config::corners::PANEL / 3.))
+                .rounded(px(bezel_theme::Theme::panel_radius()))
+                .p(px(CONTENT_INSET / 2.))
                 .bg(rgb(canvas))
         })
         .overflow_hidden()
