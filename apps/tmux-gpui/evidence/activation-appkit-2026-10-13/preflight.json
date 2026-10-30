@@ -1,6 +1,0 @@
-{
-  "aliasCollisionRejected": true,
-  "exitCode": 1,
-  "noReceiptOrTraceCreated": true,
-  "stderr": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Trace and receipt must differ\n    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/.tasks/gpui-activation-second/run.mjs:13:8 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: '/private/tmp/gpui-activation-second-preflight-never-created.json',\n  expected: '/private/tmp/gpui-activation-second-preflight-never-created.json',\n  operator: 'notStrictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.21.0\n"
-}

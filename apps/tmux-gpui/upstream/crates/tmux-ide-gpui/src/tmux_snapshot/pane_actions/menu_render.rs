@@ -1,5 +1,5 @@
 //! Accessible adapter for this menu's flat, label-only action/separator list.
-//! Bezel 0.2.16 owns the surfaces, row metrics and cursor; its `menu::card`
+//! Bezel 0.2.22 owns the surfaces, row metrics and cursor; its `menu::card`
 //! does not expose accessibility customization for rows. Keep this adaptation
 //! limited to our list rather than forking Bezel's submenu/search machinery.
 use super::SnapshotView;

@@ -1,1 +1,0 @@
-Independent read-only review approved the final slice. Corrected the presence guard at final helper preparation and aggregation of unavailable/partial fleets. Reviewer found no remaining concrete blocker. Delayed-read tests do not physically qualify the final file-I/O race or remote SSH agent selection.

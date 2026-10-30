@@ -466,7 +466,7 @@ invalid delivery retires the connection, and disconnect clears all surfaces.
 Interactive publications add history-stripped surfaces. The 8 MiB publication
 limit is preserved; it is not a claim about total canonical-history memory.
 
-New isolated `bridge/multipane-smoke.mjs` splits one owned tmux window, observes
+New isolated [`bridge/multipane-smoke.mjs`](https://github.com/wavyrai/tmux-ide/blob/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/bridge/multipane-smoke.mjs) splits one owned tmux window, observes
 two distinct seeds, verifies one pane's update leaves its sibling unchanged, and
 checks all surfaces clear on daemon stop. Passed `/tmp/gpui-multipane-smoke.log`.
 Bridge typecheck, four replica regression tests, read-only single-pane live smoke
@@ -822,7 +822,7 @@ retain their original chronological scope.
 | Distribution                | Receipt-bound development app, artifact checks, authenticated download/extraction and install/update/rollback/recovery components                                                                                                                                  | Trusted Apple signing identity, signed/notarized artifact, clean-machine install/update/rollback and public download verification                                                                                                                                                                                                            |
 | Release                     | Reviewed source checkpoints and scoped evidence are committed through `4876fa44`                                                                                                                                                                                   | Current-main integration check, impacted terminal release gates and published preview receipt; no public-release claim                                                                                                                                                                                                                       |
 
-Evidence directory names above are relative to `evidence/`. These scoped passes
+Evidence directory names above are relative to [`evidence/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence). These scoped passes
 do not establish full TUI parity or close all GP01–GP11 acceptance requirements.
 
 The human's Selection Trace app remains open for testing. Its fixture watchdog
@@ -842,7 +842,7 @@ Run preparation with a new absolute evidence directory:
 
 ```bash
 TMUX_GPUI_VISUAL_DIR=/tmp/gpui-visual-new \
-  node --import tsx apps/tmux-gpui/bridge/native-visual-smoke.mjs --prepare-only
+  node --import tsx apps/tmux-gpui/bridge/manual/native-visual-smoke.mjs --prepare-only
 ```
 
 For native inspection, omit `--prepare-only` and set `TMUX_GPUI_TEST_APP` to
@@ -1398,7 +1398,7 @@ Physical native recovery and signed clean-machine installation remain open.
 
 Reviewed branch commit `f7db40ca` fixes the public terminal-delivery address at its owner. Each connection captures the trusted validated workspace address before subscription; raw tmux session names remain exact for canonical/native identity. Envelopes and ACK/NACK now use that same address throughout. No schema weakening, trimming, or global aliasing.
 
-The identical real source regression for a Unicode/spaced/trailing-space session failed with Pane unavailable before the fix and passes afterward with a real frame plus input readiness. Packaged Node/browser against the isolated source-built daemon also passes, as does ordinary-name source opening. Exact native name retention and fixture cleanup pass. 162 focused daemon tests, daemon typechecks, scoped lint/format and independent review passed. Evidence: `apps/tmux-gpui/evidence/delivery-address-2026-10-10/`.
+The identical real source regression for a Unicode/spaced/trailing-space session failed with Pane unavailable before the fix and passes afterward with a real frame plus input readiness. Packaged Node/browser against the isolated source-built daemon also passes, as does ordinary-name source opening. Exact native name retention and fixture cleanup pass. 162 focused daemon tests, daemon typechecks, scoped lint/format and independent review passed. Evidence: [`apps/tmux-gpui/evidence/delivery-address-2026-10-10/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/delivery-address-2026-10-10).
 
 A fresh isolated user demo is open with Side by side and Stacked windows; both first-window terminals visibly rendered and keyboard readiness appeared. This is not the missing long-label narrow native marker-routing proof, which remains open. Existing demos were preserved. Local branch only; no merge or release. CI38080028723 remains live in macOS release-executable build; pushes held to avoid cancelling it.
 

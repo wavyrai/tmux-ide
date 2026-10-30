@@ -1,5 +1,0 @@
-84b86ffc3beec94fec1ebe52827e2329c5976d7b56588fe4a6fde98b10f907e4  apps/tmux-gpui/bridge/home-agent-publication.ts
-0ea02b70eb23f221674d6fd4842f4e78fa5e7ff426807b106325bef5a3d463e5  apps/tmux-gpui/bridge/home-agent-context.test.ts
-0c2b4e5ce63544a3127d756c983e7ada56c73011c2cf4849bc0482c7b7985ada  apps/tmux-gpui/bridge/fleet-agents.ts
-f348ceb4e1b2093f6e6b86bcc054199f08f330fb612da16006dd1f4108015373  apps/tmux-gpui/bridge/fleet-agents.test.ts
-6e08f1a6295167d06fe05a5e9abd3254d57e51e8db7b7c5572e3acf45427e313  apps/tmux-gpui/bridge/home-machine-filter-smoke.mjs

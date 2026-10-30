@@ -1,7 +1,0 @@
-# Installer lifecycle policy — 18 October 2026
-
-Audited docs/public/install.sh at bb1216ff: it deliberately installs with npm --ignore-scripts, then runs only tmux-ide own postinstall with npm_config_global=false after relocation. The blocked third-party script warning seen in an earlier ordinary npm install is not evidence of a customer-installer defect.
-
-A fresh private HOME/prefix installed the actual current 2.9.7 tarball from e0f813bd with this lifecycle policy, without rebuilding third-party dependencies. Node24/npm11 dependency loads and CLI version pass, no daemon started by setup, package/CLI bytes and protected checkout CLI remain unchanged. It then serves a real private stock3.8 terminal through the separately compiled baseline TUI: exact 2138-byte mode-off Unicode paste, final rendered marker, identity/geometry, artifact hashes and observed-process cleanup pass. Independent review found no blockers.
-
-The existing installer shell suite also passed all 34 tests under Node26.10.0, covering mocked transaction/rollback/failure/cleanup behavior. These mocks and the separate lifecycle smoke do not prove an end-to-end public download/install/update. This experiment did not execute real Node/runtime downloads, public checksum verification, relocation/activation, Applications registration, signing or second-Mac checks. Runtime is separately compiled TUI plus installed daemon, not a signed native GPUI candidate. No product edit, push, merge or publication.

@@ -1,8 +1,0 @@
-
- RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/contracts
-
-
- Test Files  1 passed (1)
-      Tests  2 passed (2)
-   Start at  16:19:12
-   Duration  126ms (transform 39ms, setup 0ms, import 71ms, tests 2ms, environment 0ms)

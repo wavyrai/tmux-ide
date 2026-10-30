@@ -1,6 +1,6 @@
 {
   "git": {
-    "sha1": "693d6a82716fa1ac79a4329dc8412b423b0762f6",
+    "sha1": "337a80e387cc9a19c7b665b3171b4b2ff58c7c17",
     "dirty": true
   },
   "path_in_vcs": "crates/gpui_apple"

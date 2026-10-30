@@ -1,6 +1,0 @@
-{
-  "verified": false,
-  "observation": "Initial collapsed screenshot retained active and favorite sessions, but also displayed Ordinary hidden sibling in Current session catalog fallback. No preference or navigation inputs were sent. Parent cancelled the owned fixture and preserved its failed receipt.",
-  "review": "Fixture published sessions from multiple servers. Production browser catalog is bound to selected host.scope server ID/generation. Initial fixture catalog must contain A only; accepted B must replace catalog with B and C. This run does not establish a production collapse defect.",
-  "remaining": "Correct fixture scope and rerun physical collapse and duplicate-name selection checks."
-}

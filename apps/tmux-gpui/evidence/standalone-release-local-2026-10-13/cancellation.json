@@ -1,8 +1,0 @@
-{
-  "ok": false,
-  "error": {
-    "code": "cancelled",
-    "message": "Release operation cancelled. Inspect activation state; completed activation is not rolled back.",
-    "activationState": "not-attempted"
-  }
-}

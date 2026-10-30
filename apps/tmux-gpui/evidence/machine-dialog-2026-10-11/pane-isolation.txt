@@ -1,5 +1,0 @@
-%0: dialog sentinels absent in pane capture
-%1: dialog sentinels absent in pane capture
-%2: dialog sentinels absent in pane capture
-%3: dialog sentinels absent in pane capture
-Read-only captures of four disposable QA panes; no input wire trace claimed.
