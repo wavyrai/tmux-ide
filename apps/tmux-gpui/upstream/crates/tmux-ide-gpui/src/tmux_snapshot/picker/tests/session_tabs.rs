@@ -171,12 +171,7 @@ fn tab_shortcuts_held_modal_and_unsupported_combination_never_reach_terminal(
             assert!(receiver.try_recv().is_err());
             v.open_commands(w, cx);
             v.picker_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f9").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f9"),
                 w,
                 cx,
             );
@@ -210,12 +205,7 @@ fn tab_pending_blocks_other_navigation_owners_then_new_navigation_supersedes(
                     forward: None,
                 });
             v.session_history_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("f8").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("f8"),
                 w,
                 cx,
             );

@@ -2,15 +2,10 @@
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
 use super::mount::{frame, mount, observe_overlay, painted, slot_colors};
-use crate::tmux_snapshot::{SnapshotView, browser, decode, presence::Presence};
+use crate::tmux_snapshot::{SnapshotView, browser};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, mpsc},
-    time::Duration,
-};
+use std::{rc::Rc, sync::mpsc, time::Duration};
 fn choice(id: &str, label: &str) -> browser::Choice {
     browser::Choice {
         id: id.into(),
@@ -26,68 +21,12 @@ fn make_view(
     cx: &mut Context<SnapshotView>,
     sender: mpsc::SyncSender<browser::Command>,
 ) -> SnapshotView {
-    let focus = cx.focus_handle();
-    focus.focus(window, cx);
-    let mut presence = Presence::new(true);
-    presence.flush(&sender);
-    presence.acknowledge(1);
-    let frame = Arc::new(
-        decode::frame(include_bytes!("../../../../../../fixtures/snapshot.json")).unwrap(),
-    );
-    SnapshotView {
-        graphics: Default::default(),
-        presence,
-        _activation: None,
-        _appearance: None,
-        last_system: None,
-        glass: Default::default(),
-        last_workspace_session: None,
-        pending_session_open: None,
-        header_controls: Default::default(),
-        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        browsing: true,
-        terminal_focus: focus,
-        input_interrupted: false,
-        pending_input: None,
-        picker: None,
-        attention: Default::default(),
-        palette: Default::default(),
-        session_history: Default::default(),
-        session_tabs: Default::default(),
-        workspace_fleet_agents: Default::default(),
-        home_filter: None,
-        pane_actions: None,
-        browser_address: None,
-        new_session: None,
-        new_session_queued: None,
-        agent_animation: Default::default(),
-        sidebar_hidden: false,
-        sidebar_keyboard: Default::default(),
-        developer_mode: Default::default(),
-        terminal_font: Default::default(),
-        window_reveal: Default::default(),
-        resize_gesture: Default::default(),
-        last_resize: None,
-        fit_settle: Default::default(),
-        marked: String::new(),
-        marked_selection: None,
-        input_geometry: Some((
-            Bounds::new(point(px(0.), px(0.)), size(px(500.), px(500.))),
-            Bounds::default(),
-        )),
-        input_cell_width: Some(10.),
-        painted_focus: None,
-        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        pointer: Default::default(),
-        selection: None,
-        divider: None,
-        wheel: crate::terminal::WheelRemainder::default(),
-        browser_request: 7,
-        browser_state: browser::State {
+    crate::tmux_snapshot::fit_test_support::fixture_view(
+        window,
+        cx,
+        sender,
+        7,
+        browser::State {
             request: 7,
             surface: browser::Surface::Home,
             home_phase: browser::HomePhase::Live,
@@ -95,23 +34,9 @@ fn make_view(
             sessions: vec![choice("session-a", "Session Alpha")],
             panes: vec![choice("pane-a", "Editor")],
             selected_session: Some("session-a".into()),
-            selected_pane: Some("pane-a".into()),
-            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-                frame,
-            )),
-            regions: serde_json::from_str(
-                r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
-            )
-            .unwrap(),
             ..Default::default()
         },
-        browser_commands: Some(sender),
-        _browser_task: None,
-        _task: None,
-        painter: Rc::new(RefCell::new(
-            crate::terminal_painter::TerminalPainter::default(),
-        )),
-    }
+    )
 }
 struct Host {
     snapshot: Entity<SnapshotView>,

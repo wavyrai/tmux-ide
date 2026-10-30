@@ -1,12 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
-use crate::tmux_snapshot::{decode, presence::Presence};
+use crate::tmux_snapshot::presence::Presence;
 use core::prelude::v1::test;
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, mpsc},
-};
+use std::sync::mpsc;
 fn choice(id: &str, label: &str) -> browser::Choice {
     browser::Choice {
         id: id.into(),
@@ -22,68 +18,12 @@ fn make_view(
     cx: &mut Context<SnapshotView>,
     sender: mpsc::SyncSender<browser::Command>,
 ) -> SnapshotView {
-    let focus = cx.focus_handle();
-    focus.focus(window, cx);
-    let mut presence = Presence::new(true);
-    presence.flush(&sender);
-    presence.acknowledge(1);
-    let frame = Arc::new(
-        decode::frame(include_bytes!("../../../../../../fixtures/snapshot.json")).unwrap(),
-    );
-    SnapshotView {
-        graphics: Default::default(),
-        presence,
-        _activation: None,
-        _appearance: None,
-        last_system: None,
-        glass: Default::default(),
-        last_workspace_session: None,
-        pending_session_open: None,
-        header_controls: Default::default(),
-        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        browsing: true,
-        terminal_focus: focus,
-        input_interrupted: false,
-        pending_input: None,
-        picker: None,
-        attention: Default::default(),
-        palette: Default::default(),
-        session_history: Default::default(),
-        session_tabs: Default::default(),
-        workspace_fleet_agents: Default::default(),
-        home_filter: None,
-        pane_actions: None,
-        browser_address: None,
-        new_session: None,
-        new_session_queued: None,
-        agent_animation: Default::default(),
-        sidebar_hidden: false,
-        sidebar_keyboard: Default::default(),
-        developer_mode: Default::default(),
-        terminal_font: Default::default(),
-        window_reveal: Default::default(),
-        resize_gesture: Default::default(),
-        last_resize: None,
-        fit_settle: Default::default(),
-        marked: String::new(),
-        marked_selection: None,
-        input_geometry: Some((
-            Bounds::new(point(px(0.), px(0.)), size(px(500.), px(500.))),
-            Bounds::default(),
-        )),
-        input_cell_width: Some(10.),
-        painted_focus: None,
-        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        pointer: Default::default(),
-        selection: None,
-        divider: None,
-        wheel: crate::terminal::WheelRemainder::default(),
-        browser_request: 7,
-        browser_state: browser::State {
+    crate::tmux_snapshot::fit_test_support::fixture_view(
+        window,
+        cx,
+        sender,
+        7,
+        browser::State {
             request: 7,
             surface: browser::Surface::Home,
             home_phase: browser::HomePhase::Live,
@@ -91,23 +31,9 @@ fn make_view(
             sessions: vec![choice("session-a", "Session Alpha")],
             panes: vec![choice("pane-a", "Editor")],
             selected_session: Some("session-a".into()),
-            selected_pane: Some("pane-a".into()),
-            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-                frame,
-            )),
-            regions: serde_json::from_str(
-                r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
-            )
-            .unwrap(),
             ..Default::default()
         },
-        browser_commands: Some(sender),
-        _browser_task: None,
-        _task: None,
-        painter: Rc::new(RefCell::new(
-            crate::terminal_painter::TerminalPainter::default(),
-        )),
-    }
+    )
 }
 
 #[test]
@@ -135,6 +61,60 @@ fn phase_and_catalog_are_truthful_without_inventing_counts_or_targets() {
     assert!(!current(&state, true, 7, 7, "two"));
 }
 
+type Dispatch = fn(&mut SnapshotView, u64, &mut Window, &mut Context<SnapshotView>);
+
+/// Every entry point that carries the request it was offered under, from
+/// Home: a stale request (6 against 7) sends nothing, and the current one sends.
+#[gpui::test]
+fn stale_request_is_refused_by_each_direct_entry_point(cx: &mut TestAppContext) {
+    const RETRY: &str = "fe470cdc-82bb-48d5-8fc4-1fa68025c8e4";
+    let rows: [(&str, Dispatch); 4] = [
+        ("home_select", |v, request, w, cx| {
+            v.home_select(request, "session-a", w, cx)
+        }),
+        ("home_refresh", |v, request, w, cx| {
+            v.home_refresh(request, w, cx)
+        }),
+        ("dispatch_application_tab", |v, request, w, cx| {
+            v.last_workspace_session = Some("session-a".into());
+            v.dispatch_application_tab(
+                request,
+                crate::tmux_snapshot::workspace_chrome::ApplicationTab::Terminals,
+                w,
+                cx,
+            )
+        }),
+        ("retry_fleet_machine", |v, request, w, cx| {
+            v.browser_state.fleet = Some(
+                serde_json::from_value(serde_json::json!({
+                    "groups":[{"id":"remote","label":"Build","state":"disconnected",
+                        "conflict":false,"retry":RETRY,"omittedSessions":0,"sessions":[]}],
+                    "omittedGroups":0
+                }))
+                .unwrap(),
+            );
+            v.retry_fleet_machine(request, RETRY, w, cx);
+        }),
+    ];
+    for (name, dispatch) in rows {
+        let (sender, receiver) = mpsc::sync_channel(64);
+        let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+        receiver.try_iter().for_each(drop);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                dispatch(view, 6, window, cx);
+                assert_eq!(view.browser_request, 7, "{name}: request moved");
+                assert!(receiver.try_recv().is_err(), "{name}: stale request sent");
+                dispatch(view, 7, window, cx);
+                assert!(
+                    receiver.try_recv().is_ok(),
+                    "{name}: current request did not send"
+                );
+            })
+        });
+    }
+}
+
 #[gpui::test]
 fn home_dispatch_fences_request_surface_catalog_and_channel(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -142,7 +122,6 @@ fn home_dispatch_fences_request_surface_catalog_and_channel(cx: &mut TestAppCont
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| view.update(cx, |view, cx| {
         let frame = view.frame.clone().unwrap();
-        view.home_select(6, "session-a", window, cx);
         view.home_select(7, "Session Alpha", window, cx);
         view.browser_state.surface = browser::Surface::Workspace;
         view.home_select(7, "session-a", window, cx);
@@ -155,7 +134,6 @@ fn home_dispatch_fences_request_surface_catalog_and_channel(cx: &mut TestAppCont
         view.home_select(7, "session-a", window, cx);
         view.home_refresh(7, window, cx);
         view.browser_commands = sender;
-        view.home_refresh(6, window, cx);
         assert_eq!(view.browser_request, 7);
         assert!((view.frame.as_ref().unwrap()).same(&frame));
         assert!(view.browser_state.input_ready);

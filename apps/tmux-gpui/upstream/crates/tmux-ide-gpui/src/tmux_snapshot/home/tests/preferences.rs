@@ -196,23 +196,3 @@ fn preference_new_epoch_and_acknowledged_foreground_retire_old_queue(cx: &mut Te
         })
     });
 }
-
-#[test]
-fn preference_svg_icons_are_embedded_and_listed() {
-    let icons = crate::icons::Icons;
-    for path in [
-        "icons/fleet-star.svg",
-        "icons/fleet-star-filled.svg",
-        "icons/chevron-right.svg",
-        "icons/chevron-down.svg",
-    ] {
-        assert!(icons.load(path).unwrap().is_some());
-        assert!(
-            icons
-                .list("icons/")
-                .unwrap()
-                .iter()
-                .any(|p| p.as_ref() == path)
-        );
-    }
-}

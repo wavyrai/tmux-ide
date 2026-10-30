@@ -119,12 +119,7 @@ fn command_popover_marked_composition_owns_escape_and_return(cx: &mut TestAppCon
             // input path may legitimately unmark it while consuming later keys.
             for key in ["escape", "enter"] {
                 view.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );

@@ -61,20 +61,10 @@ fn home_filter_keys_preserve_modifiers_modal_input_and_workspace_ownership(
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             for key in ["cmd-w", "ctrl-a", "alt-w", "shift-a"] {
-                let event = KeyDownEvent {
-                    keystroke: Keystroke::parse(key).unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                };
+                let event = crate::tmux_snapshot::fit_test_support::key_down(key);
                 assert!(!v.home_filter_key(&event, window, cx));
             }
-            let event = KeyDownEvent {
-                keystroke: Keystroke::parse("w").unwrap(),
-                is_held: false,
-                prefer_character_input: false,
-                layout: None,
-            };
+            let event = crate::tmux_snapshot::fit_test_support::key_down("w");
             v.open_commands(window, cx);
             assert!(!v.home_filter_key(&event, window, cx));
             v.picker = None;
@@ -101,12 +91,7 @@ fn home_filter_keys_preserve_marked_search_and_do_not_retoggle_held_attention(
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
-            let mut event = KeyDownEvent {
-                keystroke: Keystroke::parse("a").unwrap(),
-                is_held: false,
-                prefer_character_input: false,
-                layout: None,
-            };
+            let mut event = crate::tmux_snapshot::fit_test_support::key_down("a");
             assert!(v.home_filter_key(&event, window, cx));
             event.is_held = true;
             assert!(v.home_filter_key(&event, window, cx));

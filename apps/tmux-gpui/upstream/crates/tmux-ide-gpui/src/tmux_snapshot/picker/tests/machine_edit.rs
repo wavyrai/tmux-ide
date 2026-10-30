@@ -132,12 +132,7 @@ fn edit_machine_reopen_stale_queue_and_composition_fences(cx: &mut TestAppContex
             });
             for key in ["enter", "tab", "escape"] {
                 view.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );
@@ -148,18 +143,7 @@ fn edit_machine_reopen_stale_queue_and_composition_fences(cx: &mut TestAppContex
                 input.unmark_text(window, cx);
                 input.set_text_selected("New", cx);
             });
-            view.browser_commands
-                .as_ref()
-                .unwrap()
-                .try_send(browser::Command::Machines {
-                    request: 7,
-                    operation: browser::machines::Operation::Read,
-                })
-                .unwrap();
-            view.save_machine_edit(cx);
-            assert!(view.picker.as_ref().unwrap().error.is_some());
-            receiver.try_recv().unwrap();
-            assert!(receiver.try_recv().is_err());
+            assert_full_queue_refused(view, &receiver, |view| view.save_machine_edit(cx));
             view.presence.set_active(false);
             view.save_machine_edit(cx);
             assert!(receiver.try_recv().is_err());

@@ -167,12 +167,7 @@ fn f7_cancel_survives_full_queue_and_composition_cannot_activate(cx: &mut TestAp
             });
             for key in ["enter", "escape"] {
                 v.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );

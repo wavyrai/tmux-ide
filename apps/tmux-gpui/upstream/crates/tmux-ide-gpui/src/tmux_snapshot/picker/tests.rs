@@ -15,13 +15,9 @@ mod session_continuation;
 mod session_history;
 mod session_popover;
 mod session_tabs;
-use crate::tmux_snapshot::{decode, presence::Presence};
+use crate::tmux_snapshot::presence::Presence;
 use core::prelude::v1::test;
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, mpsc},
-};
+use std::sync::{Arc, mpsc};
 fn choice(id: &str, label: &str) -> browser::Choice {
     browser::Choice {
         id: id.into(),
@@ -32,93 +28,98 @@ fn choice(id: &str, label: &str) -> browser::Choice {
         window_label: None,
     }
 }
+/// Fills the one-slot command queue, then `submit`s a form: it must show an
+/// error and send nothing past the filler.
+pub(super) fn assert_full_queue_refused(
+    view: &mut SnapshotView,
+    receiver: &mpsc::Receiver<browser::Command>,
+    submit: impl FnOnce(&mut SnapshotView),
+) {
+    // An earlier refusal may have left its own error; this one must set it again.
+    if let Some(picker) = view.picker.as_mut() {
+        picker.error = None;
+    }
+    view.browser_commands
+        .as_ref()
+        .unwrap()
+        .try_send(browser::Command::Home { request: 99 })
+        .unwrap();
+    submit(view);
+    assert!(view.picker.as_ref().unwrap().error.is_some());
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::Home { request: 99 }
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+
+/// A form prepared by `prepare`, focused by `keys` on its Enter target, whose
+/// request then goes stale: the Enter keyup and every button in `buttons` must
+/// leave it open (`open`) and send nothing.
+pub(super) fn assert_stale_form_inert(
+    cx: &mut TestAppContext,
+    prepare: fn(&mut SnapshotView, &mut Window, &mut Context<SnapshotView>),
+    typed: Option<&str>,
+    keys: &str,
+    buttons: &[&'static str],
+    open: fn(&SnapshotView) -> bool,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+    cx.update(|w, cx| {
+        view.update(cx, |v, cx| prepare(v, w, cx));
+        w.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    if let Some(typed) = typed {
+        cx.simulate_input(typed);
+    }
+    cx.simulate_keystrokes(keys);
+    cx.update(|_, cx| view.update(cx, |v, _| v.browser_request += 1));
+    cx.simulate_event(KeyUpEvent {
+        layout: None,
+        keystroke: Keystroke::parse("enter").unwrap(),
+    });
+    assert!(view.read_with(cx, |v, _| open(v)), "{keys}: keyup");
+    cx.update(|w, cx| w.draw(cx).clear(cx));
+    for id in buttons {
+        let bounds = cx.debug_bounds(id).unwrap();
+        cx.simulate_click(bounds.center(), Modifiers::default());
+        assert!(view.read_with(cx, |v, _| open(v)), "{keys}: {id}");
+    }
+    assert!(receiver.try_recv().is_err(), "{keys}: no command");
+}
+
+/// A Workspace whose selected pane offers pane actions, with input interrupted.
+pub(super) fn ready_pane(view: &mut SnapshotView, zoomed: bool) {
+    view.browser_state.surface = browser::Surface::Workspace;
+    view.browser_state.request = view.browser_request;
+    view.browser_state.selected_session = Some("session-a".into());
+    view.browser_state.pane_actions = Some(browser::PaneActions {
+        token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
+        id: "pane-a".into(),
+        zoomed,
+    });
+    view.input_interrupted = true;
+}
+
 pub(super) fn make_view(
     window: &mut Window,
     cx: &mut Context<SnapshotView>,
     sender: mpsc::SyncSender<browser::Command>,
 ) -> SnapshotView {
-    let focus = cx.focus_handle();
-    focus.focus(window, cx);
-    let mut presence = Presence::new(true);
-    presence.flush(&sender);
-    presence.acknowledge(1);
-    let frame = Arc::new(
-        decode::frame(include_bytes!("../../../../../../fixtures/snapshot.json")).unwrap(),
-    );
-    SnapshotView {
-        graphics: Default::default(),
-        presence,
-        _activation: None,
-        _appearance: None,
-        last_system: None,
-        glass: Default::default(),
-        last_workspace_session: None,
-        pending_session_open: None,
-        header_controls: Default::default(),
-        frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        browsing: true,
-        terminal_focus: focus,
-        input_interrupted: false,
-        pending_input: None,
-        picker: None,
-        attention: Default::default(),
-        palette: Default::default(),
-        session_history: Default::default(),
-        session_tabs: Default::default(),
-        workspace_fleet_agents: Default::default(),
-        home_filter: None,
-        pane_actions: None,
-        browser_address: None,
-        new_session: None,
-        new_session_queued: None,
-        agent_animation: Default::default(),
-        sidebar_hidden: false,
-        sidebar_keyboard: Default::default(),
-        developer_mode: Default::default(),
-        terminal_font: Default::default(),
-        window_reveal: Default::default(),
-        resize_gesture: Default::default(),
-        last_resize: None,
-        fit_settle: Default::default(),
-        marked: String::new(),
-        marked_selection: None,
-        input_geometry: Some((
-            Bounds::new(point(px(0.), px(0.)), size(px(500.), px(500.))),
-            Bounds::default(),
-        )),
-        input_cell_width: Some(10.),
-        painted_focus: None,
-        painted_frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-            frame.clone(),
-        )),
-        pointer: Default::default(),
-        selection: None,
-        divider: None,
-        wheel: crate::terminal::WheelRemainder::default(),
-        browser_request: 7,
-        browser_state: browser::State {
+    crate::tmux_snapshot::fit_test_support::fixture_view(
+        window,
+        cx,
+        sender,
+        7,
+        browser::State {
             input_ready: true,
             sessions: vec![choice("session-a", "Session Alpha")],
             panes: vec![choice("pane-a", "Editor")],
-            selected_pane: Some("pane-a".into()),
-            frame: Some(crate::tmux_snapshot::display_frame::DisplayFrame::Legacy(
-                frame,
-            )),
-            regions: serde_json::from_str(
-                r#"[{"id":"pane-a","left":0,"top":0,"width":1,"height":1}]"#,
-            )
-            .unwrap(),
             ..Default::default()
         },
-        browser_commands: Some(sender),
-        _browser_task: None,
-        _task: None,
-        painter: Rc::new(RefCell::new(
-            crate::terminal_painter::TerminalPainter::default(),
-        )),
-    }
+    )
 }
 
 #[test]
@@ -160,12 +161,7 @@ fn search_input_owns_typing_composition_and_selection_revalidates(cx: &mut TestA
             });
             for key in ["enter", "escape", "cmd-k"] {
                 view.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );
@@ -338,12 +334,7 @@ fn theme_picker_isolated_and_selection_waits_for_publication(cx: &mut TestAppCon
                 input.replace_and_mark_text_in_range(None, "界", None, window, cx)
             });
             view.picker_key(
-                &KeyDownEvent {
-                    keystroke: Keystroke::parse("enter").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                },
+                &crate::tmux_snapshot::fit_test_support::key_down("enter"),
                 window,
                 cx,
             );
