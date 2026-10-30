@@ -24,6 +24,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
       url: absoluteUrl(AGENTS_PAGE.path),
       lastModified: routeLastModified(AGENTS_PAGE.path),
     },
+    ...["/about", "/contact", "/privacy", "/themes"].map((path) => ({
+      url: absoluteUrl(path),
+      lastModified: routeLastModified(path),
+    })),
     ...docs,
   ];
 

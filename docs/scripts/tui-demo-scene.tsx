@@ -50,6 +50,8 @@ export interface Scene {
   readonly rows: number;
   readonly surface: "home" | "terminals";
   readonly mode?: ThemeMode;
+  /** A theme preset id; the theme gallery renders one scene per preset. */
+  readonly preset?: string;
   readonly panes?: readonly DemoPane[];
   readonly focusedPane?: string;
   /** Extra windows after "agents", for the window strip. */
@@ -311,7 +313,7 @@ function terminalAdapter(
 export async function renderScene(scene: Scene): Promise<CapturedFrame> {
   const panes = scene.panes ?? PANES;
   const focused = scene.focusedPane ?? panes[0]!.id;
-  const theme = createSemanticThemeSnapshot({ mode: scene.mode ?? "dark" });
+  const theme = createSemanticThemeSnapshot({ mode: scene.mode ?? "dark", preset: scene.preset });
   const palette = createTerminalPaletteProjection(theme);
   const session = [...panes, ...(scene.backgroundPanes ?? [])];
   const shell = semantic(scene, session, focused);

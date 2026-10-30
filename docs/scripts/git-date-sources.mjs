@@ -11,6 +11,10 @@ export const homeSources = ["app/(home)", "lib/landing-content.ts", "components/
 /** Sources that render each marketing page outside the homepage and the docs. */
 export const routeSources = {
   "/tmux-for-coding-agents": ["app/(home)/tmux-for-coding-agents", "components/agents-page"],
+  "/about": ["app/(home)/about", "components/trust"],
+  "/contact": ["app/(home)/contact", "components/trust"],
+  "/privacy": ["app/(home)/privacy", "components/trust"],
+  "/themes": ["app/(home)/themes", "components/themes-gallery", "public/themes"],
 };
 
 /** Source paths (relative to docs/) for a site pathname, or null when unknown. */
