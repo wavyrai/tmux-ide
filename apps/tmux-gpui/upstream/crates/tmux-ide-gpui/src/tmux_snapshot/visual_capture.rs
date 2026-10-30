@@ -255,11 +255,62 @@ fn capture_view(
     }
 }
 
+/// The fleet sidebar (machine, server and session rows), with one session's
+/// agent waiting on the user, so the attention badge shows.
+fn with_fleet(mut state: browser::State) -> Result<browser::State> {
+    state.fleet = Some(serde_json::from_value(serde_json::json!({
+        "preferences": {"revision": 1, "phase": "ready", "error": null},
+        "omittedGroups": 0,
+        "groups": [{
+            "id": "this-mac", "label": "This Mac", "state": "ready", "conflict": false,
+            "collapsed": false, "collapseAction": "11111111-1111-4111-8111-111111111111",
+            "omittedSessions": 0, "omittedServers": 0,
+            "servers": [{"id": "default", "label": "default", "state": "online",
+                "generation": "22222222-2222-4222-8222-222222222222",
+                "selection": "33333333-3333-4333-8333-333333333333"}],
+            "sessions": [
+                {"id": "fleet-a", "name": "tmux-ide", "sessionId": "session-a", "serverId": "default",
+                 "paneCount": 3, "selection": "44444444-4444-4444-8444-444444444444", "active": true},
+                {"id": "fleet-b", "name": "site", "sessionId": "session-b", "serverId": "default",
+                 "paneCount": 2, "selection": "55555555-5555-4555-8555-555555555555"},
+                {"id": "fleet-c", "name": "bezel", "sessionId": "session-c", "serverId": "default",
+                 "paneCount": 1, "selection": "66666666-6666-4666-8666-666666666666"}
+            ]
+        }]
+    }))?);
+    let mut agents: super::workspace_fleet_agents::Publication =
+        serde_json::from_value(serde_json::json!({
+            "request": state.request, "scope": 1, "revision": 1, "phase": "live",
+            "selectedKey": null, "observedSessions": 1, "totalSessions": 1,
+            "truncatedSessions": 0, "truncatedRows": 0, "note": null,
+            "rows": [{"key": "agent-b", "sessionId": "session-b", "paneId": "pane-b",
+                "name": "Claude", "sessionLabel": "site", "projectName": "site",
+                "status": "BLOCKED", "attention": true, "available": true}]
+        }))?;
+    agents.sessions.insert(
+        "agent-b".into(),
+        super::workspace_fleet_agents::SessionScope {
+            machine: "this-mac".into(),
+            server: "default".into(),
+            generation: "22222222-2222-4222-8222-222222222222".into(),
+            session: "session-b".into(),
+        },
+    );
+    state.workspace_fleet_agents = Some(agents);
+    Ok(state)
+}
+
 fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<PathBuf> {
-    let appearance = catalog_appearance(id)?;
+    // `<theme>+fleet` shows the fleet sidebar with an attention badge.
+    let (theme, fleet) = match id.strip_suffix("+fleet") {
+        Some(theme) => (theme, true),
+        None => (id, false),
+    };
+    let appearance = catalog_appearance(theme)?;
     // Transparent where the theme is vibrant, so translucent chrome keeps its alpha.
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
+    let state = if fleet { with_fleet(state)? } else { state };
     let (sender, receiver) = mpsc::sync_channel(1024);
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),

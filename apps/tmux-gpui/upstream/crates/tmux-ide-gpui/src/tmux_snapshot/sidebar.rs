@@ -126,8 +126,9 @@ pub(super) fn render_row(
 ) -> Stateful<Div> {
     use bezel_ui::widgets::Content as _;
     // Text on the frosted chrome keeps 4.5:1 whatever the desktop behind it.
-    let label = crate::tmux_snapshot::design::chrome_text(theme, theme.foreground);
-    let muted = crate::tmux_snapshot::design::chrome_text(theme, theme.muted);
+    // Ink that reads on the row's own fill (selected or hovered) as well as
+    // on the frosted chrome, whatever the desktop behind it.
+    let (label, muted) = crate::tmux_snapshot::design::row_ink(theme);
     let session = matches!(
         row.target,
         Some(Target::Session(_) | Target::FleetSession { .. })
@@ -205,6 +206,11 @@ pub(super) fn render_row(
         element = element.child(
             bezel
                 .badge(row.attention.to_string())
+                // Filled, as it was before Bezel: the count is what asks for
+                // the user, so it stands out of the row rather than outlining.
+                .bg(rgb(theme.active))
+                .border_color(rgb(theme.active))
+                .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
