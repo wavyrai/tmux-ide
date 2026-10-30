@@ -1,10 +1,12 @@
-// Freshness record for docs/public/tui-demo.svg.
+// Freshness records for docs/public/tui-demo.svg and the theme gallery renders.
 //
 // The demo is rendered from the app's own presentation code, so it goes stale
 // whenever that code changes. `pnpm demo:tui` records a hash of every
 // presentation file the renderer imports (its import closure, limited to the
 // app's UI layer and visual tokens) in tui-demo.sources.json; check:site
 // recomputes it and names the files that changed since the last render.
+// `pnpm demo:themes` keeps the same kind of record for docs/public/themes/ in
+// components/themes-gallery/gallery.json.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -12,11 +14,20 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const RECORD = join(repoRoot, "docs/scripts/tui-demo.sources.json");
+export const GALLERY_RECORD = join(repoRoot, "docs/components/themes-gallery/gallery.json");
 const ENTRY = "docs/scripts/render-tui-demo.tsx";
+const GALLERY_ENTRY = "docs/scripts/render-theme-gallery.tsx";
 const ASSETS = [
   "docs/scripts/tui-demo-font/chars.txt",
   "docs/scripts/tui-demo-font/regular.woff2",
   "docs/scripts/tui-demo-font/bold.woff2",
+];
+// The rasterizer runs after the renderer, so the import walk does not reach it
+// or the shown list it reads.
+const GALLERY_ASSETS = [
+  ...ASSETS,
+  "docs/scripts/rasterize-theme-gallery.mjs",
+  "docs/components/themes-gallery/shown-presets.mjs",
 ];
 const PRESENTATION = [
   /^docs\/scripts\//u,
@@ -44,10 +55,10 @@ function resolveImport(from, specifier) {
   return null;
 }
 
-/** Repo-relative presentation files in the renderer's value-import closure. */
-export function demoSources() {
+/** Repo-relative presentation files in a renderer's value-import closure. */
+function sourcesOf(entry, assets) {
   const seen = new Set();
-  const stack = [join(repoRoot, ENTRY)];
+  const stack = [join(repoRoot, entry)];
   while (stack.length > 0) {
     const file = stack.pop();
     if (seen.has(file)) continue;
@@ -62,8 +73,16 @@ export function demoSources() {
     ...[...seen]
       .map((file) => relative(repoRoot, file))
       .filter((file) => PRESENTATION.some((scope) => scope.test(file))),
-    ...ASSETS,
+    ...assets,
   ].sort();
+}
+
+export function demoSources() {
+  return sourcesOf(ENTRY, ASSETS);
+}
+
+export function gallerySources() {
+  return sourcesOf(GALLERY_ENTRY, GALLERY_ASSETS);
 }
 
 function digest(file) {
@@ -79,12 +98,24 @@ export function demoFingerprint() {
   return Object.fromEntries(demoSources().map((file) => [file, digest(file)]));
 }
 
-/** Files whose presentation hash differs from the recorded render. */
-export function staleDemoSources() {
-  if (!existsSync(RECORD)) return ["(no tui-demo.sources.json recorded)"];
-  const recorded = JSON.parse(readFileSync(RECORD, "utf8")).sources ?? {};
-  const current = demoFingerprint();
+export function galleryFingerprint() {
+  return Object.fromEntries(gallerySources().map((file) => [file, digest(file)]));
+}
+
+function staleAgainst(record, current) {
+  if (!existsSync(record)) return [`(no ${relative(repoRoot, record)} recorded)`];
+  const recorded = JSON.parse(readFileSync(record, "utf8")).sources ?? {};
   return [...new Set([...Object.keys(recorded), ...Object.keys(current)])]
     .filter((file) => recorded[file] !== current[file])
     .sort();
+}
+
+/** Files whose presentation hash differs from the recorded render. */
+export function staleDemoSources() {
+  return staleAgainst(RECORD, demoFingerprint());
+}
+
+/** Files whose hash differs from the recorded theme gallery render. */
+export function staleGallerySources() {
+  return staleAgainst(GALLERY_RECORD, galleryFingerprint());
 }
