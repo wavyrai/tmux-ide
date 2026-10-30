@@ -196,3 +196,27 @@ fn preference_new_epoch_and_acknowledged_foreground_retire_old_queue(cx: &mut Te
         })
     });
 }
+
+/// `select` moves `browser_request` before the publication for it arrives: a
+/// preference from either side of that gap must wait for the publication.
+#[gpui::test]
+fn preference_waits_until_the_publication_catches_up(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|_, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.request = 7;
+            v.browser_state.fleet = Some(preference_fleet());
+            v.prepare_home_filter(cx);
+            v.browser_request = 8;
+            v.change_fleet_preference(7, 4, ACTION, true, cx);
+            assert!(receiver.try_recv().is_err(), "old request");
+            v.change_fleet_preference(8, 4, ACTION, true, cx);
+            assert!(receiver.try_recv().is_err(), "unpublished request");
+            v.browser_state.request = 8;
+            v.change_fleet_preference(8, 4, ACTION, true, cx);
+            assert!(receiver.try_recv().is_ok(), "current request");
+        })
+    });
+}
