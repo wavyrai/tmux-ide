@@ -140,16 +140,7 @@ impl SnapshotView {
                     }
                 }),
         };
-        div()
-            .id("saved-machines-overlay")
-            .absolute()
-            .inset_0()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        super::super::design::dialog_overlay("saved-machines-overlay", &theme)
             .child(
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("saved-machines-dialog")
@@ -171,7 +162,10 @@ impl SnapshotView {
                                 "Machines"
                             }),
                     )
-                    .child(div().text_color(rgb(theme.muted)).child(message))
+                    .child(bezel_ui::popover::dialog_body(
+                        &super::super::design::palette(&theme),
+                        message,
+                    ))
                     .child(self.picker_render(cx))
                     .child(
                         div().flex().justify_end().child(

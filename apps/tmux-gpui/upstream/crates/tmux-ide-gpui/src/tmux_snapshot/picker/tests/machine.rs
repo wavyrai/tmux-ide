@@ -73,3 +73,26 @@ fn invalid_or_stale_machine_form_never_emits_a_command(cx: &mut TestAppContext) 
     });
     assert!(receiver.try_recv().is_err());
 }
+
+#[gpui::test]
+fn machine_dialog_sits_on_bezels_scrim(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("connect to machine");
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let overlay = cx.debug_bounds("machine-dialog-overlay").unwrap();
+    let theme = view.read_with(cx, |view, _| view.theme());
+    let scrim = crate::tmux_snapshot::design::palette(&theme).scrim();
+    let (quads, scale) = cx.update(|window, _| (window.painted_quads(), window.scale_factor()));
+    let painted: Vec<_> = quads
+        .iter()
+        .filter(|quad| quad.bounds == overlay.scale(scale))
+        .filter_map(|quad| quad.background.as_solid())
+        .collect();
+    assert!(painted.contains(&scrim), "{painted:?}");
+}
