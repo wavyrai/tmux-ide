@@ -133,6 +133,7 @@ fn fixture_with_batch_ack(
         owner_notice: None,
         action_status: None,
         catalog_only: false,
+        daemon_version: None,
         generation: GEN.into(),
         topology_notice: None,
         topology_sent: Default::default(),
