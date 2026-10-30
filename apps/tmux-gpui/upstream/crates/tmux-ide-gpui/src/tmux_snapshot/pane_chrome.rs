@@ -596,12 +596,27 @@ impl SnapshotView {
             ))
             .children(indicator)
             .child(browser.unwrap_or_else(|| {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(label(&self.browser_state, &header.id))
-                    .into_any_element()
+                // The pane's title as a Bezel tab: focused for the selected
+                // pane, resting otherwise, at the header's cell height.
+                bezel_ui::tabs::tab(
+                    &super::design::palette(&theme),
+                    format!("pane-title:{}", header.id),
+                    bezel_ui::tabs::Label::new(label(&self.browser_state, &header.id)),
+                    if selected {
+                        bezel_ui::tabs::State::Focused
+                    } else {
+                        bezel_ui::tabs::State::Resting
+                    },
+                )
+                .debug_selector({
+                    let id = header.id.clone();
+                    move || format!("pane-title:{id}")
+                })
+                .h_full()
+                .min_w_0()
+                .flex_shrink(1.)
+                .text_size(px((self.terminal_height() - 2.).min(12.)))
+                .into_any_element()
             }))
     }
     pub(super) fn pane_header_labels(&self, width: f32, cx: &mut Context<Self>) -> Vec<AnyElement> {

@@ -1,36 +1,7 @@
 //! Bezel-derived native component tokens. See BEZEL-NOTICE.md for provenance.
 //! These colors belong to chrome; never use them to recolor canonical terminal cells.
 use crate::{config::Theme, contrast::Contrast};
-use gpui::{prelude::*, *};
-
-pub(super) const SURFACE_RADIUS: f32 = 12.;
-
-#[derive(Clone, Copy)]
-pub(super) struct Palette {
-    pub overlay: Rgba,
-    pub text: Rgba,
-    pub muted: Rgba,
-    pub selected: Rgba,
-    pub border: Rgba,
-}
-impl Palette {
-    pub fn for_theme(theme: &Theme) -> Self {
-        let source = palette(theme);
-        let overlay: Rgba = source.surface_overlay.into();
-        Self {
-            overlay,
-            text: source.text.into(),
-            muted: source.text_muted.into(),
-            selected: source.element_active.into(),
-            border: source.border.into(),
-        }
-    }
-}
-
-/// Bezel paint::surface_shadows. A single elevation recipe for floating cards.
-pub(super) fn shadows() -> Vec<BoxShadow> {
-    bezel_theme::surface_shadows()
-}
+use gpui::*;
 
 /// The tmux theme as the one Bezel palette. The terminal's background, surface,
 /// text, cursor, selection and 16 ANSI colours are taken as they are; every
@@ -245,6 +216,41 @@ pub(crate) fn badge_text(theme: &Theme) -> u32 {
     crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
 }
 
+/// The palette's text, inked on its opaque plate (`surface_overlay`) and on
+/// the selected row's wash over it. The palette floats over live terminal
+/// content, so its plate is opaque rather than glass (PM, #671 round 2), and
+/// Bezel's deliberately faint popover roles are lifted to 4.5:1 on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PopoverInk {
+    /// The plate itself, opaque.
+    pub plate: Hsla,
+    /// Row labels and the card's own text.
+    pub text: Hsla,
+    /// Headings, keycaps, legends, notes and disabled rows.
+    pub muted: Hsla,
+}
+
+pub(crate) fn popover_ink(theme: &Theme) -> PopoverInk {
+    let bezel = palette(theme);
+    let plate = Hsla {
+        a: 1.0,
+        ..bezel.surface_overlay
+    };
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let plates = [
+        pack(plate),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+        pack(bezel_theme::flatten(bezel.element_hover, plate)),
+    ];
+    let ink =
+        |color: u32| -> Hsla { rgb(crate::contrast::ink_on_chrome(color, plates, 4.6)).into() };
+    PopoverInk {
+        plate,
+        text: ink(theme.foreground),
+        muted: ink(theme.muted),
+    }
+}
+
 /// What chrome text is drawn on: the opaque surface and, in a dark theme (the
 /// one Bezel frosts), the frost over a white and over a black desktop.
 fn chrome_plates(theme: &Theme) -> [u32; 3] {
@@ -322,29 +328,11 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
     cx.set_global(next);
 }
 
-pub(super) fn popover(element: Stateful<Div>, cx: &App) -> bezel_ui::surface::Surface {
-    use bezel_ui::surface::Surfaced;
-    let theme = bezel_theme::Theme::of(cx);
-    element.surface(theme, theme.popover_surface)
-}
-
-/// Shared floating-surface component. Owners retain positioning, occlusion and focus.
-pub(super) fn floating<E: Styled>(element: E, theme: &Theme) -> E {
-    let palette = Palette::for_theme(theme);
-    element
-        .rounded(px(SURFACE_RADIUS))
-        .border_1()
-        .border_color(palette.border)
-        .bg(palette.overlay)
-        .text_color(palette.text)
-        .shadow(shadows())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Palette, badge_text, chrome_text, palette, prepare, row_ink};
+    use super::{badge_text, chrome_text, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
-    use gpui::{Hsla, Rgba, TestAppContext, black, rgb, white};
+    use gpui::{Hsla, TestAppContext, black, rgb, white};
 
     fn color(value: u32) -> Hsla {
         rgb(value).into()
@@ -364,17 +352,17 @@ mod tests {
     }
 
     #[test]
-    fn floating_text_is_legible_in_both_appearances() {
+    fn popover_text_is_legible_in_both_appearances() {
         for background in [0x000000, 0xffffff] {
             let theme = Theme {
                 background,
                 ..Theme::default()
             };
-            let p = Palette::for_theme(&theme);
-            let luminance = |c: Rgba| crate::contrast::luminance(u32::from(c) >> 8);
-            let (a, b) = (luminance(p.text), luminance(p.overlay));
-            assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
-            assert_eq!(p.overlay.a, 1.0, "No fake blur over live terminal text");
+            let bezel = palette(&theme);
+            let overlay = bezel.surface_overlay;
+            let text = bezel_theme::flatten(bezel.text, overlay);
+            assert!(bezel_theme::contrast_ratio(text, overlay) >= 4.5);
+            assert_eq!(overlay.a, 1.0, "No fake blur over live terminal text");
         }
     }
 
@@ -599,6 +587,37 @@ mod tests {
                     let ratio = bezel_theme::contrast_ratio(text, *plate);
                     if ratio < 4.5 {
                         failures.push(format!("{name}: {role} on {plate_name} is {ratio:.2}:1"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn every_palette_text_role_reads_on_its_plate() {
+        let mut failures = Vec::new();
+        for (name, _, theme) in catalog() {
+            let bezel = palette(&theme);
+            let ink = popover_ink(&theme);
+            assert_eq!(ink.plate.a, 1.0, "{name}: the palette plate is opaque");
+            for (plate, plate_name) in [
+                (ink.plate, "plate"),
+                (
+                    bezel_theme::flatten(bezel.card_selected_bg(), ink.plate),
+                    "selected row",
+                ),
+                (
+                    bezel_theme::flatten(bezel.element_hover, ink.plate),
+                    "hovered row",
+                ),
+            ] {
+                for (role, text) in [("text", ink.text), ("muted", ink.muted)] {
+                    let ratio = bezel_theme::contrast_ratio(text, plate);
+                    if ratio < 4.5 {
+                        failures.push(format!(
+                            "{name}: palette {role} on {plate_name} is {ratio:.2}:1"
+                        ));
                     }
                 }
             }

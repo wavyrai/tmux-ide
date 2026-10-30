@@ -11,6 +11,15 @@ fn direct_expand_uses_current_target_and_close_requires_confirmation(cx: &mut Te
     let expand = cx.debug_bounds("pane-expand:pane-a").unwrap();
     let close = cx.debug_bounds("pane-close:pane-a").unwrap();
     assert!(expand.right() <= close.left());
+    // The two hit areas sit edge to edge at the header's right end: a gap
+    // between them would be a dead strip in the header.
+    assert_eq!(expand.right(), close.left());
+    assert_eq!(expand.size, close.size);
+    // The pane title is a Bezel tab filling the header row, not Bezel's
+    // 24 pt chip floating in it.
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    assert_eq!(title.size.height, close.size.height);
+    assert_eq!(title.top(), close.top());
     cx.simulate_click(close.center(), Modifiers::default());
     assert!(
         receiver.try_recv().is_err(),

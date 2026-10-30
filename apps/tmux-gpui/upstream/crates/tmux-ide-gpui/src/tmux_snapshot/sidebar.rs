@@ -108,6 +108,18 @@ mod row_style_tests;
 #[path = "sidebar/tests.rs"]
 mod tests;
 
+/// The attention count: Bezel's badge, filled as it was before Bezel, since
+/// the count is what asks for the user and should stand out of the row
+/// rather than outline. Its count is inked on the pill.
+fn attention_badge(theme: &Theme, bezel: &bezel_theme::Theme, count: usize) -> Div {
+    use bezel_ui::widgets::Content as _;
+    bezel
+        .badge(count.to_string())
+        .bg(rgb(theme.active))
+        .border_color(rgb(theme.active))
+        .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
+}
+
 /// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
 /// the selected row takes `Selection`'s fill and shadow (emphasized while the
 /// sidebar holds the keyboard), an unselected row fades in
@@ -124,7 +136,6 @@ pub(super) fn render_row(
     painter: bezel_motion::Painter,
     emphasized: bool,
 ) -> Stateful<Div> {
-    use bezel_ui::widgets::Content as _;
     // Text on the frosted chrome keeps 4.5:1 whatever the desktop behind it.
     // Ink that reads on the row's own fill (selected or hovered) as well as
     // on the frosted chrome, whatever the desktop behind it.
@@ -204,13 +215,7 @@ pub(super) fn render_row(
         );
     if row.attention > 0 {
         element = element.child(
-            bezel
-                .badge(row.attention.to_string())
-                // Filled, as it was before Bezel: the count is what asks for
-                // the user, so it stands out of the row rather than outlining.
-                .bg(rgb(theme.active))
-                .border_color(rgb(theme.active))
-                .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
+            attention_badge(theme, bezel, row.attention)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
