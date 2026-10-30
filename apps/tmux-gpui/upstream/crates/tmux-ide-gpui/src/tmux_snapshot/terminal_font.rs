@@ -1,9 +1,8 @@
 //! tmux-ide-only font preferences. Reuses Herdr FontConfig/cascade resolution;
 //! never reads or writes Herdr's application configuration.
-mod cache;
 use super::SnapshotView;
 use crate::config::{Config, FONT_SIZE_RANGE, FONT_SIZE_STEP, FontConfig};
-use gpui::Context;
+use gpui::{Context, Window};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     io::{self, Read, Write},
@@ -190,8 +189,7 @@ impl Settings {
         result.requested = result.config.family.clone();
         result
     }
-    /// Resolves the requested family against `names`, now the picker's list,
-    /// and remembers the result for the next launch.
+    /// Resolves the requested family against `names`, now the picker's list.
     fn list(&mut self, names: Vec<String>) {
         self.config = FontConfig {
             line_height_multiple: self.config.line_height_multiple,
@@ -201,12 +199,6 @@ impl Settings {
         self.ready = true;
         self.listing_started = true;
         self.listed = true;
-    }
-    fn remembered(&self) -> Option<(PathBuf, cache::Resolved)> {
-        Some((
-            self.path.clone()?,
-            cache::Resolved::new(&self.requested, &self.config)?,
-        ))
     }
 }
 impl SnapshotView {
@@ -240,28 +232,23 @@ impl SnapshotView {
             Arc::new(move || text.all_font_names())
         })
     }
-    /// Loads the saved font at launch. Enumerating installed fonts is left
-    /// to the font picker unless no remembered resolution matches the saved
-    /// family, because the icon cascade can only be detected from the list.
+    /// The launch step: read the saved font now, and list installed fonts on
+    /// the window's first frame, so the listing stays off the startup path.
+    pub(super) fn launch_terminal_fonts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.discover_terminal_fonts(cx);
+        cx.on_next_frame(window, |view, _, cx| view.list_terminal_fonts(cx));
+    }
+    /// Loads the saved font at launch, without enumerating installed fonts:
+    /// that waits for `list_terminal_fonts`, after the window is shown.
     pub(super) fn discover_terminal_fonts(&mut self, cx: &mut Context<Self>) {
         if self.terminal_font.discovery_started {
             return;
         }
         self.terminal_font.discovery_started = true;
-        let source = self.font_source(cx);
         let location = self.terminal_font.path.clone().or_else(path);
-        let task = cx.background_executor().spawn(async move {
-            let mut settings = Settings::load_from(location);
-            let remembered = settings.path.as_deref().and_then(cache::read);
-            let requested = settings.requested.clone();
-            if !remembered.is_some_and(|r| r.apply(&requested, &mut settings.config)) {
-                settings.list(font_names(source()));
-                if let Some((path, resolved)) = settings.remembered() {
-                    cache::write(&path, &resolved);
-                }
-            }
-            settings
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { Settings::load_from(location) });
         cx.spawn(async move |view, cx| {
             let mut settings = task.await;
             let _ = view.update(cx, |view, cx| {
@@ -281,7 +268,9 @@ impl SnapshotView {
         })
         .detach();
     }
-    /// Lists installed fonts the first time the font picker opens.
+    /// Lists installed fonts once, in the background: after the window is
+    /// shown, and again when the picker opens if no listing has landed.
+    /// Each launch lists afresh, so a font installed since is detected.
     pub(super) fn list_terminal_fonts(&mut self, cx: &mut Context<Self>) {
         if self.terminal_font.ready || self.terminal_font.listing_started {
             return;
@@ -294,6 +283,11 @@ impl SnapshotView {
         cx.spawn(async move |view, cx| {
             let names = task.await;
             let _ = view.update(cx, |view, cx| {
+                if names.is_empty() {
+                    // Keep the current family; the next picker open lists again.
+                    view.terminal_font.listing_started = false;
+                    return;
+                }
                 if !view.terminal_font.loaded {
                     // The launch step resolves the saved family against these.
                     view.terminal_font.names = names;
@@ -305,11 +299,6 @@ impl SnapshotView {
                 let after = &view.terminal_font.config;
                 if after.family != before.family || after.fallbacks != before.fallbacks {
                     view.invalidate_font_geometry(cx);
-                }
-                if let Some((path, resolved)) = view.terminal_font.remembered() {
-                    cx.background_executor()
-                        .spawn(async move { cache::write(&path, &resolved) })
-                        .detach();
                 }
                 view.refresh_picker(cx);
                 cx.notify();
@@ -354,9 +343,6 @@ impl SnapshotView {
                 size: config.size,
             };
             write(&path, &saved)?;
-            if let Some(resolved) = cache::Resolved::new(&saved.family, &config) {
-                cache::write(&path, &resolved);
-            }
             Ok::<_, io::Error>(config)
         });
         cx.spawn(async move |view, cx| {

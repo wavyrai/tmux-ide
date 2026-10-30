@@ -432,7 +432,7 @@ fn show_owned(
                         browser_state: home::initial_state(),
                         browser_commands: browser.map(|b| b.commands),
                     };
-                    view.discover_terminal_fonts(cx);
+                    view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
                     view

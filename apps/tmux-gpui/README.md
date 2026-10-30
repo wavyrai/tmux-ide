@@ -95,11 +95,11 @@ and installed-symbol fallback resolution. Preferences are saved in
 `$HOME/.config/tmux-ide/gpui-fonts.json` when no absolute XDG config directory is
 set. A save failure is shown in the picker and retains the previous setting.
 
-Installed fonts are listed when the picker first opens, not at launch. The
-resolved family and its icon fallbacks are remembered beside the preferences in
-`gpui-font-cache.json`, so a launch with a remembered font skips the listing. A
-missing or invalid cache file is ignored, and the app lists fonts in the
-background at launch as before.
+Installed fonts are listed in the background once the window has drawn its
+first frame, not during app start, and every launch lists them afresh, so a
+Nerd Font installed since the last launch is used for terminal icons. If that
+listing comes back empty, the saved font stays in use and opening the picker
+lists fonts again.
 
 These preferences belong to the GPUI client; they do not change tmux, the TUI,
 Herdr, or another terminal application's settings. Ghostty configuration/theme
