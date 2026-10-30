@@ -95,32 +95,41 @@ fn oklch_hue_chroma(value: u32) -> (f32, f32) {
     (b.atan2(a).to_degrees().rem_euclid(360.), a.hypot(b))
 }
 
-/// The tmux theme the installed Bezel palette was built from.
+/// The tmux theme the installed Bezel palette was built from, and whether that
+/// palette paints glass.
 struct Bridged(Theme, bool);
 impl Global for Bridged {}
 
 /// The daemon still chooses appearance. Bezel receives that choice, never persists
 /// a second preference or modifies the canonical terminal palette.
+///
+/// Runs while a window renders, before anything reads the palette, so that
+/// window needs no refresh. `install_custom` would refresh every window, and
+/// two windows on different tmux themes would then reinstall each other's
+/// palette forever; each window installs its own as it renders instead.
 pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
+    let build = {
+        let source = theme.clone();
+        move |_| {
+            let mut next = palette(&source);
+            next.glass &= native_glass;
+            next.vibrancy &= native_glass;
+            next
+        }
+    };
+    let next = build(bezel_theme::Appearance::Dark);
     if cx
         .try_global::<Bridged>()
-        .is_some_and(|Bridged(current, glass)| current == theme && *glass == native_glass)
+        .is_some_and(|Bridged(current, glass)| current == theme && *glass == next.glass)
     {
         return;
     }
-    let source = theme.clone();
-    let build = move |_| {
-        let mut next = palette(&source);
-        next.glass &= native_glass;
-        next.vibrancy &= native_glass;
-        next
-    };
-    let next = build(bezel_theme::Appearance::Dark);
+    bezel_theme::set_current_appearance(next.appearance);
     // Any later rebuild by Bezel (a light/dark switch) starts from the same
     // tmux theme rather than from Bezel's stock palette.
     bezel_theme::AppExt::set_palette(cx, build);
-    cx.set_global(Bridged(theme.clone(), native_glass));
-    bezel_theme::Theme::install_custom(next, cx);
+    cx.set_global(Bridged(theme.clone(), next.glass));
+    cx.set_global(next);
 }
 
 pub(super) fn popover(element: Stateful<Div>, cx: &App) -> bezel_ui::surface::Surface {
