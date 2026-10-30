@@ -19,10 +19,12 @@ env:
 permissions:
   contents: read
 
-# Do not automatically interrupt owned qualification teardown on a newer push.
+# A newer push to a pull request cancels its older runs. Every pull-request job
+# runs on an ephemeral GitHub-hosted runner, the case scripts/development-ci.md
+# allows. Pushes to main, schedules and dispatches never interrupt owned teardown.
 concurrency:
   group: development-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
