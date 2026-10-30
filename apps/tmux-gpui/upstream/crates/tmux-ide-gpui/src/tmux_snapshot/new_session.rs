@@ -294,7 +294,8 @@ impl SnapshotView {
         let available = (self.local_session_target().is_some()
             || (self.can_create_session() && self.browser_state.local_session_create.is_some()))
             && self.new_session.is_none();
-        controls::action_button(
+        // On Home's inked palette, like Home's other buttons.
+        controls::action_button_on(
             "home-new-local-session",
             Some("New local session…"),
             "Create a session on this Mac",
@@ -304,7 +305,7 @@ impl SnapshotView {
             } else {
                 controls::ButtonStyle::Unavailable
             },
-            &self.theme(),
+            &self.home_palette(),
         )
         .debug_selector(|| "home-new-local-session".into())
         .when(available, |button| {
