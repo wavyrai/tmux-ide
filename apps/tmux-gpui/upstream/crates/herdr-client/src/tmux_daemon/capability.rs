@@ -94,6 +94,11 @@ impl ServerClient {
     ) -> Result<Handoff, Error> {
         self.assert_current()?;
         selection.validate()?;
+        let daemon_version = match &self.daemon {
+            super::owner::Owner::Local(local) => Some(local.product_version().to_owned()),
+            #[cfg(unix)]
+            super::owner::Owner::Remote(_) => None,
+        };
         let (origin, local_images, remote): (_, _, Option<(u16, crate::tmux_ssh::PeerIdentity)>) =
             match &self.daemon {
                 super::owner::Owner::Local(local) => (
@@ -184,6 +189,7 @@ impl ServerClient {
             alternate_screen_projection: graphics,
             local_images,
             server_scope: Some(scope.clone()),
+            daemon_version,
         })
     }
 }
