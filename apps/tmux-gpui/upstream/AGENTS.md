@@ -28,7 +28,7 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 
 - Keep dependency direction from UI to client to protocol. Protocol/client code must not depend on GPUI.
 - Keep session transitions separate from socket scheduling, and connection ownership separate from window rendering.
-- Reuse `ConnectionBridge`, domain targets, geometry helpers, and the test sandbox rather than duplicating their policies.
+- Reuse `ConnectionBridge`, domain targets, and geometry helpers rather than duplicating their policies.
 - **File size limit: 1,000 lines.** No Rust, Python, shell, or Swift file may exceed it,
   tests included; `bash scripts/check-file-size.sh` enforces it in CI's macOS job.
   There is no allowlist: when a change would cross the limit, split the file by
@@ -157,6 +157,7 @@ through `examples/tmux_native_journey.rs`; `.github/workflows/gpui-preview.yml`
 shows how they run. The manual GUI and SSH smokes are listed in
 `apps/tmux-gpui/bridge/manual/README.md`.
 
+- Isolate every opt-in test: a private short directory, its own HOME, XDG and socket paths, and an explicitly selected daemon. Never discover or attach to the user's daemon.
 - Kill and wait only for exact children created by the test, before removing their sandbox. Never use `server stop`, process-name matching, or process-group kills.
 - Native window checks need an active desktop. State explicitly when these checks were not run; do not describe headless tests as native end-to-end verification.
 
