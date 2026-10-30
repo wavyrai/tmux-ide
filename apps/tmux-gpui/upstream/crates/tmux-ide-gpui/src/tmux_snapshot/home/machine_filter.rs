@@ -111,13 +111,13 @@ impl SnapshotView {
                 view.cycle_home_machine(request, revision, cx);
             }));
         } else {
-            button = button.text_color(rgb(theme.muted));
+            button = button.text_color(self.home_palette().text_muted);
         }
         let mut body = div().flex().flex_col().child(button);
         if self.home_filter.as_ref().is_some_and(|c| c.machine_error) {
             body = body.child(
                 div()
-                    .text_sm()
+                    .text_style(TextStyle::Callout)
                     .child("Machine filter not queued — try again"),
             );
         }

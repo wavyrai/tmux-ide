@@ -205,8 +205,7 @@ impl SnapshotView {
         let Some(controls) = &self.home_filter else {
             return div().into_any_element();
         };
-        let theme = self.theme();
-        let bezel = super::super::design::palette(&theme);
+        let bezel = self.home_palette();
         let mut tabs = bezel.toggle_group().flex_wrap();
         for filter in [Filter::All, Filter::Working, Filter::Attention] {
             tabs = tabs.child(
@@ -235,8 +234,9 @@ impl SnapshotView {
                 .child(self.home_machine_control(cx)).child(tabs))
             .child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(theme.muted))
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(bezel.text_muted)
+                    .children(design::ink_probe(|| "home-filter-hints".into()))
                     .child("↑↓ Select · Enter Open · / Search · 0 All · W Working · A Attention · Esc Clear search"),
             )
             .into_any_element()

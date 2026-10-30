@@ -108,7 +108,7 @@ impl SnapshotView {
         if self.home_filter.as_ref().is_some_and(|c| c.recovery_error) {
             row = row.child(
                 div()
-                    .text_sm()
+                    .text_style(TextStyle::Callout)
                     .child("Observation request not queued — try again"),
             );
         }

@@ -41,7 +41,8 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let roster = self.browser_state.home_agents.as_ref()?;
-        let theme = self.theme();
+        let bezel = self.home_palette();
+        let (hover, muted) = (bezel.element_hover, bezel.text_muted);
         let request = self.browser_request;
         let revision = roster.revision;
         let query = self
@@ -69,16 +70,12 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .gap_2()
+            .child(div().text_style(TextStyle::Headline).child(heading))
             .child(
                 div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(heading),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme.muted))
+                    .text_style(TextStyle::Callout)
+                    .text_color(muted)
+                    .children(design::ink_probe(|| "home-agent-counts".into()))
                     .child(crate::tmux_snapshot::roster_counts::home(roster)),
             );
         body = body.child(self.home_filter_controls(cx));
@@ -87,7 +84,7 @@ impl SnapshotView {
             body = body.child(div().min_w_0().child(note.clone()));
         }
         if roster.rows.is_empty() && roster.phase == Phase::Live {
-            body = body.child(super::super::design::palette(&theme).empty_state(
+            body = body.child(bezel.empty_state(
                 bezel_ui::icons::Icon::asset("icons/terminal.svg"),
                 "No observed agents",
                 "Start a coding agent in a terminal to see its activity here.",
@@ -98,7 +95,7 @@ impl SnapshotView {
             && matches!(roster.phase, Phase::Live | Phase::Partial)
         {
             body = body.child(
-                super::super::design::palette(&theme)
+                bezel
                     .empty_state(
                         bezel_ui::icons::Icon::asset("icons/terminal.svg"),
                         "No matching loaded agents",
@@ -138,18 +135,18 @@ impl SnapshotView {
                 .items_center()
                 .gap_3()
                 .p_3()
-                .rounded(px(crate::config::corners::PANEL))
-                .bg(rgb(
+                .rounded(px(bezel_theme::Theme::panel_radius()))
+                .bg(
                     if self
                         .home_filter
                         .as_ref()
                         .is_some_and(|c| c.selected.as_deref() == Some(row.key.as_str()))
                     {
-                        theme.active
+                        bezel.card_selected_bg()
                     } else {
-                        theme.surface
+                        bezel.card_glass_bg()
                     },
-                ))
+                )
                 .child(
                     svg()
                         .path(super::super::pane_chrome::agent_icon_path(
@@ -157,7 +154,7 @@ impl SnapshotView {
                         ))
                         .size(px(18.))
                         .flex_shrink_0()
-                        .text_color(rgb(theme.foreground)),
+                        .text_color(bezel.text),
                 )
                 .child(
                     div()
@@ -174,9 +171,12 @@ impl SnapshotView {
                         .child(
                             div()
                                 .truncate()
-                                .text_sm()
-                                .text_color(rgb(theme.muted))
+                                .text_style(TextStyle::Callout)
+                                .text_color(muted)
                                 .debug_selector(move || format!("home-agent-context-{index}"))
+                                .children(design::ink_probe(move || {
+                                    format!("home-agent-context-{index}")
+                                }))
                                 .child(row.context_label()),
                         ),
                 )
@@ -188,13 +188,16 @@ impl SnapshotView {
                     div()
                         .debug_selector(move || format!("home-agent-action-{index}"))
                         .flex_none()
-                        .text_color(rgb(theme.muted))
+                        .text_color(muted)
+                        .children(design::ink_probe(move || {
+                            format!("home-agent-action-{index}")
+                        }))
                         .child(if enabled { "Open" } else { "Unavailable" }),
                 );
             if enabled {
                 item = item
                     .cursor_pointer()
-                    .hover(move |s| s.bg(rgb(theme.active)))
+                    .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.home_agent_select(request, revision, &key, window, cx);
