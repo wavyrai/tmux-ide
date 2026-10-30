@@ -138,6 +138,11 @@ path = "src/tmux_main.rs"
 name = "tmux_native_journey"
 required-features = ["integration-test"]
 
+# Card #666 design mockup: the main window on Bezel, static data, no daemon.
+[[example]]
+name = "bezel_mockup"
+required-features = ["mockup"]
+
 # Retained upstream reference executable; never distributed as the tmux-ide app.
 [[bin]]
 name = "herdr-gpui"
