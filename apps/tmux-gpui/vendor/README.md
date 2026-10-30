@@ -1,7 +1,7 @@
 # Apple GPUI renderer patch
 
 `bezel-gpui-apple` is copied from the crates.io package
-`0.3.19+zed.f16f96`, retaining its Apache license and original package metadata.
+`0.3.21+zed.f16f96`, retaining its Apache license and original package metadata.
 [Provenance](bezel-gpui-apple-provenance.json) records the original crate checksum,
 original file hashes and changed files. `upstream/Cargo.toml` patches this one
 package to the repository copy; the application uses `upstream/Cargo.lock`.
