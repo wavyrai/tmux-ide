@@ -74,7 +74,7 @@ pub(super) struct Row {
     target: Target,
     label: String,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Font,
     Reference,

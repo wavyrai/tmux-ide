@@ -224,14 +224,18 @@ pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Res
             || ready.input_lifetime == Some(false)
             || ready.input_bytes == Some(false)
             || (issued.effective_viewer_mode == ViewerMode::Interactive
-                && (ready.connection_client_id.as_deref() != Some(&options.host_client_id)
-                    || ready.input_lifetime != Some(true)))
+                && ready.connection_client_id.as_deref() != Some(&options.host_client_id))
             || ready
                 .connection_client_id
                 .as_ref()
                 .is_some_and(|id| id != &options.host_client_id)
         {
             return Err(Error::Identity);
+        }
+        // An otherwise exact peer that omits the field predates capability 105.
+        if issued.effective_viewer_mode == ViewerMode::Interactive && ready.input_lifetime.is_none()
+        {
+            return Err(Error::DaemonTooOld);
         }
         return Ok(Event::Ready(ready));
     }

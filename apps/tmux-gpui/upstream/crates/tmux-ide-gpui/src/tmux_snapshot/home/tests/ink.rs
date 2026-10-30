@@ -156,6 +156,7 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "control-tmux-home-refresh",
             "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
+            "control-home-new-local-session",
         ] {
             let Some(&text) = probes.get(key) else {
                 failures.push(format!("{key}: not painted"));

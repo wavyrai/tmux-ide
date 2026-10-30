@@ -8,6 +8,7 @@ mod fleet_disconnect;
 mod fleet_retry;
 mod help;
 mod machine;
+mod menu_bar;
 mod navigation_keys;
 mod popover;
 mod saved_machines;
