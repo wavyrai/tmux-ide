@@ -30,12 +30,12 @@ crossbeam-channel    = "0.5"
 flate2               = "1"
 # Locates installed font files on Linux, as GPUI's own text system does.
 fontdb               = "0.23"
-gpui                 = { package = "bezel-gpui", version = "=0.3.19" }
-gpui_apple           = { package = "bezel-gpui-apple", version = "=0.3.19" }
+gpui                 = { package = "bezel-gpui", version = "=0.3.21" }
+gpui_apple           = { package = "bezel-gpui-apple", version = "=0.3.21" }
 objc2-core-video     = { default-features = false, features = ["std", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVReturn", "objc2-io-surface"], version = "=0.3.2" }
-gpui_platform        = { package = "bezel-gpui-platform", version = "=0.3.19" }
-bezel_theme          = { package = "bezel-theme", version = "=0.2.16" }
-bezel_ui             = { package = "bezel-ui", version = "=0.2.16" }
+gpui_platform        = { package = "bezel-gpui-platform", version = "=0.3.21" }
+bezel_theme          = { package = "bezel-theme", version = "=0.2.22" }
+bezel_ui             = { package = "bezel-ui", version = "=0.2.22" }
 herdr-client         = { path = "crates/herdr-client" }
 tmux-native-surface-sdk = { path = "crates/tmux-native-surface-sdk" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
