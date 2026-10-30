@@ -147,7 +147,9 @@ and all receipts. Run one isolated single-pane fixture with the same geometry,
 workload and transport for both clients; the GUI probe rejects multi-pane frames.
 
 Start `renderer-fixture.mjs` only inside that owned fixture pane, with
-`TMUX_IDE_RENDERER_FIXTURE=1`. For each client, set the same flag and:
+`TMUX_IDE_RENDERER_FIXTURE=1`. The GUI probe exists only in a build made with
+`cargo build --release -p tmux-ide-gpui --features qualification`; shipped builds
+leave it out. For each client, set the same flag and:
 
 - `TMUX_IDE_RENDERER_PROBE_TRIALS`: JSON array of that side's manifest trials,
   mapping each entry to exactly `{id, nonce, kind}` in manifest order.
