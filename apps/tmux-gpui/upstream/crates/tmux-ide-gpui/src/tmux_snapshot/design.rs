@@ -55,6 +55,9 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     let color = |value: u32| -> Hsla { rgb(value).into() };
     result.bg = color(theme.background);
     result.terminal_bg = color(theme.background);
+    // What a pane card fills with when the window is frosted: the terminal's
+    // own background, not Bezel's grey, so panes stay the theme's colour.
+    result.content_background = color(theme.background);
     result.surface = color(theme.surface);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
@@ -328,6 +331,7 @@ mod tests {
             if bezel.bg != color(theme.background)
                 || bezel.surface != color(theme.surface)
                 || bezel.terminal_bg != color(theme.background)
+                || bezel.content_background != color(theme.background)
                 || bezel.cursor != color(theme.cursor)
                 || bezel
                     .terminal_ansi
