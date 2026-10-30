@@ -54,6 +54,40 @@ fn strip_and_error_text_reads_in_every_catalog_theme() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// Bezel's strip tones are made for a dark plate and wash out on a lighter
+/// canvas; Home's stay at 4.5:1 on each, and a cached ink from one canvas is
+/// not reused on another.
+#[test]
+fn strip_text_follows_the_canvas() {
+    let colors: crate::tmux_snapshot::appearance::Colors =
+        serde_json::from_value(faint_muted()["theme"].clone()).unwrap();
+    let theme = theme_of(&colors);
+    let stock = design::palette(&theme);
+    let mut stock_fails = false;
+    let mut failures = Vec::new();
+    for canvas in [0x000000, 0x404040, 0x808080, 0xc0c0c0, 0xffffff, 0x404040] {
+        let home = palette(&theme, canvas);
+        let [(error, bare), (warning, _)] = strip_plates(&theme, canvas);
+        stock_fails |= reads(stock.danger_muted, error) < 4.5;
+        stock_fails |= reads(stock.warning_muted, warning) < 4.5;
+        for (role, text, plate, name) in [
+            ("error", home.danger_muted, error, "error strip"),
+            ("error", home.danger_muted, bare, "canvas"),
+            ("warning", home.warning_muted, warning, "warning strip"),
+        ] {
+            let ratio = reads(text, plate);
+            if ratio < 4.5 {
+                failures.push(format!("{role} on {name} of {canvas:06x} is {ratio:.2}:1"));
+            }
+        }
+    }
+    assert!(
+        stock_fails,
+        "Bezel's strip tones must fail somewhere here, or the test proves nothing"
+    );
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 const HINT_KEYS: [&str; 14] = [
     "home-key-cap-↑↓",
     "home-key-cap-Enter",
@@ -72,7 +106,8 @@ const HINT_KEYS: [&str; 14] = [
 ];
 
 /// The colours the strips, error rows and key hints are painted in, on the
-/// faint theme where Bezel's own tones and muted fail Home's plates.
+/// faint theme over a mid-grey canvas, where Bezel's own tones and muted, and
+/// the strips' 90% text, fail Home's plates.
 #[gpui::test]
 fn state_text_is_painted_inked(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -80,7 +115,9 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
         let mut view = make_view(window, cx, sender);
         view.frame = None;
         view.browser_state.frame = None;
-        view.browser_state.appearance = Some(serde_json::from_value(faint_muted()).unwrap());
+        let mut appearance = faint_muted();
+        appearance["theme"]["canvas"] = 0x808080.into();
+        view.browser_state.appearance = Some(serde_json::from_value(appearance).unwrap());
         view.browser_state.fleet = Some(
             serde_json::from_value(serde_json::json!({"groups":[],"omittedGroups":0})).unwrap(),
         );
@@ -101,6 +138,12 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
     assert!(
         reads(stock.text_muted.opacity(0.45), bare) < 4.5,
         "Bezel's key hint label must fail here, or the test proves nothing"
+    );
+    let home = palette(&theme, canvas);
+    assert!(
+        reads(home.danger_muted.opacity(0.9), error) < 4.5
+            && reads(home.warning_muted.opacity(0.9), warning) < 4.5,
+        "the strips' own 90% text must fail here, or the test proves nothing"
     );
     cx.simulate_resize(size(px(1400.), px(1800.)));
     let paint = |cx: &mut VisualTestContext, change: &dyn Fn(&mut SnapshotView)| {
