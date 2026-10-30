@@ -596,6 +596,16 @@ impl SnapshotView {
         self.terminal_focus.focus(window, cx);
         cx.notify();
     }
+    /// Opens Add machine, for the dev-only capture example.
+    #[cfg(feature = "visual-capture")]
+    pub(super) fn open_add_machine_for_capture(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_picker_mode(Mode::Machine, window, cx);
+    }
+
     fn choose_picker(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.as_ref().is_some_and(|p| p.mode.is_reference()) {
             return;

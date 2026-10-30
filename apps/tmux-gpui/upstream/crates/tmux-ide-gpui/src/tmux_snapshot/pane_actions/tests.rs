@@ -334,3 +334,41 @@ fn bezel_menu_arrows_select_without_terminal_input_and_enter_consumes_capability
         })
     });
 }
+
+/// review-644's probe on #672, adopted: Cancel then Rename (Mac order), and
+/// a refused name shows Bezel's error strip inside the panel and sends
+/// nothing.
+#[gpui::test]
+fn rename_is_mac_ordered_and_shows_its_error(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_pane_actions(window, cx);
+            view.edit_pane_name(window, cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    let cancel = cx.debug_bounds("pane-actions-cancel").unwrap();
+    let submit = cx.debug_bounds("pane-name-submit").unwrap();
+    assert!(cancel.right() <= submit.left(), "Cancel comes first");
+    assert!(cx.debug_bounds("pane-name-error").is_none());
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let input = view.pane_actions.as_ref().unwrap().input.clone().unwrap();
+            input.update(cx, |input, cx| input.set_text_selected("   ", cx));
+            view.send_pane_action(true, window, cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(receiver.try_recv().is_err(), "a refused name sends nothing");
+    let panel = cx.debug_bounds("pane-actions-panel").unwrap();
+    let error = cx.debug_bounds("pane-name-error").unwrap();
+    assert!(error.top() >= panel.top() && error.bottom() <= panel.bottom());
+    let submit = cx.debug_bounds("pane-name-submit").unwrap();
+    assert!(
+        submit.bottom() <= panel.bottom(),
+        "Rename stays inside the panel"
+    );
+}

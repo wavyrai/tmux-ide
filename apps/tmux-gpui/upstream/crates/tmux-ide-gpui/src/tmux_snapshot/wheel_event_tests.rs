@@ -220,3 +220,51 @@ fn wheel_preserves_pane_local_position_modifiers_and_live_input_gate(cx: &mut Te
         "explicit local-history override stays available"
     );
 }
+
+/// review-644's probe on #672, adopted: while a machine dialog is open, a
+/// wheel over one pane and a press on another reach nothing behind it.
+fn dialog_occludes(query: &str, overlay: &'static str, cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        prepare(&mut view);
+        view
+    });
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let (pane_a, pane_b) = view.read_with(cx, |view, _| {
+        (view.test_cell_point(2.5, 2.5), view.test_cell_point(7., 2.))
+    });
+    // Control: with no dialog, the wheel on pane-a scrolls it.
+    cx.simulate_event(event(pane_a, 1.));
+    assert_scroll(&receiver, 7, 1);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input(query);
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let bounds = cx.debug_bounds(overlay).unwrap();
+    assert!(bounds.contains(&pane_a) && bounds.contains(&pane_b));
+    for _ in 0..4 {
+        cx.simulate_event(event(pane_a, 1.));
+    }
+    cx.simulate_click(pane_b, Modifiers::default());
+    assert!(
+        receiver.try_recv().is_err(),
+        "nothing reaches the terminal under {overlay}"
+    );
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-a"));
+    });
+}
+
+#[gpui::test]
+fn add_machine_dialog_occludes_the_terminal(cx: &mut TestAppContext) {
+    dialog_occludes("connect to machine", "machine-dialog-overlay", cx);
+}
+
+#[gpui::test]
+fn saved_machines_dialog_occludes_the_terminal(cx: &mut TestAppContext) {
+    dialog_occludes("switch saved machine", "saved-machines-overlay", cx);
+}

@@ -1,5 +1,7 @@
 //! Catalog-backed Home. No daemon queries or invented activity in the render path.
-use super::{SnapshotView, browser, browser_ui::Selection, controls as native_controls};
+use super::{SnapshotView, browser, browser_ui::Selection, controls as native_controls, design};
+use bezel_theme::{TextStyle, Typeset};
+use bezel_ui::widgets::Scaffolding;
 use gpui::{prelude::*, *};
 mod action_focus;
 pub(super) mod filters;
@@ -8,6 +10,67 @@ pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
 mod selection;
+
+/// What Home's text sits on: the opaque canvas, Bezel's card fill over it,
+/// the hover wash over each, and the selected wash over the canvas (a hovered
+/// row takes the hover fill in place of its own).
+fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 5] {
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let canvas_color: Hsla = rgb(canvas).into();
+    let card = bezel_theme::flatten(bezel.card_glass_bg(), canvas_color);
+    [
+        canvas,
+        pack(card),
+        pack(bezel_theme::flatten(bezel.element_hover, canvas_color)),
+        pack(bezel_theme::flatten(bezel.element_hover, card)),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), canvas_color)),
+    ]
+}
+
+/// Bezel's palette for Home, with `text` and `text_muted` inked to read at
+/// 4.5:1 on every plate Home paints text on. Bezel's own roles are made for
+/// the window chrome; Home sits on its own canvas, which is not the terminal's
+/// background, and Bezel's translucent muted text can drop under 4.5:1 there.
+/// The 4.6 target leaves room for the 8-bit rounding of the plates, as
+/// `design::chrome_text` does.
+pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
+    /// Foreground, muted, surface, background, high contrast, canvas.
+    type Key = (u32, u32, u32, u32, bool, u32);
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<Key, (u32, u32)>> =
+            Default::default();
+    }
+    let mut bezel = design::palette(theme);
+    let key = (
+        theme.foreground,
+        theme.muted,
+        theme.surface,
+        theme.background,
+        theme.contrast == crate::contrast::Contrast::High,
+        canvas,
+    );
+    let (text, muted) = CACHE.with(|cache| {
+        if let Some(&inked) = cache.borrow().get(&key) {
+            return inked;
+        }
+        let plates = plates(&bezel, canvas);
+        let inked = (
+            crate::contrast::ink(theme.foreground, &plates, 4.6),
+            crate::contrast::ink(theme.muted, &plates, 4.6),
+        );
+        let mut cache = cache.borrow_mut();
+        // A theme inks once per canvas; theme switching starts over rather
+        // than growing without bound.
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        cache.insert(key, inked);
+        inked
+    });
+    bezel.text = rgb(text).into();
+    bezel.text_muted = rgb(muted).into();
+    bezel
+}
 
 /// Before the first browser publication, absence of a catalog is not an empty catalog.
 pub(super) fn initial_state() -> browser::State {
@@ -61,6 +124,10 @@ fn current(state: &browser::State, connected: bool, request: u64, captured: u64,
 }
 
 impl SnapshotView {
+    /// [`palette`] for this view's theme and canvas.
+    pub(super) fn home_palette(&self) -> bezel_theme::Theme {
+        palette(&self.theme(), self.canvas())
+    }
     fn home_select(&mut self, request: u64, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if current(
             &self.browser_state,
@@ -135,6 +202,7 @@ impl SnapshotView {
                 self.browser_state.home_agents.as_ref().map(|r| r.revision);
         }
         let theme = self.theme();
+        let bezel = self.home_palette();
         let request = self.browser_request;
         let connected = self.browser_commands.is_some();
         let setup_phase = self
@@ -152,47 +220,41 @@ impl SnapshotView {
                         .iter()
                         .any(|g| g.state == browser::fleet::Phase::Ready)
                 }));
-        // Reuse Herdr window/reconnecting.rs's bounded, rounded surface card
-        // and sidebar/row.rs's label renderer; only the actions/data differ.
-        let mut body = div()
+        // Bezel's page scaffolding: its column, headline and subtitle. The
+        // column is widened from Bezel's 768 so the fleet and agents columns
+        // can share a row in a wide window.
+        let mut body = bezel
+            .page_column()
             .id("tmux-home-content")
             .min_w_0()
-            .w_full()
             .max_w(px(1280.))
             .bg(rgb(self.canvas()))
-            .text_color(rgb(theme.foreground))
-            .text_size(px(13.))
-            .p(px(24.))
+            .text_color(bezel.text)
+            .text_style(TextStyle::Body)
+            .children(design::ink_probe(|| "home-text".into()))
+            .child(bezel.page_header("tmux-ide", None))
             .child(
-                div()
-                    .text_size(px(22.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("tmux-ide"),
-            )
-            .child(
-                div()
-                    .mt_2()
-                    .text_color(rgb(theme.muted))
-                    .child(summary(&self.browser_state, connected)),
+                bezel
+                    .page_subtitle(summary(&self.browser_state, connected))
+                    .children(design::ink_probe(|| "home-summary".into())),
             );
         if (connected && setup_phase.is_some())
             || (!is_live && !self.browser_state.status.is_empty())
         {
             body = body.child(
-                div()
-                    .mt_2()
-                    .text_color(rgb(theme.muted))
-                    .child(status_message(&self.browser_state, connected)),
+                bezel
+                    .page_subtitle(status_message(&self.browser_state, connected))
+                    .children(design::ink_probe(|| "home-status".into())),
             );
         }
         if self.home_diagnostics_available() {
             body = body.child(
-                native_controls::button(
+                native_controls::button_on(
                     "home-copy-diagnostics",
                     Some("Copy diagnostics"),
                     "Copy safe error details",
                     native_controls::Icon::Copy,
-                    &theme,
+                    &bezel,
                 )
                 .when_some(self.home_filter.as_ref(), |control, filter| {
                     action_focus::focus_control(
@@ -222,13 +284,13 @@ impl SnapshotView {
                     .flex_wrap()
                     .gap_2()
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "home-browse",
                             Some("Browse sessions"),
                             "Browse sessions (⌘K)",
                             native_controls::Icon::Sessions,
                             native_controls::ButtonStyle::Primary,
-                            &theme,
+                            &bezel,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
                             action_focus::focus_control(
@@ -248,7 +310,7 @@ impl SnapshotView {
                         )),
                     )
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "home-theme",
                             Some("Theme…"),
                             "Choose a theme",
@@ -258,7 +320,7 @@ impl SnapshotView {
                             } else {
                                 native_controls::ButtonStyle::Unavailable
                             },
-                            &theme,
+                            &bezel,
                         )
                         .when(!theme_ready, |control| {
                             control.aria_description("Appearance settings are not available yet")
@@ -282,7 +344,7 @@ impl SnapshotView {
                         }),
                     )
                     .child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "tmux-home-refresh",
                             Some(refresh_label),
                             refresh_label,
@@ -292,7 +354,7 @@ impl SnapshotView {
                             } else {
                                 native_controls::ButtonStyle::Quiet
                             },
-                            &theme,
+                            &bezel,
                         )
                         .when_some(action_focus.as_ref(), |control, focus| {
                             action_focus::focus_control(
@@ -317,14 +379,15 @@ impl SnapshotView {
             .min_w_0()
             .flex_1()
             .child(div().flex().items_center().justify_between().gap_2()
-                .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child("Your fleet"))
+                .child(div().text_style(TextStyle::Headline).child("Your fleet"))
                 .child(self.local_session_action(cx).when(self.local_session_available(), |control| {
                 control.when_some(self.home_filter.as_ref(), |control, filters| {
                     action_focus::focus_control(control, &filters.actions[3], 3, theme.foreground, self.canvas())
                 })
             })))
             .when(setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none(), |column| column.child(
-                div().mt_2().text_sm().text_color(rgb(theme.muted))
+                div().mt_2().text_style(TextStyle::Callout).text_color(bezel.text_muted)
+                    .children(design::ink_probe(|| "home-local-guidance".into()))
                     .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
             .child(self.new_session_controls(cx));
         if let Some(cards) = self.fleet_cards(cx) {
@@ -337,6 +400,7 @@ impl SnapshotView {
                 .enumerate()
                 .map(|(index, session)| {
                     let id = session.id.clone();
+                    let (hover, muted) = (bezel.element_hover, bezel.text_muted);
                     div()
                         .id(("tmux-home-session", index))
                         .debug_selector(move || format!("tmux-home-session-{index}"))
@@ -347,12 +411,12 @@ impl SnapshotView {
                         .items_center()
                         .gap_3()
                         .p_3()
-                        .rounded(px(crate::config::corners::PANEL))
+                        .rounded(px(bezel_theme::Theme::panel_radius()))
                         .border_1()
-                        .border_color(rgb(theme.active))
-                        .bg(rgb(theme.surface))
+                        .border_color(bezel.border)
+                        .bg(bezel.card_glass_bg())
                         .cursor_pointer()
-                        .hover(move |s| s.bg(rgb(theme.active)))
+                        .hover(move |s| s.bg(hover))
                         .child(
                             div()
                                 .flex_1()
@@ -372,12 +436,15 @@ impl SnapshotView {
                                         .debug_selector(move || format!("tmux-home-count-{index}"))
                                         .min_w_0()
                                         .truncate()
-                                        .text_sm()
-                                        .text_color(rgb(theme.muted))
+                                        .text_style(TextStyle::Callout)
+                                        .text_color(muted)
+                                        .children(design::ink_probe(move || {
+                                            format!("tmux-home-count-{index}")
+                                        }))
                                         .child(count)
                                 })),
                         )
-                        .child(div().flex_none().text_color(rgb(theme.muted)).child("Open"))
+                        .child(div().flex_none().text_color(muted).child("Open"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.home_select(request, &id, window, cx);
@@ -400,10 +467,10 @@ impl SnapshotView {
                     .mt_4()
                     .max_w(px(640.))
                     .p_3()
-                    .rounded(px(crate::config::corners::PANEL))
+                    .rounded(px(bezel_theme::Theme::panel_radius()))
                     .border_1()
-                    .border_color(rgb(theme.active))
-                    .bg(rgb(theme.surface))
+                    .border_color(bezel.border)
+                    .bg(bezel.card_glass_bg())
                     .child(guidance),
             );
         }

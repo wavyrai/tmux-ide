@@ -162,10 +162,13 @@ impl SnapshotView {
                                 "Machines"
                             }),
                     )
-                    .child(bezel_ui::popover::dialog_body(
-                        &super::super::design::palette(&theme),
-                        message,
-                    ))
+                    .child(
+                        bezel_ui::popover::dialog_body(
+                            &super::super::design::palette(&theme),
+                            message,
+                        )
+                        .text_color(super::super::design::dialog_muted(&theme)),
+                    )
                     .child(self.picker_render(cx))
                     .child(
                         div().flex().justify_end().child(

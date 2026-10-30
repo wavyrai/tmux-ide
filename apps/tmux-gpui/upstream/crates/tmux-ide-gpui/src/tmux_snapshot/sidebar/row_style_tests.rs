@@ -125,7 +125,8 @@ fn hovering_a_row_fades_in_its_own_wash(cx: &mut TestAppContext) {
 }
 
 /// Catalog `blue` (dark): its foreground needs the row ink to read on a
-/// selected row over the frost, so the row's ink and the bare chrome ink differ.
+/// selected row over the frost, so the row's ink, the bare chrome ink and
+/// Bezel's raw text tokens all differ.
 fn blue() -> Theme {
     Theme {
         background: 0x000000,
@@ -153,11 +154,55 @@ fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
         let mut element = render_row(0, &row(true), &theme, &bezel, painter, true);
         let painted = element.style().text.color;
         assert_eq!(painted, Some(rgb(label).into()));
-        let mut badge = attention_badge(&theme, &bezel, 2);
+        let mut badge = attention_badge(&theme, &bezel, 2, 0);
         let fill = match badge.style().background.clone() {
             Some(Fill::Color(background)) => background.as_solid(),
             None => None,
         };
         assert_eq!(fill, Some(rgb(theme.active).into()));
+    });
+}
+
+struct BlueRows;
+impl Render for BlueRows {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = blue();
+        crate::tmux_snapshot::design::prepare(&theme, false, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::of(cx);
+        let mut loud = row(false);
+        loud.attention = 3;
+        div().size_full().flex().flex_col().children(
+            [row(true), loud]
+                .iter()
+                .enumerate()
+                .map(|(index, row)| render_row(index, row, &theme, &bezel, painter, true))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+#[gpui::test]
+fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::design::{InkProbes, badge_text, palette, row_ink};
+    let theme = blue();
+    let (label, caption) = row_ink(&theme);
+    let raw = palette(&theme);
+    assert_ne!(
+        Hsla::from(rgb(label)),
+        raw.text,
+        "blue must tell the inks apart"
+    );
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (_, cx) = cx.add_window_view(|_, _| BlueRows);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|_, cx| {
+        let probes = &cx.global::<InkProbes>().0;
+        assert_eq!(probes.get("sidebar-label-0"), Some(&rgb(label).into()));
+        assert_eq!(probes.get("sidebar-count-0"), Some(&rgb(caption).into()));
+        assert_eq!(
+            probes.get("sidebar-badge-1"),
+            Some(&rgb(badge_text(&theme)).into())
+        );
     });
 }

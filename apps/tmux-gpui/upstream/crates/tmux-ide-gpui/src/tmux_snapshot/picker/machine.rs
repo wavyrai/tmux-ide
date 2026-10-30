@@ -148,7 +148,7 @@ impl SnapshotView {
             .child(bezel_ui::popover::dialog_card(&super::super::design::palette(&theme)).id("machine-dialog").w(px(440.)).max_w_full()
                 .flex().flex_col().gap_3()
                 .child(bezel_ui::popover::dialog_title(&super::super::design::palette(&theme), "Add machine"))
-                .child(bezel_ui::popover::dialog_body(&super::super::design::palette(&theme), "Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary."))
+                .child(bezel_ui::popover::dialog_body(&super::super::design::palette(&theme), "Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary.").text_color(super::super::design::dialog_muted(&theme)).children(super::super::design::ink_probe(|| "dialog-body-machine".into())))
                 .child(picker.search.clone())
                 .children(picker.error.map(|error| super::super::design::palette(&theme).error_strip(error).mt_0().px_2().py_1().min_w_0().w_full()))
                 .child(div().flex().justify_end().gap_2()

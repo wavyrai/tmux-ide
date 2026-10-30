@@ -111,13 +111,16 @@ mod tests;
 /// The attention count: Bezel's badge, filled as it was before Bezel, since
 /// the count is what asks for the user and should stand out of the row
 /// rather than outline. Its count is inked on the pill.
-fn attention_badge(theme: &Theme, bezel: &bezel_theme::Theme, count: usize) -> Div {
+fn attention_badge(theme: &Theme, bezel: &bezel_theme::Theme, count: usize, index: usize) -> Div {
     use bezel_ui::widgets::Content as _;
     bezel
         .badge(count.to_string())
         .bg(rgb(theme.active))
         .border_color(rgb(theme.active))
         .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
+        .children(crate::tmux_snapshot::design::ink_probe(move || {
+            format!("sidebar-badge-{index}")
+        }))
 }
 
 /// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
@@ -187,7 +190,10 @@ pub(super) fn render_row(
                     div()
                         .min_w_0()
                         .truncate()
-                        .child(crate::sidebar::label_text(&row.label)),
+                        .child(crate::sidebar::label_text(&row.label))
+                        .children(crate::tmux_snapshot::design::ink_probe(move || {
+                            format!("sidebar-label-{index}")
+                        })),
                 )
                 .children(row.summary.as_ref().map(|summary| {
                     div()
@@ -211,11 +217,14 @@ pub(super) fn render_row(
                         .font_weight(FontWeight::NORMAL)
                         .text_color(rgb(muted))
                         .child(count.clone())
+                        .children(crate::tmux_snapshot::design::ink_probe(move || {
+                            format!("sidebar-count-{index}")
+                        }))
                 })),
         );
     if row.attention > 0 {
         element = element.child(
-            attention_badge(theme, bezel, row.attention)
+            attention_badge(theme, bezel, row.attention, index)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }

@@ -96,3 +96,25 @@ fn machine_dialog_sits_on_bezels_scrim(cx: &mut TestAppContext) {
         .collect();
     assert!(painted.contains(&scrim), "{painted:?}");
 }
+
+#[gpui::test]
+fn machine_dialog_body_paints_in_the_dialog_ink(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::design::{InkProbes, dialog_muted};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("connect to machine");
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let theme = view.read_with(cx, |view, _| view.theme());
+    cx.update(|_, cx| {
+        let probes = &cx.global::<InkProbes>().0;
+        assert_eq!(
+            probes.get("dialog-body-machine"),
+            Some(&dialog_muted(&theme))
+        );
+    });
+}

@@ -90,12 +90,12 @@ impl SnapshotView {
             ] {
                 if self.recovery_available(request, revision, action) {
                     row = row.child(
-                        super::super::controls::button(
+                        super::super::controls::button_on(
                             id,
                             Some(label),
                             label,
                             super::super::controls::Icon::Refresh,
-                            &self.theme(),
+                            &self.home_palette(),
                         )
                         .on_click(cx.listener(move |view, _, _, cx| {
                             cx.stop_propagation();
@@ -108,7 +108,7 @@ impl SnapshotView {
         if self.home_filter.as_ref().is_some_and(|c| c.recovery_error) {
             row = row.child(
                 div()
-                    .text_sm()
+                    .text_style(TextStyle::Callout)
                     .child("Observation request not queued — try again"),
             );
         }

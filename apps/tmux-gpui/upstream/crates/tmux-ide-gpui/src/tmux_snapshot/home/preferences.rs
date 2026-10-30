@@ -73,7 +73,6 @@ impl SnapshotView {
         icon: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = self.theme();
         let request = self.browser_request;
         let revision = self
             .browser_state
@@ -85,7 +84,7 @@ impl SnapshotView {
         let enabled = action
             .as_ref()
             .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value, cx));
-        let palette = super::super::design::palette(&theme);
+        let palette = self.home_palette();
         let glyph = match icon {
             "icons/chevron-right.svg" => palette.disclosure(false),
             "icons/chevron-down.svg" => palette.disclosure(true),

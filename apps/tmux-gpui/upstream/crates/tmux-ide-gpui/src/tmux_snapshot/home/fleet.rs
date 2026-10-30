@@ -1,18 +1,15 @@
 use super::*;
-use bezel_ui::widgets::Content;
+use bezel_ui::widgets::{Content, Scaffolding};
 
 // Follow Herdr sidebar/row.rs and row/configured.rs's visual hierarchy:
 // labels flex and truncate; marks and trailing state keep their width.
 // This is local composition using existing assets, not imported row ownership.
-fn fleet_mark(path: &'static str, color: u32) -> Svg {
+fn fleet_mark(path: &'static str, color: Hsla) -> Svg {
     svg()
         .path(path)
         .size(px(16.))
         .flex_shrink_0()
-        .text_color(rgb(color))
-}
-fn fleet_status(text: impl Into<SharedString>, theme: &crate::config::Theme) -> Div {
-    super::super::design::palette(theme).badge(text)
+        .text_color(color)
 }
 
 impl SnapshotView {
@@ -79,7 +76,8 @@ impl SnapshotView {
         session: &browser::fleet::Session,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = self.theme();
+        let bezel = self.home_palette();
+        let hover = bezel.element_hover;
         let request = self.browser_request;
         let token = session.selection.clone();
         let enabled = token.is_some()
@@ -94,13 +92,11 @@ impl SnapshotView {
             .py_1()
             .min_h(px(36.))
             .min_w_0()
-            .rounded(px(crate::config::corners::CONTROL))
+            .rounded(px(bezel_theme::Theme::control_radius()))
             .flex()
             .items_center()
             .gap_2()
-            .when(enabled, |d| {
-                d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
-            })
+            .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
             .child(self.fleet_preference_button(
                 ("fleet-favorite", index * 128 + row),
                 session.favorite_action.as_deref(),
@@ -117,7 +113,7 @@ impl SnapshotView {
                 },
                 cx,
             ))
-            .child(fleet_mark("icons/terminal.svg", theme.muted))
+            .child(fleet_mark("icons/terminal.svg", bezel.text_muted))
             .child(
                 div()
                     .debug_selector(move || format!("fleet-session-label-{index}-{row}"))
@@ -127,8 +123,8 @@ impl SnapshotView {
                     .child(crate::sidebar::label_text(&session.name)),
             )
             .child(
-                fleet_status(
-                    format!(
+                bezel
+                    .badge(format!(
                         "{} {} · {}",
                         session.pane_count,
                         if session.pane_count == 1 {
@@ -137,10 +133,8 @@ impl SnapshotView {
                             "panes"
                         },
                         if enabled { "Open" } else { "Unavailable" }
-                    ),
-                    &theme,
-                )
-                .debug_selector(move || format!("fleet-session-status-{index}-{row}")),
+                    ))
+                    .debug_selector(move || format!("fleet-session-status-{index}-{row}")),
             )
             .on_click(cx.listener(move |view, _, window, cx| {
                 cx.stop_propagation();
@@ -152,20 +146,25 @@ impl SnapshotView {
     }
     pub(super) fn fleet_cards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let fleet = self.browser_state.fleet.as_ref()?;
-        let theme = self.theme();
+        let bezel = self.home_palette();
+        let (hover, muted) = (bezel.element_hover, bezel.text_muted);
         let request = self.browser_request;
         let mut body = div().mt_4().flex().flex_col().gap_3();
         if let Some(status) = self.fleet_preference_status() {
-            body = body.child(div().text_color(rgb(theme.muted)).child(status.to_owned()));
+            body = body.child(
+                div()
+                    .text_color(muted)
+                    .children(design::ink_probe(|| "fleet-preference-status".into()))
+                    .child(status.to_owned()),
+            );
         }
         for (index, group) in fleet.groups.iter().enumerate() {
-            let mut card = div()
+            // Bezel's section card: its fill, hairline and radius.
+            let mut card = bezel
+                .group_box()
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
                 .p_2()
-                .rounded(px(crate::config::corners::PANEL))
-                .border_1()
-                .border_color(native_controls::separator(&theme))
                 .child(
                     div()
                         .debug_selector(move || format!("fleet-machine-header-{index}"))
@@ -190,7 +189,7 @@ impl SnapshotView {
                             },
                             cx,
                         ))
-                        .child(fleet_mark("icons/devices.svg", theme.foreground))
+                        .child(fleet_mark("icons/devices.svg", bezel.text))
                         .child(
                             div()
                                 .debug_selector(move || format!("fleet-machine-label-{index}"))
@@ -201,15 +200,13 @@ impl SnapshotView {
                                 .child(crate::sidebar::label_text(&group.label)),
                         )
                         .child(
-                            fleet_status(
-                                if group.conflict {
+                            bezel
+                                .badge(if group.conflict {
                                     "Identity conflict"
                                 } else {
                                     group.state.label()
-                                },
-                                &theme,
-                            )
-                            .debug_selector(move || format!("fleet-machine-status-{index}")),
+                                })
+                                .debug_selector(move || format!("fleet-machine-status-{index}")),
                         ),
                 );
             if let Some(message) = group.connection_hint() {
@@ -219,7 +216,11 @@ impl SnapshotView {
                         .ml(px(36.))
                         .mt_1()
                         .min_w_0()
-                        .text_color(rgb(theme.muted))
+                        .text_style(TextStyle::Callout)
+                        .text_color(muted)
+                        .children(design::ink_probe(move || {
+                            format!("fleet-machine-guidance-{index}")
+                        }))
                         .child(message),
                 );
             }
@@ -227,13 +228,13 @@ impl SnapshotView {
             if let Some(token) = group.retry.clone() {
                 actions = actions.child(
                     div().id(("fleet-retry", index)).child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "fleet-retry-action",
                             Some("Retry connection"),
                             "Retry connection",
                             native_controls::Icon::Refresh,
                             native_controls::ButtonStyle::Secondary,
-                            &theme,
+                            &self.home_palette(),
                         )
                         .accessibility_id(format!("fleet-retry-{index}"))
                         .debug_selector(move || format!("fleet-retry-{index}"))
@@ -249,13 +250,13 @@ impl SnapshotView {
             if let Some(token) = group.disconnect.clone() {
                 actions = actions.child(
                     div().id(("fleet-disconnect", index)).child(
-                        native_controls::action_button(
+                        native_controls::action_button_on(
                             "fleet-disconnect-action",
                             Some("Disconnect"),
                             "Disconnect",
                             native_controls::Icon::Close,
                             native_controls::ButtonStyle::Quiet,
-                            &theme,
+                            &self.home_palette(),
                         )
                         .accessibility_id(format!("fleet-disconnect-{index}"))
                         .debug_selector(move || format!("fleet-disconnect-{index}"))
@@ -276,8 +277,8 @@ impl SnapshotView {
                     div()
                         .mt_2()
                         .ml(px(36.))
-                        .text_size(px(12.))
-                        .text_color(rgb(theme.muted))
+                        .text_style(TextStyle::Callout)
+                        .text_color(muted)
                         .child("No sessions available"),
                 );
             }
@@ -312,7 +313,7 @@ impl SnapshotView {
                     .flex()
                     .flex_col()
                     .border_l_1()
-                    .border_color(native_controls::separator(&theme))
+                    .border_color(bezel.border)
                     .child(
                         div()
                             .id(("fleet-server", index * 32 + server_index))
@@ -321,14 +322,12 @@ impl SnapshotView {
                             .py_1()
                             .min_h(px(32.))
                             .min_w_0()
-                            .rounded(px(crate::config::corners::CONTROL))
+                            .rounded(px(bezel_theme::Theme::control_radius()))
                             .flex()
                             .items_center()
                             .gap_2()
-                            .when(enabled, |d| {
-                                d.cursor_pointer().hover(move |d| d.bg(rgb(theme.active)))
-                            })
-                            .child(fleet_mark("icons/sessions.svg", theme.muted))
+                            .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
+                            .child(fleet_mark("icons/sessions.svg", muted))
                             .child(
                                 div()
                                     .debug_selector(move || {
@@ -337,24 +336,22 @@ impl SnapshotView {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(13.))
+                                    .text_style(TextStyle::Body)
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(crate::sidebar::label_text(&server.label)),
                             )
                             .child(
-                                fleet_status(
-                                    if selected {
+                                bezel
+                                    .badge(if selected {
                                         "Selected"
                                     } else if enabled {
                                         "Select server"
                                     } else {
                                         "Unavailable"
-                                    },
-                                    &theme,
-                                )
-                                .debug_selector(move || {
-                                    format!("fleet-server-status-{index}-{server_index}")
-                                }),
+                                    })
+                                    .debug_selector(move || {
+                                        format!("fleet-server-status-{index}-{server_index}")
+                                    }),
                             )
                             .on_click(cx.listener(move |view, _, window, cx| {
                                 cx.stop_propagation();
@@ -378,8 +375,8 @@ impl SnapshotView {
                         div()
                             .ml_3()
                             .py_1()
-                            .text_size(px(12.))
-                            .text_color(rgb(theme.muted))
+                            .text_style(TextStyle::Callout)
+                            .text_color(muted)
                             .child("No sessions"),
                     );
                 }
@@ -401,12 +398,12 @@ impl SnapshotView {
             if group.omitted_servers > 0 {
                 card = card.child(
                     div()
-                        .text_color(rgb(theme.muted))
+                        .text_color(muted)
                         .child(format!("{} more servers not shown", group.omitted_servers)),
                 );
             }
             if group.omitted_sessions > 0 {
-                card = card.child(div().text_color(rgb(theme.muted)).child(format!(
+                card = card.child(div().text_color(muted).child(format!(
                     "{} more sessions not shown",
                     group.omitted_sessions
                 )));
