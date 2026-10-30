@@ -256,6 +256,17 @@ mod tests {
         assert!(local.recovery.is_some());
     }
     #[test]
+    fn same_generation_with_another_live_session_falls_back() {
+        let (mut local, _events) = fixture();
+        let mut target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        local.targets.clear();
+        target.live = "$9".into();
+        local.targets.insert("other-token".into(), target);
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
     fn local_restart_with_a_recreated_session_falls_back() {
         let (mut local, _events) = fixture();
         let target = local.active.as_ref().unwrap().target.clone();
@@ -301,6 +312,46 @@ mod tests {
         restarted(&mut local, target, "server", "$1");
         local.reconnect_catalog().unwrap();
         fell_back(&local);
+    }
+    #[test]
+    fn a_pane_action_in_flight_across_a_restart_is_not_replayed() {
+        let (mut local, _events) = fixture();
+        let route = local.active.as_ref().unwrap();
+        let operation_id = uuid::Uuid::new_v4();
+        let request = browser_native_owner::Request {
+            version: 1,
+            id: route.id.clone(),
+            request: route.request,
+            sequence: 1,
+            operation_id: operation_id.to_string(),
+            live_session_id: route.target.live.clone(),
+            generation: route.target.scope.generation.clone(),
+            pane: "%2".into(),
+            action: browser_native_owner::Action::NewWindow,
+        };
+        local.stage = Some(Stage::Owner {
+            scope: route.target.scope.clone(),
+            operation_id,
+            creation: herdr_client::tmux_daemon::PaneCreation {
+                workspace_name: route.workspace.clone(),
+                live_session_id: route.target.live.clone(),
+                source_pane: "%2".into(),
+                kind: herdr_client::tmux_daemon::NewPane::Terminal,
+            },
+            request,
+        });
+        local.submitted = true;
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        assert!(local.recovery.is_none());
+        assert!(local.stage.is_none());
+        assert_eq!(
+            local.state.status,
+            "Connection lost during an action — refresh to inspect its outcome"
+        );
+        restarted(&mut local, target, "server", "$1");
+        assert!(!local.reconnect_catalog().unwrap());
+        assert!(local.stage.is_none());
     }
     #[test]
     fn a_mutation_in_flight_across_a_restart_is_not_replayed() {
@@ -400,6 +451,23 @@ mod tests {
         let denied = E::RecordIo(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert_eq!(Failure::of(&denied), Failure::Other);
         assert_eq!(Failure::of(&E::RequestStatus(500)), Failure::Other);
+    }
+    #[test]
+    fn other_failures_get_exactly_three_retries() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().others, 1);
+        local.reconnect_retry(Failure::Other).unwrap();
+        local.reconnect_retry(Failure::Other).unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().others, 3);
+        assert!(local.recovery.as_ref().unwrap().waiting());
+        assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+        local.reconnect_retry(Failure::Other).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
     }
     #[test]
     fn retry_budget_stops() {
