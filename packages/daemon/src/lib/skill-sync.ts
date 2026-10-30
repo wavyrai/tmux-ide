@@ -13,8 +13,8 @@ import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
  *
  * The dir is FULLY MANAGED: overwriting our own `~/.claude/skills/tmux-ide` is
  * correct, and this NEVER touches anything outside it (user-authored skills in
- * sibling dirs are safe). The version marker is line 2 of SKILL.md, an HTML
- * comment ({@link VERSION_MARKER_RE}); {@link parseSkillVersion} reads it and
+ * sibling dirs are safe). The version marker is an HTML comment under
+ * SKILL.md's frontmatter ({@link VERSION_MARKER_RE}); {@link parseSkillVersion} reads it and
  * {@link rewriteVersionMarker} substitutes it at copy time.
  *
  * The parse/render helpers are PURE and tested against fixtures; {@link syncSkill}
@@ -73,7 +73,7 @@ export function defaultSkillSource(): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The version marker line (an HTML comment on line 2 of SKILL.md). The sync
+ * The version marker line (an HTML comment under SKILL.md's frontmatter). The sync
  * machinery reads it to know which version an installed copy is, and rewrites it
  * to the installed package version at copy time.
  */
