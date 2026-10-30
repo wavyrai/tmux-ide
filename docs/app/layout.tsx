@@ -6,8 +6,8 @@ import { GeistPixelSquare } from "geist/font/pixel";
 import { Analytics } from "@vercel/analytics/next";
 import { WebMcpTools } from "@/components/webmcp-tools";
 import type { Metadata, Viewport } from "next";
+import { softwareApplicationJsonLd } from "@/lib/structured-data";
 import {
-  CURRENT_RELEASE_PATH,
   PUBLISHER_ID,
   PUBLISHER_NAME,
   PUBLISHER_URL,
@@ -17,9 +17,7 @@ import {
   SITE_REPOSITORY,
   SITE_TITLE,
   SITE_URL,
-  SOFTWARE_DOWNLOAD_URL,
   SOFTWARE_LICENSE,
-  SOFTWARE_VERSION,
   absoluteUrl,
 } from "@/lib/site";
 
@@ -132,27 +130,7 @@ const jsonLd = {
       inLanguage: "en",
       publisher: { "@id": PUBLISHER_ID },
     },
-    {
-      "@type": "SoftwareApplication",
-      "@id": `${SITE_URL}/#software`,
-      name: SITE_NAME,
-      url: absoluteUrl("/"),
-      description: SITE_DESCRIPTION,
-      disambiguatingDescription: "tmux-ide, an open-source Prototyper project",
-      applicationCategory: "DeveloperApplication",
-      applicationSubCategory: "Agent workspace for tmux",
-      operatingSystem: "macOS, Linux",
-      softwareRequirements: "tmux 3.7 or newer (the installer bundles it)",
-      softwareVersion: SOFTWARE_VERSION,
-      releaseNotes: absoluteUrl(CURRENT_RELEASE_PATH),
-      license: SOFTWARE_LICENSE,
-      downloadUrl: SOFTWARE_DOWNLOAD_URL,
-      installUrl: absoluteUrl("/docs/getting-started"),
-      sameAs: [SITE_REPOSITORY, SOFTWARE_DOWNLOAD_URL],
-      author: { "@id": PUBLISHER_ID },
-      publisher: { "@id": PUBLISHER_ID },
-      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-    },
+    softwareApplicationJsonLd(),
     {
       "@type": "SoftwareSourceCode",
       "@id": `${SITE_URL}/#source`,

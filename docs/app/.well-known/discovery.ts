@@ -47,6 +47,26 @@ export function jsonResponse(body: unknown, contentType: string, extra?: Headers
 
 const urn = (namespace: string, name: string) => `urn:air:${PUBLISHER_DOMAIN}:${namespace}:${name}`;
 
+/** The publisher's identity: an HTTPS URI on the urn:air publisher domain, so the two align. */
+const PUBLISHER_IDENTITY = `https://${PUBLISHER_DOMAIN}`;
+
+/** Every resource here is built and published from the public GitHub repository. */
+const provenance = [{ relation: "publishedFrom", sourceId: SITE_REPOSITORY }];
+
+/**
+ * ARD trustManifest (ARD §4.5, ard-entry.schema.json): identity only, no
+ * attestations or signature. ARD requires `identity`, an SPIFFE ID, DID or
+ * HTTPS URI whose trust domain matches the identifier's publisher segment.
+ */
+const ardTrustManifest = { identity: PUBLISHER_IDENTITY, identityType: "https", provenance };
+
+/**
+ * AI Catalog 1.0 Trust Manifest, unsigned: a contributor plus the provenance
+ * link, since the spec rejects a manifest with no trust member besides
+ * `contributor` ("Manifest Validity").
+ */
+const aiCatalogTrustManifest = { contributor: PUBLISHER_IDENTITY, provenance };
+
 const resources = () => [
   {
     identifier: urn("mcp", "automation"),
@@ -113,7 +133,10 @@ const resources = () => [
 /** /.well-known/ard.json (Agentic Resource Discovery). ARD defines no `digest` member. */
 export function ardManifest() {
   return {
-    entries: resources().map(({ digest: _digest, ...entry }) => entry),
+    entries: resources().map(({ digest: _digest, ...entry }) => ({
+      ...entry,
+      trustManifest: ardTrustManifest,
+    })),
   };
 }
 
@@ -130,7 +153,14 @@ export function aiCatalog() {
     },
     // displayName and representativeQueries stay on every entry: ARD consumers read
     // ai-catalog.json as an entry source and require them (PM decision, 29 Oct).
-    entries: resources().map(({ capabilities: _caps, ...entry }) => ({ ...entry, publisher })),
+    // For the same readers each entry carries ARD's trustManifest beside AI
+    // Catalog's own trustManifests.
+    entries: resources().map(({ capabilities: _caps, ...entry }) => ({
+      ...entry,
+      publisher,
+      trustManifest: ardTrustManifest,
+      trustManifests: [aiCatalogTrustManifest],
+    })),
   };
 }
 

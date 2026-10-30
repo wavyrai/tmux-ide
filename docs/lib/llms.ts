@@ -91,6 +91,11 @@ export function llmsIndex(): string {
       "/agents.md",
       "install, the agent status contract, and the commands agents use to coordinate",
     ),
+    link(
+      "Pricing",
+      "/pricing.md",
+      "free and open source under the MIT license: no paid tiers, accounts or usage limits",
+    ),
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
@@ -143,7 +148,7 @@ export function llmsIndex(): string {
     "",
     `> ${SITE_DESCRIPTION}`,
     "",
-    `${SITE_NAME} is an open-source ${PUBLISHER_NAME} project (MIT license), current version ${SOFTWARE_VERSION}. ` +
+    `${SITE_NAME} is a free, open-source ${PUBLISHER_NAME} project (MIT license), current version ${SOFTWARE_VERSION}. ` +
       "tmux keeps owning processes, panes, and sessions; tmux-ide adds an agent-aware workspace on top, " +
       "so sessions keep running if tmux-ide closes.",
     "",

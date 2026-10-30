@@ -1,4 +1,5 @@
 import { getPageImage, source } from "@/lib/source";
+import { docArticleJsonLd } from "@/lib/structured-data";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
@@ -7,7 +8,7 @@ import { createRelativeLink } from "fumadocs-ui/mdx";
 import { PageActions, RailActions } from "@/components/docs/page-actions";
 import { gitConfig } from "@/lib/layout.shared";
 import { docLastModified, docPublished } from "@/lib/git-dates";
-import { PUBLISHER_ID, SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
+import { SITE_DESCRIPTION, absoluteUrl } from "@/lib/site";
 
 // The docs index's frontmatter title is the bare product name; give the
 // document a distinct title instead of "tmux-ide | tmux-ide".
@@ -21,8 +22,6 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const MDX = page.data.body;
   const description = page.data.description ?? SITE_DESCRIPTION;
   const pageUrl = absoluteUrl(page.url);
-  const modified = docLastModified(page.path);
-  const published = docPublished(page.path);
   const breadcrumbs = [
     { "@type": "ListItem", position: 1, name: "Home", item: absoluteUrl("/") },
     {
@@ -38,22 +37,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
-      {
-        "@type": "TechArticle",
-        "@id": `${pageUrl}#article`,
-        headline: page.data.title,
-        description,
-        url: pageUrl,
-        mainEntityOfPage: pageUrl,
-        image: absoluteUrl(getPageImage(page).url),
-        ...(published ? { datePublished: published.toISOString() } : {}),
-        ...(modified ? { dateModified: modified.toISOString() } : {}),
-        inLanguage: "en",
-        isPartOf: { "@id": `${SITE_URL}/#website` },
-        about: { "@id": `${SITE_URL}/#software` },
-        author: { "@id": PUBLISHER_ID },
-        publisher: { "@id": PUBLISHER_ID },
-      },
+      docArticleJsonLd(page),
       {
         "@type": "BreadcrumbList",
         "@id": `${pageUrl}#breadcrumbs`,

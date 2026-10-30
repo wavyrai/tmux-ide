@@ -1,4 +1,5 @@
 import { SITE_URL } from "@/lib/site";
+import { SCHEMA_MAP_PATH } from "@/lib/structured-data";
 
 export const revalidate = false;
 
@@ -18,6 +19,8 @@ const robots = [
   "",
   `Host: ${SITE_URL}`,
   `Sitemap: ${SITE_URL}/sitemap.xml`,
+  // NLWeb Schema Feeds 0.1 §3: the spec spells the directive in lowercase.
+  `schemamap: ${SITE_URL}${SCHEMA_MAP_PATH}`,
   "",
 ].join("\n");
 
