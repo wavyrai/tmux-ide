@@ -605,7 +605,7 @@ impl SnapshotView {
                 .text_color(bezel.text)
                 .children(design::ink_probe(|| "pane-empty".into()))
                 .child(
-                    pane_empty_ink(&bezel)
+                    bezel
                         .empty_state(
                             bezel_ui::icons::Icon::asset("icons/terminal.svg"),
                             title,
@@ -1006,15 +1006,4 @@ fn request_native_quit(
         }
     })
     .detach();
-}
-
-/// Bezel's palette for the empty pane: its secondary text inked on the
-/// opaque terminal fill, which the bridge does not ink it for.
-fn pane_empty_ink(bezel: &bezel_theme::Theme) -> bezel_theme::Theme {
-    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-    let plate = pack(bezel.terminal_bg);
-    let muted = pack(bezel_theme::flatten(bezel.text_muted, bezel.terminal_bg));
-    let mut ink = bezel.clone();
-    ink.text_muted = rgb(crate::contrast::ink_on_chrome(muted, [plate; 3], 4.6)).into();
-    ink
 }

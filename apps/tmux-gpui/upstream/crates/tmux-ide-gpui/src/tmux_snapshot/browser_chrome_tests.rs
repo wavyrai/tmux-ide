@@ -301,6 +301,12 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
                 // The developer lane is opaque, on the terminal's background.
                 check(&mut failures, name, &probes, "status-text", &background);
                 check(&mut failures, name, &probes, "status-title", &background);
+                // Bezel's status bar ink, not a colour set over it.
+                for key in ["status-text", "status-title"] {
+                    if probes.0.get(key) != Some(&bezel.text_muted) {
+                        failures.push(format!("{name}: {key} is not the bar's text_muted"));
+                    }
+                }
             } else {
                 // The notice sits in the title bar, on the chrome.
                 check(&mut failures, name, &probes, "status-text", &chrome);
@@ -308,7 +314,7 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
         }
         // The empty pane's title and hint, on the opaque terminal fill.
         let theme = view.read_with(cx, |view, _| view.theme());
-        let ink = crate::tmux_snapshot::pane_empty_ink(&design::palette(&theme));
+        let ink = design::palette(&theme);
         let plate = ink.terminal_bg;
         for (role, text) in [("title", ink.text), ("hint", ink.text_muted)] {
             let ratio = bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate);
