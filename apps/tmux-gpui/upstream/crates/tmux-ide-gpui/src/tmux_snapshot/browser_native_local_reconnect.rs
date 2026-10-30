@@ -1,5 +1,6 @@
-//! Bounded, read-only rediscovery. A new daemon never authorizes an old server
-//! generation, and recovery never repeats owner mutations.
+//! Bounded, read-only rediscovery. A new daemon authorizes an old server generation
+//! only for a local restart with the identical live session, and recovery never
+//! repeats owner mutations.
 use super::*;
 
 pub(super) struct Recovery {
@@ -7,10 +8,37 @@ pub(super) struct Recovery {
     pane: Option<String>,
     attempts: u8,
     due: Option<Instant>,
+    started: Instant,
+    others: u8,
+    /// The private local record recovery began on; `None` for any remote source.
+    local_record: Option<PathBuf>,
 }
 impl Recovery {
     pub(super) fn waiting(&self) -> bool {
         self.due.is_some()
+    }
+}
+/// A daemon restart refuses connections or removes its record for a few seconds.
+const BUDGET: Duration = Duration::from_secs(30);
+const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Failure {
+    /// Retried with backoff until the budget ends.
+    Unreachable,
+    /// A different daemon answered; never retried.
+    Identity,
+    /// Retried at most three times.
+    Other,
+}
+impl Failure {
+    pub(super) fn of(error: &herdr_client::tmux_daemon::Error) -> Self {
+        use herdr_client::tmux_daemon::Error as E;
+        match error {
+            E::Network(_) | E::RecordChanged => Self::Unreachable,
+            E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
+            E::IdentityFormat | E::IdentityChanged | E::Incompatible(_) => Self::Identity,
+            _ => Self::Other,
+        }
     }
 }
 impl Local {
@@ -27,19 +55,35 @@ impl Local {
             pane: self.state.selected_pane.clone(),
             attempts: 0,
             due: None,
+            started: Instant::now(),
+            others: 0,
+            local_record: self.current_local_record(),
         });
         self.cancel()?;
         self.recovery = Some(recovery);
-        self.reconnect_retry()
+        self.reconnect_retry(Failure::Other)
     }
-    pub(super) fn reconnect_retry(&mut self) -> Result<(), Error> {
+    /// Backoff doubles from 250 ms to a 4 s cap; only an unreachable daemon outlasts three tries.
+    pub(super) fn reconnect_retry(&mut self, failure: Failure) -> Result<(), Error> {
         let Some(recovery) = self.recovery.as_mut() else {
             return Ok(());
         };
-        if recovery.attempts >= 3 {
-            return self.unavailable("Couldn't reconnect. Refresh sessions to try again.");
+        let delay = Duration::from_millis(
+            250u64
+                .checked_shl(u32::from(recovery.attempts))
+                .unwrap_or(u64::MAX)
+                .min(4000),
+        );
+        if failure == Failure::Other {
+            recovery.others += 1;
         }
-        recovery.due = Some(Instant::now() + Duration::from_millis(250u64 << recovery.attempts));
+        if failure == Failure::Identity
+            || recovery.others > 3
+            || recovery.started.elapsed() + delay > BUDGET
+        {
+            return self.unavailable(GIVE_UP);
+        }
+        recovery.due = Some(Instant::now() + delay);
         self.stage = None;
         self.submitted = false;
         self.state.status = "Connection lost. Reconnecting…".into();
@@ -61,20 +105,38 @@ impl Local {
         recovery.due = None;
         let request = self.state.request;
         self.home(request)?;
-        self.state.status = "Reconnecting…".into();
+        self.state.status = "Connection lost. Reconnecting…".into();
         self.recovery = Some(recovery);
         Ok(())
     }
-    /// Select only an exact generation/session match in the newly verified catalog.
+    fn current_local_record(&self) -> Option<PathBuf> {
+        match self.sources.observation_source().ok()? {
+            CatalogSource::Local(record) if self.selected_profile.is_none() => Some(record),
+            _ => None,
+        }
+    }
+    /// Select an exact generation/session match in the newly verified catalog. A
+    /// restarted local daemon has a new generation; its live session id hashes the
+    /// tmux server pid, session id and creation time, so an identical id on the
+    /// same server and the same private record is the same tmux session.
     pub(super) fn reconnect_catalog(&mut self) -> Result<bool, Error> {
         let Some(recovery) = self.recovery.take() else {
             return Ok(false);
         };
+        let same_local_daemon =
+            recovery.local_record.is_some() && recovery.local_record == self.current_local_record();
         let key = self
             .targets
             .iter()
             .find(|(_, target)| {
                 target.scope == recovery.target.scope && target.live == recovery.target.live
+            })
+            .or_else(|| {
+                self.targets.iter().find(|(_, target)| {
+                    same_local_daemon
+                        && target.scope.server_id == recovery.target.scope.server_id
+                        && target.live == recovery.target.live
+                })
             })
             .map(|(key, _)| key.clone());
         let Some(key) = key else {
@@ -166,17 +228,148 @@ mod tests {
         assert_eq!(local.state.request, 7);
         assert_eq!(local.recovery.as_ref().unwrap().attempts, 1);
     }
-    #[test]
-    fn replacement_generation_cannot_reopen_same_session_id() {
-        let (mut local, _events) = fixture();
-        let mut target = local.active.as_ref().unwrap().target.clone();
+    fn restarted(local: &mut Local, mut target: Target, server: &str, live: &str) {
         target.scope.generation = "replacement".into();
-        local.reconnect_start().unwrap();
+        target.scope.server_id = server.into();
+        target.live = live.into();
         local.targets.insert("new-token".into(), target);
-        local.reconnect_catalog().unwrap();
+    }
+    fn fell_back(local: &Local) {
         assert!(local.stage.is_none());
         assert!(local.recovery.is_none());
         assert!(local.state.home_phase == HomePhase::Unavailable);
+        assert_eq!(
+            local.state.status,
+            "Previous session identity changed or disappeared — select a session"
+        );
+    }
+    #[test]
+    fn local_restart_with_the_same_live_id_reopens_that_session() {
+        let (mut local, _events) = fixture();
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        restarted(&mut local, target, "server", "$1");
+        local.reconnect_catalog().unwrap();
+        assert!(
+            matches!(&local.stage, Some(Stage::Open { preferred, .. }) if preferred.as_deref() == Some("%2"))
+        );
+        assert!(local.recovery.is_some());
+    }
+    #[test]
+    fn same_generation_with_another_live_session_falls_back() {
+        let (mut local, _events) = fixture();
+        let mut target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        local.targets.clear();
+        target.live = "$9".into();
+        local.targets.insert("other-token".into(), target);
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
+    fn local_restart_with_a_recreated_session_falls_back() {
+        let (mut local, _events) = fixture();
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        restarted(&mut local, target, "server", "$9");
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
+    fn local_restart_on_another_server_falls_back() {
+        let (mut local, _events) = fixture();
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        restarted(&mut local, target, "other-server", "$1");
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
+    fn replacement_generation_cannot_reopen_same_session_id() {
+        // SSH: a saved profile is selected, so recovery has no local record.
+        let (mut local, _events) = fixture();
+        local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: "Build".into(),
+            ssh_target: "fixture.invalid".into(),
+            expected_environment_id: None,
+            enabled: true,
+        });
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        assert!(local.recovery.as_ref().unwrap().local_record.is_none());
+        restarted(&mut local, target, "server", "$1");
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
+    fn a_different_local_record_cannot_reopen_across_generations() {
+        let (mut local, _events) = fixture();
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        local.recovery.as_mut().unwrap().local_record =
+            Some(PathBuf::from("/nonexistent-reconnect-test/other.json"));
+        restarted(&mut local, target, "server", "$1");
+        local.reconnect_catalog().unwrap();
+        fell_back(&local);
+    }
+    #[test]
+    fn a_pane_action_in_flight_across_a_restart_is_not_replayed() {
+        let (mut local, _events) = fixture();
+        let route = local.active.as_ref().unwrap();
+        let operation_id = uuid::Uuid::new_v4();
+        let request = browser_native_owner::Request {
+            version: 1,
+            id: route.id.clone(),
+            request: route.request,
+            sequence: 1,
+            operation_id: operation_id.to_string(),
+            live_session_id: route.target.live.clone(),
+            generation: route.target.scope.generation.clone(),
+            pane: "%2".into(),
+            action: browser_native_owner::Action::NewWindow,
+        };
+        local.stage = Some(Stage::Owner {
+            scope: route.target.scope.clone(),
+            operation_id,
+            creation: herdr_client::tmux_daemon::PaneCreation {
+                workspace_name: route.workspace.clone(),
+                live_session_id: route.target.live.clone(),
+                source_pane: "%2".into(),
+                kind: herdr_client::tmux_daemon::NewPane::Terminal,
+            },
+            request,
+        });
+        local.submitted = true;
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        assert!(local.recovery.is_none());
+        assert!(local.stage.is_none());
+        assert_eq!(
+            local.state.status,
+            "Connection lost during an action — refresh to inspect its outcome"
+        );
+        restarted(&mut local, target, "server", "$1");
+        assert!(!local.reconnect_catalog().unwrap());
+        assert!(local.stage.is_none());
+    }
+    #[test]
+    fn a_mutation_in_flight_across_a_restart_is_not_replayed() {
+        let (mut local, _events) = fixture();
+        let operation_id = uuid::Uuid::new_v4();
+        local.stage = Some(Stage::Create {
+            scope: local.active.as_ref().unwrap().target.scope.clone(),
+            operation_id,
+            name: "never replay".into(),
+        });
+        local.submitted = true;
+        let target = local.active.as_ref().unwrap().target.clone();
+        local.reconnect_start().unwrap();
+        restarted(&mut local, target, "server", "$1");
+        assert!(!local.reconnect_catalog().unwrap());
+        assert!(local.stage.is_none());
+        assert!(local.recovery.is_none());
+        assert_eq!(local.uncertain_create, Some(operation_id));
     }
     #[test]
     fn background_defers_reconnect_and_user_navigation_cancels_it() {
@@ -190,12 +383,98 @@ mod tests {
         local.home(8).unwrap();
         assert!(local.recovery.is_none());
     }
+    /// The scheduled delay, floored to the 250 ms step so a slow runner cannot change it.
+    fn delay(local: &Local, before: Instant) -> u128 {
+        let due = local.recovery.as_ref().unwrap().due.unwrap();
+        due.duration_since(before).as_millis() / 250 * 250
+    }
+    #[test]
+    fn an_unreachable_daemon_backs_off_to_a_four_second_cap() {
+        let (mut local, _events) = fixture();
+        let before = Instant::now();
+        local.reconnect_start().unwrap();
+        let mut delays = vec![delay(&local, before)];
+        for _ in 0..6 {
+            local.recovery.as_mut().unwrap().due = Some(Instant::now());
+            local.reconnect_tick().unwrap();
+            assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+            let before = Instant::now();
+            local.reconnect_retry(Failure::Unreachable).unwrap();
+            assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+            delays.push(delay(&local, before));
+        }
+        assert_eq!(delays, [250, 500, 1000, 2000, 4000, 4000, 4000]);
+    }
+    #[test]
+    fn an_unreachable_daemon_past_the_budget_ends_on_the_refresh_message() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        local.recovery.as_mut().unwrap().attempts = 9;
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+        assert!(
+            local.recovery.is_some(),
+            "attempts alone never end an unreachable wait"
+        );
+        local.recovery.as_mut().unwrap().started =
+            Instant::now().checked_sub(Duration::from_secs(27)).unwrap();
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
+    }
+    #[test]
+    fn an_identity_failure_never_retries() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        local.reconnect_retry(Failure::Identity).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
+    }
+    #[test]
+    fn daemon_errors_are_classified_for_recovery() {
+        use herdr_client::tmux_daemon::Error as E;
+        let missing = E::RecordIo(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(Failure::of(&missing), Failure::Unreachable);
+        assert_eq!(Failure::of(&E::RecordChanged), Failure::Unreachable);
+        let refused = E::Network(ureq::Error::Io(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert_eq!(Failure::of(&refused), Failure::Unreachable);
+        for identity in [E::IdentityChanged, E::IdentityFormat, E::Incompatible(3)] {
+            assert_eq!(Failure::of(&identity), Failure::Identity);
+        }
+        let denied = E::RecordIo(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(Failure::of(&denied), Failure::Other);
+        assert_eq!(Failure::of(&E::RequestStatus(500)), Failure::Other);
+    }
+    #[test]
+    fn other_failures_get_exactly_three_retries() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().others, 1);
+        local.reconnect_retry(Failure::Other).unwrap();
+        local.reconnect_retry(Failure::Other).unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().others, 3);
+        assert!(local.recovery.as_ref().unwrap().waiting());
+        assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+        local.reconnect_retry(Failure::Other).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
+    }
     #[test]
     fn retry_budget_stops() {
         let (mut local, _events) = fixture();
         local.reconnect_start().unwrap();
-        local.recovery.as_mut().unwrap().attempts = 3;
-        local.reconnect_retry().unwrap();
+        local.recovery.as_mut().unwrap().others = 3;
+        local.reconnect_retry(Failure::Other).unwrap();
         assert!(local.recovery.is_none());
         assert!(local.stage.is_none());
         assert_eq!(
@@ -275,6 +554,9 @@ mod tests {
             pane: Some("%2".into()),
             attempts: 1,
             due: None,
+            started: Instant::now(),
+            others: 1,
+            local_record: None,
         });
         local
             .command(Command::NativeTerminalReady {
