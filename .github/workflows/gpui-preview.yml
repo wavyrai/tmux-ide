@@ -69,7 +69,8 @@ jobs:
   native:
     name: macOS Rust correctness (no physical UI claim)
     runs-on: macos-26
-    timeout-minutes: 90
+    # Headroom over the longest green run; the dist prebuild alone takes 15-22 min.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: apps/tmux-gpui/upstream
@@ -203,3 +204,5 @@ jobs:
             ${{ runner.temp }}/gpui-package-check/*.log
             ${{ runner.temp }}/gpui-package-check/native-build.json
             ${{ runner.temp }}/gpui-package-check/Tmux IDE CI.app/Contents/Resources/development-manifest.json
+            # Symbolicates crash reports from the packaged dist binary.
+            apps/tmux-gpui/upstream/target/dist/tmux-ide-gpui.dSYM
