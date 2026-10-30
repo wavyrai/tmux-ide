@@ -369,6 +369,24 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if home {
         state.surface = browser::Surface::Home;
     }
+    // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
+    // with local setup failed, and `+home-warning` with the catalog unavailable.
+    for extra in &extras {
+        match *extra {
+            "home-empty" => state.sessions.clear(),
+            "home-error" => {
+                state.local_setup = Some(browser::local_setup::Setup {
+                    phase: browser::local_setup::Phase::Failed,
+                })
+            }
+            "home-warning" => {
+                state.home_phase = browser::HomePhase::Unavailable;
+                state.status = "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.".into();
+            }
+            _ => continue,
+        }
+        state.surface = browser::Surface::Home;
+    }
     let (sender, receiver) = mpsc::sync_channel(1024);
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),

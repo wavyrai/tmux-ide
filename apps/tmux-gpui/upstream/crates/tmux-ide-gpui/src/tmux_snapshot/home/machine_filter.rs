@@ -102,7 +102,7 @@ impl SnapshotView {
         )
         .w_auto()
         .max_w(px(240.))
-        .px_3()
+        .px(px(SPACE * 1.5))
         .child(div().min_w_0().truncate().child(format!("{label} · f")));
         if enabled {
             button = button.on_click(cx.listener(move |view, _, _, cx| {
@@ -114,10 +114,12 @@ impl SnapshotView {
         }
         let mut body = div().flex().flex_col().child(button);
         if self.home_filter.as_ref().is_some_and(|c| c.machine_error) {
+            let bezel = self.home_palette();
             body = body.child(
-                div()
-                    .text_style(TextStyle::Callout)
-                    .child("Machine filter not queued — try again"),
+                bezel_ui::popover::error_row(&bezel, "Machine filter not queued — try again")
+                    .text_color(bezel.danger_muted)
+                    .debug_selector(|| "home-machine-error".into())
+                    .children(design::ink_probe(|| "home-machine-error".into())),
             );
         }
         body.into_any_element()

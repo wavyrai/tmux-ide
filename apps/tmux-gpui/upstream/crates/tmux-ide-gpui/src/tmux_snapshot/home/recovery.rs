@@ -76,7 +76,7 @@ impl SnapshotView {
         cx.notify();
     }
     pub(super) fn home_recovery_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut row = div().flex().flex_wrap().gap_2().min_w_0();
+        let mut row = div().flex().flex_wrap().gap(px(SPACE)).min_w_0();
         if let Some(capability) = &self.browser_state.home_agent_recovery {
             let request = self.browser_request;
             let revision = capability.revision;
@@ -106,10 +106,12 @@ impl SnapshotView {
             }
         }
         if self.home_filter.as_ref().is_some_and(|c| c.recovery_error) {
+            let bezel = self.home_palette();
             row = row.child(
-                div()
-                    .text_style(TextStyle::Callout)
-                    .child("Observation request not queued — try again"),
+                bezel_ui::popover::error_row(&bezel, "Observation request not queued — try again")
+                    .text_color(bezel.danger_muted)
+                    .debug_selector(|| "home-recovery-error".into())
+                    .children(design::ink_probe(|| "home-recovery-error".into())),
             );
         }
         row.into_any_element()
