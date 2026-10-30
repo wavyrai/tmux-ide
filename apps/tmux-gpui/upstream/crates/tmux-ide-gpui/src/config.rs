@@ -5,6 +5,8 @@ mod bitmap_fonts;
 mod fonts;
 mod theme;
 
+#[cfg(test)]
+use fonts::symbol_fallbacks;
 pub use fonts::{FONT_SIZE_RANGE, FONT_SIZE_STEP, FontConfig};
 pub use theme::Theme;
 
@@ -46,3 +48,6 @@ impl Default for Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

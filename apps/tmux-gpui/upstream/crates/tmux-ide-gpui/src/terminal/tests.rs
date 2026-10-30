@@ -74,3 +74,62 @@ fn custom_palette_and_defaults_preserve_truecolor_and_modifiers() {
         ((theme.palette[255] & 0xfefefe) >> 1) + ((0x123456 & 0xfefefe) >> 1)
     );
 }
+
+#[test]
+fn wheel_remainder_keeps_fractions_and_resets_on_reversal() {
+    let mut wheel = WheelRemainder::default();
+    assert_eq!(wheel.add(0.4), 0);
+    assert_eq!(wheel.add(0.7), 1);
+    // The 0.1 left over is dropped when the direction reverses.
+    assert_eq!(wheel.add(-0.5), 0);
+    assert_eq!(wheel.add(-0.6), -1);
+    assert_eq!(wheel.add(f32::NAN), 0);
+    assert_eq!(wheel.add(f32::INFINITY), 0);
+    // One event's work is bounded, not a backlog.
+    assert_eq!(wheel.add(10_000.), 128);
+    assert_eq!(wheel.add(0.), 0);
+}
+
+#[test]
+fn selection_copies_are_capped_at_four_mebibytes() {
+    assert_eq!(MAX_SELECTION_BYTES, 4 << 20);
+}
+
+fn text_cells(text: &str) -> Vec<CellData> {
+    text.chars()
+        .map(|c| CellData {
+            symbol: c.to_string(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: false,
+            hyperlink: None,
+        })
+        .collect()
+}
+
+#[test]
+fn logical_web_links_resolve_plain_and_explicit_links_but_not_hidden_cells() {
+    let mut cells = text_cells("see https://a.test/x now");
+    let row: Vec<&CellData> = cells.iter().collect();
+    assert_eq!(
+        logical_web_link(&row, 8, &[]).as_deref(),
+        Some("https://a.test/x")
+    );
+    assert_eq!(logical_web_link(&row, 0, &[]), None);
+    cells[0].hyperlink = Some(0);
+    let row: Vec<&CellData> = cells.iter().collect();
+    let hyperlinks = ["https://b.test/".to_owned()];
+    assert_eq!(
+        logical_web_link(&row, 0, &hyperlinks).as_deref(),
+        Some("https://b.test/")
+    );
+    let local = ["file:///etc/passwd".to_owned()];
+    assert_eq!(logical_web_link(&row, 0, &local), None);
+    cells[8].modifier |= HIDDEN;
+    let row: Vec<&CellData> = cells.iter().collect();
+    assert_eq!(logical_web_link(&row, 8, &[]), None);
+    let long = text_cells(&"x".repeat(8193));
+    let row: Vec<&CellData> = long.iter().collect();
+    assert_eq!(logical_web_link(&row, 0, &[]), None);
+}

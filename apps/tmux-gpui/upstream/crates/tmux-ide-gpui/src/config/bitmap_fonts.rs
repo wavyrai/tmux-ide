@@ -7,6 +7,40 @@
 //! strikes (dfrg/swash#139). Until a fixed swash ships, such a family is
 //! replaced rather than allowed to abort the process on the next space it draws.
 
+/// Whether swash would panic on some glyph of face `index` in `data`: a
+/// byte-aligned 1, 2, or 4 bit EBDT mask whose width is zero. Packed and
+/// 8 bit masks decode without dividing rows, so they are safe at any width.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn has_undrawable_bitmap(data: &[u8], index: u32) -> bool {
+    use skrifa::{
+        FontRef, GlyphId,
+        bitmap::{BitmapData, BitmapFormat, BitmapStrikes, MaskData},
+        raw::TableProvider,
+    };
+    let Ok(font) = FontRef::from_index(data, index) else {
+        return false;
+    };
+    let Some(strikes) = BitmapStrikes::with_format(&font, BitmapFormat::Ebdt) else {
+        return false;
+    };
+    let glyphs = font.maxp().map_or(0, |maxp| maxp.num_glyphs());
+    strikes.iter().any(|strike| {
+        (0..glyphs).any(|glyph| {
+            strike.get(GlyphId::from(glyph)).is_some_and(|bitmap| {
+                bitmap.width == 0
+                    && matches!(
+                        bitmap.data,
+                        BitmapData::Mask(MaskData {
+                            is_packed: false,
+                            bpp: 1 | 2 | 4,
+                            ..
+                        })
+                    )
+            })
+        })
+    })
+}
+
 /// Whether any installed face of `family` would crash the rasterizer. The
 /// system font database is built once, off the UI thread, by the first
 /// config resolution that asks.
