@@ -144,9 +144,7 @@ impl SnapshotView {
         let cancel_identity = form.identity.clone();
         let connect_identity = form.identity.clone();
         let theme = self.theme();
-        Some(div().id("machine-dialog-overlay").absolute().inset_0().size_full()
-            .flex().items_center().justify_center().bg(rgba(0x00000088))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        Some(super::super::design::dialog_overlay("machine-dialog-overlay", &theme)
             .child(bezel_ui::popover::dialog_card(&super::super::design::palette(&theme)).id("machine-dialog").w(px(440.)).max_w_full()
                 .flex().flex_col().gap_3()
                 .child(bezel_ui::popover::dialog_title(&super::super::design::palette(&theme), "Add machine"))

@@ -188,7 +188,14 @@ impl SnapshotView {
                     crate::tmux_snapshot::controls::Icon::Terminal,
                     &theme,
                 )
-                .map(|b| if selected { b.bg(rgb(theme.active)) } else { b })
+                // Bezel's selected wash marks the chosen harness.
+                .map(|b| {
+                    if selected {
+                        b.bg(crate::tmux_snapshot::design::palette(&theme).card_selected_bg())
+                    } else {
+                        b
+                    }
+                })
                 .on_click(
                     cx.listener(move |view, _, _, cx| view.set_agent_harness(&identity, h, cx)),
                 ),

@@ -254,18 +254,7 @@ impl SnapshotView {
         } else {
             "Changing the SSH target disconnects this app's existing route. Remote sessions keep running. The saved identity pin is preserved."
         };
-        div()
-            .id("machine-edit-overlay")
-            .absolute()
-            .inset_0()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+        super::super::design::dialog_overlay("machine-edit-overlay", &theme)
             .child(
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-edit-dialog")
