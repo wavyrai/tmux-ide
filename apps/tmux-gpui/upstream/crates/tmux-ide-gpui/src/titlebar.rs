@@ -64,11 +64,8 @@ pub(crate) fn navigation_header(window: &Window, navigation: AnyElement, cx: &Ap
             })
             .into_any_element()
     } else {
-        div()
-            .flex()
+        titlebar::titlebar("navigation", false, window)
             .flex_none()
-            .w_full()
-            .h(px(HEIGHT))
             .child(navigation)
             .into_any_element()
     }

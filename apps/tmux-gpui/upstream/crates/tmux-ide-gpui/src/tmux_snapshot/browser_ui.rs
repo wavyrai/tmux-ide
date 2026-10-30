@@ -4,6 +4,7 @@ pub(super) use sidebar::Keyboard as SidebarKeyboard;
 #[path = "workspace_agents.rs"]
 mod workspace_agents;
 use super::{SnapshotView, browser};
+use bezel_theme::{TextStyle, Typeset};
 use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 pub(super) enum Selection {
@@ -647,18 +648,17 @@ impl SnapshotView {
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
         self.chrome.sync(window, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
         let mut sidebar = div()
             .id("session-list")
             .debug_selector(|| "session-list".into())
-            .track_scroll(&self.sidebar_keyboard.scroll)
             .when_some(self.sidebar_keyboard.focus.as_ref(), |list, focus| {
                 list.track_focus(focus)
             })
             .w_full()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .p_2()
+            .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
             .gap(px(2.))
@@ -667,13 +667,12 @@ impl SnapshotView {
                     .px_2()
                     .pt_1()
                     .pb_1()
-                    .text_color(rgb(super::design::chrome_text(&theme, theme.muted)))
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(bezel.text_muted)
+                    .children(super::design::ink_probe(|| "sidebar-heading".into()))
                     .child("Sessions"),
             );
         let request = self.browser_request;
-        let bezel = bezel_theme::Theme::of(cx).clone();
         let painter = bezel_motion::Painter::of(cx);
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
             let mut element = sidebar::render_row(
@@ -684,15 +683,18 @@ impl SnapshotView {
                 painter,
                 self.sidebar_keyboard.active,
             )
-            .when(
-                self.sidebar_keyboard.active
-                    && (row.target.as_ref().is_some_and(|target| {
-                        Some(target) == self.sidebar_keyboard.selected.as_ref()
-                    }) || row.machine.as_ref().is_some_and(|machine| {
-                        Some(machine) == self.sidebar_keyboard.machine_focus.as_ref()
-                    })),
-                |row| row.border_1().border_color(rgb(self.accent())),
-            );
+            .map(|element| {
+                focus_ring(
+                    element,
+                    self.sidebar_keyboard.active
+                        && (row.target.as_ref().is_some_and(|target| {
+                            Some(target) == self.sidebar_keyboard.selected.as_ref()
+                        }) || row.machine.as_ref().is_some_and(|machine| {
+                            Some(machine) == self.sidebar_keyboard.machine_focus.as_ref()
+                        })),
+                    &bezel,
+                )
+            });
             if let Some(key) = &row.agent
                 && let Some(publication) = &self.browser_state.workspace_fleet_agents
                 && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
@@ -738,13 +740,14 @@ impl SnapshotView {
         if let Some(status) = self.fleet_preference_status() {
             sidebar = sidebar.child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(theme.muted))
+                    .text_style(TextStyle::Callout)
+                    .text_color(bezel.text_muted)
+                    .children(super::design::ink_probe(|| "sidebar-status".into()))
                     .child(status.to_owned()),
             );
         }
         sidebar = sidebar.children(self.workspace_agent_rows(cx));
-        sidebar = div()
+        let sidebar = div()
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())
             .relative()
@@ -755,7 +758,11 @@ impl SnapshotView {
             .overflow_hidden()
             .flex()
             .flex_col()
-            .child(sidebar)
+            .child(
+                bezel_ui::scroll::Viewport::new("session-list", sidebar, Axis::Vertical)
+                    .track_scroll(&self.sidebar_keyboard.scroll)
+                    .fill(),
+            )
             .child(self.sidebar_footer(cx));
         let status = if self.browser_state.retained_preview {
             if self.browser_state.status.starts_with("Restoring terminal…") {
@@ -808,7 +815,7 @@ impl SnapshotView {
         let home = is_home.then(|| self.home_render(window, cx));
         // Connection messages can wrap; retain the scroll owner instead of
         // imposing the upstream status bar's fixed single-line height.
-        let context = super::design::palette(&theme)
+        let context = bezel
             .status_bar()
             .occlude()
             .h_auto()
@@ -819,9 +826,9 @@ impl SnapshotView {
             .min_w_0()
             .w_full()
             .bg(if self.developer_mode.enabled {
-                rgb(theme.background)
+                bezel.bg
             } else {
-                rgba(0)
+                transparent_black()
             })
             .children(
                 super::pane_chrome::selected_title(&self.browser_state)
@@ -834,11 +841,12 @@ impl SnapshotView {
                             .px_2()
                             .py_1()
                             .truncate()
-                            .text_color(rgb(theme.muted))
+                            .children(super::design::ink_probe(|| "status-title".into()))
                             .child(title)
                     }),
             )
-            .child(
+            .child(bezel_ui::scroll::Viewport::new(
+                "connection-status",
                 div()
                     .id("connection-status")
                     .debug_selector(|| "tmux-status-viewport".into())
@@ -849,12 +857,12 @@ impl SnapshotView {
                     } else {
                         24.
                     }))
-                    .overflow_y_scroll()
                     .px_2()
                     .py_1()
-                    .text_color(rgb(theme.muted))
+                    .children(super::design::ink_probe(|| "status-text".into()))
                     .child(div().w_full().child(status)),
-            );
+                Axis::Vertical,
+            ));
         // Cards own their terminal background; the surrounding canvas exposes gutters.
         let content_background = self.canvas();
         let mut context = Some(context);
@@ -921,7 +929,8 @@ impl SnapshotView {
             .size_full()
             .flex()
             .flex_col()
-            .text_color(rgb(theme.foreground))
+            .text_color(bezel.text)
+            .children(super::design::ink_probe(|| "workspace-body".into()))
             .on_key_down(cx.listener(Self::picker_key))
             .map(|body| self.menu_actions(body, cx))
             .child(main)
@@ -934,10 +943,29 @@ impl SnapshotView {
                     .map(|dialog| deferred(dialog).with_priority(2)),
             )
             .into_any_element();
-        super::shell::themed_frame(body, window, cx, &theme, application_tabs)
+        super::shell::themed_frame(body, window, cx, application_tabs)
     }
 }
 
+/// The keyboard-selected row's ring, laid over the row so focus never
+/// changes its size.
+fn focus_ring(row: Stateful<Div>, focused: bool, bezel: &bezel_theme::Theme) -> Stateful<Div> {
+    row.when(focused, |row| row.child(ring(bezel)))
+}
+
+fn ring(bezel: &bezel_theme::Theme) -> Div {
+    div()
+        .debug_selector(|| "tmux-sidebar-focus-ring".into())
+        .absolute()
+        .inset_0()
+        .rounded(px(bezel_theme::Theme::control_radius()))
+        .border_1()
+        .border_color(bezel.ring)
+}
+
+#[cfg(test)]
+#[path = "browser_chrome_tests.rs"]
+mod chrome_tests;
 #[cfg(test)]
 #[path = "input_interruption_tests.rs"]
 mod input_interruption_tests;
