@@ -205,7 +205,7 @@ fn capture_view(
         _activation: None,
         _appearance: None,
         last_system: state.appearance.as_ref().map(|a| a.system),
-        glass: Default::default(),
+        chrome: Default::default(),
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),

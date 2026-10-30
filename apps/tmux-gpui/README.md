@@ -914,10 +914,12 @@ appearance and macOS System transitions remain unverified.
 
 ### Native sidebar material (source preview)
 
-The source preview now uses Apple's actual `NSGlassEffectView` for the sidebar
-on supported macOS versions, with the active theme's tint and appearance. The
-terminal remains opaque. Older systems and Reduce Transparency/Increase Contrast
-use opaque chrome; runtime accessibility notifications request a redraw.
+The sidebar and title bar sit on Bezel's chrome material: the window blurs the
+desktop behind it and the palette's frost, tinted with the theme's surface,
+covers it in dark themes. Light themes keep opaque chrome. Text on the chrome is
+inked to 4.5:1 over any desktop. The terminal remains opaque. Reduce
+Transparency/Increase Contrast use opaque chrome; runtime accessibility
+notifications request a redraw.
 
 A separate synthetic debug window verified native activation, clickable theme
 selection, dark/light changes, narrow-width clipping and clean exit. This is

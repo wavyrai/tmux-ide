@@ -667,7 +667,7 @@ impl SnapshotView {
                     .px_2()
                     .pt_1()
                     .pb_1()
-                    .text_color(rgb(theme.muted))
+                    .text_color(rgb(super::design::chrome_text(&theme, theme.muted)))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Sessions"),
