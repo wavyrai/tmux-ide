@@ -321,5 +321,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Chromium for the WebMCP check
+        run: pnpm --filter @tmux-ide/docs exec playwright install --with-deps chromium
+
       - name: Build docs
         run: pnpm docs:build
