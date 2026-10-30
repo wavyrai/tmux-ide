@@ -74,6 +74,28 @@ fn home_text_reads_on_every_plate_in_every_catalog_theme() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// The same theme on two canvases inks for each: a cached ink from one
+/// canvas reused on the other leaves text under 4.5:1.
+#[test]
+fn home_ink_follows_the_canvas() {
+    let colors: crate::tmux_snapshot::appearance::Colors =
+        serde_json::from_value(faint_muted()["theme"].clone()).unwrap();
+    let theme = theme_of(&colors);
+    let mut failures = Vec::new();
+    for canvas in [0x0b0b10, 0x404040, 0x0b0b10] {
+        let home = palette(&theme, canvas);
+        for (plate, name) in plates_under_text(&theme, canvas) {
+            for (role, text) in [("text", home.text), ("muted", home.text_muted)] {
+                let ratio = bezel_theme::contrast_ratio(text, plate);
+                if ratio < 4.5 {
+                    failures.push(format!("{role} on {name} of {canvas:06x} is {ratio:.2}:1"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 /// A dark theme on a lighter canvas than its surface: Bezel's text and muted,
 /// made to read on the surface, drop under 4.5:1 on Home's canvas.
 fn faint_muted() -> serde_json::Value {
