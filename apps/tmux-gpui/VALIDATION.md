@@ -111,6 +111,7 @@ only the preview dispatcher. Original module composition moved into `src/lib.rs`
 the upstream `herdr-gpui` binary remains an explicit reference target. Development
 launchers select the dedicated binary. No dependency, lockfile, painter or protocol
 change is involved; this does not yet remove inherited build dependencies.
+(Mac app cleanup, 30 Oct: #655 removed the `herdr-gpui` binary and its modules.)
 
 Three new executable tests cover product help/version, rejection of upstream and
 malformed options, and canonical fixture validation with no state files created.

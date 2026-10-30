@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod access;
 mod frame;
 pub(crate) use frame::{FrameView, NativeFrame};
@@ -7,7 +8,6 @@ mod graphics;
 mod grid;
 mod images;
 
-use self::access::link_bounds;
 use self::area::whole;
 pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
 use self::glyphs::GlyphCache;
@@ -18,7 +18,7 @@ use self::images::{ImageCache, ImageGeometry, below_text};
 use crate::config::Theme;
 use crate::terminal::*;
 use gpui::*;
-use herdr_client::protocol::{CellData, FrameData, PaneSurfacePane, SurfaceRect};
+use herdr_client::protocol::{CellData, PaneSurfacePane, SurfaceRect};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -31,8 +31,6 @@ use unicode_width::UnicodeWidthStr;
 const SELECTION_ALPHA: u32 = 0x59;
 /// Search matches tint like the selection, the current one strongly enough to
 /// find at a glance among the others.
-const MATCH_ALPHA: u32 = 0x4d;
-const CURRENT_MATCH_ALPHA: u32 = 0xa6;
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_PAINT: Duration = Duration::from_millis(16);
 const SCROLLBAR_INSET: f32 = 1.;
@@ -42,19 +40,12 @@ const SCROLLBAR_ALPHA: u32 = 0xc0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tint {
     Selection,
-    Match,
-    CurrentMatch,
-    /// The copy-mode cursor, drawn as a block over its cell.
-    CopyCursor,
 }
 
 impl Tint {
     fn color(self, theme: &Theme) -> Rgba {
         match self {
             Self::Selection => rgba((theme.primary() << 8) | SELECTION_ALPHA),
-            Self::Match => rgba((theme.palette[3] << 8) | MATCH_ALPHA),
-            Self::CurrentMatch => rgba((theme.palette[3] << 8) | CURRENT_MATCH_ALPHA),
-            Self::CopyCursor => rgba((theme.cursor << 8) | CURRENT_MATCH_ALPHA),
         }
     }
 }
@@ -281,28 +272,6 @@ impl TerminalPainter {
         }
     }
 
-    #[cfg(feature = "integration-test")]
-    pub fn reset_cache(&mut self) {
-        self.config = None;
-        self.glyphs.clear();
-        self.cell_width = None;
-    }
-
-    #[cfg(feature = "integration-test")]
-    pub fn verify_native_cache(&self, window: &Window) -> Result<usize> {
-        let Some(base) = &self.config else {
-            anyhow::bail!("missing font config");
-        };
-        for (style, symbol, cached) in self.glyphs.iter() {
-            let fresh = self.shape(base, style, &symbol, window);
-            // Includes native glyph IDs/positions, font IDs and metrics.
-            if format!("{fresh:?}") != format!("{cached:?}") {
-                anyhow::bail!("cached glyph/style mismatch: {symbol:?}");
-            }
-        }
-        Ok(self.glyphs.len())
-    }
-
     /// Glyphs for one cell symbol. Color is left to `paint_glyphs`, so one
     /// shape serves every color the symbol is drawn in.
     fn shape(&self, font: &Font, style: usize, symbol: &str, window: &Window) -> ShapedLine {
@@ -368,62 +337,6 @@ impl TerminalPainter {
         let _ = cx;
         self.cell_width = Some(width);
         width
-    }
-
-    /// Underlines the cells of a hovered link, painted after `paint_frame`
-    /// for the same frame and origin. Each cell takes its own text color, as
-    /// an SGR underline would, and spaces along the link are underlined too.
-    pub fn paint_link_view(
-        &self,
-        frame: FrameView<'_>,
-        origin: Point<Pixels>,
-        cell_width: f32,
-        rows: &[(u16, std::ops::Range<u16>)],
-        window: &mut Window,
-    ) {
-        let Some(bounds) = link_bounds(frame, rows) else {
-            return;
-        };
-        let layer = Bounds::new(
-            origin
-                + point(
-                    px(f32::from(bounds.x) * cell_width),
-                    px(f32::from(bounds.y) * self.cell_height),
-                ),
-            size(
-                px(f32::from(bounds.width) * cell_width),
-                px(f32::from(bounds.height) * self.cell_height),
-            ),
-        );
-        window.paint_layer(layer, |window| {
-            for (row, columns) in rows {
-                if *row >= frame.height() {
-                    continue;
-                }
-                for column in columns.start..columns.end.min(frame.width()) {
-                    let index =
-                        usize::from(*row) * usize::from(frame.width()) + usize::from(column);
-                    let Some(data) = frame.cell_at(index) else {
-                        continue;
-                    };
-                    let position = origin
-                        + point(
-                            px(f32::from(column) * cell_width),
-                            px(f32::from(*row) * self.cell_height + self.cell_height - 2.),
-                        );
-                    window.paint_quad(fill(
-                        Bounds::new(position, size(px(cell_width), px(1.))),
-                        rgb(cell_colors(data, &self.theme).0),
-                    ));
-                }
-            }
-        });
-    }
-
-    /// Releases the textures of images no paint has placed for a while, for
-    /// frames that paint without placing any.
-    pub(crate) fn release_idle_images(&mut self, window: &mut Window) {
-        self.images.release_idle(window);
     }
 
     /// Paints one layer of the cells of one frame that `part` covers, or

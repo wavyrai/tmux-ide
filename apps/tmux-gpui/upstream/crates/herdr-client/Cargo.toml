@@ -9,13 +9,6 @@ version.workspace      = true
 [lints]
 workspace = true
 
-[features]
-# `ConnectTarget::Cloud`: machines a cloud provider created, reached through an
-# application-built command. Each provider adds its `CloudProvider` variant.
-cloud = []
-coder = ["cloud"]
-daytona = ["cloud"]
-
 [dependencies]
 regex = "=1.13.1"
 unicode-normalization = "=0.1.25"

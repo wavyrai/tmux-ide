@@ -46,9 +46,8 @@ Cargo workspace is outside pnpm and npm publication; native alpha distribution
 and validation are separate. No Rust rewrite of the daemon is
 required.
 
-Use the dedicated `tmux-ide-gpui` binary. Do not launch the retained `herdr-gpui`
-reference binary against personal state: it still has Herdr
-connection/bootstrap behavior, update endpoints, branding, and product actions.
+The crate builds one binary, `tmux-ide-gpui`. The Herdr reference binary and the
+Herdr modules only it used were removed; git history keeps them.
 Do not run its installer, release scripts, or hook setup in this monorepo.
 Some upstream scripts resolve the Git root and must be adapted before use here.
 Nested `.github` workflows are source reference only; GitHub does not run them.
@@ -238,9 +237,9 @@ The upstream package name is retained for provenance; the executable name is
 describes supported modes; `--version` identifies an unreleased development
 preview rather than copying upstream's version as a tmux-ide release.
 
-The original `herdr-gpui` executable remains for reference checks only. Shared
-modules currently compile through a library; this isolates startup dispatch but
-does not constitute dependency trimming or a signed application package.
+Only the tmux path and the few helpers it shares remain in the crate's library;
+the Herdr window, settings, browser tabs, updater and cloud modules were removed
+with their dependencies.
 
 ## Native terminal data path
 
@@ -921,10 +920,12 @@ appearance and macOS System transitions remain unverified.
 
 ### Native sidebar material (source preview)
 
-The source preview now uses Apple's actual `NSGlassEffectView` for the sidebar
-on supported macOS versions, with the active theme's tint and appearance. The
-terminal remains opaque. Older systems and Reduce Transparency/Increase Contrast
-use opaque chrome; runtime accessibility notifications request a redraw.
+The sidebar and title bar sit on Bezel's chrome material: the window blurs the
+desktop behind it and the palette's frost, tinted with the theme's surface,
+covers it in dark themes. Light themes keep opaque chrome. Text on the chrome is
+inked to 4.5:1 over any desktop. The terminal remains opaque. Reduce
+Transparency/Increase Contrast use opaque chrome; runtime accessibility
+notifications request a redraw.
 
 A separate synthetic debug window verified native activation, clickable theme
 selection, dark/light changes, narrow-width clipping and clean exit. This is
@@ -1097,9 +1098,8 @@ evidence and remaining work; these entries are not a performance-parity claim.
 ### Native crate identity and session sidebar
 
 The application crate is `tmux-ide-gpui` in `upstream/crates/tmux-ide-gpui`.
-The `herdr-gpui` executable is retained only for upstream reference tests;
-release builds explicitly select `--bin tmux-ide-gpui`. Original provenance
-hashes retain their upstream `crates/herdr-gpui` paths. The `NOTICE` and the
+Release builds select `--bin tmux-ide-gpui`, the crate's only binary. Original
+provenance hashes retain their upstream `crates/herdr-gpui` paths. The `NOTICE` and the
 crate's attribution files continue to credit the original sources.
 
 The workspace sidebar leads with sessions beneath compact machine headings.

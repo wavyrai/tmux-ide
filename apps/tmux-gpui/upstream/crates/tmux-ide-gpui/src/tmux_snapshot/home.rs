@@ -159,7 +159,7 @@ impl SnapshotView {
             .min_w_0()
             .w_full()
             .max_w(px(1280.))
-            .when(!self.glass.is_active(), |body| body.bg(rgb(self.canvas())))
+            .bg(rgb(self.canvas()))
             .text_color(rgb(theme.foreground))
             .text_size(px(13.))
             .p(px(24.))
@@ -439,7 +439,7 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .items_center()
-            .when(!self.glass.is_active(), |body| body.bg(rgb(self.canvas())))
+            .bg(rgb(self.canvas()))
             .child(body)
             .into_any_element()
     }

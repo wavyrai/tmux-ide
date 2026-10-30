@@ -25,13 +25,12 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 | `crates/herdr-protocol` | Generation-1 wire types, framing, validation, and atomic surface patches |
 | `crates/herdr-client` | Discovery, socket worker, session transitions, ordered commands, and client-local activity projection |
 | `crates/tmux-ide-gpui` | Native UI, connection bridge, presentation state, semantic input, geometry, and painting |
-| `crates/test-support/sandbox.rs` | Shared isolated process setup for opt-in integration tests; not a production crate |
 
 - Keep dependency direction from UI to client to protocol. Protocol/client code must not depend on GPUI.
 - Keep session transitions separate from socket scheduling, and connection ownership separate from window rendering.
-- Reuse `ConnectionBridge`, domain targets, geometry helpers, and the test sandbox rather than duplicating their policies.
+- Reuse `ConnectionBridge`, domain targets, and geometry helpers rather than duplicating their policies.
 - **File size limit: 1,000 lines.** No Rust, Python, shell, or Swift file may exceed it,
-  tests included; `just check-file-size` enforces it in `just ci` and CI's checks job.
+  tests included; `bash scripts/check-file-size.sh` enforces it in CI's macOS job.
   There is no allowlist: when a change would cross the limit, split the file by
   responsibility in the same change rather than adding an exception.
 - Split modules by responsibility; the line limit is a ceiling, not a reason for arbitrary cuts. Prefer wiring and exports in entry points as code grows; do not perform unrelated file reshuffles.
@@ -115,63 +114,52 @@ and `publish` passes its `RELEASE_NOTES.md` to `gh release create --notes-file`.
   so nothing user-visible may ship under those types. A breaking change is the
   exception: `type!:` or a `BREAKING CHANGE:` footer is always published, under
   Changed and prefixed `**BREAKING:**`, whatever its type.
-- Previewing the generated changelog before a release is covered by the
-  `release` skill.
-- These rules are enforced, not advisory. `just hooks` installs a `commit-msg`
-  hook that refuses a bad subject before the commit exists, and CI's `commits`
-  job checks every commit in a pull request; it is part of the `Format, lint,
-  and test` gate. Run `just hooks` once per clone, and `just check-commits`
-  to check a branch by hand. Fix a rejected subject with `git commit --amend`
-  rather than `--no-verify`.
+- Check a branch by hand with `python3 scripts/release/check-commit-messages.py`.
+  Fix a rejected subject with `git commit --amend` rather than `--no-verify`.
 
 ## Verification
 
-Prefer the existing `just` recipes. Run focused tests while iterating, then the
-workspace gates for Rust changes before handoff or a requested commit:
+Run focused tests while iterating, then the gates `.github/workflows/gpui-preview.yml`
+runs at the repository root, from `upstream/`, before handoff or a requested commit:
 
 ```sh
-just format
-just ci
+cargo fmt --all -- --check
+bash scripts/check-file-size.sh
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+cargo test --locked --workspace --all-features
 ```
 
-- For linking, startup, or packaging changes, also use `just test-build` to build the release executable and exercise its CLI without a desktop.
-- The `windows` CI job checks formatting, lints every target and feature, and
-  runs workspace tests with default and all features, including headless UI and
-  CLI tests. Optimized Windows builds and CLI tests run in the release workflow;
-  native GUI behavior is unproven. Keep the `cfg(unix)`/`cfg(windows)`
+- For linking, startup, or packaging changes, also build the release executable with `cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui` and exercise its CLI without a desktop.
+- Only macOS ships, and CI checks only macOS. Keep the `cfg(unix)`/`cfg(windows)`
   split honest and say plainly what a platform cannot do instead of stubbing
   behavior that appears to work.
 - A `cfg` gate is only proven on the platform it names. Before handing off a
-  change that touches one, run `just lint-linux` and `just lint-windows` as well
-  as `just ci`: a macOS run cannot see a Linux-only gate, and neither can the
-  Windows cross-check.
+  change that touches one, run `bash scripts/lint-linux.sh` as well as the gates
+  above: a macOS run cannot see a Linux-only gate.
 - Documentation-only changes need command/path/link review and `git diff --check`; do not claim a code test run that did not happen.
 - Add deterministic tests for invariants: ordering, cancellation, fragmentation, revision fencing, error paths, geometry, and cleanup. Prefer explicit coordination and bounded waits over timing guesses.
 - Test pure session/CLI/geometry logic without a socket or window where possible. Exercise public behavior with mock peers and headless GPUI tests where integration matters.
 - Keep test bodies out of production files, which only declare `#[cfg(test)] mod tests;`.
   Put tests for a new feature in a new topic file under the module's `tests/` directory
-  (for example `keymap/tests/pane_keys.rs`, starting with `use super::*;`) rather than
+  (for example `terminal_painter/tests/cells.rs`, starting with `use super::*;`) rather than
   inserting them into an existing large test module, and keep shared fixtures in the
   parent `tests.rs`. Parallel PRs then edit different files instead of conflicting.
 - Fix flaky tests rather than hiding them with retries or new ignores. Existing live/native tests are ignored because they require explicit external resources.
 - For visual changes, verify the actual native UI when a desktop is available, including narrow layouts, long labels, focus, popup/IME behavior, and clipping. Headless layout tests do not prove native glyph or OS input correctness.
-- Measure interactive performance in release mode (`just run`), not debug mode. Preserve bounded glyph caching and deterministic paint budgets; native timing budgets are machine-dependent.
+- Measure interactive performance in a release build, not debug mode. Preserve bounded glyph caching and deterministic paint budgets; native timing budgets are machine-dependent.
 - Keep CLI parsing pure and based on OS strings so socket paths need not be UTF-8. Invalid options and help must exit before starting GPUI.
 
 ### Opt-In Tests
 
-```sh
-just test-live /absolute/path/to/herdr
-just test-gui /absolute/path/to/herdr
-just test-sidebar
-just test-perf
-```
+The native journeys in `apps/tmux-gpui/bridge/` drive the production Rust worker
+through `examples/tmux_native_journey.rs`; `.github/workflows/gpui-preview.yml`
+shows how they run. The manual GUI and SSH smokes are listed in
+`apps/tmux-gpui/bridge/manual/README.md`.
 
-- Live tests require an explicitly selected `HERDR_TEST_BINARY`; never fall back to discovering a user's daemon.
-- Reuse the shared sandbox: private unique short directory, cleared environment, isolated HOME/XDG/config/socket paths, and explicit desktop-variable allowlist for GUI children only.
+- Isolate every opt-in test: a private short directory, its own HOME, XDG and socket paths, and an explicitly selected daemon. Never discover or attach to the user's daemon.
 - Kill and wait only for exact children created by the test, before removing their sandbox. Never use `server stop`, process-name matching, or process-group kills.
-- `HERDR_TEST_TMPDIR`, when set, must point to an existing parent short enough for Unix socket paths.
-- Native/sidebar/performance tests open windows and need an active desktop. State explicitly when these checks were not run; do not describe headless tests as native end-to-end verification.
+- Native window checks need an active desktop. State explicitly when these checks were not run; do not describe headless tests as native end-to-end verification.
 
 ## Git And Handoff
 

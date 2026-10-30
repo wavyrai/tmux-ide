@@ -175,14 +175,6 @@ impl SearchInput {
         self.edit.text.len() - range.len() + inserted <= limit
     }
 
-    // Only cloud provider secrets are masked so far.
-    #[cfg_attr(not(feature = "cloud"), allow(dead_code))]
-    pub(crate) fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
-        self.masked = masked;
-        self.layout = None;
-        cx.notify();
-    }
-
     /// Byte `offset` of the text in the shaped line's index space.
     fn shown(&self, offset: usize) -> usize {
         if self.masked {
@@ -220,14 +212,6 @@ impl SearchInput {
 
     pub fn is_composing(&self) -> bool {
         self.edit.marked.is_some()
-    }
-
-    pub fn clear(&mut self, cx: &mut Context<Self>) {
-        let changed = !self.edit.text.is_empty();
-        self.edit = Editing::default();
-        self.scroll = px(0.);
-        self.selecting = false;
-        self.did_edit(changed, cx);
     }
 
     pub fn set_appearance(&mut self, font: FontConfig, theme: Theme, cx: &mut Context<Self>) {

@@ -1,8 +1,6 @@
 //! Font faces, their configured overrides and sizes, and the icon-font cascade.
 use super::Config;
-use crate::{Error, Result};
 use gpui::{Font, FontFallbacks};
-use serde::Deserialize;
 use std::{collections::BTreeSet, ops::RangeInclusive};
 
 /// Every face is held to this range, whether it comes from the config file or
@@ -11,110 +9,6 @@ pub const FONT_SIZE_RANGE: RangeInclusive<f32> = 8.0..=48.0;
 
 /// One logical pixel: the smallest step that can move the terminal cell grid.
 pub const FONT_SIZE_STEP: f32 = 1.0;
-
-/// A configured terminal line height. Below 1 rows overlap their neighbors;
-/// past 2 most of every row is blank.
-pub(super) const LINE_HEIGHT_RANGE: RangeInclusive<f32> = 1.0..=2.0;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FontFace {
-    Sidebar,
-    Tabs,
-    Terminal,
-    Ui,
-}
-
-impl FontFace {
-    pub(crate) fn set_size(self, config: &mut Config, size: f32) {
-        match self {
-            Self::Sidebar => config.sidebar.size = size,
-            Self::Tabs => config.tabs.size = size,
-            Self::Terminal => config.terminal.size = size,
-            Self::Ui => config.ui.size = size,
-        }
-    }
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Sidebar => "sidebar",
-            Self::Tabs => "tabs",
-            Self::Terminal => "terminal",
-            Self::Ui => "ui",
-        }
-    }
-
-    pub(crate) fn size(self, config: &Config) -> f32 {
-        match self {
-            Self::Sidebar => config.sidebar.size,
-            Self::Tabs => config.tabs.size,
-            Self::Terminal => config.terminal.size,
-            Self::Ui => config.ui.size,
-        }
-    }
-}
-
-/// Upper bound on a configured cascade. Every entry is searched for each
-/// uncovered codepoint, so a long list costs shaping time and covers nothing a
-/// short one does not. Names that are not installed are ignored by the platform.
-pub(super) const MAX_FONT_FALLBACKS: usize = 8;
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-pub(super) struct FontSettings {
-    family: Option<String>,
-    size: Option<f32>,
-    fallback: Option<Vec<String>>,
-    /// Untyped because only the terminal takes it: elsewhere it is discarded
-    /// as unknown, so its type must not fail the whole file first.
-    line_height: Option<toml::Value>,
-}
-
-impl FontSettings {
-    /// Takes `line_height` out of a face that lays out no terminal rows,
-    /// returning the key to report as unknown.
-    pub(super) fn reject_line_height(&mut self, name: &str) -> Option<String> {
-        self.line_height
-            .take()
-            .map(|_| format!("{name}.line_height"))
-    }
-
-    /// Merges this face's configured keys over `font`, then validates the result.
-    pub(super) fn apply(self, name: &'static str, font: &mut FontConfig) -> Result<()> {
-        if let Some(family) = self.family {
-            font.family = family;
-        }
-        if let Some(size) = self.size {
-            font.size = size;
-        }
-        if let Some(fallback) = self.fallback {
-            if fallback.len() > MAX_FONT_FALLBACKS {
-                return Err(Error::TooManyFontFallbacks(name));
-            }
-            if fallback.iter().any(|family| family.trim().is_empty()) {
-                return Err(Error::EmptyFontFallback(name));
-            }
-            font.fallbacks = Some(fallback);
-        }
-        if let Some(line_height) = self.line_height {
-            let line_height = match line_height {
-                toml::Value::Float(value) => value as f32,
-                toml::Value::Integer(value) => value as f32,
-                _ => return Err(Error::InvalidLineHeight(name)),
-            };
-            if !line_height.is_finite() || !LINE_HEIGHT_RANGE.contains(&line_height) {
-                return Err(Error::InvalidLineHeight(name));
-            }
-            font.line_height_multiple = Some(line_height);
-        }
-        if font.family.trim().is_empty() {
-            return Err(Error::EmptyFontFamily(name));
-        }
-        if !font.size.is_finite() || !FONT_SIZE_RANGE.contains(&font.size) {
-            return Err(Error::InvalidFontSize(name));
-        }
-        Ok(())
-    }
-}
 
 /// A platform's default families and the installed alternatives that replace
 /// them when missing. GPUI shapes a missing family with whatever face the

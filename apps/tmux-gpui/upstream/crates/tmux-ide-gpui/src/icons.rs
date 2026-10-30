@@ -71,72 +71,6 @@ agent_icons! {
     Muse => "muse",
 }
 
-/// Shared working-tree marker, distinct from the daemon's activity dots.
-pub(super) fn uncommitted(theme: &crate::config::Theme, size: f32) -> gpui::Div {
-    use gpui::{div, prelude::*, px, rgb, rgba, svg};
-    div()
-        .size(px(size))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(crate::config::corners::SMALL))
-        .bg(rgba((theme.palette[3] << 8) | 0x30))
-        .border_1()
-        .border_color(rgba((theme.palette[3] << 8) | 0x90))
-        .child(
-            svg()
-                .path("icons/pencil.svg")
-                .size(px(size - 4.))
-                .text_color(rgb(theme.ink(theme.palette[3]))),
-        )
-}
-
-/// A checkout the user keeps a note on, beside the working-tree marker and
-/// in a hue of its own so the two never read as one.
-pub(super) fn note(theme: &crate::config::Theme, size: f32) -> gpui::Div {
-    use gpui::{div, prelude::*, px, rgb, rgba, svg};
-    div()
-        .size(px(size))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(crate::config::corners::SMALL))
-        .bg(rgba((theme.palette[4] << 8) | 0x30))
-        .border_1()
-        .border_color(rgba((theme.palette[4] << 8) | 0x90))
-        .child(
-            svg()
-                .path("icons/note.svg")
-                .size(px(size - 4.))
-                .text_color(rgb(theme.ink(theme.palette[4]))),
-        )
-}
-
-/// A checkout whose work was teleported to another host.
-pub(super) fn teleported(theme: &crate::config::Theme, size: f32) -> gpui::Div {
-    use gpui::{Rgba, div, prelude::*, px, svg};
-    let color = crate::menu::teleported(theme);
-    let faded = |a: f32| Rgba { a, ..color };
-    div()
-        .size(px(size))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(crate::config::corners::SMALL))
-        .bg(faded(0.22))
-        .border_1()
-        .border_color(faded(0.7))
-        .child(
-            svg()
-                .path("icons/teleport.svg")
-                .size(px(size - 4.))
-                .text_color(color),
-        )
-}
-
 impl AssetSource for Icons {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         if let Some(icon) = AgentIcon::ALL.iter().find(|icon| icon.path() == path) {
@@ -206,10 +140,7 @@ impl AssetSource for Icons {
             "icons/window-restore.svg" => {
                 include_bytes!("../../../assets/icons/window-restore.svg")
             }
-            _ => match crate::usage::icon(path) {
-                Some(bytes) => bytes,
-                None => return Ok(None),
-            },
+            _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
     }
@@ -268,7 +199,6 @@ impl AssetSource for Icons {
         ]
         .into_iter()
         .chain(AgentIcon::ALL.iter().map(|icon| icon.path()))
-        .chain(crate::usage::icon_paths())
         .filter(|name| name.starts_with(path))
         .map(Into::into)
         .collect())
@@ -302,7 +232,7 @@ mod tests {
         assert!(Icons.load("unknown.svg").unwrap().is_none());
         assert_eq!(
             Icons.list("icons/").unwrap().len(),
-            49 + AgentIcon::ALL.len() + crate::usage::icon_paths().count()
+            49 + AgentIcon::ALL.len()
         );
     }
 

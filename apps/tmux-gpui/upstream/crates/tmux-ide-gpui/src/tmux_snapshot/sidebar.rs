@@ -115,6 +115,9 @@ pub(super) fn render_row(
     _accent: u32,
     _glass: bool,
 ) -> Stateful<Div> {
+    // Text on the frosted chrome keeps 4.5:1 whatever the desktop behind it.
+    let label = crate::tmux_snapshot::design::chrome_text(theme, theme.foreground);
+    let muted = crate::tmux_snapshot::design::chrome_text(theme, theme.muted);
     let session = matches!(
         row.target,
         Some(Target::Session(_) | Target::FleetSession { .. })
@@ -150,7 +153,7 @@ pub(super) fn render_row(
         } else {
             rgba(0)
         })
-        .text_color(rgb(theme.foreground))
+        .text_color(rgb(label))
         .text_size(px(if session { 12. } else { 11. }))
         .font_weight(if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
@@ -162,11 +165,7 @@ pub(super) fn render_row(
                 .path(path)
                 .size(px(14.))
                 .flex_none()
-                .text_color(rgb(if row.selected {
-                    theme.foreground
-                } else {
-                    theme.muted
-                }))
+                .text_color(rgb(if row.selected { label } else { muted }))
         }))
         .child(
             div()
@@ -191,7 +190,7 @@ pub(super) fn render_row(
                         .text_size(px(11.))
                         .line_height(px(16.))
                         .font_weight(FontWeight::NORMAL)
-                        .text_color(rgb(theme.muted))
+                        .text_color(rgb(muted))
                         .child(summary.clone())
                 }))
                 .children(row.pane_count.as_ref().map(|count| {
@@ -202,7 +201,7 @@ pub(super) fn render_row(
                         .text_size(px(10.))
                         .mt(px(2.))
                         .font_weight(FontWeight::NORMAL)
-                        .text_color(rgb(theme.muted))
+                        .text_color(rgb(muted))
                         .child(count.clone())
                 })),
         );

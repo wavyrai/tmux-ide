@@ -1,17 +1,11 @@
 # cargo-deny configuration. Run locally with `cargo deny check`.
 #
-# Evaluate every shipped target: both macOS architectures, experimental
-# x86_64/ARM64 GNU/Linux, and experimental x86_64/ARM64 Windows. This set is pinned to
-# the release targets by scripts/release/test-release-security.py.
+# Evaluate the shipped targets: the native app ships for macOS only.
 
 [graph]
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc",
-    "aarch64-pc-windows-msvc",
 ]
 all-features = true
 

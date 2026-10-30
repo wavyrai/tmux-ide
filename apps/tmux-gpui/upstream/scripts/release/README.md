@@ -1,5 +1,11 @@
 # Release Packaging
 
+This is Herdr GPUI's release guide, kept for the scripts tmux-ide still uses:
+`build-macos.sh` and its helpers, `generate-notices.py` and `about.toml`. The
+Herdr release workflows, the `herdr-gpui` binary, and the Homebrew, Linux,
+Windows and updater packaging this guide also describes were removed in the
+Mac app cleanup (#655); git history keeps them.
+
 Run with Bash; packaging scripts never build or execute the GUI, bundle a daemon,
 or publish artifacts. Output directories must already exist. Existing
 artifacts are refused. Versions are calendar versions `YYYYMMDD.COUNTER`: an
@@ -307,6 +313,13 @@ Host build dependencies use `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none`:
 Apple stripping produced unloadable, misaligned proc-macro dylibs during local
 Intel cross-compilation. The setting does not disable optimization or change
 stripping policy for the distributed executable.
+The workspace `[profile.dist]` in `Cargo.toml` sets the distributed tmux-ide-gpui
+executable's policy; `apps/tmux-gpui/scripts/build-native-release.mjs` builds with
+`--profile dist`. It inherits `release` and adds fat LTO, one codegen unit,
+line-table debug info split into a packed `tmux-ide-gpui.dSYM` beside each
+`target/<target>/dist/tmux-ide-gpui`, and `strip = "debuginfo"`. `release` stays
+Cargo's default so CI and tests build quickly. Keep that dSYM with the build to
+symbolicate crash reports; it is not copied into the app.
 
 A missing root `.envrc` fails before building. This ignored file contains **no
 credentials** and defines `herdr_sign VERSION APP OUT`, calling the ignored
@@ -341,11 +354,6 @@ printed on stdout after promotion. Existing version artifacts are never overwrit
 ```sh
 for script in scripts/release/*.sh; do bash -n "$script" || exit; done
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/release/tests -v
-PYTHONDONTWRITEBYTECODE=1 python3 scripts/release/test-release-security.py
-OPENSSL="$(brew --prefix openssl@3)/bin/openssl" \
-  python3 -m unittest discover -s scripts -p 'test_update_manifest.py' -v
-actionlint .github/workflows/release.yml
-zizmor --offline .github/workflows/release.yml
 ```
 
 Tests run on macOS and Linux with Python 3, Git and `jq`. They use dummy credentials
