@@ -123,3 +123,41 @@ fn hovering_a_row_fades_in_its_own_wash(cx: &mut TestAppContext) {
         assert_eq!(fill(&mut hovered), Some(bezel.element_hover));
     });
 }
+
+/// Catalog `blue` (dark): its foreground needs the row ink to read on a
+/// selected row over the frost, so the row's ink and the bare chrome ink differ.
+fn blue() -> Theme {
+    Theme {
+        background: 0x000000,
+        foreground: 0x3377ee,
+        surface: 0x00000a,
+        active: 0x2c3a64,
+        muted: 0x7185a8,
+        ..Theme::default()
+    }
+}
+
+#[gpui::test]
+fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
+    let theme = blue();
+    let (label, _) = crate::tmux_snapshot::design::row_ink(&theme);
+    assert_ne!(
+        label,
+        crate::tmux_snapshot::design::chrome_text(&theme, theme.foreground),
+        "this theme must tell the two inks apart"
+    );
+    cx.update(|cx| {
+        crate::tmux_snapshot::design::prepare(&theme, false, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::from(cx.new(|_| ()).entity_id());
+        let mut element = render_row(0, &row(true), &theme, &bezel, painter, true);
+        let painted = element.style().text.color;
+        assert_eq!(painted, Some(rgb(label).into()));
+        let mut badge = attention_badge(&theme, &bezel, 2);
+        let fill = match badge.style().background.clone() {
+            Some(Fill::Color(background)) => background.as_solid(),
+            None => None,
+        };
+        assert_eq!(fill, Some(rgb(theme.active).into()));
+    });
+}
