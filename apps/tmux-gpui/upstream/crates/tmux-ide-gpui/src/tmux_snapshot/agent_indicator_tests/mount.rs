@@ -11,3 +11,16 @@ pub(super) fn frame(view: &SnapshotView) -> usize {
 pub(super) fn slot_colors(view: &SnapshotView) -> Vec<gpui::Hsla> {
     view.agent_animation.colors()
 }
+/// Counts the notifications the spinner overlay receives.
+pub(super) fn observe_overlay(
+    view: &Entity<SnapshotView>,
+    count: std::rc::Rc<std::cell::Cell<usize>>,
+    cx: &mut App,
+) -> Option<gpui::Subscription> {
+    let overlay = view.read(cx).agent_animation.overlay()?;
+    Some(cx.observe(&overlay, move |_, _| count.set(count.get() + 1)))
+}
+/// The frames the overlay painted since the last call, one per working row.
+pub(super) fn painted(view: &SnapshotView) -> Vec<usize> {
+    view.agent_animation.take_painted()
+}

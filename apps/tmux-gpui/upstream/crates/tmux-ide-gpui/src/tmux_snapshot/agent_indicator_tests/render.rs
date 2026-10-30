@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
-use super::mount::{frame, mount, slot_colors};
+use super::mount::{frame, mount, observe_overlay, painted, slot_colors};
 use crate::tmux_snapshot::{SnapshotView, browser, decode, presence::Presence};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
@@ -244,4 +244,26 @@ fn a_terminal_font_change_re_renders_the_cached_view(cx: &mut TestAppContext) {
         !rendered_after(&snapshot, cx, |_, _| {}),
         "control: no change, no render"
     );
+}
+#[gpui::test]
+fn a_spinner_tick_invalidates_and_paints_the_overlay(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    let notified = Rc::new(std::cell::Cell::new(0));
+    let _subscription = cx
+        .update(|_, cx| observe_overlay(&snapshot, notified.clone(), cx))
+        .expect("no spinner overlay is mounted");
+    for tick in 0..3 {
+        let before = notified.get();
+        cx.update(|_, cx| painted(snapshot.read(cx)));
+        let (frame, _) = period(&snapshot, cx);
+        assert!(
+            notified.get() > before,
+            "tick {tick} did not invalidate the overlay"
+        );
+        let painted = cx.update(|_, cx| painted(snapshot.read(cx)));
+        assert!(
+            !painted.is_empty() && painted.iter().all(|painted| *painted == frame),
+            "tick {tick} did not paint frame {frame}: {painted:?}"
+        );
+    }
 }
