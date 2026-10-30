@@ -138,7 +138,7 @@ qualification on supported hosts; there is no local patch-removal condition.
 
 ### Native macOS alpha: Apple GPUI surfaces
 
-The separately distributed GUI patches `bezel-gpui-apple` 0.3.19+zed.f16f96 to
+The separately distributed GUI patches `bezel-gpui-apple` 0.3.21+zed.f16f96 to
 [repository-owned source](../apps/tmux-gpui/vendor/README.md).
 [Provenance](../apps/tmux-gpui/vendor/bezel-gpui-apple-provenance.json) records the
 original crate checksum, original file hashes and modified files. The patch adds

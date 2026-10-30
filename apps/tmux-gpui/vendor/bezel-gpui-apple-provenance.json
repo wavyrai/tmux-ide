@@ -1,11 +1,11 @@
 {
   "package": "bezel-gpui-apple",
-  "version": "0.3.19+zed.f16f96",
+  "version": "0.3.21+zed.f16f96",
   "source": "crates.io registry package pinned in upstream/Cargo.lock",
   "originalFilesSha256": {
-    ".cargo_vcs_info.json": "ea43db507c28b6588983a65c38014ec60fcfba41de1b842dccf0d65c0ea100ec",
-    "Cargo.toml": "58f28218f638757eee28789b71ec42403571cec1308dd49bc5cec47157ea44c9",
-    "Cargo.toml.orig": "557333498973a4b2435090a7ea6678c9f759248dbf996a9d9d835fd23f1a08c7",
+    ".cargo_vcs_info.json": "b9c1e563d65b39f685e9f2bbdcd6aafbdf301982a1f7ae44dc21a158e510fc3a",
+    "Cargo.toml": "57b1fc50a53c581a0b308c5cd0e3e84ee2b3ff01bff6480cd558215f8133e840",
+    "Cargo.toml.orig": "6d45007f1c6e818630b59baff8da7df4807535ea0523b83d2d3509a6753076c8",
     "LICENSE-APACHE": "752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a",
     "README.md": "ef0a96b38cdfb6222a1e00491207b8445a908e93b4caaa1e430f76a56427da7a",
     "build.rs": "1ca0bfa13a6e98631881cc05d26aece1ca849f07ea8dfbdb46541d4a2ec11c61",
@@ -24,7 +24,7 @@
     "src/text_system.rs": "932774c521b1bfd99a2552572cf09769e0dd39b2b2e306a3f6df80f57522b375",
     "src/thermal.rs": "a894594d2676d81968554171738ed6c42f0d0d859201f5658ab138f222e08395"
   },
-  "originalCrateSha256": "669b9027804920bf1193a1c77e78ce47fedfba5c1c900fa1ae3ef6a8f71a20d8",
+  "originalCrateSha256": "efc7854ca4092d13c2cb64b1ad6bec040e8a27b8bb0f543850de4bc29666aacc",
   "patchPurpose": "Straight-alpha BGRA CoreVideo surfaces alongside NV12, and retain submitted surface buffers until GPU completion.",
   "modifiedFiles": [
     "Cargo.toml",
