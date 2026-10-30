@@ -69,24 +69,12 @@ const sitemap = read(resolve(appDir, "sitemap.xml.body"));
 if (!/<loc>https:\/\/tmux-ide\.com\/themes<\/loc>/u.test(sitemap))
   fail("/themes is not in the sitemap");
 
-// The intro says who the themes are for, and the page credits Gloomberb, whose
-// MIT-licensed palettes the presets adapt (packages/contracts/src/visual-theme-presets.ts).
+// The intro says who the themes are for: the tmux-ide app, not plain tmux.
 const text = (markup) =>
   decode(markup.replace(/<!-- -->/gu, "").replace(/<[^>]+>/gu, "")).replace(/\s+/gu, " ");
 const intro = text(html.split("</h1>")[1]?.split("</p>")[0] ?? "");
 if (!intro.includes("These themes are for the tmux-ide app"))
   fail(`/themes intro must keep "These themes are for the tmux-ide app"; has "${intro.trim()}"`);
-const creditMarkup =
-  html.match(/<p\b[^>]*data-credit="gloomberb"[^>]*>([\s\S]*?)<\/p>/u)?.[1] ?? "";
-const credit = text(creditMarkup);
-if (
-  !credit.includes("Gloomberb") ||
-  !/\bMIT\b/u.test(credit) ||
-  !/<a\b[^>]*href="https:\/\/github\.com\/gloom-sh\/gloomberb"/u.test(creditMarkup)
-)
-  fail(
-    `/themes must credit Gloomberb, name the MIT licence and link https://github.com/gloom-sh/gloomberb; credit line "${credit.trim()}"`,
-  );
 
 // One card per shown preset, each image's alt naming its theme.
 const cards = [...html.matchAll(/<article id="([\w-]+)"/gu)].map((m) => m[1]);

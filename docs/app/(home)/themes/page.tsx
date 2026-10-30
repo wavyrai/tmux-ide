@@ -116,16 +116,6 @@ export default function ThemesPage() {
                 Each card shows the app&apos;s Terminals view, drawn by the app&apos;s own interface
                 code, with sample agent panes. Select an image for the full-size view.
               </p>
-              <p data-credit="gloomberb" className="type-caption-1 mt-2 text-fd-muted-foreground">
-                The theme palettes are adapted from{" "}
-                <a
-                  href="https://github.com/gloom-sh/gloomberb"
-                  className="marketing-link-action text-fd-foreground"
-                >
-                  Gloomberb
-                </a>
-                , MIT License, Copyright (c) 2026 Gloomberb Contributors.
-              </p>
             </div>
           </BandBody>
         </Band>
