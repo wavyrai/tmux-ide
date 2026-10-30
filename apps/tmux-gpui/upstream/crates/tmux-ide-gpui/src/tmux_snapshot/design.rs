@@ -216,6 +216,26 @@ pub(crate) fn badge_text(theme: &Theme) -> u32 {
     crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
 }
 
+/// The overlay every modal dialog sits in: Bezel's scrim over the whole
+/// shell body, the card centred, occluding and swallowing presses and wheel
+/// events so nothing under it reacts. One recipe instead of four
+/// hand-written ones (audit 04 finding 4).
+pub(super) fn dialog_overlay(id: &'static str, theme: &Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .absolute()
+        .inset_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(palette(theme).scrim())
+        .occlude()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+}
+
 /// The palette's text, inked on its opaque plate (`surface_overlay`) and on
 /// the selected row's wash over it. The palette floats over live terminal
 /// content, so its plate is opaque rather than glass (PM, #671 round 2), and

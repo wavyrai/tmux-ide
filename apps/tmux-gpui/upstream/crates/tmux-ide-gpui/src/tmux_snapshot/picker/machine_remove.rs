@@ -197,18 +197,7 @@ impl SnapshotView {
         let theme = self.theme();
         let registry = self.browser_state.machines.as_ref();
         let (removed, status) = captured.feedback(registry);
-        div()
-            .id("machine-remove-overlay")
-            .absolute()
-            .inset_0()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+        super::super::design::dialog_overlay("machine-remove-overlay", &theme)
             .child(
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-remove-dialog")

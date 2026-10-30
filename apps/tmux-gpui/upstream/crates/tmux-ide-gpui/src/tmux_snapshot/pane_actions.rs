@@ -457,12 +457,30 @@ impl SnapshotView {
                 .text_size(px(12.))
                 .child(bezel_ui::popover::dialog_title(&bezel, "Rename pane"))
                 .child(input.clone())
-                .children(menu.error.map(|error| div().child(error)))
+                .children(menu.error.map(|error| {
+                    use bezel_ui::widgets::Status as _;
+                    bezel.error_strip(error).mt_0().px_2().py_1().w_full()
+                }))
+                // Mac order: Cancel, then the default action, right-aligned.
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
+                        .justify_end()
                         .gap_2()
+                        .child(
+                            super::controls::button(
+                                "pane-actions-cancel",
+                                Some("Cancel"),
+                                "Cancel rename",
+                                super::controls::Icon::Close,
+                                &theme,
+                            )
+                            .aria_label("Cancel rename")
+                            .on_click(cx.listener(
+                                |view, _, window, cx| view.close_pane_actions(window, cx),
+                            )),
+                        )
                         .child(
                             super::controls::action_button(
                                 "pane-name-submit",
@@ -475,19 +493,6 @@ impl SnapshotView {
                             .aria_label("Rename pane")
                             .on_click(cx.listener(
                                 |view, _, window, cx| view.send_pane_action(true, window, cx),
-                            )),
-                        )
-                        .child(
-                            super::controls::button(
-                                "pane-actions-cancel",
-                                Some("Cancel"),
-                                "Cancel rename",
-                                super::controls::Icon::Close,
-                                &theme,
-                            )
-                            .aria_label("Cancel rename")
-                            .on_click(cx.listener(
-                                |view, _, window, cx| view.close_pane_actions(window, cx),
                             )),
                         ),
                 )
