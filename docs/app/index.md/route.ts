@@ -1,5 +1,5 @@
 import { MARKDOWN_VARY, homeMarkdown } from "@/lib/agent-markdown";
-import { absoluteUrl } from "@/lib/site";
+import { canonicalUrl } from "@/lib/site";
 
 export const revalidate = false;
 
@@ -8,7 +8,7 @@ export function GET() {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       Vary: MARKDOWN_VARY,
-      Link: `<${absoluteUrl("/")}>; rel="canonical"`,
+      Link: `<${canonicalUrl("/")}>; rel="canonical"`,
     },
   });
 }
