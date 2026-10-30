@@ -2,7 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, realpath, mkdir, cp, copyFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  realpath,
+  mkdir,
+  cp,
+  copyFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { TERMINAL_BROWSER_LAUNCHER } from "./browser-payload.mjs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -189,6 +199,12 @@ test(
       for (let i = 0; i < 400 && !(tar = await tarOf()); i++)
         await new Promise((resolve) => setTimeout(resolve, 10));
       assert.ok(tar, "the unpack was never observed");
+      // The private copy lives in a fresh mktemp directory only this user can enter.
+      const [staging, ...others] = await readdir(layout.temporary);
+      assert.deepEqual(others, []);
+      assert.match(staging, /^tmux-ide-browser\.[A-Za-z0-9]{6}$/);
+      assert.notEqual(staging, "tmux-ide-browser.XXXXXX");
+      assert.equal((await stat(join(layout.temporary, staging))).mode & 0o777, 0o700);
       child.kill("SIGHUP");
       await new Promise((resolve) => child.on("exit", resolve));
       for (let i = 0; i < 1000; i++) {
