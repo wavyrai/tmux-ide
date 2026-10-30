@@ -12,6 +12,9 @@ pub(super) struct Chrome {
     allowed: bool,
     #[cfg(target_os = "macos")]
     watcher: Option<macos::Watcher>,
+    /// Tests stand in for the accessibility settings here.
+    #[cfg(test)]
+    forced: Option<bool>,
 }
 impl Chrome {
     /// Whether accessibility settings allow translucent chrome, as of the last
@@ -24,6 +27,11 @@ impl Chrome {
     /// Reads the accessibility settings. Runs once per render, before the
     /// palette is prepared.
     pub(super) fn refresh(&mut self) -> bool {
+        #[cfg(test)]
+        if let Some(allowed) = self.forced {
+            self.allowed = allowed;
+            return allowed;
+        }
         #[cfg(target_os = "macos")]
         {
             if self.watcher.is_none() {
@@ -45,6 +53,13 @@ impl Chrome {
             self.applied = Some(wanted);
         }
         theme.vibrancy
+    }
+
+    /// Answers [`Self::refresh`] as if the accessibility settings said
+    /// `allowed`.
+    #[cfg(test)]
+    pub(super) fn force(&mut self, allowed: bool) {
+        self.forced = Some(allowed);
     }
 
     /// True once after the accessibility settings change, so the view redraws.

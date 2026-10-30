@@ -264,6 +264,32 @@ fn normal_ready_workspace_reserves_status_lane_without_hiding_errors(cx: &mut Te
     }
 }
 
+#[gpui::test]
+fn accessibility_policy_reaches_the_rendered_window(cx: &mut TestAppContext) {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let mut view = browser_fixture(cx, sender);
+        view.chrome.force(false);
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|_, cx| {
+        let installed = bezel_theme::Theme::of(cx);
+        assert!(!installed.vibrancy && !installed.glass);
+        assert_eq!(
+            installed.window_background_appearance(),
+            WindowBackgroundAppearance::Opaque
+        );
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| view.chrome.force(true));
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    cx.update(|_, cx| assert!(bezel_theme::Theme::of(cx).vibrancy));
+}
+
 #[path = "shell_tests/fullscreen.rs"]
 mod fullscreen;
 
