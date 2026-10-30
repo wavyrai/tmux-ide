@@ -459,7 +459,13 @@ impl SnapshotView {
                 .child(input.clone())
                 .children(menu.error.map(|error| {
                     use bezel_ui::widgets::Status as _;
-                    bezel.error_strip(error).mt_0().px_2().py_1().w_full()
+                    bezel
+                        .error_strip(error)
+                        .debug_selector(|| "pane-name-error".into())
+                        .mt_0()
+                        .px_2()
+                        .py_1()
+                        .w_full()
                 }))
                 // Mac order: Cancel, then the default action, right-aligned.
                 .child(

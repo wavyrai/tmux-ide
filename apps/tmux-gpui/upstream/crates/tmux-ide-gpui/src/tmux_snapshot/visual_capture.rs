@@ -301,18 +301,24 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
 }
 
 fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<PathBuf> {
-    // `<theme>+fleet` shows the fleet sidebar with an attention badge, and
-    // `<theme>+palette` the command palette open over the workspace.
+    // `<theme>+fleet` shows the fleet sidebar with an attention badge,
+    // `<theme>+palette` the command palette open over the workspace,
+    // `<theme>+machine` the Add machine dialog, and `<theme>+home` Home.
     let mut parts = id.split('+');
     let theme = parts.next().unwrap_or(id);
     let extras: Vec<&str> = parts.collect();
     let fleet = extras.contains(&"fleet");
     let palette = extras.contains(&"palette");
+    let machine = extras.contains(&"machine");
+    let home = extras.contains(&"home");
     let appearance = catalog_appearance(theme)?;
     // Transparent where the theme is vibrant, so translucent chrome keeps its alpha.
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
-    let state = if fleet { with_fleet(state)? } else { state };
+    let mut state = if fleet { with_fleet(state)? } else { state };
+    if home {
+        state.surface = browser::Surface::Home;
+    }
     let (sender, receiver) = mpsc::sync_channel(1024);
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),
@@ -331,6 +337,9 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 let view = cx.new(|cx| capture_view(window, cx, sender, state));
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
+                }
+                if machine {
+                    view.update(cx, |view, cx| view.open_add_machine_for_capture(window, cx));
                 }
                 super::agent_spinner::window_root(view, window, cx)
             },
