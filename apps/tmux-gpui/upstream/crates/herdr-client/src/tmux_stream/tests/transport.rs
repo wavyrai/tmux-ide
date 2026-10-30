@@ -454,14 +454,24 @@ fn full_sixteen_mib_seed_burst_survives_a_paused_then_slow_consumer() {
 #[test]
 fn interactive_readiness_requires_connection_identity_and_input_lifetime() {
     let options = options(12345);
-    for field in ["connectionClientId", "inputLifetime"] {
-        let mut frame: serde_json::Value = serde_json::from_str(&ready()).unwrap();
-        frame.as_object_mut().unwrap().remove(field);
-        assert!(matches!(
-            wire::parse(&frame.to_string(), &options, false),
-            Err(Error::Identity)
-        ));
-    }
+    let mut frame: serde_json::Value = serde_json::from_str(&ready()).unwrap();
+    frame.as_object_mut().unwrap().remove("connectionClientId");
+    assert!(matches!(
+        wire::parse(&frame.to_string(), &options, false),
+        Err(Error::Identity)
+    ));
+    frame["inputLifetime"] = false.into();
+    frame["connectionClientId"] = "native.test".into();
+    assert!(matches!(
+        wire::parse(&frame.to_string(), &options, false),
+        Err(Error::Identity)
+    ));
+    frame.as_object_mut().unwrap().remove("inputLifetime");
+    frame["requestId"] = "c987f903-e864-43dd-8591-8d0a464ca6e8".into();
+    assert!(matches!(
+        wire::parse(&frame.to_string(), &options, false),
+        Err(Error::Identity)
+    ));
     let mut options = options;
     options.descriptor.effective_viewer_mode = ViewerMode::ReadOnly;
     let mut frame: serde_json::Value = serde_json::from_str(&ready()).unwrap();
@@ -471,6 +481,18 @@ fn interactive_readiness_requires_connection_identity_and_input_lifetime() {
     assert!(matches!(
         wire::parse(&frame.to_string(), &options, false),
         Ok(Event::Ready(_))
+    ));
+}
+
+#[test]
+fn interactive_ready_from_a_2_9_7_daemon_is_too_old_not_an_identity_mismatch() {
+    // v2.9.7 pane-stream-websocket.ts sends exactly these fields.
+    let frame = serde_json::json!({"type":"ready","protocolVersion":2,"daemonInstanceId":INSTANCE,
+        "requestId":REQUEST,"connectionClientId":"native.test","panes":["pane.one"],
+        "effectiveViewerMode":"interactive"});
+    assert!(matches!(
+        wire::parse(&frame.to_string(), &options(12345), false),
+        Err(Error::DaemonTooOld)
     ));
 }
 

@@ -568,7 +568,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.
                         let structural = current.actions.interrupted().is_some_and(|c| c.reissue);
-                        if current.owner.waiting_receipt() && current.owner_notice.is_none() {
+                        // Reconnecting cannot help a daemon that lacks a required capability.
+                        let stop = diagnostics::stop_message(&error);
+                        if stop.is_some() {
+                            revoke_connection(&mut active, &mut state, &mut output);
+                        } else if current.owner.waiting_receipt() && current.owner_notice.is_none() {
                             // The authorized HTTP operation may retire the stream
                             // before replying. Preserve correlation, not terminal IO.
                             current.stream_interrupted = true;
@@ -596,7 +600,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 break 'worker;
                             }
                         }
-                        state.status = "Terminal connection interrupted — recovering".into();
+                        state.status = stop
+                            .unwrap_or("Terminal connection interrupted — recovering")
+                            .into();
                         state.input_target_rejected = true;
                         changed = true;
                     }

@@ -23,6 +23,14 @@ pub(super) fn code(error: &NativeError) -> &'static str {
         },
     }
 }
+/// Daemon 2.9.15 is the oldest release this client has been proven against.
+pub(super) const DAEMON_TOO_OLD: &str =
+    "This tmux-ide daemon is too old for the app. Update tmux-ide to 2.9.15 or later and restart it.";
+
+/// A terminal failure that no reconnect can fix, with the status it shows.
+pub(super) fn stop_message(error: &NativeError) -> Option<&'static str> {
+    (code(error) == "stream-daemon-too-old").then_some(DAEMON_TOO_OLD)
+}
 fn session(error: &tmux_native_session::Error) -> &'static str {
     use tmux_native_session::Error;
     match error {
@@ -51,6 +59,7 @@ fn transport(error: &tmux_stream::Error) -> &'static str {
         Error::WebSocket(_) => "stream-websocket",
         Error::Json(_) => "stream-json",
         Error::Identity => "stream-identity",
+        Error::DaemonTooOld => "stream-daemon-too-old",
         Error::Frame => "stream-frame",
         Error::FrameBound => "stream-frame-bound",
         Error::EventBacklog => "stream-event-backlog",
