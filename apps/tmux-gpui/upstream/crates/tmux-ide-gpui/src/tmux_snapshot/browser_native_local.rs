@@ -637,10 +637,10 @@ impl Local {
                                 self.creation_failed(operation_id, error)?;
                             }
                         }
-                        Err(_) => {
+                        Err(error) => {
                             let setup = matches!(stage, Stage::Servers);
                             if self.recovery.is_some() {
-                                self.reconnect_retry()?;
+                                self.reconnect_retry(reconnect::Failure::of(&error))?;
                             } else {
                                 self.unavailable(
                                     "Session changed or is unavailable — refresh to retry",
@@ -890,6 +890,9 @@ impl Local {
 #[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_restart_live_tests.rs"]
+mod restart_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_tests.rs"]
 mod tests;

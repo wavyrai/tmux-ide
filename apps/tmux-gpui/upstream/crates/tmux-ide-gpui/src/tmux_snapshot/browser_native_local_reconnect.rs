@@ -7,10 +7,35 @@ pub(super) struct Recovery {
     pane: Option<String>,
     attempts: u8,
     due: Option<Instant>,
+    started: Instant,
+    others: u8,
 }
 impl Recovery {
     pub(super) fn waiting(&self) -> bool {
         self.due.is_some()
+    }
+}
+/// A daemon restart refuses connections or removes its record for a few seconds.
+const BUDGET: Duration = Duration::from_secs(30);
+const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Failure {
+    /// Retried with backoff until the budget ends.
+    Unreachable,
+    /// A different daemon answered; never retried.
+    Identity,
+    /// Retried at most three times.
+    Other,
+}
+impl Failure {
+    pub(super) fn of(error: &herdr_client::tmux_daemon::Error) -> Self {
+        use herdr_client::tmux_daemon::Error as E;
+        match error {
+            E::Network(_) | E::RecordChanged => Self::Unreachable,
+            E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
+            E::IdentityFormat | E::IdentityChanged | E::Incompatible(_) => Self::Identity,
+            _ => Self::Other,
+        }
     }
 }
 impl Local {
@@ -27,19 +52,34 @@ impl Local {
             pane: self.state.selected_pane.clone(),
             attempts: 0,
             due: None,
+            started: Instant::now(),
+            others: 0,
         });
         self.cancel()?;
         self.recovery = Some(recovery);
-        self.reconnect_retry()
+        self.reconnect_retry(Failure::Other)
     }
-    pub(super) fn reconnect_retry(&mut self) -> Result<(), Error> {
+    /// Backoff doubles from 250 ms to a 4 s cap; only an unreachable daemon outlasts three tries.
+    pub(super) fn reconnect_retry(&mut self, failure: Failure) -> Result<(), Error> {
         let Some(recovery) = self.recovery.as_mut() else {
             return Ok(());
         };
-        if recovery.attempts >= 3 {
-            return self.unavailable("Couldn't reconnect. Refresh sessions to try again.");
+        let delay = Duration::from_millis(
+            250u64
+                .checked_shl(u32::from(recovery.attempts))
+                .unwrap_or(u64::MAX)
+                .min(4000),
+        );
+        if failure == Failure::Other {
+            recovery.others += 1;
         }
-        recovery.due = Some(Instant::now() + Duration::from_millis(250u64 << recovery.attempts));
+        if failure == Failure::Identity
+            || recovery.others > 3
+            || recovery.started.elapsed() + delay > BUDGET
+        {
+            return self.unavailable(GIVE_UP);
+        }
+        recovery.due = Some(Instant::now() + delay);
         self.stage = None;
         self.submitted = false;
         self.state.status = "Connection lost. Reconnecting…".into();
@@ -61,7 +101,7 @@ impl Local {
         recovery.due = None;
         let request = self.state.request;
         self.home(request)?;
-        self.state.status = "Reconnecting…".into();
+        self.state.status = "Connection lost. Reconnecting…".into();
         self.recovery = Some(recovery);
         Ok(())
     }
@@ -190,12 +230,81 @@ mod tests {
         local.home(8).unwrap();
         assert!(local.recovery.is_none());
     }
+    /// The scheduled delay, floored to the 250 ms step so a slow runner cannot change it.
+    fn delay(local: &Local, before: Instant) -> u128 {
+        let due = local.recovery.as_ref().unwrap().due.unwrap();
+        due.duration_since(before).as_millis() / 250 * 250
+    }
+    #[test]
+    fn an_unreachable_daemon_backs_off_to_a_four_second_cap() {
+        let (mut local, _events) = fixture();
+        let before = Instant::now();
+        local.reconnect_start().unwrap();
+        let mut delays = vec![delay(&local, before)];
+        for _ in 0..6 {
+            local.recovery.as_mut().unwrap().due = Some(Instant::now());
+            local.reconnect_tick().unwrap();
+            assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+            let before = Instant::now();
+            local.reconnect_retry(Failure::Unreachable).unwrap();
+            assert_eq!(local.state.status, "Connection lost. Reconnecting…");
+            delays.push(delay(&local, before));
+        }
+        assert_eq!(delays, [250, 500, 1000, 2000, 4000, 4000, 4000]);
+    }
+    #[test]
+    fn an_unreachable_daemon_past_the_budget_ends_on_the_refresh_message() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        local.recovery.as_mut().unwrap().attempts = 9;
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+        assert!(
+            local.recovery.is_some(),
+            "attempts alone never end an unreachable wait"
+        );
+        local.recovery.as_mut().unwrap().started =
+            Instant::now().checked_sub(Duration::from_secs(27)).unwrap();
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
+    }
+    #[test]
+    fn an_identity_failure_never_retries() {
+        let (mut local, _events) = fixture();
+        local.reconnect_start().unwrap();
+        local.reconnect_retry(Failure::Identity).unwrap();
+        assert!(local.recovery.is_none());
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
+    }
+    #[test]
+    fn daemon_errors_are_classified_for_recovery() {
+        use herdr_client::tmux_daemon::Error as E;
+        let missing = E::RecordIo(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(Failure::of(&missing), Failure::Unreachable);
+        assert_eq!(Failure::of(&E::RecordChanged), Failure::Unreachable);
+        let refused = E::Network(ureq::Error::Io(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert_eq!(Failure::of(&refused), Failure::Unreachable);
+        for identity in [E::IdentityChanged, E::IdentityFormat, E::Incompatible(3)] {
+            assert_eq!(Failure::of(&identity), Failure::Identity);
+        }
+        let denied = E::RecordIo(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(Failure::of(&denied), Failure::Other);
+        assert_eq!(Failure::of(&E::RequestStatus(500)), Failure::Other);
+    }
     #[test]
     fn retry_budget_stops() {
         let (mut local, _events) = fixture();
         local.reconnect_start().unwrap();
-        local.recovery.as_mut().unwrap().attempts = 3;
-        local.reconnect_retry().unwrap();
+        local.recovery.as_mut().unwrap().others = 3;
+        local.reconnect_retry(Failure::Other).unwrap();
         assert!(local.recovery.is_none());
         assert!(local.stage.is_none());
         assert_eq!(
@@ -275,6 +384,8 @@ mod tests {
             pane: Some("%2".into()),
             attempts: 1,
             due: None,
+            started: Instant::now(),
+            others: 1,
         });
         local
             .command(Command::NativeTerminalReady {
