@@ -317,7 +317,7 @@ impl SnapshotView {
             self.open_commands(window, cx);
         }
         if let Some(picker) = &mut self.picker {
-            picker.error = Some("Retry queue unavailable — try again or restart the preview");
+            picker.error = Some("Couldn't retry. Try again.");
         }
         cx.notify();
         false
@@ -356,7 +356,7 @@ impl SnapshotView {
             self.open_commands(window, cx);
         }
         if let Some(picker) = &mut self.picker {
-            picker.error = Some("Disconnect queue unavailable — try again or restart the preview");
+            picker.error = Some("Couldn't disconnect. Try again.");
         }
         cx.notify();
         false

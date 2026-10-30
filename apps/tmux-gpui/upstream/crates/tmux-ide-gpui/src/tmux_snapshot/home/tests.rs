@@ -200,3 +200,34 @@ mod columns;
 
 #[path = "tests/local_setup.rs"]
 mod local_setup;
+
+#[test]
+fn fleet_summary_counts_use_singular_for_one() {
+    let fleet = |machines: usize, sessions: usize| {
+        let sessions: Vec<_> = (0..sessions)
+            .map(|i| serde_json::json!({"id":format!("s{i}"),"name":"main","paneCount":1,"sessionId":null,"selection":"pick"}))
+            .collect();
+        let groups: Vec<_> = (0..machines)
+            .map(|i| serde_json::json!({"id":format!("m{i}"),"label":"Mac","state":"ready","conflict":false,"omittedSessions":0,"sessions":if i == 0 { sessions.clone() } else { vec![] }}))
+            .collect();
+        browser::State {
+            fleet: Some(
+                serde_json::from_value(serde_json::json!({"groups":groups,"omittedGroups":0}))
+                    .unwrap(),
+            ),
+            ..Default::default()
+        }
+    };
+    assert_eq!(
+        summary(&fleet(0, 0), true),
+        "0 machines · 0 available sessions"
+    );
+    assert_eq!(
+        summary(&fleet(1, 1), true),
+        "1 machine · 1 available session"
+    );
+    assert_eq!(
+        summary(&fleet(2, 2), true),
+        "2 machines · 2 available sessions"
+    );
+}

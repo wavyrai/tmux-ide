@@ -2,6 +2,43 @@ use super::*;
 use crate::tmux_stream::ViewerMode;
 use std::sync::Arc;
 
+// macOS hands the accepted socket the listener's O_NONBLOCK flag, so a read
+// before the client's request arrives fails with WouldBlock unless it is reset.
+fn accept_blocking(listener: &TcpListener, deadline: Instant) -> std::net::TcpStream {
+    let socket = loop {
+        match listener.accept() {
+            Ok((s, _)) => break s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    };
+    socket.set_nonblocking(false).unwrap();
+    socket
+}
+
+#[test]
+fn accepted_socket_waits_for_a_late_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = thread::spawn(move || {
+        let mut stream = std::net::TcpStream::connect(address).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        stream.write_all(b"x").unwrap();
+    });
+    let mut socket = accept_blocking(&listener, Instant::now() + Duration::from_secs(8));
+    socket
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut byte = [0];
+    socket.read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"x");
+    client.join().unwrap();
+}
+
 #[test]
 fn surface_source_requests_only_read_only_binary_cells() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -10,16 +47,7 @@ fn surface_source_requests_only_read_only_binary_cells() {
     let peer = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(8);
         for index in 0..3 {
-            let mut socket = loop {
-                match listener.accept() {
-                    Ok((s, _)) => break s,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline);
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(e) => panic!("{e}"),
-                }
-            };
+            let mut socket = accept_blocking(&listener, deadline);
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();

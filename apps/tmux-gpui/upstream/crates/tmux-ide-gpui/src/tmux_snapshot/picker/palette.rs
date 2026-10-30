@@ -157,16 +157,14 @@ impl SnapshotView {
         });
         match publication {
             Some(p) => format!(
-                "{} · {} sessions observed · {} sessions and {} matching rows omitted",
+                "{} · {}",
                 match p.roster.phase {
                     browser::home_agents::Phase::Loading => "Loading fleet agents",
                     browser::home_agents::Phase::Unavailable => "Fleet agents unavailable",
                     browser::home_agents::Phase::Partial => "Partial fleet observations",
                     browser::home_agents::Phase::Live => "Fleet agents",
                 },
-                p.roster.observed_sessions,
-                p.roster.truncated_sessions,
-                p.roster.truncated_rows
+                crate::tmux_snapshot::roster_counts::palette(&p.roster)
             ),
             None => "Loading fleet search…".into(),
         }

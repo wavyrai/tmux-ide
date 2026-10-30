@@ -274,3 +274,34 @@ fn sidebar_stale_publication_and_full_preference_queue_preserve_workspace(cx: &m
     ));
     assert!(receiver.try_recv().is_err());
 }
+#[test]
+fn hierarchy_omitted_counts_use_singular_only_for_one() {
+    for (sessions, servers, machines, group_line, fleet_line) in [
+        (
+            1,
+            2,
+            1,
+            "1 session · 2 servers omitted",
+            "1 machine omitted",
+        ),
+        (
+            2,
+            1,
+            2,
+            "2 sessions · 1 server omitted",
+            "2 machines omitted",
+        ),
+    ] {
+        let mut fleet = fleet();
+        fleet.omitted_groups = machines;
+        fleet.groups[0].omitted_sessions = sessions;
+        fleet.groups[0].omitted_servers = servers;
+        let state = browser::State {
+            fleet: Some(fleet),
+            ..Default::default()
+        };
+        let labels: Vec<_> = rows(&state).into_iter().map(|r| r.label).collect();
+        assert!(labels.iter().any(|l| l == group_line), "{labels:?}");
+        assert!(labels.iter().any(|l| l == fleet_line), "{labels:?}");
+    }
+}

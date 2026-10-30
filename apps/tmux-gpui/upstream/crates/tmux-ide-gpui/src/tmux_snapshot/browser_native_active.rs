@@ -93,7 +93,12 @@ impl Active {
         )?;
         Ok(())
     }
-    pub(super) fn poll(&mut self, state: &mut State, now: u64) -> Result<bool, NativeError> {
+    pub(super) fn poll(
+        &mut self,
+        state: &mut State,
+        foreground: bool,
+        now: u64,
+    ) -> Result<bool, NativeError> {
         if self.stream_interrupted {
             if let Some(done) = self.owner.poll_interrupted(now) {
                 self.owner_completed(done);
@@ -214,6 +219,7 @@ impl Active {
                 state,
                 &window,
                 self.controller.input_ready(),
+                foreground,
                 update.presence_revision.unwrap_or(presence),
                 now,
             )?;
@@ -222,6 +228,7 @@ impl Active {
                     state,
                     &window,
                     self.controller.input_ready(),
+                    foreground,
                     update.presence_revision.unwrap_or(presence),
                     now,
                 )?;

@@ -5,39 +5,7 @@ use super::{
 };
 use bezel_ui::widgets::Content;
 use gpui::{prelude::*, *};
-use std::{
-    cell::Cell,
-    rc::Rc,
-    time::{Duration, Instant},
-};
-const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-#[derive(Default)]
-pub(super) struct Clock {
-    visible: Rc<Cell<bool>>,
-    frame: usize,
-    last: Option<Instant>,
-}
-impl Clock {
-    pub(super) fn begin_render(&self) {
-        self.visible.set(false);
-    }
-    fn tick(&mut self, now: Instant, active: bool) -> bool {
-        if !active || !self.visible.get() {
-            self.last = None;
-            self.frame = 0;
-            return false;
-        }
-        if self
-            .last
-            .is_some_and(|last| now.duration_since(last) < Duration::from_millis(80))
-        {
-            return false;
-        }
-        self.last = Some(now);
-        self.frame = (self.frame + 1) % FRAMES.len();
-        true
-    }
-}
+pub(super) const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 fn animated(row: &Row, unavailable: bool) -> bool {
     matches!(row.status, Status::Working) && !row.attention && !unavailable
 }
@@ -98,26 +66,20 @@ fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     }
 }
 impl SnapshotView {
-    pub(super) fn tick_agent_indicators(&mut self, cx: &mut Context<Self>) {
-        let active = self.presence.active()
+    fn agent_motion(&self) -> bool {
+        self.presence.active()
             && self.picker.is_none()
             && self.new_session.is_none()
-            && self.pane_actions.is_none();
-        if self.agent_animation.tick(Instant::now(), active) {
-            cx.notify();
-        }
+            && self.pane_actions.is_none()
+    }
+    /// Starts or stops the spinner overlay's tick; never repaints this view.
+    pub(super) fn tick_agent_indicators(&mut self, cx: &mut Context<Self>) {
+        self.agent_animation.sync(self.agent_motion(), cx);
     }
     pub(super) fn agent_indicator(&self, row: &Row, unavailable: bool) -> AnyElement {
-        self.agent_indicator_with_motion(row, unavailable, true)
-    }
-    pub(super) fn agent_indicator_with_motion(
-        &self,
-        row: &Row,
-        unavailable: bool,
-        motion: bool,
-    ) -> AnyElement {
-        let running = animated(row, unavailable) && motion;
-        let visible = self.agent_animation.visible.clone();
+        let slots = self.agent_animation.clone();
+        // A running row only reserves its slot: the overlay paints the frames.
+        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
         let theme = self.theme();
         super::design::palette(&theme)
             .badge("")
@@ -130,27 +92,21 @@ impl SnapshotView {
                     .relative()
                     .w(px(16.))
                     .flex_shrink_0()
-                    .child(if !motion && animated(row, unavailable) {
-                        "●"
-                    } else {
-                        glyph(row, unavailable, self.agent_animation.frame)
-                    })
                     .child(
-                        canvas(
-                            |_, _, _| (),
-                            move |bounds, _, window, _| {
-                                let bounds = bounds.intersect(&window.content_mask().bounds);
-                                if running
-                                    && bounds.size.width > px(0.)
-                                    && bounds.size.height > px(0.)
-                                {
-                                    visible.set(true);
-                                }
-                            },
+                        div()
+                            .when(running, |glyph| glyph.text_color(transparent_black()))
+                            .child(glyph(row, unavailable, slots.frame())),
+                    )
+                    .when(running, |slot| {
+                        slot.child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, window, _| slots.reserve(bounds, window),
+                            )
+                            .absolute()
+                            .size_full(),
                         )
-                        .absolute()
-                        .size_full(),
-                    ),
+                    }),
             )
             .child(label(row, unavailable))
             .into_any_element()

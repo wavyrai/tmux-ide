@@ -37,12 +37,12 @@ impl Local {
             return Ok(());
         };
         if recovery.attempts >= 3 {
-            return self.unavailable("Reconnect attempts exhausted — refresh to try again");
+            return self.unavailable("Couldn't reconnect. Refresh sessions to try again.");
         }
         recovery.due = Some(Instant::now() + Duration::from_millis(250u64 << recovery.attempts));
         self.stage = None;
         self.submitted = false;
-        self.state.status = "Connection lost — reconnecting".into();
+        self.state.status = "Connection lost. Reconnecting…".into();
         self.publish()
     }
     pub(super) fn reconnect_tick(&mut self) -> Result<(), Error> {
@@ -61,7 +61,7 @@ impl Local {
         recovery.due = None;
         let request = self.state.request;
         self.home(request)?;
-        self.state.status = "Reconnecting terminal".into();
+        self.state.status = "Reconnecting…".into();
         self.recovery = Some(recovery);
         Ok(())
     }
@@ -198,7 +198,10 @@ mod tests {
         local.reconnect_retry().unwrap();
         assert!(local.recovery.is_none());
         assert!(local.stage.is_none());
-        assert!(local.state.status.contains("exhausted"));
+        assert_eq!(
+            local.state.status,
+            "Couldn't reconnect. Refresh sessions to try again."
+        );
     }
     #[test]
     fn mutation_interruption_retains_uncertain_id_without_retry() {

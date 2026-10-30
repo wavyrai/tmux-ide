@@ -180,8 +180,9 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
         if g.omitted_sessions > 0 || g.omitted_servers > 0 {
             out.push(row(
                 format!(
-                    "{} sessions · {} servers omitted",
-                    g.omitted_sessions, g.omitted_servers
+                    "{} · {} omitted",
+                    crate::plural::count(g.omitted_sessions, "session", "sessions"),
+                    crate::plural::count(g.omitted_servers, "server", "servers")
                 ),
                 None,
                 1,
@@ -227,7 +228,10 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
     }
     if fleet.omitted_groups > 0 {
         out.push(row(
-            format!("{} machines omitted", fleet.omitted_groups),
+            format!(
+                "{} omitted",
+                crate::plural::count(fleet.omitted_groups, "machine", "machines")
+            ),
             None,
             0,
             None,

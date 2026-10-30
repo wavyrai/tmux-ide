@@ -150,7 +150,7 @@ fn fixture_with_batch_ack(
     let deadline = Instant::now() + Duration::from_secs(3);
     while active.controller.selectable("right").is_none() || (with_authority && !state.input_ready)
     {
-        active.poll(&mut state, 0).unwrap();
+        active.poll(&mut state, true, 0).unwrap();
         assert!(Instant::now() < deadline, "canonical panes did not arrive");
         thread::sleep(Duration::from_millis(1));
     }
@@ -168,7 +168,7 @@ fn coherent_selection_without_input_authority_completes_refusal_instead_of_stall
         result.is_ok(),
         "navigation was silently dropped: {result:?}"
     );
-    active.poll(&mut state, 2).unwrap();
+    active.poll(&mut state, true, 2).unwrap();
     assert_eq!(active.request, 4);
     assert!(state.input_target_rejected);
     assert!(matches!(
@@ -205,7 +205,7 @@ fn blur_cancels_queued_selection_and_completes_newest_request_without_replaying_
     active.select("right", 5, 3).unwrap();
     active.input.focus_loss();
     active.controller.presence(false, 2, 4).unwrap();
-    active.poll(&mut state, 5).unwrap();
+    active.poll(&mut state, true, 5).unwrap();
     assert_eq!(active.request, 5);
     assert!(state.input_target_rejected);
     assert!(matches!(
@@ -248,7 +248,7 @@ fn refused_newer_navigation_does_not_retire_accepted_input_correlation() {
         .unwrap();
     active.select("right", 4, 2).unwrap();
     active.select("right", 5, 3).unwrap();
-    active.poll(&mut state, 4).unwrap();
+    active.poll(&mut state, true, 4).unwrap();
     assert_eq!(active.request, 5);
     assert_eq!(active.input_epoch, 3);
     assert!(!active.input.waiting());
@@ -271,7 +271,7 @@ fn refused_newer_navigation_does_not_retire_accepted_input_correlation() {
     assert_eq!(input_count, 2);
     let deadline = Instant::now() + Duration::from_secs(3);
     while active.input.busy() {
-        active.poll(&mut state, 6).unwrap();
+        active.poll(&mut state, true, 6).unwrap();
         assert!(
             Instant::now() < deadline,
             "accepted input ACKs did not drain"
@@ -309,7 +309,7 @@ fn catalog_repaint_does_not_cancel_pending_editor_read() {
         )
         .unwrap();
     active.presentation.invalidate_overlay();
-    active.poll(&mut state, 2).unwrap();
+    active.poll(&mut state, true, 2).unwrap();
     assert!(
         active.editor_notice.is_none(),
         "catalog repaint cancelled a current editor read"
@@ -353,7 +353,7 @@ fn editor_result_waits_for_repaint_and_still_rejects_focus_loss() {
         if blurred {
             active.controller.presence(false, 2, 2).unwrap();
         }
-        active.poll(&mut state, 3).unwrap();
+        active.poll(&mut state, true, 3).unwrap();
         assert_eq!(active.editor_notice.is_some(), blurred);
         assert_eq!(
             state.status == "Open folder requires verified local daemon discovery",

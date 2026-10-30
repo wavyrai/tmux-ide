@@ -112,9 +112,11 @@ remains open.
 
 Home, the workspace agent list, and matching pane headers use the TUI's status
 vocabulary: Working (animated marker), Needs input, Done, Failed, Idle, and
-Unknown/Unavailable. Animation is presentation-only: one shared clock updates
-visible working markers without polling the daemon. Native reduced-motion
-preference wiring remains pending; the indicator supports a static rendering.
+Unknown/Unavailable. Animation is presentation-only: one small overlay view
+redraws the working markers every 80 ms without polling the daemon or repainting
+the terminal, and it stops while the window is hidden or minimised. While the
+window is inactive or a picker or menu is open, a working marker shows a still
+spinner frame. Native reduced-motion preference wiring remains pending.
 
 Panes are separate rounded cards with 34-pixel headers, 10-pixel content padding and 10-pixel gutters. Each header shares its terminal background; Close sits at the far right. Painting, pointer input, selection, links, IME placement and divider dragging use the same card coordinate map. Chrome is deducted from the terminal fit before resizing, rather than covering terminal cells. Expand/restore and Close have direct labeled icon buttons; Close always asks for confirmation. Narrow headers keep these actions in **⋯**, alongside Rename and Split right/down.
 Opening another pane's menu first selects that exact pane and waits for its
@@ -605,11 +607,12 @@ to an explicitly assembled app; a headless green result does not qualify packagi
 
 `.github/workflows/gpui-preview.yml` defines an independent preview lane: Linux
 bridge checks and isolated startup/replacement/session journeys using supported
-system tmux, plus macOS Rust formatting, file-size checks, both Clippy and test
-feature configurations, the dedicated release executable build and its isolated
-CLI integration tests. Run those release checks from `upstream/` with
-`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui` and
-`cargo test --locked --release -p tmux-ide-gpui --test tmux_cli`. The lane does
+system tmux, plus macOS Rust formatting, file-size checks, both Clippy feature
+configurations, one `--all-features` test run (which includes the isolated CLI
+integration tests) and the dedicated release executable build. It runs only when
+a pull request or push changes a path in the workflow's `paths:` list. Run the
+release build from `upstream/` with
+`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui`. The lane does
 not publish artifacts, sign, install, or operate production sessions. Physical UI,
 bundled runtime, display-scale and release/install/update qualification remain
 separate required evidence. A local check does not establish a hosted CI pass.
