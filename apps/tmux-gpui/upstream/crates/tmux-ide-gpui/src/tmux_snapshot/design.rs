@@ -216,6 +216,49 @@ pub(crate) fn badge_text(theme: &Theme) -> u32 {
     crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
 }
 
+/// A dialog's secondary text (`popover::dialog_body`'s role), inked on the
+/// dialog card's opaque `surface_dialog`.
+pub(crate) fn dialog_muted(theme: &Theme) -> Hsla {
+    let card = palette(theme).surface_dialog;
+    let pack = u32::from(Rgba::from(Hsla { a: 1.0, ..card })) >> 8;
+    rgb(crate::contrast::ink_on_chrome(theme.muted, [pack; 3], 4.6)).into()
+}
+
+/// The text colours painted in the last draw, by probe key. Tests only.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct InkProbes(pub std::collections::BTreeMap<String, Hsla>);
+#[cfg(test)]
+impl Global for InkProbes {}
+
+/// In tests, a zero-size child that records the text colour its parent
+/// paints with, under `key`, so a test can check the colour text is
+/// actually drawn in rather than the value a helper returns. Nothing in a
+/// build that isn't a test.
+pub(crate) fn ink_probe(key: impl Fn() -> String + 'static) -> Option<AnyElement> {
+    #[cfg(test)]
+    {
+        Some(
+            canvas(
+                |_, _, _| (),
+                move |_, (), window, cx| {
+                    if cx.has_global::<InkProbes>() {
+                        let color = window.text_style().color;
+                        cx.global_mut::<InkProbes>().0.insert(key(), color);
+                    }
+                },
+            )
+            .size_0()
+            .into_any_element(),
+        )
+    }
+    #[cfg(not(test))]
+    {
+        let _ = key;
+        None
+    }
+}
+
 /// The overlay every modal dialog sits in: Bezel's scrim over the whole
 /// shell body, the card centred, occluding and swallowing presses and wheel
 /// events so nothing under it reacts. One recipe instead of four
@@ -350,7 +393,7 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge_text, chrome_text, palette, popover_ink, prepare, row_ink};
+    use super::{badge_text, chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, TestAppContext, black, rgb, white};
 
@@ -621,6 +664,14 @@ mod tests {
             let bezel = palette(&theme);
             let ink = popover_ink(&theme);
             assert_eq!(ink.plate.a, 1.0, "{name}: the palette plate is opaque");
+            let card = Hsla {
+                a: 1.0,
+                ..bezel.surface_dialog
+            };
+            let ratio = bezel_theme::contrast_ratio(dialog_muted(&theme), card);
+            if ratio < 4.5 {
+                failures.push(format!("{name}: dialog body on its card is {ratio:.2}:1"));
+            }
             for (plate, plate_name) in [
                 (ink.plate, "plate"),
                 (

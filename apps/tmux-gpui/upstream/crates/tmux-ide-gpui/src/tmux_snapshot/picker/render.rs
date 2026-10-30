@@ -100,6 +100,9 @@ impl SnapshotView {
             return div().into_any_element();
         };
         let theme = self.theme();
+        // Once per draw: every row, heading and hint below reads these.
+        let bezel = super::super::design::palette(&theme);
+        let ink = super::super::design::popover_ink(&theme);
         let mut panel = div()
             .id("tmux-picker")
             .size_full()
@@ -123,13 +126,11 @@ impl SnapshotView {
                         self.terminal_font.config.family, self.terminal_font.config.size
                     )))
                     .child(
-                        div()
-                            .text_color(super::super::design::popover_ink(&theme).muted)
-                            .child(
-                                self.terminal_font
-                                    .note
-                                    .unwrap_or("Automatic installed symbol fallbacks"),
-                            ),
+                        div().text_color(ink.muted).child(
+                            self.terminal_font
+                                .note
+                                .unwrap_or("Automatic installed symbol fallbacks"),
+                        ),
                     )
             })
             .when(picker.mode.is_reference(), |panel| {
@@ -137,7 +138,8 @@ impl SnapshotView {
             })
             .when(picker.mode == Mode::Commands, |panel| {
                 panel.child(section_heading(
-                    &theme,
+                    &bezel,
+                    ink,
                     if picker.pane_scope.is_some() {
                         "Pane actions"
                     } else {
@@ -153,7 +155,12 @@ impl SnapshotView {
                 |panel| panel.child(div().px_2().py_1().child(self.palette_status())),
             )
             .when(picker.mode == Mode::Navigation, |panel| {
-                panel.child(section_heading(&theme, "Sessions and panes", Some("F6")))
+                panel.child(section_heading(
+                    &bezel,
+                    ink,
+                    "Sessions and panes",
+                    Some("F6"),
+                ))
             })
             .when(picker.mode == Mode::Attention, |panel| {
                 panel.child(self.attention_heading())
@@ -192,11 +199,9 @@ impl SnapshotView {
                 }
                 && current(&self.browser_state, &target);
             if picker.mode == Mode::Theme {
-                list = list.child(theme_style::row(self, index, row, enabled, cx));
+                list = list.child(theme_style::row(self, index, row, enabled, ink, cx));
                 continue;
             }
-            let bezel = super::super::design::palette(&theme);
-            let ink = super::super::design::popover_ink(&theme);
             let hint = match &target {
                 Target::Command(Action::Home) => Some("F1"),
                 Target::Command(Action::Terminals) => Some("F2"),
@@ -261,6 +266,7 @@ impl SnapshotView {
                             ))
                     })
                     .child(div().flex_1().min_w_0().when(!picker.mode.is_reference(), |label| label.truncate()).child(label.to_owned()))
+                    .children(super::super::design::ink_probe(move || format!("palette-row-{index}")))
                     .children(hint.map(|hint| keycap(&bezel, ink, hint)))
                     .when(enabled, |row| {
                         row.on_click(cx.listener(move |view, _, window, cx| {
@@ -270,7 +276,6 @@ impl SnapshotView {
             );
         }
         panel = panel.child(list).when(picker.mode == Mode::Theme, |panel| {
-            let bezel = super::super::design::palette(&theme);
             panel.child(
                 div()
                     .debug_selector(|| "picker-key-hints".into())
@@ -279,7 +284,7 @@ impl SnapshotView {
                     .gap(px(14.))
                     .children(
                         [("↑↓", "Browse"), ("↩", "Apply"), ("esc", "Close")]
-                            .map(|(cap, label)| key_hint(&bezel, &theme, cap, label)),
+                            .map(|(cap, label)| key_hint(&bezel, ink, cap, label)),
                     ),
             )
         });
@@ -290,18 +295,20 @@ impl SnapshotView {
 /// A palette section heading: Bezel's menu heading, with the mode's key as a
 /// keycap rather than glued into the text.
 fn section_heading(
-    theme: &crate::config::Theme,
+    bezel: &bezel_theme::Theme,
+    ink: super::super::design::PopoverInk,
     label: &'static str,
     key: Option<&'static str>,
 ) -> Div {
-    let bezel = super::super::design::palette(theme);
-    let ink = super::super::design::popover_ink(theme);
-    bezel_ui::popover::menu_heading(&bezel, label)
+    bezel_ui::popover::menu_heading(bezel, label)
         .text_color(ink.muted)
+        .children(super::super::design::ink_probe(move || {
+            format!("palette-heading-{label}")
+        }))
         .flex()
         .items_center()
         .justify_between()
-        .children(key.map(|key| keycap(&bezel, ink, key)))
+        .children(key.map(|key| keycap(bezel, ink, key)))
 }
 
 /// Bezel's keycap, inked on the palette plate.
@@ -310,18 +317,21 @@ fn keycap(
     ink: super::super::design::PopoverInk,
     key: &'static str,
 ) -> Div {
-    super::super::kbd::badge(bezel, key).text_color(ink.muted)
+    super::super::kbd::badge(bezel, key)
+        .text_color(ink.muted)
+        .children(super::super::design::ink_probe(move || {
+            format!("palette-keycap-{key}")
+        }))
 }
 
 /// Bezel's `key_hint_text` (a keycap and its label), with both inked on the
 /// palette plate; Bezel paints the label at 45% of muted.
 fn key_hint(
     bezel: &bezel_theme::Theme,
-    theme: &crate::config::Theme,
+    ink: super::super::design::PopoverInk,
     cap: &'static str,
     label: &'static str,
 ) -> Div {
-    let ink = super::super::design::popover_ink(theme);
     div()
         .flex()
         .flex_row()
@@ -333,5 +343,12 @@ fn key_hint(
                 .text_color(ink.muted)
                 .child(cap),
         )
-        .child(div().text_color(ink.muted).child(label))
+        .child(
+            div()
+                .text_color(ink.muted)
+                .child(label)
+                .children(super::super::design::ink_probe(move || {
+                    format!("palette-legend-{label}")
+                })),
+        )
 }

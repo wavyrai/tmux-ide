@@ -62,6 +62,7 @@ pub(super) fn row(
     index: usize,
     row: &Row,
     enabled: bool,
+    ink: super::super::design::PopoverInk,
     cx: &mut Context<SnapshotView>,
 ) -> AnyElement {
     let theme = view.theme();
@@ -81,10 +82,7 @@ pub(super) fn row(
         .flex()
         .items_center()
         .gap_2()
-        .text_color({
-            let ink = super::super::design::popover_ink(&theme);
-            if enabled { ink.text } else { ink.muted }
-        })
+        .text_color(if enabled { ink.text } else { ink.muted })
         .when(enabled, |item| {
             item.cursor_pointer()
                 .hover(move |style| style.bg(bezel.element_hover))

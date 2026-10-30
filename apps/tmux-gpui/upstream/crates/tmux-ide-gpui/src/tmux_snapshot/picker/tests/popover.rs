@@ -183,3 +183,29 @@ fn palette_paints_bezels_selected_row_and_lighter_scrim(cx: &mut TestAppContext)
         at(overlay)
     );
 }
+
+#[gpui::test]
+fn palette_paints_its_text_in_the_popover_ink(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::design::{InkProbes, palette, popover_ink};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let theme = view.read_with(cx, |view, _| view.theme());
+    let ink = popover_ink(&theme);
+    assert_ne!(
+        ink.muted,
+        palette(&theme).text_muted,
+        "the ink must differ from Bezel's"
+    );
+    cx.update(|_, cx| {
+        let probes = &cx.global::<InkProbes>().0;
+        assert_eq!(probes.get("palette-heading-Commands"), Some(&ink.muted));
+        assert_eq!(probes.get("palette-keycap-F5"), Some(&ink.muted));
+        assert_eq!(probes.get("palette-row-0"), Some(&ink.text));
+    });
+}
