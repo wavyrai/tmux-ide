@@ -167,3 +167,126 @@ fn a_rejection_clears_after_a_while_or_on_the_next_click() {
     assert!(local.state.browser_marks.is_empty());
     assert!(writing(&local) == Some((BrowserAction::Back, 7, false)));
 }
+fn rejected(local: &Local) -> bool {
+    matches!(
+        local.state.browser_marks.get("pane-a"),
+        Some(Mark::Rejected(_))
+    )
+}
+#[test]
+fn a_click_during_the_retried_write_is_reported_not_lost() {
+    let mut local = fixture();
+    local
+        .state
+        .browser_controls
+        .insert("pane-a".into(), observed(7));
+    in_flight(
+        &mut local,
+        Some(BrowserCommand::new(&observed(7), BrowserAction::Back, None)),
+    );
+    reply(&mut local, failed());
+    reply(&mut local, read(observed(8)));
+    assert!(writing(&local) == Some((BrowserAction::Back, 8, true)));
+    // The fresh read made the toolbar live again, so the user clicks once more.
+    let reload = BrowserCommand::new(&observed(8), BrowserAction::Reload, None);
+    local
+        .browser_controls(1, "pane-a".into(), Some(reload))
+        .unwrap();
+    assert!(
+        rejected(&local),
+        "a click during the retried write was dropped"
+    );
+    assert!(local.browser_controls.queued.is_none());
+    assert!(writing(&local) == Some((BrowserAction::Back, 8, true)));
+    reply(&mut local, read(observed(9)));
+    assert!(writing(&local).is_none());
+    assert!(local.browser_controls.pending.is_none());
+}
+#[test]
+fn a_click_during_the_retry_read_is_reported_not_lost() {
+    let mut local = fixture();
+    local
+        .state
+        .browser_controls
+        .insert("pane-a".into(), observed(7));
+    in_flight(
+        &mut local,
+        Some(BrowserCommand::new(&observed(7), BrowserAction::Back, None)),
+    );
+    reply(&mut local, failed());
+    assert!(local.browser_controls.retry.is_some());
+    // The view's pending mark has expired while the retry read is in flight.
+    let reload = BrowserCommand::new(&observed(7), BrowserAction::Reload, None);
+    local
+        .browser_controls(1, "pane-a".into(), Some(reload))
+        .unwrap();
+    assert!(
+        rejected(&local),
+        "a click during the retry read was dropped"
+    );
+    assert!(local.browser_controls.queued.is_none());
+    reply(&mut local, read(observed(8)));
+    assert!(writing(&local) == Some((BrowserAction::Back, 8, true)));
+    assert!(local.browser_controls.queued.is_none());
+}
+#[test]
+fn a_failed_click_with_no_newer_revision_is_reported_not_resent() {
+    let mut local = fixture();
+    local
+        .state
+        .browser_controls
+        .insert("pane-a".into(), observed(7));
+    in_flight(
+        &mut local,
+        Some(BrowserCommand::new(&observed(7), BrowserAction::Back, None)),
+    );
+    reply(&mut local, failed());
+    // The revision didn't move, so the failure wasn't a stale revision.
+    reply(&mut local, read(observed(7)));
+    assert!(writing(&local).is_none());
+    assert!(local.browser_controls.pending.is_none());
+    assert!(rejected(&local));
+}
+#[test]
+fn controls_survive_three_failed_reads_and_go_on_the_fourth() {
+    // About 3 s of failed reads at the 750 ms poll.
+    let mut local = fixture();
+    local
+        .state
+        .browser_controls
+        .insert("pane-a".into(), observed(7));
+    for _ in 0..3 {
+        in_flight(&mut local, None);
+        reply(&mut local, failed());
+    }
+    assert!(local.state.browser_controls.get("pane-a") == Some(&observed(7)));
+    in_flight(&mut local, None);
+    reply(&mut local, failed());
+    assert!(local.state.browser_controls.is_empty());
+}
+#[test]
+fn a_failed_retry_read_is_reported_then_shows_stale_again() {
+    let mut local = fixture();
+    local
+        .state
+        .browser_controls
+        .insert("pane-a".into(), observed(7));
+    in_flight(
+        &mut local,
+        Some(BrowserCommand::new(&observed(7), BrowserAction::Back, None)),
+    );
+    reply(&mut local, failed());
+    reply(&mut local, failed());
+    assert!(writing(&local).is_none());
+    assert!(
+        rejected(&local),
+        "a click lost to a failed read was not reported"
+    );
+    assert!(local.state.browser_controls.get("pane-a") == Some(&observed(7)));
+    local.browser_controls.rejected.insert(
+        "pane-a".into(),
+        Instant::now().checked_sub(REJECTED_FOR).unwrap(),
+    );
+    local.browser_controls_tick().unwrap();
+    assert!(local.state.browser_marks.get("pane-a") == Some(&Mark::Stale));
+}

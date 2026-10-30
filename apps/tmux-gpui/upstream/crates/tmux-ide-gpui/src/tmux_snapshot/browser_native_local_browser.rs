@@ -98,22 +98,28 @@ impl Local {
                     .reads
                     .push_back((request, pane.clone()));
             }
+            let Some(write) = write else {
+                return Ok(());
+            };
             // A read may be in flight when a user clicks. Keep one captured intent,
-            // then revalidate it against the reply before dispatching it once.
+            // then revalidate it against the reply before dispatching it once. A click
+            // during a write or its retry, or behind a held one, is reported instead.
             if self.browser_controls.writing.is_none()
+                && self.browser_controls.retry.is_none()
                 && self.browser_controls.queued.is_none()
-                && let Some(write) = write
             {
                 self.browser_controls.queued =
                     Some((route.id.clone(), request, pane, write.command));
+                return Ok(());
             }
-            return Ok(());
+            return self.reject_browser(&pane);
         }
-        if write.is_some()
-            && self.browser_controls.rejected.remove(&pane).is_some()
-            && matches!(self.state.browser_marks.get(&pane), Some(Mark::Rejected(_)))
-        {
-            self.state.browser_marks.remove(&pane);
+        if write.is_some() && self.browser_controls.rejected.remove(&pane).is_some() {
+            clear_rejection(
+                &mut self.state.browser_marks,
+                &self.browser_controls.failures,
+                &pane,
+            );
         }
         if self.browser_controls.worker.is_none() {
             self.browser_controls.worker = Some(CatalogWorker::spawn_source(
@@ -166,9 +172,11 @@ impl Local {
             .collect();
         for pane in &expired {
             self.browser_controls.rejected.remove(pane);
-            if matches!(self.state.browser_marks.get(pane), Some(Mark::Rejected(_))) {
-                self.state.browser_marks.remove(pane);
-            }
+            clear_rejection(
+                &mut self.state.browser_marks,
+                &self.browser_controls.failures,
+                pane,
+            );
         }
         if !expired.is_empty() {
             self.publish()?;
@@ -255,6 +263,9 @@ impl Local {
                 .and_then(|fresh| rebase(&write.command, &write.basis, &fresh))
             {
                 Some(command) => {
+                    if let Some((_, _, queued_pane, _)) = &queued {
+                        self.reject_browser(queued_pane)?;
+                    }
                     let write = Write {
                         command,
                         retried: true,
@@ -262,10 +273,8 @@ impl Local {
                     };
                     return self.dispatch_browser(request, pane, Some(write));
                 }
-                None if self.state.browser_marks.get(&pane) != Some(&Mark::Stale) => {
-                    self.reject_browser(&pane)?;
-                }
-                None => {}
+                // Also when the fresh read failed: the click did not happen.
+                None => self.reject_browser(&pane)?,
             }
         }
         if let Some((queued_id, queued_request, queued_pane, command)) = queued
@@ -315,6 +324,21 @@ impl Local {
         self.browser_controls.previous.remove(pane);
         self.browser_controls.failures.remove(pane);
         self.browser_controls.rejected.remove(pane);
+    }
+}
+/// Ends a shown rejection; controls kept through failed reads are stale again.
+fn clear_rejection(
+    marks: &mut BTreeMap<String, Mark>,
+    failures: &BTreeMap<String, u8>,
+    pane: &str,
+) {
+    if !matches!(marks.get(pane), Some(Mark::Rejected(_))) {
+        return;
+    }
+    if failures.contains_key(pane) {
+        marks.insert(pane.into(), Mark::Stale);
+    } else {
+        marks.remove(pane);
     }
 }
 #[cfg(test)]
