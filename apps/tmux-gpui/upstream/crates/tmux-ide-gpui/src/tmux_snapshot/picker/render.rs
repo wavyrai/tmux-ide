@@ -22,7 +22,7 @@ impl SnapshotView {
             )
         })?;
         let theme = self.theme();
-        super::super::design::prepare(&theme, self.glass.is_active(), cx);
+        super::super::design::prepare(&theme, self.chrome.allowed(), cx);
         let viewport = window.viewport_size();
         let pane_scope = self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some());
         // Pane rows are single-line. Budget heading/search/padding separately,

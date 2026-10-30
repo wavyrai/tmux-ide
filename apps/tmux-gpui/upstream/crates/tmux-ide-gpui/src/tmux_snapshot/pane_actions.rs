@@ -408,7 +408,7 @@ impl SnapshotView {
     ) -> Option<AnyElement> {
         let menu = self.pane_actions.as_ref()?;
         let theme = self.theme();
-        super::design::prepare(&theme, self.glass.is_active(), cx);
+        super::design::prepare(&theme, self.chrome.allowed(), cx);
         if menu.input.is_none() {
             let items = menu.items();
             let bezel = bezel_theme::Theme::of(cx).clone();

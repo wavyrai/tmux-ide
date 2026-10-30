@@ -6,8 +6,9 @@ Source: https://github.com/crabtalk/bezel (reference checkout 5a46a86).
 
 Theme/color math, menu cards, menu rows, ghost controls and floating glass surfaces
 are reused from the upstream crates. Native terminal rendering and daemon input
-admission remain owned by tmux-ide. Accessibility disables lens effects when the
-native glass owner reports the opaque fallback.
+admission remain owned by tmux-ide. The window chrome is Bezel's: its frame, title
+bar band and behind-window blur. Reduce Transparency and Increase Contrast turn the
+material and lens effects off.
 
 License scope: bezel-ui, bezel-theme, bezel-motion and bezel-icons are MIT.
 The bezel-gpui renderer/platform family and its Bezel Zed support crates are
