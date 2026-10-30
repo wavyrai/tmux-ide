@@ -9,9 +9,6 @@ are reused from the upstream crates. Native terminal rendering and daemon input
 admission remain owned by tmux-ide. Accessibility disables lens effects when the
 native glass owner reports the opaque fallback.
 
-gpui-wry 0.6.6 is vendored with the GPUI provider changed and rectangular clip
-masks given explicit default corners. See upstream/crates/gpui-wry/NOTICE.md.
-
 License scope: bezel-ui, bezel-theme, bezel-motion and bezel-icons are MIT.
 The bezel-gpui renderer/platform family and its Bezel Zed support crates are
 Apache-2.0, retaining Zed Industries' notices. Their complete license texts and

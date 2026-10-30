@@ -1,6 +1,5 @@
 mod links;
 mod selection;
-pub(crate) mod splits;
 pub(crate) use links::logical_web_link;
 pub(crate) use selection::MAX_SELECTION_BYTES;
 

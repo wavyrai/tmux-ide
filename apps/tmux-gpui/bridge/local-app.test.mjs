@@ -65,8 +65,6 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
   for (const [name, source] of Object.entries({
     "HERDR-PROTOCOL-LICENSE": "crates/herdr-protocol/LICENSE-APACHE",
     "HERDR-PROTOCOL-NOTICE": "crates/herdr-protocol/NOTICE.md",
-    "HERDR-SOUND-NOTICE": "crates/tmux-ide-gpui/SOUND-NOTICE.md",
-    "HERDR-GITHUB-NOTICE": "crates/tmux-ide-gpui/GITHUB-NOTICE.md",
     "OCTICONS-LICENSE": "assets/icons/LICENSE-octicons",
   })) {
     assert.deepEqual(await readFile(join(resources, name)), await readFile(join(upstream, source)));

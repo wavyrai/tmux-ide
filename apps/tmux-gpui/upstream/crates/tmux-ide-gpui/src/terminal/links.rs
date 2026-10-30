@@ -4,8 +4,6 @@
 use super::{HIDDEN, selection::shown};
 use std::ops::Range;
 
-mod path;
-
 pub(super) const MAX_ROW_BYTES: usize = 32768;
 
 fn web_url(value: &str) -> Option<String> {

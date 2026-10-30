@@ -141,6 +141,7 @@ archives; `updater/release.rs` authenticates original bytes before parsing, then
 checks release identity, bounded downloads and hashes; `updater/install/archive.rs`
 checks archive paths, duplicates, entry types and expanded size. The release
 workflow signs/notarizes before packaging and verifies uploaded draft artifacts.
+(Mac app cleanup, 30 Oct: #655 removed the updater modules and that workflow.)
 
 Adapt the patterns; do not enable its product updater. Its repository endpoint,
 key, Herdr.app naming, calendar versions and bundle identity are not tmux-ide's.
