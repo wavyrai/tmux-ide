@@ -5,20 +5,16 @@ use crate::tmux_snapshot::{SnapshotView, controls};
 
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn sidebar_footer(&self, cx: &mut Context<Self>) -> AnyElement {
-        use bezel_ui::surface::Surfaced as _;
+        use bezel_ui::{surface::Surfaced as _, widgets::Buttons as _};
         let theme = self.theme();
         let bezel = bezel_theme::Theme::of(cx).clone();
         let request = self.browser_request;
         // A floating glass cluster at the foot of the frosted sidebar (#666).
-        let cluster = div()
+        let cluster = bezel
+            .control_group()
             .debug_selector(|| "tmux-sidebar-footer".into())
             .flex_none()
-            .flex()
-            .items_center()
-            .gap_1()
-            .m(px(8.))
-            .p(px(4.))
-            .rounded(px(bezel_theme::Theme::surface_radius()))
+            .m(px(bezel_theme::Theme::SPACE))
             .child(
                 self.sidebar_focus_control(
                     controls::button(
