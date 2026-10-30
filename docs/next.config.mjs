@@ -44,6 +44,16 @@ const config = {
     const canonicalLink = (path) => [
       { key: "Link", value: `<${siteUrl}${path}>; rel="canonical"` },
     ];
+    // RFC 8288 Link header on the homepage: where agents find the machine-readable files.
+    const discoveryLinks = [
+      `<${siteUrl}/llms.txt>; rel="describedby"; type="text/plain"; title="llms.txt"`,
+      `<${siteUrl}/agents.md>; rel="describedby"; type="text/markdown"; title="Manual for AI agents"`,
+      `<${siteUrl}/.well-known/ard.json>; rel="ard"; type="application/json"`,
+      `<${siteUrl}/.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"`,
+      `<${siteUrl}/sitemap.xml>; rel="sitemap"; type="application/xml"`,
+      // The homepage's markdown twin, for agents that look for an alternate.
+      '</index.md>; rel="alternate"; type="text/markdown"',
+    ];
     const negotiatedVary = [
       {
         key: "Vary",
@@ -53,6 +63,8 @@ const config = {
     ];
     return [
       { source: "/:path*", headers: securityHeaders },
+      // One Link entry for "/": Next keeps only the last header entry per key.
+      { source: "/", headers: [{ key: "Link", value: discoveryLinks.join(", ") }] },
       { source: "/docs/:path+.mdx", headers: canonicalLink("/docs/:path+") },
       { source: "/docs/:path+.md", headers: canonicalLink("/docs/:path+") },
       { source: "/docs.mdx", headers: canonicalLink("/docs") },
@@ -61,11 +73,6 @@ const config = {
       // is repeated so the value is complete whichever header a host keeps.
       { source: "/", headers: negotiatedVary },
       { source: "/docs/:path*", headers: negotiatedVary },
-      // The homepage's markdown twin, for agents that look for an alternate.
-      {
-        source: "/",
-        headers: [{ key: "Link", value: '</index.md>; rel="alternate"; type="text/markdown"' }],
-      },
     ];
   },
   async redirects() {

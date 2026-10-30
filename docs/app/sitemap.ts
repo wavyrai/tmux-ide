@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
-import { docLastModified, homeLastModified } from "@/lib/git-dates";
+import { AGENTS_PAGE } from "@/components/agents-page/content";
+import { docLastModified, homeLastModified, routeLastModified } from "@/lib/git-dates";
 import { source } from "@/lib/source";
 import { absoluteUrl } from "@/lib/site";
 
@@ -19,6 +20,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
       url: absoluteUrl("/"),
       lastModified: homeLastModified(),
     },
+    {
+      url: absoluteUrl(AGENTS_PAGE.path),
+      lastModified: routeLastModified(AGENTS_PAGE.path),
+    },
+    ...["/about", "/contact", "/privacy", "/themes"].map((path) => ({
+      url: absoluteUrl(path),
+      lastModified: routeLastModified(path),
+    })),
     ...docs,
   ];
 
