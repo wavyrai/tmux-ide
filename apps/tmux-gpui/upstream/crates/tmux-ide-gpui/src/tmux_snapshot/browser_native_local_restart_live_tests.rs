@@ -69,7 +69,7 @@ fn statuses(seen: &[(Duration, State)]) -> Vec<String> {
     out
 }
 #[test]
-#[ignore = "requires a scratch daemon the harness stops for about 5 s"]
+#[ignore = "requires a scratch daemon the harness stops for about 7 s"]
 fn session_reconnects_on_its_own_after_a_short_daemon_outage() {
     let record = std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap();
     let (bridge, owner) = start(record.into(), Default::default()).unwrap();
@@ -86,6 +86,8 @@ fn session_reconnects_on_its_own_after_a_short_daemon_outage() {
         last.frame.is_some() && last.input_ready,
         "no reconnect: {trail:?}"
     );
+    assert_eq!(last.selected_session, live.selected_session, "{trail:?}");
+    assert_eq!(last.selected_pane, live.selected_pane, "{trail:?}");
     assert!(
         seen.iter().any(|(_, s)| s.status == RECONNECTING),
         "{trail:?}"

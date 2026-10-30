@@ -1086,8 +1086,18 @@ These entries require an existing compatible daemon; they do not install or star
 one. SSH uses noninteractive OpenSSH authentication and existing host trust.
 The SSH entry shares one owned forward between independent foreground and layout
 HTTP lanes and verifies the peer on each terminal socket before redemption.
-Interrupted terminals now use bounded automatic rediscovery and reopen only the
-same server generation and session, preserving the preferred pane. Recovery
+Interrupted terminals now use bounded automatic rediscovery, preserving the
+preferred pane. Recovery reopens the same server generation and session, or,
+after a local daemon restart, the session with the identical live session id
+on the same tmux server, when the catalog came from the same private daemon
+record. A restart gives the daemon a new generation, but the live session id
+hashes the tmux server pid, the session id and its creation time, so an
+identical id is the same tmux session incarnation. SSH recovery and any other
+mismatch fall back to "select a session". While the daemon is unreachable
+(connection refused, or its record missing), recovery retries with backoff
+from 250 ms doubling to a 4 s cap, for up to 30 s, under "Connection lost.
+Reconnecting…", then shows "Couldn't reconnect. Refresh sessions to try
+again.". Identity failures and a too-old daemon stop at once. Recovery
 defers while backgrounded; navigation cancels it, and mutations are never
 automatically replayed. Saved-profile selection and return-to-Local retain a separate local registry
 worker. The local entry provides that worker automatically; the SSH entry
