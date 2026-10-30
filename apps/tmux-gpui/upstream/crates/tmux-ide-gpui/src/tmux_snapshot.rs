@@ -232,7 +232,10 @@ fn show_owned(
 ) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
-    let application = gpui_platform::application().with_assets(crate::icons::Icons);
+    // `gpui_platform::application()` also builds a reqwest client for remote
+    // images; this window paints only local ones, so it starts without one.
+    let application = Application::with_platform(gpui_platform::current_platform(false))
+        .with_assets(crate::icons::Icons);
     application.run(move |cx| {
         let closing = Rc::new(std::cell::Cell::new(false));
         let quit_owner = owner.clone();
@@ -411,7 +414,7 @@ fn show_owned(
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
-                        terminal_font: Default::default(),
+                        terminal_font: terminal_font::Settings::pending(),
                         window_reveal: Default::default(),
                         resize_gesture: Default::default(),
                         last_resize: None,
@@ -430,7 +433,7 @@ fn show_owned(
                         browser_state: home::initial_state(),
                         browser_commands: browser.map(|b| b.commands),
                     };
-                    view.discover_terminal_fonts(cx);
+                    view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
                     view

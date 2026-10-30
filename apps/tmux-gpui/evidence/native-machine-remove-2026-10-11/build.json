@@ -1,6 +1,0 @@
-{
-  "binary": "apps/tmux-gpui/upstream/target/debug/tmux-ide-gpui",
-  "sha256": "cd218dd5e8d3ad0fd72bdc189996a4801a67e71dbd5d973eaf575d1a81565a8c",
-  "profile": "debug",
-  "launched": false
-}

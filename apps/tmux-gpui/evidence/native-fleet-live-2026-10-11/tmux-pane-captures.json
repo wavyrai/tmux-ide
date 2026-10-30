@@ -1,4 +1,0 @@
-{
-  "e2e-gpui-fleet-live-v2-9536-0": "sh-3.2$",
-  "e2e-gpui-fleet-live-v2-9536-1": "sh-3.2$ printf 'GPUI_FLEET_INPUT_OK\\n'\nGPUI_FLEET_INPUT_OK\nsh-3.2$"
-}

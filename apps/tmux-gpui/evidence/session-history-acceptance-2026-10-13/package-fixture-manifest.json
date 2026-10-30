@@ -1,7 +1,0 @@
-{
-  "head": "010834bd20c7c354e559b239a39a1b1710ee87ab",
-  "files": {
-    "apps/tmux-gpui/bridge/session-history-smoke.mjs": "48847dee13dd108d223418e894b1006e219242a651a967f9f9c1e69e7de6ee50",
-    "apps/tmux-gpui/bridge/session-history-package.test.mjs": "28261c549b29d23cbeb7311d403cf241f3ba294f8b59a101fe01aee8c7531fef"
-  }
-}

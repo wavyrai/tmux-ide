@@ -38,7 +38,13 @@ impl SnapshotView {
                     .as_ref()
                     .map(|selection| selection.frame.clone())
                     .or_else(|| state.frame.clone());
+                let pending = self
+                    .browser_state
+                    .browser_pending
+                    .take()
+                    .and_then(|p| p.carried(&state));
                 self.browser_state = state;
+                self.browser_state.browser_pending = pending;
                 if self.browser_state.input_target_rejected {
                     self.interrupt_input(cx);
                 }
@@ -51,6 +57,7 @@ impl SnapshotView {
             }
             None => {
                 self.cancel_pending_input(cx);
+                self.browser_state.browser_pending = None;
                 self.session_tabs.selections = Default::default();
                 self.workspace_fleet_agents.pending = None;
                 self.session_history.pending = None;

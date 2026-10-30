@@ -1,3 +1,0 @@
-2026-10-18T12:25:00.237536+00:00
-cua.getState(): apps=[]; native apps unavailable because Mac is locked; automatic unlock unsuccessful.
-No native pointer interaction or physical GUI acceptance performed.

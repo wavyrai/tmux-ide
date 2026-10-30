@@ -1,5 +1,0 @@
-{
-  "apps/tmux-gpui/bridge/live.ts": "d9a1f12f4bb7a285bab1968e57c5e800bb9e213d4641b194fc8a37be24e8f246",
-  "apps/tmux-gpui/bridge/selected-window-surfaces.ts": "6e9be81bd63c593e65fde10523946b873d7fcea3a62caa3ffc2eafcdf8f3fed8",
-  "apps/tmux-gpui/bridge/selected-window-surfaces.test.ts": "28346f1d52311e0c2461a853bccd0afb1a38c8de7839beddc2a6722db9d7b0f6"
-}

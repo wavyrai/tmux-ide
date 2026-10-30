@@ -1,1 +1,0 @@
-apps/tmux-gpui/bridge/browser.ts(374,12): error TS2339: Property 'dispose' does not exist on type 'never'.

@@ -1,9 +1,0 @@
-
- RUN  v4.1.6 /Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide
-
-
- Test Files  2 passed (2)
-      Tests  18 passed (18)
-   Start at  15:33:14
-   Duration  1.06s (transform 1.16s, setup 0ms, import 1.76s, tests 53ms, environment 0ms)
-

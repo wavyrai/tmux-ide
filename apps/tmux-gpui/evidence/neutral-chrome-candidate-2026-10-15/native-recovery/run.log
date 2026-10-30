@@ -1,7 +1,0 @@
-Packaged app ready: select session/pane, type echo BEFORE_REPLACEMENT and Return; keep the window open
-tmux-preview: native chrome glass true
-TMUX_GPUI_DIAGNOSTIC {"code":"transport-closed","closeCode":1001}
-Owned daemon stopped. Verify blank/unavailable native state, then create the recovery signal.
-New daemon ready. Refresh sessions, select the fresh pane, type echo AFTER_REPLACEMENT and Return.
-Same app recovered input after daemon replacement; close with Cmd-Q
-{"passed":true,"daemonReplaced":true,"sameAppRecovered":true,"packagedRuntime":true,"isolatedCwd":true,"minimalPath":true,"sourceSurvivesClose":true}

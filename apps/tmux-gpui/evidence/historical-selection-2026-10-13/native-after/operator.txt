@@ -1,1 +1,0 @@
-Activated QA app with normal Cmd-Tab after initial inactive state. Scrolled 2 pages to history offset35. Dragged from x449 y583 to x701 y663; native highlight appeared over exact target; pressed CmdC. Raised same owned TextEdit sentinel document, CmdA CmdV. AX Value captured without trimming or normalization. clipboard.txt is the exact observed paste.
