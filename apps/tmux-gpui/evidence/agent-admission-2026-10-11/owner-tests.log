@@ -1,8 +1,0 @@
-
- RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide
-
-
- Test Files  2 passed (2)
-      Tests  16 passed (16)
-   Start at  16:17:36
-   Duration  433ms (transform 448ms, setup 0ms, import 717ms, tests 6ms, environment 0ms)

@@ -1,5 +1,0 @@
-NATIVE_PIPE_READY /tmp/gpui-copy-qualified-retry-20261010
-SELECT_COPY_PANE: select the only session and pane; do not type into it
-WAIT_NATIVE_VIEWPORT: waiting for native resize and matching canonical/tmux geometry
-COPY_READY: screenshot; set known sentinel clipboard; press Cmd-Shift-C with terminal focused and no selection; parent reads clipboard only after that action and atomically writes /tmp/gpui-copy-qualified-retry-20261010/clipboard.txt
-{"passed":true,"packagedBrowser":true,"externalNative":true,"unicodeSoftWrap":true,"hardNewline":true,"independentTmuxJoined":true,"exactClipboard":true}

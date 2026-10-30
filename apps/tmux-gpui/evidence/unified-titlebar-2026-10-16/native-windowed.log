@@ -1,7 +1,0 @@
-{"event":"fixture-owned","root":"/tmp/tmi-e2e-unified-titlebar-JT8z5B","socketPath":"/tmp/tmi-e2e-unified-titlebar-JT8z5B/t.sock","session":"e2e-unified-titlebar-89936-0","left":"%0","right":"%2","daemonPid":89969}
-{"event":"app-owned","pid":89989,"appPath":"/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/unified-titlebar-20261016/Tmux IDE Unified Tabs QA.app"}
-Packaged panes ready: open session/window, click LEFT terminal when ready, verify selected title/rail and type echo GPUI_LEFT_OK then Return.
-tmux-preview: native chrome glass true
-Left verified: click RIGHT terminal when ready, verify selected title changes and separator stays clear of content, type echo GPUI_RIGHT_OK then Return.
-Both pane targets verified. Open second session using titlebar +, type echo UNIFIED_SECOND_OK, test Home and retained tabs, close a session tab, then Cmd-Q.
-{"passed":true,"distinctPaneTargets":true,"secondSessionInput":true,"visualAppearance":"requires separate screenshots","packagedRuntime":true,"isolatedCwd":true,"privateCli":true,"minimalPath":true,"sourceSurvivesClose":true}

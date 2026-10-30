@@ -1,7 +1,0 @@
-{
-  "original": "/Users/thijs/.codex/worktrees/gpui-main-release/tmux-ide/.tasks/native-reliability-mission/nr01-current-payload/bridge/browser.bundle.mjs",
-  "originalSha256": "85984f3a07871576191978ed5b889fdaa56a4186c9bd06fb3fb2c7cf51a757b9",
-  "instrumentedSha256": "f88ed3cd3238e977de26889f9904917a68fb6a499dc4ac2e097402de120c1ed5",
-  "liveOriginalSha256": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0",
-  "liveCopiedSha256": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0"
-}

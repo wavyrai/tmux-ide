@@ -41,11 +41,11 @@ fi
 
 # The tmux-ide qualification tests include these sibling data files at compile
 # time. Copy only fixture inputs, not the outer application's runtime or caches.
-mkdir -p "$cache/fixtures" "$cache/bridge" "$cache/evidence/home-fleet-2026-10-15"
+mkdir -p "$cache/fixtures" "$cache/bridge"
 if [[ -d "$root/../fixtures" ]]; then
     rsync -a --delete "$root/../fixtures/" "$cache/fixtures/"
 fi
-for fixture in bridge/binary-vectors.json evidence/home-fleet-2026-10-15/fleet.json; do
+for fixture in bridge/binary-vectors.json; do
     if [[ -f "$root/../$fixture" ]]; then
         cp "$root/../$fixture" "$cache/$fixture"
     fi
@@ -112,7 +112,7 @@ if [[ -n $platform ]]; then
     run+=(--platform "$platform")
 fi
 run+=(-v "$cache/tree":/tree:ro -v "$cache/vendor":/vendor:ro -v "$cache/fixtures":/fixtures:ro
-    -v "$cache/bridge":/bridge:ro -v "$cache/evidence":/evidence:ro -v "$cache":/cache ubuntu:24.04 bash /cache/run.sh)
+    -v "$cache/bridge":/bridge:ro -v "$cache":/cache ubuntu:24.04 bash /cache/run.sh)
 
 printf 'Linting for Linux%s. Cache: %s\n' "${platform:+ ($platform)}" "$cache"
 status=0

@@ -1,7 +1,0 @@
-{
-  "binarySHA256": "0e5e0a81b43509a30d0e04a99c56bb7b846a81bd3b69be94aee68f2669192ad2",
-  "app": "/tmp/Tmux IDE Home Filter Verified QA.app",
-  "purpose": "Private debug native QA; not release packaging qualification",
-  "baseCommit": "800ce0f3",
-  "source": "native-source.sha256 and bridge-source.json"
-}
