@@ -192,7 +192,9 @@ jobs:
           node scripts/build-cli.mjs --outfile "$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
           export PATH="$RUNNER_TEMP/gpui-tmux-bundle:$PATH"
           export TMUX_GPUI_TEST_CLI="$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
-          export TMUX_GPUI_TEST_APP="$RUNNER_TEMP/gpui-package-check/Tmux IDE CI.app"
+          # These journeys drive the legacy helper bridge, which only the --node development
+          # app carries; check-packaged-app.sh covers the Node-free default app.
+          export TMUX_GPUI_TEST_APP="$RUNNER_TEMP/gpui-package-check/Tmux IDE CI Development.app"
           node --import tsx apps/tmux-gpui/bridge/fleet-server-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/fleet-server.log"
           node --import tsx apps/tmux-gpui/bridge/home-machine-filter-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/home-machine-filter.log"
           node --import tsx apps/tmux-gpui/bridge/new-window-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/new-window.log"
@@ -211,3 +213,4 @@ jobs:
             ${{ runner.temp }}/gpui-package-check/*.log
             ${{ runner.temp }}/gpui-package-check/native-build.json
             ${{ runner.temp }}/gpui-package-check/Tmux IDE CI.app/Contents/Resources/development-manifest.json
+            ${{ runner.temp }}/gpui-package-check/Tmux IDE CI Development.app/Contents/Resources/development-manifest.json

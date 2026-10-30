@@ -130,6 +130,27 @@ fn shipped_app_without_node_names_the_dev_only_helper_route_once() {
 
 #[test]
 #[cfg(unix)]
+fn a_bundled_node_passes_the_guard_even_when_its_bridge_and_host_are_missing() {
+    // The guard checks the Node path only. A regular file there reaches the spawn,
+    // which fails on its own terms; the script and host must not trigger the message.
+    let dir = tempfile::tempdir().unwrap();
+    let node = dir.path().join("node");
+    std::fs::write(&node, b"not executable").unwrap();
+    let missing = dir.path().join("missing");
+    let out = cli(&[
+        "--tmux-browser-helper",
+        node.to_str().unwrap(),
+        missing.to_str().unwrap(),
+        missing.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!stderr.is_empty());
+    assert!(!stderr.contains("legacy helper route"), "{stderr}");
+}
+
+#[test]
+#[cfg(unix)]
 fn invalid_native_ssh_input_exits_without_gui_or_discovery() {
     for args in [
         vec!["--tmux-native-ssh", "-bad"],

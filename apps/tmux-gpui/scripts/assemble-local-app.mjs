@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { verifyNativeBuildReceipt } from "./native-build-receipt.mjs";
 import { readBundleMetadata, bundlePlist } from "./app-bundle-metadata.mjs";
-import { copyBrowserPayload } from "./browser-payload.mjs";
+import { copyBrowserPayload, assertCurrentBrowserLauncher } from "./browser-payload.mjs";
 const run = promisify(execFile);
 const flags = process.argv.slice(5);
 const options = new Map();
@@ -25,12 +25,11 @@ if (process.platform !== "darwin" || process.argv.length < 5)
   throw new Error(
     "macOS only: assemble-local-app.mjs NATIVE_BINARY BUILD_RECEIPT.json NEW_APP.app [--metadata METADATA.json] [--node NODE24_BINARY --node-license NODE_LICENSE] [--browser-payload PREPARED_DIRECTORY]",
   );
-// The default bundle has no Node: the native app never starts it. --node opts a
-// development bundle into the legacy helper routes and the Node-run browser payload.
+// The default bundle has no Node: the native app never starts it, and the browser
+// payload runs on its engine's Node mode. --node opts a development bundle into the
+// legacy helper routes.
 if (options.has("--node") !== options.has("--node-license"))
   throw new Error("--node and --node-license must be given together");
-if (options.has("--browser-payload") && !options.has("--node"))
-  throw new Error("The browser payload runs on the bundled Node: add --node and --node-license");
 const node = options.get("--node"),
   nodeLicense = options.get("--node-license");
 const [native, receipt, output] = process.argv.slice(2, 5).map((p) => resolve(p));
@@ -38,6 +37,11 @@ if (!output.endsWith(".app")) throw new Error("Output must be a new .app directo
 const metadata = options.has("--metadata")
   ? await readBundleMetadata(options.get("--metadata"))
   : undefined;
+// Before any supplied binary runs; copyBrowserPayload later pins every file's digest.
+if (options.has("--browser-payload"))
+  assertCurrentBrowserLauncher(
+    await readFile(join(resolve(options.get("--browser-payload")), "terminal-browser"), "utf8"),
+  );
 const project = fileURLToPath(new URL("../", import.meta.url));
 // Verify source/binary consistency before executing either supplied binary.
 await verifyNativeBuildReceipt(receipt, native, join(project, "upstream"));

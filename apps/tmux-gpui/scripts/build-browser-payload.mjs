@@ -2,6 +2,7 @@
 // Development assembly. Signing, complete notices and live qualification remain release gates.
 import { createRequire } from "node:module";
 import { bridgeNotices } from "./bridge-notices.mjs";
+import { TERMINAL_BROWSER_LAUNCHER } from "./browser-payload.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, copyFile, writeFile, readFile, readdir, lstat, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -154,8 +155,7 @@ try {
     await copyFile(join(scripts, name), join(output, name));
   await copyFile(join(engine, "browser-runtime.tar.gz"), join(output, "browser-runtime.tar.gz"));
   await writeFile(join(output, "runtime.json"), JSON.stringify(metadata, null, 2) + "\n");
-  const launcher = `#!/bin/sh\nset -eu\nunset NODE_OPTIONS NODE_PATH ELECTRON_RUN_AS_NODE\nroot=$(CDPATH= cd -P -- "$(/usr/bin/dirname -- "$0")" && pwd -P)\nexec "$root/../node" "$root/browser-launch.mjs" "$@"\n`;
-  await writeFile(join(output, "terminal-browser"), launcher, { mode: 0o755 });
+  await writeFile(join(output, "terminal-browser"), TERMINAL_BROWSER_LAUNCHER, { mode: 0o755 });
   await writeFile(
     join(output, "bin/terminal-browser"),
     '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -P -- "$(/usr/bin/dirname -- "$0")/.." && pwd -P)\nexec "$root/terminal-browser" "$@"\n',

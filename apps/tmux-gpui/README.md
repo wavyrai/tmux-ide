@@ -554,8 +554,9 @@ node apps/tmux-gpui/scripts/assemble-local-app.mjs \
 ```
 
 Add `--node /absolute/path/node --node-license /absolute/path/node-LICENSE` (Node 24)
-to bundle Node, its license and the bridge for the legacy helper routes;
-`--browser-payload` requires them, because its launcher runs on the bundled Node.
+to bundle Node, its license and the bridge for the legacy helper routes.
+`--browser-payload` needs no Node: its launcher runs on the browser engine's own
+Node mode (`ELECTRON_RUN_AS_NODE=1`).
 The assembler rejects existing destinations, wrong architectures and non-system
 linked libraries. It includes the project/Herdr notices. Each assembly generates `RUST-THIRD-PARTY-NOTICES.txt` from the locked
 workspace and records its hash. Generation failure aborts assembly and removes

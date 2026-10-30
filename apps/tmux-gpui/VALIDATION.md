@@ -1422,3 +1422,12 @@ because cargo-about 0.9.2 was not installed; notice generation was not qualified
 The preview signer and the installer's app verifier now sign and verify `Resources/node`
 only when it is present; a present Node must still be a signed regular file. Neither
 was run against real Apple tools.
+
+The terminal browser payload no longer needs `Resources/node` (30 October): its
+launcher runs `browser-launch.mjs` on the browser engine in Node mode
+(`ELECTRON_RUN_AS_NODE=1`), so `--browser-payload` works without `--node`. With the
+28 October managed payload in an app layout with no Node, the launcher printed its
+version on first launch (about 5 s, unpacking a private engine copy) and from the
+installed cache (about 0.4 s). Started in a detached tmux pane, `terminal-browser open`
+ran on the cached engine and queried the terminal for graphics support; a detached
+pane cannot answer that query, so the page itself was not rendered there.
