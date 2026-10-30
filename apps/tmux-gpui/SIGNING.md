@@ -50,7 +50,8 @@ or Gatekeeper acceptance for a new candidate.
 
 ## Entitlements and signature boundaries
 
-Sign the bundled Node executable explicitly, separately from the native executable
+The default app bundles no Node; the steps below apply only to development apps
+assembled with `--node`. Sign a bundled Node executable explicitly, separately from the native executable
 and the outer app. `Resources/node` is outside the conventional nested-code locations;
 the installer verifies its Developer ID team explicitly. Do not use `codesign --deep`
 for signing or apply Herdr's audio-input entitlement to every executable.
@@ -98,7 +99,8 @@ unverified path. Failed attempts are not publishable artifacts.
 
 - Developer ID signing and notarization Accepted, stapler validation and Gatekeeper.
 - Explicit bundle/version/team/architecture/deployment checks on the final app.
-- Actual signed launcher, bundled Node and terminal operations on the supported Mac.
+- Actual signed launcher and terminal operations on the supported Mac (and the
+  bundled Node, for a development app that includes it).
 - Final archive extraction with unchanged signatures and byte-bound provenance.
 - Public endpoint, pinned checksums and release notes; an independently trusted
   manifest/key if adopting the experimental authenticated update flow.

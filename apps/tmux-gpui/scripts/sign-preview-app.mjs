@@ -124,8 +124,12 @@ export async function signPreviewApp(
       throw new Error("Trusted policy required");
     const entitlements = await boundedFile(options.nodeEntitlements, 64 * 1024);
     const before = await inventory(source);
-    for (const name of [native, node, ...historical])
+    for (const name of [native, ...historical])
       if (!before.some((r) => r[0] === name && r[2])) throw new Error("Missing assembly input");
+    // Default apps ship without Node; a bundled one must be a regular file and is signed.
+    const nodeEntry = before.find((r) => r[0] === node);
+    if (nodeEntry && !nodeEntry[2]) throw new Error("Missing assembly input");
+    const bundledNode = nodeEntry ? [node] : [];
     const hasBrowser = before.some(
       (r) => r[0] === "Contents/Resources/browser/terminal-browser" && r[2],
     );
@@ -133,7 +137,7 @@ export async function signPreviewApp(
     for (const name of browserCode)
       if (!before.some((r) => r[0] === name && r[2]))
         throw new Error("Missing browser assembly input");
-    const executables = [native, node, ...browserCode];
+    const executables = [native, ...bundledNode, ...browserCode];
     await mkdir(destination, { mode: 0o700 });
     output = destination;
     outputIdentity = await lstat(output);
@@ -204,12 +208,13 @@ export async function signPreviewApp(
     const signing = ["--force", "--sign", options.identity, "--options", "runtime", "--timestamp"];
     await run("/usr/bin/codesign", [...signing, join(app, native)]);
     stage = "sign-node";
-    await run("/usr/bin/codesign", [
-      ...signing,
-      "--entitlements",
-      entitlementPath,
-      join(app, node),
-    ]);
+    for (const path of bundledNode)
+      await run("/usr/bin/codesign", [
+        ...signing,
+        "--entitlements",
+        entitlementPath,
+        join(app, path),
+      ]);
     stage = "sign-browser";
     for (const path of browserCode) {
       await run("/usr/bin/codesign", [...signing, join(app, path)]);

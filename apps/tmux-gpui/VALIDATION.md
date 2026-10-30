@@ -1406,3 +1406,29 @@ A fresh isolated user demo is open with Side by side and Stacked windows; both f
 Native follow-up: the separately identified Navigation Trace QA app (unchanged native/Node/live bytes; metadata-only browser relay) opened the exact long-label session, automatically selected its pane with active presence revision 2, rendered frames and accepted `echo WINDOW_ONE_OK`, then tab selection plus `echo WINDOW_TWO_OK`. The fixture verified both exact source outputs and no crossed targets. Screenshot and redacted metadata trace are included. No narrow-size checkpoint was written: CUA drag gestures left the screenshot at 2002×1300 pixels. Operator closed QA normally; the fixture correctly exits1 with App closed before narrow observation and runs isolated cleanup. This is positive native stream/input/routing evidence, not full narrow-layout or source-survives-close qualification. The user's three demo controllers were untouched.
 
 Full bridge gate: 263 passed, 0 failed, 5 optional-app skips.
+
+## Node out of the default bundle — 29 October 2026
+
+The default app no longer bundles Node 24, its license or the Node-run bridge;
+`assemble-local-app.mjs --node NODE24 --node-license LICENSE` builds a development
+app that keeps them. On macOS ARM64 the default app measured 28 MB (`du -sh`)
+against 159 MB for the development app, which has the previous layout. Launched with
+no arguments, the default app's launcher started `tmux-ide-gpui --tmux-native-local`
+and opened its window with no `Resources/node` present. Its legacy private-host
+route exits 1 with one line naming the missing runtime and the development-only
+route. `check-packaged-app.sh` now checks both apps: 4 of 4 package tests on the
+default app, 10 passed and 1 skipped (the no-Node check) on the development app.
+That run replaced cargo-about notice generation with a stub in a scratch copy,
+because cargo-about 0.9.2 was not installed; notice generation was not qualified.
+The preview signer and the installer's app verifier now sign and verify `Resources/node`
+only when it is present; a present Node must still be a signed regular file. Neither
+was run against real Apple tools.
+
+The terminal browser payload no longer needs `Resources/node` (30 October): its
+launcher runs `browser-launch.mjs` on the browser engine in Node mode
+(`ELECTRON_RUN_AS_NODE=1`), so `--browser-payload` works without `--node`. With the
+28 October managed payload in an app layout with no Node, the launcher printed its
+version on first launch (about 5 s, unpacking a private engine copy) and from the
+installed cache (about 0.4 s). Started in a detached tmux pane, `terminal-browser open`
+ran on the cached engine and queried the terminal for graphics support; a detached
+pane cannot answer that query, so the page itself was not rendered there.

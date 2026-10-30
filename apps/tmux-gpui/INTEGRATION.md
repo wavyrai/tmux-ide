@@ -185,8 +185,8 @@ short version `0.0.0`, build `0`, and a distribution:false development manifest.
 An arbitrary archive version does not change that identity and will fail the
 installer's expectedVersion check. The optional `--metadata` assembly input now supplies explicit tmux-owned
 identity/version/build before signing. Before publishing, select the actual
-release policy, sign the native executable and bundled Node
-with the configured team, then sign/notarize the complete bundle. Never edit
+release policy, sign the native executable (and Node, only in a development
+app assembled with `--node`) with the configured team, then sign/notarize the complete bundle. Never edit
 bundle metadata after signing. Publisher Ed25519 key policy, HTTPS endpoint and
 successful signed install remain separate required inputs and checks.
 

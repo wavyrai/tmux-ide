@@ -592,6 +592,7 @@ fn rejection_reason(error: &Error) -> &'static str {
         Error::Arguments => "invalid snapshot arguments",
         Error::NativeCatalog(_) => "native catalog worker failed",
         Error::NativeOwner(_) => "native SSH owner shutdown failed",
+        Error::HelperRuntimeMissing(_) => "legacy helper runtime missing",
         #[cfg(unix)]
         Error::NativeFleet(_) => "native fleet ownership failed",
     }

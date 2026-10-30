@@ -247,8 +247,13 @@ now assembles a standalone development payload, including CLI/browser bundles,
 native binding, assets, JavaScript/Rust dependency notices, font license, engine
 archive and launcher.
 Assembly requires the exact pinned source and integration patch. Install that payload as
-`Contents/Resources/browser` beside the app's Node binary. The launcher resolves
-its own location, verifies/materializes the engine, and forwards arguments
+`Contents/Resources/browser`; the app needs no Node. The launcher resolves its own
+location and runs `browser-launch.mjs` on the engine itself in Node mode
+(`ELECTRON_RUN_AS_NODE=1`): the cached engine once `codesign` verifies it against
+the browser's requirement, or, on first launch, a private copy unpacked with
+`/usr/bin/tar` after the archive's SHA-256 matches `runtime.json` and the copy
+verifies. `browser-launch.mjs` then installs the cache through the bounded
+loader, and the private copy is removed on exit. Arguments are forwarded
 without shell interpolation. Its internal relaunch entrypoint uses the same
 loader. `assemble-local-app.mjs` accepts `--browser-payload PREPARED_DIRECTORY`
 to copy these resources into a new app; its assembly manifest records every

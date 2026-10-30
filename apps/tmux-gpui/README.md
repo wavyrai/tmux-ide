@@ -52,9 +52,11 @@ Do not run its installer, release scripts, or hook setup in this monorepo.
 Some upstream scripts resolve the Git root and must be adapted before use here.
 Nested `.github` workflows are source reference only; GitHub does not run them.
 
-The root GPUI CI workflow includes a macOS ARM64 packaging gate. It assembles an
-unsigned development app from the native build receipt and runs artifact checks
-plus source and exact-packaged daemon compatibility checks. To run that gate locally with the pinned Rust toolchain,
+The root GPUI CI workflow includes a macOS ARM64 packaging gate. From one native
+build receipt it assembles two unsigned apps: the default app, which ships without
+Node, and a development app with the supplied Node 24 runtime. It runs the artifact
+checks on both, and the source and exact-packaged daemon compatibility checks on the
+development app. To run that gate locally with the pinned Rust toolchain,
 packaging dependencies and cargo-about 0.9.2 available:
 
 ```bash
@@ -254,9 +256,11 @@ grid patches, history, and graphics. The normal app launch does not start Node.
 This source change does not update an installed release.
 
 Passing an explicit legacy private-host configuration to the packaged launcher
-still uses the Rust-owned Node metadata helper. That compatibility path and the
-development preview supervisor remain available; the Node runtime and broker are
-therefore still packaged. The normal path has no automatic helper fallback.
+uses the Rust-owned Node metadata helper. That compatibility path and the
+development preview supervisor are development-only: the default app does not
+bundle Node or the bridge, and there the legacy route exits with one message that
+names the missing runtime. Development apps assembled with `--node` keep the route.
+The normal path has no automatic helper fallback.
 Native startup, first-run setup and actual-window behavior still require final
 packaged qualification before release. See the research log for scoped evidence.
 
@@ -525,16 +529,15 @@ without `tsx`, `node_modules`, or a source checkout. Existing output directories
 are rejected. `bridge-manifest.json` records file sizes and SHA-256 hashes;
 these hashes are not a signature or runtime trust check.
 
-This is only the bridge payload. A distributable application must still include
-the qualified Node runtime, native executable, license notices, source provenance,
+This is only the bridge payload, for development apps assembled with `--node`. A
+distributable application must still include the native executable, license notices, source provenance,
 signing/notarization, and the install/update flow. No native release is produced
 by this command.
 
 ## Local macOS development app
 
 Build the ARM64 native executable with a local integrity receipt, then assemble it
-and an explicit Node 24 runtime into a
-new `.app` directory (macOS only). Python 3 and the workspace Rust toolchain
+into a new `.app` directory (macOS only). The default app has no Node runtime. Python 3 and the workspace Rust toolchain
 must be on PATH, with `cargo-about 0.9.2` installed (`cargo install cargo-about
 --version 0.9.2 --locked --features cli`). Notice generation may need network
 access to fetch dependency sources. The native wrapper builds offline; populate
@@ -545,14 +548,16 @@ if needed:
 node apps/tmux-gpui/scripts/build-native-release.mjs /absolute/path/native-build.json
 # Use the native executable path printed by the build command.
 node apps/tmux-gpui/scripts/assemble-local-app.mjs \
-  /absolute/path/tmux-ide-gpui /absolute/path/node \
-  /absolute/path/node-LICENSE /absolute/path/native-build.json \
+  /absolute/path/tmux-ide-gpui /absolute/path/native-build.json \
   '/absolute/path/Tmux IDE Development.app'
 ```
 
+Add `--node /absolute/path/node --node-license /absolute/path/node-LICENSE` (Node 24)
+to bundle Node, its license and the bridge for the legacy helper routes.
+`--browser-payload` needs no Node: its launcher runs on the browser engine's own
+Node mode (`ELECTRON_RUN_AS_NODE=1`).
 The assembler rejects existing destinations, wrong architectures and non-system
-linked libraries. It includes the bundled bridge, Node license and project/Herdr
-notices. Each assembly generates `RUST-THIRD-PARTY-NOTICES.txt` from the locked
+linked libraries. It includes the project/Herdr notices. Each assembly generates `RUST-THIRD-PARTY-NOTICES.txt` from the locked
 workspace and records its hash. Generation failure aborts assembly and removes
 only the newly created app. The report covers all features and the configured
 platform union, including build/dev dependencies; it is a conservative superset,
@@ -566,7 +571,8 @@ attestation. Compiler/dependency caches and the host SDK remain outside that
 claim. Set CARGO_HOME/RUSTUP_HOME explicitly when using a separate toolchain.
 The launcher discovers an already running local canonical daemon; it
 does not install or start one. Its optional argument is a private host JSON file.
-It clears inherited `NODE_OPTIONS` and `NODE_PATH` and uses bundled runtime paths.
+It clears inherited `NODE_OPTIONS` and `NODE_PATH` and uses bundled runtime paths;
+without a bundled Node the private-host form fails with the development-only message.
 
 The app produced by the command above is an unsigned development candidate, not
 the published alpha. Each new release candidate still requires signing, notarization,

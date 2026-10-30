@@ -248,3 +248,30 @@ test("optional authenticated release version is checked after signature validati
     assert.ok(!denied.calls.some((c) => c.args[1] === "CFBundleShortVersionString"));
   });
 });
+
+test("an app without bundled Node verifies; a bundled Node must still be a signed regular file", async () => {
+  await fixture(async (app) => {
+    const node = join(app, "Contents/Resources/node");
+    await rm(node);
+    const deps = commands();
+    assert.equal(await verifyMacApp(app, policy, deps), true);
+    const nested = deps.calls.filter(
+      (c) => c.tool.endsWith("codesign") && c.args[0] === "--verify" && c.args[1] === "--strict",
+    );
+    assert.deepEqual(
+      nested.map((c) => c.args.at(-1)),
+      [join(app, "Contents/MacOS/tmux-ide-gpui")],
+    );
+    assert.equal(deps.calls.length, 11);
+    await mkdir(node);
+    const directory = commands();
+    await assert.rejects(verifyMacApp(app, policy, directory), /regular staged app files/);
+    assert.equal(directory.calls.length, 0);
+    // Only a missing Node counts as absent; an unreadable Resources path still fails closed.
+    await rm(join(app, "Contents/Resources"), { recursive: true });
+    await writeFile(join(app, "Contents/Resources"), "not a directory");
+    const unreadable = commands();
+    await assert.rejects(verifyMacApp(app, policy, unreadable), { code: "ENOTDIR" });
+    assert.equal(unreadable.calls.length, 0);
+  });
+});

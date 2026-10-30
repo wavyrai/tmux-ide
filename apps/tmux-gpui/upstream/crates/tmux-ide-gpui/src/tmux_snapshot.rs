@@ -89,6 +89,12 @@ pub(crate) enum Error {
     TooLarge,
     #[error("invalid snapshot: {0}")]
     Invalid(&'static str),
+    #[error(
+        "the legacy helper route needs a Node.js runtime at {}, which this app does not bundle; \
+         it is available only in development bundles assembled with --node",
+        .0.display()
+    )]
+    HelperRuntimeMissing(PathBuf),
 }
 
 pub(crate) fn run(args: Vec<OsString>) -> Result<(), Error> {
@@ -200,6 +206,10 @@ pub(crate) fn browse_with_helper(
     host: &std::ffi::OsStr,
 ) -> Result<(), Error> {
     // Paths are supplied by the version-pinned app launcher, never terminal data.
+    // Shipped bundles omit Node, so the launcher's path names a missing file there.
+    if !std::path::Path::new(node).is_file() {
+        return Err(Error::HelperRuntimeMissing(node.into()));
+    }
     // Spawn before entering GPUI; the owner retires/reaps only this child off-thread.
     let herdr_client::tmux_broker_process::Broker {
         reader,
