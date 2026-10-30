@@ -923,6 +923,7 @@ impl SnapshotView {
             .flex_col()
             .text_color(rgb(theme.foreground))
             .on_key_down(cx.listener(Self::picker_key))
+            .map(|body| self.menu_actions(body, cx))
             .child(main)
             .children(
                 self.picker_popover(window, cx)
