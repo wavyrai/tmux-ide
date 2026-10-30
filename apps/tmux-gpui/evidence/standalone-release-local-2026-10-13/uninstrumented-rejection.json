@@ -1,8 +1,0 @@
-{
-  "ok": false,
-  "error": {
-    "code": "release",
-    "message": "Release installation failed. Inspect activation state; rollback is not implied.",
-    "activationState": "unknown"
-  }
-}

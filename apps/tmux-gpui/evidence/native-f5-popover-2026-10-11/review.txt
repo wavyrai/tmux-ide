@@ -1,1 +1,0 @@
-Independent reviewer approved final source diff. Actual outside down/redraw/up regressions cover sidebar and terminal without command/navigation/latch reset. Composition test distinguishes marked owner guards from OS unmarking. Physical narrow/IME remain unqualified. No remaining concrete blocker in scoped UI diff.

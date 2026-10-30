@@ -1,1 +1,0 @@
-Independent review approved by boundary_review. All six frozen hashes match. Reference rows match native routing and cannot dispatch terminal commands; IME guard precedes Escape/Enter, two-stage Escape preserved; bounded overlay extraction reviewed. Three focused tests passed. Full gates and physical UI pending.

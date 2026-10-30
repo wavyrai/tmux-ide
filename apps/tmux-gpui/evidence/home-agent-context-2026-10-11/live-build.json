@@ -1,5 +1,0 @@
-{
-  "cli": ".tasks/gpui-server-candidate/cli.mjs",
-  "sha256": "c14f93ff08703cec0d1898fa19023464db89631161ee9d5fd4420383f5ccad06",
-  "nativeUi": false
-}

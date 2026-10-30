@@ -1,8 +1,0 @@
-{"stage":"font-ready","expectedSettings":{"version":1,"family":"Menlo","size":15},"configPath":"/tmp/tmi-e2e-gpui-native-font-DToueT/home/.config/tmux-ide/gpui-fonts.json"}
-Open the sole session and wait for FONT_READY. Use F5 → Terminal font; select Menlo and adjust size to 15. Do not type into the terminal.
-tmux-preview: native sidebar glass true
-Settings saved with zero terminal input. Quit this owned app using Cmd-Q; the fixture will relaunch it.
-{"stage":"verify-restored-font","confirmationPath":"/private/tmp/gpui-native-trace-two-oct13/restored-confirmation.txt","confirmation":"c3193622-5c49-43cb-b8e4-1a5efafd38f0","expectedSettings":{"version":1,"family":"Menlo","size":15}}
-Reopen the sole session. Visually inspect the font picker/current size: Menlo, size 15. Only after confirming, write the exact confirmation token above to confirmationPath, then Cmd-Q. This confirmation is operator evidence, not an automated rendering measurement.
-tmux-preview: native sidebar glass true
-{"passed":true,"settings":{"version":1,"family":"Menlo","size":15},"operatorConfirmedRestoration":true,"terminalInputBytes":0,"sourceSurvivesClose":true,"producerPid":"27817","cleanup":true}

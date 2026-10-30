@@ -29,15 +29,15 @@ physical light/dark verification. F1 Home, F2 Terminals and F6 session search no
 owners, and the F5 list exposes Terminals and shortcut labels. Modified function
 keys remain available to the terminal. F5 now floats in a centered popover over the unchanged view; shared control sizing
 and theme treatments are consistent. F6 now shares this popover. Fleet-wide F7 is implemented and undergoing native
-qualification; full TUI action vocabulary remains unfinished. See `evidence/native-f5-popover-2026-10-11/`. Shared icon tabs and sidebar buttons landed in
-`2b83924c`; see `evidence/native-controls-2026-10-11/` and `evidence/native-f5-2026-10-11/`.
+qualification; full TUI action vocabulary remains unfinished. See [`evidence/native-f5-popover-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-f5-popover-2026-10-11). Shared icon tabs and sidebar buttons landed in
+`2b83924c`; see [`evidence/native-controls-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-controls-2026-10-11) and [`evidence/native-f5-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-f5-2026-10-11).
 
 - [ ] Match TUI information hierarchy: machine, session, window, pane and agent status.
 - [ ] Match Home search, machine filter, All/Working/Needs attention and jump-to-agent workflows.
       Native Home now filters loaded agents by name/session label and All/Working/Needs
       attention, preserving coverage, unavailable rows and identity/revision fences.
       Headless tests and physical light/dark checks are recorded in
-      `evidence/home-filters-2026-10-11/`. Broader team/project/machine search, machine
+      [`evidence/home-filters-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/home-filters-2026-10-11). Broader team/project/machine search, machine
       filters and remaining physical acceptance stay open. Home now supports `/`
       to focus search, `0` All, `w` Working, `a` toggle Attention, and Escape to
       clear/exit search. Modified keys, dialogs, search typing and marked IME
@@ -101,7 +101,7 @@ native callers must supply their manager. The default local GPUI browser now use
 that owner for foreground Home, with a globally bounded native roster and opaque
 machine/session/agent keys. Opening validates fresh semantic/native ownership and
 the captured route across asynchronous work. Private-host and Workspace rosters
-retain their previous paths. See `evidence/native-fleet-agents-2026-10-11/`;
+retain their previous paths. See [`evidence/native-fleet-agents-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-fleet-agents-2026-10-11);
 real cross-machine agent clicks and native physical acceptance remain open.
 Local/remote discovery can resolve an explicitly selected server ID and generation;
 private SSH host files now support that scope without reconnecting the transport.
@@ -133,7 +133,7 @@ actions through the existing canonical registry mutation path. The dialog uses
 authoritative pending/results rather than optimistic saved-state changes. Keyboard
 dispatch and stale/pending/unavailable guards have headless coverage. Physical
 macOS enable/disable now has native screenshots and separate-process persisted
-registry reads in `evidence/native-fleet-live-2026-10-11/`; restart restoration and
+registry reads in [`evidence/native-fleet-live-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-fleet-live-2026-10-11); restart restoration and
 real SSH acceptance remain unqualified. Native edit/remove controls and physical
 saved-picker/Add acceptance remain pending.
 Reuse SavedMachineSchema and scoped clients;
@@ -263,7 +263,7 @@ Native Home cards and F5 expose Retry for disconnected SSH machines via the shar
 connection manager. Per-route tokens reject removed/replaced targets; retry does
 not change saved settings or navigation. Queue failure stays visible in the
 command picker. Physical native interaction and real SSH recovery are still open;
-see `evidence/native-fleet-retry-2026-10-11/`.
+see [`evidence/native-fleet-retry-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-fleet-retry-2026-10-11).
 
 ## Disconnect a fleet machine
 
@@ -364,8 +364,8 @@ unchanged pane dimensions passed. F7 narrow/dark/OS-IME and remote acceptance
 remain open; this is not released parity. Discovered fleet agent admission was
 subsequently added in c8c1efca and physically qualified for Home/F7 with exact
 keyboard/paste delivery to duplicate-label second panes; see
-`evidence/native-agent-admission-2026-10-11/`. Original F7 evidence:
-`evidence/native-f7-attention-2026-10-11/`.
+[`evidence/native-agent-admission-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-agent-admission-2026-10-11). Original F7 evidence:
+[`evidence/native-f7-attention-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-f7-attention-2026-10-11).
 
 ### Next observer recovery slice
 
@@ -384,7 +384,7 @@ before truncation, recompute Home coverage, and leave global F7 scope unchanged.
 Native Retry observations and Load more sessions now use the shared observer,
 including r/m shortcuts fenced from search/IME/modal input. Physical local macOS
 Load more32→33 retained search and selection; shared F7 and unchanged tmux source
-are verified by the real-process fixture. Evidence: evidence/home-recovery-2026-10-11/.
+are verified by the real-process fixture. Evidence: [evidence/home-recovery-2026-10-11/](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/home-recovery-2026-10-11).
 Unavailable-source Retry, physical shortcuts, narrow/dark/IME and remote acceptance
 remain open. Prerequisite owner fixes fb008a99 and458143b6 remove polling starvation
 and legacy full-fleet discovery during semantic subscriptions. No full-parity or
@@ -400,7 +400,7 @@ roster revision, acknowledged foreground presence and modal guards remain enforc
 Machine removal resets All. Search/activity selection is retained.
 
 Independent review, bridge346/5optional skips, real private two-session smoke and
-full native gates passed; see `evidence/home-machine-filter-2026-10-11/`. Physical
+full native gates passed; see [`evidence/home-machine-filter-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/home-machine-filter-2026-10-11). Physical
 filter acceptance remains open because the user took over the isolated QA app.
 This supersedes earlier implementation-gap statements about machine filtering,
 without closing the broader Home/fleet acceptance checklist.
@@ -413,7 +413,7 @@ stale tokens and callbacks from a replaced picker cannot dispatch. Terminal inpu
 is not rearmed and the tested canvas stays unchanged. Independent review, focused
 202 native tests, both full workspace configurations, both Clippy configurations,
 format/size checks and debug build passed. Physical F5 pane-action QA remains open.
-See `evidence/native-f5-pane-actions-2026-10-11/`; this does not close the full
+See [`evidence/native-f5-pane-actions-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-f5-pane-actions-2026-10-11); this does not close the full
 F5 action-vocabulary or release acceptance checklist.
 
 ## Exact fleet-server navigation — 11 October checkpoint
@@ -428,8 +428,8 @@ The full private bridge workflow passed with two genuinely empty duplicate-label
 servers: select the second by identity, create exactly one session there, preserve
 the first empty server and source session identity/geometry/stamps. Failed-before
 and passing-after evidence, independent reviews and source hashes are in
-`evidence/fleet-server-navigation-2026-10-11/` and
-`evidence/empty-server-owner-2026-10-11/`. Bridge 354 passed/5 optional skips;
+[`evidence/fleet-server-navigation-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/fleet-server-navigation-2026-10-11) and
+[`evidence/empty-server-owner-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/empty-server-owner-2026-10-11). Bridge 354 passed/5 optional skips;
 native focused 207 and both full workspace configurations passed, as did both
 Clippy configurations and the debug build. Physical native server selection and
 creation, remote SSH and packaged acceptance remain open. This supersedes the
@@ -455,7 +455,7 @@ success; registry publication drives the result, and uncertain replies are never
 replayed. This adds a native management control over an existing API, not a port
 of a production TUI remove dialog. Saved-machine editing remains unimplemented.
 
-Evidence: `evidence/native-machine-remove-2026-10-11/`. Independent review approved;
+Evidence: [`evidence/native-machine-remove-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-machine-remove-2026-10-11). Independent review approved;
 211 focused native tests, full default/all-feature workspace suites, both Clippy
 configurations, format/size/debug build and bridge gate (356 pass/5 optional skips)
 passed. Actual isolated browser/canonical HTTP handler verifies registry removal;
@@ -480,7 +480,7 @@ headless coverage includes context-only queries over duplicate agent labels,
 stale F7 revision refusal, optional/invalid fields and 520px layout with maximum
 length Unicode context plus a real simulated Open click. Physical light/dark,
 OS input and remote checks remain distinct and open. See
-`evidence/home-agent-context-2026-10-11/` for exact final gates and source hashes.
+[`evidence/home-agent-context-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/home-agent-context-2026-10-11) for exact final gates and source hashes.
 This supersedes the preceding context/search implementation gap, without claiming
 full Home/fleet parity or release readiness.
 
@@ -491,7 +491,7 @@ compatibility checks. Maintained Home machine-filter/context and empty-server
 creation fixtures now support strict explicit packaged-app mode: bundled Node and
 browser, private scratch cwd, no source fallback. Source and exact-package paths
 both passed with unchanged source sessions. Evidence and exact artifact hashes:
-`evidence/packaged-fleet-home-2026-10-11/`. This narrows the packaging gap for those
+[`evidence/packaged-fleet-home-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/packaged-fleet-home-2026-10-11). This narrows the packaging gap for those
 bridge workflows only; no native UI, real remote SSH, signing or install/update
 acceptance is claimed. Saved-machine removal is still source-process qualified.
 
@@ -502,7 +502,7 @@ GPUI workflow, with fresh private CLI builds and retained failure logs. macOS
 builds the pinned patched tmux in a private directory. The exact journey step
 passed locally against existing qualified artifacts; a new hosted run is still
 required. This does not close native UI, remote SSH or release acceptance. See
-`evidence/packaged-fleet-ci-2026-10-11/`.
+[`evidence/packaged-fleet-ci-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/packaged-fleet-ci-2026-10-11).
 
 ## Saved-machine editing checkpoint — 11 October
 
@@ -517,7 +517,7 @@ isolation and hidden-list key isolation reuse native input ownership.
 Headless coverage includes real typing/Tab/Enter, 640×400 dialog bounds, rendered
 pending/confirmed states and stale/reopen/queue guards. An actual browser plus
 canonical HTTP handler verifies exact private-file editing, sibling/pin retention
-and duplicate refusal. See `evidence/native-machine-edit-2026-10-11/` for gate
+and duplicate refusal. See [`evidence/native-machine-edit-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-machine-edit-2026-10-11) for gate
 results and source hashes. Physical pointer/IME, real SSH and exact packaging of
 this newer native binary remain unqualified. The active user demo is unchanged.
 
@@ -528,7 +528,7 @@ artifact/compatibility and exact-bundled Edit/Remove checks. The packaging gate
 now runs those canonical HTTP/private-registry journeys automatically; explicit
 invalid packages fail before fixture allocation. This supersedes source-only
 Edit/Remove bridge qualification, but does not claim physical native form or real
-SSH acceptance. Evidence: `evidence/packaged-machine-edit-2026-10-11/`.
+SSH acceptance. Evidence: [`evidence/packaged-machine-edit-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/packaged-machine-edit-2026-10-11).
 
 ## New terminal window checkpoint — 11 October
 
@@ -544,7 +544,7 @@ packaged real-tmux journeys both prove one new window, input delivered to its
 exact pane, preserved source identities and duplicate/stale refusal. The fresh
 development app passed all seven packaging checks. CI now runs the creation
 journey on Linux source and macOS packaged bridges. Evidence:
-`evidence/new-window-2026-10-11/` and `evidence/controller-release-2026-10-11/`.
+[`evidence/new-window-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/new-window-2026-10-11) and [`evidence/controller-release-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/controller-release-2026-10-11).
 Physical pointer/F5/narrow-window acceptance remains open; the user's active
 demo is unchanged. Pane close confirmation and harness creation remain gaps.
 
@@ -562,7 +562,7 @@ nonlast window, with actual survivor input, preserved sibling identity and usabl
 input after last-pane refusal. New-window regression also passes. Native gates:
 220 focused, 2,900 default and 2,934 all-feature tests; both Clippy configurations,
 format, size and build passed. Bridge: 381 passed, five explicit skips. Packaging:
-seven passed. Evidence: `evidence/close-pane-2026-10-11/`.
+seven passed. Evidence: [`evidence/close-pane-2026-10-11/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/close-pane-2026-10-11).
 
 Physical confirmation/pointer/IME acceptance remains open. Existing user demos
 are unchanged. New agent, Help, Keyboard shortcuts and What's new remain missing
@@ -574,7 +574,7 @@ F5 now includes a searchable Keyboard shortcuts reference and Terminal font
 picker. Font family and size persist independently of Herdr settings. Native
 save/restart qualification passed for Menlo 15, with zero terminal input bytes
 and source-process survival; exact-package checks passed. See
-`evidence/terminal-font-2026-10-12/` and `evidence/shortcuts-native-2026-10-12/`.
+[`evidence/terminal-font-2026-10-12/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/terminal-font-2026-10-12) and [`evidence/shortcuts-native-2026-10-12/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/shortcuts-native-2026-10-12).
 This supersedes the earlier statement that Keyboard shortcuts is missing.
 Help, What's new, new-agent workflows, broader remote/native acceptance and
 release qualification remain separate gaps. An intermittent runtime-failure
@@ -594,7 +594,7 @@ The optimized macOS artifact passed a synthetic Home visual check for readable
 wrapping, final-paragraph keyboard reveal, search and Escape. No terminal input
 was emitted. Physical narrow-window, Workspace and OS-composition checks remain
 open; attempted edge drags did not change the QA window dimensions. Evidence:
-`evidence/help-reference-2026-10-13/`. This supersedes the missing-implementation
+[`evidence/help-reference-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/help-reference-2026-10-13). This supersedes the missing-implementation
 claim for Help/What's new, without closing complete F5 or release acceptance.
 
 The downloadable local unsigned alpha build 2026101302 predates this increment.
@@ -613,7 +613,7 @@ Bridge gate456pass/5optional skips; native default2945pass/10ignored and
 all-features2979pass/17ignored; formatting/file-size/bothClippy passed. Actual
 native star/collapse/expand clicks passed against a private authenticated resource
 and storage fixture, including exact writes and no input. See
-`evidence/fleet-preferences-2026-10-13/`. First launch remained inactive/Loading;
+[`evidence/fleet-preferences-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/fleet-preferences-2026-10-13). First launch remained inactive/Loading;
 identical second launch passed. That activation failure, physical narrow layout,
 and full canonical-daemon/TUI reload acceptance remain open. This is local branch
 work, not a published or distribution-qualified alpha.
@@ -633,7 +633,7 @@ context, searches agent project/harness/team metadata, and rejects callbacks fro
 a replaced popover. Reviewed commit `d02c27da` passed both workspace test modes and
 strict Clippy configurations. A private native fixture verified exact session and
 agent command dispatch through the visible F5 popover; see
-`evidence/f5-direct-navigation-2026-10-13/`. This was a synthetic routing check,
+[`evidence/f5-direct-navigation-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/f5-direct-navigation-2026-10-13). This was a synthetic routing check,
 not a live daemon/terminal admission test.
 
 Full fleet-wide agent search from Workspace remains open: its current roster is
@@ -656,7 +656,7 @@ Native: 2,960 default and 2,994 all-feature passes, both Clippy configurations,
 format and size checks. Real native F5 query replacement selected synthetic
 agent-299 beyond the initial cap, displayed the correlated destination, emitted
 no terminal input, and exited cleanly. Ten exact-package checks passed. See
-`evidence/f5-fleet-search-2026-10-13/`. This is observed-roster search, not proof
+[`evidence/f5-fleet-search-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/f5-fleet-search-2026-10-13). This is observed-roster search, not proof
 of unobserved-session discovery or live remote fleet admission.
 
 Remaining parity includes the full Workspace fleet tree and visited-session
@@ -682,7 +682,7 @@ search. Ten packaged tests passed, and all22 regular archive files match the
 assembled app. It requires an existing local daemon and is not signed, notarized
 or qualified on a clean Mac. Older alpha builds remain available. No publishing
 or production daemon changes occurred. See
-`evidence/workspace-fleet-sidebar-2026-10-13/`.
+[`evidence/workspace-fleet-sidebar-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/workspace-fleet-sidebar-2026-10-13).
 
 Remaining: cross-session Workspace agent tree, visited-session history, activation
 diagnosis, narrow/IME/remote qualification and signed install/update acceptance.
@@ -702,7 +702,7 @@ passed the physical synthetic rejection → Back → Forward journey. The source
 bridge with a real private canonical daemon passed the same navigation plus
 persisted visits and unchanged pane identities. Bridge: 494 passed, five optional
 skips. Ten exact-package checks and all 22 archived-file comparisons passed.
-Evidence: `evidence/session-history-acceptance-2026-10-13/`; package evidence
+Evidence: [`evidence/session-history-acceptance-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/session-history-acceptance-2026-10-13); package evidence
 commit `010834bd`. Unsigned local alpha `2026101310` includes these controls.
 
 This supersedes the missing history implementation statement above. Native GUI
@@ -748,7 +748,7 @@ and overlapping F5/F7 submissions. The keyboard reference now documents existing
 F8/Shift-F8 and sidebar collapse/favorite shortcuts. Broad native gates now pass: 2,983 default / 3,017 all-feature tests (10/17
 existing ignored), format, size and both strict Clippy configurations. Rendered
 acceptance and a new package are pending; alpha1310 does not contain this slice.
-See `evidence/workspace-fleet-agents-2026-10-13/` for the exact evidence and limits.
+See [`evidence/workspace-fleet-agents-2026-10-13/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/workspace-fleet-agents-2026-10-13) for the exact evidence and limits.
 Retained session tabs, combined native/remote validation, activation and signed
 clean-machine install/update acceptance remain open.
 

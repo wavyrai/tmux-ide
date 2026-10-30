@@ -1,9 +1,0 @@
-# NR08 missing remote CLI → owned repair → explicit Retry
-
-Run62797 exited0. Actual OpenSSH fixture executes public remote-daemon-info using private source CLI SHA d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5 (Node24.21.0, stocktmux3.8). The harness verifies private file ownership, reads/hashes only owned bin/tmux-ide, removes it and proves ENOENT. Authentication/trust remain valid. Actual saved Add publishes typed remote-cli-missing, no snapshot and inputReady=false. No synthetic handshake response was used (requests0).
-
-Repair exclusively recreates that missing owned executable with saved bytes (wx/0700), captures/verifies its private file ownership and checks restored SHA equals original. Explicit offered Retry reaches ready on the same single saved machine, clears diagnostic, discovers the exact same semantic pane and executes fresh input. A unique command attempted during denial is absent after fresh input succeeds. Cleanup completed via existing exact-child/process-identity/file-ownership fixture cleanup.
-
-Scope: real OpenSSH and actual explicit source CLI public discovery against mirrored independently verified private daemon record. This is not installed-package onboarding, public installer, personal SSH, native GUI or a remote installation performed by the app. The harness installs no runtime; it restores its own private fixture executable. No product files or shared SSH fixture changed; only ssh-onboarding-smoke.mjs gained this explicit case.
-
-Command from worktree: TMUX_GPUI_TEST_SSH_FAILURE=missing-cli TMUX_GPUI_TEST_PUBLIC_DISCOVERY=1 TMUX_GPUI_TEST_CLI="$PWD/.tasks/native-reliability-mission/nr07-guidance-runtime/cli.mjs" TMUX_GPUI_TEST_OUTPUT="$PWD/.tasks/native-reliability-mission/nr08/missing-cli-repair-current" PATH="$PWD/.tasks/tmux38-compat/tmux-3.8:$PATH" .tasks/tmux38-release-20261018/TmuxIDE.app/Contents/Resources/node --import tsx apps/tmux-gpui/bridge/ssh-onboarding-smoke.mjs

@@ -1,8 +1,0 @@
-{
-  "apps/tmux-gpui/bridge/browser.ts": "81cf9cb0fd09855a055a559c4a75b4f18eafe5ee5ebabd7bc97235db417c36a5",
-  "apps/tmux-gpui/bridge/live.ts": "5354c1b5f895920fb0d4119e67684cb0cfae11f23bb673a9a7da65d4200cdf45",
-  "apps/tmux-gpui/bridge/live-diagnostics.ts": "5f5688d05e92a2ceb9117764f42d0876d3e286def512563faa2c4baf2304cb10",
-  "apps/tmux-gpui/bridge/live-diagnostics.test.ts": "5faad29a68b207ce98cf9ee7ccb76474046cce8ff70853e826b4b1fc42b3ade2",
-  "apps/tmux-gpui/bridge/diagnostic-channel.ts": "557bc0d78f33e8ba64e57a4e067b27ab6e7b1de759343c8db68d363c81806add",
-  "apps/tmux-gpui/bridge/diagnostic-channel.test.ts": "dadd5e9a60e388b33fb56de983e7984cf5422e889c3dbc8a337f83bf37c03478"
-}

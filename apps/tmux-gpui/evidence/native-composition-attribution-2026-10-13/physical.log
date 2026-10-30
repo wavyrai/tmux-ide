@@ -1,9 +1,0 @@
-{"stage":"mark-a","nonce":"a4a7a6a8-9bcc-444a-95e1-983d32d57392","confirmationPath":"/private/tmp/gpui-composition-oct13/mark-a.confirm","paneA":"%0","paneB":"%1","instruction":"Open session, click LEFT pane A, Option+E only. Capture marked UI, then write nonce; no paste/Return."}
-tmux-preview: native sidebar glass true
-Now press E to commit é to pane A exactly once.
-{"stage":"commit-a","nonce":"9998f51e-0140-4d52-b1b2-fcd6a86f0345","confirmationPath":"/private/tmp/gpui-composition-oct13/commit-a.confirm","paneA":"%0","paneB":"%1","instruction":"Capture committed é evidence; confirm before starting the next marked input."}
-{"stage":"remark-a","nonce":"b2f67ad2-e691-4b65-838d-3cb359e3fd13","confirmationPath":"/private/tmp/gpui-composition-oct13/remark-a.confirm","paneA":"%0","paneB":"%1","instruction":"In A press Option+E only again; capture marked UI and confirm zero additional bytes."}
-Now click RIGHT pane B and type plain x only. Do not commit or paste in A.
-{"stage":"attribution-b","nonce":"fac21dd9-304c-42d4-86e9-30ced93a2d42","confirmationPath":"/private/tmp/gpui-composition-oct13/attribution-b.confirm","paneA":"%0","paneB":"%1","instruction":"Capture pane B x and cancelled/uncommitted A mark; confirm exact attribution, then Cmd-Q."}
-Close only this owned app with Cmd-Q.
-{"passed":true,"rawCompositionBytesVerified":true,"twoPaneAttributionVerified":true,"paneAHex":"c3a9","paneBHex":"78","osCompositionPathRequiresOperatorEvidence":true,"bracketPasteFlag":0,"exactBytes":2,"sha256":"4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c","sourceSurvivesClose":true,"producerPid":"30077","cleanup":true}

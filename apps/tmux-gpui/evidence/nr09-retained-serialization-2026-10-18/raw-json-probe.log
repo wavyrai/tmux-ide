@@ -1,4 +1,0 @@
-{"node":"v24.21.0"}
-{"input":"{\"a\":1}","error":"SyntaxError","message":"Unexpected token '{', \"{\"a\":1}\" is not valid JSON"}
-{"input":"[1]","error":"SyntaxError","message":"Unexpected token '[', \"[1]\" is not valid JSON"}
-{"input":"123","result":"{\"snapshot\":123}"}

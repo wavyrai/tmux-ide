@@ -1,9 +1,0 @@
-{
-  "sourceCommit": "c8c1efca",
-  "nativeSha256": "ded5346c89be6685c7b645bcd4d1d303f74c2073d6d52b5aae46a7918bfcfe85",
-  "instrumentationRemoved": true,
-  "productSourceDiff": [
-    "protected bin/cli.js only"
-  ],
-  "nativeUi": "local macOS, normal window, system light theme"
-}

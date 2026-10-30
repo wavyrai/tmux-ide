@@ -1,1 +1,0 @@
-Independent boundary_review approved current font source after discovery/appearance and divider height fixes. Shared config covers production paint/cursor/IME/header/selection/wheel/resize. Persistence, pre-ready isolation, nondefault height and cancel-only gestures covered by new tests. Actual async save/restart and physical family rendering/IME pending.

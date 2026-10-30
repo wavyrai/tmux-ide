@@ -122,16 +122,9 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   including a headless paint of a real-wire fixture at exact cell rectangles.
 - `native/tmux/tests/kitty-graphics.py` runs in the sanitized native suite
   (`scripts/test-tmux-interaction-native.mjs`).
-- `bridge/kitty-graphics-smoke.mjs`: owned daemon and scratch tmux.
+- `bridge/manual/kitty-graphics-smoke.mjs`: owned daemon and scratch tmux.
   - Placeholder and cursor placements resolve, and the exact bytes arrive once.
   - A reattaching helper that already holds the image receives no bytes, then
     re-pulls the image after `kitty-missing`.
   - Passes on stock and patched tmux 3.7c. For the patched build, set
     `TMUX_IDE_KITTY_SMOKE_TMUX=<dir>` so it also checks that the option is on.
-- `bridge/kitty-graphics-browser-smoke.mjs`: the product bridge path with a
-  two-pane window.
-  - Canvas offsets and ordered chunk lines are checked.
-  - `TMUX_GPUI_TEST_BINARY` pipes everything into a dev native binary, which
-    must accept every line.
-  - `TMUX_IDE_KITTY_SMOKE_SIZE=1920x1080` exercises multi-chunk transfer.
-- Reproduce the original probe with `scripts/kitty-spike/`.

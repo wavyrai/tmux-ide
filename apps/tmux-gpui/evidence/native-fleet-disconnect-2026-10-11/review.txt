@@ -1,5 +1,0 @@
-Independent boundary review: approved with no scoped blocker.
-Exact handle/epoch capabilities; selected route retirement uses the existing
-retireMachineRoute path; sibling handles and saved settings are preserved.
-Native stale-request/token and full-queue checks remain intact.
-Model-level tests do not qualify a real remote PTY or persisted byte equality.
