@@ -198,3 +198,17 @@ fn pipe_json_cannot_enable_native_surface_authority() {
         Err(Error::Json(_))
     ));
 }
+
+#[test]
+fn broker_json_cannot_supply_the_daemon_version() {
+    let mut value = envelope();
+    value["capability"]["daemonVersion"] = json!("2.9.15");
+    assert!(matches!(
+        Event::parse(value.to_string().as_bytes()),
+        Err(Error::Json(_))
+    ));
+    match Event::parse(envelope().to_string().as_bytes()) {
+        Ok(Event::Open { capability, .. }) => assert_eq!(capability.daemon_version, None),
+        _ => panic!("expected open"),
+    }
+}

@@ -46,10 +46,15 @@ pub(super) struct Stop {
 }
 impl Stop {
     pub(super) fn new(error: &NativeError, request: u64, version: Option<&str>) -> Option<Self> {
-        (code(error) == "stream-daemon-too-old").then(|| Self {
-            request,
-            status: daemon_too_old(version),
-        })
+        let status = match code(error) {
+            "stream-daemon-too-old" => daemon_too_old(version),
+            // A peer that fails identity is not the daemon we issued against.
+            "stream-identity" | "stream-remote-identity" => {
+                "Couldn't reconnect. Refresh sessions to try again.".into()
+            }
+            _ => return None,
+        };
+        Some(Self { request, status })
     }
     /// The catalog owner republishes its own status; keep the stop until a newer request.
     pub(super) fn apply(stop: &mut Option<Self>, state: &mut super::State) {
