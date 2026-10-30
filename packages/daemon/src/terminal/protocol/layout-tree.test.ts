@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parseLayout, parseLayoutTree, type LayoutTreeNode } from "./layout-parse.ts";
 
 // Exact real tmux strings retained from apps/tmux-gpui/evidence/
-// split-target-2026-10-10/gpui-split-target-no-descendant.log.
+// split-target-2026-10-10/gpui-split-target-no-descendant.log (removed from the
+// tree after a0cff52a; git history keeps it).
 const recorded = [
   "cd2f,160x80,0,0{80x80,0,0,1,39x80,81,0[39x40,81,0{19x40,81,0,2,19x40,101,0,5},39x39,81,41,4],39x80,121,0,3}",
   "b195,160x80,0,0{80x80,0,0,1,39x80,81,0[39x40,81,0{16x40,81,0,2,22x40,98,0,5},39x39,81,41,4],39x80,121,0,3}",

@@ -1,7 +1,0 @@
-# Current payload local Linux attempt — unsuccessful
-
-At873ef58e built current bridge payload and explicit private daemon CLI outfile; protected bin/cli.js was not built. Copied tracked current packages/scripts/bridge source over cached LinuxARM64 image to avoid stale harness imports; package.json and lockfile unchanged from cached4c45fa9f. Bundle manifest and exact CLI hash plus container command/inspection are in receipt.json. Node24.21.0, stocktmux3.8, network disabled, no host mounts,2CPUs/768MiB/256PIDs,90s timeout.
-
-Run72850 terminated124 after timeout. Browser lifecycle reported incomplete foreground recovery after resize burst. Docker recorded OOMKilled=true; cgroup memory.events reported max0/oom0/oom_kill1 and peak736825344 bytes. Entire Docker VM MemTotal was1010122752 bytes (~963MiB), shared with existing Supabase services. This establishes an OOM-affected unsuccessful runner, not a proven terminal regression or a passing qualification. Per-container limit was not recorded as hit. No memory/performance comparison is claimed.
-
-The exact owned container was inspected terminal and removed. Existing services/settings were untouched. Need a viable bounded runner or adequate VM capacity before requalifying current Linux payload. Native GUI/hosted x64/full package acceptance remain separate. Private source overlay/archive and bundles stay in .tasks/native-reliability-mission/nr01-current-payload; do not commit generated payloads.

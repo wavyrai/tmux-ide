@@ -1,6 +1,0 @@
-{
-  "apps/tmux-gpui/bridge/fleet-preferences.ts": "77589fe59815fdeb90d688fc58e0a5c5e9b8d814c72ed6fa4e594050c97aeb92",
-  "apps/tmux-gpui/bridge/fleet-preference-visits.test.ts": "9a2e74f388e897c412ecf0cb97991c7fad04ca121a4e350ae5dd809e74af0a05",
-  "apps/tmux-gpui/bridge/session-navigation-history.ts": "6874abecf15c2823eb383abeec9f03f7dd5a19d4f1604153c9042d157ee581d0",
-  "apps/tmux-gpui/bridge/session-navigation-history.test.ts": "c561a8a8838bc4dcc5a9d4d92b390984028d2967ceb4a54bc1822e6e8879a153"
-}

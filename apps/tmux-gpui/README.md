@@ -105,7 +105,7 @@ These preferences belong to the GPUI client; they do not change tmux, the TUI,
 Herdr, or another terminal application's settings. Ghostty configuration/theme
 import is not implemented. A private native save/restart test verified Menlo 15
 restoration with no terminal input leakage and surviving source processes; see
-`evidence/terminal-font-2026-10-12/`. Broader font/IME and geometry qualification
+[`evidence/terminal-font-2026-10-12/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/terminal-font-2026-10-12). Broader font/IME and geometry qualification
 remains open.
 
 ## Agent indicators and pane headers
@@ -196,10 +196,10 @@ canonical replica, not that the GPU has painted. This prototype has not been ben
 ## Isolated live smoke test
 
 ```sh
-node --import tsx apps/tmux-gpui/bridge/live-smoke.mjs
+node --import tsx apps/tmux-gpui/bridge/manual/live-smoke.mjs
 # Include the real native window after building it:
 TMUX_GPUI_TEST_BINARY="$PWD/apps/tmux-gpui/upstream/target/debug/tmux-ide-gpui" \
-  node --import tsx apps/tmux-gpui/bridge/live-smoke.mjs
+  node --import tsx apps/tmux-gpui/bridge/manual/live-smoke.mjs
 ```
 
 Use the repository's supported Node/Bun/tmux toolchain on PATH. The existing product
@@ -583,17 +583,14 @@ are required; input is never replayed, and a same-name replacement is never sele
 Navigation or explicit disconnect cancels pending recovery. Protocol/replica validation
 faults remain explicit failures. Exhaustion asks for refresh/reselection.
 
-`TMUX_GPUI_TEST_CLI=/absolute/path/to/isolated-cli.js node --import tsx apps/tmux-gpui/bridge/terminal-recovery-smoke.mjs`
-
-Set `TMUX_GPUI_TEST_SSH=1` on macOS to run the same recovery through a private real OpenSSH server. Set `TMUX_GPUI_TEST_BROWSER` to an absolute packaged `browser.bundle.mjs` path to qualify that helper. The fixture verifies the restored pane, retained tab and executed input; it does not connect to production SSH hosts.
-checks private daemon replacement with the same browser and pane, then verifies input.
-The fixture pins its private socket and selects only its exact generated session name.
-This headless proof does not replace native GUI or real remote SSH qualification.
+CI covers this recovery headlessly with `bridge/startup-recovery-smoke.mjs` and
+`bridge/discovery-recovery-smoke.mjs`. That does not replace native GUI or real
+remote SSH qualification.
 
 To repeat the physical daemon-replacement check, set `TMUX_GPUI_TEST_APP` to an
 explicit freshly assembled app and `TMUX_GPUI_RECOVERY_SIGNAL` to a new absolute
 signal-file path, then run
-`node --import tsx apps/tmux-gpui/bridge/native-recovery-smoke.mjs`
+`node --import tsx apps/tmux-gpui/bridge/manual/native-recovery-smoke.mjs`
 from the repository root with the
 fixture's supported tmux runtime on PATH. Follow its printed UI steps. Create the
 signal file only after observing the unavailable/blank terminal. The fixture owns
@@ -984,9 +981,9 @@ original pane remains selected; the new pane becomes selectable after verified
 daemon inventory and layout refresh. A background transition, changed selection,
 or uncertain result cancels the follow-up rather than replaying the split.
 Both split directions were physically qualified on the local macOS preview; see
-`evidence/native-pane-split-2026-10-10/`. Session pane counts refresh from canonical
+[`evidence/native-pane-split-2026-10-10/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-pane-split-2026-10-10). Session pane counts refresh from canonical
 metadata after splitting; the follow-up qualification is recorded in
-`evidence/split-session-count-2026-10-10/`.
+[`evidence/split-session-count-2026-10-10/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/split-session-count-2026-10-10).
 
 Run the isolated real-tmux path with:
 

@@ -1,4 +1,0 @@
-2026-10-12T06:23:46.0468015Z TUI demo check failed:
-2026-10-12T06:23:46.0469929Z - docs/public/tui-demo.svg is older than the app code it shows. Run `pnpm demo:tui` from the repo root and commit docs/public/tui-demo*.svg and docs/scripts/tui-demo.sources.json. Changed since the last render:
-2026-10-12T06:23:46.0471807Z     packages/daemon/src/tui/mirror/runtime/application-daemon-authority-owner.ts
-2026-10-12T06:23:46.0472864Z     packages/daemon/src/tui/mirror/runtime/application-machine-authority.ts

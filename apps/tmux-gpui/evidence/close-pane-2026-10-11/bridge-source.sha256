@@ -1,7 +1,0 @@
-91e107329306e499d7d09b81096a75b8f031b16e963f0438b72a540f30ec250f  apps/tmux-gpui/bridge/close-pane.ts
-b62453f36fc50cbd08033f127920fc5916861c2f5d075fb6831d139b4b6c2be0  apps/tmux-gpui/bridge/close-pane.test.ts
-65d9c7960abe135fe5c30bc3d767c3fc5a61a3a651efb5d3da32e9249a99a30e  apps/tmux-gpui/bridge/close-pane-smoke.mjs
-ceac4f05a53edfb017dd59d8b9c8d17be9009364636ef62d7574cae0d2ea3eb6  apps/tmux-gpui/bridge/catalog.ts
-58c7ae123253134733f6139c4851408352935b00b22e86f44d0e78d3bba65079  apps/tmux-gpui/bridge/live.ts
-296850881937ae0f239ecfbf3dd107c3c7f57db81eff170ce9d8dd9deef36f3a  apps/tmux-gpui/bridge/browser.ts
-964f00ae4a0ab6bc2e38583b3e6c425ae9878ac0ccfa4f0614d20123a7b439ed  apps/tmux-gpui/bridge/pane-actions.ts

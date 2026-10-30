@@ -1,6 +1,0 @@
-{
-  "geometryUnchanged": true,
-  "leaks": [],
-  "before": "Popover playground:%0:40x23\nPopover playground:%2:39x23\nTerminal lab:%1:92x11\nTerminal lab:%3:92x11\n",
-  "after": "Popover playground:%0:40x23\nPopover playground:%2:39x23\nTerminal lab:%1:92x11\nTerminal lab:%3:92x11\n"
-}

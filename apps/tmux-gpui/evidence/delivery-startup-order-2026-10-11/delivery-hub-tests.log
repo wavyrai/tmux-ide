@@ -1,7 +1,0 @@
-RUN  v4.1.6 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
-
-
- Test Files  3 passed (3)
-      Tests  80 passed (80)
-   Start at  15:29:33
-   Duration  8.19s (transform 569ms, setup 0ms, import 1.00s, tests 8.32s, environment 0ms)

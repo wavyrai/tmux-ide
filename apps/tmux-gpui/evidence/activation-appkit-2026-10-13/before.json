@@ -1,5 +1,0 @@
-{
-  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs": "7c1be984ad62648c55266335b1e2ca25a6e104951df296c56d2b7da9f9e87461",
-  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs": "e2db48f207972ff8d4d236b9dbb45b4266e2bcfb899b67261278329a7320a1ca",
-  "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/presence.rs": "58894eb115b87729aa59870b66c8dfb74131f778333304f3ff155da245fb582d"
-}

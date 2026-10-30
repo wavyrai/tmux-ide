@@ -1,9 +1,0 @@
-file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/.tasks/gpui-f5-popover-qa/run.mjs:27
-const wait=async (predicate,label)=>{const deadline=Date.now()+45000;while(!await predicate()){if(Date.now()>deadline){await writeFile('.tasks/gpui-f5-popover-qa/failed-'+label.replaceAll(' ','-')+'.json',JSON.stringify(events.slice(-12),null,2));throw Error('Timeout: '+label);}await new Promise(r=>setTimeout(r,50));}};
-                                                                                                                                                                                                                                                             ^
-
-Error: Timeout: terminal input
-    at wait (file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/.tasks/gpui-f5-popover-qa/run.mjs:27:254)
-    at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/.tasks/gpui-f5-popover-qa/run.mjs:38:2
-
-Node.js v24.21.0

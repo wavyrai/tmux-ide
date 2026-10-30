@@ -1,9 +1,0 @@
-COMPOSITION_READY: use OS dead-key compo
-sition once; no paste or Return.
-
-RECEIVED_BYTES=2
----
-COMPOSITION_READY: use OS dead-key comp
-osition once; no paste or Return.
-
-RECEIVED_BYTES=1

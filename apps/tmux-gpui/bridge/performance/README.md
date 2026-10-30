@@ -509,7 +509,7 @@ folder, separate from the clean validation build.
 
 ### Live alternate-screen projection — 2026-10-23
 
-The isolated `direct-terminal-smoke.mjs` projection fixture writes 350 history
+The isolated `manual/direct-terminal-smoke.mjs` projection fixture writes 350 history
 lines, enters the alternate screen, and updates a visible counter. The Rust
 probe now uses `Controller::spawn(handoff)`, matching the GUI capability path.
 Its previous bare `NativeSession::spawn` discarded the offered projection and

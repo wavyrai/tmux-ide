@@ -1,6 +1,0 @@
-f10bf11cb5d957915777ad88aefd523317aec79c73aec84924d7078cc074c3f1  apps/tmux-gpui/bridge/new-window.ts
-0c583b3f2a33ef0fb5a47eb901057da6e9b681696c39c22bf8deeec136b2d613  apps/tmux-gpui/bridge/new-window.test.ts
-1d0c6d6d79f9c5b4bb4caf7a41a70b96efd00df506d31b6ee8d3bfe55b1c21ef  apps/tmux-gpui/bridge/new-window-smoke.mjs
-22fc5b0e3ac44640034c743b014df51497ca0b2c92e866e468b80e151b5d6c96  apps/tmux-gpui/bridge/pane-actions.ts
-57a11c548878963bb5e33edca6fd12a30455cf76c17d6113119be5e956067b1d  apps/tmux-gpui/bridge/live.ts
-beadca650b1d5a6dc62a4a65a45c5c5d5775ea5433f2f1a20f6eeb3f2b2d1698  apps/tmux-gpui/bridge/browser.ts
