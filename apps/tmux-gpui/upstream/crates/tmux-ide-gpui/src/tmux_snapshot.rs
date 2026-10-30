@@ -66,7 +66,6 @@ mod workspace_chrome;
 mod workspace_fleet_agents;
 
 use crate::terminal_painter::{CellPixels, ImageTarget, PlacedImages, TerminalPainter};
-use bezel_ui::widgets::Content as _;
 use display_frame::DisplayFrame;
 use gpui::{prelude::*, *};
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
@@ -596,24 +595,7 @@ impl SnapshotView {
                     "If the connection was lost, reopen tmux-ide to reconnect.",
                 )
             };
-            return div()
-                .debug_selector(|| "tmux-pane-empty".into())
-                .size_full()
-                .flex()
-                .items_center()
-                .bg(bezel.terminal_bg)
-                .text_color(bezel.text)
-                .children(design::ink_probe(|| "pane-empty".into()))
-                .child(
-                    bezel
-                        .empty_state(
-                            bezel_ui::icons::Icon::asset("icons/terminal.svg"),
-                            title,
-                            hint,
-                        )
-                        .debug_selector(|| "tmux-pane-empty-state".into()),
-                )
-                .into_any_element();
+            return shell::empty_pane(&bezel, title, hint).into_any_element();
         };
         #[cfg(target_os = "macos")]
         let native_surfaces = self

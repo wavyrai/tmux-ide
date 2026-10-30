@@ -116,9 +116,12 @@ fn keyboard_reveal_scrolls_the_session_list_beside_its_bar(cx: &mut TestAppConte
     let list = cx.debug_bounds("session-list").unwrap();
     let last = cx.debug_bounds("tmux-sidebar-row-39").unwrap();
     assert!(last.top() >= list.top() && last.bottom() <= list.bottom());
-    let track = cx
-        .debug_bounds("session-list-track")
-        .expect("an overflowing session list shows Bezel's scrollbar");
+    let track = cx.debug_bounds("session-list-track");
+    assert!(
+        track.is_some(),
+        "an overflowing session list shows Bezel's scrollbar"
+    );
+    let track = track.unwrap();
     assert_eq!(track.right(), list.right());
     // The bar's strip covers only the rows' trailing padding.
     let label = cx.debug_bounds("tmux-sidebar-label-39").unwrap();
@@ -141,9 +144,12 @@ fn a_long_developer_status_scrolls_under_bezels_bar(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     let lane = cx.debug_bounds("tmux-status-viewport").unwrap();
     assert!(lane.size.height <= px(72.), "{lane:?}");
-    let track = cx
-        .debug_bounds("connection-status-track")
-        .expect("an overflowing status lane shows Bezel's scrollbar");
+    let track = cx.debug_bounds("connection-status-track");
+    assert!(
+        track.is_some(),
+        "an overflowing status lane shows Bezel's scrollbar"
+    );
+    let track = track.unwrap();
     assert_eq!(track.right(), lane.right());
 }
 

@@ -68,6 +68,31 @@ pub(super) fn themed_frame(
         );
     bezel_ui::window::frame(content, window, cx).into_any_element()
 }
+/// A pane with nothing to show: Bezel's empty state on the opaque terminal fill.
+pub(super) fn empty_pane(
+    bezel: &bezel_theme::Theme,
+    title: &'static str,
+    hint: &'static str,
+) -> Div {
+    use bezel_ui::widgets::Content as _;
+    div()
+        .debug_selector(|| "tmux-pane-empty".into())
+        .size_full()
+        .flex()
+        .items_center()
+        .bg(bezel.terminal_bg)
+        .text_color(bezel.text)
+        .children(super::design::ink_probe(|| "pane-empty".into()))
+        .child(
+            bezel
+                .empty_state(
+                    bezel_ui::icons::Icon::asset("icons/terminal.svg"),
+                    title,
+                    hint,
+                )
+                .debug_selector(|| "tmux-pane-empty-state".into()),
+        )
+}
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;
