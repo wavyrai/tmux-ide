@@ -30,6 +30,9 @@ pub enum Error {
     Json(#[source] serde_json::Error),
     #[error("pane-stream peer identity mismatch")]
     Identity,
+    /// The peer is a daemon released before interactive input lifetime (2.9.11).
+    #[error("pane-stream daemon is too old for interactive input")]
+    DaemonTooOld,
     #[error("unexpected pane-stream frame")]
     Frame,
     #[error("pane-stream frame exceeds the bound")]

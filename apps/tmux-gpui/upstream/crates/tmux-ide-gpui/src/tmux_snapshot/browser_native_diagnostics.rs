@@ -23,6 +23,45 @@ pub(super) fn code(error: &NativeError) -> &'static str {
         },
     }
 }
+/// Capability 105 (input lifetime) first shipped in tmux-ide 2.9.11.
+pub(super) fn daemon_too_old(version: Option<&str>) -> String {
+    let version = version.map(str::trim).filter(|v| {
+        !v.is_empty()
+            && v.len() <= 32
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+    });
+    match version {
+        Some(version) => format!(
+            "This tmux-ide daemon ({version}) is too old for the Mac app. Update tmux-ide to 2.9.11 or later: tmux-ide update"
+        ),
+        None => "This tmux-ide daemon is too old for the Mac app. Update tmux-ide to 2.9.11 or later: tmux-ide update".into(),
+    }
+}
+
+/// A terminal failure that no reconnect can fix, kept on screen for its request.
+pub(super) struct Stop {
+    request: u64,
+    pub(super) status: String,
+}
+impl Stop {
+    pub(super) fn new(error: &NativeError, request: u64, version: Option<&str>) -> Option<Self> {
+        (code(error) == "stream-daemon-too-old").then(|| Self {
+            request,
+            status: daemon_too_old(version),
+        })
+    }
+    /// The catalog owner republishes its own status; keep the stop until a newer request.
+    pub(super) fn apply(stop: &mut Option<Self>, state: &mut super::State) {
+        match stop {
+            Some(current) if state.request > current.request => *stop = None,
+            Some(current) if state.request == current.request && state.frame.is_none() => {
+                state.status.clone_from(&current.status);
+            }
+            _ => {}
+        }
+    }
+}
 fn session(error: &tmux_native_session::Error) -> &'static str {
     use tmux_native_session::Error;
     match error {
@@ -51,6 +90,7 @@ fn transport(error: &tmux_stream::Error) -> &'static str {
         Error::WebSocket(_) => "stream-websocket",
         Error::Json(_) => "stream-json",
         Error::Identity => "stream-identity",
+        Error::DaemonTooOld => "stream-daemon-too-old",
         Error::Frame => "stream-frame",
         Error::FrameBound => "stream-frame-bound",
         Error::EventBacklog => "stream-event-backlog",

@@ -32,6 +32,9 @@ pub struct Handoff {
     /// Public owner scope for history response fencing; never an owner credential.
     #[serde(default, deserialize_with = "optional_server_scope")]
     pub server_scope: Option<ServerScope>,
+    /// The local daemon's product version, for compatibility notices only; never broker JSON.
+    #[serde(skip)]
+    pub daemon_version: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
