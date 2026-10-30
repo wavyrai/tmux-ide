@@ -35,7 +35,7 @@ struct Shared {
     spinner: RefCell<Option<WeakEntity<Spinner>>>,
     /// Frames painted, one per slot, so tests can see a tick reach the screen.
     #[cfg(test)]
-    painted: RefCell<Vec<usize>>,
+    painted: RefCell<Vec<SharedString>>,
 }
 
 /// `SnapshotView`'s side of the spinner: the slots its last paint reserved.
@@ -94,7 +94,7 @@ impl Slots {
     }
     /// The frame each slot was painted with since the last call.
     #[cfg(test)]
-    pub(super) fn take_painted(&self) -> Vec<usize> {
+    pub(super) fn take_painted(&self) -> Vec<SharedString> {
         std::mem::take(&mut *self.0.painted.borrow_mut())
     }
     /// The overlay view a tick must invalidate.
@@ -136,7 +136,7 @@ impl Slots {
                     cx,
                 ) {
                     #[cfg(test)]
-                    Ok(()) => self.0.painted.borrow_mut().push(self.frame()),
+                    Ok(()) => self.0.painted.borrow_mut().push(line.text.clone()),
                     #[cfg(not(test))]
                     Ok(()) => {}
                     Err(error) => eprintln!("tmux-ide: agent spinner paint failed: {error}"),

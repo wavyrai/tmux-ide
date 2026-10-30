@@ -21,6 +21,6 @@ pub(super) fn observe_overlay(
     Some(cx.observe(&overlay, move |_, _| count.set(count.get() + 1)))
 }
 /// The frames the overlay painted since the last call, one per working row.
-pub(super) fn painted(view: &SnapshotView) -> Vec<usize> {
+pub(super) fn painted(view: &SnapshotView) -> Vec<gpui::SharedString> {
     view.agent_animation.take_painted()
 }

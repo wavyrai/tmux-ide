@@ -262,7 +262,9 @@ fn a_spinner_tick_invalidates_and_paints_the_overlay(cx: &mut TestAppContext) {
         );
         let painted = cx.update(|_, cx| painted(snapshot.read(cx)));
         assert!(
-            !painted.is_empty() && painted.iter().all(|painted| *painted == frame),
+            !painted.is_empty()
+                && painted.iter().all(|painted| painted.as_ref()
+                    == crate::tmux_snapshot::agent_indicator::FRAMES[frame]),
             "tick {tick} did not paint frame {frame}: {painted:?}"
         );
     }
