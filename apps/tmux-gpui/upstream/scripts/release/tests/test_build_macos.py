@@ -200,7 +200,9 @@ class ReleaseProfileTests(unittest.TestCase):
         })
         # CI and tests build `release`; it stays Cargo's default.
         self.assertIsNone(self.profile(manifest, "release"))
-        self.assertNotRegex(manifest, r"^\[profile\.(release|dist)\.", "per-package override")
+        self.assertNotRegex(
+            manifest, re.compile(r"^\[profile\.(release|dist)\.", re.M), "per-package override"
+        )
         for config in (SCRIPTS.parents[1] / ".cargo/config.toml", SCRIPTS.parents[1] / ".cargo/config"):
             if config.exists():
                 self.assertNotIn("[profile", config.read_text(), f"{config} overrides a profile")
