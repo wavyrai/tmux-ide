@@ -94,6 +94,11 @@ export function llmsIndex(): string {
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
+    link(
+      "tmux themes",
+      "/themes",
+      "the app's light and dark theme presets, each with the line that selects it",
+    ),
     `- [AGENTS.md](${SITE_REPOSITORY}/blob/main/AGENTS.md): instructions for AI coding agents working in the tmux-ide repository`,
     `- [Agent skill](${SITE_REPOSITORY}/tree/main/skill): \`skill/SKILL.md\`, how an agent uses tmux-ide (status contract, fleet, send, restore); install with \`npx skills add wavyrai/tmux-ide\``,
   ]);

@@ -13,6 +13,7 @@ const columns = [
       ["Getting started", "/docs/getting-started"],
       ["Documentation", "/docs"],
       ["App demo", "/docs/demo"],
+      ["Themes", "/themes"],
       ["CLI reference", "/docs/commands"],
     ],
   },
