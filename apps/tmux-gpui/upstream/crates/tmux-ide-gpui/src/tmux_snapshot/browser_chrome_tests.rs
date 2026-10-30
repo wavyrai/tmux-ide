@@ -159,6 +159,20 @@ fn the_empty_pane_shows_bezels_empty_state_on_the_opaque_fill(cx: &mut TestAppCo
     });
 }
 
+#[test]
+fn the_home_panel_takes_bezels_panel_corner_and_inset() {
+    let mut panel = super::super::shell::content_panel(0x123456, true);
+    let style = panel.style();
+    let radius = Some(AbsoluteLength::Pixels(px(bezel_theme::Theme::panel_radius())));
+    assert_eq!(style.corner_radii.top_left, radius);
+    assert_eq!(style.corner_radii.bottom_right, radius);
+    let inset = Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(
+        bezel_theme::Theme::CONTENT_INSET / 2.,
+    ))));
+    assert_eq!(style.padding.top, inset);
+    assert_eq!(style.padding.left, inset);
+}
+
 #[derive(serde::Deserialize)]
 struct Preset {
     id: String,
@@ -256,7 +270,8 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
             let mut everywhere = chrome.clone();
             everywhere.extend(background);
             let probes = cx.update(|_, cx| std::mem::take(cx.global_mut::<InkProbes>()));
-            check(&mut failures, name, &probes, "shell-body", &everywhere);
+            check(&mut failures, name, &probes, "shell-root", &chrome);
+            check(&mut failures, name, &probes, "workspace-body", &everywhere);
             check(&mut failures, name, &probes, "sidebar-heading", &chrome);
             check(&mut failures, name, &probes, "sidebar-status", &chrome);
             if developer {

@@ -55,6 +55,7 @@ pub(super) fn themed_frame(
         .text_size(px(font.size))
         .bg(bezel.sidebar_bg())
         .text_color(bezel.text)
+        .children(super::design::ink_probe(|| "shell-root".into()))
         .child(header)
         .child(
             div()

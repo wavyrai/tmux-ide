@@ -930,7 +930,7 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .text_color(bezel.text)
-            .children(super::design::ink_probe(|| "shell-body".into()))
+            .children(super::design::ink_probe(|| "workspace-body".into()))
             .on_key_down(cx.listener(Self::picker_key))
             .child(main)
             .children(
