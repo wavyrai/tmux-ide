@@ -608,6 +608,10 @@ impl SnapshotView {
                         bezel_ui::tabs::State::Resting
                     },
                 )
+                .debug_selector({
+                    let id = header.id.clone();
+                    move || format!("pane-title:{id}")
+                })
                 .h_full()
                 .min_w_0()
                 .flex_shrink(1.)
