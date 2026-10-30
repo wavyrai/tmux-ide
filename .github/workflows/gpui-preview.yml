@@ -139,6 +139,10 @@ jobs:
         env:
           HERDR_BUILD_PR_NUMBER: ""
         run: cargo build --locked --profile dist -p tmux-ide-gpui --bin tmux-ide-gpui
+      # The bridge job runs these on Linux, where they skip: they need macOS codesign.
+      - name: Browser launcher signature and cleanup checks
+        working-directory: .
+        run: node --test apps/tmux-gpui/scripts/browser-launch.test.mjs
       - name: Install pinned license-report generator
         run: cargo install cargo-about --version 0.9.2 --locked --features cli
       # Offline metadata reads the full lockfile, including non-macOS dependencies.

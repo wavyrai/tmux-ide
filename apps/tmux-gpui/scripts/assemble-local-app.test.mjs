@@ -64,4 +64,8 @@ test("the browser launcher runs on the engine's Node mode, never Resources/node"
   assert.ok(launcher.includes(`requirement='${requirement}'`));
   assert.equal(launcher.match(/codesign --verify --deep --strict -R "\$requirement"/g)?.length, 2);
   assert.match(launcher, /shasum -a 256 .*\n.*= "\$digest" \] \|\| fail/);
+  // The private engine copy lives in a fresh mktemp -d directory (mode 0700), never a fixed path.
+  assert.ok(
+    launcher.includes('staging=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/tmux-ide-browser.XXXXXX")'),
+  );
 });

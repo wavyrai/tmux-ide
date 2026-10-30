@@ -23,6 +23,7 @@ export const TERMINAL_BROWSER_LAUNCHER = [
   '[ "${actual%% *}" = "$digest" ] || fail "browser runtime does not match its metadata"',
   'staging=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/tmux-ide-browser.XXXXXX")',
   "trap '/bin/rm -rf \"$staging\"' EXIT",
+  "trap 'exit 129' HUP",
   "trap 'exit 130' INT",
   "trap 'exit 143' TERM",
   '/usr/bin/tar -xzf "$root/browser-runtime.tar.gz" -C "$staging" || fail "browser runtime extraction failed"',
