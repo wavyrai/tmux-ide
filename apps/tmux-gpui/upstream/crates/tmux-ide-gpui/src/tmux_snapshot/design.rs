@@ -68,6 +68,25 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.text = color(theme.foreground);
         brand.ink.for_appearance(appearance).paint(&mut result);
     }
+    // Body text is drawn on the background and on the surface. Where Bezel's
+    // translucent ink drops it under 4.5:1 on either (the saturated presets,
+    // Solarized), it becomes the opaque foreground with its lightness moved
+    // just far enough to read; muted and faint keep their alphas.
+    let chrome = [theme.background, theme.surface];
+    let reads = |text: Hsla| {
+        chrome.iter().all(|&plate| {
+            let plate = color(plate);
+            bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate) >= 4.5
+        })
+    };
+    if !reads(result.text) {
+        let opaque = Hsla {
+            a: 1.0,
+            ..result.text
+        };
+        let packed = u32::from(Rgba::from(opaque)) >> 8;
+        result.text = color(crate::contrast::ink(packed, &chrome, 4.5));
+    }
     if high {
         result.glass = false;
         result.vibrancy = false;
@@ -245,6 +264,99 @@ mod tests {
         });
         assert!(!high.glass && !high.vibrancy);
         assert!(high.text_faint.a > standard.text_faint.a);
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Preset {
+        id: String,
+        mode: String,
+        dark: crate::tmux_snapshot::appearance::Colors,
+        light: crate::tmux_snapshot::appearance::Colors,
+    }
+
+    /// Every preset in the shipped catalog, in both of its variants, as the
+    /// tmux theme the app derives from it, with the appearance it should have.
+    fn catalog() -> Vec<(String, String, Theme)> {
+        let presets: Vec<Preset> =
+            match serde_json::from_str(include_str!("appearance/catalog.json")) {
+                Ok(presets) => presets,
+                Err(error) => panic!("catalog.json: {error}"),
+            };
+        let mut themes = Vec::new();
+        for preset in presets {
+            for (variant, colors) in [("dark", &preset.dark), ("light", &preset.light)] {
+                let mut theme = Theme {
+                    background: colors.background,
+                    foreground: colors.foreground,
+                    cursor: colors.cursor,
+                    surface: colors.surface,
+                    active: colors.active,
+                    muted: colors.muted,
+                    ..Theme::default()
+                };
+                for (slot, value) in theme.palette.iter_mut().zip(&colors.palette) {
+                    *slot = *value;
+                }
+                let expected = match preset.mode.as_str() {
+                    "system" => variant,
+                    mode => mode,
+                };
+                themes.push((
+                    format!("{} ({variant})", preset.id),
+                    expected.to_owned(),
+                    theme,
+                ));
+            }
+        }
+        themes
+    }
+
+    #[test]
+    fn every_catalog_theme_drives_a_complete_readable_palette() {
+        let themes = catalog();
+        assert_eq!(themes.len(), 50, "25 presets, two variants each");
+        let mut failures = Vec::new();
+        for (name, expected, theme) in themes {
+            let mut bezel = palette(&theme);
+            let appearance = match bezel.appearance {
+                bezel_theme::Appearance::Dark => "dark",
+                bezel_theme::Appearance::Light => "light",
+            };
+            if appearance != expected {
+                failures.push(format!("{name}: came out {appearance}"));
+            }
+            if bezel.bg != color(theme.background)
+                || bezel.surface != color(theme.surface)
+                || bezel.terminal_bg != color(theme.background)
+                || bezel.cursor != color(theme.cursor)
+                || bezel
+                    .terminal_ansi
+                    .iter()
+                    .zip(theme.palette)
+                    .any(|(a, v)| *a != color(v))
+            {
+                failures.push(format!("{name}: fell back to stock Bezel colours"));
+            }
+            if let Some((token, _)) = bezel.tokens_mut().into_iter().find(|(_, c)| {
+                ![c.h, c.s, c.l, c.a]
+                    .iter()
+                    // gpui rounds a saturated sRGB colour to an `s` a hair over 1.
+                    .all(|v| v.is_finite() && (-1e-4..=1.0 + 1e-4).contains(v))
+            }) {
+                failures.push(format!("{name}: {token} is not a colour"));
+            }
+            for (plate, plate_name) in
+                [(theme.background, "background"), (theme.surface, "surface")]
+            {
+                let plate = color(plate);
+                let text = bezel_theme::flatten(bezel.text, plate);
+                let ratio = bezel_theme::contrast_ratio(text, plate);
+                if ratio < 4.5 {
+                    failures.push(format!("{name}: text on {plate_name} is {ratio:.2}:1"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[gpui::test]
