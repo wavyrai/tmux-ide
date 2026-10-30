@@ -223,7 +223,10 @@ impl SnapshotView {
         let ready = self.current_browser(pane).is_some();
         let pending = self.pending_browser(pane);
         let mark = self.browser_state.browser_marks.get(pane).copied();
-        let palette = super::design::palette(&self.theme());
+        let theme = self.theme();
+        let palette = super::design::palette(&theme);
+        let ink = super::pane_chrome::header_ink(&theme);
+        let hover = palette.element_hover;
         let mut row = div().flex().items_center().gap_1().flex_1().min_w_0();
         for (name, label, action, available) in [
             (
@@ -259,58 +262,89 @@ impl SnapshotView {
                 BrowserAction::Stop => "icons/close.svg",
                 _ => "icons/refresh.svg",
             };
-            row = row.child(
-                div()
+            row = row.child({
+                use bezel_ui::widgets::Buttons as _;
+                palette
+                    .icon_button(
+                        bezel_ui::icons::Icon::asset(icon),
+                        bezel_ui::widgets::ButtonStyle::Ghost,
+                        None,
+                    )
                     .id(name)
                     .role(Role::Button)
                     .aria_label(label)
-                    .w(px(24.))
+                    .debug_selector(move || name.into())
                     .h(px(26.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
+                    .tooltip(move |window, cx| {
+                        if action == BrowserAction::Reload {
+                            bezel_ui::tooltip::Tooltip::with_keystroke(label, "⌘R", window, cx)
+                        } else {
+                            bezel_ui::tooltip::Tooltip::text(label, window, cx)
+                        }
+                    })
                     .when(pressed, |b| b.bg(palette.element_active))
+                    .when(!available, |b| b.cursor_default())
                     .when(available, |b| {
-                        b.cursor_pointer()
-                            .on_click(cx.listener(move |view, _, _, cx| {
+                        b.hover(move |s| s.bg(hover)).on_click(cx.listener(
+                            move |view, _, _, cx| {
                                 cx.stop_propagation();
                                 view.send_browser(&pane, command.clone(), cx);
-                            }))
+                            },
+                        ))
                     })
                     .opacity(if available || pressed { 1. } else { 0.35 })
-                    .child(svg().path(icon).size(px(14.)).text_color(palette.text)),
-            );
+            });
         }
         let pane = pane.to_owned();
         Some(
-            row.child(
-                div()
-                    .id("browser-address")
+            row.child({
+                use bezel_ui::widgets::Buttons as _;
+                palette
+                    .ghost("browser-address")
                     .role(Role::Button)
                     .aria_label("Edit browser address")
+                    .tooltip(|window, cx| {
+                        bezel_ui::tooltip::Tooltip::with_keystroke(
+                            "Edit browser address",
+                            "⌘L",
+                            window,
+                            cx,
+                        )
+                    })
+                    .debug_selector(|| "browser-address".into())
                     .flex_1()
                     .min_w_0()
-                    .truncate()
+                    .px(px(bezel_theme::Theme::SPACE / 2.))
                     .when(mark == Some(Mark::Stale), |address| {
-                        address.text_color(palette.text_muted)
+                        address.text_color(ink.muted)
                     })
-                    .child(state.url.clone())
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .child(state.url.clone())
+                            .children(super::design::ink_probe({
+                                let pane = pane.clone();
+                                move || format!("browser-address:{pane}")
+                            })),
+                    )
+                    .when(!ready, |address| address.cursor_default())
                     .when(ready, |address| {
-                        address.cursor_pointer().on_click(cx.listener(
-                            move |view, _, window, cx| {
-                                cx.stop_propagation();
-                                view.open_browser_address(pane.clone(), window, cx);
-                            },
-                        ))
-                    }),
-            )
+                        address.on_click(cx.listener(move |view, _, window, cx| {
+                            cx.stop_propagation();
+                            view.open_browser_address(pane.clone(), window, cx);
+                        }))
+                    })
+            })
             .when(matches!(mark, Some(Mark::Rejected(_))), |row| {
+                use bezel_theme::Typeset as _;
                 row.child(
                     div()
                         .flex_shrink_0()
-                        .text_color(palette.text_muted)
-                        .child(REJECTED),
+                        .text_style(bezel_theme::TextStyle::Caption)
+                        .text_color(ink.warning)
+                        .child(REJECTED)
+                        .children(super::design::ink_probe(|| "browser-rejected".into())),
                 )
             })
             .into_any_element(),
@@ -318,7 +352,24 @@ impl SnapshotView {
     }
     pub(super) fn browser_address_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let address = self.browser_address.as_ref()?;
-        let palette = super::design::palette(&self.theme());
+        let theme = self.theme();
+        let palette = super::design::palette(&theme);
+        let muted = super::design::dialog_muted(&theme);
+        // The keycap's own wash lightens a dark card by enough to cost the
+        // muted ink its 4.5:1 (Amber, 4.11), so the cap's text is inked on it too.
+        let card = Hsla {
+            a: 1.,
+            ..palette.surface_dialog
+        };
+        let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+        let cap_plate = pack(bezel_theme::flatten(bezel_theme::ink(0.05), card));
+        let cap: Hsla = rgb(crate::contrast::ink_on_chrome(
+            pack(muted),
+            [pack(card), cap_plate, cap_plate],
+            4.6,
+        ))
+        .into();
+        let space = px(bezel_theme::Theme::SPACE);
         Some(
             bezel_ui::popover::dialog_card(&palette)
                 .id("browser-address-dialog")
@@ -328,8 +379,8 @@ impl SnapshotView {
                 .bottom(relative(1.))
                 .left_0()
                 .w(px(480.))
-                .p_2()
-                .gap_2()
+                .p(space)
+                .gap(space)
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
@@ -354,12 +405,48 @@ impl SnapshotView {
                 .child(address.input.clone())
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .child("Enter to open · Esc to cancel"),
+                        .flex()
+                        .items_center()
+                        .gap(space)
+                        .child(key_hint(&palette, (cap, muted), "return", "Open"))
+                        .child(key_hint(&palette, (cap, muted), "esc", "Cancel")),
                 )
                 .into_any_element(),
         )
     }
+}
+/// Bezel's `key_hint_text` (a keycap and its verb) inked on the dialog card;
+/// Bezel paints the verb at 45% of muted, under 4.5:1 on every preset.
+fn key_hint(
+    palette: &bezel_theme::Theme,
+    (cap_ink, muted): (Hsla, Hsla),
+    cap: &'static str,
+    label: &'static str,
+) -> Div {
+    use bezel_theme::Typeset as _;
+    div()
+        .flex()
+        .items_center()
+        .gap(px(bezel_theme::Theme::SPACE / 2.))
+        .child(
+            bezel_ui::popover::key_cap(palette)
+                .text_style(bezel_theme::TextStyle::Subheadline)
+                .font_family(palette.font_mono.clone())
+                .text_color(cap_ink)
+                .child(cap)
+                .children(super::design::ink_probe(move || {
+                    format!("browser-address-cap-{cap}")
+                })),
+        )
+        .child(
+            div()
+                .text_style(bezel_theme::TextStyle::Caption)
+                .text_color(muted)
+                .child(label)
+                .children(super::design::ink_probe(move || {
+                    format!("browser-address-hint-{label}")
+                })),
+        )
 }
 #[cfg(test)]
 #[path = "browser_toolbar_tests.rs"]

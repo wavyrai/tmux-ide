@@ -260,27 +260,21 @@ impl SnapshotView {
                 RevealEffect::None => {}
             }
         }
-        let mut strip = div()
-            .id("window-strip")
-            .debug_selector(|| "workspace-window-strip".into())
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_shrink_0()
-            .overflow_x_scroll()
+        let mut strip = bezel_ui::tabs::bar("window-strip")
             .track_scroll(&self.window_reveal.scroll)
+            .debug_selector(|| "workspace-window-strip".into())
+            .flex_shrink_0()
             .on_scroll_wheel({
                 let scroll = self.window_reveal.scroll.clone();
                 move |event, window, cx| crate::tab_scroll::wheel(&scroll, event, window, cx)
-            })
-            .gap(px(4.))
-            .items_center();
+            });
         if self.browser_state.surface != browser::Surface::Workspace {
             return strip.into_any_element();
         }
         let Some(session) = self.browser_state.selected_session.as_ref() else {
             return strip.into_any_element();
         };
+        let icon_tint = super::design::palette(&theme).text_muted;
         for (index, choice) in choices.into_iter().enumerate() {
             let session = session.clone();
             strip = strip.child(
@@ -295,7 +289,7 @@ impl SnapshotView {
                             .and_then(|pane| pane.browser_icon.as_deref()),
                         "icons/terminal.svg",
                         14.,
-                        theme.muted,
+                        icon_tint,
                     ),
                     choice.selected,
                     &theme,

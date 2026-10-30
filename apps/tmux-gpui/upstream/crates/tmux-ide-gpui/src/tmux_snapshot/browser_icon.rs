@@ -43,7 +43,7 @@ pub(in crate::tmux_snapshot) fn element(
     value: Option<&str>,
     fallback: &'static str,
     size: f32,
-    tint: u32,
+    tint: Hsla,
 ) -> AnyElement {
     if let Some(image) = value.and_then(cached) {
         return img(image).size(px(size)).flex_none().into_any_element();
@@ -56,7 +56,7 @@ pub(in crate::tmux_snapshot) fn element(
         })
         .size(px(size))
         .flex_none()
-        .text_color(rgb(tint))
+        .text_color(tint)
         .into_any_element()
 }
 #[cfg(test)]
