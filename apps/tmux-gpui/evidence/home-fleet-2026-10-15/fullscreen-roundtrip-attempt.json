@@ -1,7 +1,0 @@
-{
-  "commit": "5fe4a97f",
-  "fullscreen_entry": "Native screenshot confirms Home starts at left edge; fullscreen-roundtrip-entry.png",
-  "fullscreen_exit": "Unverified: ctrl+super+f, Escape and top-edge control reveal produced no observed exit",
-  "picker": "Unverified: separate light fixture did not reliably respond to AX/pointer input; later tool reported changed window, refreshed state showed Terminals. No picker acceptance claimed.",
-  "cleanup": "Only two exact owned QA executable PIDs terminated; production and user previews untouched"
-}

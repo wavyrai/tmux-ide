@@ -1,7 +1,0 @@
-{
-  "binarySHA256": "1a284745342a9cce281f9c46386e2994c00480f2ae759fb4b448fce846c28705",
-  "profile": "debug",
-  "purpose": "Native QA candidate; not release artifact",
-  "baseCommit": "53be1d0c",
-  "sourceManifest": "source.json"
-}

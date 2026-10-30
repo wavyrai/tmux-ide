@@ -1,7 +1,0 @@
-{
-  "binarySHA256": "b2605a1e3cfe70c3488e74f8fee800fb71258dcebde9b104f495e747d9febe87",
-  "profile": "debug",
-  "purpose": "QA candidate; live empty-server acceptance currently fails",
-  "baseCommit": "504c2be7",
-  "source": "native-source.json"
-}

@@ -36,8 +36,9 @@ fn summary(state: &browser::State, connected: bool) -> String {
             .filter(|s| s.selection.is_some())
             .count();
         return format!(
-            "{} machines · {sessions} available sessions",
-            fleet.groups.len()
+            "{} · {}",
+            crate::plural::count(fleet.groups.len(), "machine", "machines"),
+            crate::plural::count(sessions, "available session", "available sessions")
         );
     }
     if !connected || state.home_phase == browser::HomePhase::Unavailable {
@@ -386,7 +387,7 @@ impl SnapshotView {
                 fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
         } else if !connected || setup_phase.is_none() {
             let guidance = if !connected {
-                "Restart the native preview to reconnect."
+                "Connection lost. Reopen tmux-ide to reconnect."
             } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
                 "The daemon could not list sessions. Refresh to try again."
             } else if self.browser_state.home_phase == browser::HomePhase::Loading {

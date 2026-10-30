@@ -1,6 +1,0 @@
-Independent read-only review approved implementation-body equivalence, explicit
-manager injection, retained TUI defaults, local import boundary and exact graph
-budget delta. Optional undefined-reader fallback issue fixed and regression added.
-Follow-up approved pure roster subpath avoiding runtime TSX renderer imports.
-Boundary bundle tests and plain Node emitted-package smoke have distinct scopes;
-neither establishes clean-machine installation or native fleet UI completion.

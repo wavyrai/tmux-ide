@@ -1,8 +1,0 @@
-{
-  ".tasks/native-reliability-mission/current-native-09e7bd45-final/Tmux IDE CI.app/Contents/Resources/bridge/browser.bundle.mjs": "cad69a1026c6263c1561cb977dac2600359d7bf0db9ca58423cf993c3c05e7d8",
-  ".tasks/native-reliability-mission/current-native-09e7bd45-final/Tmux IDE CI.app/Contents/Resources/bridge/live.bundle.mjs": "a1282eeb5f0a374bc5b8b87a03f6e5637e01d97f358c301ea6cfe268864e22b0",
-  ".tasks/native-reliability-mission/current-native-09e7bd45-final/Tmux IDE CI.app/Contents/Resources/node": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b",
-  ".tasks/native-reliability-mission/nr07-guidance-runtime/cli.mjs": "d4252e328292012da246bc086833c3720b0e55365e50e5da86826a4f2c31b1f5",
-  ".tasks/tmux38-compat/tmux-3.8/tmux": "8b97ea85e10c6e9a6966451259f15d1041981fb313715e510c14c430d294af96",
-  "apps/tmux-gpui/bridge/terminal-recovery-smoke.mjs": "84bf29054f12f969cb7b8a750c25ad2df61fd5d9138ee7cd8289139f372e6cff"
-}

@@ -1,5 +1,0 @@
-{"stage":"paste-ready","payload":"PASTE_界_é_🙂\nSECOND_LINE","payloadFile":"/private/tmp/gpui-shortcuts-native-check/payload.txt","expectedBytes":42,"expectedHex":"1b5b3230307e50415354455fe7958c5f65cc815ff09f99820a5345434f4e445f4c494e451b5b3230317e"}
-Open the sole session, wait Keyboard ready, activate/click its terminal, then paste payload.txt exactly once. Do not press Return.
-tmux-preview: native sidebar glass true
-Exact bracketed Unicode/multiline bytes received. Close this owned app with Cmd-Q.
-{"passed":true,"physicalNativePaste":true,"bracketPasteFlag":1,"exactBytes":42,"sha256":"3a20d8c9c1610d2be49f4e464b11f3e6d77c7ab93569a41cbc3d283c12c8aa91","sourceSurvivesClose":true,"producerPid":"6222","cleanup":true}

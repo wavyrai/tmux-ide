@@ -114,7 +114,7 @@ path selection, saved machines/SSH and native browser integration.
 
 The client test suite passed (425 unit tests, two existing integration tests and
 one documentation test; opt-in tests excluded), and client all-feature Clippy
-passed. `bridge/native-discovery-smoke.mjs` starts an isolated daemon and runs the
+passed. `bridge/manual/native-discovery-smoke.mjs` starts an isolated daemon and runs the
 explicit opt-in Rust test against its private record. That real-daemon test passed:
 Rust performed both discovery and authenticated catalog access, and the source
 pane was unchanged. The new work still needs full workspace and platform gates
@@ -637,7 +637,7 @@ and physical measurements remain pending.
 
 ## Owned OpenSSH qualification — transport passed
 
-`bridge/native-ssh-smoke.mjs` now runs an opt-in Rust test through the existing
+`bridge/manual/native-ssh-smoke.mjs` now runs an opt-in Rust test through the existing
 private nonroot macOS OpenSSH fixture. Rust executes its production discovery
 command, creates its owned SSH forward, verifies the actual forwarded HTTP
 connection and performs an authenticated capabilities request. The SSH server,
@@ -654,7 +654,7 @@ not a real tmux daemon, remote terminal rendering, desktop input or latency pari
 Run with the explicitly selected Rust client test binary:
 
 ```sh
-node --import tsx apps/tmux-gpui/bridge/native-ssh-smoke.mjs /absolute/herdr_client-test-binary
+node --import tsx apps/tmux-gpui/bridge/manual/native-ssh-smoke.mjs /absolute/herdr_client-test-binary
 ```
 
 The opt-in Rust test passed through actual OpenSSH; all-target/all-feature client
@@ -681,7 +681,7 @@ programmatic input, history restoration, session and window creation. This does
 not exercise OS keyboard delivery or GPU painting:
 
 ```sh
-node --import tsx apps/tmux-gpui/bridge/native-ssh-smoke.mjs /absolute/client-test-binary /absolute/bin/cli.js /absolute/gui-test-binary
+node --import tsx apps/tmux-gpui/bridge/manual/native-ssh-smoke.mjs /absolute/client-test-binary /absolute/bin/cli.js /absolute/gui-test-binary
 ```
 
 ### Real-daemon native GUI SSH journey
@@ -2388,7 +2388,7 @@ so a changed ancestor cannot silently retain the previous approval. Invalid
 non-Unicode namespace values are rejected rather than dropped into production
 fallback. This is a path-resolution boundary, not a cross-process filesystem lock.
 
-`bridge/native-config-namespace-smoke.mjs` constructs owned paths and compares the
+`bridge/manual/native-config-namespace-smoke.mjs` constructs owned paths and compares the
 actual TypeScript authority with Rust. It refuses zero matching Rust tests and
 cleans up its child, socket and owned files. The initial fixture exceeded macOS's
 Unix socket path limit; its root now uses a short private `/tmp` path. A subsequent

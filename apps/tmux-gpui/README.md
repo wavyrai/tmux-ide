@@ -95,20 +95,28 @@ and installed-symbol fallback resolution. Preferences are saved in
 `$HOME/.config/tmux-ide/gpui-fonts.json` when no absolute XDG config directory is
 set. A save failure is shown in the picker and retains the previous setting.
 
+Installed fonts are listed in the background once the window has drawn its
+first frame, not during app start, and every launch lists them afresh, so a
+Nerd Font installed since the last launch is used for terminal icons. If that
+listing comes back empty, the saved font stays in use and opening the picker
+lists fonts again.
+
 These preferences belong to the GPUI client; they do not change tmux, the TUI,
 Herdr, or another terminal application's settings. Ghostty configuration/theme
 import is not implemented. A private native save/restart test verified Menlo 15
 restoration with no terminal input leakage and surviving source processes; see
-`evidence/terminal-font-2026-10-12/`. Broader font/IME and geometry qualification
+[`evidence/terminal-font-2026-10-12/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/terminal-font-2026-10-12). Broader font/IME and geometry qualification
 remains open.
 
 ## Agent indicators and pane headers
 
 Home, the workspace agent list, and matching pane headers use the TUI's status
 vocabulary: Working (animated marker), Needs input, Done, Failed, Idle, and
-Unknown/Unavailable. Animation is presentation-only: one shared clock updates
-visible working markers without polling the daemon. Native reduced-motion
-preference wiring remains pending; the indicator supports a static rendering.
+Unknown/Unavailable. Animation is presentation-only: one small overlay view
+redraws the working markers every 80 ms without polling the daemon or repainting
+the terminal, and it stops while the window is hidden or minimised. While the
+window is inactive or a picker or menu is open, a working marker shows a still
+spinner frame. Native reduced-motion preference wiring remains pending.
 
 Panes are separate rounded cards with 34-pixel headers, 10-pixel content padding and 10-pixel gutters. Each header shares its terminal background; Close sits at the far right. Painting, pointer input, selection, links, IME placement and divider dragging use the same card coordinate map. Chrome is deducted from the terminal fit before resizing, rather than covering terminal cells. Expand/restore and Close have direct labeled icon buttons; Close always asks for confirmation. Narrow headers keep these actions in **⋯**, alongside Rename and Split right/down.
 Opening another pane's menu first selects that exact pane and waits for its
@@ -190,10 +198,10 @@ canonical replica, not that the GPU has painted. This prototype has not been ben
 ## Isolated live smoke test
 
 ```sh
-node --import tsx apps/tmux-gpui/bridge/live-smoke.mjs
+node --import tsx apps/tmux-gpui/bridge/manual/live-smoke.mjs
 # Include the real native window after building it:
 TMUX_GPUI_TEST_BINARY="$PWD/apps/tmux-gpui/upstream/target/debug/tmux-ide-gpui" \
-  node --import tsx apps/tmux-gpui/bridge/live-smoke.mjs
+  node --import tsx apps/tmux-gpui/bridge/manual/live-smoke.mjs
 ```
 
 Use the repository's supported Node/Bun/tmux toolchain on PATH. The existing product
@@ -577,17 +585,14 @@ are required; input is never replayed, and a same-name replacement is never sele
 Navigation or explicit disconnect cancels pending recovery. Protocol/replica validation
 faults remain explicit failures. Exhaustion asks for refresh/reselection.
 
-`TMUX_GPUI_TEST_CLI=/absolute/path/to/isolated-cli.js node --import tsx apps/tmux-gpui/bridge/terminal-recovery-smoke.mjs`
-
-Set `TMUX_GPUI_TEST_SSH=1` on macOS to run the same recovery through a private real OpenSSH server. Set `TMUX_GPUI_TEST_BROWSER` to an absolute packaged `browser.bundle.mjs` path to qualify that helper. The fixture verifies the restored pane, retained tab and executed input; it does not connect to production SSH hosts.
-checks private daemon replacement with the same browser and pane, then verifies input.
-The fixture pins its private socket and selects only its exact generated session name.
-This headless proof does not replace native GUI or real remote SSH qualification.
+CI covers this recovery headlessly with `bridge/startup-recovery-smoke.mjs` and
+`bridge/discovery-recovery-smoke.mjs`. That does not replace native GUI or real
+remote SSH qualification.
 
 To repeat the physical daemon-replacement check, set `TMUX_GPUI_TEST_APP` to an
 explicit freshly assembled app and `TMUX_GPUI_RECOVERY_SIGNAL` to a new absolute
 signal-file path, then run
-`node --import tsx apps/tmux-gpui/bridge/native-recovery-smoke.mjs`
+`node --import tsx apps/tmux-gpui/bridge/manual/native-recovery-smoke.mjs`
 from the repository root with the
 fixture's supported tmux runtime on PATH. Follow its printed UI steps. Create the
 signal file only after observing the unavailable/blank terminal. The fixture owns
@@ -602,11 +607,12 @@ to an explicitly assembled app; a headless green result does not qualify packagi
 
 `.github/workflows/gpui-preview.yml` defines an independent preview lane: Linux
 bridge checks and isolated startup/replacement/session journeys using supported
-system tmux, plus macOS Rust formatting, file-size checks, both Clippy and test
-feature configurations, the dedicated release executable build and its isolated
-CLI integration tests. Run those release checks from `upstream/` with
-`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui` and
-`cargo test --locked --release -p tmux-ide-gpui --test tmux_cli`. The lane does
+system tmux, plus macOS Rust formatting, file-size checks, both Clippy feature
+configurations, one `--all-features` test run (which includes the isolated CLI
+integration tests) and the dedicated release executable build. It runs only when
+a pull request or push changes a path in the workflow's `paths:` list. Run the
+release build from `upstream/` with
+`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui`. The lane does
 not publish artifacts, sign, install, or operate production sessions. Physical UI,
 bundled runtime, display-scale and release/install/update qualification remain
 separate required evidence. A local check does not establish a hosted CI pass.
@@ -978,9 +984,9 @@ original pane remains selected; the new pane becomes selectable after verified
 daemon inventory and layout refresh. A background transition, changed selection,
 or uncertain result cancels the follow-up rather than replaying the split.
 Both split directions were physically qualified on the local macOS preview; see
-`evidence/native-pane-split-2026-10-10/`. Session pane counts refresh from canonical
+[`evidence/native-pane-split-2026-10-10/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/native-pane-split-2026-10-10). Session pane counts refresh from canonical
 metadata after splitting; the follow-up qualification is recorded in
-`evidence/split-session-count-2026-10-10/`.
+[`evidence/split-session-count-2026-10-10/`](https://github.com/wavyrai/tmux-ide/tree/a0cff52add18dfdf9d4acbf3ec40a44c7542b7cd/apps/tmux-gpui/evidence/split-session-count-2026-10-10).
 
 Run the isolated real-tmux path with:
 

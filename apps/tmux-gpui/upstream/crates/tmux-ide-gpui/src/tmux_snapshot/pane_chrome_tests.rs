@@ -5,7 +5,7 @@ use core::prelude::v1::test;
 fn title_uses_selected_identity_and_keeps_readiness_independent() {
     let mut state = State {
         selected_pane: Some("b".into()),
-        status: "Waiting for input authority".into(),
+        status: "Connecting…".into(),
         panes: vec![
             Choice {
                 id: "a".into(),
@@ -31,7 +31,7 @@ fn title_uses_selected_identity_and_keeps_readiness_independent() {
         Some("Selected: Selected pane".into())
     );
     assert!(!state.input_ready);
-    assert_eq!(state.status, "Waiting for input authority");
+    assert_eq!(state.status, "Connecting…");
     state.selected_pane = Some("Selected pane".into());
     assert_eq!(selected_title(&state), None);
 }

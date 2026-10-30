@@ -2,8 +2,28 @@ name: GPUI preview correctness
 
 on:
   pull_request:
+    paths: &app-paths
+      - apps/tmux-gpui/**
+      - native/tmux/**
+      # The journeys build the CLI from bin/ and packages/, and import scripts/lib fixtures.
+      - bin/**
+      - packages/**
+      - scripts/build-cli.mjs
+      - scripts/build-bundled-tmux.mjs
+      - scripts/lib/**
+      - docs/app/icon.png
+      # The packaged app ships the root license.
+      - LICENSE
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
+      - .bun-version
+      - .github/actions/setup-tmux/**
+      - .github/workflows/gpui-preview.yml
   push:
     branches: [main]
+    paths: *app-paths
   workflow_dispatch:
 
 permissions:
@@ -53,6 +73,7 @@ jobs:
           node --import tsx apps/tmux-gpui/bridge/home-machine-filter-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-fleet-source/home.log"
       - name: Preserve Home and fleet source evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: gpui-fleet-source-evidence
@@ -108,12 +129,9 @@ jobs:
           cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
       - name: Workspace tests
         run: |
-          cargo test --locked --workspace
           cargo test --locked --workspace --all-features
-      - name: Build and check the release preview executable
-        run: |
-          cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui
-          cargo test --locked --release -p tmux-ide-gpui --test tmux_cli
+      - name: Build the release preview executable
+        run: cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui
       # The packaging wrapper builds the shipped dist profile at --jobs 1. Build it
       # here in parallel first, with the wrapper's HERDR_BUILD_PR_NUMBER, so the
       # wrapper finds every crate current instead of compiling them one at a time.
@@ -162,7 +180,6 @@ jobs:
           node scripts/build-cli.mjs --outfile "$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
           export PATH="$RUNNER_TEMP/gpui-tmux-bundle:$PATH"
           export TMUX_GPUI_TEST_CLI="$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
-          node --import tsx apps/tmux-gpui/bridge/new-window-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-new-window.log"
           node --import tsx apps/tmux-gpui/bridge/pane-actions-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-pane-actions.log"
           node --import tsx apps/tmux-gpui/bridge/native-viewport-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-native-viewport.log"
           TMUX_GPUI_TEST_DISCOVERY=1 node --import tsx apps/tmux-gpui/bridge/browser-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-browser.log"
@@ -175,9 +192,6 @@ jobs:
           node --import tsx apps/tmux-gpui/bridge/pane-replacement-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-pane-replacement.log"
           node --import tsx apps/tmux-gpui/bridge/competing-viewers-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-competing-viewers.log"
           node --import tsx apps/tmux-gpui/bridge/editor-action-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-editor-action.log"
-          node --import tsx apps/tmux-gpui/bridge/browser-history-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-history.log"
-          node --import tsx apps/tmux-gpui/bridge/close-pane-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-close-pane.log"
-          TMUX_GPUI_CLOSE_LAYOUT=windows node --import tsx apps/tmux-gpui/bridge/close-pane-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/source-close-window.log"
       - name: Exact packaged Home and fleet journeys (no GUI)
         working-directory: .
         shell: bash
@@ -195,6 +209,7 @@ jobs:
           TMUX_GPUI_CLOSE_LAYOUT=windows node --import tsx apps/tmux-gpui/bridge/close-pane-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/close-window.log"
       - name: Preserve packaging evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: gpui-macos-packaging-evidence

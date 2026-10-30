@@ -1,3 +1,0 @@
-
-> @tmux-ide/daemon@2.9.5 build:tsc /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
-> tsc -p tsconfig.json

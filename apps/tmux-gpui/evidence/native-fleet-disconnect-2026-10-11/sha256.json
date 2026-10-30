@@ -1,8 +1,0 @@
-{
-  "bridge/fleet.ts": "a81208e11ee1f687b2516d597e456820531732a1a8cad5653b4584f79f039bdb",
-  "bridge/fleet-runtime.ts": "f37d0d15d88bb3d97f9f8304a69258a83ff93b3d4790ce39ab261eeb508a4bc9",
-  "bridge/browser.ts": "358c15ecfa138b9340e4c0d65e5d0d5973f0e27c34f812cab7e4c030fed26174",
-  "upstream/crates/herdr-gpui/src/tmux_snapshot/picker.rs": "a7e10c2c1fec847b038662e5fec00e337d6eb7a8bff2f4512ae32da354f0d51e",
-  "upstream/crates/herdr-gpui/src/tmux_snapshot/browser_fleet.rs": "c1b327c2f9be85d31fca6589a1982a62ec06e4c40592f015e9d096d740292e8b",
-  "debug-native-binary": "c34683e271d2782fb51b29dc97b13dce128529a9548bfff06b60bfed877ed5ec"
-}

@@ -1,3 +1,0 @@
-Native binary SHA256 4a0f2efdddb39a6d80e9eb2e6bfa7dfc149c4a98aa776317ff0c6c0f49d35322.
-Synthetic fixture only; no daemon or tmux. Initial run failed because the operator sent F9 twice before observing the first publication: trace shows activateA then activateB where closeB was required. No product or fixture edits.
-Unchanged rerun: F9 once, separately observe Accepted Session A with unread removed; pointer close B at current header coordinate, observe A/frame retained; Ctrl-F9, separately observe Home with no retained tabs; Cmd-Q. Fixture exits 0 with exact three expected commands. Activation used Ctrl-G; normal Finder launch remains unqualified. Raw visual boolean was intentionally not rewritten; these observations supply separate manual evidence.

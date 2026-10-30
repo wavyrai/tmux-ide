@@ -96,7 +96,7 @@ fn native_overlay_preserves_catalog_and_uses_content_for_copy_hit_rect_for_panes
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(snapshot(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(snapshot(), 1, "one"), true, true, 4, 0)
         .unwrap();
     assert_eq!(s.request, 17);
     assert_eq!(s.sessions[0].label, "Human session");
@@ -127,20 +127,27 @@ fn cursor_and_revision_updates_keep_input_and_selection_proof_and_rows() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     let first = s.frame.clone().unwrap();
     let token = s.input_targets[0].token.clone();
     let selection = s.selection_identity.clone();
     adapter
-        .apply(&mut s, &window(source.clone(), 2, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 2, "one"), true, true, 4, 0)
         .unwrap();
     assert!(first.same(s.frame.as_ref().unwrap()));
     assert_eq!(selection, s.selection_identity);
     let mut changed = (*source).clone();
     changed.cursor.x = 0;
     adapter
-        .apply(&mut s, &window(Arc::new(changed), 3, "one"), true, 4, 0)
+        .apply(
+            &mut s,
+            &window(Arc::new(changed), 3, "one"),
+            true,
+            true,
+            4,
+            0,
+        )
         .unwrap();
     assert_eq!(token, s.input_targets[0].token);
     assert_eq!(selection, s.selection_identity);
@@ -159,17 +166,17 @@ fn changed_rows_retire_selection_proof_but_lifetime_tokens_survive() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(snapshot(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(snapshot(), 1, "one"), true, true, 4, 0)
         .unwrap();
     let token = s.input_targets[0].token.clone();
     let selection = s.selection_identity.clone();
     adapter
-        .apply(&mut s, &window(snapshot(), 2, "one"), true, 4, 0)
+        .apply(&mut s, &window(snapshot(), 2, "one"), true, true, 4, 0)
         .unwrap();
     assert_ne!(selection, s.selection_identity);
     assert_eq!(token, s.input_targets[0].token);
     adapter
-        .apply(&mut s, &window(snapshot(), 3, "two"), true, 4, 0)
+        .apply(&mut s, &window(snapshot(), 3, "two"), true, true, 4, 0)
         .unwrap();
     assert_ne!(token, s.input_targets[0].token);
     assert!(adapter.resolve("pane", Some(&token)).is_none());
@@ -180,17 +187,17 @@ fn retained_skew_and_authority_loss_never_authorize_input() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     let mut retained = window(source.clone(), 1, "one");
     retained.coherent = false;
-    adapter.apply(&mut s, &retained, true, 4, 0).unwrap();
+    adapter.apply(&mut s, &retained, true, true, 4, 0).unwrap();
     assert!(!s.input_ready);
     assert!(s.input_targets.is_empty());
     assert!(s.selection_identity.is_none());
     assert!(adapter.resolve("pane", None).is_none());
     adapter
-        .apply(&mut s, &window(source, 2, "one"), false, 4, 0)
+        .apply(&mut s, &window(source, 2, "one"), false, true, 4, 0)
         .unwrap();
     assert!(!s.input_ready);
     assert!(adapter.resolve("pane", None).is_none());
@@ -207,14 +214,14 @@ fn stale_node_grants_are_cleared_and_invalid_copy_rect_retires_targets() {
         zoomed: false,
     });
     adapter
-        .apply(&mut s, &window(snapshot(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(snapshot(), 1, "one"), true, true, 4, 0)
         .unwrap();
     assert!(s.resize_token.is_none());
     assert!(!s.resize_gesture_supported);
     assert!(s.pane_actions.is_none());
     let mut invalid = window(snapshot(), 2, "one");
     Arc::get_mut(&mut invalid.paint).unwrap().copy_region.top = 0;
-    assert!(adapter.apply(&mut s, &invalid, true, 4, 0).is_err());
+    assert!(adapter.apply(&mut s, &invalid, true, true, 4, 0).is_err());
     assert!(adapter.resolve("pane", None).is_none());
 }
 fn with_history() -> Arc<Snapshot> {
@@ -243,11 +250,11 @@ fn local_history_scroll_only_changes_selected_rows_and_never_mutates_canonical()
     });
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
-    adapter.apply(&mut s, &shown, true, 4, 0).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap();
     let first = s.frame.clone().unwrap();
     adapter.scroll(Scroll::Home);
     assert!(adapter.resolve("pane", None).is_none());
-    adapter.apply(&mut s, &shown, true, 4, 0).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap();
     assert_eq!(adapter.history_offset(), 2);
     assert_eq!(s.history_offset, 2);
     assert!(!s.input_ready);
@@ -282,11 +289,11 @@ fn output_while_anchored_keeps_displayed_rows_then_end_returns_live() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     adapter.scroll(Scroll::Home);
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     let before = s.frame.clone().unwrap();
     let selection = s.selection_identity.clone();
@@ -297,14 +304,14 @@ fn output_while_anchored_keeps_displayed_rows_then_end_returns_live() {
         .unwrap()
         .push(source.grid[0].clone());
     adapter
-        .apply(&mut s, &window(Arc::new(newer), 2, "one"), true, 4, 0)
+        .apply(&mut s, &window(Arc::new(newer), 2, "one"), true, true, 4, 0)
         .unwrap();
     assert_eq!(adapter.history_offset(), 3);
     assert!(before.same(s.frame.as_ref().unwrap()));
     assert_eq!(selection, s.selection_identity);
     adapter.scroll(Scroll::End);
     adapter
-        .apply(&mut s, &window(source.clone(), 3, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 3, "one"), true, true, 4, 0)
         .unwrap();
     assert_eq!(adapter.history_offset(), 0);
     assert!(s.input_ready);
@@ -321,18 +328,25 @@ fn alternate_screen_and_new_incarnation_reset_history() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     adapter.scroll(Scroll::Home);
     adapter
-        .apply(&mut s, &window(source.clone(), 2, "two"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 2, "two"), true, true, 4, 0)
         .unwrap();
     assert_eq!(adapter.history_offset(), 0);
     adapter.scroll(Scroll::Home);
     let mut alternate = (*source).clone();
     alternate.modes.alternate_screen = true;
     adapter
-        .apply(&mut s, &window(Arc::new(alternate), 3, "two"), true, 4, 0)
+        .apply(
+            &mut s,
+            &window(Arc::new(alternate), 3, "two"),
+            true,
+            true,
+            4,
+            0,
+        )
         .unwrap();
     assert_eq!(adapter.history_offset(), 0);
 }
@@ -344,7 +358,7 @@ fn scroll_captures_metadata_and_owner_resolve_restores_exact_row() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 0)
         .unwrap();
     adapter.scroll(Scroll::Home);
     let capture = adapter.take_history_action().unwrap();
@@ -366,7 +380,7 @@ fn scroll_captures_metadata_and_owner_resolve_restores_exact_row() {
     adapter.restore_history(HISTORY_TOKEN.into(), 10);
     let restore = adapter.take_history_action().unwrap();
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 11)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 11)
         .unwrap();
     assert!(!s.input_ready);
     assert!(s.selection_identity.is_none());
@@ -379,7 +393,7 @@ fn scroll_captures_metadata_and_owner_resolve_restores_exact_row() {
         12
     ));
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 13)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 13)
         .unwrap();
     assert_eq!(adapter.history_offset(), 2);
     assert!(Arc::ptr_eq(
@@ -398,7 +412,7 @@ fn first_frame_restore_waits_for_proof_and_late_response_is_fenced() {
     assert_eq!(adapter.history_pane(), None);
     assert!(adapter.take_history_action().is_none());
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 10)
+        .apply(&mut s, &window(source.clone(), 1, "one"), true, true, 4, 10)
         .unwrap();
     let pending = adapter.take_history_action().unwrap();
     assert!(!s.input_ready);
@@ -412,14 +426,28 @@ fn first_frame_restore_waits_for_proof_and_late_response_is_fenced() {
         3001
     ));
     adapter
-        .apply(&mut s, &window(source.clone(), 1, "one"), true, 4, 3001)
+        .apply(
+            &mut s,
+            &window(source.clone(), 1, "one"),
+            true,
+            true,
+            4,
+            3001,
+        )
         .unwrap();
     assert!(s.input_ready);
     assert_eq!(adapter.history_offset(), 0);
     adapter.scroll(Scroll::Home);
     let old = adapter.take_history_action().unwrap();
     adapter
-        .apply(&mut s, &window(source.clone(), 2, "two"), true, 4, 3002)
+        .apply(
+            &mut s,
+            &window(source.clone(), 2, "two"),
+            true,
+            true,
+            4,
+            3002,
+        )
         .unwrap();
     assert!(!adapter.complete_history(
         &old.ticket,
@@ -436,7 +464,7 @@ fn superseded_scroll_capture_cannot_replace_current_anchor_token() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     adapter
-        .apply(&mut s, &window(source, 1, "one"), true, 4, 0)
+        .apply(&mut s, &window(source, 1, "one"), true, true, 4, 0)
         .unwrap();
     adapter.scroll(Scroll::Home);
     let old = adapter.take_history_action().unwrap();
@@ -464,35 +492,35 @@ fn idle_same_paint_skips_projection_but_authority_presence_and_request_refresh()
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     let shown = window(snapshot(), 1, "one");
-    assert!(adapter.apply(&mut s, &shown, true, 4, 0).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap());
     let frame = s.frame.clone().unwrap();
     let token = s.input_targets[0].token.clone();
     let selection = s.selection_identity.clone();
     for now in 1..101 {
-        assert!(!adapter.apply(&mut s, &shown, true, 4, now).unwrap());
+        assert!(!adapter.apply(&mut s, &shown, true, true, 4, now).unwrap());
     }
     assert!(frame.same(s.frame.as_ref().unwrap()));
     assert_eq!(s.input_targets[0].token, token);
     assert_eq!(s.selection_identity, selection);
-    assert!(adapter.apply(&mut s, &shown, false, 4, 101).unwrap());
+    assert!(adapter.apply(&mut s, &shown, false, true, 4, 101).unwrap());
     assert!(!s.input_ready);
     assert!(adapter.resolve("pane", Some(&token)).is_none());
-    assert!(adapter.apply(&mut s, &shown, true, 5, 102).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 5, 102).unwrap());
     assert!(s.input_ready);
     assert_eq!(s.presence_revision, 5);
     s.request += 1;
-    assert!(adapter.apply(&mut s, &shown, true, 5, 103).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 5, 103).unwrap());
 }
 #[test]
 fn replaced_catalog_reapplies_overlay_without_changing_native_paint() {
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     let shown = window(snapshot(), 1, "one");
-    adapter.apply(&mut s, &shown, true, 4, 0).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap();
     s = state();
     adapter.invalidate_overlay();
     assert!(adapter.resolve("pane", None).is_none());
-    assert!(adapter.apply(&mut s, &shown, true, 4, 1).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 1).unwrap());
     assert!(s.frame.is_some() && s.input_ready);
     assert_eq!(s.panes[0].label, "Human pane");
 }
@@ -501,15 +529,15 @@ fn same_paint_history_restore_completion_failure_and_timeout_invalidate_cache() 
     let mut adapter = NativePresentation::new("scope", "workspace");
     let mut s = state();
     let shown = window(with_history(), 1, "one");
-    adapter.apply(&mut s, &shown, true, 4, 0).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap();
     adapter.scroll(Scroll::Home);
-    assert!(adapter.apply(&mut s, &shown, true, 4, 1).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 1).unwrap());
     assert!(s.history_offset > 0);
     adapter.scroll(Scroll::End);
-    adapter.apply(&mut s, &shown, true, 4, 2).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 2).unwrap();
     adapter.restore_history(HISTORY_TOKEN.into(), 10);
     let restore = adapter.take_history_action().unwrap();
-    assert!(adapter.apply(&mut s, &shown, true, 4, 11).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 11).unwrap());
     assert!(!s.input_ready);
     assert!(adapter.complete_history(
         &restore.ticket,
@@ -519,18 +547,18 @@ fn same_paint_history_restore_completion_failure_and_timeout_invalidate_cache() 
         }),
         12
     ));
-    assert!(adapter.apply(&mut s, &shown, true, 4, 13).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 13).unwrap());
     assert_eq!(s.history_offset, 2);
     adapter.scroll(Scroll::End);
-    adapter.apply(&mut s, &shown, true, 4, 14).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 14).unwrap();
     adapter.restore_history(HISTORY_TOKEN.into(), 20);
     let failed = adapter.take_history_action().unwrap();
-    adapter.apply(&mut s, &shown, true, 4, 21).unwrap();
+    adapter.apply(&mut s, &shown, true, true, 4, 21).unwrap();
     adapter.fail_history(&failed.ticket);
-    assert!(adapter.apply(&mut s, &shown, true, 4, 22).unwrap());
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 22).unwrap());
     adapter.restore_history(HISTORY_TOKEN.into(), 30);
-    adapter.apply(&mut s, &shown, true, 4, 31).unwrap();
-    assert!(adapter.apply(&mut s, &shown, true, 4, 3030).unwrap());
+    adapter.apply(&mut s, &shown, true, true, 4, 31).unwrap();
+    assert!(adapter.apply(&mut s, &shown, true, true, 4, 3030).unwrap());
     assert!(s.input_ready);
 }
 
@@ -542,3 +570,43 @@ mod alternate_projection;
 
 #[path = "browser_direct_tests/focus.rs"]
 mod focus_tokens;
+#[test]
+fn titlebar_status_says_inactive_in_background_and_connecting_until_granted() {
+    let mut adapter = NativePresentation::new("scope", "workspace");
+    let mut s = state();
+    let shown = window(snapshot(), 1, "one");
+    for (input_authority, foreground, presence, status) in [
+        (
+            false,
+            false,
+            1,
+            "Window inactive — activate tmux-ide to type",
+        ),
+        (false, true, 2, "Connecting…"),
+        (true, true, 3, "Connected"),
+        (
+            false,
+            false,
+            4,
+            "Window inactive — activate tmux-ide to type",
+        ),
+    ] {
+        assert!(
+            adapter
+                .apply(&mut s, &shown, input_authority, foreground, presence, 0)
+                .unwrap()
+        );
+        assert_eq!(s.status, status);
+        assert_eq!(s.input_ready, input_authority);
+    }
+}
+#[test]
+fn foreground_change_alone_refreshes_the_cached_status() {
+    let mut adapter = NativePresentation::new("scope", "workspace");
+    let mut s = state();
+    let shown = window(snapshot(), 1, "one");
+    assert!(adapter.apply(&mut s, &shown, false, true, 4, 0).unwrap());
+    assert_eq!(s.status, "Connecting…");
+    assert!(adapter.apply(&mut s, &shown, false, false, 4, 1).unwrap());
+    assert_eq!(s.status, "Window inactive — activate tmux-ide to type");
+}

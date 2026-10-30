@@ -1,1 +1,0 @@
-{"passed":true,"stages":[{"stage":"switch-cycle","cycle":1,"windows":2},{"stage":"switch-cycle","cycle":2,"windows":2},{"stage":"disconnected","snapshot":false,"inputReady":false},{"stage":"recovered","sameBrowser":true,"exactOriginalTargets":true}],"publications":123,"sourceIdentityPreserved":true,"admittedGeometryPreserved":true,"cleanup":true}
