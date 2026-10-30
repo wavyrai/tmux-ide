@@ -23,12 +23,44 @@ pub(super) fn code(error: &NativeError) -> &'static str {
         },
     }
 }
-/// Daemon 2.9.15 is the oldest release this client has been proven against.
-pub(super) const DAEMON_TOO_OLD: &str = "This tmux-ide daemon is too old for the app. Update tmux-ide to 2.9.15 or later and restart it.";
+/// Capability 105 (input lifetime) first shipped in tmux-ide 2.9.11.
+pub(super) fn daemon_too_old(version: Option<&str>) -> String {
+    let version = version.map(str::trim).filter(|v| {
+        !v.is_empty()
+            && v.len() <= 32
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+    });
+    match version {
+        Some(version) => format!(
+            "This tmux-ide daemon ({version}) is too old for the Mac app. Update tmux-ide to 2.9.11 or later: tmux-ide update"
+        ),
+        None => "This tmux-ide daemon is too old for the Mac app. Update tmux-ide to 2.9.11 or later: tmux-ide update".into(),
+    }
+}
 
-/// A terminal failure that no reconnect can fix, with the status it shows.
-pub(super) fn stop_message(error: &NativeError) -> Option<&'static str> {
-    (code(error) == "stream-daemon-too-old").then_some(DAEMON_TOO_OLD)
+/// A terminal failure that no reconnect can fix, kept on screen for its request.
+pub(super) struct Stop {
+    request: u64,
+    pub(super) status: String,
+}
+impl Stop {
+    pub(super) fn new(error: &NativeError, request: u64, version: Option<&str>) -> Option<Self> {
+        (code(error) == "stream-daemon-too-old").then(|| Self {
+            request,
+            status: daemon_too_old(version),
+        })
+    }
+    /// The catalog owner republishes its own status; keep the stop until a newer request.
+    pub(super) fn apply(stop: &mut Option<Self>, state: &mut super::State) {
+        match stop {
+            Some(current) if state.request > current.request => *stop = None,
+            Some(current) if state.request == current.request && state.frame.is_none() => {
+                state.status.clone_from(&current.status);
+            }
+            _ => {}
+        }
+    }
 }
 fn session(error: &tmux_native_session::Error) -> &'static str {
     use tmux_native_session::Error;
