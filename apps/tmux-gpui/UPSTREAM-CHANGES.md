@@ -110,14 +110,11 @@ The sidebar row presentation additionally adapts the selected-row typography in
 It retains `sidebar::label_text`, with a bounded marker gutter and label area;
 window headings stay inert and selection continues through the tmux identity fence.
 
-The tmux-only `glass.rs` / `glass/macos.rs` boundary adds Apple's public
-`NSGlassEffectView` behind the GPUI Metal view using the raw-handle borrowing
-pattern from `browser/native.rs`. It owns only its inserted sibling and its
-accessibility observer. The member Cargo manifest enables existing objc2 AppKit
-and Foundation features; dependency versions and lockfile are unchanged. Navigation
-chrome exposes the material only when the native boundary reports success;
-unsupported/accessibility modes and terminal content remain opaque. This is a
-new tmux adaptation, not a Liquid Glass implementation copied from Herdr.
+The window chrome is Bezel's (card #668): `bezel_ui::window::frame`, Bezel's title
+bar band, and the palette's behind-window blur, applied by the tmux-only
+`chrome.rs` owner. That owner keeps only the Reduce Transparency / Increase
+Contrast gate and its accessibility observer from the earlier `glass.rs`, whose
+`NSGlassEffectView` sibling is gone. Terminal panes stay opaque.
 
 The tmux-only divider gesture model adds fenced, release-time pane resizing,
 status-row-aware geometry, stale/focus cancellation and an input-interruption

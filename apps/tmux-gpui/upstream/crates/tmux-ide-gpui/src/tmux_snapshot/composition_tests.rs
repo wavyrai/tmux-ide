@@ -23,7 +23,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             _activation: None,
             _appearance: None,
             last_system: None,
-            glass: Default::default(),
+            chrome: Default::default(),
             last_workspace_session: None,
             pending_session_open: None,
             header_controls: Default::default(),

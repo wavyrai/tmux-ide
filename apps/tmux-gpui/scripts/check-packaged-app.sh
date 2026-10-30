@@ -25,12 +25,22 @@ if (records.length !== 1 || typeof records[0].native !== 'string' || !isAbsolute
 console.log(records[0].native);
 JS
 )
+# The default bundle ships without Node. A development bundle opts into the
+# bundled Node so the legacy helper routes stay qualified.
 app="$output/Tmux IDE CI.app"
+dev_app="$output/Tmux IDE CI Development.app"
 "$node_binary" apps/tmux-gpui/scripts/assemble-local-app.mjs \
-  "$native_binary" "$node_binary" "$node_license" "$output/native-build.json" "$app" \
+  "$native_binary" "$output/native-build.json" "$app" \
   2>&1 | tee "$output/assembly.log"
+"$node_binary" apps/tmux-gpui/scripts/assemble-local-app.mjs \
+  "$native_binary" "$output/native-build.json" "$dev_app" \
+  --node "$node_binary" --node-license "$node_license" \
+  2>&1 | tee "$output/assembly-dev.log"
 TMUX_GPUI_TEST_APP="$app" "$node_binary" --import tsx --test \
+  apps/tmux-gpui/bridge/local-app.test.mjs \
+  2>&1 | tee "$output/package-tests.log"
+TMUX_GPUI_TEST_APP="$dev_app" "$node_binary" --import tsx --test \
   apps/tmux-gpui/bridge/local-app.test.mjs apps/tmux-gpui/bridge/compatibility-process.test.mjs \
   apps/tmux-gpui/bridge/machine-remove-process.test.mjs \
   apps/tmux-gpui/bridge/fleet-refresh-diagnostic.test.mjs \
-  2>&1 | tee "$output/package-tests.log"
+  2>&1 | tee "$output/package-tests-dev.log"

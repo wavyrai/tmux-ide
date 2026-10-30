@@ -644,14 +644,9 @@ impl SnapshotView {
         let theme = self.theme();
         let is_home = self.browser_state.surface == browser::Surface::Home;
         let show_sidebar = !is_home && !self.sidebar_hidden;
-        let viewport = window.viewport_size();
         // One material backs the header, sidebar and the gutter around opaque content.
-        let glass = self.glass.sync(
-            window,
-            Bounds::new(point(px(0.), px(0.)), viewport),
-            theme.surface,
-        );
-        super::design::prepare(&theme, glass, cx);
+        super::design::prepare(&theme, self.chrome.refresh(), cx);
+        self.chrome.sync(window, cx);
         let mut sidebar = div()
             .id("session-list")
             .debug_selector(|| "session-list".into())
@@ -672,14 +667,24 @@ impl SnapshotView {
                     .px_2()
                     .pt_1()
                     .pb_1()
-                    .text_color(rgb(theme.muted))
+                    .text_color(rgb(super::design::chrome_text(&theme, theme.muted)))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Sessions"),
             );
         let request = self.browser_request;
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::of(cx);
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
-            let mut element = sidebar::render_row(index, &row, &theme, self.accent(), glass).when(
+            let mut element = sidebar::render_row(
+                index,
+                &row,
+                &theme,
+                &bezel,
+                painter,
+                self.sidebar_keyboard.active,
+            )
+            .when(
                 self.sidebar_keyboard.active
                     && (row.target.as_ref().is_some_and(|target| {
                         Some(target) == self.sidebar_keyboard.selected.as_ref()
@@ -861,9 +866,6 @@ impl SnapshotView {
         let application_tabs = self.application_tabs(notice, window, cx);
         let content = super::shell::content_panel(content_background, is_home)
             .relative()
-            .when(is_home && glass, |panel| {
-                panel.bg(rgba((content_background << 8) | 0x99))
-            })
             .children(home)
             .when(!is_home, |panel| {
                 panel
@@ -931,7 +933,7 @@ impl SnapshotView {
                     .map(|dialog| deferred(dialog).with_priority(2)),
             )
             .into_any_element();
-        super::shell::themed_frame(body, window, &theme, glass, application_tabs)
+        super::shell::themed_frame(body, window, cx, &theme, application_tabs)
     }
 }
 

@@ -19,6 +19,7 @@ mod browser_native_transition;
 mod browser_state;
 mod browser_toolbar;
 mod browser_ui;
+mod chrome;
 mod composition;
 mod controls;
 mod copy;
@@ -30,7 +31,6 @@ mod direct_projection;
 mod display_frame;
 mod divider;
 mod geometry;
-mod glass;
 mod hit_regions;
 mod home;
 mod input_gate;
@@ -60,6 +60,8 @@ mod terminal_font;
 mod terminal_links;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "visual-capture")]
+pub(crate) mod visual_capture;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
@@ -87,6 +89,12 @@ pub(crate) enum Error {
     TooLarge,
     #[error("invalid snapshot: {0}")]
     Invalid(&'static str),
+    #[error(
+        "the legacy helper route needs a Node.js runtime at {}, which this app does not bundle; \
+         it is available only in development bundles assembled with --node",
+        .0.display()
+    )]
+    HelperRuntimeMissing(PathBuf),
 }
 
 pub(crate) fn run(args: Vec<OsString>) -> Result<(), Error> {
@@ -198,6 +206,10 @@ pub(crate) fn browse_with_helper(
     host: &std::ffi::OsStr,
 ) -> Result<(), Error> {
     // Paths are supplied by the version-pinned app launcher, never terminal data.
+    // Shipped bundles omit Node, so the launcher's path names a missing file there.
+    if !std::path::Path::new(node).is_file() {
+        return Err(Error::HelperRuntimeMissing(node.into()));
+    }
     // Spawn before entering GPUI; the owner retires/reaps only this child off-thread.
     let herdr_client::tmux_broker_process::Broker {
         reader,
@@ -327,7 +339,7 @@ fn show_owned(
                                         view.flush_palette(cx);
                                         view.flush_kitty_graphics(cx);
                                         view.tick_agent_indicators(cx);
-                                        if view.glass.take_policy_change() {
+                                        if view.chrome.take_policy_change() {
                                             cx.notify();
                                         }
                                     })
@@ -389,7 +401,7 @@ fn show_owned(
                         _activation: Some(activation),
                         _appearance: Some(appearance),
                         last_system: None,
-                        glass: Default::default(),
+                        chrome: Default::default(),
                         last_workspace_session: None,
                         pending_session_open: None,
                         header_controls: Default::default(),
@@ -478,7 +490,7 @@ struct SnapshotView {
     _activation: Option<Subscription>,
     _appearance: Option<Subscription>,
     last_system: Option<appearance::System>,
-    glass: glass::Glass,
+    chrome: chrome::Chrome,
     last_workspace_session: Option<String>,
     pending_session_open: Option<session_open::Intent>,
     header_controls: pane_chrome::Controls,

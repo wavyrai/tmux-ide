@@ -57,9 +57,17 @@ export async function verifyMacApp(
   const paths = {
     plist: join(app, "Contents/Info.plist"),
     native: join(app, "Contents/MacOS/tmux-ide-gpui"),
-    node: join(app, "Contents/Resources/node"),
     launcher: join(app, "Contents/MacOS/tmux-ide-launcher"),
   };
+  // Default apps ship without Node; a development app's Node is verified like the native binary.
+  const node = join(app, "Contents/Resources/node");
+  if (
+    await lstat(node).then(
+      () => true,
+      (error) => (error.code === "ENOENT" ? false : Promise.reject(error)),
+    )
+  )
+    paths.node = node;
   for (const path of Object.values(paths)) {
     if (!(await lstat(path)).isFile() || (await realpath(path)) !== path)
       throw new Error("Expected regular staged app files without redirected parents");
@@ -109,7 +117,7 @@ export async function verifyMacApp(
   const bundleFloor = parseVersion(await plist("LSMinimumSystemVersion"));
   if (older(bundleFloor, floor) || older(host, bundleFloor))
     throw new Error("Bundle macOS floor is incompatible with policy or host");
-  for (const path of [paths.native, paths.node]) {
+  for (const path of paths.node ? [paths.native, paths.node] : [paths.native]) {
     // Resources/node is outside codesign's conventional --deep nesting paths.
     await run("codesign", [
       "--verify",

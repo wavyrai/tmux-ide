@@ -17,24 +17,32 @@ pub(super) fn options() -> WindowOptions {
     WindowOptions {
         titlebar: Some(crate::titlebar::options("tmux-ide — native preview")),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
+        // Opaque until the first render installs the palette; `Chrome::sync`
+        // then moves it to Bezel's blurred background where the palette frosts.
+        window_background_blur: bezel_theme::Theme::WINDOW_BLUR.into(),
         window_min_size: Some(size(px(640.), px(400.))),
         ..Default::default()
     }
 }
 #[cfg(test)]
-pub(super) fn frame(body: impl IntoElement, window: &mut Window) -> AnyElement {
-    themed_frame(body, window, &Theme::default(), false, "Home")
+pub(super) fn frame(body: impl IntoElement, window: &mut Window, cx: &mut App) -> AnyElement {
+    super::design::prepare(&Theme::default(), false, cx);
+    themed_frame(body, window, cx, &Theme::default(), "Home")
 }
+/// The window: Bezel's frame around the chrome material, the title bar band
+/// and `body`. The chrome is the palette's sidebar fill, which is frost over
+/// the blurred desktop where the palette is translucent; terminal panes paint
+/// their own opaque fill over it.
 pub(super) fn themed_frame(
     body: impl IntoElement,
     window: &mut Window,
+    cx: &App,
     theme: &Theme,
-    glass: bool,
     navigation: impl IntoElement,
 ) -> AnyElement {
     let font = Config::default().ui;
-    let header =
-        crate::titlebar::navigation_header(theme, window, navigation.into_any_element(), rgba(0));
+    let chrome = bezel_theme::Theme::of(cx).sidebar_bg();
+    let header = crate::titlebar::navigation_header(window, navigation.into_any_element(), cx);
     let content = div()
         .on_action(|action: &crate::RunCommand, window, cx| {
             if action.command == crate::controls::Command::ToggleFullScreen {
@@ -49,7 +57,7 @@ pub(super) fn themed_frame(
         .overflow_hidden()
         .text_font(&font)
         .text_size(px(font.size))
-        .bg(chrome_fill(theme.surface, glass))
+        .bg(chrome)
         .text_color(rgb(theme.foreground))
         .child(header)
         .child(
@@ -61,29 +69,14 @@ pub(super) fn themed_frame(
                 .overflow_hidden()
                 .child(body),
         );
-    crate::titlebar::frame(window, theme.active, content).into_any_element()
+    bezel_ui::window::frame(content, window, cx).into_any_element()
 }
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;
 
-// Tint only the navigation chrome; terminal surfaces retain opaque theme colors.
-pub(super) fn chrome_fill(color: u32, glass: bool) -> Rgba {
-    if glass {
-        // Dark ink needs a stronger frost over bright desktop content.
-        let alpha = if crate::contrast::luminance(color) < 0.5 {
-            0xcc
-        } else {
-            0x18
-        };
-        rgba((color << 8) | alpha)
-    } else {
-        rgb(color)
-    }
-}
-
 /// Insets keep native material visible while every terminal cell stays opaque.
-pub(super) const CONTENT_INSET: f32 = 8.;
+pub(super) const CONTENT_INSET: f32 = bezel_theme::Theme::CONTENT_INSET;
 pub(super) fn content_panel(canvas: u32, is_home: bool) -> Stateful<Div> {
     div()
         .id("workspace-content")

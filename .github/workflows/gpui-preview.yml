@@ -90,7 +90,8 @@ jobs:
   native:
     name: macOS Rust correctness (no physical UI claim)
     runs-on: macos-26
-    timeout-minutes: 90
+    # Headroom over the longest green run; the dist prebuild alone takes 15-22 min.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: apps/tmux-gpui/upstream
@@ -131,6 +132,17 @@ jobs:
           cargo test --locked --workspace --all-features
       - name: Build the release preview executable
         run: cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui
+      # The packaging wrapper builds the shipped dist profile at --jobs 1. Build it
+      # here in parallel first, with the wrapper's HERDR_BUILD_PR_NUMBER, so the
+      # wrapper finds every crate current instead of compiling them one at a time.
+      - name: Prebuild the shipped dist executable
+        env:
+          HERDR_BUILD_PR_NUMBER: ""
+        run: cargo build --locked --profile dist -p tmux-ide-gpui --bin tmux-ide-gpui
+      # The bridge job runs these on Linux, where they skip: they need macOS codesign.
+      - name: Browser launcher signature and cleanup checks
+        working-directory: .
+        run: node --test apps/tmux-gpui/scripts/browser-launch.test.mjs
       - name: Install pinned license-report generator
         run: cargo install cargo-about --version 0.9.2 --locked --features cli
       # Offline metadata reads the full lockfile, including non-macOS dependencies.
@@ -192,7 +204,9 @@ jobs:
           node scripts/build-cli.mjs --outfile "$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
           export PATH="$RUNNER_TEMP/gpui-tmux-bundle:$PATH"
           export TMUX_GPUI_TEST_CLI="$GITHUB_WORKSPACE/.tasks/gpui-ci/cli.mjs"
-          export TMUX_GPUI_TEST_APP="$RUNNER_TEMP/gpui-package-check/Tmux IDE CI.app"
+          # These journeys drive the legacy helper bridge, which only the --node development
+          # app carries; check-packaged-app.sh covers the Node-free default app.
+          export TMUX_GPUI_TEST_APP="$RUNNER_TEMP/gpui-package-check/Tmux IDE CI Development.app"
           node --import tsx apps/tmux-gpui/bridge/fleet-server-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/fleet-server.log"
           node --import tsx apps/tmux-gpui/bridge/home-machine-filter-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/home-machine-filter.log"
           node --import tsx apps/tmux-gpui/bridge/new-window-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/gpui-package-check/new-window.log"
@@ -211,3 +225,6 @@ jobs:
             ${{ runner.temp }}/gpui-package-check/*.log
             ${{ runner.temp }}/gpui-package-check/native-build.json
             ${{ runner.temp }}/gpui-package-check/Tmux IDE CI.app/Contents/Resources/development-manifest.json
+            ${{ runner.temp }}/gpui-package-check/Tmux IDE CI Development.app/Contents/Resources/development-manifest.json
+            # Symbolicates crash reports from the packaged dist binary.
+            apps/tmux-gpui/upstream/target/dist/tmux-ide-gpui.dSYM

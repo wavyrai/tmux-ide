@@ -133,7 +133,8 @@ function validate(receipt) {
         "tmux-ide-gpui",
         "--bin",
         "tmux-ide-gpui",
-        "--release",
+        "--profile",
+        "dist",
         "--message-format=json-render-diagnostics",
       ])
   )
