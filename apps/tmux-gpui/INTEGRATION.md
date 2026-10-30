@@ -7,6 +7,10 @@ terminal capture, input routing and resize authority. The Rust client consumes
 its supported contracts and paints cells through GPUI. It does not start another
 tmux server, emulate the terminal again, or infer authority from display names.
 
+The Herdr source paths below name files at the pinned upstream revisions this
+plan cites. Most of those modules were later removed from this tree; read them
+from git history.
+
 Herdr's framed bincode protocol is not the tmux-ide protocol. Reusing the painter
 requires an explicit adapter, not a socket address replacement. Keep upstream
 source changes small and documented for possible contribution back.
@@ -137,6 +141,7 @@ archives; `updater/release.rs` authenticates original bytes before parsing, then
 checks release identity, bounded downloads and hashes; `updater/install/archive.rs`
 checks archive paths, duplicates, entry types and expanded size. The release
 workflow signs/notarizes before packaging and verifies uploaded draft artifacts.
+(Mac app cleanup, 30 Oct: #655 removed the updater modules and that workflow.)
 
 Adapt the patterns; do not enable its product updater. Its repository endpoint,
 key, Herdr.app naming, calendar versions and bundle identity are not tmux-ide's.

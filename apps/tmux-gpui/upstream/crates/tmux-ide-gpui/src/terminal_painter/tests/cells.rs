@@ -1,32 +1,5 @@
 use super::*;
 
-#[test]
-fn link_underlines_stay_inside_the_frame() {
-    let frame = FrameData {
-        width: 10,
-        height: 3,
-        cells: vec![cell("a"); 30],
-        cursor: None,
-        hyperlinks: vec![],
-        graphics: vec![],
-    };
-    let rect = |x, y, width, height| SurfaceRect {
-        x,
-        y,
-        width,
-        height,
-    };
-    // A wrapped link's two rows, the second past the frame's right edge.
-    assert_eq!(
-        link_bounds(&frame, &[(1, 4..10), (2, 0..14)]),
-        Some(rect(0, 1, 10, 2))
-    );
-    // Rows a resize has already removed, and empty ranges, paint nothing.
-    assert_eq!(link_bounds(&frame, &[(3, 0..4), (0, 5..5)]), None);
-    assert_eq!(link_bounds(&frame, &[(0, 12..14)]), None);
-    assert_eq!(link_bounds(&frame, &[]), None);
-}
-
 #[gpui::test]
 fn edge_backgrounds_reach_the_canvas_without_stretching_popups_or_prompts(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
@@ -103,12 +76,8 @@ fn edge_backgrounds_reach_the_canvas_without_stretching_popups_or_prompts(cx: &m
 fn backgrounds_fill_only_fractional_cell_remainders() {
     let cell = size(px(10.), px(20.));
     let available = size(px(103.), px(67.));
-    let viewport = viewport(103., 67., 10., 20.);
-    let grid = size(
-        px(f32::from(viewport.cols) * 10.),
-        px(f32::from(viewport.rows) * 20.),
-    );
-    assert_eq!(grid, size(px(100.), px(60.)));
+    // The whole cells that fit: 10 columns and 3 rows.
+    let grid = size(px(100.), px(60.));
     assert_eq!(background_extent(grid, available, cell), available);
     for (available, expected) in [
         (size(px(100.), px(60.)), grid),

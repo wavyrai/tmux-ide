@@ -1,5 +1,4 @@
-use super::*;
-use crate::config::fonts::{LINUX_FONTS, MACOS_FONTS, PLATFORM_FONTS, WINDOWS_FONTS};
+use crate::config::fonts::{LINUX_FONTS, MACOS_FONTS, WINDOWS_FONTS};
 use std::collections::BTreeSet;
 
 fn installed(families: &[&str]) -> BTreeSet<String> {
@@ -98,30 +97,4 @@ fn chosen_aliased_and_unmatched_families_are_left_alone() {
     // macOS always ships its defaults, so resolution never checks them.
     assert!(!MACOS_FONTS.is_replaceable("Menlo"));
     assert_eq!(MACOS_FONTS.substitute("Menlo", &fonts), None);
-}
-
-#[test]
-fn resolution_replaces_missing_platform_defaults_only() -> anyhow::Result<()> {
-    let mut config = Config::parse("[terminal]\nfamily = 'Iosevka'")?;
-    let default = Config::default();
-    config.resolve_fonts(|| ["Noto Sans Mono", "Noto Sans", "Consolas"].map(str::to_owned));
-    let monospace = if cfg!(target_os = "linux") {
-        "Noto Sans Mono"
-    } else if cfg!(windows) {
-        "Consolas"
-    } else {
-        "Menlo"
-    };
-    let sans = if cfg!(target_os = "linux") {
-        "Noto Sans"
-    } else {
-        PLATFORM_FONTS.sans
-    };
-    assert_eq!(config.sidebar.family, monospace);
-    assert_eq!(config.tabs.family, monospace);
-    assert_eq!(config.terminal.family, "Iosevka");
-    assert_eq!(config.ui.family, sans);
-    // Defaults themselves are untouched; only the loaded copy is resolved.
-    assert_eq!(default.terminal.family, PLATFORM_FONTS.monospace);
-    Ok(())
 }

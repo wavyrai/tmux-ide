@@ -43,10 +43,7 @@ pub fn discovery_command(target: &SshTarget) -> Command {
         "--",
         target.as_str(),
     ]);
-    command.arg(format!(
-        "/bin/sh -c {}",
-        crate::script::shell_quote(DISCOVER)
-    ));
+    command.arg(format!("/bin/sh -c {}", shell_quote(DISCOVER)));
     command
 }
 /// Construction is not connection verification. The future transport must gate
@@ -89,3 +86,8 @@ pub fn tunnel_command(
 #[cfg(test)]
 #[path = "command_tests.rs"]
 mod tests;
+
+/// `value` as one POSIX shell word.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}

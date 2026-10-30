@@ -9,7 +9,7 @@ use objc2_app_kit::{
     NSView, NSWindowOrderingMode, NSWorkspace,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
-use wry::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 pub(super) struct Native {
     glass: Retained<NSGlassEffectView>,

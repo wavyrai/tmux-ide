@@ -1,7 +1,7 @@
 //! Surface geometry the client negotiates with, and the bounds it is validated
 //! against before any of it reaches the wire.
 
-use crate::{Error, Result, protocol::ClientSurfaceSize};
+use crate::protocol::ClientSurfaceSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectOptions {
@@ -17,20 +17,4 @@ impl Default for ConnectOptions {
             cell_height_px: 0,
         }
     }
-}
-
-pub(crate) fn validate_options(options: ConnectOptions) -> Result<()> {
-    let size = options.surface_size;
-    if size.cols == 0 || size.rows == 0 {
-        return Err(Error::EmptySurface);
-    }
-    if size.cols > 4096
-        || size.rows > 4096
-        || u32::from(size.cols) * u32::from(size.rows) > 1_000_000
-        || options.cell_width_px > 4096
-        || options.cell_height_px > 4096
-    {
-        return Err(Error::GeometryLimit);
-    }
-    Ok(())
 }

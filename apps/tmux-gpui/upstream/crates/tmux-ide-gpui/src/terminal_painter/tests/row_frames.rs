@@ -60,43 +60,6 @@ fn borrowed_rows_share_storage_and_match_flat_cell_access() {
     assert!(b.cell_at(1).unwrap().skip);
 }
 #[test]
-fn clipping_wide_cells_and_links_match_flat_frames() {
-    let (flat, native) = frames();
-    let area = [
-        Span {
-            row: 0,
-            columns: 1..8,
-        },
-        Span {
-            row: 1,
-            columns: 2..4,
-        },
-        Span {
-            row: 3,
-            columns: 0..3,
-        },
-    ];
-    assert_eq!(
-        cell_ranges(&flat, &area).collect::<Vec<_>>(),
-        cell_ranges(&native, &area).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        cell_ranges(&native, &area).collect::<Vec<_>>(),
-        vec![1..3, 5..6]
-    );
-    let theme = Theme::default();
-    assert_eq!(
-        background_spans(FrameView::Flat(&flat).row(0).unwrap(), 1..3, &theme).collect::<Vec<_>>(),
-        background_spans(FrameView::Rows(&native).row(0).unwrap(), 1..3, &theme)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        link_bounds(&flat, &[(0, 1..8), (1, 2..4)]),
-        link_bounds(&native, &[(0, 1..8), (1, 2..4)])
-    );
-    assert_eq!(whole(&flat), whole(&native));
-}
-#[test]
 fn missing_or_overlong_native_rows_never_escape_geometry() {
     let native = NativeFrame {
         width: 2,
