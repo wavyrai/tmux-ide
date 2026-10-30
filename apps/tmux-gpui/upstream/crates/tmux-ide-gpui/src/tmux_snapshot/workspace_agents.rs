@@ -110,12 +110,21 @@ impl SnapshotView {
                 summary: None,
                 attention: 0,
             };
-            let mut element = sidebar::render_row(512 + index, &row, &theme, self.accent(), false)
-                .debug_selector(move || format!("tmux-workspace-agent-{index}"))
-                .child(self.agent_indicator(
-                    agent,
-                    !agent.available || !matches!(w.roster.phase, Phase::Live | Phase::Partial),
-                ));
+            let bezel = bezel_theme::Theme::of(cx).clone();
+            let painter = bezel_motion::Painter::of(cx);
+            let mut element = sidebar::render_row(
+                512 + index,
+                &row,
+                &theme,
+                &bezel,
+                painter,
+                self.sidebar_keyboard.active,
+            )
+            .debug_selector(move || format!("tmux-workspace-agent-{index}"))
+            .child(self.agent_indicator(
+                agent,
+                !agent.available || !matches!(w.roster.phase, Phase::Live | Phase::Partial),
+            ));
             if enabled {
                 element =
                     element

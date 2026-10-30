@@ -646,7 +646,7 @@ impl SnapshotView {
         let show_sidebar = !is_home && !self.sidebar_hidden;
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
-        let glass = self.chrome.sync(window, cx);
+        self.chrome.sync(window, cx);
         let mut sidebar = div()
             .id("session-list")
             .debug_selector(|| "session-list".into())
@@ -673,8 +673,18 @@ impl SnapshotView {
                     .child("Sessions"),
             );
         let request = self.browser_request;
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::of(cx);
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
-            let mut element = sidebar::render_row(index, &row, &theme, self.accent(), glass).when(
+            let mut element = sidebar::render_row(
+                index,
+                &row,
+                &theme,
+                &bezel,
+                painter,
+                self.sidebar_keyboard.active,
+            )
+            .when(
                 self.sidebar_keyboard.active
                     && (row.target.as_ref().is_some_and(|target| {
                         Some(target) == self.sidebar_keyboard.selected.as_ref()

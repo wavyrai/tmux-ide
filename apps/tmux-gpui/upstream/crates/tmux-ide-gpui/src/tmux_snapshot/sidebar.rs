@@ -102,19 +102,29 @@ pub(super) fn current(state: &browser::State, target: &Target) -> bool {
     }
 }
 #[cfg(test)]
+#[path = "sidebar/row_style_tests.rs"]
+mod row_style_tests;
+#[cfg(test)]
 #[path = "sidebar/tests.rs"]
 mod tests;
 
-/// Adapt Herdr sidebar/row.rs::row_text and sidebar/layout.rs::highlight's
-/// fill treatment. Keep one label renderer and fixed gutters; visual selection
-/// describes the catalog only and never grants input authority.
+/// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
+/// the selected row takes `Selection`'s fill and shadow (emphasized while the
+/// sidebar holds the keyboard), an unselected row fades in
+/// `element_hover` under the pointer, at `control_radius`. Bezel's `nav_row`
+/// itself draws a single truncated label; these rows also carry the painted
+/// label probe, a count line and badges, so they are composed from the same
+/// parts. Visual selection describes the catalog only and never grants input
+/// authority.
 pub(super) fn render_row(
     index: usize,
     row: &Row,
     theme: &Theme,
-    _accent: u32,
-    _glass: bool,
+    bezel: &bezel_theme::Theme,
+    painter: bezel_motion::Painter,
+    emphasized: bool,
 ) -> Stateful<Div> {
+    use bezel_ui::widgets::Content as _;
     // Text on the frosted chrome keeps 4.5:1 whatever the desktop behind it.
     let label = crate::tmux_snapshot::design::chrome_text(theme, theme.foreground);
     let muted = crate::tmux_snapshot::design::chrome_text(theme, theme.muted);
@@ -122,11 +132,8 @@ pub(super) fn render_row(
         row.target,
         Some(Target::Session(_) | Target::FleetSession { .. })
     ) || row.favorite.is_some();
-    let hover = if row.selected {
-        rgba((theme.foreground << 8) | 0x18)
-    } else {
-        rgba((theme.foreground << 8) | 0x0c)
-    };
+    let selection = bezel_theme::Selection::new(row.selected, emphasized);
+    let fade = bezel_motion::Fade::new(painter, format!("sidebar-row-{index}"));
     let mut element = div()
         .id(("sidebar-row", index))
         .debug_selector(move || format!("tmux-sidebar-row-{index}"))
@@ -138,21 +145,10 @@ pub(super) fn render_row(
         .pl(px(8. + f32::from(row.depth) * 6.))
         .pr_2()
         .py(px(if session { 5. } else { 3. }))
-        .rounded(px(crate::config::corners::CONTROL))
-        .border_1()
-        .border_color(if row.selected {
-            rgba((theme.foreground << 8) | 0x20)
-        } else {
-            rgba(0)
-        })
+        .rounded(px(bezel_theme::Theme::control_radius()))
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
-        .bg(if row.selected {
-            rgba((theme.foreground << 8) | 0x18)
-        } else {
-            rgba(0)
-        })
         .text_color(rgb(label))
         .text_size(px(if session { 12. } else { 11. }))
         .font_weight(if row.selected || row.machine.is_some() {
@@ -207,18 +203,24 @@ pub(super) fn render_row(
         );
     if row.attention > 0 {
         element = element.child(
-            div()
-                .flex_none()
-                .px(px(5.))
-                .rounded(px(8.))
-                .bg(rgb(theme.active))
-                .text_size(px(11.))
-                .child(row.attention.to_string()),
+            bezel
+                .badge(row.attention.to_string())
+                .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
-    // The unselected row stays transparent: the sidebar owns its glass tint.
-    if row.target.is_some() {
-        element = element.cursor_pointer().hover(move |style| style.bg(hover));
+    match selection.fill(bezel) {
+        Some(fill) => element.bg(fill).shadow(selection.shadows()),
+        None if row.target.is_some() => {
+            element = element.cursor_pointer().bg(bezel_motion::hover_blend(
+                &fade,
+                bezel.ink(0.0),
+                bezel.element_hover,
+            ));
+            element
+                .interactivity()
+                .on_hover(bezel_motion::hover_listener(fade));
+            element
+        }
+        None => element,
     }
-    element
 }
