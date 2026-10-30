@@ -1,7 +1,7 @@
 # Bezel dependency provenance
 
-The tmux-ide native client uses bezel-gpui / bezel-gpui-platform 0.3.19,
-bezel-theme / bezel-ui 0.2.16, pinned in upstream/Cargo.lock.
+The tmux-ide native client uses bezel-gpui / bezel-gpui-platform 0.3.21,
+bezel-theme / bezel-ui 0.2.22, pinned in upstream/Cargo.lock.
 Source: https://github.com/crabtalk/bezel (reference checkout 5a46a86).
 
 Theme/color math, menu cards, menu rows, ghost controls and floating glass surfaces
