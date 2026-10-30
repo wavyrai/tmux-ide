@@ -602,11 +602,12 @@ to an explicitly assembled app; a headless green result does not qualify packagi
 
 `.github/workflows/gpui-preview.yml` defines an independent preview lane: Linux
 bridge checks and isolated startup/replacement/session journeys using supported
-system tmux, plus macOS Rust formatting, file-size checks, both Clippy and test
-feature configurations, the dedicated release executable build and its isolated
-CLI integration tests. Run those release checks from `upstream/` with
-`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui` and
-`cargo test --locked --release -p tmux-ide-gpui --test tmux_cli`. The lane does
+system tmux, plus macOS Rust formatting, file-size checks, both Clippy feature
+configurations, one `--all-features` test run (which includes the isolated CLI
+integration tests) and the dedicated release executable build. It runs only when
+a pull request or push changes a path in the workflow's `paths:` list. Run the
+release build from `upstream/` with
+`cargo build --locked --release -p tmux-ide-gpui --bin tmux-ide-gpui`. The lane does
 not publish artifacts, sign, install, or operate production sessions. Physical UI,
 bundled runtime, display-scale and release/install/update qualification remain
 separate required evidence. A local check does not establish a hosted CI pass.
