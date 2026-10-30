@@ -111,10 +111,13 @@ uuid                 = { features = ["serde"], version = "1" }
 windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
 zeroize              = "=1.9.0"
 
-# Shipped build: whole-program optimisation, one codegen unit, and debug info
-# moved out of the executable into a packed dSYM next to it in target/release
-# for crash symbolication. The panic strategy stays the default (unwind).
-[profile.release]
+# Shipped build (`--profile dist`, used by scripts/build-native-release.mjs):
+# whole-program optimisation, one codegen unit, and debug info moved out of the
+# executable into a packed dSYM next to it in target/dist for crash
+# symbolication. `release` stays Cargo's default so CI and tests build quickly.
+# The panic strategy stays the default (unwind).
+[profile.dist]
+inherits        = "release"
 codegen-units   = 1
 debug           = "line-tables-only"
 lto             = "fat"

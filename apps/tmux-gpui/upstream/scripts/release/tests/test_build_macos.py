@@ -175,22 +175,40 @@ class BuildMacosTests(unittest.TestCase):
 class ReleaseProfileTests(unittest.TestCase):
     """The shipped executable's size policy lives in the workspace manifest."""
 
-    def test_release_profile_optimises_and_keeps_a_dsym(self):
-        manifest = (SCRIPTS.parents[1] / "Cargo.toml").read_text()
-        section = re.search(r"^\[profile\.release\]\n((?:[^\[\n].*\n|\n)*)", manifest, re.M)
-        self.assertIsNotNone(section, "missing [profile.release]")
-        settings = dict(
+    @staticmethod
+    def profile(manifest, name):
+        section = re.search(
+            r"^\[profile\." + re.escape(name) + r"\]\n((?:[^\[\n].*\n|\n)*)", manifest, re.M
+        )
+        if section is None:
+            return None
+        return dict(
             (key.strip(), value.strip())
             for key, value in (line.split("=", 1) for line in section.group(1).splitlines()
                                if "=" in line and not line.lstrip().startswith("#"))
         )
-        self.assertEqual(settings, {
+
+    def test_dist_profile_optimises_and_keeps_a_dsym(self):
+        manifest = (SCRIPTS.parents[1] / "Cargo.toml").read_text()
+        self.assertEqual(self.profile(manifest, "dist"), {
+            "inherits": '"release"',
             "codegen-units": "1",
             "debug": '"line-tables-only"',
             "lto": '"fat"',
             "split-debuginfo": '"packed"',
             "strip": '"debuginfo"',
         })
+        # CI and tests build `release`; it stays Cargo's default.
+        self.assertIsNone(self.profile(manifest, "release"))
+        self.assertNotRegex(manifest, r"^\[profile\.(release|dist)\.", "per-package override")
+        for config in (SCRIPTS.parents[1] / ".cargo/config.toml", SCRIPTS.parents[1] / ".cargo/config"):
+            if config.exists():
+                self.assertNotIn("[profile", config.read_text(), f"{config} overrides a profile")
+
+    def test_the_packaging_wrapper_builds_the_dist_profile(self):
+        wrapper = (SCRIPTS.parents[2] / "scripts/build-native-release.mjs").read_text()
+        self.assertIn('"--profile",\n    "dist",', wrapper)
+        self.assertNotIn('"--release"', wrapper)
 
 
 if __name__ == "__main__":

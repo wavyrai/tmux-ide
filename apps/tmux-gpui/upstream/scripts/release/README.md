@@ -307,11 +307,13 @@ Host build dependencies use `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none`:
 Apple stripping produced unloadable, misaligned proc-macro dylibs during local
 Intel cross-compilation. The setting does not disable optimization or change
 stripping policy for the distributed executable.
-The workspace `[profile.release]` in `Cargo.toml` sets the distributed executable's
-policy: fat LTO, one codegen unit, line-table debug info split into a packed
-`tmux-ide-gpui.dSYM` beside each `target/<target>/release/tmux-ide-gpui`, and
-`strip = "debuginfo"`. Keep that dSYM with the build to symbolicate crash reports;
-it is not copied into the app.
+The workspace `[profile.dist]` in `Cargo.toml` sets the distributed tmux-ide-gpui
+executable's policy; `apps/tmux-gpui/scripts/build-native-release.mjs` builds with
+`--profile dist`. It inherits `release` and adds fat LTO, one codegen unit,
+line-table debug info split into a packed `tmux-ide-gpui.dSYM` beside each
+`target/<target>/dist/tmux-ide-gpui`, and `strip = "debuginfo"`. `release` stays
+Cargo's default so CI and tests build quickly. Keep that dSYM with the build to
+symbolicate crash reports; it is not copied into the app.
 
 A missing root `.envrc` fails before building. This ignored file contains **no
 credentials** and defines `herdr_sign VERSION APP OUT`, calling the ignored
