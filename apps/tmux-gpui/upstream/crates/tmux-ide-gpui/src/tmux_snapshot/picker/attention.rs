@@ -207,9 +207,9 @@ impl SnapshotView {
         } else if !self.presence.ready() {
             Some("Activate the window and reopen attention")
         } else if self.attention.pending_close.is_some() {
-            Some("Attention queue unavailable — restart the preview")
+            Some("Couldn't open attention. Try again.")
         } else if self.attention.next >= 9_007_199_254_740_991 {
-            Some("Attention scope exhausted — restart the preview")
+            Some("Couldn't open attention. Reopen tmux-ide to try again.")
         } else {
             self.attention.next += 1;
             let scope = self.attention.next;
@@ -254,13 +254,9 @@ impl SnapshotView {
                     }
                 }
             };
-            heading = heading.child(phase).child(format!(
-                "{} of {} sessions observed · {} sessions and {} rows omitted",
-                p.roster.observed_sessions,
-                p.roster.total_sessions,
-                p.roster.truncated_sessions,
-                p.roster.truncated_rows
-            ));
+            heading = heading
+                .child(phase)
+                .child(crate::tmux_snapshot::roster_counts::attention(&p.roster));
             if let Some(note) = &p.roster.note {
                 heading = heading.child(note.clone());
             }

@@ -159,7 +159,7 @@ fn native_focus_case(cx: &mut TestAppContext, partial: bool, background_update: 
         };
         let mut presented=present(snapshot.clone());
         let mut projection = crate::tmux_snapshot::browser_direct::NativePresentation::new("connection","workspace");
-        projection.apply(&mut view.browser_state,&presented,false,2,0).unwrap();
+        projection.apply(&mut view.browser_state,&presented,false,true,2,0).unwrap();
         view.frame = view.browser_state.frame.clone();
         view.input_geometry=Some((Bounds::new(point(px(0.),px(0.)),size(px(500.),px(500.))),Bounds::default()));
         view.input_cell_width=Some(10.);
@@ -175,7 +175,7 @@ fn native_focus_case(cx: &mut TestAppContext, partial: bool, background_update: 
         if background_update {
             let mut updated=(*snapshot).clone();updated.cursor.hidden=true;
             presented=present(Arc::new(updated));
-            projection.apply(&mut view.browser_state,&presented,false,2,1).unwrap();
+            projection.apply(&mut view.browser_state,&presented,false,true,2,1).unwrap();
             view.frame=view.browser_state.frame.clone();
             assert!(!crate::tmux_snapshot::hit_regions::is_painted(view.frame.as_ref(),view.painted_frame.as_ref()));
             assert!(before_target==view.browser_state.native_focus_target,"same connection/pane/lifetime token");
@@ -209,7 +209,7 @@ fn native_focus_case(cx: &mut TestAppContext, partial: bool, background_update: 
         assert!(view.selection.is_none());
         view.replace_text_in_range(None,"whole",window,cx);
         let mut state = view.browser_state.clone();
-        projection.apply(&mut state,&presented,true,3,0).unwrap();
+        projection.apply(&mut state,&presented,true,true,3,0).unwrap();
         view.apply_browser_state(Some(state),cx);
         assert!(matches!(receiver.try_recv().unwrap(),browser::Command::Input{input:Input::Text(t),..} if t=="whole"));
         assert!(receiver.try_recv().is_err());

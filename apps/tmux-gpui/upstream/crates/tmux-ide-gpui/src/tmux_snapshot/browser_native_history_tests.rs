@@ -122,6 +122,7 @@ fn historical_presentation() -> NativePresentation {
             },
             &window,
             true,
+            true,
             1,
             0,
         )

@@ -1,7 +1,0 @@
-NATIVE_COMMAND {"type":"appearance","system":"light"}
-NATIVE_COMMAND {"type":"presence","active":false,"revision":1}
-NATIVE_COMMAND {"type":"presence","active":true,"revision":2}
-NATIVE_COMMAND {"type":"theme","id":"dark"}
-NATIVE_COMMAND {"type":"open-agent","request":1,"fromRequest":0,"rosterRevision":29,"key":"live-session.90b5b070977eb97ad564\u0000agent.5415f50e2e4588e17390"}
-NATIVE_COMMAND {"type":"input","request":1,"id":"pane.promoted.c4836e08cacb54d38cb1","input":{"kind":"resize","data":{"cols":92,"rows":24}}}
-QA_CLEANUP_COMPLETE

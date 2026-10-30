@@ -24,3 +24,11 @@ export const CURRENT_RELEASE_PATH = "/docs/release-2-9-4";
 export function absoluteUrl(path = "/"): string {
   return new URL(path, `${SITE_URL}/`).toString();
 }
+
+/**
+ * The canonical URL of a site page, as its HTML `<link rel="canonical">` writes
+ * it. Next renders the homepage's as the bare origin, with no trailing slash.
+ */
+export function canonicalUrl(path: string): string {
+  return path === "/" ? SITE_URL : absoluteUrl(path);
+}

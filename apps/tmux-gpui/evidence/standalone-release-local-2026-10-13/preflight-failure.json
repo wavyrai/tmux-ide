@@ -1,9 +1,0 @@
-{
-  "passed": false,
-  "errors": [
-    {
-      "name": "Error",
-      "message": "Command failed: /usr/bin/python3 /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/scripts/preview-release-package.py --app /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/.tasks/gpui-history-alpha-2026-10-13/Tmux IDE Preview.app --output /private/tmp/gpui-standalone-release-50yijl/app.tar.gz --version 0.1.0\nArchive packaging rejected; no signing or verification performed.\n"
-    }
-  ]
-}

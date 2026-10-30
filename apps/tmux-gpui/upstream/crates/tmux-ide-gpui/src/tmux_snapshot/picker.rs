@@ -317,7 +317,7 @@ impl SnapshotView {
             self.open_commands(window, cx);
         }
         if let Some(picker) = &mut self.picker {
-            picker.error = Some("Retry queue unavailable — try again or restart the preview");
+            picker.error = Some("Couldn't retry. Try again.");
         }
         cx.notify();
         false
@@ -356,7 +356,7 @@ impl SnapshotView {
             self.open_commands(window, cx);
         }
         if let Some(picker) = &mut self.picker {
-            picker.error = Some("Disconnect queue unavailable — try again or restart the preview");
+            picker.error = Some("Couldn't disconnect. Try again.");
         }
         cx.notify();
         false
@@ -440,6 +440,9 @@ impl SnapshotView {
     fn open_picker_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.browser_commands.is_none() && mode != Mode::Commands {
             return;
+        }
+        if mode == Mode::Font {
+            self.list_terminal_fonts(cx);
         }
         self.sidebar_keyboard.active = false;
         self.cancel_attention();

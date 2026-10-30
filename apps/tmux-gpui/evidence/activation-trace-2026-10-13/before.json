@@ -1,8 +1,0 @@
-{
-  "head": "c4d493304c901217e319789a531d5067fab87931",
-  "files": {
-    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot.rs": "ad68abc3ef25368b928a6e004a1b659d20cdf993bb40800df046a820f1914ea9",
-    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_state.rs": "e0e1013c48d02025e1a99800f8aade7dcee24dd8197a629a3bc9664b3a9a5d39",
-    "apps/tmux-gpui/upstream/crates/herdr-gpui/src/tmux_snapshot/browser_ui.rs": "acc52e5d9121cb7109b20b76069b6a9c6dd8efcacd6cbeaf5ee87efcfc052c04"
-  }
-}

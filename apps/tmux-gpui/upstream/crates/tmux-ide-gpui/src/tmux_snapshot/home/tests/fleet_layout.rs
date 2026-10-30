@@ -7,7 +7,7 @@ fn fleet_hierarchy_keeps_long_labels_and_statuses_separate(cx: &mut TestAppConte
         let mut view = make_view(window, cx, sender);
         view.browser_state.fleet = Some(
             serde_json::from_slice(include_bytes!(
-                "../../../../../../../evidence/home-fleet-2026-10-15/fleet.json"
+                "../../../../../../../fixtures/home-fleet.json"
             ))
             .unwrap(),
         );

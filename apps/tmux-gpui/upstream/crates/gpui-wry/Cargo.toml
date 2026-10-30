@@ -45,7 +45,7 @@ doctest = false
 version = "1"
 
 [dependencies.gpui]
-version = "=0.3.19"
+version = "=0.3.21"
 package = "bezel-gpui"
 
 [dependencies.wry]

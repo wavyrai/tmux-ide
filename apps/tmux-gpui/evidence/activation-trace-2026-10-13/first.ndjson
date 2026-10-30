@@ -1,9 +1,0 @@
-{"stage":0,"elapsed_ms":0,"dropped":0,"sample":null}
-{"stage":1,"elapsed_ms":992,"dropped":0,"sample":{"window_active":false,"presence_active":false,"presence_ready":false,"request":0,"wire_request":0,"presence_revision":0}}
-{"stage":6,"elapsed_ms":993,"dropped":0,"sample":{"window_active":false,"presence_active":false,"presence_ready":false,"request":0,"wire_request":0,"presence_revision":0}}
-{"stage":4,"elapsed_ms":1010,"dropped":0,"sample":null}
-{"stage":5,"elapsed_ms":1011,"dropped":0,"sample":null}
-{"stage":8,"elapsed_ms":1051,"dropped":0,"sample":null}
-{"stage":8,"elapsed_ms":1068,"dropped":0,"sample":null}
-{"stage":6,"elapsed_ms":321710,"dropped":0,"sample":{"window_active":false,"presence_active":false,"presence_ready":false,"request":0,"wire_request":0,"presence_revision":1}}
-{"stage":7,"elapsed_ms":558256,"dropped":0,"sample":{"window_active":false,"presence_active":false,"presence_ready":false,"request":0,"wire_request":0,"presence_revision":1}}

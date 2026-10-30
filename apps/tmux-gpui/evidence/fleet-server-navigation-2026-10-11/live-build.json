@@ -1,7 +1,0 @@
-{
-  "daemonFixCommit": "2d889407",
-  "cli": ".tasks/gpui-server-candidate/cli.mjs",
-  "cliSha256": "c14f93ff08703cec0d1898fa19023464db89631161ee9d5fd4420383f5ccad06",
-  "fixtureSha256": "70224df7e4bb858f46decbc64ef10fffd83cad32732886017dff8e1c43009fc0",
-  "nativeUiVerified": false
-}

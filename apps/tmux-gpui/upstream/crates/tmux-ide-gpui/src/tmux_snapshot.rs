@@ -1,6 +1,7 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
 mod agent_indicator;
+mod agent_spinner;
 mod appearance;
 mod browser;
 mod browser_direct;
@@ -47,6 +48,7 @@ mod picker;
 mod pointer;
 mod presence;
 mod renderer_probe;
+mod roster_counts;
 mod selection;
 mod session_history;
 mod session_open;
@@ -241,7 +243,10 @@ fn show_owned(
 ) -> Result<(), Error> {
     let failed = Rc::new(std::cell::Cell::new(false));
     let open_failed = failed.clone();
-    let application = gpui_platform::application().with_assets(crate::icons::Icons);
+    // `gpui_platform::application()` also builds a reqwest client for remote
+    // images; this window paints only local ones, so it starts without one.
+    let application = Application::with_platform(gpui_platform::current_platform(false))
+        .with_assets(crate::icons::Icons);
     application.run(move |cx| {
         let closing = Rc::new(std::cell::Cell::new(false));
         let quit_owner = owner.clone();
@@ -277,7 +282,7 @@ fn show_owned(
                 }
             },
             |window, cx| {
-                cx.new(|cx: &mut Context<SnapshotView>| {
+                let snapshot = cx.new(|cx: &mut Context<SnapshotView>| {
                     let task = mailbox.map(|mailbox| {
                         cx.spawn(async move |entity, cx| {
                             loop {
@@ -420,7 +425,7 @@ fn show_owned(
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
-                        terminal_font: Default::default(),
+                        terminal_font: terminal_font::Settings::pending(),
                         window_reveal: Default::default(),
                         resize_gesture: Default::default(),
                         last_resize: None,
@@ -439,11 +444,12 @@ fn show_owned(
                         browser_state: home::initial_state(),
                         browser_commands: browser.map(|b| b.commands),
                     };
-                    view.discover_terminal_fonts(cx);
+                    view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
                     view
-                })
+                });
+                agent_spinner::window_root(snapshot, window, cx)
             },
         );
         if let Err(error) = result {
@@ -500,7 +506,7 @@ struct SnapshotView {
     browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
-    agent_animation: agent_indicator::Clock,
+    agent_animation: agent_spinner::Slots,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
@@ -578,7 +584,7 @@ impl SnapshotView {
             let guidance = if self.browsing && self.browser_commands.is_some() {
                 "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
             } else {
-                "Waiting for a verified pane, or connection unavailable. Restart the preview to reconnect."
+                "Waiting for a pane. If the connection was lost, reopen tmux-ide to reconnect."
             };
             return div()
                 .size_full()

@@ -207,18 +207,22 @@ try {
   send({ type: "presence", active: true, revision: 6 });
   await until(() => latest?.presenceRevision === 6 && latest.paneActions);
   assert.deepEqual(sourceRows(), [sibling]);
+  // A later broker publication can replace the refusal status before a poll
+  // sees it, so wait for the consumed token to rotate instead.
+  const lastPaneToken = latest.paneActions.token;
   send({
     type: "pane-action",
     request: 2,
     id: siblingSemantic,
-    token: latest.paneActions.token,
+    token: lastPaneToken,
     action: "close",
   });
   await until(
     () =>
       latest?.inputReady &&
       latest.selectedPane === siblingSemantic &&
-      latest.status === "Pane action was not applied",
+      latest.paneActions &&
+      latest.paneActions.token !== lastPaneToken,
   );
   const refusalMarker = "GPUI_CLOSE_REFUSED_INPUT_OK";
   send({

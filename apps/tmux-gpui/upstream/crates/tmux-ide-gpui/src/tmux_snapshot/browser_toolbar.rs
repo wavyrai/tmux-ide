@@ -3,6 +3,62 @@ use super::{SnapshotView, browser};
 use crate::search_input::SearchInput;
 use gpui::{prelude::*, *};
 use herdr_client::tmux_daemon::{BrowserAction, BrowserCommand, BrowserState};
+use std::time::{Duration, Instant};
+/// A click stays pending at most this long without a confirming observation.
+pub(super) const PENDING_TTL: Duration = Duration::from_secs(3);
+pub(super) const REJECTED: &str = "Page changed — try again";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    /// The last read failed; the controls shown are the last good observation.
+    Stale,
+    /// A click could not be applied to the current page; the number orders rejections.
+    Rejected(u64),
+}
+#[derive(Clone)]
+pub(super) struct Pending {
+    pub pane: String,
+    pub action: BrowserAction,
+    pub basis: BrowserState,
+    /// The worker mark seen when clicking; only a newer mark settles the click.
+    pub mark: Option<Mark>,
+    pub at: Instant,
+}
+impl Pending {
+    /// Pending lasts until the observation it was sent against changes or is marked.
+    pub(super) fn carried(self, next: &browser::State) -> Option<Self> {
+        (self.at.elapsed() < PENDING_TTL
+            && next.browser_controls.get(&self.pane) == Some(&self.basis)
+            && next
+                .browser_marks
+                .get(&self.pane)
+                .is_none_or(|mark| Some(*mark) == self.mark))
+        .then_some(self)
+    }
+}
+/// Re-targets a command to a newer observation of the same page, if it still means
+/// what the user clicked: same tab, URL and loading phase, and the action is offered.
+pub(super) fn rebase(
+    command: &BrowserCommand,
+    basis: &BrowserState,
+    fresh: &BrowserState,
+) -> Option<BrowserCommand> {
+    let offered = match command.action {
+        BrowserAction::Back => fresh.can_go_back,
+        BrowserAction::Forward => fresh.can_go_forward,
+        BrowserAction::Reload | BrowserAction::Stop | BrowserAction::Navigate => true,
+    };
+    (offered
+        && fresh.enabled
+        && fresh.instance == command.instance
+        && fresh.pane == command.pane
+        && fresh.tab == command.tab
+        && fresh.url == basis.url
+        && fresh.loading == basis.loading)
+        .then(|| BrowserCommand {
+            revision: fresh.revision,
+            ..command.clone()
+        })
+}
 pub(super) struct Address {
     request: u64,
     pane: String,
@@ -38,6 +94,9 @@ impl SnapshotView {
         let Some(state) = self.current_browser(&pane) else {
             return false;
         };
+        if event.keystroke.key == "r" && self.pending_browser(&pane).is_some() {
+            return false;
+        }
         let command = BrowserCommand::new(state, BrowserAction::Reload, None);
         cx.stop_propagation();
         window.prevent_default();
@@ -59,28 +118,54 @@ impl SnapshotView {
     }
     fn current_browser(&self, pane: &str) -> Option<&BrowserState> {
         let state = self.observed_browser(pane)?;
-        (self.presence.ready() && self.browser_state.input_ready && state.enabled).then_some(state)
+        (self.presence.ready()
+            && self.browser_state.input_ready
+            && state.enabled
+            && self.browser_state.browser_marks.get(pane) != Some(&Mark::Stale))
+        .then_some(state)
+    }
+    fn pending_browser(&self, pane: &str) -> Option<BrowserAction> {
+        self.browser_state
+            .browser_pending
+            .clone()
+            .and_then(|p| p.carried(&self.browser_state))
+            .filter(|p| p.pane == pane)
+            .map(|p| p.action)
     }
     fn send_browser(&mut self, pane: &str, command: BrowserCommand, cx: &mut Context<Self>) {
         let Some(state) = self.current_browser(pane) else {
             return;
         };
-        if command.instance != state.instance
-            || command.revision != state.revision
+        // An older revision is forwarded: the worker re-targets it or reports it, never drops it.
+        if self.pending_browser(pane).is_some()
+            || command.instance != state.instance
             || command.tab != state.tab
             || !command.valid()
         {
             return;
         }
-        if let Some(sender) = &self.browser_commands {
-            let _ = sender.try_send(browser::Command::BrowserControls {
-                request: self.browser_request,
-                id: pane.into(),
-                command: Some(command),
+        let basis = state.clone();
+        let action = command.action;
+        let sent = self.browser_commands.as_ref().is_some_and(|sender| {
+            sender
+                .try_send(browser::Command::BrowserControls {
+                    request: self.browser_request,
+                    id: pane.into(),
+                    command: Some(command),
+                })
+                .is_ok()
+        });
+        if sent {
+            // No optimistic URL/history changes: keep the observed controls, marked pending.
+            let mark = self.browser_state.browser_marks.remove(pane);
+            self.browser_state.browser_pending = Some(Pending {
+                pane: pane.into(),
+                action,
+                basis,
+                mark,
+                at: Instant::now(),
             });
         }
-        // No optimistic URL/history changes; wait for a fresh browser observation.
-        self.browser_state.browser_controls.remove(pane);
         cx.notify();
     }
     fn open_browser_address(&mut self, pane: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -136,6 +221,9 @@ impl SnapshotView {
         // Observation owns the layout; input authority only enables its actions.
         let state = self.observed_browser(pane)?;
         let ready = self.current_browser(pane).is_some();
+        let pending = self.pending_browser(pane);
+        let mark = self.browser_state.browser_marks.get(pane).copied();
+        let palette = super::design::palette(&self.theme());
         let mut row = div().flex().items_center().gap_1().flex_1().min_w_0();
         for (name, label, action, available) in [
             (
@@ -161,7 +249,8 @@ impl SnapshotView {
                 true,
             ),
         ] {
-            let available = ready && available;
+            let pressed = pending == Some(action);
+            let available = ready && available && pending.is_none();
             let command = BrowserCommand::new(state, action, None);
             let pane = pane.to_owned();
             let icon = match action {
@@ -181,6 +270,7 @@ impl SnapshotView {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.))
+                    .when(pressed, |b| b.bg(palette.element_active))
                     .when(available, |b| {
                         b.cursor_pointer()
                             .on_click(cx.listener(move |view, _, _, cx| {
@@ -188,13 +278,8 @@ impl SnapshotView {
                                 view.send_browser(&pane, command.clone(), cx);
                             }))
                     })
-                    .opacity(if available { 1. } else { 0.35 })
-                    .child(
-                        svg()
-                            .path(icon)
-                            .size(px(14.))
-                            .text_color(super::design::palette(&self.theme()).text),
-                    ),
+                    .opacity(if available || pressed { 1. } else { 0.35 })
+                    .child(svg().path(icon).size(px(14.)).text_color(palette.text)),
             );
         }
         let pane = pane.to_owned();
@@ -207,6 +292,9 @@ impl SnapshotView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .when(mark == Some(Mark::Stale), |address| {
+                        address.text_color(palette.text_muted)
+                    })
                     .child(state.url.clone())
                     .when(ready, |address| {
                         address.cursor_pointer().on_click(cx.listener(
@@ -217,6 +305,14 @@ impl SnapshotView {
                         ))
                     }),
             )
+            .when(matches!(mark, Some(Mark::Rejected(_))), |row| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(palette.text_muted)
+                        .child(REJECTED),
+                )
+            })
             .into_any_element(),
         )
     }
@@ -265,3 +361,6 @@ impl SnapshotView {
         )
     }
 }
+#[cfg(test)]
+#[path = "browser_toolbar_tests.rs"]
+mod tests;

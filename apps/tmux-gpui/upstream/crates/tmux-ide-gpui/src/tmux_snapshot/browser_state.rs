@@ -38,7 +38,13 @@ impl SnapshotView {
                     .as_ref()
                     .map(|selection| selection.frame.clone())
                     .or_else(|| state.frame.clone());
+                let pending = self
+                    .browser_state
+                    .browser_pending
+                    .take()
+                    .and_then(|p| p.carried(&state));
                 self.browser_state = state;
+                self.browser_state.browser_pending = pending;
                 if self.browser_state.input_target_rejected {
                     self.interrupt_input(cx);
                 }
@@ -51,6 +57,7 @@ impl SnapshotView {
             }
             None => {
                 self.cancel_pending_input(cx);
+                self.browser_state.browser_pending = None;
                 self.session_tabs.selections = Default::default();
                 self.workspace_fleet_agents.pending = None;
                 self.session_history.pending = None;
@@ -66,7 +73,7 @@ impl SnapshotView {
                 self.frame = None;
                 self.browser_state.diagnostics = None;
                 self.browser_state.retained_preview = false;
-                self.browser_state.status = "Connection unavailable — restart the preview".into();
+                self.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
                 self.browser_commands = None;
             }
             _ => {}

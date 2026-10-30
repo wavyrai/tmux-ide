@@ -308,7 +308,7 @@ fn nullable_and_malformed_record_fields_do_not_mint_authority() {
 }
 
 #[test]
-#[ignore = "requires an explicitly owned daemon fixture; use native-discovery-smoke.mjs"]
+#[ignore = "requires an explicitly owned daemon fixture; use bridge/manual/native-discovery-smoke.mjs"]
 fn reads_explicit_owned_daemon_catalog() {
     let path =
         std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").expect("explicit owned record required");
