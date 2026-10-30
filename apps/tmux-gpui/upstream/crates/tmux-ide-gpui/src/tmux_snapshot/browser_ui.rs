@@ -947,14 +947,20 @@ impl SnapshotView {
     }
 }
 
-/// The keyboard-selected row's ring. Every row keeps the hairline, clear
-/// unless focused, so focus never changes a row's size.
+/// The keyboard-selected row's ring, laid over the row so focus never
+/// changes its size.
 fn focus_ring(row: Stateful<Div>, focused: bool, bezel: &bezel_theme::Theme) -> Stateful<Div> {
-    row.border_1().border_color(if focused {
-        bezel.ring
-    } else {
-        transparent_black()
-    })
+    row.when(focused, |row| row.child(ring(bezel)))
+}
+
+fn ring(bezel: &bezel_theme::Theme) -> Div {
+    div()
+        .debug_selector(|| "tmux-sidebar-focus-ring".into())
+        .absolute()
+        .inset_0()
+        .rounded(px(bezel_theme::Theme::control_radius()))
+        .border_1()
+        .border_color(bezel.ring)
 }
 
 #[cfg(test)]

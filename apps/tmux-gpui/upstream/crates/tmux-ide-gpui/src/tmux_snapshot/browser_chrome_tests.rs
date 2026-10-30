@@ -59,8 +59,9 @@ fn row_bounds(cx: &mut VisualTestContext) -> Vec<Bounds<Pixels>> {
     .collect()
 }
 
-/// The keyboard-selected row used to gain its border only while focused,
-/// growing by a pixel each side and pushing every row under it down.
+/// The keyboard-selected row used to gain a border while focused, growing by
+/// a pixel each side and pushing every row under it down. The ring now lies
+/// over the focused row and nowhere else.
 #[gpui::test]
 fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -70,6 +71,11 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let resting = row_bounds(cx);
+    assert!(
+        resting.iter().all(|row| row.size.height == px(29.5)),
+        "{resting:?}"
+    );
+    assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_none());
     cx.simulate_keystrokes("ctrl-g");
     draw(cx);
     view.read_with(cx, |view, _| {
@@ -77,9 +83,17 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
         assert!(view.sidebar_keyboard.selected.is_some());
     });
     assert_eq!(row_bounds(cx), resting);
+    let ring = cx.debug_bounds("tmux-sidebar-focus-ring").unwrap();
+    let focused = resting.iter().position(|row| *row == ring);
+    assert!(
+        focused.is_some(),
+        "the ring covers one row exactly: {ring:?}"
+    );
     cx.simulate_keystrokes("down");
     draw(cx);
     assert_eq!(row_bounds(cx), resting);
+    let moved = cx.debug_bounds("tmux-sidebar-focus-ring").unwrap();
+    assert_eq!(Some(moved), focused.map(|index| resting[index + 1]));
 }
 
 #[gpui::test]
@@ -87,15 +101,23 @@ fn the_focused_row_alone_shows_the_ring(cx: &mut TestAppContext) {
     cx.update(|cx| {
         design::prepare(&crate::config::Theme::default(), false, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
-        for (focused, color) in [(true, bezel.ring), (false, transparent_black())] {
+        let mut ring = ring(&bezel);
+        let style = ring.style();
+        assert_eq!(style.border_color, Some(bezel.ring));
+        assert_eq!(style.position, Some(Position::Absolute));
+        let width = Some(AbsoluteLength::Pixels(px(1.)));
+        assert_eq!(style.border_widths.top, width);
+        assert_eq!(style.border_widths.bottom, width);
+        assert_eq!(style.border_widths.left, width);
+        assert_eq!(style.border_widths.right, width);
+        let radius = Some(AbsoluteLength::Pixels(px(
+            bezel_theme::Theme::control_radius(),
+        )));
+        assert_eq!(style.corner_radii.top_left, radius);
+        // The row itself draws no border, focused or not.
+        for focused in [true, false] {
             let mut row = focus_ring(div().id("row"), focused, &bezel);
-            let style = row.style();
-            assert_eq!(style.border_color, Some(color));
-            let width = Some(AbsoluteLength::Pixels(px(1.)));
-            assert_eq!(style.border_widths.top, width);
-            assert_eq!(style.border_widths.bottom, width);
-            assert_eq!(style.border_widths.left, width);
-            assert_eq!(style.border_widths.right, width);
+            assert_eq!(row.style().border_widths.top, None);
         }
     });
 }
