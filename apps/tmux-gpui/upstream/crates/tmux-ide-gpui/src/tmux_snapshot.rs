@@ -37,6 +37,7 @@ mod input_gate;
 mod kbd;
 mod keys;
 mod kitty_graphics;
+mod menu_bar;
 mod navigation;
 mod new_session;
 mod pane_actions;
@@ -261,6 +262,7 @@ fn show_owned(
         .detach();
         cx.bind_keys([KeyBinding::new("cmd-q", crate::Quit, None)]);
         shell::bind_keys(cx);
+        menu_bar::install(cx);
         let action_owner = owner.clone();
         let action_closing = closing.clone();
         cx.on_action(move |_: &crate::Quit, cx| {

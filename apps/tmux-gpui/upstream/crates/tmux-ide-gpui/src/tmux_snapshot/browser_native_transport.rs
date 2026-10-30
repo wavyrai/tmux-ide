@@ -75,6 +75,7 @@ struct Active {
     owner_notice: Option<Command>,
     action_status: Option<&'static str>,
     catalog_only: bool,
+    daemon_version: Option<String>,
     generation: String,
     topology_notice: Option<Command>,
     topology_sent: catalog_notice::CatalogNotice,
@@ -286,6 +287,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut active: Option<Active> = None;
         let history_cache: Cache = Default::default();
         let mut state = State::default();
+        let mut stopped: Option<diagnostics::Stop> = None;
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
         let mut browser_read_at = 0;
@@ -395,6 +397,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             current.presentation.invalidate_overlay();
                         }
                         state = *next;
+                        diagnostics::Stop::apply(&mut stopped, &mut state);
                         changed = true;
                     }
                     Incoming::Handoff(Event::Close { id, request, .. }) => {
@@ -418,6 +421,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         }
                         let workspace = capability.workspace_name.clone();
                         let catalog_only = capability.catalog_only;
+                        let daemon_version = capability.daemon_version.clone();
+                        stopped = None;
                         let generation = capability.descriptor.daemon_instance_id.clone();
                         let history = History::new(
                             capability
@@ -488,6 +493,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             owner_notice: None,
                             action_status: None,
                             catalog_only,
+                            daemon_version,
                             generation,
                             topology_notice: None,
                             topology_sent: Default::default(),
@@ -568,7 +574,16 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.
                         let structural = current.actions.interrupted().is_some_and(|c| c.reissue);
-                        if current.owner.waiting_receipt() && current.owner_notice.is_none() {
+                        // Reconnecting cannot help a daemon that lacks a required capability.
+                        let stop = diagnostics::Stop::new(
+                            &error,
+                            current.request,
+                            current.daemon_version.as_deref(),
+                        );
+                        if stop.is_some() {
+                            revoke_connection(&mut active, &mut state, &mut output);
+                        } else if current.owner.waiting_receipt() && current.owner_notice.is_none()
+                        {
                             // The authorized HTTP operation may retire the stream
                             // before replying. Preserve correlation, not terminal IO.
                             current.stream_interrupted = true;
@@ -596,7 +611,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 break 'worker;
                             }
                         }
-                        state.status = "Terminal connection interrupted — recovering".into();
+                        state.status = stop.as_ref().map_or_else(
+                            || "Terminal connection interrupted — recovering".into(),
+                            |stop| stop.status.clone(),
+                        );
+                        stopped = stop;
                         state.input_target_rejected = true;
                         changed = true;
                     }

@@ -932,6 +932,7 @@ impl SnapshotView {
             .text_color(bezel.text)
             .children(super::design::ink_probe(|| "workspace-body".into()))
             .on_key_down(cx.listener(Self::picker_key))
+            .map(|body| self.menu_actions(body, cx))
             .child(main)
             .children(
                 self.picker_popover(window, cx)
