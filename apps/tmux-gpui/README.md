@@ -284,6 +284,13 @@ that offer in the native handoff; Rust must reject an unsolicited binary upgrade
 Binary representation hashes cover the encoded bytes; canonical state hashes and
 acknowledgements continue to cover the same decoded terminal state.
 
+Interactive streams have no fallback for input lifetime (capability 105, first
+released in tmux-ide 2.9.11). Without it, typed input could reach a pane that was
+respawned. A daemon whose interactive `ready` frame omits `inputLifetime` is too
+old: the app stops that terminal and shows "This tmux-ide daemon is too old for
+the app. Update tmux-ide to 2.9.15 or later and restart it." instead of
+reconnecting. 2.9.15 is the oldest daemon this client has been tested against.
+
 Cold alternate-screen subscriptions may negotiate `deferred-history-v1`. Their
 TCP1 projection contains visible rows and a history commitment, with a separate
 receipt that never acknowledges a complete terminal state. Leaving the alternate
