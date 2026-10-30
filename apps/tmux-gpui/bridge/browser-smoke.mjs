@@ -502,10 +502,7 @@ try {
     send({ type: "pane", request: 7, id: second });
     await until(() => events.at(-1)?.request === 7 && !!events.at(-1)?.snapshot);
     assert.equal(events.at(-1).inputReady, false);
-    assert.match(
-      events.at(-1).status,
-      /^Window inactive — activate tmux-ide to type$/,
-    );
+    assert.match(events.at(-1).status, /^Window inactive — activate tmux-ide to type$/);
     send({ type: "presence", active: true, revision: 4 });
     await until(
       () =>
