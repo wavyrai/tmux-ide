@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { MARKDOWN_VARY, notFoundMarkdown } from "@/lib/agent-markdown";
-import { absoluteUrl } from "@/lib/site";
+import { canonicalUrl } from "@/lib/site";
 
 /**
  * Markdown for agents on the HTML routes: `/` and the docs pages answer with
@@ -95,13 +95,13 @@ export function proxy(request: NextRequest): NextResponse {
   if (HTML_ONLY_PAGES.has(pathname.replace(/\/+$/u, ""))) return NextResponse.next();
   const route = markdownRoute(pathname);
   if (!route) {
-    return new NextResponse(notFoundMarkdown(pathname), {
+    return new NextResponse(notFoundMarkdown(), {
       status: 404,
       headers: { "Content-Type": "text/markdown; charset=utf-8", Vary: MARKDOWN_VARY },
     });
   }
   const response = NextResponse.rewrite(new URL(route, request.url));
-  response.headers.set("Link", `<${absoluteUrl(pathname)}>; rel="canonical"`);
+  response.headers.set("Link", `<${canonicalUrl(pathname)}>; rel="canonical"`);
   return response;
 }
 
