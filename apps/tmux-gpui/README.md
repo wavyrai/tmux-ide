@@ -111,9 +111,11 @@ remains open.
 
 Home, the workspace agent list, and matching pane headers use the TUI's status
 vocabulary: Working (animated marker), Needs input, Done, Failed, Idle, and
-Unknown/Unavailable. Animation is presentation-only: one shared clock updates
-visible working markers without polling the daemon. Native reduced-motion
-preference wiring remains pending; the indicator supports a static rendering.
+Unknown/Unavailable. Animation is presentation-only: one small overlay view
+redraws the working markers every 80 ms without polling the daemon or repainting
+the terminal, and it stops while the window is hidden or minimised. While the
+window is inactive or a picker or menu is open, a working marker shows a still
+spinner frame. Native reduced-motion preference wiring remains pending.
 
 Panes are separate rounded cards with 34-pixel headers, 10-pixel content padding and 10-pixel gutters. Each header shares its terminal background; Close sits at the far right. Painting, pointer input, selection, links, IME placement and divider dragging use the same card coordinate map. Chrome is deducted from the terminal fit before resizing, rather than covering terminal cells. Expand/restore and Close have direct labeled icon buttons; Close always asks for confirmation. Narrow headers keep these actions in **⋯**, alongside Rename and Split right/down.
 Opening another pane's menu first selects that exact pane and waits for its

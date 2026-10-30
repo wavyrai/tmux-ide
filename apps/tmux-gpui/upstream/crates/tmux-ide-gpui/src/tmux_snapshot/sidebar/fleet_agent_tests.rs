@@ -81,7 +81,7 @@ fn fleet_agent_actual_pointer_and_coverage_use_authoritative_rows(cx: &mut TestA
         );
         assert!(
             all.iter()
-                .any(|r| r.label.contains("2 sessions · 1 agents omitted"))
+                .any(|r| r.label.contains("2 sessions · 1 agent omitted"))
         );
         assert!(
             all.iter()

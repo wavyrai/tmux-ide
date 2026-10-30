@@ -73,7 +73,7 @@ impl SnapshotView {
                 self.frame = None;
                 self.browser_state.diagnostics = None;
                 self.browser_state.retained_preview = false;
-                self.browser_state.status = "Connection unavailable — restart the preview".into();
+                self.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
                 self.browser_commands = None;
             }
             _ => {}
