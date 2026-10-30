@@ -9,7 +9,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug?: 
   const { slug } = await params;
   const page = source.getPage(slug);
   if (!page) {
-    return new Response(notFoundMarkdown(["/docs", ...(slug ?? [])].join("/")), {
+    return new Response(notFoundMarkdown(), {
       status: 404,
       headers: { "Content-Type": "text/markdown; charset=utf-8", Vary: MARKDOWN_VARY },
     });

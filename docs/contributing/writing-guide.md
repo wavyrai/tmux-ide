@@ -144,7 +144,8 @@ with them (Claude Code, Codex, tmux, iTerm2).
 ```yaml
 ---
 title: Restore and resume
-description: "Rebuild every tmux session after a server crash with tmux-ide restore: windows, layouts, directories, titles, and agent conversations."
+metaTitle: "tmux resume: restore sessions and agent chats"
+description: Resume tmux sessions after a crash or reboot. tmux-ide restore rebuilds windows, layouts and directories and reopens Claude Code and Codex chats.
 ---
 ```
 
@@ -153,10 +154,11 @@ description: "Rebuild every tmux session after a server crash with tmux-ide rest
   Code", "Home"); write "and", not "&".
 - `metaTitle` (optional): a search title of at most 49 characters, used only for
   the browser title and social cards. Add one when the short `title` lacks the
-  words people search for ("Restore tmux sessions and resume agents" for
-  "Restore and resume"). Each must be unique.
-- `description`: 110–155 characters, one sentence, ending with a period. Say
-  what the page lets the reader do, and put the key phrase first.
+  words people search for ("tmux resume: restore sessions and agent chats" for
+  "Restore and resume"). Each must be unique. The site appends " | tmux-ide",
+  so don't start it with the brand.
+- `description`: 110–155 characters, one or two sentences, ending with a
+  period. Say what the page lets the reader do, and put the key phrase first.
 - Quote the description if it contains `: `, or the YAML breaks.
 
 ## Commands and code

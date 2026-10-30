@@ -13,6 +13,7 @@ import {
   SITE_REPOSITORY,
   SITE_TITLE,
   absoluteUrl,
+  canonicalUrl,
 } from "@/lib/site";
 
 /** Markdown answers can stand in for an HTML page, so caches must key them on what was asked. */
@@ -32,7 +33,7 @@ export function frontmatter({ title, description, path, lastUpdated }: MarkdownM
     "---",
     `title: ${JSON.stringify(title)}`,
     `description: ${JSON.stringify(description)}`,
-    `canonical: ${absoluteUrl(path)}`,
+    `canonical: ${canonicalUrl(path)}`,
     ...(lastUpdated ? [`last_updated: ${lastUpdated.toISOString()}`] : []),
     "---",
     "",
@@ -93,12 +94,15 @@ export function homeMarkdown(): string {
   return out.join("\n");
 }
 
-/** Body of a 404 asked for as markdown. */
-export function notFoundMarkdown(path: string): string {
+/**
+ * Body of a 404 asked for as markdown. It never repeats the requested path, so
+ * a crafted URL can't put its own text in the answer.
+ */
+export function notFoundMarkdown(): string {
   return [
     "# Page not found",
     "",
-    `There is no page at \`${path}\` on ${SITE_NAME}.`,
+    `${SITE_NAME} has no page at this address. Start from the documentation or the index for agents:`,
     "",
     `- [Documentation](${absoluteUrl("/docs")})`,
     `- [Docs index for agents](${absoluteUrl("/llms.txt")})`,

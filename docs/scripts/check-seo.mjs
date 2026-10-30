@@ -198,6 +198,10 @@ for (const [path, page] of builtPages) {
   if (titleOwners.has(title))
     throw new Error(`${path} and ${titleOwners.get(title)} share the <title> "${title}"`);
   titleOwners.set(title, path);
+  // The title template appends " | tmux-ide"; a title that already leads with
+  // the brand must not get it twice (#640 review N5).
+  if (title.startsWith("tmux-ide") && title.endsWith("| tmux-ide"))
+    throw new Error(`${path} <title> repeats the brand through the title template: ${title}`);
   const description = decode(page.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "");
   if (!description || description.length > 155)
     throw new Error(`${path} meta description must be 1–155 chars (is ${description.length})`);
@@ -223,7 +227,8 @@ const ownUrl = (href, path) => {
     const url = new URL(decode(href));
     return (
       url.origin === apexOrigin &&
-      url.pathname.replace(/(.)\/$/u, "$1") === path &&
+      // Exactly the page's own path: /docs/commands/ is a 308 to /docs/commands.
+      url.pathname === path &&
       !url.search &&
       !url.hash
     );
@@ -256,6 +261,7 @@ for (const [path, page] of builtPages) {
   for (const pattern of [
     /<title>([^<]*)<\/title>/u,
     /<meta property="og:title" content="([^"]*)"/u,
+    /<meta name="twitter:title" content="([^"]*)"/u,
   ]) {
     const title = decode(page.match(pattern)?.[1] ?? "");
     if (agentsPhrase.test(title))

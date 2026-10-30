@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
@@ -12,8 +13,9 @@ import { fileURLToPath } from "node:url";
 const docsDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const appDir = resolve(docsDir, ".next/server/app");
 const builtHome = readFileSync(resolve(appDir, "index.html"), "utf8");
-const origin = new URL(builtHome.match(/<link rel="canonical" href="([^"]+)"/u)?.[1] ?? "invalid:")
-  .origin;
+// The homepage's HTML canonical, byte for byte: its markdown twin must name the same URL.
+const homeCanonical = builtHome.match(/<link rel="canonical" href="([^"]+)"/u)?.[1] ?? "invalid:";
+const origin = new URL(homeCanonical).origin;
 const gitDates = JSON.parse(readFileSync(resolve(docsDir, ".source/git-dates.json"), "utf8"));
 
 const BROWSER_ACCEPT =
@@ -72,6 +74,19 @@ async function startServer(port) {
   throw new Error(`next start did not answer within 30 s:\n${log}`);
 }
 
+/** GET with no Accept header: fetch always adds one, node:http doesn't. */
+function withoutAccept(url) {
+  return new Promise((done, reject) => {
+    const req = httpRequest(url, { headers: { "user-agent": BROWSER_UA } }, (res) => {
+      res.resume();
+      res.on("end", () => done({ contentType: res.headers["content-type"] ?? "" }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 const failures = [];
 const fail = (message) => failures.push(message);
 
@@ -120,7 +135,7 @@ async function run(base) {
       fail(
         `${path} markdown response must open with --- frontmatter, got ${JSON.stringify(mdBody.slice(0, 40))}`,
       );
-    const canonical = `<${origin}${path === "/" ? "/" : path}>; rel="canonical"`;
+    const canonical = `<${path === "/" ? homeCanonical : `${origin}${path}`}>; rel="canonical"`;
     if (!(md.headers.get("link") ?? "").includes(canonical))
       fail(
         `${path} markdown response must send Link: ${canonical}, got "${md.headers.get("link")}"`,
@@ -154,12 +169,46 @@ async function run(base) {
     }
   }
 
+  // On Vercel too the prerendered page's Vary wins over next.config.mjs (measured
+  // live on #637), so vercel.json appends Accept to the response's Vary at the edge.
+  // Not visible to `next start`: checked live after deploy (card #647 item 3).
+  const vercel = JSON.parse(read(resolve(docsDir, "vercel.json")) || "{}");
+  for (const path of ["/", "/docs", "/docs/getting-started"]) {
+    const appends = (vercel.routes ?? []).some(
+      (route) =>
+        route.continue === true &&
+        new RegExp(route.src, "u").test(path) &&
+        (route.transforms ?? []).some(
+          (transform) =>
+            transform.type === "response.headers" &&
+            transform.op === "append" &&
+            transform.target?.key?.toLowerCase?.() === "vary" &&
+            String(transform.args)
+              .split(",")
+              .map((name) => name.trim().toLowerCase())
+              .includes("accept"),
+        ),
+    );
+    if (!appends)
+      fail(
+        `vercel.json must append Accept to Vary on ${path} (a continue route with a response.headers transform)`,
+      );
+  }
+  for (const path of ["/about", "/llms.txt", "/_next/static/chunk.js"]) {
+    if ((vercel.routes ?? []).some((route) => new RegExp(route.src, "u").test(path)))
+      fail(`vercel.json routes must leave ${path} alone; it is not a negotiated page`);
+  }
+
   for (const accept of [
     "*/*",
     BROWSER_ACCEPT,
     "text/html, text/markdown",
     "text/markdown;q=0.5, text/html",
     "text/markdown;q=0, */*",
+    // #637 review N2: a refused markdown range, and HTML reached through a wildcard.
+    "text/markdown;q=0",
+    "text/markdown;q=0.5, text/*",
+    "text/markdown;q=0.5, */*",
   ]) {
     const response = await get("/", { accept });
     await response.arrayBuffer();
@@ -172,6 +221,8 @@ async function run(base) {
     "text/markdown, text/html;q=0.9, */*;q=0.8",
     "text/markdown, text/html",
     "text/plain;q=0.5, text/markdown",
+    // Media types are case-insensitive (RFC 9110 §8.3.1).
+    "TEXT/MARKDOWN",
   ]) {
     const response = await get("/", { accept });
     await response.arrayBuffer();
@@ -180,6 +231,11 @@ async function run(base) {
         `/ with Accept: ${accept} must return markdown, got ${response.headers.get("content-type")}`,
       );
   }
+
+  // A request with no Accept header at all (fetch would add `*/*`) gets HTML.
+  const bare = await withoutAccept(`${base}/`);
+  if (!bare.contentType.startsWith("text/html"))
+    fail(`/ with no Accept header must return HTML, got ${bare.contentType}`);
 
   // Next answers an RSC request without its _rsc cache key with a redirect to it.
   const rsc = await fetch(`${base}/`, { headers: { accept: "*/*", rsc: "1" } });
@@ -230,7 +286,7 @@ async function run(base) {
   }
 
   const pages = [
-    { path: "/index.md", canonical: `${origin}/`, date: gitDates.home },
+    { path: "/index.md", canonical: homeCanonical, date: gitDates.home },
     {
       path: "/docs/getting-started.md",
       canonical: `${origin}/docs/getting-started`,
@@ -273,6 +329,10 @@ async function run(base) {
       fail(`${path} must start its body with a # heading after the frontmatter`);
   }
 
+  const indexLink = (await get("/index.md")).headers.get("link") ?? "";
+  if (!indexLink.split(", ").includes(`<${homeCanonical}>; rel="canonical"`))
+    fail(`/index.md must send Link: <${homeCanonical}>; rel="canonical", got "${indexLink}"`);
+
   // The markdown and text routes themselves stay outside the proxy.
   for (const path of ["/index.md", "/docs/getting-started.md", "/llms.txt", "/agents.md"]) {
     const response = await get(path, { accept: "text/markdown" });
@@ -304,15 +364,31 @@ async function run(base) {
   if (!/^## When not to use tmux-ide$/mu.test(manual))
     fail("agents.md must say when not to use tmux-ide");
 
-  for (const path of ["/__agent-markdown-404-probe", "/docs/__agent-markdown-404-probe"]) {
+  // The markdown 404 is one fixed body: it never repeats the requested path, so
+  // a crafted URL (#637 review N3) can't put its own text or headings in it.
+  const probe = "__agent-markdown-404-probe";
+  const injected = "%60%0A%23%20Injected";
+  const notFoundBodies = new Set();
+  for (const path of [
+    `/${probe}`,
+    `/docs/${probe}`,
+    `/docs/${probe}${injected}`,
+    `/docs/${probe}.md`,
+  ]) {
     const md = await get(path, { accept: "text/markdown" });
     const body = await md.text();
     if (md.status !== 404 || !isMarkdown(md))
       fail(
         `${path} with Accept: text/markdown must return 404 text/markdown, got ${md.status} ${md.headers.get("content-type")}`,
       );
-    else if (!body.includes(`](${origin}/docs)`) || !body.includes(`](${origin}/llms.txt)`))
-      fail(`${path} markdown 404 must link ${origin}/docs and ${origin}/llms.txt`);
+    else {
+      notFoundBodies.add(body);
+      if (!body.includes(`](${origin}/docs)`) || !body.includes(`](${origin}/llms.txt)`))
+        fail(`${path} markdown 404 must link ${origin}/docs and ${origin}/llms.txt`);
+      if (body.includes(probe) || /Injected/u.test(body))
+        fail(`${path} markdown 404 must not echo the requested path, got ${JSON.stringify(body)}`);
+    }
+    if (path.endsWith(".md")) continue;
     const html = await get(path, { accept: BROWSER_ACCEPT });
     await html.arrayBuffer();
     if (html.status !== 404 || !isHtml(html))
@@ -320,6 +396,9 @@ async function run(base) {
         `${path} with a browser Accept must return the HTML 404, got ${html.status} ${html.headers.get("content-type")}`,
       );
   }
+
+  if (notFoundBodies.size > 1)
+    fail(`the markdown 404 must be one fixed body, got ${notFoundBodies.size} different bodies`);
 
   // Every extensionless page route must still be found when asked for as
   // markdown: the proxy must not answer a real page with its markdown 404.
