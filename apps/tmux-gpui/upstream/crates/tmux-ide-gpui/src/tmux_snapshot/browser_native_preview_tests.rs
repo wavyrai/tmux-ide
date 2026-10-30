@@ -101,7 +101,7 @@ fn fixture() -> (Route, PresentedWindow, State) {
     let window = window(snapshot(), 1, "one");
     let mut state = state();
     NativePresentation::new("connection", "workspace")
-        .apply(&mut state, &window, true, 1, 0)
+        .apply(&mut state, &window, true, true, 1, 0)
         .unwrap();
     (scope, window, state)
 }

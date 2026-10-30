@@ -81,6 +81,7 @@ mod osc52;
 mod palette;
 mod pane_menu;
 mod panel_resize;
+mod plural;
 mod port_forward;
 mod pr_actions;
 mod preferences;

@@ -132,10 +132,7 @@ pub(super) fn rows(state: &browser::State) -> Vec<Row> {
     }
     if p.roster.truncated_sessions > 0 || p.roster.truncated_rows > 0 {
         out.push(row(
-            format!(
-                "{} sessions · {} agents omitted",
-                p.roster.truncated_sessions, p.roster.truncated_rows
-            ),
+            crate::tmux_snapshot::roster_counts::fleet_agents(&p.roster),
             None,
         ));
     }

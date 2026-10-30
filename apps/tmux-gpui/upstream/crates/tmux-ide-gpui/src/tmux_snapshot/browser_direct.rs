@@ -30,6 +30,7 @@ struct Applied {
     paint: Arc<WindowPaint>,
     coherent: bool,
     input_authority: bool,
+    foreground: bool,
     presence_revision: u64,
     request: u64,
     session: Option<String>,
@@ -206,6 +207,7 @@ impl NativePresentation {
         state: &mut browser::State,
         window: &PresentedWindow,
         input_authority: bool,
+        foreground: bool,
         presence_revision: u64,
         now_ms: u64,
     ) -> Result<bool, Error> {
@@ -214,6 +216,7 @@ impl NativePresentation {
             Arc::ptr_eq(&last.paint, &window.paint)
                 && last.coherent == window.coherent
                 && last.input_authority == input_authority
+                && last.foreground == foreground
                 && last.presence_revision == presence_revision
                 && last.request == state.request
                 && last.session == state.selected_session
@@ -512,8 +515,10 @@ impl NativePresentation {
             "Restoring terminal history"
         } else if !coherent {
             "Waiting for coherent terminal geometry"
+        } else if !foreground {
+            "Window inactive — activate tmux-ide to type"
         } else if !input_authority {
-            "Waiting for input authority"
+            "Connecting…"
         } else {
             "Connected"
         }
@@ -535,6 +540,7 @@ impl NativePresentation {
             paint: window.paint.clone(),
             coherent: window.coherent,
             input_authority,
+            foreground,
             presence_revision,
             request: state.request,
             session: state.selected_session.clone(),
