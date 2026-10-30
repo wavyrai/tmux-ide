@@ -10,9 +10,6 @@ pub(super) const FOCUS: [(&str, &str); 4] = [
 ];
 pub(super) fn badge(theme: &bezel_theme::Theme, label: impl Into<SharedString>) -> Div {
     bezel_ui::popover::kbd_hint(theme, label)
-        .border_1()
-        .border_color(theme.border)
         .text_color(theme.text_muted)
-        .min_h(px(20.))
-        .flex_shrink_0()
+        .min_h(px(bezel_theme::Theme::CONTROL_HEIGHT_SMALL))
 }

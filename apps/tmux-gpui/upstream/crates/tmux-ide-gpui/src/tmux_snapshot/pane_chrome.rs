@@ -181,6 +181,39 @@ fn publication_current(
         && hit_regions::valid_view(&state.regions, Some(frame.view()), &state.panes)
         && state.regions.iter().any(|r| r.id == id)
 }
+/// Header text on the pane's own background, bare and under the hover and
+/// selected washes Bezel paints there: Bezel's roles, each moved only as far
+/// as it needs to read at 4.5:1 (Bezel's muted misses on a hovered header in
+/// Light, its warning on several light presets).
+#[derive(Clone, Copy)]
+pub(super) struct HeaderInk {
+    pub text: Hsla,
+    pub muted: Hsla,
+    pub warning: Hsla,
+}
+pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
+    let bezel = super::design::palette(theme);
+    let plate = bezel.terminal_bg;
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let plates = [
+        pack(plate),
+        pack(bezel_theme::flatten(bezel.element_hover, plate)),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+    ];
+    let ink = |c: Hsla| -> Hsla {
+        rgb(crate::contrast::ink_on_chrome(
+            pack(bezel_theme::flatten(c, plate)),
+            plates,
+            4.6,
+        ))
+        .into()
+    };
+    HeaderInk {
+        text: ink(bezel.text),
+        muted: ink(bezel.text_muted),
+        warning: ink(bezel.warning),
+    }
+}
 impl SnapshotView {
     fn header_mode_visible(&self, header: &Header, width: f32) -> bool {
         has_mode(header, width)
@@ -290,34 +323,70 @@ impl SnapshotView {
         let request = self.browser_request;
         let id = header.id.clone();
         let theme = self.theme();
+        let palette = super::design::palette(&theme);
+        let ink = header_ink(&theme);
+        let rect = self.header_rect(header, width);
+        let (label, hint) = if history > 0 {
+            ("Back to live", "Return to the live terminal")
+        } else {
+            ("Restore", "Restore pane layout")
+        };
+        let hover = palette.element_hover;
         Some(
             div()
                 .id(SharedString::from(format!("pane-mode:{id}")))
+                .role(Role::Button)
+                .aria_label(hint)
+                .tooltip(move |window, cx| {
+                    if history > 0 {
+                        bezel_ui::tooltip::Tooltip::text(hint, window, cx)
+                    } else {
+                        bezel_ui::tooltip::Tooltip::with_keystroke(
+                            hint,
+                            super::kbd::ZOOM,
+                            window,
+                            cx,
+                        )
+                    }
+                })
                 .debug_selector({
                     let id = id.clone();
                     move || format!("pane-mode:{id}")
                 })
                 .absolute()
-                .left(px(f32::from(self.header_rect(header, width).right())
+                .left(px(f32::from(rect.right())
                     - OVERFLOW_WIDTH
                     - MODE_WIDTH
                     - action_width(header, width)))
-                .top(self.header_rect(header, width).origin.y)
+                .top(rect.origin.y)
                 .w(px(MODE_WIDTH))
-                .h(self.header_rect(header, width).size.height)
+                .h(rect.size.height)
                 .overflow_hidden()
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(10.))
-                .text_color(rgb(theme.foreground))
-                .rounded(px(crate::config::corners::CONTROL))
-                .occlude()
                 .cursor_pointer()
-                .child(if history > 0 {
-                    "Back to live"
-                } else {
-                    "Restore"
+                .occlude()
+                // Bezel's small ghost button, without its side padding so the
+                // label fits the width the header reserves for it.
+                .child({
+                    use bezel_theme::{Sizing as _, Typeset as _};
+                    use bezel_ui::widgets::Buttons as _;
+                    palette
+                        .button(label, bezel_ui::widgets::ButtonStyle::Ghost, None)
+                        .control_size(bezel_theme::ControlSize::Small)
+                        .text_style(bezel_theme::TextStyle::Caption)
+                        .w_full()
+                        .min_h_0()
+                        .h(px(bezel_theme::ControlSize::Small.height()).min(rect.size.height))
+                        .px_0()
+                        .justify_center()
+                        .text_color(ink.muted)
+                        .hover(move |s| s.bg(hover))
+                        .children(super::design::ink_probe({
+                            let id = id.clone();
+                            move || format!("pane-mode:{id}")
+                        }))
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
@@ -358,7 +427,9 @@ impl SnapshotView {
         let regions = self.browser_state.regions.clone();
         let request = self.browser_request;
         let id = header.id.clone();
-        let theme = self.theme();
+        let palette = super::design::palette(&self.theme());
+        let rect = self.header_rect(header, width);
+        let hover = palette.element_hover;
         Some(
             div()
                 .id(SharedString::from(format!("pane-overflow:{id}")))
@@ -372,27 +443,29 @@ impl SnapshotView {
                     move || format!("pane-overflow:{id}")
                 })
                 .absolute()
-                .left(px(f32::from(self.header_rect(header, width).right())
+                .left(px(f32::from(rect.right())
                     - OVERFLOW_WIDTH
                     - action_width(header, width)))
-                .top(self.header_rect(header, width).origin.y)
+                .top(rect.origin.y)
                 .w(px(OVERFLOW_WIDTH))
-                .h(self.header_rect(header, width).size.height)
+                .h(rect.size.height)
                 .overflow_hidden()
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(12.))
-                .text_color(rgb(theme.muted))
-                .rounded(px(crate::config::corners::CONTROL))
                 .cursor_pointer()
                 .occlude()
-                .child(
-                    svg()
-                        .path("icons/more.svg")
-                        .size(px(14.).min(px(self.terminal_height())))
-                        .text_color(rgb(theme.muted)),
-                )
+                .child({
+                    use bezel_ui::widgets::Buttons as _;
+                    palette
+                        .icon_button(
+                            bezel_ui::icons::Icon::asset("icons/more.svg"),
+                            bezel_ui::widgets::ButtonStyle::Ghost,
+                            None,
+                        )
+                        .size(px(OVERFLOW_WIDTH).min(rect.size.height))
+                        .hover(move |s| s.bg(hover))
+                })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
                     cx.stop_propagation();
@@ -452,7 +525,7 @@ impl SnapshotView {
             .h(px(self.terminal_height()))
             .flex_shrink_0()
             .overflow_hidden()
-            .bg(rgb(theme.background));
+            .bg(super::design::palette(&theme).terminal_bg);
         if !hit_regions::is_painted(self.frame.as_ref(), self.browser_state.frame.as_ref())
             || self.selection.is_some()
         {
@@ -543,6 +616,9 @@ impl SnapshotView {
             .and_then(|pane| pane.browser_icon.as_deref());
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
+        let ink = header_ink(&theme);
+        let tint = if selected { ink.text } else { ink.muted };
+        let size = (self.terminal_height() - 2.).min(bezel_theme::TextStyle::Callout.size());
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
         // with native elements. Never insert title glyphs into terminal cells.
         div()
@@ -568,14 +644,10 @@ impl SnapshotView {
                     }))
             })
             .when(self.card_layout(width).is_none(), |label| {
-                label.bg(rgb(theme.background))
+                label.bg(super::design::palette(&theme).terminal_bg)
             })
-            .text_color(rgb(if selected {
-                theme.foreground
-            } else {
-                theme.muted
-            }))
-            .text_size(px((self.terminal_height() - 2.).min(12.)))
+            .text_color(tint)
+            .text_size(px(size))
             .font_weight(if selected {
                 FontWeight::SEMIBOLD
             } else {
@@ -583,16 +655,12 @@ impl SnapshotView {
             })
             .flex()
             .items_center()
-            .gap(px(4.))
+            .gap(px(bezel_theme::Theme::SPACE / 2.))
             .child(browser_icon::element(
                 browser_icon,
                 icon,
                 (self.terminal_height() - 2.).clamp(8., 14.),
-                if selected {
-                    theme.foreground
-                } else {
-                    theme.muted
-                },
+                tint,
             ))
             .children(indicator)
             .child(browser.unwrap_or_else(|| {
@@ -615,7 +683,12 @@ impl SnapshotView {
                 .h_full()
                 .min_w_0()
                 .flex_shrink(1.)
-                .text_size(px((self.terminal_height() - 2.).min(12.)))
+                .text_size(px(size))
+                .text_color(tint)
+                .children(super::design::ink_probe({
+                    let id = header.id.clone();
+                    move || format!("pane-title:{id}")
+                }))
                 .into_any_element()
             }))
     }

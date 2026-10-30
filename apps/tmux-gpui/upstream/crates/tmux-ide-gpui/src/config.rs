@@ -14,7 +14,6 @@ pub use theme::Theme;
 /// terminal grid. Small badges/keycaps retain a tighter curve than controls.
 pub(crate) mod corners {
     pub(crate) const PANEL: f32 = 12.;
-    pub(crate) const CONTROL: f32 = 8.;
 }
 
 #[derive(Clone, Debug)]

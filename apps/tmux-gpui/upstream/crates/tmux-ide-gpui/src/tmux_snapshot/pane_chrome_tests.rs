@@ -207,5 +207,9 @@ fn header_callback_publication_fence_rejects_replaced_frame_request_and_regions(
     Ok(())
 }
 
+#[path = "pane_chrome_tests/bezel.rs"]
+mod bezel;
 #[path = "pane_chrome_tests/controls.rs"]
 mod controls;
+#[path = "pane_chrome_tests/ink.rs"]
+mod ink;
