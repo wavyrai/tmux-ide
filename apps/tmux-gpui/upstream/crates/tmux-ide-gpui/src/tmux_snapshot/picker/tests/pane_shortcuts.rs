@@ -1,5 +1,5 @@
 use super::*;
-fn ready(view: &mut SnapshotView) {
+pub(super) fn ready(view: &mut SnapshotView) {
     view.browser_state.surface = browser::Surface::Workspace;
     view.browser_state.request = view.browser_request;
     view.browser_state.selected_session = Some("session-a".into());
