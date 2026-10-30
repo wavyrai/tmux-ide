@@ -127,6 +127,27 @@ fn keyboard_reveal_scrolls_the_session_list_beside_its_bar(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn a_long_developer_status_scrolls_under_bezels_bar(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender, 2));
+    cx.simulate_resize(size(px(800.), px(600.)));
+    view.update(cx, |view, _| {
+        view.developer_mode.enabled = true;
+        view.browser_state.status =
+            "Reconnecting to the tmux server after a dropped link. ".repeat(20);
+    });
+    draw(cx);
+    draw(cx);
+    receiver.try_iter().for_each(drop);
+    let lane = cx.debug_bounds("tmux-status-viewport").unwrap();
+    assert!(lane.size.height <= px(72.), "{lane:?}");
+    let track = cx
+        .debug_bounds("connection-status-track")
+        .expect("an overflowing status lane shows Bezel's scrollbar");
+    assert_eq!(track.right(), lane.right());
+}
+
+#[gpui::test]
 fn the_empty_pane_shows_bezels_empty_state_on_the_opaque_fill(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
@@ -163,7 +184,9 @@ fn the_empty_pane_shows_bezels_empty_state_on_the_opaque_fill(cx: &mut TestAppCo
 fn the_home_panel_takes_bezels_panel_corner_and_inset() {
     let mut panel = super::super::shell::content_panel(0x123456, true);
     let style = panel.style();
-    let radius = Some(AbsoluteLength::Pixels(px(bezel_theme::Theme::panel_radius())));
+    let radius = Some(AbsoluteLength::Pixels(px(
+        bezel_theme::Theme::panel_radius(),
+    )));
     assert_eq!(style.corner_radii.top_left, radius);
     assert_eq!(style.corner_radii.bottom_right, radius);
     let inset = Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(
