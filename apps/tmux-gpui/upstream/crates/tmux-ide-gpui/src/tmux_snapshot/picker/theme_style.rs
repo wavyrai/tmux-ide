@@ -29,7 +29,7 @@ pub(super) fn heading(view: &SnapshotView) -> AnyElement {
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(theme.muted))
+                        .text_color(super::super::design::popover_ink(&theme).muted)
                         .truncate()
                         .child(format!("Applied · {name}{mode}")),
                 ),
@@ -81,10 +81,9 @@ pub(super) fn row(
         .flex()
         .items_center()
         .gap_2()
-        .text_color(if enabled {
-            bezel.text
-        } else {
-            bezel.text_muted
+        .text_color({
+            let ink = super::super::design::popover_ink(&theme);
+            if enabled { ink.text } else { ink.muted }
         })
         .when(enabled, |item| {
             item.cursor_pointer()

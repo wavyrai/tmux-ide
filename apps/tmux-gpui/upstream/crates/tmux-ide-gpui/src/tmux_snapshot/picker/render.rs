@@ -23,6 +23,7 @@ impl SnapshotView {
         })?;
         let theme = self.theme();
         super::super::design::prepare(&theme, self.chrome.allowed(), cx);
+        let ink = super::super::design::popover_ink(&theme);
         let viewport = window.viewport_size();
         let pane_scope = self.picker.as_ref().is_some_and(|p| p.pane_scope.is_some());
         // Pane rows are single-line. Budget heading/search/padding separately,
@@ -46,6 +47,9 @@ impl SnapshotView {
                 .flex()
                 .justify_center()
                 .pt((viewport.height / 6.).min(px(80.)))
+                // `popover::modal_glass`'s lighter scrim: the palette is a
+                // glass popover, and the standard dim buries its backdrop.
+                .bg(bezel_theme::scrim(0.35))
                 .occlude()
                 .on_mouse_down(
                     MouseButton::Left,
@@ -57,7 +61,15 @@ impl SnapshotView {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .child(
-                    div()
+                    // Bezel's popover card, on an opaque plate rather than
+                    // glass: it floats over live terminal output (PM, #671
+                    // round 2). Glass stays on the sidebar and titlebar.
+                    bezel_ui::popover::popover_card(&super::super::design::palette(&theme))
+                        .bg(ink.plate)
+                        .border_1()
+                        .border_color(super::super::design::palette(&theme).border)
+                        .shadow(bezel_theme::surface_shadows())
+                        .text_color(ink.text)
                         .id("commands-popover")
                         .debug_selector(|| "commands-popover".into())
                         .w((viewport.width - px(24.))
@@ -68,15 +80,11 @@ impl SnapshotView {
                                 .max(px(0.))
                                 .min(px(content_height)),
                         )
-                        .p_3()
-                        .overflow_hidden()
-                        .map(|panel| super::super::design::floating(panel, &theme))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(self.picker_render(cx))
-                        .map(|panel| super::super::design::popover(panel, cx)),
+                        .child(self.picker_render(cx)),
                 )
                 .into_any_element(),
         )
@@ -116,7 +124,7 @@ impl SnapshotView {
                     )))
                     .child(
                         div()
-                            .text_color(super::super::design::Palette::for_theme(&theme).muted)
+                            .text_color(super::super::design::popover_ink(&theme).muted)
                             .child(
                                 self.terminal_font
                                     .note
@@ -128,11 +136,15 @@ impl SnapshotView {
                 panel.child(div().px_2().py_1().child(reference::heading(picker.mode)))
             })
             .when(picker.mode == Mode::Commands, |panel| {
-                panel.child(div().px_2().py_1().child(if picker.pane_scope.is_some() {
-                    "Pane actions"
-                } else {
-                    "Commands · F5"
-                }))
+                panel.child(section_heading(
+                    &theme,
+                    if picker.pane_scope.is_some() {
+                        "Pane actions"
+                    } else {
+                        "Commands"
+                    },
+                    picker.pane_scope.is_none().then_some("F5"),
+                ))
             })
             .when(
                 picker.mode == Mode::Commands
@@ -141,7 +153,7 @@ impl SnapshotView {
                 |panel| panel.child(div().px_2().py_1().child(self.palette_status())),
             )
             .when(picker.mode == Mode::Navigation, |panel| {
-                panel.child(div().px_2().py_1().child("Sessions and panes · F6"))
+                panel.child(section_heading(&theme, "Sessions and panes", Some("F6")))
             })
             .when(picker.mode == Mode::Attention, |panel| {
                 panel.child(self.attention_heading())
@@ -184,6 +196,7 @@ impl SnapshotView {
                 continue;
             }
             let bezel = super::super::design::palette(&theme);
+            let ink = super::super::design::popover_ink(&theme);
             let hint = match &target {
                 Target::Command(Action::Home) => Some("F1"),
                 Target::Command(Action::Terminals) => Some("F2"),
@@ -229,21 +242,15 @@ impl SnapshotView {
                     .when(!enabled && !picker.mode.is_reference(), |row| row.aria_description("Unavailable"))
         .aria_label(row.label.clone())
                     .debug_selector(move || format!("picker-row-{index}"))
-                    .px_2()
-                    .py_1()
-                    .rounded(px(crate::config::corners::CONTROL))
                     .when(!picker.mode.is_reference(), |row| row.truncate())
                     .when(picker.mode.is_reference(), |row| {
                         row.w_full().whitespace_normal()
                     })
                     .when(enabled, |row| row.cursor_pointer())
-                    .when(!enabled && !picker.mode.is_reference(), |row| {
-                        row.text_color(super::super::design::Palette::for_theme(&theme).muted)
-                    })
-                    .bg(if index == picker.selected {
-                        super::super::design::Palette::for_theme(&theme).selected
+                    .text_color(if enabled || picker.mode.is_reference() {
+                        ink.text
                     } else {
-                        rgba(0)
+                        ink.muted
                     })
                     .when(picker.mode == Mode::Font, |row| {
                         row.min_h(px(super::super::controls::CONTROL_HEIGHT))
@@ -254,7 +261,7 @@ impl SnapshotView {
                             ))
                     })
                     .child(div().flex_1().min_w_0().when(!picker.mode.is_reference(), |label| label.truncate()).child(label.to_owned()))
-                    .children(hint.map(|hint| super::super::kbd::badge(&bezel, hint)))
+                    .children(hint.map(|hint| keycap(&bezel, ink, hint)))
                     .when(enabled, |row| {
                         row.on_click(cx.listener(move |view, _, window, cx| {
                             view.choose_picker(target.clone(), window, cx)
@@ -263,14 +270,68 @@ impl SnapshotView {
             );
         }
         panel = panel.child(list).when(picker.mode == Mode::Theme, |panel| {
+            let bezel = super::super::design::palette(&theme);
             panel.child(
                 div()
+                    .debug_selector(|| "picker-key-hints".into())
                     .pt_2()
-                    .text_sm()
-                    .text_color(super::super::design::Palette::for_theme(&theme).muted)
-                    .child("↑ ↓ Browse   ·   Enter Apply   ·   Esc Close"),
+                    .flex()
+                    .gap(px(14.))
+                    .children(
+                        [("↑↓", "Browse"), ("↩", "Apply"), ("esc", "Close")]
+                            .map(|(cap, label)| key_hint(&bezel, &theme, cap, label)),
+                    ),
             )
         });
         panel.into_any_element()
     }
+}
+
+/// A palette section heading: Bezel's menu heading, with the mode's key as a
+/// keycap rather than glued into the text.
+fn section_heading(
+    theme: &crate::config::Theme,
+    label: &'static str,
+    key: Option<&'static str>,
+) -> Div {
+    let bezel = super::super::design::palette(theme);
+    let ink = super::super::design::popover_ink(theme);
+    bezel_ui::popover::menu_heading(&bezel, label)
+        .text_color(ink.muted)
+        .flex()
+        .items_center()
+        .justify_between()
+        .children(key.map(|key| keycap(&bezel, ink, key)))
+}
+
+/// Bezel's keycap, inked on the palette plate.
+fn keycap(
+    bezel: &bezel_theme::Theme,
+    ink: super::super::design::PopoverInk,
+    key: &'static str,
+) -> Div {
+    super::super::kbd::badge(bezel, key).text_color(ink.muted)
+}
+
+/// Bezel's `key_hint_text` (a keycap and its label), with both inked on the
+/// palette plate; Bezel paints the label at 45% of muted.
+fn key_hint(
+    bezel: &bezel_theme::Theme,
+    theme: &crate::config::Theme,
+    cap: &'static str,
+    label: &'static str,
+) -> Div {
+    let ink = super::super::design::popover_ink(theme);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(5.))
+        .child(
+            bezel_ui::popover::key_cap(bezel)
+                .font_family(bezel.font_mono.clone())
+                .text_color(ink.muted)
+                .child(cap),
+        )
+        .child(div().text_color(ink.muted).child(label))
 }
