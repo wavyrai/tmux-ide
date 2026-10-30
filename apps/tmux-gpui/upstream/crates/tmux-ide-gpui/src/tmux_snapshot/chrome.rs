@@ -62,6 +62,12 @@ impl Chrome {
         self.forced = Some(allowed);
     }
 
+    /// The background last applied to the window.
+    #[cfg(test)]
+    pub(super) fn applied(&self) -> Option<WindowBackgroundAppearance> {
+        self.applied
+    }
+
     /// True once after the accessibility settings change, so the view redraws.
     pub(super) fn take_policy_change(&self) -> bool {
         #[cfg(target_os = "macos")]
