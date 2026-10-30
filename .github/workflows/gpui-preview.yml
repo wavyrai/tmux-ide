@@ -12,6 +12,8 @@ on:
       - scripts/build-bundled-tmux.mjs
       - scripts/lib/**
       - docs/app/icon.png
+      # The packaged app ships the root license.
+      - LICENSE
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
