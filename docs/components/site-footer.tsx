@@ -4,7 +4,7 @@ import { AppIcon } from "@/components/app-icon";
 import { AsciiWordmark } from "@/components/ascii-wordmark";
 import { MarketingFrame } from "@/components/marketing/lattice";
 import { PrototyperWordmark } from "@/components/prototyper-wordmark";
-import { INSTALL_COMMAND } from "@/lib/site";
+import { INSTALL_COMMAND, SITE_TAGLINE } from "@/lib/site";
 
 const columns = [
   {
@@ -61,9 +61,7 @@ export function SiteFooter() {
               <AppIcon size={30} />
               <AsciiWordmark size="footer" inverted />
             </Link>
-            <p className="footer-muted type-body mt-5 max-w-md">
-              The open-source workspace for coding agents, built on durable tmux sessions.
-            </p>
+            <p className="footer-muted type-body mt-5 max-w-md">{SITE_TAGLINE}</p>
             <code className="footer-foreground type-caption-1 mt-7 inline-block font-mono">
               {INSTALL_COMMAND}
             </code>

@@ -69,6 +69,13 @@ const sitemap = read(resolve(appDir, "sitemap.xml.body"));
 if (!/<loc>https:\/\/tmux-ide\.com\/themes<\/loc>/u.test(sitemap))
   fail("/themes is not in the sitemap");
 
+// The intro says who the themes are for: the tmux-ide app, not plain tmux.
+const text = (markup) =>
+  decode(markup.replace(/<!-- -->/gu, "").replace(/<[^>]+>/gu, "")).replace(/\s+/gu, " ");
+const intro = text(html.split("</h1>")[1]?.split("</p>")[0] ?? "");
+if (!intro.includes("These themes are for the tmux-ide app"))
+  fail(`/themes intro must keep "These themes are for the tmux-ide app"; has "${intro.trim()}"`);
+
 // One card per shown preset, each image's alt naming its theme.
 const cards = [...html.matchAll(/<article id="([\w-]+)"/gu)].map((m) => m[1]);
 const shownIds = SHOWN_PRESETS.map(({ id }) => id);
