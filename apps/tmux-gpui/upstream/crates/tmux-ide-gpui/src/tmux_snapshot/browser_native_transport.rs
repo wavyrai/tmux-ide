@@ -572,7 +572,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         let stop = diagnostics::stop_message(&error);
                         if stop.is_some() {
                             revoke_connection(&mut active, &mut state, &mut output);
-                        } else if current.owner.waiting_receipt() && current.owner_notice.is_none() {
+                        } else if current.owner.waiting_receipt() && current.owner_notice.is_none()
+                        {
                             // The authorized HTTP operation may retire the stream
                             // before replying. Preserve correlation, not terminal IO.
                             current.stream_interrupted = true;

@@ -23,7 +23,9 @@ fn a_daemon_without_input_lifetime_stops_with_an_update_message() {
     assert_eq!(code(&error), "stream-daemon-too-old");
     assert_eq!(
         stop_message(&error),
-        Some("This tmux-ide daemon is too old for the app. Update tmux-ide to 2.9.15 or later and restart it.")
+        Some(
+            "This tmux-ide daemon is too old for the app. Update tmux-ide to 2.9.15 or later and restart it."
+        )
     );
     let identity = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
         tmux_native_session::Error::Transport(tmux_stream::Error::Identity),
