@@ -1,4 +1,6 @@
-import { SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+import { SITE_REPOSITORY, SITE_URL, SOFTWARE_VERSION } from "@/lib/site";
+
+const SKILL_TREE_URL = `${SITE_REPOSITORY}/tree/main/skill`;
 
 export const revalidate = false;
 
@@ -143,9 +145,20 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 - Use \`tmux-ide send\`, not raw \`tmux send-keys\`, so the target resolves by id, title or name and long
   messages go through a dispatch file.
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
+- Theme presets for the app, each with the config line that selects it: ${SITE_URL}/themes
 - Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
   ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
 - Overview of running coding agents in tmux, for people: ${SITE_URL}/tmux-for-coding-agents
+
+## Agent resources and discovery files
+
+- Agent skill: ${SKILL_TREE_URL} (\`skill/SKILL.md\`); install it with \`npx skills add wavyrai/tmux-ide\` (skills.sh), or \`tmux-ide integration install claude\` for Claude Code
+- Rules for coding agents working in the repository: ${SITE_REPOSITORY}/blob/main/AGENTS.md
+- MCP server card for \`tmux-ide mcp\`: ${SITE_URL}/.well-known/mcp/server-card.json
+- Agentic Resource Discovery catalog: ${SITE_URL}/.well-known/ard.json
+- AI Catalog: ${SITE_URL}/.well-known/ai-catalog.json
+- API catalog (RFC 9727): ${SITE_URL}/.well-known/api-catalog
+- Agent skills index: ${SITE_URL}/.well-known/agent-skills/index.json
 `;
 
 export function GET() {

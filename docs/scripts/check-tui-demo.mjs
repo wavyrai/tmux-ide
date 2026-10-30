@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { staleDemoSources } from "./tui-demo-sources.mjs";
+import { SHOWN_PRESETS } from "../components/themes-gallery/shown-presets.mjs";
+import { GALLERY_RECORD, staleDemoSources, staleGallerySources } from "./tui-demo-sources.mjs";
 
 const docsDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Fig. 01 ships in the app's default Dark and Light themes; the page shows the
@@ -85,10 +86,35 @@ const icons = readFileSync(resolve(docsDir, "components/icons/sprite.svg"), "utf
 if (!icons.includes('<symbol id="cursor-arrow"'))
   failures.push("components/icons/sprite.svg lacks the #cursor-arrow symbol the cursors draw");
 
+// The /themes gallery: one render per shown preset, from the current theme code.
+const staleGallery = staleGallerySources();
+if (staleGallery.length > 0)
+  failures.push(
+    "docs/public/themes/ is older than the app code it shows. Run `pnpm demo:themes` from the " +
+      "repo root and commit docs/public/themes and docs/components/themes-gallery/gallery.json. " +
+      `Changed since the last render:\n    ${staleGallery.join("\n    ")}`,
+  );
+const gallery = existsSync(GALLERY_RECORD) ? JSON.parse(readFileSync(GALLERY_RECORD, "utf8")) : {};
+const galleryIds = new Set((gallery.presets ?? []).map(({ id }) => id));
+const themesDir = resolve(docsDir, "public/themes");
+const expectedRenders = SHOWN_PRESETS.flatMap(({ id }) => [`${id}.webp`, `${id}-full.webp`]);
+for (const { id } of SHOWN_PRESETS)
+  if (!galleryIds.has(id))
+    failures.push(`gallery.json has no preset "${id}"; run \`pnpm demo:themes\``);
+for (const file of expectedRenders)
+  if (!existsSync(resolve(themesDir, file)))
+    failures.push(`docs/public/themes/${file} is missing; run \`pnpm demo:themes\``);
+const publishedRenders = existsSync(themesDir) ? readdirSync(themesDir) : [];
+for (const file of publishedRenders)
+  if (!expectedRenders.includes(file))
+    failures.push(
+      `docs/public/themes/${file} is not a shown preset's render; run \`pnpm demo:themes\``,
+    );
+
 if (failures.length > 0) {
   console.error(`TUI demo check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
 console.log(
-  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with cursor paths.`,
+  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with cursor paths, ${SHOWN_PRESETS.length} theme gallery renders.`,
 );
