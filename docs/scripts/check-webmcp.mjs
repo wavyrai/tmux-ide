@@ -200,10 +200,13 @@ async function checkHandlers(page) {
     "/llms.txt",
     // /agents.md exists, so only the /docs guard rejects it.
     "/agents",
+    "/agents/docs",
+    "/docs-x",
+    "/docs/.x",
   ]) {
     const result = await call(page, "get_page_markdown", { path });
     expect(
-      rejected(result),
+      /^RangeError: path must/u.test(result.error ?? ""),
       `get_page_markdown rejects ${JSON.stringify(path)}`,
       JSON.stringify(result).slice(0, 160),
     );
@@ -307,8 +310,16 @@ try {
 
   console.log("document.modelContext stub on /:");
   const page = await openWithStub(browser, base, "document");
+  const requests = [];
+  page.on("request", (request) => requests.push(request.url()));
   await checkRegistration(page);
   await checkHandlers(page);
+  const offOrigin = requests.filter((url) => new URL(url).origin !== new URL(base).origin);
+  expect(
+    offOrigin.length === 0,
+    "the tools fetch only from the page's own origin",
+    offOrigin.join(" "),
+  );
   await page.close();
 
   console.log("both stubs on /:");
