@@ -441,6 +441,9 @@ impl SnapshotView {
         if self.browser_commands.is_none() && mode != Mode::Commands {
             return;
         }
+        if mode == Mode::Font {
+            self.list_terminal_fonts(cx);
+        }
         self.sidebar_keyboard.active = false;
         self.cancel_attention();
         self.cancel_palette();
