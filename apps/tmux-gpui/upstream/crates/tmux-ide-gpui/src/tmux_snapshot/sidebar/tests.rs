@@ -172,3 +172,9 @@ mod reveal_tests;
 
 #[path = "session_design_tests.rs"]
 mod session_design_tests;
+
+#[path = "agents_ink_tests.rs"]
+mod agents_ink_tests;
+
+#[path = "footer_tests.rs"]
+mod footer_tests;

@@ -107,6 +107,9 @@ mod row_style_tests;
 #[cfg(test)]
 #[path = "sidebar/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "sidebar/text_role_tests.rs"]
+mod text_role_tests;
 
 /// The attention count: Bezel's badge, filled as it was before Bezel, since
 /// the count is what asks for the user and should stand out of the row
@@ -139,6 +142,8 @@ pub(super) fn render_row(
     painter: bezel_motion::Painter,
     emphasized: bool,
 ) -> Stateful<Div> {
+    use bezel_theme::{TextStyle, Typeset as _};
+    use bezel_ui::widgets::Icons as _;
     // Text on the frosted chrome keeps 4.5:1 whatever the desktop behind it.
     // Ink that reads on the row's own fill (selected or hovered) as well as
     // on the frosted chrome, whatever the desktop behind it.
@@ -147,6 +152,11 @@ pub(super) fn render_row(
         row.target,
         Some(Target::Session(_) | Target::FleetSession { .. })
     ) || row.favorite.is_some();
+    let role = if session {
+        TextStyle::Callout
+    } else {
+        TextStyle::Subheadline
+    };
     let selection = bezel_theme::Selection::new(row.selected, emphasized);
     let fade = bezel_motion::Fade::new(painter, format!("sidebar-row-{index}"));
     let mut element = div()
@@ -157,7 +167,7 @@ pub(super) fn render_row(
         .flex()
         .items_center()
         .gap(px(6.))
-        .pl(px(8. + f32::from(row.depth) * 6.))
+        .pl(px(bezel_theme::Theme::SPACE + f32::from(row.depth) * 6.))
         .pr_2()
         .py(px(if session { 5. } else { 3. }))
         .rounded(px(bezel_theme::Theme::control_radius()))
@@ -165,16 +175,18 @@ pub(super) fn render_row(
         .flex_shrink_0()
         .overflow_hidden()
         .text_color(rgb(label))
-        .text_size(px(if session { 12. } else { 11. }))
+        // The ladder's sizes at gpui's own leading, which the rows' heights
+        // are laid out on.
+        .text_style(role)
+        .line_height(phi())
         .font_weight(if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
         })
         .children(row.icon.filter(|_| !session).map(|path| {
-            svg()
-                .path(path)
-                .size(px(14.))
+            bezel
+                .icon_at(TextStyle::Body, bezel_ui::icons::Icon::asset(path))
                 .flex_none()
                 .text_color(rgb(if row.selected { label } else { muted }))
         }))
@@ -201,20 +213,22 @@ pub(super) fn render_row(
                         .min_w_0()
                         .max_h(px(32.))
                         .overflow_hidden()
-                        .text_size(px(11.))
+                        .text_style(TextStyle::Subheadline)
                         .line_height(px(16.))
-                        .font_weight(FontWeight::NORMAL)
                         .text_color(rgb(muted))
                         .child(summary.clone())
+                        .children(crate::tmux_snapshot::design::ink_probe(move || {
+                            format!("sidebar-summary-{index}")
+                        }))
                 }))
                 .children(row.pane_count.as_ref().map(|count| {
                     div()
                         .debug_selector(move || format!("tmux-sidebar-count-{index}"))
                         .min_w_0()
                         .truncate()
-                        .text_size(px(10.))
+                        .text_style(TextStyle::Caption)
+                        .line_height(phi())
                         .mt(px(2.))
-                        .font_weight(FontWeight::NORMAL)
                         .text_color(rgb(muted))
                         .child(count.clone())
                         .children(crate::tmux_snapshot::design::ink_probe(move || {
