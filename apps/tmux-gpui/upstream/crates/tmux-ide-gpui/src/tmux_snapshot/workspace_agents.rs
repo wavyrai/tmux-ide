@@ -54,7 +54,19 @@ impl SnapshotView {
         if self.browser_state.selected_session.as_ref() != Some(&w.session_id) {
             return None;
         }
+        use bezel_theme::{TextStyle, Typeset as _};
         let theme = self.theme();
+        let (ink, muted) = crate::tmux_snapshot::design::row_ink(&theme);
+        let line = |text: SharedString, probe: &'static str| {
+            div()
+                .px(px(bezel_theme::Theme::SPACE))
+                .text_style(TextStyle::Callout)
+                .text_color(rgb(ink))
+                .child(text)
+                .children(crate::tmux_snapshot::design::ink_probe(move || {
+                    probe.into()
+                }))
+        };
         let request = self.browser_request;
         let revision = w.roster.revision;
         let mut body = div()
@@ -69,10 +81,14 @@ impl SnapshotView {
             .overflow_hidden()
             .child(
                 div()
-                    .px_2()
-                    .text_sm()
-                    .text_color(rgb(theme.muted))
-                    .child("Agents"),
+                    .px(px(bezel_theme::Theme::SPACE))
+                    .text_style(TextStyle::Subheadline)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(muted))
+                    .child("Agents")
+                    .children(crate::tmux_snapshot::design::ink_probe(|| {
+                        "sidebar-agents-heading".into()
+                    })),
             );
         let phase = match w.roster.phase {
             Phase::Loading => Some("Refreshing agents…"),
@@ -80,14 +96,15 @@ impl SnapshotView {
             _ => None,
         };
         if let Some(text) = phase {
-            body = body.child(div().px_2().text_sm().child(text));
+            body = body.child(line(text.into(), "sidebar-agents-phase"));
         }
         if let Some(note) = &w.roster.note {
-            body = body.child(div().px_2().text_sm().child(note.clone()));
+            body = body.child(line(note.clone().into(), "sidebar-agents-note"));
         }
         if w.roster.truncated_rows > 0 {
-            body = body.child(div().px_2().text_sm().child(
-                crate::tmux_snapshot::roster_counts::workspace_agents(&w.roster),
+            body = body.child(line(
+                crate::tmux_snapshot::roster_counts::workspace_agents(&w.roster).into(),
+                "sidebar-agents-truncated",
             ));
         }
         for (index, agent) in w.roster.rows.iter().enumerate() {

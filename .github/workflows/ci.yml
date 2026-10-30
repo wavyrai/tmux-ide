@@ -7,6 +7,12 @@ on:
       - master
   pull_request:
 
+# A newer push to a pull request cancels its older runs. Other events get a
+# group of their own, so main keeps every run and never queues behind itself.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   native_macos_notifier:
     name: Native macOS notifier

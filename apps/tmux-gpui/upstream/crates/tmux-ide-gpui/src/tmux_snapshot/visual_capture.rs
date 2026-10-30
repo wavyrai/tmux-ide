@@ -300,10 +300,44 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
     Ok(state)
 }
 
+/// Two panes of one window: the upper scrolled back, so its header offers
+/// Back to live; the lower a browser whose page just refused a click.
+fn with_browser(mut state: browser::State) -> Result<browser::State> {
+    if let Some(pane) = state.panes.iter_mut().find(|pane| pane.id == "pane-b") {
+        pane.window_id = Some("window-1".into());
+    }
+    state.regions = serde_json::from_value(serde_json::json!([
+        {"id": "pane-a", "left": 0, "top": 0, "width": COLS, "height": 23},
+        {"id": "pane-b", "left": 0, "top": 24, "width": COLS, "height": ROWS - 24}
+    ]))?;
+    state.history_offset = 12;
+    state.browser_controls.insert(
+        "pane-b".into(),
+        herdr_client::tmux_daemon::BrowserState {
+            version: 1,
+            instance: "12345678-1234-4234-8234-123456789abc".into(),
+            pane: "%2".into(),
+            tab: 1,
+            revision: 1,
+            enabled: true,
+            url: "https://tmux-ide.dev/docs".into(),
+            title: "tmux-ide docs".into(),
+            loading: false,
+            can_go_back: true,
+            can_go_forward: false,
+        },
+    );
+    state
+        .browser_marks
+        .insert("pane-b".into(), super::browser_toolbar::Mark::Rejected(1));
+    Ok(state)
+}
+
 fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<PathBuf> {
     // `<theme>+fleet` shows the fleet sidebar with an attention badge,
     // `<theme>+palette` the command palette open over the workspace,
-    // `<theme>+machine` the Add machine dialog, and `<theme>+home` Home.
+    // `<theme>+machine` the Add machine dialog, `<theme>+home` Home, and
+    // `<theme>+browser` a split window with a browser pane's toolbar.
     let mut parts = id.split('+');
     let theme = parts.next().unwrap_or(id);
     let extras: Vec<&str> = parts.collect();
@@ -311,12 +345,46 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let palette = extras.contains(&"palette");
     let machine = extras.contains(&"machine");
     let home = extras.contains(&"home");
+    let browser_pane = extras.contains(&"browser");
     let appearance = catalog_appearance(theme)?;
     // Transparent where the theme is vibrant, so translucent chrome keeps its alpha.
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
-    let mut state = if fleet { with_fleet(state)? } else { state };
+    let state = if fleet { with_fleet(state)? } else { state };
+    let mut state = if browser_pane {
+        with_browser(state)?
+    } else {
+        state
+    };
+    if extras.contains(&"agents") {
+        state.workspace_agents = Some(serde_json::from_value(serde_json::json!({
+            "sessionId": "session-a", "revision": 1, "phase": "loading",
+            "rows": [{"key": "agent-a", "sessionId": "session-a", "paneId": "pane-a",
+                "name": "Claude", "sessionLabel": "tmux-ide", "status": "WORKING",
+                "attention": false, "available": true}],
+            "observedSessions": 1, "totalSessions": 3, "truncatedSessions": 2,
+            "truncatedRows": 4, "note": "Two servers did not answer"
+        }))?);
+    }
     if home {
+        state.surface = browser::Surface::Home;
+    }
+    // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
+    // with local setup failed, and `+home-warning` with the catalog unavailable.
+    for extra in &extras {
+        match *extra {
+            "home-empty" => state.sessions.clear(),
+            "home-error" => {
+                state.local_setup = Some(browser::local_setup::Setup {
+                    phase: browser::local_setup::Phase::Failed,
+                })
+            }
+            "home-warning" => {
+                state.home_phase = browser::HomePhase::Unavailable;
+                state.status = "The local daemon could not be reached. Check the tmux-ide daemon, then Refresh sessions.".into();
+            }
+            _ => continue,
+        }
         state.surface = browser::Surface::Home;
     }
     let (sender, receiver) = mpsc::sync_channel(1024);

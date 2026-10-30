@@ -228,17 +228,68 @@ impl SnapshotView {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(SPACE))
             .child(controls.search.clone())
-            .child(div().flex().flex_wrap().items_center().gap_2()
-                .child(self.home_machine_control(cx)).child(tabs))
             .child(
                 div()
-                    .text_style(TextStyle::Subheadline)
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(SPACE))
+                    .child(self.home_machine_control(cx))
+                    .child(tabs),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "home-filter-hints".into())
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_x(px(SPACE * 1.5))
+                    .gap_y(px(SPACE / 2.))
                     .text_color(bezel.text_muted)
                     .children(design::ink_probe(|| "home-filter-hints".into()))
-                    .child("↑↓ Select · Enter Open · / Search · 0 All · W Working · A Attention · Esc Clear search"),
+                    .children(
+                        HINTS
+                            .iter()
+                            .map(|&(cap, label)| key_hint(&bezel, cap, label)),
+                    ),
             )
             .into_any_element()
     }
+}
+
+const HINTS: [(&str, &str); 7] = [
+    ("↑↓", "Select"),
+    ("Enter", "Open"),
+    ("/", "Search"),
+    ("0", "All"),
+    ("W", "Working"),
+    ("A", "Attention"),
+    ("Esc", "Clear search"),
+];
+
+/// Bezel's `key_hint_text` (a keycap and its label), with both in Home's
+/// inked muted; Bezel paints the cap at 70% and the label at 45% of muted.
+fn key_hint(bezel: &bezel_theme::Theme, cap: &'static str, label: &'static str) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(5.))
+        .child(
+            bezel_ui::popover::key_cap(bezel)
+                .text_style(TextStyle::Subheadline)
+                .font_family(bezel.font_mono.clone())
+                .text_color(bezel.text_muted)
+                .children(design::ink_probe(move || format!("home-key-cap-{cap}")))
+                .child(cap),
+        )
+        .child(
+            div()
+                .text_style(TextStyle::Caption)
+                .text_color(bezel.text_muted)
+                .children(design::ink_probe(move || format!("home-key-label-{label}")))
+                .child(label),
+        )
 }

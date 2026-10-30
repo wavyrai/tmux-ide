@@ -104,6 +104,7 @@ impl SnapshotView {
                 .child({
                     use bezel_ui::widgets::Buttons as _;
                     let side = px(24.).min(self.header_rect(header, width).size.height);
+                    let hover = bezel.element_hover;
                     bezel
                         .icon_button(
                             bezel_ui::icons::Icon::asset(icon),
@@ -111,6 +112,7 @@ impl SnapshotView {
                             None,
                         )
                         .size(side)
+                        .hover(move |s| s.bg(hover))
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {

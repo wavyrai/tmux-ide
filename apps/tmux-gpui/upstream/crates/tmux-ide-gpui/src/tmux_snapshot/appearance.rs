@@ -102,12 +102,6 @@ impl SnapshotView {
             .as_ref()
             .map_or_else(|| Theme::default().background, |a| a.theme.canvas)
     }
-    pub(super) fn accent(&self) -> u32 {
-        self.browser_state
-            .appearance
-            .as_ref()
-            .map_or(0x69b7ff, |a| a.theme.accent)
-    }
     pub(super) fn publish_system(&mut self, mode: System) {
         if self.last_system == Some(mode) {
             return;

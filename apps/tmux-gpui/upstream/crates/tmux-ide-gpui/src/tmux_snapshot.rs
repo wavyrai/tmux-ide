@@ -584,19 +584,20 @@ impl SnapshotView {
         };
         let kitty_store = self.graphics.store.clone();
         let kitty_cell_pixels = self.graphics.cell_pixels.clone();
+        let bezel = bezel_theme::Theme::of(cx).clone();
         let Some(frame) = self.frame.clone() else {
-            let guidance = if self.browsing && self.browser_commands.is_some() {
-                "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect."
+            let (title, hint) = if self.browsing && self.browser_commands.is_some() {
+                (
+                    "No pane selected",
+                    "Select a session and pane. If the connection is unavailable, refresh sessions to reconnect.",
+                )
             } else {
-                "Waiting for a pane. If the connection was lost, reopen tmux-ide to reconnect."
+                (
+                    "Waiting for a pane",
+                    "If the connection was lost, reopen tmux-ide to reconnect.",
+                )
             };
-            return div()
-                .size_full()
-                .bg(rgb(theme.background))
-                .text_color(rgb(theme.foreground))
-                .p_4()
-                .child(guidance)
-                .into_any_element();
+            return shell::empty_pane(&bezel, title, hint).into_any_element();
         };
         #[cfg(target_os = "macos")]
         let native_surfaces = self
@@ -617,9 +618,7 @@ impl SnapshotView {
             .relative()
             .size_full()
             // Cards own their opaque surfaces; gutters expose the shell material.
-            .when(cards.is_none(), |terminal| {
-                terminal.bg(rgb(theme.background))
-            })
+            .when(cards.is_none(), |terminal| terminal.bg(bezel.terminal_bg))
             .overflow_hidden()
             .children(self.card_surfaces(width))
             .child(

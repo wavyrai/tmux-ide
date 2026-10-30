@@ -1,7 +1,7 @@
 //! Catalog-backed Home. No daemon queries or invented activity in the render path.
 use super::{SnapshotView, browser, browser_ui::Selection, controls as native_controls, design};
 use bezel_theme::{TextStyle, Typeset};
-use bezel_ui::widgets::Scaffolding;
+use bezel_ui::widgets::{Content as _, Scaffolding, Status as _};
 use gpui::{prelude::*, *};
 mod action_focus;
 pub(super) mod filters;
@@ -11,11 +11,28 @@ mod preferences;
 pub(super) mod recovery;
 mod selection;
 
+const SPACE: f32 = bezel_theme::Theme::SPACE;
+/// The page column's width: wider than Bezel's 768 so the fleet and agents
+/// columns can share a row in a wide window.
+const PAGE_MAX: f32 = 1280.;
+/// A session card's and the empty state's width in the fleet column.
+const CARD_MAX: f32 = 640.;
+/// The window width from which the fleet and agents columns sit side by side.
+const COLUMNS_MIN: f32 = 1060.;
+/// The alpha of `popover::key_cap`'s fill.
+const KEY_CAP_FILL: f32 = 0.05;
+/// The alpha of the status strips' tinted fill.
+const STRIP_FILL: f32 = 0.06;
+
+fn pack(color: Hsla) -> u32 {
+    u32::from(Rgba::from(color)) >> 8
+}
+
 /// What Home's text sits on: the opaque canvas, Bezel's card fill over it,
-/// the hover wash over each, and the selected wash over the canvas (a hovered
-/// row takes the hover fill in place of its own).
-fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 5] {
-    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+/// the hover wash over each, the selected wash over the canvas (a hovered
+/// row takes the hover fill in place of its own), and a key cap over the
+/// canvas.
+fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 6] {
     let canvas_color: Hsla = rgb(canvas).into();
     let card = bezel_theme::flatten(bezel.card_glass_bg(), canvas_color);
     [
@@ -24,20 +41,32 @@ fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 5] {
         pack(bezel_theme::flatten(bezel.element_hover, canvas_color)),
         pack(bezel_theme::flatten(bezel.element_hover, card)),
         pack(bezel_theme::flatten(bezel.card_selected_bg(), canvas_color)),
+        pack(bezel_theme::flatten(bezel.ink(KEY_CAP_FILL), canvas_color)),
     ]
+}
+
+/// What a status strip of `tone` paints its message on: the tone's wash over
+/// the canvas.
+fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
+    pack(bezel_theme::flatten(
+        tone.opacity(STRIP_FILL),
+        rgb(canvas).into(),
+    ))
 }
 
 /// Bezel's palette for Home, with `text` and `text_muted` inked to read at
 /// 4.5:1 on every plate Home paints text on. Bezel's own roles are made for
 /// the window chrome; Home sits on its own canvas, which is not the terminal's
 /// background, and Bezel's translucent muted text can drop under 4.5:1 there.
-/// The 4.6 target leaves room for the 8-bit rounding of the plates, as
-/// `design::chrome_text` does.
+/// `danger_muted` and `warning_muted`, the strips' text, are inked opaque on
+/// their strip's wash; `danger_muted` also on the bare canvas, where error
+/// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
+/// as `design::chrome_text` does.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
     thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<Key, (u32, u32)>> =
+        static CACHE: std::cell::RefCell<std::collections::HashMap<Key, [u32; 4]>> =
             Default::default();
     }
     let mut bezel = design::palette(theme);
@@ -49,15 +78,26 @@ pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme:
         theme.contrast == crate::contrast::Contrast::High,
         canvas,
     );
-    let (text, muted) = CACHE.with(|cache| {
+    let [text, muted, danger, warning] = CACHE.with(|cache| {
         if let Some(&inked) = cache.borrow().get(&key) {
             return inked;
         }
         let plates = plates(&bezel, canvas);
-        let inked = (
+        let opaque = |color: Hsla| pack(Hsla { a: 1.0, ..color });
+        let inked = [
             crate::contrast::ink(theme.foreground, &plates, 4.6),
             crate::contrast::ink(theme.muted, &plates, 4.6),
-        );
+            crate::contrast::ink(
+                opaque(bezel.danger_muted),
+                &[strip_plate(bezel.danger, canvas), canvas],
+                4.6,
+            ),
+            crate::contrast::ink(
+                opaque(bezel.warning_muted),
+                &[strip_plate(bezel.warning, canvas)],
+                4.6,
+            ),
+        ];
         let mut cache = cache.borrow_mut();
         // A theme inks once per canvas; theme switching starts over rather
         // than growing without bound.
@@ -69,7 +109,27 @@ pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme:
     });
     bezel.text = rgb(text).into();
     bezel.text_muted = rgb(muted).into();
+    bezel.danger_muted = rgb(danger).into();
+    bezel.warning_muted = rgb(warning).into();
     bezel
+}
+
+/// How Home shows its status line: a strip for a failure, the page subtitle
+/// otherwise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum StatusTone {
+    Normal,
+    Warning,
+    Error,
+}
+
+fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
+    match state.local_setup.as_ref().filter(|_| connected) {
+        Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
+        Some(_) => StatusTone::Normal,
+        None if state.home_phase == browser::HomePhase::Unavailable => StatusTone::Warning,
+        None => StatusTone::Normal,
+    }
 }
 
 /// Before the first browser publication, absence of a catalog is not an empty catalog.
@@ -220,14 +280,12 @@ impl SnapshotView {
                         .iter()
                         .any(|g| g.state == browser::fleet::Phase::Ready)
                 }));
-        // Bezel's page scaffolding: its column, headline and subtitle. The
-        // column is widened from Bezel's 768 so the fleet and agents columns
-        // can share a row in a wide window.
+        // Bezel's page scaffolding: its column, headline and subtitle.
         let mut body = bezel
             .page_column()
             .id("tmux-home-content")
             .min_w_0()
-            .max_w(px(1280.))
+            .max_w(px(PAGE_MAX))
             .bg(rgb(self.canvas()))
             .text_color(bezel.text)
             .text_style(TextStyle::Body)
@@ -241,11 +299,21 @@ impl SnapshotView {
         if (connected && setup_phase.is_some())
             || (!is_live && !self.browser_state.status.is_empty())
         {
-            body = body.child(
-                bezel
-                    .page_subtitle(status_message(&self.browser_state, connected))
-                    .children(design::ink_probe(|| "home-status".into())),
-            );
+            let status = status_message(&self.browser_state, connected);
+            let line = match status_tone(&self.browser_state, connected) {
+                StatusTone::Normal => bezel
+                    .page_subtitle(status)
+                    .debug_selector(|| "home-status-subtitle".into()),
+                StatusTone::Warning => bezel
+                    .warning_strip(status)
+                    .text_color(bezel.warning_muted)
+                    .debug_selector(|| "home-status-warning".into()),
+                StatusTone::Error => bezel
+                    .error_strip(status)
+                    .text_color(bezel.danger_muted)
+                    .debug_selector(|| "home-status-error".into()),
+            };
+            body = body.child(line.children(design::ink_probe(|| "home-status".into())));
         }
         if self.home_diagnostics_available() {
             body = body.child(
@@ -278,11 +346,11 @@ impl SnapshotView {
                 .map(|controls| controls.actions.clone());
             body = body.child(
                 div()
-                    .mt_4()
+                    .mt(px(SPACE * 2.))
                     .tab_group()
                     .flex()
                     .flex_wrap()
-                    .gap_2()
+                    .gap(px(SPACE))
                     .child(
                         native_controls::action_button_on(
                             "home-browse",
@@ -378,7 +446,7 @@ impl SnapshotView {
             .debug_selector(|| "home-fleet-column".into())
             .min_w_0()
             .flex_1()
-            .child(div().flex().items_center().justify_between().gap_2()
+            .child(div().flex().items_center().justify_between().gap(px(SPACE))
                 .child(div().text_style(TextStyle::Headline).child("Your fleet"))
                 .child(self.local_session_action(cx).when(self.local_session_available(), |control| {
                 control.when_some(self.home_filter.as_ref(), |control, filters| {
@@ -386,7 +454,7 @@ impl SnapshotView {
                 })
             })))
             .when(setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none(), |column| column.child(
-                div().mt_2().text_style(TextStyle::Callout).text_color(bezel.text_muted)
+                div().mt(px(SPACE)).text_style(TextStyle::Callout).text_color(bezel.text_muted)
                     .children(design::ink_probe(|| "home-local-guidance".into()))
                     .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
             .child(self.new_session_controls(cx));
@@ -406,11 +474,11 @@ impl SnapshotView {
                         .debug_selector(move || format!("tmux-home-session-{index}"))
                         .min_w_0()
                         .w_full()
-                        .max_w(px(640.))
+                        .max_w(px(CARD_MAX))
                         .flex()
                         .items_center()
-                        .gap_3()
-                        .p_3()
+                        .gap(px(SPACE * 1.5))
+                        .p(px(SPACE * 1.5))
                         .rounded(px(bezel_theme::Theme::panel_radius()))
                         .border_1()
                         .border_color(bezel.border)
@@ -450,38 +518,58 @@ impl SnapshotView {
                             this.home_select(request, &id, window, cx);
                         }))
                 });
-            fleet_column =
-                fleet_column.child(div().mt_4().flex().flex_col().gap_2().children(cards));
-        } else if !connected || setup_phase.is_none() {
-            let guidance = if !connected {
-                "Connection lost. Reopen tmux-ide to reconnect."
-            } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
-                "The daemon could not list sessions. Refresh to try again."
-            } else if self.browser_state.home_phase == browser::HomePhase::Loading {
-                "Waiting for the daemon’s session catalog."
-            } else {
-                "Start a new local session, or select a fleet server to create a session there."
-            };
             fleet_column = fleet_column.child(
                 div()
-                    .mt_4()
-                    .max_w(px(640.))
-                    .p_3()
-                    .rounded(px(bezel_theme::Theme::panel_radius()))
-                    .border_1()
-                    .border_color(bezel.border)
-                    .bg(bezel.card_glass_bg())
-                    .child(guidance),
+                    .mt(px(SPACE * 2.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(SPACE))
+                    .children(cards),
             );
+        } else if !connected || setup_phase.is_none() {
+            let guidance = if !connected {
+                bezel
+                    .error_strip("Connection lost. Reopen tmux-ide to reconnect.")
+                    .text_color(bezel.danger_muted)
+                    .debug_selector(|| "home-guidance-error".into())
+                    .children(design::ink_probe(|| "home-guidance-error".into()))
+            } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
+                bezel
+                    .warning_strip("The daemon could not list sessions. Refresh to try again.")
+                    .text_color(bezel.warning_muted)
+                    .debug_selector(|| "home-guidance-warning".into())
+                    .children(design::ink_probe(|| "home-guidance-warning".into()))
+            } else {
+                let (title, hint) = if self.browser_state.home_phase == browser::HomePhase::Loading
+                {
+                    (
+                        "Loading sessions…",
+                        "Waiting for the daemon’s session catalog.",
+                    )
+                } else {
+                    (
+                        "No live sessions",
+                        "Start a new local session, or select a fleet server to create a session there.",
+                    )
+                };
+                bezel
+                    .empty_state(
+                        bezel_ui::icons::Icon::asset("icons/terminal.svg"),
+                        title,
+                        hint,
+                    )
+                    .debug_selector(|| "home-empty".into())
+            };
+            fleet_column = fleet_column.child(guidance.max_w(px(CARD_MAX)));
         }
-        let wide = window.viewport_size().width >= px(1060.);
+        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
         body = body.child(
             div()
-                .mt_4()
+                .mt(px(SPACE * 2.))
                 .w_full()
                 .min_w_0()
                 .flex()
-                .gap_6()
+                .gap(px(SPACE * 3.))
                 .when(!wide, |columns| columns.flex_col())
                 .child(fleet_column)
                 .child(
@@ -492,6 +580,20 @@ impl SnapshotView {
                         .children(self.home_agent_rows(cx)),
                 ),
         );
+        let page = div()
+            .id("tmux-home-page")
+            .debug_selector(|| "tmux-home-page".into())
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .child(body);
+        let mut page = bezel_ui::scroll::Viewport::new("tmux-home-page", page, Axis::Vertical);
+        if let Some(controls) = &self.home_filter {
+            page = page.track_scroll(&controls.page_scroll);
+        }
         div()
             .id("tmux-home")
             .debug_selector(|| "tmux-home".into())
@@ -499,15 +601,10 @@ impl SnapshotView {
             .flex_1()
             .min_w_0()
             .h_full()
-            .overflow_y_scroll()
-            .when_some(self.home_filter.as_ref(), |element, controls| {
-                element.track_scroll(&controls.page_scroll)
-            })
             .flex()
             .flex_col()
-            .items_center()
             .bg(rgb(self.canvas()))
-            .child(body)
+            .child(page.fill())
             .into_any_element()
     }
 }
