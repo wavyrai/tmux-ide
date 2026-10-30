@@ -1,23 +1,11 @@
 use super::*;
-
-fn ready(view: &mut SnapshotView, zoomed: bool) {
-    view.browser_state.surface = browser::Surface::Workspace;
-    view.browser_state.request = view.browser_request;
-    view.browser_state.selected_session = Some("session-a".into());
-    view.browser_state.pane_actions = Some(browser::PaneActions {
-        token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-        id: "pane-a".into(),
-        zoomed,
-    });
-    view.input_interrupted = true;
-}
 #[gpui::test]
 fn f5_pane_actions_dispatch_existing_wire_without_navigation_or_input(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     // Establish the same ready Workspace chrome before measuring its viewport.
     cx.update(|window, cx| {
-        view.update(cx, |view, _| ready(view, false));
+        view.update(cx, |view, _| ready_pane(view, false));
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
@@ -48,7 +36,7 @@ fn f5_pane_actions_dispatch_existing_wire_without_navigation_or_input(cx: &mut T
             serde_json::json!({"action":"split","direction":"down"}),
         ),
     ] {
-        cx.update(|_, cx| view.update(cx, |view, _| ready(view, zoomed)));
+        cx.update(|_, cx| view.update(cx, |view, _| ready_pane(view, zoomed)));
         let canvas_before = view.read_with(cx, |view, _| view.input_geometry.unwrap().0);
         cx.simulate_keystrokes("f5");
         cx.simulate_input(query);
@@ -84,7 +72,7 @@ fn f5_pane_action_captured_token_and_disabled_state_are_inert(cx: &mut TestAppCo
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view, false);
+            ready_pane(view, false);
             view.open_commands(window, cx);
             let target = command_rows(&view.browser_state, "split right")
                 .remove(0)
@@ -112,7 +100,7 @@ fn f5_pane_action_full_queue_preserves_picker_and_capability(cx: &mut TestAppCon
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view, false);
+            ready_pane(view, false);
             view.open_commands(window, cx);
             view.browser_commands
                 .as_ref()
@@ -148,7 +136,7 @@ fn old_f5_pane_action_cannot_dispatch_through_replacement_picker(cx: &mut TestAp
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view, false);
+            ready_pane(view, false);
             for mode in [Mode::Theme, Mode::Navigation, Mode::Machine] {
                 view.open_commands(window, cx);
                 let target = command_rows(&view.browser_state, "split right")
@@ -173,7 +161,7 @@ fn new_window_strip_click_is_bounded_and_consumes_only_captured_capability(
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
         view.update(cx, |view, _| {
-            ready(view, false);
+            ready_pane(view, false);
             for index in 0..12 {
                 let mut pane = view.browser_state.panes[0].clone();
                 pane.id = format!("extra-{index}");
@@ -208,7 +196,7 @@ fn new_window_strip_click_is_bounded_and_consumes_only_captured_capability(
     });
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view, false);
+            ready_pane(view, false);
             let old =
                 crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
             view.browser_state.pane_actions.as_mut().unwrap().token = "replacement".into();
@@ -231,7 +219,7 @@ fn new_window_strip_full_queue_preserves_capability_and_shows_error(cx: &mut Tes
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view, false);
+            ready_pane(view, false);
             let target =
                 crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
             view.browser_commands

@@ -193,3 +193,50 @@ fn fleet_session_pointer_refuses_inactive_and_preack_then_opens_when_ready(
     cx.simulate_click(point, Modifiers::default());
     view.read_with(cx, |view, _| opened(view, &receiver, &token(view)));
 }
+
+type Open = fn(&mut SnapshotView, u64, &str, &mut Window, &mut Context<SnapshotView>);
+
+/// `select` moves `browser_request` before the publication for it arrives. In
+/// that window neither an action from the old request nor one from the new
+/// request may open a session or a server; once the publication lands, it may.
+#[gpui::test]
+fn fleet_opens_refuse_requests_until_the_publication_catches_up(cx: &mut TestAppContext) {
+    const SERVER: &str = "22222222-2222-4222-8222-222222222222";
+    let rows: [(&str, Open, bool); 2] = [
+        (
+            "open_fleet_session",
+            |v, r, t, w, cx| v.open_fleet_session(r, t, w, cx),
+            false,
+        ),
+        (
+            "open_fleet_server",
+            |v, r, t, w, cx| v.open_fleet_server(r, t, w, cx),
+            true,
+        ),
+    ];
+    for (name, open, server) in rows {
+        let (sender, receiver) = mpsc::sync_channel(64);
+        let (view, cx) = cx.add_window_view(|window, cx| catalog(window, cx, sender));
+        receiver.try_iter().for_each(drop);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.browser_state.fleet.as_mut().unwrap().groups[0].servers = vec![
+                    serde_json::from_value(serde_json::json!({
+                        "id":"server-a","label":"Empty","state":"online",
+                        "generation":"11111111-1111-4111-8111-111111111111","selection":SERVER
+                    }))
+                    .unwrap(),
+                ];
+                let target = if server { SERVER.into() } else { token(view) };
+                view.browser_request = 8;
+                open(view, 7, &target, window, cx);
+                assert!(receiver.try_recv().is_err(), "{name}: old request");
+                open(view, 8, &target, window, cx);
+                assert!(receiver.try_recv().is_err(), "{name}: unpublished request");
+                view.browser_state.request = 8;
+                open(view, 8, &target, window, cx);
+                assert!(receiver.try_recv().is_ok(), "{name}: current request");
+            })
+        });
+    }
+}

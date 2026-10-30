@@ -73,12 +73,7 @@ fn help_reference_composition_and_replaced_picker_reject_activation(cx: &mut Tes
                 });
                 for key in ["escape", "enter"] {
                     view.picker_key(
-                        &KeyDownEvent {
-                            keystroke: Keystroke::parse(key).unwrap(),
-                            is_held: false,
-                            prefer_character_input: false,
-                            layout: None,
-                        },
+                        &crate::tmux_snapshot::fit_test_support::key_down(key),
                         window,
                         cx,
                     );

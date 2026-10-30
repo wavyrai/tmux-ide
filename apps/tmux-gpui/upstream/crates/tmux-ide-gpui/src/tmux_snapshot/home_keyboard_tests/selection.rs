@@ -125,23 +125,13 @@ fn home_roster_navigation_preserves_search_composition_and_overlay_ownership(
             for key in [
                 "enter", "escape", "up", "down", "pageup", "pagedown", "home", "end",
             ] {
-                let event = KeyDownEvent {
-                    keystroke: Keystroke::parse(key).unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                    layout: None,
-                };
+                let event = crate::tmux_snapshot::fit_test_support::key_down(key);
                 assert!(!v.home_filter_key(&event, window, cx));
             }
             assert!(search.read(cx).is_composing());
             search.update(cx, |input, cx| input.unmark_text(window, cx));
             v.open_commands(window, cx);
-            let event = KeyDownEvent {
-                keystroke: Keystroke::parse("enter").unwrap(),
-                is_held: false,
-                prefer_character_input: false,
-                layout: None,
-            };
+            let event = crate::tmux_snapshot::fit_test_support::key_down("enter");
             assert!(!v.home_filter_key(&event, window, cx));
         });
     });
@@ -166,12 +156,7 @@ fn home_enter_does_not_open_replacement_before_redraw(cx: &mut TestAppContext) {
             let roster = v.browser_state.home_agents.as_mut().unwrap();
             roster.rows.remove(0);
             roster.revision += 1;
-            let event = KeyDownEvent {
-                keystroke: Keystroke::parse("enter").unwrap(),
-                is_held: false,
-                prefer_character_input: false,
-                layout: None,
-            };
+            let event = crate::tmux_snapshot::fit_test_support::key_down("enter");
             assert!(v.home_filter_key(&event, window, cx));
             assert!(receiver.try_recv().is_err());
             assert_eq!(v.browser_request, 7);

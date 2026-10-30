@@ -23,12 +23,7 @@ fn exercise(
     prepare(v);
     v.input_interrupted = true;
     v.picker_key(
-        &KeyDownEvent {
-            keystroke: Keystroke::parse(if tabs { "f9" } else { "f8" }).unwrap(),
-            is_held: false,
-            prefer_character_input: false,
-            layout: None,
-        },
+        &crate::tmux_snapshot::fit_test_support::key_down(if tabs { "f9" } else { "f8" }),
         window,
         cx,
     );

@@ -1,21 +1,10 @@
 use super::*;
-fn ready(view: &mut SnapshotView) {
-    view.browser_state.surface = browser::Surface::Workspace;
-    view.browser_state.request = view.browser_request;
-    view.browser_state.selected_session = Some("session-a".into());
-    view.browser_state.pane_actions = Some(browser::PaneActions {
-        token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-        id: "pane-a".into(),
-        zoomed: false,
-    });
-    view.input_interrupted = true;
-}
 #[gpui::test]
 fn agent_form_keyboard_pointer_cancel_and_narrow_geometry(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
-        view.update(cx, |view, _| ready(view));
+        view.update(cx, |view, _| ready_pane(view, false));
         window.draw(cx).clear(cx);
     });
     cx.simulate_resize(size(px(640.), px(400.)));
@@ -54,7 +43,7 @@ fn agent_form_identity_composition_stale_and_queue_fences(cx: &mut TestAppContex
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            ready(view);
+            ready_pane(view, false);
             view.open_commands(window, cx);
             let target =
                 crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
@@ -87,12 +76,7 @@ fn agent_form_identity_composition_stale_and_queue_fences(cx: &mut TestAppContex
             });
             for key in ["enter", "tab", "escape"] {
                 view.picker_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse(key).unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down(key),
                     window,
                     cx,
                 );
@@ -106,21 +90,11 @@ fn agent_form_identity_composition_stale_and_queue_fences(cx: &mut TestAppContex
             view.browser_state.pane_actions.as_mut().unwrap().token = "replacement".into();
             view.submit_new_agent(&identity, window, cx);
             assert!(receiver.try_recv().is_err());
-            ready(view);
-            view.browser_commands
-                .as_ref()
-                .unwrap()
-                .try_send(browser::Command::PaneAction {
-                    request: 7,
-                    id: "occupied".into(),
-                    token: "occupied".into(),
-                    action: crate::tmux_snapshot::pane_actions::Action::NewWindow,
-                })
-                .unwrap();
-            view.submit_new_agent(&identity, window, cx);
-            assert!(view.picker.as_ref().unwrap().error.is_some());
+            ready_pane(view, false);
+            assert_full_queue_refused(view, &receiver, |view| {
+                view.submit_new_agent(&identity, window, cx)
+            });
             assert!(view.browser_state.pane_actions.is_some());
-            receiver.try_recv().unwrap();
             view.submit_new_agent(&identity, window, cx);
             receiver.try_recv().unwrap();
             view.submit_new_agent(&identity, window, cx);

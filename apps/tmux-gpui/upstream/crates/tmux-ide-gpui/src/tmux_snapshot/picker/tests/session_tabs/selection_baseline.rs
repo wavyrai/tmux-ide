@@ -159,12 +159,7 @@ fn sidebar_round_trip(cx: &mut TestAppContext, supersede: bool) {
             if supersede {
                 // Explicit sidebar focus arriving before the next draw supersedes restoration.
                 assert!(v.sidebar_keyboard_key(
-                    &KeyDownEvent {
-                        keystroke: Keystroke::parse("ctrl-g").unwrap(),
-                        is_held: false,
-                        prefer_character_input: false,
-                        layout: None,
-                    },
+                    &crate::tmux_snapshot::fit_test_support::key_down("ctrl-g"),
                     window,
                     cx
                 ));

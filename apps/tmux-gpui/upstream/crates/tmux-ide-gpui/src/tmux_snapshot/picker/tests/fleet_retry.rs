@@ -32,7 +32,6 @@ fn f5_retry_uses_current_token_without_navigation_or_registry_mutation(cx: &mut 
     });
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            view.retry_fleet_machine(6, token, window, cx);
             view.browser_state.fleet.as_mut().unwrap().groups[0].retry = None;
             view.retry_fleet_machine(7, token, window, cx);
         })
@@ -48,7 +47,6 @@ fn fleet_retry_full_queue_keeps_f5_error_visible_and_home_uses_same_feedback(
     cx: &mut TestAppContext,
 ) {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let queued = sender.clone();
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     receiver.try_iter().for_each(drop);
     let token = "fe470cdc-82bb-48d5-8fc4-1fa68025c8e4";
@@ -58,19 +56,11 @@ fn fleet_retry_full_queue_keeps_f5_error_visible_and_home_uses_same_feedback(
             "groups":[{"id":"remote","label":"Build", "state":"disconnected", "conflict":false,
                 "retry":token,"omittedSessions":0,"sessions":[]}], "omittedGroups":0
         })).unwrap());
-            queued
-                .try_send(browser::Command::Home { request: 99 })
-                .unwrap();
-            assert!(!view.retry_fleet_machine(7, token, window, cx));
-            assert!(view.picker.as_ref().unwrap().error.is_some());
-            view.choose_picker(Target::FleetRetry(token.into()), window, cx);
-            assert!(view.picker.as_ref().unwrap().error.is_some());
+            assert_full_queue_refused(view, &receiver, |view| {
+                assert!(!view.retry_fleet_machine(7, token, window, cx));
+                view.choose_picker(Target::FleetRetry(token.into()), window, cx);
+            });
             assert_eq!(view.browser_request, 7);
         })
     });
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        browser::Command::Home { request: 99 }
-    ));
-    assert!(receiver.try_recv().is_err());
 }

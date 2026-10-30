@@ -67,22 +67,13 @@ fn removal_stale_revision_modal_and_queue_failure_are_inert(cx: &mut TestAppCont
             }
             prepare(view, window, cx);
             view.begin_machine_removal(ID, 12, window, cx);
-            view.browser_commands
-                .as_ref()
-                .unwrap()
-                .try_send(browser::Command::Machines {
-                    request: 7,
-                    operation: browser::machines::Operation::Read,
-                })
-                .unwrap();
-            view.confirm_machine_removal(window, cx);
-            assert!(view.picker.as_ref().unwrap().error.is_some());
+            assert_full_queue_refused(view, &receiver, |view| {
+                view.confirm_machine_removal(window, cx)
+            });
             assert_eq!(
                 view.browser_state.machines.as_ref().unwrap().machines.len(),
                 1
             );
-            receiver.try_recv().unwrap();
-            assert!(receiver.try_recv().is_err());
             view.close_picker(window, cx);
             view.confirm_machine_removal(window, cx);
             assert!(receiver.try_recv().is_err());
