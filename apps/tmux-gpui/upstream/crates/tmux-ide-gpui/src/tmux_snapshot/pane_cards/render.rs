@@ -62,6 +62,46 @@ impl Layout {
         ok
     }
 }
+/// The cards one terminal canvas paints: the layout, reflowed to a divider
+/// preview while one is active, with the theme's card plate and border.
+pub(in crate::tmux_snapshot) struct CardSurfaces {
+    layout: Layout,
+    background: Hsla,
+    border: Hsla,
+}
+impl CardSurfaces {
+    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+        self.layout
+            .paint_cards(bounds, self.background, self.border, window);
+    }
+}
+impl SnapshotView {
+    pub(in crate::tmux_snapshot) fn card_surfaces(&self, width: f32) -> Option<CardSurfaces> {
+        let mut layout = self.card_layout(width)?;
+        if let Some(preview) = self.divider_content_preview() {
+            layout = layout.reflow(&preview.regions);
+        }
+        let palette = super::super::design::palette(&self.theme());
+        Some(CardSurfaces {
+            layout,
+            background: palette.terminal_bg,
+            border: palette.border,
+        })
+    }
+    /// Records the terminal canvas a paint used. Headers span their cards as
+    /// painted in it, so a new canvas size renders them again.
+    pub(in crate::tmux_snapshot) fn record_canvas(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cursor: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.input_geometry.map(|g| g.0.size) != Some(bounds.size) {
+            cx.notify();
+        }
+        self.input_geometry = Some((bounds, cursor));
+    }
+}
 impl Layout {
     /// Each pane's opaque card under its cells, on Bezel's panel radius and
     /// hairline border, sized to the canvas `bounds` it paints in.

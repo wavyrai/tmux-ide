@@ -38,6 +38,7 @@ mod kbd;
 mod keys;
 mod kitty_graphics;
 mod menu_bar;
+mod native_quit;
 mod navigation;
 mod new_session;
 mod pane_actions;
@@ -69,6 +70,7 @@ mod workspace_fleet_agents;
 use crate::terminal_painter::{CellPixels, ImageTarget, PlacedImages, TerminalPainter};
 use display_frame::DisplayFrame;
 use gpui::{prelude::*, *};
+use native_quit::request_native_quit;
 use std::{cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Debug, thiserror::Error)]
@@ -569,8 +571,6 @@ impl SnapshotView {
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
         let separator = controls::separator(&theme);
-        let card_background = design::palette(&theme).terminal_bg;
-        let card_border = design::palette(&theme).border;
         let highlights = self
             .selection
             .as_ref()
@@ -611,6 +611,7 @@ impl SnapshotView {
             .unwrap_or_default();
         let resize_preview = self.divider_content_preview();
         let cards = self.card_layout(width);
+        let card_surfaces = self.card_surfaces(width);
         let painted_gutters = (cards.is_some()
             && resize_preview.is_none()
             && hit_regions::is_painted(Some(&frame), self.browser_state.frame.as_ref()))
@@ -626,14 +627,8 @@ impl SnapshotView {
                 canvas(
                     |_, _, _| (),
                     move |bounds, (), window, cx| {
-                        if let Some(layout) = &cards {
-                            let target = resize_preview.as_ref().map(|p| layout.reflow(&p.regions));
-                            target.as_ref().unwrap_or(layout).paint_cards(
-                                bounds,
-                                card_background,
-                                card_border,
-                                window,
-                            );
+                        if let Some(surfaces) = &card_surfaces {
+                            surfaces.paint(bounds, window);
                         }
                         if entity.read(cx).terminal_font.revision != font_revision {
                             return;
@@ -674,12 +669,7 @@ impl SnapshotView {
                                     )
                             });
                             let cursor_bounds = Bounds::new(origin, size(px(width), px(height)));
-                            // Headers span their cards as painted in this canvas,
-                            // so a new canvas size renders them again.
-                            if view.input_geometry.map(|g| g.0.size) != Some(bounds.size) {
-                                cx.notify();
-                            }
-                            view.input_geometry = Some((bounds, cursor_bounds));
+                            view.record_canvas(bounds, cursor_bounds, cx);
                             view.input_cell_width = Some(width);
                             // A translated preview is not evidence that canonical
                             // hit coordinates are on screen, including after cancel.
@@ -977,32 +967,3 @@ mod fit_test_support;
 
 #[cfg(feature = "integration-test")]
 pub(crate) mod journey_probe;
-
-// Normal Quit/last-window-close waits off-thread before asking macOS to exit.
-// GPUI's final shutdown hook has only 200 ms, less than SSH's TERM grace period.
-fn request_native_quit(
-    owner: Option<browser::NativeOwner>,
-    closing: Rc<std::cell::Cell<bool>>,
-    cx: &mut App,
-) {
-    let Some(owner) = owner else {
-        cx.quit();
-        return;
-    };
-    if closing.replace(true) {
-        return;
-    }
-    let cleanup = cx
-        .background_executor()
-        .spawn(async move { owner.shutdown() });
-    cx.spawn(async move |cx| match cleanup.await {
-        Ok(()) => {
-            cx.update(|cx| cx.quit());
-        }
-        Err(error) => {
-            eprintln!("tmux-ide: native SSH shutdown failed: {error}");
-            closing.set(false);
-        }
-    })
-    .detach();
-}
