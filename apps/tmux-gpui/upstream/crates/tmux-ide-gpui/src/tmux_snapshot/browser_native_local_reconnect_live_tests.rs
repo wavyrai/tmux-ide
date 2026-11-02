@@ -70,13 +70,32 @@ fn until(
     done: impl Fn(&State) -> bool,
 ) -> State {
     let started = Instant::now();
+    // An idle app publishes nothing (#703), so a condition that becomes true
+    // outside the app (a harness signal) is re-checked against the last state.
+    let mut last: Option<State> = None;
     loop {
-        assert!(started.elapsed() < limit, "timed out: {:?}", watch.seen);
+        assert!(
+            started.elapsed() < limit,
+            "timed out: {:?}; last: {:?}",
+            watch.seen,
+            last.as_ref().map(|s| (
+                s.request,
+                s.input_ready,
+                s.frame.is_some(),
+                s.retained_preview,
+                s.reconnect_attempt,
+                s.status.clone(),
+                s.input_targets.len(),
+            ))
+        );
         if let Some(state) = next(bridge) {
             watch.observe(&state, request, started);
             if done(&state) {
                 return state;
             }
+            last = Some(state);
+        } else if last.as_ref().is_some_and(|state| done(state)) {
+            return last.take().unwrap();
         } else {
             std::thread::sleep(Duration::from_millis(5));
         }
