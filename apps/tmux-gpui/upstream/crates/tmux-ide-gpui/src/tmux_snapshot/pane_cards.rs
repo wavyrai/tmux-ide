@@ -5,7 +5,6 @@ pub(super) const PAD: f32 = 10.;
 pub(super) const V_PAD: f32 = 4.;
 pub(super) const HEADER: f32 = 34.;
 pub(super) const GAP: f32 = 10.;
-pub(super) const RADIUS: f32 = 10.;
 #[derive(Clone)]
 pub(super) struct Layout {
     pub regions: Vec<Region>,
@@ -107,6 +106,23 @@ impl Layout {
             + HEADER
             + 2. * V_PAD;
         Bounds::new(origin, size(px(right) - origin.x, px(bottom) - origin.y))
+    }
+    /// The card as painted in a canvas of `canvas` size. The part of a row or
+    /// column the grid can't fill joins the cards on its last row and in its
+    /// last column, so they reach the canvas's bottom and right edges and every
+    /// outer inset is the workspace's. Cells, and so the grid sent to tmux,
+    /// stay where they are.
+    pub fn card_in(&self, r: &Region, canvas: Size<Pixels>) -> Bounds<Pixels> {
+        let mut card = self.card(r);
+        let bottom = self.regions.iter().map(|r| r.top + r.height).max();
+        if Some(r.top + r.height) == bottom && canvas.height > card.bottom() {
+            card.size.height = canvas.height - card.origin.y;
+        }
+        let right = self.regions.iter().map(|r| r.left + r.width).max();
+        if Some(r.left + r.width) == right && canvas.width > card.right() {
+            card.size.width = canvas.width - card.origin.x;
+        }
+        card
     }
     pub fn content(&self, r: &Region) -> Bounds<Pixels> {
         Bounds::new(
@@ -211,7 +227,7 @@ impl SnapshotView {
         }
     }
 }
-mod render;
+pub(super) mod render;
 #[cfg(test)]
 mod tests;
 

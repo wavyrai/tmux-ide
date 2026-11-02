@@ -135,6 +135,10 @@ const ROWS: usize = 44;
 
 /// The fixture terminal frame, padded with blank cells to [`COLS`]x[`ROWS`].
 fn fixture_frame() -> Result<Vec<u8>> {
+    fixture_frame_sized(COLS, ROWS)
+}
+
+fn fixture_frame_sized(cols: usize, rows: usize) -> Result<Vec<u8>> {
     let mut snapshot: serde_json::Value =
         serde_json::from_slice(include_bytes!("../../../../../fixtures/snapshot.json"))?;
     let blank = serde_json::json!({
@@ -144,15 +148,15 @@ fn fixture_frame() -> Result<Vec<u8>> {
     let grid = snapshot["grid"]
         .as_array_mut()
         .ok_or_else(|| anyhow!("fixture grid"))?;
-    grid.resize_with(ROWS, || serde_json::json!({"cells": [], "wrapped": false}));
+    grid.resize_with(rows, || serde_json::json!({"cells": [], "wrapped": false}));
     for row in grid.iter_mut() {
         let cells = row["cells"]
             .as_array_mut()
             .ok_or_else(|| anyhow!("fixture row"))?;
-        cells.resize(COLS, blank.clone());
+        cells.resize(cols, blank.clone());
     }
-    snapshot["cols"] = COLS.into();
-    snapshot["rows"] = ROWS.into();
+    snapshot["cols"] = cols.into();
+    snapshot["rows"] = rows.into();
     Ok(serde_json::to_vec(&snapshot)?)
 }
 
@@ -373,6 +377,30 @@ fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
 
 /// Two panes of one window: the upper scrolled back, so its header offers
 /// Back to live; the lower a browser whose page just refused a click.
+/// The owner's window (31 Oct capture): about 1560x1010, two panes side by
+/// side, the right one focused. The first frames run at [`COLS`]x[`ROWS`];
+/// the grid is then refitted to what the window's workspace holds.
+const OWNER_WIDTH: f32 = 1560.;
+const OWNER_HEIGHT: f32 = 1010.;
+
+fn with_owner_split(mut state: browser::State, cols: usize, rows: usize) -> Result<browser::State> {
+    let frame = Arc::new(
+        decode::frame(&fixture_frame_sized(cols, rows)?)
+            .map_err(|error| anyhow!("fixture frame: {error}"))?,
+    );
+    state.frame = Some(DisplayFrame::Legacy(frame));
+    if let Some(pane) = state.panes.iter_mut().find(|pane| pane.id == "pane-b") {
+        pane.window_id = Some("window-1".into());
+    }
+    let left = cols / 2;
+    state.regions = serde_json::from_value(serde_json::json!([
+        {"id": "pane-a", "left": 0, "top": 0, "width": left, "height": rows},
+        {"id": "pane-b", "left": left + 1, "top": 0, "width": cols - left - 1, "height": rows}
+    ]))?;
+    state.selected_pane = Some("pane-b".into());
+    Ok(state)
+}
+
 fn with_browser(mut state: browser::State) -> Result<browser::State> {
     if let Some(pane) = state.panes.iter_mut().find(|pane| pane.id == "pane-b") {
         pane.window_id = Some("window-1".into());
@@ -408,7 +436,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     // `<theme>+fleet` shows the fleet sidebar with an attention badge,
     // `<theme>+palette` the command palette open over the workspace,
     // `<theme>+machine` the Add machine dialog, `<theme>+home` Home, and
-    // `<theme>+browser` a split window with a browser pane's toolbar.
+    // `<theme>+browser` a split window with a browser pane's toolbar, and
+    // `<theme>+owner` the owner's window size with two panes side by side.
     let mut parts = id.split('+');
     let theme = parts.next().unwrap_or(id);
     let extras: Vec<&str> = parts.collect();
@@ -422,6 +451,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
     let state = if fleet { with_fleet(state)? } else { state };
+    let owner = extras.contains(&"owner");
+    let state = if owner {
+        with_owner_split(state, COLS, ROWS)?
+    } else {
+        state
+    };
     let mut state = if browser_pane {
         with_browser(state)?
     } else {
@@ -467,9 +502,14 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         state.surface = browser::Surface::Home;
     }
     let (sender, receiver) = mpsc::sync_channel(1024);
+    let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),
-        size: size(px(width), px(height)),
+        size: if owner {
+            size(px(OWNER_WIDTH), px(OWNER_HEIGHT))
+        } else {
+            size(px(width), px(height))
+        },
     };
     let handle = cx.update(|cx| {
         cx.open_window(
@@ -495,6 +535,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     }
                     view
                 });
+                *root.borrow_mut() = Some(view.clone());
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
                 }
@@ -509,6 +550,38 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     for _ in 0..3 {
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+    }
+    if owner && let Some(view) = root.borrow().clone() {
+        cx.update(|cx| {
+            view.update(cx, |view, _| -> Result<()> {
+                let (Some((canvas, _)), Some(width)) = (view.input_geometry, view.input_cell_width)
+                else {
+                    return Err(anyhow!("owner capture: no terminal geometry"));
+                };
+                let overhead = view
+                    .card_layout(width)
+                    .map_or(size(px(0.), px(0.)), |l| l.overhead());
+                let (cols, rows) = super::geometry::cell_grid(
+                    f32::from(canvas.size.width - overhead.width),
+                    f32::from(canvas.size.height - overhead.height),
+                    width,
+                    view.terminal_height(),
+                )
+                .ok_or_else(|| anyhow!("owner capture: no fit"))?;
+                let state = with_owner_split(
+                    std::mem::take(&mut view.browser_state),
+                    cols.into(),
+                    rows.into(),
+                )?;
+                view.frame = state.frame.clone();
+                view.browser_state = state;
+                Ok(())
+            })
+        })?;
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+        }
     }
     cx.run_until_parked();
     receiver.try_iter().for_each(drop);

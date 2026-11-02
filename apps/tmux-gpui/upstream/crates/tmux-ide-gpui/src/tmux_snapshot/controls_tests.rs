@@ -55,3 +55,21 @@ fn compact_controls_share_height_and_selection_does_not_reflow_tabs(cx: &mut Tes
 
 #[path = "controls_tests/unavailable.rs"]
 mod unavailable;
+
+#[test]
+fn separator_is_bezels_faint_hairline_and_its_strong_one_in_high_contrast() {
+    let normal = Theme::default();
+    let high = Theme {
+        contrast: crate::contrast::Contrast::High,
+        ..Theme::default()
+    };
+    assert_eq!(
+        separator(&normal),
+        crate::tmux_snapshot::design::palette(&normal).border_faint
+    );
+    assert_eq!(
+        separator(&high),
+        crate::tmux_snapshot::design::palette(&high).border_strong
+    );
+    assert_ne!(separator(&normal), separator(&high));
+}

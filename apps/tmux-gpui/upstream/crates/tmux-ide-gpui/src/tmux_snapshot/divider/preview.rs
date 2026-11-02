@@ -78,7 +78,7 @@ impl Preview {
         width: f32,
         height: f32,
         font: &Font,
-        separator: Rgba,
+        separator: Hsla,
         images: Option<PlacedImages<'_>>,
         window: &mut Window,
         cx: &mut App,

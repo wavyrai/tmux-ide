@@ -150,7 +150,7 @@ fn painter_moves_existing_pane_cells_to_the_provisional_origin(cx: &mut TestAppC
                     10.,
                     crate::terminal::CELL_HEIGHT,
                     &font("Menlo"),
-                    rgb(0x888888),
+                    rgb(0x888888).into(),
                     None,
                     window,
                     cx,
