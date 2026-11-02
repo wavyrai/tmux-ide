@@ -104,7 +104,8 @@ fn a_failed_identity_proof_is_never_cached() {
 }
 
 /// Review item 2: every way a credential-bearing request can fail drops the
-/// proof. `None` is a refused connection: the peer has already closed.
+/// proof. `None` is a refused connection: the peer has already closed. An
+/// empty reply closes an accepted connection before the response head.
 #[test]
 fn every_failed_request_drops_the_proof() {
     type Call = fn(&LocalDaemon) -> bool;
@@ -118,17 +119,21 @@ fn every_failed_request_drops_the_proof() {
             .is_err()
     };
     let preferences: Call = |d| d.fleet_preferences().is_err();
-    let cases: [(&str, Option<&'static str>, Call); 12] = [
+    let cases: [(&str, Option<&'static str>, Call); 16] = [
         ("GET refused", None, get),
+        ("GET closed", Some(""), get),
         ("GET status", Some(SERVER_ERROR), get),
         ("GET body", Some(SHORT_BODY), get),
         ("POST refused", None, post),
+        ("POST closed", Some(""), post),
         ("POST status", Some(SERVER_ERROR), post),
         ("POST body", Some(SHORT_BODY), post),
         ("long-poll refused", None, watch),
+        ("long-poll closed", Some(""), watch),
         ("long-poll status", Some(SERVER_ERROR), watch),
         ("long-poll body", Some(SHORT_BODY), watch),
         ("preferences refused", None, preferences),
+        ("preferences closed", Some(""), preferences),
         ("preferences status", Some(SERVER_ERROR), preferences),
         ("preferences body", Some(SHORT_BODY), preferences),
     ];
