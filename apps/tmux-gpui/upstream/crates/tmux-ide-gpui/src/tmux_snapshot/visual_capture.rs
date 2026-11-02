@@ -477,7 +477,27 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     }
     // `+home-b` is Home's fleet table (#684), `+home-b+spark` with spark
     // picked in the left list; both at the owner's window size, no sidebar.
-    let home_b = extras.contains(&"home-b");
+    // `+design-a` / `+design-b` with `+one`, `+fleet` or `+empty` is the
+    // Home design round 2 mockup (#705): fixture data, nothing wired.
+    let design = if extras.contains(&"design-a") {
+        Some(super::home_mockup::Variant::A)
+    } else if extras.contains(&"design-b") {
+        Some(super::home_mockup::Variant::B)
+    } else {
+        None
+    };
+    let fixture = if extras.contains(&"empty") {
+        super::home_mockup::Fixture::Empty
+    } else if extras.contains(&"fleet") {
+        super::home_mockup::Fixture::Fleet
+    } else {
+        super::home_mockup::Fixture::One
+    };
+    super::home_mockup::set(design.map(|variant| (variant, fixture)));
+    if design.is_some() {
+        state.surface = browser::Surface::Home;
+    }
+    let home_b = extras.contains(&"home-b") || design.is_some();
     if home_b {
         state = with_home_fleet(state)?;
     }
