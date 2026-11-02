@@ -136,7 +136,7 @@ describe("terminal seed frame hash (#706)", () => {
     Object.freeze(rows);
     const snapshot = { ...update.snapshot, [field]: rows };
     Object.freeze(snapshot);
-    // Same claimed stateHash: only the frame identity can tell them apart.
+    // Same claimed stateHash: the recomputed state hash and the frame identity both see the rows.
     const other = { ...update, snapshot };
     expect(applyTerminalReplicaUpdate(applied.state, other).status).toBe("conflict");
   });
@@ -149,4 +149,24 @@ describe("terminal seed frame hash (#706)", () => {
     const other = { ...update, incarnation: "00000000-0000-4000-8000-000000000001:1" };
     expect(applyTerminalReplicaUpdate(applied.state, other).status).toBe("conflict");
   });
+
+  // The envelope's cols and rows are compared only through the frame identity:
+  // the idempotent branch runs before the envelope-versus-snapshot check.
+  it.each([
+    ["cols", { cols: 201 }],
+    ["rows", { rows: 51 }],
+  ] as const)(
+    "keeps a same-revision seed whose envelope %s changed a conflict",
+    async (_, envelope) => {
+      const update = historySeed(200, 50, 600);
+      const applied = applyTerminalReplicaUpdate(null, update);
+      expect(applied.status).toBe("applied");
+      const other = { ...update, ...envelope };
+      expect(applyTerminalReplicaUpdate(applied.state, other).status).toBe("conflict");
+      const cooperative = await applyTerminalReplicaUpdateCooperatively(applied.state, other, {
+        yieldControl: async () => {},
+      });
+      expect(cooperative.status).toBe("conflict");
+    },
+  );
 });
