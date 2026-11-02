@@ -49,6 +49,7 @@ mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
+mod reconnect_retry;
 mod renderer_probe;
 mod roster_counts;
 mod selection;

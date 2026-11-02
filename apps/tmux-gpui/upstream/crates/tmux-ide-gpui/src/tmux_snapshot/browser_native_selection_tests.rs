@@ -12,7 +12,9 @@ const ID: &str = "b987f903-e864-43dd-8591-8d0a464ca6e8";
 const NONCE: &str = "f8da3f73-66c3-4621-bf6f-547ee1d5fd1c";
 // Base64 of the shared native compact seed vector (4 columns, 2 rows).
 const SEED: &str = "eyJmIjoicyIsImsiOiJ0ZXJtaW5hbC1zZW1hbnRpYy1jb21wYWN0IiwiciI6MSwicyI6WzQsMixbWzAsW1sxLCJBIiwxLDAsMCwwXSxbMSwiw6kiLDEsMCwwLDBdLFsxLCLnlYwiLDIsMCwwLDBdLFsxLCIiLDAsMCwwLDBdXV0sWzEsW1s0LCIgIiwxLDAsMCwwXV1dXSxbWzAsW1s0LCJoIiwxLDAsMCwwXV1dXSxbMiwxLDAsImJhciIsMV0sWzAsMSwwLDEsMCwwLDEsMSwiZHJhZyIsInNnciIsMF0sW1siaW1hZ2U6MSIsImtpdHR5IiwwLDAsMiwxLCJhYmMiXV0sWyJhdXRob3JpdGF0aXZlLXN0cmVhbSIsIm9ic2VydmVkLWZyb20tc3RhcnQiXV0sInYiOjF9";
-fn fixture(with_authority: bool) -> (Active, State, mpsc::Receiver<Value>, thread::JoinHandle<()>) {
+pub(super) fn fixture(
+    with_authority: bool,
+) -> (Active, State, mpsc::Receiver<Value>, thread::JoinHandle<()>) {
     fixture_with_batch_ack(with_authority, false)
 }
 fn fixture_with_batch_ack(

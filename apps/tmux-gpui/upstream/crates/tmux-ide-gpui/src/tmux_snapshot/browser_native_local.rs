@@ -385,6 +385,7 @@ impl Local {
         state.machines = Some(self.registry.publication());
         self.publish_tabs(&mut state);
         state.session_history = self.navigation.publication(state.request, self.foreground);
+        state.reconnect_attempt = self.recovery.as_ref().map(reconnect::Recovery::attempt);
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
@@ -692,6 +693,8 @@ impl Local {
                     Err(error) => {
                         let setup = matches!(stage, Stage::Servers);
                         if self.recovery.is_some() {
+                            // Bounded messages only: codes and numbers, no payloads.
+                            eprintln!("tmux-ide: reconnect attempt failed: {error}");
                             self.reconnect_retry(reconnect::Failure::of(&error))?;
                         } else {
                             self.unavailable(
@@ -946,6 +949,9 @@ mod fault_log_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_reconnect_live_tests.rs"]
+mod reconnect_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_restart_live_tests.rs"]
 mod restart_live_tests;

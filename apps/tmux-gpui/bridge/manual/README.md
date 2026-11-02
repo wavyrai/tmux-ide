@@ -16,6 +16,7 @@ from the repository root with `node --import tsx apps/tmux-gpui/bridge/manual/<f
 - `native-pane-selection-smoke.mjs`: packaged two-pane selection and pane chrome, with screenshots.
 - `native-pane-split-smoke.mjs`: a menu split in the GUI adds exactly one pane and keeps the source PID.
 - `native-paste-smoke.mjs`: the real clipboard to GUI to PTY path, including bracketed paste.
+- `native-reconnect-smoke.mjs`: drops, freezes and restarts an owned daemon under the ignored Rust reconnect test; the frame must stay on screen and typing must work after each step.
 - `native-recovery-smoke.mjs`: daemon replacement in the same running app, with a signal file.
 - `native-ssh-smoke.mjs`: runs the ignored Rust OpenSSH tests against an owned sshd.
 - `native-theme-smoke.mjs`: the GUI theme picker saves to an isolated config and keeps unrelated keys.

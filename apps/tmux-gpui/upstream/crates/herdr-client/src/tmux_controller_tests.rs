@@ -420,4 +420,11 @@ fn a_reseeding_or_unavailable_selected_pane_refuses_input() {
         ready(&mut controller, &["right"], &["right"]),
         "another pane blocked input"
     );
+    controller.session.mark_panes(&[], &["left"]);
+    let update = controller.poll(1).unwrap();
+    assert_eq!(
+        update.unavailable.into_iter().collect::<Vec<_>>(),
+        ["left"],
+        "the update did not name the unavailable pane"
+    );
 }
