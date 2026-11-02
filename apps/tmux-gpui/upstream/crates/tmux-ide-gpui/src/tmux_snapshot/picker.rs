@@ -862,9 +862,6 @@ impl SnapshotView {
         if self.machine_edit_composing(cx) {
             return;
         }
-        if self.home_search_composing(window, cx) {
-            return;
-        }
         if self.sidebar_keyboard_key(event, window, cx) {
             return;
         }

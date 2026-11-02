@@ -102,6 +102,9 @@ pub(in crate::tmux_snapshot) enum Command {
         revision: u64,
         action: String,
     },
+    // Home stopped sending this with its agent list (#705); the bridge still
+    // honours it until the machine filter is removed end to end.
+    #[allow(dead_code)]
     #[serde(rename = "home-agent-filter", rename_all = "camelCase")]
     HomeAgentFilter {
         request: u64,

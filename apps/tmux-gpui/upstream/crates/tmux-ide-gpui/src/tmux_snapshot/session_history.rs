@@ -78,7 +78,6 @@ impl SnapshotView {
             || self.new_session.is_some()
             || self.pane_actions.is_some()
             || self.divider.is_some()
-            || self.home_search_composing(window, cx)
             || self.workspace_fleet_agents.pending.is_some()
             || self.session_history.pending.is_some()
             || self.session_tabs.pending.is_some()

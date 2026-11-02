@@ -22,6 +22,22 @@ pub struct Session {
     #[serde(deserialize_with = "nullable_workspace")]
     pub workspace_name: Option<String>,
     pub pane_count: u32,
+    /// Version 2 only (#705): the session's windows, its tmux activity time
+    /// in epoch seconds, and its project's favicon. A version 1 daemon sends
+    /// none of them.
+    #[serde(default)]
+    pub window_count: Option<u32>,
+    #[serde(default)]
+    pub last_activity: Option<i64>,
+    #[serde(default)]
+    pub favicon: Option<Favicon>,
+}
+/// A project's favicon as the daemon found it: the raw file, base64-encoded.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Favicon {
+    pub mime: String,
+    pub data: String,
 }
 fn nullable_workspace<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -81,7 +97,7 @@ impl ServerClient {
     pub fn sessions(&self) -> Result<Vec<Session>, Error> {
         self.assert_current()?;
         let path = format!(
-            "api/v1/tmux-servers/{}/{}/sessions",
+            "api/v1/tmux-servers/{}/{}/sessions?version=2",
             self.scope.server_id, self.scope.generation
         );
         let result = self.daemon.get_resource(&path);
@@ -94,7 +110,14 @@ impl ServerClient {
 }
 fn parse(bytes: &[u8], scope: &ServerScope) -> Result<Vec<Session>, Error> {
     let resource: Resource = serde_json::from_slice(bytes).map_err(|_| Error::ResourceFormat)?;
-    if resource.version != 1 || resource.sessions.len() > 4096 {
+    // An older daemon ignores `?version=2` and answers version 1, which has
+    // none of the version 2 fields.
+    let v2 = match resource.version {
+        1 => false,
+        2 => true,
+        _ => return Err(Error::ResourceFormat),
+    };
+    if resource.sessions.len() > 4096 {
         return Err(Error::ResourceFormat);
     }
     if &resource.server != scope {
@@ -113,6 +136,12 @@ fn parse(bytes: &[u8], scope: &ServerScope) -> Result<Vec<Session>, Error> {
                 .workspace_name
                 .as_ref()
                 .is_some_and(|v| !valid_name(v))
+            || (v2 && entry.window_count.is_none())
+            || (!v2
+                && (entry.window_count.is_some()
+                    || entry.last_activity.is_some()
+                    || entry.favicon.is_some()))
+            || entry.window_count == Some(0)
         {
             return Err(Error::ResourceFormat);
         }

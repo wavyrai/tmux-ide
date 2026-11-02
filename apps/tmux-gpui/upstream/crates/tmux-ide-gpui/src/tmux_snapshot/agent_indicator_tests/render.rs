@@ -56,6 +56,12 @@ fn open(cx: &mut TestAppContext) -> (Entity<SnapshotView>, &mut VisualTestContex
             view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":5,"phase":"live","rows":[
                 {"key":"busy","sessionId":"s","paneId":"p1","name":"Busy","sessionLabel":"Session","status":"WORKING","attention":false,"available":true}],
                 "observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
+            // Home shows an agent on its session's row (#705): the fleet has
+            // the session the agent runs in.
+            view.browser_state.fleet = Some(serde_json::from_value(serde_json::json!({
+                "omittedGroups":0,"groups":[{"id":"local","label":"Local","state":"ready",
+                "conflict":false,"omittedSessions":0,"sessions":[{"id":"local-s","name":"Session",
+                "paneCount":1,"sessionId":"s"}]}]})).unwrap());
             view
         });
         let content = mount(snapshot.clone(), window, cx);

@@ -103,7 +103,6 @@ fn startup_loading_then_verified_empty_and_populated_catalog(cx: &mut TestAppCon
     cx.simulate_resize(size(px(900.), px(600.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     view.read_with(cx, |view, _| {
-        assert_eq!(summary(&view.browser_state, true), "Loading sessions…");
         assert_eq!(view.browser_state.status, "Loading sessions…");
         assert!(!live(&view.browser_state, true));
         assert!(!current(&view.browser_state, true, 0, 0, "session-one"));
@@ -123,9 +122,6 @@ fn startup_loading_then_verified_empty_and_populated_catalog(cx: &mut TestAppCon
         });
         window.draw(cx).clear(cx);
     });
-    view.read_with(cx, |view, _| {
-        assert_eq!(summary(&view.browser_state, true), "No live sessions")
-    });
     assert!(cx.debug_bounds("tmux-home-session-0").is_none());
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -136,9 +132,6 @@ fn startup_loading_then_verified_empty_and_populated_catalog(cx: &mut TestAppCon
         window.draw(cx).clear(cx);
     });
     assert!(cx.debug_bounds("tmux-home-session-0").is_some());
-    view.read_with(cx, |view, _| {
-        assert_eq!(summary(&view.browser_state, true), "1 live session")
-    });
     assert!(receiver.try_recv().is_err());
 }
 

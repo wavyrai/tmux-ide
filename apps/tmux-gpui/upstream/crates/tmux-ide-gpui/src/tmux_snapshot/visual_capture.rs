@@ -306,54 +306,117 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
     Ok(state)
 }
 
-/// Home's fleet as the owner's capture had it: Local with one session, and
-/// the remote "spark" with eleven, two of them favourites; plus two agents.
-fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
+/// Which Home the capture shows (#705): the owner's own screenshot (Local
+/// with p1, p3 and p8, no agents), the two-machine fleet with favicons and
+/// agents, or a connected Local with no sessions.
+#[derive(Clone, Copy, PartialEq)]
+enum HomeFixture {
+    One,
+    Fleet,
+    Empty,
+}
+
+/// A small project favicon for the fixture, as the daemon would send it.
+fn fixture_favicon(svg: &str) -> serde_json::Value {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    serde_json::json!({"mime": "image/svg+xml", "data": STANDARD.encode(svg)})
+}
+
+/// Home's fleet for the capture. Activity is relative to now, so the rows
+/// read "now", "12 min ago" and so on whenever the capture runs.
+fn with_home_fleet(mut state: browser::State, fixture: HomeFixture) -> Result<browser::State> {
     let token =
         |n: u128| uuid::Uuid::from_u128(0x6840_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
-    let spark: Vec<serde_json::Value> = [
-        ("demo", 3, false),
-        ("devstack", 3, true),
-        ("growth", 1, false),
-        ("lint", 3, false),
-        ("site", 2, true),
-        ("api", 4, false),
-        ("bezel", 2, false),
-        ("docs", 1, false),
-        ("infra", 3, false),
-        ("notes", 1, false),
-        ("scratch", 1, false),
-    ]
-    .iter()
-    .enumerate()
-    .map(|(i, (name, panes, favorite))| {
-        let n = i as u128;
-        serde_json::json!({"id": format!("spark-{name}"), "name": name, "paneCount": panes,
-            "favorite": favorite, "active": *name == "devstack",
-            "favoriteAction": token(100 + n), "serverId": "default",
-            "sessionId": format!("${}", i + 10), "selection": token(200 + n)})
-    })
-    .collect();
-    state.fleet = Some(serde_json::from_value(serde_json::json!({
-        "preferences": {"revision": 1, "phase": "ready", "error": null},
-        "omittedGroups": 0,
-        "groups": [
-            {"id": "local", "label": "Local", "state": "ready", "conflict": false,
-             "collapsed": false, "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
-             "servers": [{"id": "default", "label": "default", "state": "online",
-                "generation": token(2), "selection": token(3)}],
-             "sessions": [{"id": "local-0", "name": "0", "paneCount": 2,
-                "favoriteAction": token(4), "serverId": "default", "sessionId": "$0",
-                "selection": token(5)}]},
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
+    let leaf = fixture_favicon(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#16a34a"/><path d="M9 21c0-7 5-12 14-12-1 9-5 14-12 14l-2 2" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>"##,
+    );
+    let hex = fixture_favicon(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M16 2 28 9v14l-12 7-12-7V9z" fill="#2563eb"/><path d="M16 9l6 3.5v7L16 23l-6-3.5v-7z" fill="#93c5fd"/></svg>"##,
+    );
+    let sun = fixture_favicon(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#f59e0b"/><circle cx="16" cy="16" r="7" fill="#fff7ed"/></svg>"##,
+    );
+    let stack = fixture_favicon(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#111827"/><path d="M8 11h16M8 16h16M8 21h10" stroke="#e5e7eb" stroke-width="2.5" stroke-linecap="round"/></svg>"##,
+    );
+    let session = |id: String, name: &str, windows: u64, panes: u64, ago: i64, n: u128| {
+        serde_json::json!({"id": id, "name": name, "paneCount": panes, "windowCount": windows,
+            "lastActivity": now - ago, "favoriteAction": token(100 + n), "serverId": "default",
+            "sessionId": format!("${n}"), "selection": token(200 + n)})
+    };
+    let local_sessions: Vec<serde_json::Value> = match fixture {
+        HomeFixture::Empty => Vec::new(),
+        HomeFixture::One => vec![
+            {
+                let mut p1 = session("local-p1".into(), "p1", 2, 3, 5, 1);
+                p1["active"] = true.into();
+                p1["favicon"] = leaf.clone();
+                p1
+            },
+            session("local-p3".into(), "p3", 1, 1, 12 * 60, 2),
+            {
+                let mut p8 = session("local-p8".into(), "p8", 3, 5, 2 * 3600, 3);
+                p8["favicon"] = hex.clone();
+                p8
+            },
+        ],
+        HomeFixture::Fleet => vec![session("local-0".into(), "0", 1, 2, 3 * 3600, 4)],
+    };
+    let mut groups = vec![serde_json::json!(
+        {"id": "local", "label": "Local", "state": "ready", "conflict": false,
+         "collapsed": false, "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
+         "servers": [{"id": "default", "label": "default", "state": "online",
+            "generation": token(2), "selection": token(3)}],
+         "sessions": local_sessions})];
+    if fixture == HomeFixture::Fleet {
+        let spark: Vec<serde_json::Value> = [
+            ("devstack", 3, 3, 30, true, Some(&stack)),
+            ("site", 2, 2, 60, true, Some(&sun)),
+            ("demo", 1, 3, 8 * 60, false, None),
+            ("api", 2, 4, 25 * 60, false, Some(&hex)),
+            ("growth", 1, 1, 3600, false, Some(&leaf)),
+            ("lint", 1, 3, 2 * 3600, false, None),
+            ("bezel", 2, 2, 3 * 3600, false, None),
+            ("docs", 1, 1, 26 * 3600, false, None),
+            ("infra", 2, 3, 30 * 3600, false, None),
+            ("notes", 1, 1, 3 * 86_400, false, None),
+            ("scratch", 1, 1, 9 * 86_400, false, None),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, (name, windows, panes, ago, favorite, icon))| {
+            let mut row = session(
+                format!("spark-{name}"),
+                name,
+                *windows,
+                *panes,
+                *ago,
+                10 + i as u128,
+            );
+            row["favorite"] = (*favorite).into();
+            row["active"] = (*name == "devstack").into();
+            if let Some(icon) = icon {
+                row["favicon"] = (*icon).clone();
+            }
+            row
+        })
+        .collect();
+        groups.push(serde_json::json!(
             {"id": "spark", "label": "spark", "state": "ready", "conflict": false,
              "collapsed": false, "collapseAction": token(6), "disconnect": token(7),
              "omittedSessions": 0, "omittedServers": 0,
              "servers": [{"id": "default", "label": "default", "state": "online",
                 "generation": token(8), "selection": token(9)}],
-             "sessions": spark}
-        ]
+             "sessions": spark}));
+    }
+    state.fleet = Some(serde_json::from_value(serde_json::json!({
+        "preferences": {"revision": 1, "phase": "ready", "error": null},
+        "omittedGroups": 0,
+        "groups": groups,
     }))?);
-    // New sessions go to Local's server, so spark offers "use for new sessions".
     state.selected_server = Some(browser::fleet::SelectedServer {
         machine_id: "local".into(),
         machine_label: "Local".into(),
@@ -361,15 +424,21 @@ fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
         generation: token(2),
         label: "default".into(),
     });
+    let rows = if fixture == HomeFixture::Fleet {
+        serde_json::json!([
+            {"key": "agent-a", "sessionId": "$10", "paneId": "pane-a", "name": "Claude",
+             "sessionLabel": "devstack", "harness": "claude-code", "status": "WORKING",
+             "attention": false, "available": true},
+            {"key": "agent-b", "sessionId": "$11", "paneId": "pane-b", "name": "Codex",
+             "sessionLabel": "site", "harness": "codex", "status": "BLOCKED",
+             "attention": true, "available": true}
+        ])
+    } else {
+        serde_json::json!([])
+    };
     state.home_agents = Some(serde_json::from_value(serde_json::json!({
         "revision": 1, "phase": "live", "observedSessions": 2, "totalSessions": 12,
-        "truncatedSessions": 0, "truncatedRows": 0, "note": null,
-        "rows": [
-            {"key": "agent-a", "sessionId": "spark-devstack", "paneId": "pane-a", "name": "Claude",
-             "sessionLabel": "devstack", "status": "WORKING", "attention": false, "available": true},
-            {"key": "agent-b", "sessionId": "spark-site", "paneId": "pane-b", "name": "Codex",
-             "sessionLabel": "site", "status": "BLOCKED", "attention": true, "available": true}
-        ]
+        "truncatedSessions": 0, "truncatedRows": 0, "note": null, "rows": rows
     }))?);
     state.surface = browser::Surface::Home;
     Ok(state)
@@ -475,31 +544,18 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if home {
         state.surface = browser::Surface::Home;
     }
-    // `+home-b` is Home's fleet table (#684), `+home-b+spark` with spark
-    // picked in the left list; both at the owner's window size, no sidebar.
-    // `+design-a` / `+design-b` with `+one`, `+fleet` or `+empty` is the
-    // Home design round 2 mockup (#705): fixture data, nothing wired.
-    let design = if extras.contains(&"design-a") {
-        Some(super::home_mockup::Variant::A)
-    } else if extras.contains(&"design-b") {
-        Some(super::home_mockup::Variant::B)
-    } else {
-        None
-    };
-    let fixture = if extras.contains(&"empty") {
-        super::home_mockup::Fixture::Empty
-    } else if extras.contains(&"fleet") {
-        super::home_mockup::Fixture::Fleet
-    } else {
-        super::home_mockup::Fixture::One
-    };
-    super::home_mockup::set(design.map(|variant| (variant, fixture)));
-    if design.is_some() {
-        state.surface = browser::Surface::Home;
-    }
-    let home_b = extras.contains(&"home-b") || design.is_some();
+    // `+home-b` is Home (#684, #705): `+one` the owner's one machine, `+empty`
+    // no sessions, otherwise the two-machine fleet; `+spark` picks spark.
+    let home_b = extras.contains(&"home-b");
     if home_b {
-        state = with_home_fleet(state)?;
+        let fixture = if extras.contains(&"one") {
+            HomeFixture::One
+        } else if extras.contains(&"empty") {
+            HomeFixture::Empty
+        } else {
+            HomeFixture::Fleet
+        };
+        state = with_home_fleet(state, fixture)?;
     }
     let spark = extras.contains(&"spark");
     let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };

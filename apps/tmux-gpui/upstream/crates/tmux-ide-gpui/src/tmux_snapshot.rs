@@ -33,8 +33,6 @@ mod divider;
 mod geometry;
 mod hit_regions;
 mod home;
-#[cfg(feature = "visual-capture")]
-pub(crate) mod home_mockup;
 mod input_gate;
 mod kbd;
 mod keys;

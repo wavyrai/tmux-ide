@@ -10,14 +10,15 @@ pub(super) mod fleet_nav;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
-mod selection;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: wider than Bezel's 768 so the fleet and agents
 /// columns can share a row in a wide window.
-const PAGE_MAX: f32 = 1280.;
+/// The left list, the gap and the table (#705): wide enough for both, no
+/// wider, so the table's values sit near its names.
+const PAGE_MAX: f32 = fleet::NAV_WIDTH + SPACE * 4. + fleet::TABLE_MAX;
 /// The Browse sessions field's width in the header.
-const BROWSE_WIDTH: f32 = 280.;
+const BROWSE_WIDTH: f32 = 220.;
 /// The window width from which the left list and the table sit side by side.
 const COLUMNS_MIN: f32 = 900.;
 /// The alpha of `popover::key_cap`'s fill.
@@ -151,32 +152,6 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     }
     crate::notifications::safe_text(&state.status, 240)
 }
-fn summary(state: &browser::State, connected: bool) -> String {
-    if connected && let Some(fleet) = &state.fleet {
-        let sessions = fleet
-            .groups
-            .iter()
-            .flat_map(|g| &g.sessions)
-            .filter(|s| s.selection.is_some())
-            .count();
-        return format!(
-            "{} · {}",
-            crate::plural::count(fleet.groups.len(), "machine", "machines"),
-            crate::plural::count(sessions, "available session", "available sessions")
-        );
-    }
-    if !connected || state.home_phase == browser::HomePhase::Unavailable {
-        return "Session catalog unavailable".into();
-    }
-    if state.home_phase == browser::HomePhase::Loading {
-        return "Loading sessions…".into();
-    }
-    match state.sessions.len() {
-        0 => "No live sessions".into(),
-        1 => "1 live session".into(),
-        n => format!("{n} live sessions"),
-    }
-}
 fn current(state: &browser::State, connected: bool, request: u64, captured: u64, id: &str) -> bool {
     state.surface == browser::Surface::Home
         && live(state, connected)
@@ -249,11 +224,6 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        #[cfg(feature = "visual-capture")]
-        if let Some(active) = super::home_mockup::active() {
-            let bezel = self.home_palette();
-            return super::home_mockup::render(active, &bezel, self.canvas(), &self.terminal_focus);
-        }
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
         if self.browser_state.appearance.is_none()
@@ -261,11 +231,6 @@ impl SnapshotView {
             && self.home_action_index(window) == Some(1)
         {
             self.terminal_focus.focus(window, cx);
-        }
-        self.reconcile_home_selection(cx);
-        if let Some(controls) = &mut self.home_filter {
-            controls.rendered_revision =
-                self.browser_state.home_agents.as_ref().map(|r| r.revision);
         }
         let theme = self.theme();
         let bezel = self.home_palette();
@@ -287,14 +252,18 @@ impl SnapshotView {
                         .any(|g| g.state == browser::fleet::Phase::Ready)
                 }));
         let canvas = self.canvas();
-        // One line: the title and summary, then Browse as a field, Refresh and
-        // Theme as glyphs, and New session as the one primary button.
+        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
+        // One line over the table: Browse as a field, the agents that need
+        // input, then Refresh and Theme with their words, and New session as
+        // the one primary button (#705).
         let mut actions = div()
             .tab_group()
+            .flex_1()
+            .min_w_0()
+            .max_w(px(fleet::TABLE_MAX))
             .flex()
             .flex_wrap()
             .items_center()
-            .justify_end()
             .gap(px(SPACE));
         if connected {
             let action_focus = self
@@ -360,10 +329,12 @@ impl SnapshotView {
                             }
                         })),
                 )
+                .children(self.home_agent_pill(cx))
+                .child(div().flex_1())
                 .child(
                     native_controls::action_button_on(
                         "tmux-home-refresh",
-                        setup_phase.map(|_| refresh_label),
+                        Some(setup_phase.map_or("Refresh", |phase| phase.label())),
                         refresh_label,
                         native_controls::Icon::Refresh,
                         if setup_running {
@@ -390,7 +361,7 @@ impl SnapshotView {
                 .child(
                     native_controls::action_button_on(
                         "home-theme",
-                        None,
+                        Some("Theme"),
                         "Choose a theme",
                         native_controls::Icon::Theme,
                         if theme_ready {
@@ -422,6 +393,9 @@ impl SnapshotView {
                     }),
                 );
         }
+        if !connected {
+            actions = actions.child(div().flex_1());
+        }
         actions = actions.child(self.local_session_action(cx).when(
             self.local_session_available(),
             |control| {
@@ -452,26 +426,13 @@ impl SnapshotView {
                     .w_full()
                     .min_w_0()
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .justify_between()
-                    .gap(px(SPACE * 2.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex()
-                            .flex_wrap()
-                            .items_baseline()
-                            .gap_x(px(SPACE * 1.5))
-                            .child(bezel.page_header("tmux-ide", None))
-                            .child(
-                                bezel
-                                    .page_subtitle(summary(&self.browser_state, connected))
-                                    .mt_0()
-                                    .debug_selector(|| "home-summary".into())
-                                    .children(design::ink_probe(|| "home-summary".into())),
-                            ),
-                    )
+                    .gap(px(SPACE * 4.))
+                    // The window's tab already says Home; the bar sits over
+                    // the table, past the left list.
+                    .when(wide, |header| {
+                        header.child(div().flex_none().w(px(fleet::NAV_WIDTH)))
+                    })
                     .child(actions),
             );
         // Status, guidance and the new-session form span the whole column,
@@ -536,34 +497,18 @@ impl SnapshotView {
             );
         }
         body = body.child(div().w_full().child(self.new_session_controls(cx)));
-        let view_title = match self.home_fleet_view() {
-            fleet_nav::View::All => Some("All sessions"),
-            fleet_nav::View::Favourites => Some("Favourites"),
-            fleet_nav::View::Machine(_) => None,
-        };
         let mut detail = div()
             .debug_selector(|| "home-fleet-column".into())
             .min_w_0()
             .flex_1()
+            .max_w(px(fleet::TABLE_MAX))
             .flex()
             .flex_col()
             .gap(px(SPACE * 1.5));
-        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
         let nav = self.fleet_nav(wide, cx);
         if let Some(cards) = self.fleet_cards(window, cx) {
-            // A machine's own header row names it; the filters get a heading.
-            detail = detail
-                .when_some(view_title, |detail, title| {
-                    detail.child(
-                        div()
-                            .debug_selector(|| "home-fleet-heading".into())
-                            .min_w_0()
-                            .truncate()
-                            .text_style(TextStyle::Title3)
-                            .child(title),
-                    )
-                })
-                .child(cards);
+            // The left list names the view; the table needs no heading.
+            detail = detail.child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
             let rows = self
                 .browser_state
@@ -656,7 +601,7 @@ impl SnapshotView {
                 .debug_selector(|| "home-agents-column".into())
                 .min_w_0()
                 .w_full()
-                .children(self.home_agent_rows(cx)),
+                .children(self.home_agent_status(cx)),
         );
         body = body.child(
             div()
