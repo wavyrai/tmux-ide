@@ -13113,6 +13113,7 @@ var require_package = __commonJS({
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
+        "demo:themes": "bun --preload @opentui/solid/preload docs/scripts/render-theme-gallery.tsx && node docs/scripts/rasterize-theme-gallery.mjs",
         "demo:font": "node docs/scripts/tui-demo-font/build.mjs",
         "readme:media": "node docs/scripts/readme-media.mjs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/testing/styled-frame-oracle.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-transient-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-draw-failure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/guided-tour-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-new-agent-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/agent-team-renderer.test.tsx ./scripts/solid-conditional-props.test.tsx",
@@ -44563,8 +44564,13 @@ async function applyTerminalReplicaUpdateCooperatively(current, update, options)
   }
   const authenticated = options.authenticatedFrameHash;
   const frameStart = readProfileClock(options.instrumentation);
-  const frameHash = authenticated && /^[0-9a-f]{16}$/u.test(authenticated) ? authenticated : await hashCanonicalTerminalValueCooperatively(
-    { ...admitted, snapshot: snapshot3 },
+  const reuseAuthenticated = Boolean(authenticated && /^[0-9a-f]{16}$/u.test(authenticated));
+  if (!reuseAuthenticated) {
+    await primeTerminalReplicaRowsHashCooperatively(snapshot3.grid, yieldControl);
+    await primeTerminalReplicaRowsHashCooperatively(snapshot3.history, yieldControl);
+  }
+  const frameHash = reuseAuthenticated ? authenticated : await hashCanonicalTerminalValueCooperatively(
+    terminalReplicaFrameIdentity({ ...admitted, snapshot: snapshot3 }),
     yieldControl,
     // Bound frame hashing without scheduling a task per few cells.
     32 * 1024
@@ -44841,9 +44847,19 @@ function resolveFrameHash(update, options, profile) {
     return authenticated;
   }
   const started = readProfileClock(options.instrumentation);
-  const hash = hashStable(update);
+  const hash = hashStable(terminalReplicaFrameIdentity(update));
   addProfileDuration(profile, "updateHash", started, options.instrumentation);
   return hash;
+}
+function terminalReplicaFrameIdentity(update) {
+  if (update.type !== "terminal.seed") return update;
+  const { grid, history, ...rest } = update.snapshot;
+  return [
+    "terminal-replica-frame-v2",
+    { ...update, snapshot: rest },
+    hashTerminalReplicaRows(grid),
+    hashTerminalReplicaRows(history)
+  ];
 }
 function readProfileClock(instrumentation) {
   if (!instrumentation) return void 0;

@@ -581,15 +581,19 @@ export async function applyTerminalReplicaUpdateCooperatively(
   }
   const authenticated = options.authenticatedFrameHash;
   const frameStart = readProfileClock(options.instrumentation);
-  const frameHash =
-    authenticated && /^[0-9a-f]{16}$/u.test(authenticated)
-      ? authenticated
-      : await hashCanonicalTerminalValueCooperatively(
-          { ...admitted, snapshot },
-          yieldControl,
-          // Bound frame hashing without scheduling a task per few cells.
-          32 * 1024,
-        );
+  const reuseAuthenticated = Boolean(authenticated && /^[0-9a-f]{16}$/u.test(authenticated));
+  if (!reuseAuthenticated) {
+    await primeTerminalReplicaRowsHashCooperatively(snapshot.grid, yieldControl);
+    await primeTerminalReplicaRowsHashCooperatively(snapshot.history, yieldControl);
+  }
+  const frameHash = reuseAuthenticated
+    ? authenticated!
+    : await hashCanonicalTerminalValueCooperatively(
+        terminalReplicaFrameIdentity({ ...admitted, snapshot }),
+        yieldControl,
+        // Bound frame hashing without scheduling a task per few cells.
+        32 * 1024,
+      );
   if (profile)
     profile.reusedAuthenticatedFrameHash = Boolean(
       authenticated && /^[0-9a-f]{16}$/u.test(authenticated),
@@ -984,9 +988,27 @@ function resolveFrameHash(
     return authenticated;
   }
   const started = readProfileClock(options.instrumentation);
-  const hash = hashStable(update);
+  const hash = hashStable(terminalReplicaFrameIdentity(update));
   addProfileDuration(profile, "updateHash", started, options.instrumentation);
   return hash;
+}
+
+/**
+ * What a frame hash covers. A seed's rows enter as their row-sequence hashes,
+ * which the replica caches per frozen row, so a seed carrying a pane's whole
+ * history is not walked cell by cell a second time (#706). Every other field
+ * enters as is. The cooperative and ordinary paths must agree: a redelivered
+ * seed whose frame hash differs is a protocol conflict, not idempotent.
+ */
+function terminalReplicaFrameIdentity(update: CanonicalTerminalReplicaUpdate): unknown {
+  if (update.type !== "terminal.seed") return update;
+  const { grid, history, ...rest } = update.snapshot;
+  return [
+    "terminal-replica-frame-v2",
+    { ...update, snapshot: rest },
+    hashTerminalReplicaRows(grid),
+    hashTerminalReplicaRows(history),
+  ];
 }
 
 function readProfileClock(

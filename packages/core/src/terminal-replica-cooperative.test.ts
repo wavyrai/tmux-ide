@@ -178,7 +178,8 @@ describe("cooperative terminal seed reduction", () => {
     expect(reads).toBe(256);
   });
   it("permits actual I/O turns while reducing wide rows and supports cancellation during hashing", async () => {
-    const update = seed(4096, 2);
+    // Wire rows: not yet hashed, so hashing does real work and must yield.
+    const update = structuredClone(seed(4096, 2));
     let turns = 0;
     const result = await applyTerminalReplicaUpdateCooperatively(null, update, {
       yieldControl: () =>
