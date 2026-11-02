@@ -5,6 +5,7 @@ import {
   hashCanonicalTerminalValue,
   hashTerminalReplicaRowCached,
   hashTerminalReplicaRowCooperatively,
+  TerminalReplicaRunEncodingCache,
 } from "./terminal-replica-hash-cache.ts";
 import { TERMINAL_REPLICA_DEFAULT_COLOR } from "./terminal-replica-owned-row.ts";
 
@@ -136,9 +137,40 @@ describe("row hash stays byte-identical (#708)", () => {
     try {
       for (const [, value] of corpus)
         expect(hashTerminalReplicaRowCached(structuredClone(value))).toBe(reference(value));
+      // Batches of 64+ rows take the run-encoding cache path (prefix, grapheme
+      // bytes, suffix); a client without WebAssembly hashes through it.
+      const cache = new TerminalReplicaRunEncodingCache();
+      for (const [, value] of corpus)
+        expect(hashTerminalReplicaRowCached(structuredClone(value), undefined, cache)).toBe(
+          reference(value),
+        );
       expect(native).toHaveBeenCalled();
     } finally {
       native.mockRestore();
+    }
+  });
+
+  it("keeps the same digests when WebAssembly does not exist at all", async () => {
+    vi.stubGlobal("WebAssembly", undefined);
+    vi.resetModules();
+    try {
+      const fresh = await import("./terminal-replica-hash-cache.ts");
+      const freshReference = (value: TerminalReplicaRow) =>
+        fresh.hashCanonicalTerminalValue([
+          value.wrapped,
+          value.cells.map((c) => [c.grapheme, c.width, c.foreground, c.background, c.attributes]),
+        ]);
+      const cache = new fresh.TerminalReplicaRunEncodingCache();
+      for (const [, value] of corpus) {
+        expect(fresh.hashTerminalReplicaRowCached(structuredClone(value))).toBe(reference(value));
+        expect(fresh.hashTerminalReplicaRowCached(structuredClone(value), undefined, cache)).toBe(
+          reference(value),
+        );
+        expect(freshReference(value)).toBe(reference(value));
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
     }
   });
 });

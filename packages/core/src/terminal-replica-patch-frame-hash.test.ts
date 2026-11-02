@@ -154,4 +154,43 @@ describe("terminal patch frame identity (#708)", () => {
     const applied = applyTerminalReplicaUpdate(state, update);
     expect(applyTerminalReplicaUpdate(applied.state, change(update)).status).toBe("conflict");
   });
+
+  // Review item 2: a patch that replaces the full history is identified by it.
+  it("keeps a same-revision patch with another full history a conflict", () => {
+    const state = seeded();
+    const current = state.snapshot!;
+    const history = Array.from({ length: 300 }, (_, i) => textRow(COLS, `full ${i} `));
+    Object.freeze(history);
+    const payload = {
+      rows: [],
+      history,
+      cursor: current.cursor,
+      modes: current.modes,
+      placements: [],
+      bootstrap: current.bootstrap,
+    };
+    const next = applyTerminalReplicaPatch(current, payload);
+    const update: CanonicalTerminalReplicaPatch = {
+      type: "terminal.patch",
+      workspaceName: "workspace",
+      semanticPaneId: "pane",
+      generation: "00000000-0000-4000-8000-000000000001",
+      incarnation: "00000000-0000-4000-8000-000000000001:0",
+      baseRevision: state.revision,
+      revision: state.revision + 1,
+      cols: COLS,
+      rows: ROWS,
+      stateHash: hashTerminalReplicaSnapshot(next),
+      hashAlgorithm: "fnv1a64-v1",
+      patch: payload,
+    };
+    const applied = applyTerminalReplicaUpdate(state, update);
+    expect(applied.status).toBe("applied");
+    expect(applyTerminalReplicaUpdate(applied.state, update).status).toBe("idempotent");
+    const other = [...history];
+    other[120] = textRow(COLS, "replaced ");
+    Object.freeze(other);
+    const changed = { ...update, patch: { ...payload, history: other } };
+    expect(applyTerminalReplicaUpdate(applied.state, changed).status).toBe("conflict");
+  });
 });
