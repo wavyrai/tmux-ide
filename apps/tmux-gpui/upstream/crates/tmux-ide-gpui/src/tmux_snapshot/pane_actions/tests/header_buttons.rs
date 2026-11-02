@@ -96,12 +96,19 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
         ] {
             let header = cx.debug_bounds(header).unwrap();
             let title = cx.debug_bounds(title).unwrap();
-            // Nothing of the title reaches above or below its header row.
-            assert!(title.top() >= header.top(), "{id} rises above its header");
+            // The title is a line of text centred in its header row, not a
+            // plate filling the row up to the card's top edge (the old chip).
             assert!(
-                title.bottom() <= header.bottom(),
-                "{id} drops below its header"
+                title.top() > header.top(),
+                "{id} reaches the card's top edge"
             );
+            assert!(
+                title.bottom() < header.bottom(),
+                "{id} fills its header row"
+            );
+            let centre =
+                (title.top() + title.bottom()) / 2. - (header.top() + header.bottom()) / 2.;
+            assert!(centre.abs() <= px(1.), "{id} sits off centre by {centre:?}");
             assert_eq!(
                 header.size.height,
                 px(crate::tmux_snapshot::pane_cards::HEADER)
