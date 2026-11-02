@@ -14,6 +14,8 @@ use std::cell::Cell;
 const SPACE: f32 = Theme::SPACE;
 const NAV_WIDTH: f32 = 232.;
 const RAIL_WIDTH: f32 = 300.;
+/// B's session card: wide enough for a name and its meta line, no wider.
+const B_CARD: f32 = 600.;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Variant {
@@ -341,52 +343,66 @@ fn nav(bezel: &Theme, machines: &[Machine], extra: Option<Div>) -> Div {
     .children(extra)
 }
 
-/// What both options show with no sessions: one centred invitation with the
-/// two ways forward, instead of an empty table.
+/// What both options show with no sessions: one centred line of guidance that
+/// points at the header's New session and the list's Add machine, without
+/// repeating either button.
 fn empty(bezel: &Theme) -> Div {
+    div().w_full().pt(px(SPACE * 8.)).child(
+        bezel
+            .empty_state(
+                icon("icons/terminal.svg"),
+                "No sessions on Local yet",
+                "Start one with New session, or add a machine from the list.",
+            )
+            .py(px(0.))
+            .text_color(bezel.text),
+    )
+}
+
+fn machine_label(bezel: &Theme, machine: &Machine, first: bool) -> Div {
     div()
-        .w_full()
-        .pt(px(SPACE * 8.))
         .flex()
-        .flex_col()
         .items_center()
-        .gap(px(SPACE * 2.))
+        .gap(px(SPACE))
+        .px(px(SPACE * 1.5))
+        .pt(px(if first { SPACE } else { SPACE * 2. }))
+        .pb(px(4.))
         .child(
-            bezel
-                .empty_state(
-                    icon("icons/terminal.svg"),
-                    "No sessions on Local yet",
-                    "Start one with New session, or add a machine to see its sessions.",
-                )
-                .py(px(0.))
-                .text_color(bezel.text),
+            div()
+                .text_style(TextStyle::Subheadline)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(bezel.text_muted)
+                .child(machine.name),
         )
-        .child(
-            bezel
-                .button("Add machine…", ButtonStyle::Ghost, None)
-                .text_color(bezel.text),
-        )
+        // Disconnect beside the machine it acts on, not in a value column.
+        .when(machine.remote, |line| {
+            line.child(muted(bezel, "·"))
+                .child(muted(bezel, "Disconnect"))
+        })
 }
 
 // Option A: one calm list ------------------------------------------------
 
-/// Column widths shared by A's labels and rows.
-const A_AGENT: f32 = 220.;
+/// A's tracks: the session (its name, "attached" and its agent inline), the
+/// layout and when it was last active. The page is as wide as this table, so
+/// the table's edge is the toolbar's edge and no band opens mid-row.
+const A_NAME: f32 = 400.;
 const A_LAYOUT: f32 = 150.;
 const A_ACTIVE: f32 = 110.;
+const A_GAP: f32 = SPACE * 1.5;
+const A_TABLE: f32 = 2. * A_GAP + 14. + A_NAME + A_LAYOUT + A_ACTIVE + 3. * A_GAP;
 
-fn a_columns(bezel: &Theme, agents: bool) -> Div {
+fn a_columns(bezel: &Theme) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(px(SPACE * 1.5))
-        .px(px(SPACE * 1.5))
+        .gap(px(A_GAP))
+        .px(px(A_GAP))
         .pb(px(6.))
         .text_style(TextStyle::Caption)
         .text_color(bezel.text_muted)
         .child(div().w(px(14.)))
-        .child(div().flex_1().child("Session"))
-        .when(agents, |row| row.child(div().w(px(A_AGENT)).child("Agent")))
+        .child(div().w(px(A_NAME)).child("Session"))
         .child(div().w(px(A_LAYOUT)).child("Windows"))
         .child(
             div()
@@ -397,16 +413,16 @@ fn a_columns(bezel: &Theme, agents: bool) -> Div {
         )
 }
 
-/// One 34px row with no rule: the star only on a favourite (hover shows it
-/// on the others), the name with "attached", the agent, the layout and when
-/// it was last active. `hover` paints the pointer's row.
-fn a_row(bezel: &Theme, session: &Session, agents: bool, hover: bool) -> Div {
+/// One 34px row with no rule: the star only on a favourite (or under the
+/// pointer), then the name with "attached" and its agent, the layout, and
+/// when it was last active.
+fn a_row(bezel: &Theme, session: &Session, hover: bool) -> Div {
     div()
         .h(px(34.))
         .flex()
         .items_center()
-        .gap(px(SPACE * 1.5))
-        .px(px(SPACE * 1.5))
+        .gap(px(A_GAP))
+        .px(px(A_GAP))
         .rounded(px(Theme::control_radius()))
         .when(hover, |row| row.bg(bezel.element_hover))
         .child(
@@ -422,26 +438,23 @@ fn a_row(bezel: &Theme, session: &Session, agents: bool, hover: bool) -> Div {
         )
         .child(
             div()
-                .flex_1()
+                .w(px(A_NAME))
+                .flex_none()
                 .min_w_0()
                 .flex()
                 .items_center()
-                .gap(px(SPACE))
+                .gap(px(SPACE * 1.5))
                 .child(bezel.row_title(session.name).text_color(bezel.text))
                 .when(session.attached, |cell| {
                     cell.child(bezel.badge("attached").text_color(bezel.text_muted))
-                }),
-        )
-        .when(agents, |row| {
-            row.child(
-                div().w(px(A_AGENT)).flex_none().children(
+                })
+                .children(
                     session
                         .agent
                         .as_ref()
                         .map(|agent| agent_inline(bezel, agent)),
                 ),
-            )
-        })
+        )
         .child(div().w(px(A_LAYOUT)).flex_none().child(muted(
             bezel,
             format!(
@@ -460,41 +473,6 @@ fn a_row(bezel: &Theme, session: &Session, agents: bool, hover: bool) -> Div {
         )
 }
 
-/// A machine as a quiet label over its rows: no box, no rule, no repeated
-/// status. A remote machine keeps Disconnect on its label line.
-fn a_machine(bezel: &Theme, machine: &Machine, agents: bool, hover_row: Option<usize>) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(SPACE))
-                .px(px(SPACE * 1.5))
-                .pt(px(SPACE * 2.))
-                .pb(px(4.))
-                .child(
-                    div()
-                        .text_style(TextStyle::Subheadline)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(bezel.text_muted)
-                        .child(machine.name),
-                )
-                .child(div().flex_1())
-                .when(machine.remote, |line| {
-                    line.child(muted(bezel, "Disconnect"))
-                }),
-        )
-        .children(
-            machine
-                .sessions
-                .iter()
-                .enumerate()
-                .map(|(i, session)| a_row(bezel, session, agents, hover_row == Some(i))),
-        )
-}
-
 fn option_a(bezel: &Theme, fixture: Fixture) -> Div {
     let machines = fleet(fixture);
     let attention = machines
@@ -503,33 +481,15 @@ fn option_a(bezel: &Theme, fixture: Fixture) -> Div {
         .filter_map(|s| s.agent.as_ref())
         .filter(|a| a.state == AgentState::NeedsInput)
         .count();
-    let appearance = div()
-        .flex()
-        .items_center()
-        .gap(px(SPACE))
-        .px(px(SPACE))
-        .py(px(6.))
-        .child(glyph("icons/theme.svg", 13., bezel.text_muted))
-        .child(muted(bezel, "Appearance…"));
     let bar = div()
+        .w(px(A_TABLE))
         .flex()
         .items_center()
         .gap(px(SPACE))
-        .child(
-            div().w(px(NAV_WIDTH)).flex_none().child(
-                div()
-                    .px(px(SPACE))
-                    .text_style(TextStyle::Title3)
-                    .text_color(bezel.text)
-                    .child("Home"),
-            ),
-        )
-        .child(div().w(px(SPACE * 3.)))
-        .child(browse_field(bezel, 420.))
+        .child(browse_field(bezel, 300.))
         .when(attention > 0, |bar| {
             bar.child(
                 div()
-                    .ml(px(SPACE))
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -542,73 +502,71 @@ fn option_a(bezel: &Theme, fixture: Fixture) -> Div {
                         div()
                             .text_style(TextStyle::Callout)
                             .text_color(bezel.text)
-                            .child(plural(attention, "agent needs input", "agents need input")),
+                            .child(plural(attention, "needs input", "need input")),
                     ),
             )
         })
         .child(div().flex_1())
         .child(labelled(bezel, "icons/refresh.svg", "Refresh"))
+        .child(labelled(bezel, "icons/theme.svg", "Theme"))
         .child(new_session(bezel));
     let empty_fleet = machines.iter().all(|m| m.sessions.is_empty());
     let several = machines.len() > 1;
-    let mut table = div().flex_1().min_w_0().flex().flex_col();
+    let mut table = div().w(px(A_TABLE)).flex_none().flex().flex_col();
     if empty_fleet {
         table = table.child(empty(bezel));
     } else {
-        let agents = machines
-            .iter()
-            .flat_map(|m| &m.sessions)
-            .any(|s| s.agent.is_some());
-        table = table.child(a_columns(bezel, agents));
+        table = table.child(a_columns(bezel));
         for (index, machine) in machines.iter().enumerate() {
             // One machine needs no label: the left list already names it.
-            let hover = (index == machines.len() - 1).then_some(1);
-            table = table.child(if several {
-                a_machine(bezel, machine, agents, hover)
-            } else {
-                div().children(
-                    machine
-                        .sessions
-                        .iter()
-                        .enumerate()
-                        .map(|(i, s)| a_row(bezel, s, agents, i == 1)),
-                )
-            });
+            if several {
+                table = table.child(machine_label(bezel, machine, index == 0));
+            }
+            let last = index == machines.len() - 1;
+            table = table.children(
+                machine
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| a_row(bezel, s, last && i == 1)),
+            );
         }
     }
     div()
-        .w_full()
-        .max_w(px(1320.))
         .pt(px(SPACE * 3.))
-        .px(px(SPACE * 4.))
         .flex()
         .flex_col()
         .gap(px(SPACE * 3.))
-        .child(bar)
+        .child(
+            div()
+                .flex()
+                .gap(px(SPACE * 3.))
+                .child(div().w(px(NAV_WIDTH)).flex_none())
+                .child(bar),
+        )
         .child(
             div()
                 .flex()
                 .items_start()
                 .gap(px(SPACE * 3.))
-                .child(nav(bezel, &machines, Some(appearance)))
+                .child(nav(bezel, &machines, None))
                 .child(table),
         )
 }
 
-// Option B: a richer table and an agents rail ---------------------------
+// Option B: two-line rows and an agents rail -----------------------------
 
-/// A two-line row: the name over a meta line (windows, panes, last active),
-/// "attached" and the star at the end. No rule; the rows sit in one card.
+/// A two-line row on the panel: the name over its meta line, then "attached"
+/// and the star. The agent is said once, in the rail.
 fn b_row(bezel: &Theme, session: &Session, hover: bool) -> Div {
     div()
         .flex()
         .items_center()
         .gap(px(SPACE * 1.5))
         .px(px(SPACE * 1.5))
-        .py(px(7.))
+        .py(px(5.))
         .rounded(px(Theme::control_radius()))
         .when(hover, |row| row.bg(bezel.element_hover))
-        .child(glyph("icons/terminal.svg", 15., bezel.text_muted))
         .child(
             div()
                 .flex_1()
@@ -624,14 +582,9 @@ fn b_row(bezel: &Theme, session: &Session, hover: bool) -> Div {
                             format!("active {}", session.active).into_any_element(),
                         ])
                         .mt(px(1.))
+                        .gap_x(px(5.))
                         .text_color(bezel.text_muted),
                 ),
-        )
-        .children(
-            session
-                .agent
-                .as_ref()
-                .map(|agent| agent_inline(bezel, agent)),
         )
         .when(session.attached, |row| {
             row.child(bezel.badge("attached").text_color(bezel.text_muted))
@@ -649,22 +602,23 @@ fn b_row(bezel: &Theme, session: &Session, hover: bool) -> Div {
         )
 }
 
+/// The rail, in every state: the agents with attention first, or one line
+/// saying none run.
 fn b_rail(bezel: &Theme, machines: &[Machine]) -> Div {
     let mut agents: Vec<(&Session, &Agent)> = machines
         .iter()
         .flat_map(|m| &m.sessions)
         .filter_map(|s| s.agent.as_ref().map(|a| (s, a)))
         .collect();
-    // Attention first.
     agents.sort_by_key(|(_, a)| a.state != AgentState::NeedsInput);
+    let count = agents.len();
     let rows = agents.into_iter().map(|(session, agent)| {
         div()
             .flex()
             .items_start()
             .gap(px(SPACE))
             .px(px(SPACE * 1.5))
-            .py(px(SPACE))
-            .rounded(px(Theme::control_radius()))
+            .py(px(5.))
             .child(
                 div()
                     .pt(px(6.))
@@ -693,126 +647,91 @@ fn b_rail(bezel: &Theme, machines: &[Machine]) -> Div {
         .flex_none()
         .flex()
         .flex_col()
-        .gap(px(4.))
         .child(
+            // On the first machine label's line.
             div()
                 .px(px(SPACE * 1.5))
+                .pt(px(SPACE))
                 .pb(px(4.))
                 .flex()
                 .items_baseline()
                 .gap(px(SPACE))
                 .child(
                     div()
-                        .text_style(TextStyle::Headline)
-                        .text_color(bezel.text)
+                        .text_style(TextStyle::Subheadline)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(bezel.text_muted)
                         .child("Agents"),
                 )
-                .child(muted(bezel, "2 running")),
+                .when(count > 0, |line| {
+                    line.child(muted(bezel, format!("{count} running")))
+                }),
         )
         .children(rows)
+        .when(count == 0, |rail| {
+            rail.child(
+                muted(
+                    bezel,
+                    "None running. An agent you start in a session shows here.",
+                )
+                .px(px(SPACE * 1.5))
+                .py(px(5.)),
+            )
+        })
 }
 
 fn option_b(bezel: &Theme, fixture: Fixture) -> Div {
     let machines = fleet(fixture);
-    let has_agents = machines
-        .iter()
-        .flat_map(|m| &m.sessions)
-        .any(|s| s.agent.is_some());
     let total: usize = machines.iter().map(|m| m.sessions.len()).sum();
+    let width = B_CARD + SPACE * 3. + RAIL_WIDTH;
     let bar = div()
+        .w(px(width))
         .flex()
         .items_center()
         .gap(px(SPACE))
-        .child(browse_field(bezel, 360.))
+        .child(browse_field(bezel, 300.))
         .child(div().flex_1())
         .child(labelled(bezel, "icons/refresh.svg", "Refresh"))
         .child(labelled(bezel, "icons/theme.svg", "Theme"))
-        .child(div().w(px(SPACE * 0.5)))
         .child(new_session(bezel));
     let several = machines.len() > 1;
     let body = if total == 0 {
-        empty(bezel)
+        div().w(px(width)).child(empty(bezel))
     } else {
-        let mut card = bezel.group_box().p(px(4.)).gap(px(1.));
+        let mut list = div().w(px(B_CARD)).flex_none().flex().flex_col();
         for (index, machine) in machines.iter().enumerate() {
             if several {
-                card = card.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(SPACE))
-                        .px(px(SPACE * 1.5))
-                        .pt(px(if index == 0 { SPACE } else { SPACE * 2. }))
-                        .pb(px(4.))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(bezel.text_muted)
-                                .child(machine.name),
-                        )
-                        .child(div().flex_1())
-                        .when(machine.remote, |line| {
-                            line.child(muted(bezel, "Disconnect"))
-                        }),
-                );
+                list = list.child(machine_label(bezel, machine, index == 0));
+            } else {
+                list = list.child(div().h(px(SPACE)));
             }
-            let hover = (index == machines.len() - 1).then_some(1);
-            card = card.children(
+            let last = index == machines.len() - 1;
+            list = list.children(
                 machine
                     .sessions
                     .iter()
                     .enumerate()
-                    .map(|(i, s)| b_row(bezel, s, hover == Some(i))),
+                    .map(|(i, s)| b_row(bezel, s, last && i == 1)),
             );
         }
-        card
+        div()
+            .flex()
+            .items_start()
+            .gap(px(SPACE * 3.))
+            .child(list)
+            .child(b_rail(bezel, &machines))
     };
-    let detail = div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .items_start()
-        .gap(px(SPACE * 3.))
-        .child(div().flex_1().min_w_0().child(body))
-        .when(has_agents, |detail| detail.child(b_rail(bezel, &machines)));
-    let footnote = (!has_agents && total > 0).then(|| {
-        muted(
-            bezel,
-            "No agents running. Agents you start in a session show beside it.",
-        )
-        .pt(px(SPACE * 1.5))
-        .px(px(SPACE * 1.5))
-    });
     div()
-        .w_full()
-        .max_w(px(1320.))
         .pt(px(SPACE * 3.))
-        .px(px(SPACE * 4.))
         .flex()
         .flex_col()
         .gap(px(SPACE * 3.))
         .child(
             div()
                 .flex()
-                .items_center()
                 .gap(px(SPACE * 3.))
-                .child(
-                    div()
-                        .w(px(NAV_WIDTH))
-                        .flex_none()
-                        .px(px(SPACE))
-                        .flex()
-                        .items_baseline()
-                        .gap(px(SPACE))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Title3)
-                                .text_color(bezel.text)
-                                .child("Home"),
-                        ),
-                )
-                .child(div().flex_1().child(bar)),
+                .child(div().w(px(NAV_WIDTH)).flex_none())
+                .child(bar),
         )
         .child(
             div()
@@ -820,15 +739,7 @@ fn option_b(bezel: &Theme, fixture: Fixture) -> Div {
                 .items_start()
                 .gap(px(SPACE * 3.))
                 .child(nav(bezel, &machines, None))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(detail)
-                        .children(footnote),
-                ),
+                .child(body),
         )
 }
 
