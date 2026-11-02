@@ -117,8 +117,16 @@ try {
   const appLines = output
     .split("\n")
     .filter((line) => line.startsWith("tmux-preview:") || line.startsWith("tmux-ide:"));
+  if (process.env.SMOKE_DAEMON_LOG)
+    await writeFile(
+      process.env.SMOKE_DAEMON_LOG,
+      daemon.output().replaceAll(daemon.record.authToken, "[redacted]"),
+    );
+  // Where typed lines landed: in the shell, as tmux captures it.
+  const pane = fleet.capturePane(fleet.sessionNames[0]);
+  const landed = ["one", "rebound", "two", "three"].filter((m) => pane.includes(`typed-${m}`));
   console.log(
-    JSON.stringify({ steps, appLines, live: live && JSON.parse(live.slice(15)) }, null, 2),
+    JSON.stringify({ steps, appLines, landed, live: live && JSON.parse(live.slice(15)) }, null, 2),
   );
   assert.equal(signal, null);
   assert.equal(code, 0, redact(output));

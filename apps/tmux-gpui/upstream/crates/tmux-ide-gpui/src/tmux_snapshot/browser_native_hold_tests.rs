@@ -30,7 +30,7 @@ fn reconnecting(request: u64, attempt: u32) -> State {
 #[test]
 fn a_dropped_stream_keeps_its_last_frame_read_only_with_the_attempt() {
     let mut hold = Hold::default();
-    hold.begin(&live(7));
+    hold.begin(&live(7), false);
     assert!(hold.active());
     let shown = hold.publication(&reconnecting(7, 3));
     assert!(shown.frame.is_some());
@@ -50,11 +50,11 @@ fn a_dropped_stream_keeps_its_last_frame_read_only_with_the_attempt() {
 #[test]
 fn navigation_a_give_up_or_a_ready_live_frame_ends_the_hold() {
     let mut hold = Hold::default();
-    hold.begin(&live(7));
+    hold.begin(&live(7), false);
     assert!(hold.publication(&reconnecting(8, 1)).frame.is_none());
     assert!(!hold.active());
 
-    hold.begin(&live(7));
+    hold.begin(&live(7), false);
     let gave_up = State {
         home_phase: HomePhase::Unavailable,
         ..reconnecting(7, 4)
@@ -62,7 +62,7 @@ fn navigation_a_give_up_or_a_ready_live_frame_ends_the_hold() {
     assert!(hold.publication(&gave_up).frame.is_none());
     assert!(!hold.active());
 
-    hold.begin(&live(7));
+    hold.begin(&live(7), false);
     // A live frame not yet accepting input is shown, but the hold stays.
     let warming = State {
         input_ready: false,
@@ -91,7 +91,7 @@ fn nothing_is_held_from_a_preview_from_home_or_without_a_frame() {
         },
     ] {
         let mut hold = Hold::default();
-        hold.begin(&state);
+        hold.begin(&state, false);
         assert!(!hold.active());
         assert!(hold.publication(&reconnecting(7, 1)).frame.is_none());
     }
@@ -100,7 +100,7 @@ fn nothing_is_held_from_a_preview_from_home_or_without_a_frame() {
 #[test]
 fn the_attempt_count_never_runs_backwards() {
     let mut hold = Hold::default();
-    hold.begin(&live(7));
+    hold.begin(&live(7), false);
     assert_eq!(
         hold.publication(&reconnecting(7, 4)).reconnect_attempt,
         Some(4)
@@ -125,13 +125,13 @@ fn a_frame_wiped_by_a_catalog_publication_is_still_held() {
         frame: None,
         ..live(7)
     };
-    hold.begin(&wiped);
+    hold.begin(&wiped, false);
     assert!(hold.active());
     assert!(hold.publication(&reconnecting(7, 1)).frame.is_some());
     // Never another request's frame.
     let mut hold = Hold::default();
     hold.observe(&live(6));
-    hold.begin(&wiped);
+    hold.begin(&wiped, false);
     assert!(!hold.active());
     // Never a frame the UI was shown as a held copy.
     let mut hold = Hold::default();
@@ -139,6 +139,25 @@ fn a_frame_wiped_by_a_catalog_publication_is_still_held() {
         retained_preview: true,
         ..live(7)
     });
-    hold.begin(&wiped);
+    hold.begin(&wiped, false);
     assert!(!hold.active());
+}
+
+/// Keys in flight when the stream dropped are never replayed; the held status
+/// says so, so the user retypes them instead of losing them silently.
+#[test]
+fn keys_lost_with_the_stream_are_reported_while_reconnecting() {
+    let mut hold = Hold::default();
+    hold.begin(&live(7), true);
+    let shown = hold.publication(&reconnecting(7, 2));
+    assert_eq!(
+        shown.status,
+        format!("Reconnecting… attempt 2 — {LOST_INPUT}")
+    );
+    let mut hold = Hold::default();
+    hold.begin(&live(7), false);
+    assert_eq!(
+        hold.publication(&reconnecting(7, 2)).status,
+        "Reconnecting… attempt 2"
+    );
 }

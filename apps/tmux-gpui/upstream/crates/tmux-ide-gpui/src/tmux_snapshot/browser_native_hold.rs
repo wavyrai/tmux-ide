@@ -13,7 +13,11 @@ struct Held {
     presentation: State,
     /// Rediscovery republishes Home between tries; the count never runs backwards.
     attempt: u32,
+    /// Keys typed just before the drop were not delivered and are never replayed.
+    lost_input: bool,
 }
+/// Shown while reconnecting when keys typed just before the drop were lost.
+pub(super) const LOST_INPUT: &str = "keys typed just before the drop were not sent; retype them";
 #[derive(Default)]
 pub(super) struct Hold {
     held: Option<Held>,
@@ -34,12 +38,17 @@ impl Hold {
     }
     /// Keep the frame that was live when the stream dropped, or the last one shown
     /// for the same request. Nothing is kept from a preview or outside a workspace.
-    pub fn begin(&mut self, state: &State) {
+    /// `lost_input`: keys were in flight or queued when the stream dropped. They
+    /// are dropped, never replayed, so the held status asks the user to retype.
+    pub fn begin(&mut self, state: &State, lost_input: bool) {
         self.held = live(state).or_else(|| {
             self.last
                 .take()
                 .filter(|last| last.request == state.request)
         });
+        if let Some(held) = &mut self.held {
+            held.lost_input = lost_input;
+        }
     }
     pub fn clear(&mut self) {
         self.held = None;
@@ -73,7 +82,11 @@ impl Hold {
         result.appearance = state.appearance.clone();
         result.presence_revision = state.presence_revision;
         result.reconnect_attempt = Some(attempt);
-        result.status = format!("Reconnecting… attempt {attempt}");
+        result.status = if held.lost_input {
+            format!("Reconnecting… attempt {attempt} — {LOST_INPUT}")
+        } else {
+            format!("Reconnecting… attempt {attempt}")
+        };
         result
     }
 }
@@ -102,6 +115,7 @@ fn live(state: &State) -> Option<Held> {
     }));
     Some(Held {
         attempt: 1,
+        lost_input: false,
         request: state.request,
         presentation: State {
             surface: Surface::Workspace,
