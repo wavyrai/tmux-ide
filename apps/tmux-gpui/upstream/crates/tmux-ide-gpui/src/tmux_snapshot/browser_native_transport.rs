@@ -575,7 +575,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     Err(error) => {
                         eprintln!(
                             "tmux-preview: terminal poll interrupted: {}",
-                            diagnostics::code(&error)
+                            diagnostics::detail(&error)
                         );
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.

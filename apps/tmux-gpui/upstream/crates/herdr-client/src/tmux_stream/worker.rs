@@ -337,7 +337,11 @@ fn run(
                 deliver(&events, wire::parse_binary(&bytes, &options)?, cancel)?;
             }
             Ok(Message::Ping(_) | Message::Pong(_)) => continue,
-            Ok(Message::Close(_)) => return Err(Error::Disconnected),
+            Ok(Message::Close(frame)) => {
+                return Err(frame.map_or(Error::Disconnected, |frame| {
+                    Error::Closed(super::Close::new(frame.code.into(), &frame.reason))
+                }));
+            }
             Ok(_) => return Err(Error::Frame),
             Err(tungstenite::Error::Io(error))
                 if matches!(

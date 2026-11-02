@@ -11,6 +11,7 @@ from the repository root with `node --import tsx apps/tmux-gpui/bridge/manual/<f
 - `local-setup-smoke.mjs`: a real managed daemon start with one owner and an owned shutdown.
 - `native-config-namespace-smoke.mjs`: runs the ignored Rust config-namespace test against the TypeScript runtime namespace.
 - `native-discovery-smoke.mjs`: runs the ignored Rust discovery and native-local GUI tests against an owned daemon.
+- `native-fault-log-smoke.mjs`: restarts an owned daemon's terminal source under the ignored Rust fault-log test; the app and daemon logs must name the same fault and pane.
 - `native-font-smoke.mjs`: packaged GUI font save and restart, with no PTY leakage (operator-driven).
 - `native-pane-selection-smoke.mjs`: packaged two-pane selection and pane chrome, with screenshots.
 - `native-pane-split-smoke.mjs`: a menu split in the GUI adds exactly one pane and keeps the source PID.

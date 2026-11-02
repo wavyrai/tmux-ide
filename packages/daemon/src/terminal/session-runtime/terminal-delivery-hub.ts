@@ -12,6 +12,7 @@ import { encodeTerminalProjectionCooperatively } from "@tmux-ide/core";
 type DeliveryEnvelope = TerminalDeliveryEnvelope | TerminalProjectionEnvelope;
 import type { KittyImage } from "../graphics/kitty-graphics.ts";
 import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
+import { logger } from "../../lib/log.ts";
 import {
   MAX_RETAINED_NATIVE_BACKING_BYTES,
   takeNativeSeedBacking,
@@ -512,6 +513,11 @@ export class SessionRuntimeTerminalDeliveryHub {
     } catch (error) {
       if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
       // Negotiation still settles this pane; no invented canonical seed is published.
+      logDeliveryFault(
+        { paneId: semanticPaneId, deliveryWorkspaceName: address },
+        "source-closed",
+        "capture-unavailable",
+      );
       await accept({
         type: "terminal.delivery.fault",
         reason: "source-closed",
@@ -697,6 +703,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#cancelEncoding(client);
       client.outgoing.length = 0;
       client.inFlight = null;
+      logDeliveryFault(client, "source-closed", "source-restarted");
       this.#enqueue(client, {
         type: "terminal.delivery.fault",
         reason: "source-closed",
@@ -2008,6 +2015,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     message: string,
     selectionObservation: SemanticSelectionObservation | null = null,
   ): void {
+    logDeliveryFault(client, reason);
     if (this.#observability.enabled)
       try {
         const atMicros = this.#observability.nowMicros();
@@ -2693,4 +2701,21 @@ function joinBytes(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return joined;
+}
+
+/**
+ * One info line per fault a client is sent, so a client's drop has a daemon-side
+ * record. Ids and fixed reasons only: the fault message can carry source text.
+ */
+function logDeliveryFault(
+  client: Pick<ClientState, "paneId" | "deliveryWorkspaceName">,
+  reason: "state-too-large" | "source-closed" | "protocol-violation",
+  cause?: "source-restarted" | "capture-unavailable",
+): void {
+  logger.info("terminal-delivery", "fault sent to client", {
+    reason,
+    ...(cause ? { cause } : {}),
+    pane: client.paneId,
+    workspace: client.deliveryWorkspaceName,
+  });
 }
