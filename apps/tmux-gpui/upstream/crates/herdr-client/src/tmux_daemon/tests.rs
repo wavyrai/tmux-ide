@@ -749,3 +749,36 @@ mod agent_observation_socket_tests;
 
 #[path = "surface_source_socket_tests.rs"]
 mod surface_source_socket_tests;
+
+/// Card #703: one `/identity` proof per daemon generation. A failed request
+/// drops it, and a rewritten record is never trusted on the old proof.
+#[test]
+fn one_identity_proof_serves_a_daemon_until_a_request_fails() {
+    IDENTITY_CACHE.with(|cache| cache.set(true));
+    let (port, worker) = peer_many(5, |index| match index {
+        0 | 3 => response(&identity()),
+        2 => "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .into(),
+        _ => response(&registrations()),
+    });
+    let sandbox = Sandbox::new();
+    let path = sandbox.record(&value(port));
+    let daemon = LocalDaemon::discover(&path).unwrap();
+    daemon.verify_current().unwrap();
+    daemon.get_resource("api/v1/tmux-servers").unwrap();
+    daemon.verify_current().unwrap();
+    assert!(matches!(
+        daemon.get_resource("api/v1/tmux-servers"),
+        Err(Error::RequestStatus(500))
+    ));
+    daemon.verify_current().unwrap();
+    daemon.get_resource("api/v1/tmux-servers").unwrap();
+    let requests = worker.join().unwrap();
+    assert_eq!(requests.matches("GET /identity").count(), 2, "{requests}");
+    // A new record is a new daemon generation: refused, never sent credentials.
+    let mut replaced = value(port);
+    replaced["authToken"] = "a-replacement-daemon-token".into();
+    fs::write(&path, replaced.to_string()).unwrap();
+    assert!(matches!(daemon.verify_current(), Err(Error::RecordChanged)));
+    IDENTITY_CACHE.with(|cache| cache.set(false));
+}

@@ -91,6 +91,10 @@ pub struct CatalogEvents {
     expected: CatalogEventIdentity,
     phase: Phase,
     sequence: u64,
+    /// The daemon pushes fleet changes (registered tmux servers, sessions,
+    /// agents), so no fallback refresh is needed. False for a daemon that
+    /// offers only the workspace catalog.
+    fleet_push: bool,
 }
 impl CatalogEvents {
     /// Expected identity must come from the authenticated discovery owner, never
@@ -100,6 +104,7 @@ impl CatalogEvents {
             expected,
             phase: Phase::Hello,
             sequence: 0,
+            fleet_push: false,
         }
     }
     pub fn subscription(after_sequence: u64) -> Result<String, CatalogEventError> {
@@ -108,13 +113,18 @@ impl CatalogEvents {
         }
         Ok(
             serde_json::json!({"type":"subscribe", "sessions":[], "interests":[
-            {"resource":"workspace-catalog","workspaceName":null}
+            {"resource":"workspace-catalog","workspaceName":null},
+            {"resource":"fleet-catalog","workspaceName":null}
         ], "legacyEvents":false,"interestRevision":1,"afterSequence":after_sequence})
             .to_string(),
         )
     }
     pub fn ready(&self) -> bool {
         self.phase == Phase::Live
+    }
+    /// Only a daemon without fleet push needs Home's periodic fallback refresh.
+    pub fn needs_fallback(&self) -> bool {
+        !self.fleet_push
     }
     pub fn receive(&mut self, bytes: &[u8]) -> Result<CatalogEventEffect, CatalogEventError> {
         if self.phase == Phase::Retired {
@@ -217,9 +227,15 @@ impl CatalogEvents {
                         return Err(CatalogEventError::Frame);
                     }
                 }
-                if !unavailable_interests.is_empty() {
+                // The workspace catalog is required; fleet push is optional and
+                // its absence keeps the fallback refresh.
+                if unavailable_interests
+                    .iter()
+                    .any(|interest| interest.resource != "fleet-catalog")
+                {
                     return Err(CatalogEventError::Unavailable);
                 }
+                self.fleet_push = unavailable_interests.is_empty();
                 self.advance(sequence, true)?;
                 self.phase = Phase::Live;
                 Ok(Invalidate)

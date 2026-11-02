@@ -156,22 +156,24 @@ impl LocalDaemon {
             },
             DefaultResolver::default(),
         );
+        // A held long-poll, but still a daemon request: count it with the rest.
+        super::count_request(endpoint.path());
         let result = (|| {
             let mut response = agent
                 .get(endpoint.as_str())
                 .header("Authorization", self.record.authorization()?)
                 .header("Cache-Control", "no-store")
                 .call()
-                .map_err(Error::Network)?;
+                .map_err(|error| self.failed(Error::Network(error)))?;
             if response.status().as_u16() != 200 {
-                return Err(Error::RequestStatus(response.status().as_u16()));
+                return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
             }
             let bytes = response
                 .body_mut()
                 .with_config()
                 .limit(64 * 1024)
                 .read_to_vec()
-                .map_err(Error::Network)?;
+                .map_err(|error| self.failed(Error::Network(error)))?;
             self.check_record()?;
             self.machine_watch_resource(&bytes, after)
         })();

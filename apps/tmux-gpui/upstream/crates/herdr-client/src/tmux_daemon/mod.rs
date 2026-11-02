@@ -221,10 +221,26 @@ impl LocalDaemon {
         &self.record.instance_id
     }
 
-    /// Re-prove the captured owner before issuing a credential-bearing request.
-    /// Checking before and after the network operation rejects replacement races.
+    /// Prove the captured owner before issuing a credential-bearing request.
+    /// The private record is re-read every time, so a restarted daemon (a new
+    /// record) is never trusted on an old proof. One `/identity` proof serves a
+    /// daemon generation until any request to it fails, which also drops the
+    /// proof; a dead or replaced daemon is then proven again before the next
+    /// credential is sent (#703).
     pub fn verify_current(&self) -> Result<(), Error> {
         self.check_record()?;
+        if proven(&self.fingerprint) {
+            return Ok(());
+        }
+        let result = self.prove_identity();
+        if result.is_ok() {
+            prove(self.fingerprint);
+        } else {
+            disprove(&self.fingerprint);
+        }
+        result
+    }
+    fn prove_identity(&self) -> Result<(), Error> {
         let endpoint = self
             .base_url
             .join("identity")
@@ -275,16 +291,16 @@ impl LocalDaemon {
             .header("Authorization", self.record.authorization()?)
             .header("Cache-Control", "no-store")
             .call()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         if response.status().as_u16() != 200 {
-            return Err(Error::RequestStatus(response.status().as_u16()));
+            return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
         }
         let bytes = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         self.check_record()?;
         Ok(bytes)
     }
@@ -328,16 +344,16 @@ impl LocalDaemon {
             .timeout_global(Some(timeout))
             .build()
             .send(body)
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         if response.status().as_u16() != 200 {
-            return Err(Error::RequestStatus(response.status().as_u16()));
+            return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
         }
         let bytes = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         self.check_record()?;
         Ok(bytes)
     }
@@ -345,9 +361,56 @@ impl LocalDaemon {
     fn check_record(&self) -> Result<(), Error> {
         let (_, fingerprint) = record::read(&self.path)?;
         if fingerprint != self.fingerprint {
+            disprove(&self.fingerprint);
             return Err(Error::RecordChanged);
         }
         Ok(())
+    }
+    /// A failed request drops this generation's proof before reporting it.
+    pub(super) fn failed(&self, error: Error) -> Error {
+        disprove(&self.fingerprint);
+        error
+    }
+}
+
+/// The local daemon generation (its record fingerprint) last proven by
+/// `/identity` in this process. Process-wide, so every worker that discovers
+/// the same daemon shares one proof.
+static PROVEN: std::sync::Mutex<Option<[u8; 32]>> = std::sync::Mutex::new(None);
+fn proven(fingerprint: &[u8; 32]) -> bool {
+    caching()
+        && PROVEN
+            .lock()
+            .is_ok_and(|proven| proven.as_ref() == Some(fingerprint))
+}
+// This crate's scripted-peer tests expect one `/identity` per call; a test opts
+// in to the cache on its own thread. Every other build always caches.
+#[cfg(test)]
+thread_local! {
+    pub(super) static IDENTITY_CACHE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+fn caching() -> bool {
+    #[cfg(test)]
+    {
+        IDENTITY_CACHE.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+fn prove(fingerprint: [u8; 32]) {
+    if caching()
+        && let Ok(mut proven) = PROVEN.lock()
+    {
+        *proven = Some(fingerprint);
+    }
+}
+fn disprove(fingerprint: &[u8; 32]) {
+    if let Ok(mut proven) = PROVEN.lock()
+        && proven.as_ref() == Some(fingerprint)
+    {
+        *proven = None;
     }
 }
 
