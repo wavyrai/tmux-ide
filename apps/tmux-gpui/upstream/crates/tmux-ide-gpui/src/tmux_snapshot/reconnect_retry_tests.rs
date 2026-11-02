@@ -48,3 +48,40 @@ fn retry_is_drawn_only_while_reconnecting_and_asks_for_this_request(cx: &mut Tes
     view.read_with(cx, |view, _| assert!(!view.retry_reconnect(7)));
     assert!(receiver.try_recv().is_err());
 }
+
+/// Review round 1, item 1: a key refused while the frame is held is reported
+/// at once, beside the attempt count.
+#[gpui::test]
+fn a_key_refused_while_reconnecting_says_so(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::tmux_snapshot::fit_test_support::fixture_view(
+            window,
+            cx,
+            sender,
+            7,
+            view_state(Some(2)),
+        )
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.status_line(), "Reconnecting… attempt 2");
+    });
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            assert!(
+                !view.offer_terminal_input(cx),
+                "a held frame accepted a key"
+            );
+        })
+    });
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            view.status_line(),
+            format!(
+                "{} — Reconnecting… attempt 2",
+                crate::tmux_snapshot::status_presentation::INPUT_REFUSED
+            )
+        );
+    });
+}
