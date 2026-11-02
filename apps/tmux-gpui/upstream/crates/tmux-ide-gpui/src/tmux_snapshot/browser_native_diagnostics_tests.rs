@@ -94,3 +94,61 @@ fn the_daemon_version_is_trimmed_bounded_and_limited_to_version_characters() {
         assert_eq!(daemon_too_old(Some(bad)), daemon_too_old(None), "{bad:?}");
     }
 }
+
+#[test]
+fn the_log_line_names_the_rejecting_check_the_pane_and_the_fault() {
+    use herdr_client::{tmux_receiver, tmux_terminal};
+    let stopped = |error| NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(error)));
+    let rejected = stopped(tmux_native_session::Error::Terminal(
+        tmux_terminal::Error::Delivery(tmux_receiver::Error::Ordering),
+        tmux_terminal::Failure {
+            pane: Some("pane.3".into()),
+            fault: None,
+        },
+    ));
+    assert_eq!(code(&rejected), "terminal-state");
+    assert_eq!(
+        detail(&rejected),
+        "terminal-state:delivery-ordering pane=pane.3"
+    );
+    let fault = stopped(tmux_native_session::Error::Terminal(
+        tmux_terminal::Error::SourceClosed,
+        tmux_terminal::Failure {
+            pane: None,
+            fault: Some("source-closed"),
+        },
+    ));
+    assert_eq!(
+        detail(&fault),
+        "terminal-state:source-closed fault=source-closed"
+    );
+    // A pane id that is not a plain token never reaches the log.
+    let odd = stopped(tmux_native_session::Error::Terminal(
+        tmux_terminal::Error::Identity,
+        tmux_terminal::Failure {
+            pane: Some("pane\n\u{1b}[31m".into()),
+            fault: None,
+        },
+    ));
+    assert_eq!(detail(&odd), "terminal-state:identity");
+}
+
+#[test]
+fn the_log_line_keeps_the_peer_close_code_and_reason() {
+    let closed = |reason| {
+        NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+            tmux_native_session::Error::Transport(tmux_stream::Error::Closed(tmux_stream::Close {
+                code: 1013,
+                reason,
+            })),
+        )))
+    };
+    let backpressure = closed(Some("output-backpressure".into()));
+    assert_eq!(code(&backpressure), "stream-disconnected");
+    assert!(Stop::new(&backpressure, 4, Some("2.9.12")).is_none());
+    assert_eq!(
+        detail(&backpressure),
+        "stream-disconnected code=1013 reason=output-backpressure"
+    );
+    assert_eq!(detail(&closed(None)), "stream-disconnected code=1013");
+}

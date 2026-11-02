@@ -43,10 +43,34 @@ pub enum Error {
     CommandBacklog,
     #[error("pane-stream disconnected")]
     Disconnected,
+    /// The peer closed the socket and said why. Diagnostics only; same policy as `Disconnected`.
+    #[error("pane-stream closed by the peer")]
+    Closed(Close),
     #[error("pane-stream cancelled")]
     Cancelled,
     #[error("pane-stream readiness timed out")]
     ReadyTimeout,
+}
+
+/// A peer close frame, bounded for logs: the code, and the reason only when it is a
+/// short token (the daemon's are like `output-backpressure`). Anything else is dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Close {
+    pub code: u16,
+    pub reason: Option<String>,
+}
+impl Close {
+    pub(crate) fn new(code: u16, reason: &str) -> Self {
+        let token = !reason.is_empty()
+            && reason.len() <= 64
+            && reason
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b));
+        Self {
+            code,
+            reason: token.then(|| reason.to_owned()),
+        }
+    }
 }
 
 impl std::fmt::Debug for Error {

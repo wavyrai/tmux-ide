@@ -888,6 +888,9 @@ impl Local {
 }
 
 #[cfg(test)]
+#[path = "browser_native_local_fault_log_live_tests.rs"]
+mod fault_log_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
 #[cfg(test)]
