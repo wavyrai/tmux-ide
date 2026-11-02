@@ -396,3 +396,28 @@ fn input_reaches_a_pane_only_while_its_commit_is_current() {
         assert!(selected_live(blocked, "right"));
     }
 }
+
+/// Review round 1, item 2: the controller refuses input to a selected pane that
+/// is reseeding or whose source closed, and not to another pane's state.
+#[test]
+fn a_reseeding_or_unavailable_selected_pane_refuses_input() {
+    let (mut controller, _observed, _response, _peer) = fixture();
+    let ready = |controller: &mut Controller, reseeding: &[&str], unavailable: &[&str]| {
+        controller.session.mark_panes(reseeding, unavailable);
+        controller.poll(1).unwrap();
+        controller.actionable
+    };
+    assert!(ready(&mut controller, &[], &[]), "the fixture pane is live");
+    assert!(
+        !ready(&mut controller, &["left"], &[]),
+        "a reseeding pane took input"
+    );
+    assert!(
+        !ready(&mut controller, &[], &["left"]),
+        "an unavailable pane took input"
+    );
+    assert!(
+        ready(&mut controller, &["right"], &["right"]),
+        "another pane blocked input"
+    );
+}
