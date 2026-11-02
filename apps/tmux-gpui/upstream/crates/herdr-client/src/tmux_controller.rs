@@ -53,6 +53,8 @@ pub struct Update {
     pub graphics_placements: BTreeMap<String, Arc<tmux_native_session::PaneGraphics>>,
     pub cell_pixels: bool,
     pub precise_cell_pixels: bool,
+    /// Panes whose source the daemon closed: their last frame stays, read-only.
+    pub unavailable: std::collections::BTreeSet<String>,
 }
 pub struct Controller {
     session: NativeSession,
@@ -482,6 +484,7 @@ impl Controller {
             graphics_placements: updates.graphics_placements,
             cell_pixels: updates.cell_pixels,
             precise_cell_pixels: updates.precise_cell_pixels,
+            unavailable: updates.unavailable,
         })
     }
 }

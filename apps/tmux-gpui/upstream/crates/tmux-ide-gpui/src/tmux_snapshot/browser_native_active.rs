@@ -109,6 +109,7 @@ impl Active {
         let prior_actions = state.pane_actions.clone();
         let prior_status = state.status.clone();
         let update = self.controller.poll(now)?;
+        state.unavailable_panes = update.unavailable.iter().cloned().collect();
         let prior_split = state.split_layout.clone();
         let prior_gesture = state.split_gesture.clone();
         if let Some(event) = self.owner.poll(&mut self.controller, now)? {

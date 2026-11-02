@@ -132,6 +132,8 @@ pub(super) struct State {
     /// `Some(attempt)` while the stream is being re-established; the last frame
     /// stays on screen, read-only, with the attempt count and a Retry button.
     pub reconnect_attempt: Option<u32>,
+    /// Panes whose source the daemon closed; their headers say so (#701, #702).
+    pub unavailable_panes: Vec<String>,
     pub native_frame_scope: Option<super::browser_native_preview::Route>,
     pub native_retained_preview: Option<super::browser_native_preview::Route>,
     pub history_offset: u32,
@@ -548,6 +550,7 @@ impl Reader {
             input_ready: p.input_ready,
             retained_preview,
             reconnect_attempt: None,
+            unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
             native_retained_preview: p.native_retained_preview,
             history_offset: p.history_offset,

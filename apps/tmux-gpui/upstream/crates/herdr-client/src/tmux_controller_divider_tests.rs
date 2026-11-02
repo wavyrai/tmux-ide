@@ -79,6 +79,7 @@ fn update() -> Update {
         graphics_placements: Default::default(),
         cell_pixels: false,
         precise_cell_pixels: false,
+        unavailable: Default::default(),
     }
 }
 #[test]

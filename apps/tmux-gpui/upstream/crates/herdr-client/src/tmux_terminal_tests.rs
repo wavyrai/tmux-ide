@@ -334,3 +334,53 @@ fn only_a_source_closed_fault_for_a_known_pane_is_pane_local() {
         assert!(matches!(s.apply(fault(frame)), Err(Error::SourceClosed)));
     }
 }
+
+/// Review round 1, item 1 (PM decision: follow the design). A delivery for the
+/// wrong stream (nonce, generation or workspace), an overlapping flight, or an
+/// unreadable envelope fails the stream at once; none of them is NACKed.
+#[test]
+fn connection_level_faults_fail_the_stream_without_a_nack() {
+    let envelope = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let (envelope, _) = seed_events("pane.a", false, 1);
+        let Event::Envelope { envelope, .. } = envelope else {
+            unreachable!()
+        };
+        let mut raw: serde_json::Value = serde_json::from_str(envelope.get()).unwrap();
+        edit(&mut raw);
+        Event::Envelope {
+            pane: "pane.a".into(),
+            envelope: to_raw_value(&raw).unwrap(),
+        }
+    };
+    for (field, value) in [
+        (
+            "deliveryNonce",
+            json!("00000000-0000-4000-8000-000000000000"),
+        ),
+        ("generation", json!("another-generation")),
+        ("workspaceName", json!("another-workspace")),
+    ] {
+        let mut s = two_panes();
+        let result = s.apply(envelope(&|raw| raw[field] = value.clone()));
+        assert!(
+            matches!(result, Err(Error::Delivery(tmux_receiver::Error::Identity))),
+            "{field}"
+        );
+    }
+
+    let mut s = two_panes();
+    s.apply(envelope(&|_| {})).unwrap();
+    assert!(matches!(
+        s.apply(envelope(&|_| {})),
+        Err(Error::Delivery(tmux_receiver::Error::Overlap))
+    ));
+
+    let mut s = two_panes();
+    assert!(matches!(
+        s.apply(Event::Envelope {
+            pane: "pane.a".into(),
+            envelope: to_raw_value(&json!({"type": "terminal.delivery"})).unwrap(),
+        }),
+        Err(Error::Delivery(tmux_receiver::Error::Envelope(_)))
+    ));
+}
