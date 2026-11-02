@@ -94,7 +94,7 @@ fn until(
                 return state;
             }
             last = Some(state);
-        } else if last.as_ref().is_some_and(|state| done(state)) {
+        } else if last.as_ref().is_some_and(&done) {
             return last.take().unwrap();
         } else {
             std::thread::sleep(Duration::from_millis(5));
