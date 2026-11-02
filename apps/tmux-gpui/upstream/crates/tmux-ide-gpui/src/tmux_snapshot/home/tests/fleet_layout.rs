@@ -27,7 +27,7 @@ fn fleet_hierarchy_keeps_long_labels_and_statuses_separate(cx: &mut TestAppConte
             ),
             (
                 "fleet-server-label-0-0",
-                "fleet-server-status-0-0",
+                "fleet-use-server-0-0",
                 "fleet-server-0-0",
             ),
             (

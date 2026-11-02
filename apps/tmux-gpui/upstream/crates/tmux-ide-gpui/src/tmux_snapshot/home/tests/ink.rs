@@ -128,6 +128,8 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         );
         // An attached row, for its marker's ink.
         view.browser_state.fleet.as_mut().unwrap().groups[0].sessions[0].active = true;
+        // A default server among several, for its marker's ink.
+        view.browser_state.selected_server = Some(server_on(&view, 0, 0));
         view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":4,"phase":"live","rows":[{"key":"s\u{0}a","sessionId":"s","paneId":"p","name":"Agent","sessionLabel":"Main","status":"WORKING","attention":false,"available":true}],"observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
         view
     });
@@ -175,9 +177,10 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "home-browse-key",
             "home-nav-count-0",
             "home-nav-machines",
-            "fleet-columns-0",
+            "fleet-columns",
             "fleet-session-attached-0-0",
             "fleet-session-enter-0-0",
+            "fleet-server-default-0-0",
             "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
             "control-home-new-local-session",
@@ -195,4 +198,21 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         }
         assert!(failures.is_empty(), "{failures:#?}");
     });
+}
+
+/// The fleet's server `server` on machine `group`, as the default.
+pub(super) fn server_on(
+    view: &SnapshotView,
+    group: usize,
+    server: usize,
+) -> browser::fleet::SelectedServer {
+    let group = &view.browser_state.fleet.as_ref().unwrap().groups[group];
+    let server = &group.servers[server];
+    browser::fleet::SelectedServer {
+        machine_id: group.id.clone(),
+        machine_label: group.label.clone(),
+        server_id: server.id.clone(),
+        generation: server.generation.clone().unwrap(),
+        label: server.label.clone(),
+    }
 }

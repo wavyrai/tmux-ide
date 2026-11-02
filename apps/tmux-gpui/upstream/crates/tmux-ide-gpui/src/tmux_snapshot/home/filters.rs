@@ -255,27 +255,50 @@ impl SnapshotView {
         if table_focused && !matches!(key, "[" | "]") {
             match key {
                 "left" | "escape" => controls.fleet_nav.clone().focus(window, cx),
-                "enter" => {
+                "enter" | "f" | "d" => {
                     if event.is_held {
                         return true;
                     }
                     let cursor =
                         fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "");
-                    let token = cursor.as_ref().and_then(|(group, session)| {
-                        fleet?
-                            .groups
+                    let row = cursor.as_ref().and_then(|(group, session)| {
+                        let group = fleet?.groups.iter().find(|g| &g.id == group)?;
+                        Some((group, group.sessions.iter().find(|s| &s.id == session)?))
+                    });
+                    let request = self.browser_request;
+                    // Enter opens the row's session, F toggles its favourite and
+                    // D sends new sessions to its server: the row's buttons.
+                    let act = row.and_then(|(group, session)| match key {
+                        "enter" => session.selection.clone().map(RowAct::Open),
+                        "f" => Some(RowAct::Favourite {
+                            action: session.favorite_action.clone()?,
+                            revision: fleet?.preferences.as_ref()?.revision,
+                            favourite: !session.favorite,
+                        }),
+                        _ => group
+                            .servers
                             .iter()
-                            .find(|g| &g.id == group)?
-                            .sessions
-                            .iter()
-                            .find(|s| &s.id == session)?
+                            .find(|s| Some(&s.id) == session.server_id.as_ref())?
                             .selection
                             .clone()
+                            .map(RowAct::UseServer),
                     });
                     controls.table_cursor = cursor;
-                    if let Some(token) = token {
-                        let request = self.browser_request;
-                        self.open_fleet_session(request, &token, window, cx);
+                    match act {
+                        Some(RowAct::Open(token)) => {
+                            self.open_fleet_session(request, &token, window, cx)
+                        }
+                        Some(RowAct::Favourite {
+                            action,
+                            revision,
+                            favourite,
+                        }) => {
+                            self.change_fleet_preference(request, revision, &action, favourite, cx)
+                        }
+                        Some(RowAct::UseServer(token)) => {
+                            self.open_fleet_server(request, &token, window, cx)
+                        }
+                        None => {}
                     }
                 }
                 _ => {
@@ -368,6 +391,17 @@ impl SnapshotView {
             )
             .into_any_element()
     }
+}
+
+/// What a table key does to the cursor's row: the row's own controls.
+enum RowAct {
+    Open(String),
+    Favourite {
+        action: String,
+        revision: u64,
+        favourite: bool,
+    },
+    UseServer(String),
 }
 
 const HINTS: [(&str, &str); 7] = [

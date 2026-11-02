@@ -337,7 +337,10 @@ impl SnapshotView {
         .flex_col()
         .items_start()
         .gap_2();
-        if let Some(server) = &self.browser_state.selected_server {
+        // With a fleet, Home's table marks the default server itself.
+        if let Some(server) = &self.browser_state.selected_server
+            && self.browser_state.fleet.is_none()
+        {
             body = body.child(
                 div()
                     .min_w_0()

@@ -5,6 +5,8 @@ use super::*;
 use crate::tmux_snapshot::home::preferences::Status;
 use fleet_nav::View;
 
+const FAVORITE: &str = "68400000-0000-4000-8000-000000000001";
+
 fn fleet_fixture() -> browser::fleet::Fleet {
     serde_json::from_slice(include_bytes!(
         "../../../../../../../fixtures/home-fleet.json"
@@ -97,25 +99,35 @@ fn list_selection_follows_pointer_and_keys_and_survives_a_vanished_machine(
 }
 
 #[gpui::test]
-fn the_table_takes_the_keyboard_from_the_list_and_enter_opens_the_cursor_row(
-    cx: &mut TestAppContext,
-) {
+fn the_table_takes_the_keyboard_and_its_keys_act_on_the_cursor_row(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
-        view.browser_state.fleet = Some(fleet_fixture());
+        let mut fleet = fleet_fixture();
+        fleet.preferences = Some(
+            serde_json::from_value(serde_json::json!({"revision":4,"phase":"ready","error":null}))
+                .unwrap(),
+        );
+        fleet.groups[0].sessions[1].favorite_action = Some(FAVORITE.into());
+        view.browser_state.fleet = Some(fleet);
         view.frame = None;
         view.browser_state.frame = None;
         view
     });
     cx.simulate_resize(size(px(1400.), px(1400.)));
     receiver.try_iter().for_each(drop);
-    let (ids, second) = {
+    let (ids, second, server) = {
         let fleet = fleet_fixture();
         let local = &fleet.groups[0];
+        let server = local
+            .servers
+            .iter()
+            .find(|s| Some(&s.id) == local.sessions[1].server_id.as_ref())
+            .unwrap();
         (
             [local.sessions[0].id.clone(), local.sessions[1].id.clone()],
             local.sessions[1].selection.clone().unwrap(),
+            server.selection.clone().unwrap(),
         )
     };
     let cursor = |cx: &mut VisualTestContext| {
@@ -143,7 +155,33 @@ fn the_table_takes_the_keyboard_from_the_list_and_enter_opens_the_cursor_row(
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
     assert!(hint(cx, 1) && !hint(cx, 0));
     assert!(receiver.try_recv().is_err());
-    // Enter opens the cursor's session by its current token.
+    // F stars the cursor's session; D sends new sessions to its server.
+    cx.simulate_keystrokes("f");
+    assert_eq!(
+        serde_json::to_value(receiver.try_recv().unwrap()).unwrap(),
+        serde_json::json!({"type":"fleet-preference","request":7,"revision":4,
+            "action":FAVORITE,"enabled":true})
+    );
+    cx.simulate_keystrokes("d");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::FleetServer { selection, .. } if selection == server
+    ));
+    assert!(receiver.try_recv().is_err());
+    // Selecting a server blurs the window and fences the request; once the
+    // publication catches up and the table has the keyboard again, Enter
+    // opens the cursor's session by its current token.
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.request = v.browser_request;
+            v.home_filter
+                .as_ref()
+                .unwrap()
+                .fleet_table
+                .clone()
+                .focus(window, cx);
+        })
+    });
     cx.simulate_keystrokes("enter");
     assert!(matches!(
         receiver.try_recv().unwrap(),
@@ -178,6 +216,86 @@ fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("down right down");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
     assert!(receiver.try_recv().is_err());
+}
+
+#[gpui::test]
+fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.fleet = Some(fleet_fixture());
+        view.frame = None;
+        view.browser_state.frame = None;
+        view
+    });
+    cx.simulate_resize(size(px(1400.), px(1400.)));
+    receiver.try_iter().for_each(drop);
+    let painted = |cx: &mut VisualTestContext, key: &'static str| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(key)
+    };
+    let update = |cx: &mut VisualTestContext, f: &dyn Fn(&mut SnapshotView)| {
+        cx.update(|_, cx| {
+            view.update(cx, |v, cx| {
+                f(v);
+                cx.notify();
+            })
+        })
+    };
+
+    // Two servers: a row each, each with its own "use for new sessions".
+    assert!(painted(cx, "fleet-server-0-0").is_some());
+    assert!(painted(cx, "fleet-server-0-1").is_some());
+    assert!(painted(cx, "fleet-use-server-0-1").is_some());
+    // The default among several is marked, and loses its button.
+    update(cx, &|v| {
+        v.browser_state.selected_server = Some(ink::server_on(v, 0, 0))
+    });
+    assert!(painted(cx, "fleet-server-default-0-0").is_some());
+    assert!(painted(cx, "fleet-use-server-0-0").is_none());
+    assert!(painted(cx, "fleet-use-server-0-1").is_some());
+    // Column labels once over the table, not per machine.
+    assert!(painted(cx, "fleet-columns").is_some());
+
+    // One server: no server row; its control sits in the machine header.
+    update(cx, &|v| {
+        v.browser_state.fleet.as_mut().unwrap().groups[0]
+            .servers
+            .truncate(1);
+        v.browser_state.selected_server = None;
+    });
+    assert!(painted(cx, "fleet-server-0-0").is_none());
+    assert!(painted(cx, "fleet-server-0-1").is_none());
+    let header = painted(cx, "fleet-machine-header-0").unwrap();
+    let use_server = painted(cx, "fleet-use-server-0-0").unwrap();
+    assert!(header.contains(&use_server.center()));
+    // Its sessions still show, and the button picks the lone server.
+    assert!(painted(cx, "fleet-session-0-0").is_some());
+    let token = view.read_with(cx, |v, _| {
+        v.browser_state.fleet.as_ref().unwrap().groups[0].servers[0]
+            .selection
+            .clone()
+            .unwrap()
+    });
+    cx.simulate_click(use_server.center(), Modifiers::default());
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::FleetServer { selection, .. } if selection == token
+    ));
+    assert!(receiver.try_recv().is_err());
+
+    // The only place new sessions can go needs no marker.
+    update(cx, &|v| {
+        v.browser_state.fleet.as_mut().unwrap().groups.truncate(1);
+        v.browser_state.selected_server = Some(ink::server_on(v, 0, 0));
+    });
+    assert!(painted(cx, "fleet-server-default-0-0").is_none());
+    assert!(painted(cx, "fleet-use-server-0-0").is_none());
+    // A machine's own view has its header row, not the column labels.
+    update(cx, &|v| {
+        v.home_filter.as_mut().unwrap().fleet_view = View::Machine("qa-local".into())
+    });
+    assert!(painted(cx, "fleet-columns").is_none());
 }
 
 fn agents(phase: &str, rows: usize) -> browser::home_agents::Roster {

@@ -349,6 +349,14 @@ fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
              "sessions": spark}
         ]
     }))?);
+    // New sessions go to Local's server, so spark offers "use for new sessions".
+    state.selected_server = Some(browser::fleet::SelectedServer {
+        machine_id: "local".into(),
+        machine_label: "Local".into(),
+        server_id: "default".into(),
+        generation: token(2),
+        label: "default".into(),
+    });
     state.home_agents = Some(serde_json::from_value(serde_json::json!({
         "revision": 1, "phase": "live", "observedSessions": 2, "totalSessions": 12,
         "truncatedSessions": 0, "truncatedRows": 0, "note": null,

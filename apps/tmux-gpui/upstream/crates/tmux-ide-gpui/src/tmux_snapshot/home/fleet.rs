@@ -472,6 +472,9 @@ impl SnapshotView {
                     })
                     .child(format!("· {}", sessions(group.sessions.len()))),
             );
+        if let [server] = group.servers.as_slice() {
+            header = header.children(self.fleet_server_default(index, 0, group, server, cx));
+        }
         if let Some(token) = group.retry.clone() {
             header = header.child(
                 div().id(("fleet-retry", index)).child(
@@ -531,15 +534,6 @@ impl SnapshotView {
             && self.browser_commands.is_some()
             && self.presence.ready()
             && self.browser_state.request == request;
-        let selected = self
-            .browser_state
-            .selected_server
-            .as_ref()
-            .is_some_and(|selected| {
-                selected.machine_id == group.id
-                    && selected.server_id == server.id
-                    && server.generation.as_ref() == Some(&selected.generation)
-            });
         bezel
             .card_row(false)
             .id(("fleet-server", index * 32 + server_index))
@@ -565,23 +559,7 @@ impl SnapshotView {
                         server.label
                     ))),
             )
-            .child(
-                div()
-                    .debug_selector(move || format!("fleet-server-status-{index}-{server_index}"))
-                    .flex_none()
-                    .text_style(TextStyle::Callout)
-                    .text_color(if selected { bezel.text } else { muted })
-                    .children(design::ink_probe(move || {
-                        format!("fleet-server-status-{index}-{server_index}")
-                    }))
-                    .child(if selected {
-                        "New sessions go here"
-                    } else if enabled {
-                        "Use for new sessions"
-                    } else {
-                        "Unavailable"
-                    }),
-            )
+            .children(self.fleet_server_default(index, server_index, group, server, cx))
             .on_click(cx.listener(move |view, _, window, cx| {
                 cx.stop_propagation();
                 if let Some(token) = &token {
@@ -591,13 +569,16 @@ impl SnapshotView {
             .into_any_element()
     }
 
-    /// The table's column labels, under a machine's header.
-    fn fleet_column_header(&self, index: usize) -> Div {
+    /// The table's column labels, once above its cards, in line with the
+    /// rows inside them (the 1px is the card's border).
+    fn fleet_column_header(&self) -> Div {
         let bezel = self.home_palette();
         bezel
-            .card_row(false)
-            .debug_selector(move || format!("fleet-columns-{index}"))
-            .py(px(4.))
+            .card_row(true)
+            .debug_selector(|| "fleet-columns".into())
+            .mx(px(1.))
+            .mb(px(-SPACE))
+            .py(px(0.))
             // In line with the session names, past the star and the glyph.
             .pl(px(ROW_INDENT
                 + bezel_theme::Theme::BUTTON_HEIGHT
@@ -606,7 +587,7 @@ impl SnapshotView {
             .min_w_0()
             .text_style(TextStyle::Caption)
             .text_color(bezel.text_muted)
-            .children(design::ink_probe(move || format!("fleet-columns-{index}")))
+            .children(design::ink_probe(|| "fleet-columns".into()))
             .child(div().flex_1().min_w_0().child("Session"))
             .child(
                 div()
@@ -617,6 +598,86 @@ impl SnapshotView {
                     .child("Panes"),
             )
             .child(div().flex_none().w(px(HINT_WIDTH)))
+    }
+
+    /// Whether new sessions go to `server`.
+    fn fleet_server_is_default(
+        &self,
+        group: &browser::fleet::Group,
+        server: &browser::fleet::Server,
+    ) -> bool {
+        self.browser_state
+            .selected_server
+            .as_ref()
+            .is_some_and(|selected| {
+                selected.machine_id == group.id
+                    && selected.server_id == server.id
+                    && server.generation.as_ref() == Some(&selected.generation)
+            })
+    }
+
+    /// Where a server's "Use for new sessions" lives: a small Bezel button
+    /// while it is not the default, a muted "Default" once it is, but only
+    /// where there is more than one place new sessions could go.
+    fn fleet_server_default(
+        &self,
+        index: usize,
+        server_index: usize,
+        group: &browser::fleet::Group,
+        server: &browser::fleet::Server,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let bezel = self.home_palette();
+        let request = self.browser_request;
+        let id = index * 32 + server_index;
+        if self.fleet_server_is_default(group, server) {
+            let several = group.servers.len() > 1
+                || self
+                    .browser_state
+                    .fleet
+                    .as_ref()
+                    .is_some_and(|f| f.groups.len() > 1);
+            return several.then(|| {
+                div()
+                    .debug_selector(move || format!("fleet-server-default-{index}-{server_index}"))
+                    .flex_none()
+                    .text_style(TextStyle::Callout)
+                    .text_color(bezel.text_muted)
+                    .children(design::ink_probe(move || {
+                        format!("fleet-server-default-{index}-{server_index}")
+                    }))
+                    .child("Default")
+                    .into_any_element()
+            });
+        }
+        let token = server.selection.clone()?;
+        let enabled = self.browser_commands.is_some()
+            && self.presence.ready()
+            && self.browser_state.request == request;
+        let label: SharedString = format!("Use {} for new sessions", server.label).into();
+        let tip = label.clone();
+        let button = bezel_ui::widgets::Button::new(("fleet-use-server", id), label)
+            .icon(bezel_ui::icons::Icon::asset("icons/check.svg"))
+            .label_hidden()
+            .enabled(enabled)
+            .text_color(bezel.text_muted)
+            .on_press(cx.listener(move |view, _, window, cx| {
+                cx.stop_propagation();
+                view.open_fleet_server(request, &token, window, cx);
+            }));
+        Some(
+            div()
+                .id(("fleet-use-server-tip", id))
+                .debug_selector(move || format!("fleet-use-server-{index}-{server_index}"))
+                .flex_shrink_0()
+                .child(button)
+                .when(enabled, |tip_el| {
+                    tip_el.tooltip(move |window, cx| {
+                        bezel_ui::tooltip::Tooltip::text(tip.clone(), window, cx)
+                    })
+                })
+                .into_any_element(),
+        )
     }
 
     fn fleet_note(&self, text: impl Into<SharedString>) -> Div {
@@ -680,6 +741,13 @@ impl SnapshotView {
                 }
             });
         }
+        // One set of column labels over the whole table; a machine's own
+        // view has its header row instead.
+        if !matches!(view, View::Machine(_))
+            && !fleet_nav::table_rows(&view, Some(fleet)).is_empty()
+        {
+            body = body.child(self.fleet_column_header());
+        }
         let mut shown = 0;
         for (index, group) in fleet.groups.iter().enumerate() {
             if !view.shows_group(group) {
@@ -691,8 +759,8 @@ impl SnapshotView {
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
                 .child(self.fleet_machine_header(index, group, view == View::All, cx));
-            // Column labels go over a machine's first session row.
-            let mut columns = false;
+            // A lone server is the machine's header; two or more get rows.
+            let server_rows = group.servers.len() > 1;
             if let Some(message) = group.connection_hint() {
                 card = card.child(
                     self.fleet_note(message)
@@ -724,13 +792,12 @@ impl SnapshotView {
                 if rows.is_empty() && hide {
                     continue;
                 }
-                card = card.child(self.fleet_server_row(index, server_index, group, server, cx));
+                if server_rows {
+                    card =
+                        card.child(self.fleet_server_row(index, server_index, group, server, cx));
+                }
                 if rows.is_empty() {
                     card = card.child(self.fleet_note("No sessions"));
-                }
-                if !rows.is_empty() && !columns {
-                    columns = true;
-                    card = card.child(self.fleet_column_header(index));
                 }
                 for (row, session) in rows {
                     card = card.child(self.fleet_session_row(
@@ -748,10 +815,6 @@ impl SnapshotView {
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
             }) {
-                if !columns {
-                    columns = true;
-                    card = card.child(self.fleet_column_header(index));
-                }
                 card = card.child(self.fleet_session_row(
                     index,
                     row,
