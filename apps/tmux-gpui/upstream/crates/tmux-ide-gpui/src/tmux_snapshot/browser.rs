@@ -246,7 +246,10 @@ struct Publication {
 #[path = "browser_commands.rs"]
 mod commands;
 pub(super) use commands::Command;
-pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
+#[path = "browser_mailbox.rs"]
+mod mailbox;
+pub(super) use mailbox::{MailboxSlot, tick_or_publication};
+pub(super) type Mailbox = Arc<MailboxSlot>;
 pub(super) struct Bridge {
     pub mailbox: Mailbox,
     pub commands: mpsc::SyncSender<Command>,

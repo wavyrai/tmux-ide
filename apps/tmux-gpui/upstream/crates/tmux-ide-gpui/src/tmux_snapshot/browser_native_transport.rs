@@ -287,7 +287,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     rx: mpsc::Receiver<Incoming>,
     output: impl FnOnce() -> F + Send + 'static,
 ) -> Bridge {
-    let mailbox = Arc::new(Mutex::new(None));
+    let mailbox = Arc::new(MailboxSlot::default());
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
     std::thread::spawn(move || {
