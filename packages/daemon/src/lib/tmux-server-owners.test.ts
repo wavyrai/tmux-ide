@@ -261,4 +261,27 @@ describe("independent tmux server owners", () => {
     expect((await after)[0]).toMatchObject({ state: "online" });
     await f.owners.dispose();
   });
+
+  // Review N1: a refresh stays ordered after a mutation queued before it.
+  it("does not share a queued refresh with a caller that queued a mutation after it", async () => {
+    const f = fixture();
+    f.observations.set("a", observation("a"));
+    f.observations.set("b", observation("b"));
+    await f.register("a");
+    const gate = deferred<void>();
+    const original = f.probe.getMockImplementation()!;
+    f.probe.mockImplementation(async (selector) => {
+      await gate.promise;
+      return original(selector);
+    });
+    const running = f.owners.refresh();
+    await Promise.resolve();
+    const queued = f.owners.refresh();
+    const registering = f.register("b");
+    const after = f.owners.refresh();
+    gate.resolve();
+    await Promise.all([running, queued, registering]);
+    expect((await after).map((descriptor) => descriptor.label)).toEqual(["a", "b"]);
+    await f.owners.dispose();
+  });
 });

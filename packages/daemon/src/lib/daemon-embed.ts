@@ -120,9 +120,9 @@ import {
 import {
   discoverLiveSessionSummaries,
   readAdoptedFleet,
-  readAdoptedFleetAsync,
   type FleetSessionFacts,
 } from "../command-center/discovery.ts";
+import { readCatalogFleet } from "./catalog-fleet-read.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { WorkspaceOpenHandoffCoordinator } from "./workspace-open-handoff.ts";
@@ -2121,14 +2121,16 @@ async function startEmbeddedDaemonGeneration(
           // mutation the read must not block the event loop: every concurrent
           // catalog request queued behind its spawnSync (#709). Inside one,
           // keep the fenced synchronous runner the mutation relies on.
-          const fleet = sessionMutationFence.active
-            ? readAdoptedFleet(workspaceRegistry, nativeGenerationTmuxRunner, endpoint, epoch)
-            : await readAdoptedFleetAsync(
-                workspaceRegistry,
-                (args) => fleetFactsTmuxRunner(args),
-                endpoint,
-                epoch,
-              );
+          const fleet = await readCatalogFleet(
+            workspaceRegistry,
+            {
+              fence: sessionMutationFence,
+              fencedSync: nativeGenerationTmuxRunner,
+              generationFencedAsync: (args) => fleetFactsTmuxRunner(args),
+            },
+            endpoint,
+            epoch,
+          );
           if (!fleet) return null;
           const names = await readTeamMemberships(
             fleet.flatMap((session) =>
