@@ -3057,6 +3057,26 @@ describe("terminal delivery fault log", () => {
     await hub.close();
   });
 
+  it("records the capture-unavailable fault with its cause", async () => {
+    _resetLogStateForTests();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => ({
+      subscribeSource: async () => {
+        throw new StockCaptureTabUnavailableError();
+      },
+    }));
+    const connection = await hub.open("client", "bad", offer, () => undefined);
+    expect(faultLines().map((entry) => entry.data)).toEqual([
+      {
+        reason: "source-closed",
+        cause: "capture-unavailable",
+        pane: "bad",
+        workspace: "workspace",
+      },
+    ]);
+    await connection.close();
+    await hub.close();
+  });
+
   it("records every fault the hub raises for a client", async () => {
     _resetLogStateForTests();
     const owner = new FakeOwner();
