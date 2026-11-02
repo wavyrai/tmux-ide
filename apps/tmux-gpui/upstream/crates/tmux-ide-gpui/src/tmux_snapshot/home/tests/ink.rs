@@ -126,6 +126,10 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             ))
             .unwrap(),
         );
+        // An attached row, for its marker's ink.
+        view.browser_state.fleet.as_mut().unwrap().groups[0].sessions[0].active = true;
+        // A default server among several, for its marker's ink.
+        view.browser_state.selected_server = Some(server_on(&view, 0, 0));
         view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":4,"phase":"live","rows":[{"key":"s\u{0}a","sessionId":"s","paneId":"p","name":"Agent","sessionLabel":"Main","status":"WORKING","attention":false,"available":true}],"observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
         view
     });
@@ -143,6 +147,18 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
     }
     cx.update(|_, cx| cx.set_global(InkProbes::default()));
     cx.simulate_resize(size(px(1400.), px(1800.)));
+    // The table's keyboard row, for the ↵ hint's ink on the selected plate.
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.prepare_home_filter(cx);
+            v.home_filter
+                .as_ref()
+                .unwrap()
+                .fleet_table
+                .clone()
+                .focus(window, cx);
+        })
+    });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|_, cx| {
         let probes = &cx.global::<InkProbes>().0;
@@ -155,9 +171,16 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "home-agent-action-0",
             "home-filter-hints",
             "fleet-machine-guidance-3",
-            // The shared quiet buttons, painted from Home's palette.
-            "control-home-theme",
-            "control-tmux-home-refresh",
+            // The shared quiet buttons, painted from Home's palette. Theme and
+            // Refresh are glyphs only, so their icons carry the probe.
+            "home-browse",
+            "home-browse-key",
+            "home-nav-count-0",
+            "home-nav-machines",
+            "fleet-columns",
+            "fleet-session-attached-0-0",
+            "fleet-session-enter-0-0",
+            "fleet-server-default-0-0",
             "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
             "control-home-new-local-session",
@@ -175,4 +198,21 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         }
         assert!(failures.is_empty(), "{failures:#?}");
     });
+}
+
+/// The fleet's server `server` on machine `group`, as the default.
+pub(super) fn server_on(
+    view: &SnapshotView,
+    group: usize,
+    server: usize,
+) -> browser::fleet::SelectedServer {
+    let group = &view.browser_state.fleet.as_ref().unwrap().groups[group];
+    let server = &group.servers[server];
+    browser::fleet::SelectedServer {
+        machine_id: group.id.clone(),
+        machine_label: group.label.clone(),
+        server_id: server.id.clone(),
+        generation: server.generation.clone().unwrap(),
+        label: server.label.clone(),
+    }
 }
