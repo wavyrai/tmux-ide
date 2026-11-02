@@ -559,6 +559,10 @@ impl Render for SnapshotView {
         if self.browsing {
             return self.browser_render(window, cx);
         }
+        // The preview windows have no browsing shell to install Bezel's theme,
+        // and the terminal reads it before drawing anything (#713).
+        let theme = self.theme();
+        design::prepare(&theme, false, cx);
         self.terminal_render(window, cx)
     }
 }
@@ -968,3 +972,7 @@ mod fit_test_support;
 
 #[cfg(feature = "integration-test")]
 pub(crate) mod journey_probe;
+
+#[cfg(test)]
+#[path = "tmux_snapshot/preview_window_tests.rs"]
+mod preview_window_tests;
