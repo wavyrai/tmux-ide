@@ -33,13 +33,17 @@ fn home_loads_with_few_requests_and_stays_quiet_when_idle() {
         }
     };
     let home_ms = started.elapsed().as_millis();
+    eprintln!("HOME_PROGRESS home at {home_ms} ms");
     let at_home = herdr_client::tmux_daemon::requests_sent();
     let before_home = herdr_client::tmux_daemon::requests_since(start_requests);
     // Let startup settle, then watch an idle Home.
     std::thread::sleep(Duration::from_secs(3));
     let settled = herdr_client::tmux_daemon::requests_sent();
+    eprintln!("HOME_PROGRESS settled");
     while bridge.mailbox.lock().unwrap().take().is_some() {}
+    eprintln!("HOME_PROGRESS idle starts");
     let idle_started = Instant::now();
+    let mut reported = 0;
     let mut publications = 0u64;
     while idle_started.elapsed() < Duration::from_secs(idle) {
         let state = bridge.mailbox.lock().unwrap().take();
@@ -48,6 +52,14 @@ fn home_loads_with_few_requests_and_stays_quiet_when_idle() {
             publications += 1;
         }
         std::thread::sleep(Duration::from_millis(5));
+        let secs = idle_started.elapsed().as_secs();
+        if secs >= reported + 10 {
+            reported = secs;
+            eprintln!(
+                "HOME_PROGRESS idle {secs} s, requests {}",
+                herdr_client::tmux_daemon::requests_sent() - settled
+            );
+        }
     }
     let idle_requests = herdr_client::tmux_daemon::requests_sent() - settled;
     eprintln!(

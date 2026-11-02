@@ -6,6 +6,7 @@ import process from "node:process";
 import console from "node:console";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { appendFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
@@ -44,17 +45,12 @@ try {
     },
   );
   let output = "";
-  const transcript = [];
   for (const stream of [child.stdout, child.stderr])
     stream.on("data", (chunk) => {
       output = (output + chunk).slice(-262144);
-      if (process.env.SMOKE_TRANSCRIPT) transcript.push(chunk);
+      if (process.env.SMOKE_TRANSCRIPT) appendFileSync(process.env.SMOKE_TRANSCRIPT, chunk);
     });
   const [code, signal] = await once(child, "close", { signal: AbortSignal.timeout(180000) });
-  if (process.env.SMOKE_TRANSCRIPT)
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(process.env.SMOKE_TRANSCRIPT, transcript.join("")),
-    );
   const line = output.split("\n").find((l) => l.startsWith("HOME_LIVE "));
   console.log(line ? JSON.stringify(JSON.parse(line.slice(10)), null, 1) : output.slice(-4000));
   assert.equal(signal, null);
