@@ -35,6 +35,8 @@ struct Watch {
     lost_at: Option<u64>,
     reconnect_requests: Vec<u64>,
     reconnect_paths: Vec<Vec<String>>,
+    /// Lines retyped after the app reported them lost with a dropped stream.
+    retyped: Vec<String>,
 }
 impl Watch {
     /// Every publication of the session's request must carry a frame.
@@ -70,19 +72,38 @@ fn until(
     done: impl Fn(&State) -> bool,
 ) -> State {
     let started = Instant::now();
+    // An idle app publishes nothing (#703), so a condition that becomes true
+    // outside the app (a harness signal) is re-checked against the last state.
+    let mut last: Option<State> = None;
     loop {
-        assert!(started.elapsed() < limit, "timed out: {:?}", watch.seen);
+        assert!(
+            started.elapsed() < limit,
+            "timed out: {:?}; last: {:?}",
+            watch.seen,
+            last.as_ref().map(|s| (
+                s.request,
+                s.input_ready,
+                s.frame.is_some(),
+                s.retained_preview,
+                s.reconnect_attempt,
+                s.status.clone(),
+                s.input_targets.len(),
+            ))
+        );
         if let Some(state) = next(bridge) {
             watch.observe(&state, request, started);
             if done(&state) {
                 return state;
             }
+            last = Some(state);
+        } else if last.as_ref().is_some_and(&done) {
+            return last.take().unwrap();
         } else {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
 }
-fn type_line(bridge: &Bridge, watch: &mut Watch, state: &State, marker: &str) -> State {
+fn send_line(bridge: &Bridge, state: &State, marker: &str) {
     let pane = state.selected_pane.clone().unwrap();
     let target = state
         .input_targets
@@ -105,7 +126,28 @@ fn type_line(bridge: &Bridge, watch: &mut Watch, state: &State, marker: &str) ->
             })
             .unwrap();
     }
+}
+/// Type a line and wait for its output. Keys typed in the instant before a drop
+/// are lost with the stream and never replayed; then the app must have said so
+/// (the lost-keys notice), and the line is retyped once after the reconnect,
+/// as the notice asks. Silent loss fails the test.
+fn type_line(bridge: &Bridge, watch: &mut Watch, state: &State, marker: &str) -> State {
+    send_line(bridge, state, marker);
     let needle = format!("typed-{marker}");
+    let told = std::cell::Cell::new(false);
+    let dropped = std::cell::Cell::new(false);
+    let settled = until(bridge, watch, state.request, Duration::from_secs(30), |s| {
+        told.set(told.get() || s.status.contains(hold::LOST_INPUT));
+        dropped.set(dropped.get() || s.reconnect_attempt.is_some());
+        (s.input_ready && contains(s, &needle))
+            || (dropped.get() && s.input_ready && s.reconnect_attempt.is_none())
+    });
+    if contains(&settled, &needle) {
+        return settled;
+    }
+    assert!(told.get(), "typed keys were lost without a notice");
+    watch.retyped.push(marker.to_owned());
+    send_line(bridge, &settled, marker);
     until(bridge, watch, state.request, Duration::from_secs(15), |s| {
         s.input_ready && contains(s, &needle)
     })
@@ -180,6 +222,7 @@ fn a_lost_stream_rebinds_keeping_the_frame_and_typing_works_after() {
             "maxAttempt": watch.max_attempt,
             "requestsPerReconnect": watch.reconnect_requests,
             "requestPaths": watch.reconnect_paths,
+            "retyped": watch.retyped,
             "trail": watch.seen,
         })
     );
