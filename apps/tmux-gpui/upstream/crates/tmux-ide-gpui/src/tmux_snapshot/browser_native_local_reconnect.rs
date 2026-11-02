@@ -823,4 +823,91 @@ mod tests {
         }
         assert!(actor.is_finished(), "the actor did not stop with its owner");
     }
+
+    /// Review round 1, item 1: a turn that fails inside a running actor becomes a
+    /// published recovery status, and the actor keeps running.
+    #[test]
+    fn a_failing_turn_is_survived_by_the_running_actor() {
+        let (mut local, _unused) = fixture();
+        let (events, receiver) = mpsc::sync_channel(64);
+        local.events = events.into();
+        let owner = local.sources.clone();
+        let (commands, input) = mpsc::sync_channel(32);
+        let actor = std::thread::spawn(move || local.run(input));
+        std::thread::sleep(Duration::from_millis(200));
+        while receiver.try_recv().is_ok() {}
+        // A stopped owner makes `switch_source` fail on `sources.replace` mid-turn.
+        owner.shutdown().unwrap();
+        commands
+            .send(Command::Machine {
+                request: 8,
+                ssh_target: None,
+            })
+            .unwrap();
+        actor.thread().unpark();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut recovered = false;
+        while !recovered && Instant::now() < deadline {
+            match receiver.recv_timeout(Duration::from_millis(50)) {
+                Ok(Incoming::Catalog(state)) => {
+                    recovered = matches!(
+                        state.status.as_str(),
+                        "Something went wrong. Refresh sessions to try again."
+                            | "Connection lost. Reconnecting…"
+                    );
+                }
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => actor.thread().unpark(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        assert!(recovered, "no recovery status was published");
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!actor.is_finished(), "the catalog actor exited");
+        drop(commands);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !actor.is_finished() && Instant::now() < deadline {
+            actor.thread().unpark();
+            while receiver.try_recv().is_ok() {}
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(actor.is_finished(), "the actor did not stop with its owner");
+    }
+
+    /// Review note N1: an idle actor parks with no timeout, so only the wake in
+    /// `watch::Commands::send` lets it see a command.
+    #[test]
+    fn a_command_wakes_a_parked_actor() {
+        let (mut local, _unused) = fixture();
+        local.active = None;
+        let (events, receiver) = mpsc::sync_channel(64);
+        local.events = events.into();
+        let (sender, input) = mpsc::sync_channel(32);
+        let actor = std::thread::spawn(move || local.run(input));
+        // Startup settles and the actor parks.
+        std::thread::sleep(Duration::from_millis(300));
+        while receiver.try_recv().is_ok() {}
+        let commands = watch::Commands::new(sender, actor.thread().clone());
+        commands
+            .send(Command::Presence {
+                active: true,
+                revision: 9,
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut woke = false;
+        while !woke && Instant::now() < deadline {
+            if let Ok(Incoming::Catalog(state)) = receiver.recv_timeout(Duration::from_millis(20)) {
+                woke = state.presence_revision == 9;
+            }
+        }
+        assert!(woke, "the parked actor never saw the command");
+        drop(commands);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !actor.is_finished() && Instant::now() < deadline {
+            actor.thread().unpark();
+            while receiver.try_recv().is_ok() {}
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(actor.is_finished(), "the actor did not stop with its owner");
+    }
 }
