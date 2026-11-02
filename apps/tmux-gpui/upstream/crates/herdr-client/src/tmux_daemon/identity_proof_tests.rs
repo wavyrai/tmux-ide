@@ -273,6 +273,12 @@ fn a_dead_owner_gets_no_credentials_even_with_a_fresh_proof() {
             daemon.fleet_preferences(),
             Err(Error::OwnerExited)
         ));
+        // Review round 2, item 1: mutations (open, create, split) reach the
+        // daemon only through this path, without `verify_current`.
+        assert!(matches!(
+            daemon.post_resource_with_options("api/v1/x", b"{}", &[], Duration::from_secs(2)),
+            Err(Error::OwnerExited)
+        ));
         assert!(matches!(
             daemon.watch_saved_machines(None, &MachineWatchCancellation::default()),
             Err(Error::OwnerExited)
@@ -294,5 +300,25 @@ fn owner_liveness_reads_kill_zero() {
         assert!(owner_alive(1));
         assert!(!owner_alive(0));
         assert!(!owner_alive(u32::MAX));
+    });
+}
+
+/// Review round 2, N1: the proof's age counts from when the probe started, so
+/// a slow `/identity` reply never stretches the 5 s window.
+#[test]
+fn a_proofs_age_counts_from_the_probe_start() {
+    cached(false, || {
+        let (port, worker) = peer(|| {
+            thread::sleep(Duration::from_millis(300));
+            response(&identity())
+        });
+        let sandbox = Sandbox::new();
+        LocalDaemon::discover(&sandbox.record(&value(port))).unwrap();
+        worker.join().unwrap();
+        let (_, at) = PROOF.lock().unwrap().proven.unwrap();
+        assert!(
+            at.elapsed() >= Duration::from_millis(300),
+            "the proof was dated after the probe"
+        );
     });
 }
