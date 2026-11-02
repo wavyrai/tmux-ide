@@ -11,6 +11,7 @@ import { isAbsolute, join } from "node:path";
 import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { stopFixtureChild } from "../fixture-child.mjs";
+const { AbortSignal } = globalThis;
 
 const [guiTestBinary] = process.argv.slice(2);
 assert(
