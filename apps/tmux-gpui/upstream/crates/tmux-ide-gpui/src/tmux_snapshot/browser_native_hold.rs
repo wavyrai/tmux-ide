@@ -15,57 +15,42 @@ struct Held {
     attempt: u32,
 }
 #[derive(Default)]
-pub(super) struct Hold(Option<Held>);
+pub(super) struct Hold {
+    held: Option<Held>,
+    /// The last live frame the UI was shown. A catalog publication can replace the
+    /// transport's state, frame included, in the same turn the stream fails.
+    last: Option<Held>,
+}
 impl Hold {
-    /// Keep the frame that was live when the stream dropped. Nothing is kept from
-    /// a frame that was already a preview, or from outside a workspace.
-    pub fn begin(&mut self, state: &State) {
-        self.0 = None;
-        let Some(DisplayFrame::Native(frame)) = &state.frame else {
-            return;
-        };
-        if state.retained_preview || state.surface != Surface::Workspace {
-            return;
+    /// Remember what the UI is shown, when it is a live workspace frame.
+    pub fn observe(&mut self, shown: &State) {
+        if let Some(live) = live(shown)
+            && self.last.as_ref().is_none_or(|last| {
+                !same_frame(&last.presentation, shown) || last.request != shown.request
+            })
+        {
+            self.last = Some(live);
         }
-        let frame = DisplayFrame::Native(Arc::new(NativeFrame {
-            rows: frame.rows.clone(),
-            width: frame.width,
-            height: frame.height,
-            cursor: None,
-        }));
-        self.0 = Some(Held {
-            attempt: 1,
-            request: state.request,
-            presentation: State {
-                surface: Surface::Workspace,
-                selected_session: state.selected_session.clone(),
-                selected_pane: state.selected_pane.clone(),
-                panes: state.panes.clone(),
-                regions: state.regions.clone(),
-                native_content_regions: state.native_content_regions.clone(),
-                graphics: state.graphics.clone(),
-                #[cfg(target_os = "macos")]
-                native_surfaces: state
-                    .native_surfaces
-                    .as_ref()
-                    .map(|(_, surfaces)| (frame.clone(), surfaces.clone())),
-                frame: Some(frame),
-                presence_revision: state.presence_revision,
-                retained_preview: true,
-                ..State::default()
-            },
+    }
+    /// Keep the frame that was live when the stream dropped, or the last one shown
+    /// for the same request. Nothing is kept from a preview or outside a workspace.
+    pub fn begin(&mut self, state: &State) {
+        self.held = live(state).or_else(|| {
+            self.last
+                .take()
+                .filter(|last| last.request == state.request)
         });
     }
     pub fn clear(&mut self) {
-        self.0 = None;
+        self.held = None;
     }
     pub fn active(&self) -> bool {
-        self.0.is_some()
+        self.held.is_some()
     }
     /// What the UI sees. The held frame stands in while the same request has no
     /// live frame; navigation, a give-up, or a live frame ends the hold.
     pub fn publication(&mut self, state: &State) -> State {
-        let Some(held) = &mut self.0 else {
+        let Some(held) = &mut self.held else {
             return state.clone();
         };
         if state.request != held.request || state.home_phase == HomePhase::Unavailable {
@@ -91,6 +76,52 @@ impl Hold {
         result.status = format!("Reconnecting… attempt {attempt}");
         result
     }
+}
+fn same_frame(a: &State, b: &State) -> bool {
+    match (&a.frame, &b.frame) {
+        (Some(DisplayFrame::Native(a)), Some(DisplayFrame::Native(b))) => {
+            a.rows.len() == b.rows.len()
+                && a.rows.iter().zip(&b.rows).all(|(a, b)| Arc::ptr_eq(a, b))
+        }
+        _ => false,
+    }
+}
+/// A read-only copy of a live workspace frame, or `None` for anything else.
+fn live(state: &State) -> Option<Held> {
+    let Some(DisplayFrame::Native(frame)) = &state.frame else {
+        return None;
+    };
+    if state.retained_preview || state.surface != Surface::Workspace {
+        return None;
+    }
+    let frame = DisplayFrame::Native(Arc::new(NativeFrame {
+        rows: frame.rows.clone(),
+        width: frame.width,
+        height: frame.height,
+        cursor: None,
+    }));
+    Some(Held {
+        attempt: 1,
+        request: state.request,
+        presentation: State {
+            surface: Surface::Workspace,
+            selected_session: state.selected_session.clone(),
+            selected_pane: state.selected_pane.clone(),
+            panes: state.panes.clone(),
+            regions: state.regions.clone(),
+            native_content_regions: state.native_content_regions.clone(),
+            graphics: state.graphics.clone(),
+            #[cfg(target_os = "macos")]
+            native_surfaces: state
+                .native_surfaces
+                .as_ref()
+                .map(|(_, surfaces)| (frame.clone(), surfaces.clone())),
+            frame: Some(frame),
+            presence_revision: state.presence_revision,
+            retained_preview: true,
+            ..State::default()
+        },
+    })
 }
 
 #[cfg(test)]

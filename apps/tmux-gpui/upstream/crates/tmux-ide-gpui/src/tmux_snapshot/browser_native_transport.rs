@@ -960,7 +960,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             let expired = transition.expire(now);
             if changed || expired {
                 let publication = transition.publication(&state, presence.0, now);
-                send_state(&incoming, &hold.publication(&publication));
+                let shown = hold.publication(&publication);
+                hold.observe(&shown);
+                send_state(&incoming, &shown);
             }
             if !changed && !admitted {
                 std::thread::sleep(Duration::from_millis(5));

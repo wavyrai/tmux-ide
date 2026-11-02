@@ -114,3 +114,31 @@ fn the_attempt_count_never_runs_backwards() {
     assert_eq!(shown.reconnect_attempt, Some(4));
     assert_eq!(shown.status, "Reconnecting… attempt 4");
 }
+
+/// A catalog publication can replace the transport's state, frame included, in the
+/// same turn the stream fails. The hold then uses the last frame the UI was shown.
+#[test]
+fn a_frame_wiped_by_a_catalog_publication_is_still_held() {
+    let mut hold = Hold::default();
+    hold.observe(&live(7));
+    let wiped = State {
+        frame: None,
+        ..live(7)
+    };
+    hold.begin(&wiped);
+    assert!(hold.active());
+    assert!(hold.publication(&reconnecting(7, 1)).frame.is_some());
+    // Never another request's frame.
+    let mut hold = Hold::default();
+    hold.observe(&live(6));
+    hold.begin(&wiped);
+    assert!(!hold.active());
+    // Never a frame the UI was shown as a held copy.
+    let mut hold = Hold::default();
+    hold.observe(&State {
+        retained_preview: true,
+        ..live(7)
+    });
+    hold.begin(&wiped);
+    assert!(!hold.active());
+}

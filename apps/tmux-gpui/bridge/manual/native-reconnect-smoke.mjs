@@ -77,6 +77,12 @@ try {
       }
       if (stopping === null && output.includes("RECONNECT_STOP_READY")) {
         stopping = (async () => {
+          // SMOKE_SKIP_STOP=1 runs the restart straight after the rebind.
+          if (process.env.SMOKE_SKIP_STOP === "1") {
+            steps.push("freeze skipped");
+            await writeFile(join(signals, "stop-done"), "");
+            return;
+          }
           const pid = daemon.record.pid;
           process.kill(pid, "SIGSTOP");
           steps.push(`SIGSTOP ${pid}`);
