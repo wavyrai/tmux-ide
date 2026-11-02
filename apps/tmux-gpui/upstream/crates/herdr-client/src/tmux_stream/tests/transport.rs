@@ -515,10 +515,17 @@ fn byte_capability_is_optional_true_only() {
 
 #[test]
 fn a_peer_close_reports_its_code_and_a_token_reason() {
+    let at_bound = "a".repeat(64);
+    let over_bound = "a".repeat(65);
     for (reason, kept) in [
         ("output-backpressure", Some("output-backpressure")),
         ("terminal bytes \u{1b}[31m", None),
+        // Review round 1: the 64-character bound and the empty reason.
+        (at_bound.as_str(), Some(at_bound.as_str())),
+        (over_bound.as_str(), None),
+        ("", None),
     ] {
+        let reason = reason.to_owned();
         let listener = listener();
         let options = options(listener.local_addr().unwrap().port());
         let peer = thread::spawn(move || {

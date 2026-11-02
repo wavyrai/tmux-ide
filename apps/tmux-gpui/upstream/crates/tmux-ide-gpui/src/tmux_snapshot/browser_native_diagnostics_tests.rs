@@ -131,6 +131,26 @@ fn the_log_line_names_the_rejecting_check_the_pane_and_the_fault() {
         },
     ));
     assert_eq!(detail(&odd), "terminal-state:identity");
+    // Review round 1: the 128-character bound on a logged pane id.
+    let long = stopped(tmux_native_session::Error::Terminal(
+        tmux_terminal::Error::Identity,
+        tmux_terminal::Failure {
+            pane: Some("p".repeat(129)),
+            fault: None,
+        },
+    ));
+    assert_eq!(detail(&long), "terminal-state:identity");
+    let bound = stopped(tmux_native_session::Error::Terminal(
+        tmux_terminal::Error::Identity,
+        tmux_terminal::Failure {
+            pane: Some("p".repeat(128)),
+            fault: None,
+        },
+    ));
+    assert_eq!(
+        detail(&bound),
+        format!("terminal-state:identity pane={}", "p".repeat(128))
+    );
 }
 
 #[test]
