@@ -389,3 +389,54 @@ fn unmeasurable_reveal_schedules_once_then_recovers_on_measured_layout() {
 
 #[path = "titlebar_tabs.rs"]
 mod titlebar_tabs;
+
+#[gpui::test]
+fn vertical_wheel_over_the_window_strip_scrolls_it_sideways(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.request = view.browser_request;
+        view.browser_state.panes = (0..12)
+            .map(|index| browser::Choice {
+                id: format!("pane-{index}"),
+                label: format!("Pane {index}"),
+                pane_count: None,
+                window_id: Some(format!("window-{index}")),
+                browser_icon: None,
+                window_label: Some(format!("Window {index} with a deliberately long title")),
+            })
+            .collect();
+        view.browser_state.selected_pane = Some("pane-0".into());
+        view.browser_state.regions.clear();
+        view.browser_state.frame = None;
+        view.browser_state.input_ready = false;
+        view.frame = None;
+        view.painted_frame = None;
+        view
+    });
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let offset = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, _| view.window_reveal.scroll.offset())
+    };
+    assert_eq!(offset(cx), point(px(0.), px(0.)));
+    let strip = cx.debug_bounds("workspace-window-strip").unwrap();
+    // Bezel's tab bar is the strip now; a mouse wheel (vertical only) still
+    // moves it along its row.
+    let wheel = |dy: f32| ScrollWheelEvent {
+        position: strip.center(),
+        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+        touch_phase: TouchPhase::Moved,
+        ..Default::default()
+    };
+    cx.simulate_event(wheel(-40.));
+    assert_eq!(offset(cx), point(px(-40.), px(0.)));
+    cx.simulate_event(wheel(25.));
+    assert_eq!(offset(cx), point(px(-15.), px(0.)));
+    // It stops at the start rather than overshooting.
+    cx.simulate_event(wheel(100.));
+    assert_eq!(offset(cx), point(px(0.), px(0.)));
+    assert!(receiver.try_recv().is_err(), "the wheel sends no input");
+}

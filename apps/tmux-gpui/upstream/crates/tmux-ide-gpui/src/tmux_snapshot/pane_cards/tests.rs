@@ -122,3 +122,31 @@ fn native_content_keeps_gutters_and_reflows_without_restoring_the_border_row() {
         preview.card(&preview.regions[2]).bottom()
     );
 }
+
+#[test]
+fn last_row_cards_reach_the_canvas_bottom_so_the_bottom_inset_matches_the_sides() {
+    let layout = Layout::new(&panes(), 8., 20.);
+    let fitted = layout.card(&layout.regions[0]).bottom();
+    // Any part of a row the grid can't fill: 13 px under the last cards.
+    let canvas = fitted + px(13.);
+    let left = layout.card_in(&layout.regions[0], canvas);
+    let top = layout.card_in(&layout.regions[1], canvas);
+    let bottom = layout.card_in(&layout.regions[2], canvas);
+    // The cards start flush with the canvas's left edge; the last row now
+    // ends flush with its bottom edge, so both insets are the workspace's.
+    assert_eq!(left.left(), px(0.));
+    assert_eq!(canvas - left.bottom(), left.left());
+    assert_eq!(bottom.bottom(), canvas);
+    // Only the last row grows; tops, the gap and every terminal cell stay put.
+    assert_eq!(top, layout.card(&layout.regions[1]));
+    assert_eq!(bottom.top() - top.bottom(), px(GAP));
+    assert_eq!(left.origin, layout.card(&layout.regions[0]).origin);
+    for r in &layout.regions {
+        assert_eq!(layout.content(r), Layout::new(&panes(), 8., 20.).content(r));
+    }
+    // A canvas shorter than the grid never shrinks a card.
+    assert_eq!(
+        layout.card_in(&layout.regions[0], fitted - px(30.)),
+        layout.card(&layout.regions[0])
+    );
+}

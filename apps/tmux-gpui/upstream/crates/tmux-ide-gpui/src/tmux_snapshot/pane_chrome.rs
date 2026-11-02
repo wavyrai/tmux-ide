@@ -664,32 +664,24 @@ impl SnapshotView {
             ))
             .children(indicator)
             .child(browser.unwrap_or_else(|| {
-                // The pane's title as a Bezel tab: focused for the selected
-                // pane, resting otherwise, at the header's cell height.
-                bezel_ui::tabs::tab(
-                    &super::design::palette(&theme),
-                    format!("pane-title:{}", header.id),
-                    bezel_ui::tabs::Label::new(label(&self.browser_state, &header.id)),
-                    if selected {
-                        bezel_ui::tabs::State::Focused
-                    } else {
-                        bezel_ui::tabs::State::Resting
-                    },
-                )
-                .debug_selector({
-                    let id = header.id.clone();
-                    move || format!("pane-title:{id}")
-                })
-                .h_full()
-                .min_w_0()
-                .flex_shrink(1.)
-                .text_size(px(size))
-                .text_color(tint)
-                .children(super::design::ink_probe({
-                    let id = header.id.clone();
-                    move || format!("pane-title:{id}")
-                }))
-                .into_any_element()
+                // The title sits flat in the header row for every pane. Focus
+                // shows in its ink and weight, never in a raised chip.
+                div()
+                    .debug_selector({
+                        let id = header.id.clone();
+                        move || format!("pane-title:{id}")
+                    })
+                    .min_w_0()
+                    .flex_shrink(1.)
+                    .truncate()
+                    .text_size(px(size))
+                    .text_color(tint)
+                    .children(super::design::ink_probe({
+                        let id = header.id.clone();
+                        move || format!("pane-title:{id}")
+                    }))
+                    .child(label(&self.browser_state, &header.id))
+                    .into_any_element()
             }))
     }
     pub(super) fn pane_header_labels(&self, width: f32, cx: &mut Context<Self>) -> Vec<AnyElement> {

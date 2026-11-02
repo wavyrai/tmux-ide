@@ -15,11 +15,9 @@ fn direct_expand_uses_current_target_and_close_requires_confirmation(cx: &mut Te
     // between them would be a dead strip in the header.
     assert_eq!(expand.right(), close.left());
     assert_eq!(expand.size, close.size);
-    // The pane title is a Bezel tab filling the header row, not Bezel's
-    // 24 pt chip floating in it.
+    // The pane title sits flat inside the header row, not in a chip.
     let title = cx.debug_bounds("pane-title:pane-a").unwrap();
-    assert_eq!(title.size.height, close.size.height);
-    assert_eq!(title.top(), close.top());
+    assert!(title.top() >= close.top() && title.bottom() <= close.bottom());
     cx.simulate_click(close.center(), Modifiers::default());
     assert!(
         receiver.try_recv().is_err(),
@@ -76,4 +74,45 @@ fn closing_an_unselected_header_waits_for_that_panes_authority(cx: &mut TestAppC
         matches!(receiver.try_recv().unwrap(), browser::Command::PaneAction { request: 8, id, token, action: Action::Close } if id == "pane-b" && token == "new-token")
     );
     assert!(receiver.try_recv().is_err());
+}
+
+#[gpui::test]
+fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    let mut seen = Vec::new();
+    for focused in ["pane-a", "pane-b"] {
+        view.update(cx, |v, _| {
+            v.browser_state.selected_pane = Some(focused.into())
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        receiver.try_iter().for_each(drop);
+        for (id, header, title) in [
+            ("pane-a", "pane-card-header:pane-a", "pane-title:pane-a"),
+            ("pane-b", "pane-card-header:pane-b", "pane-title:pane-b"),
+        ] {
+            let header = cx.debug_bounds(header).unwrap();
+            let title = cx.debug_bounds(title).unwrap();
+            // Nothing of the title reaches above or below its header row.
+            assert!(title.top() >= header.top(), "{id} rises above its header");
+            assert!(
+                title.bottom() <= header.bottom(),
+                "{id} drops below its header"
+            );
+            assert_eq!(
+                header.size.height,
+                px(crate::tmux_snapshot::pane_cards::HEADER)
+            );
+            seen.push((focused == id, header.size.height, title.size.height));
+        }
+    }
+    // Focused and unfocused titles are the same height in the same header.
+    let heights: std::collections::BTreeSet<_> = seen
+        .iter()
+        .map(|(_, h, t)| (f32::from(*h).to_bits(), f32::from(*t).to_bits()))
+        .collect();
+    assert_eq!(heights.len(), 1, "{seen:?}");
 }

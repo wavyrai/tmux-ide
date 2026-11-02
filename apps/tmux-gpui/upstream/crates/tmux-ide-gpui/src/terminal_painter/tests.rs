@@ -24,3 +24,21 @@ fn cell(symbol: &str) -> CellData {
         hyperlink: None,
     }
 }
+
+#[test]
+fn overlay_colours_come_from_the_bezel_palette() {
+    let theme = Theme::default();
+    let palette = crate::tmux_snapshot::design::palette(&theme);
+    let overlay = Overlay::new(&theme);
+    assert_eq!(overlay.thumb, palette.ink(0.2));
+    assert_eq!(overlay.cursor, palette.cursor.opacity(0.5));
+    assert_eq!(overlay.composition_text, palette.text);
+    assert_eq!(overlay.composition_bg, palette.terminal_bg);
+    let mut painter = TerminalPainter::default();
+    let light = Theme {
+        background: 0xffffff,
+        ..Theme::default()
+    };
+    painter.set_appearance(FONT_SIZE, CELL_HEIGHT, light.clone());
+    assert_eq!(painter.overlay, Overlay::new(&light));
+}

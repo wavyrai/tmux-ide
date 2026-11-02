@@ -62,31 +62,27 @@ impl Layout {
         ok
     }
 }
-impl SnapshotView {
-    pub(in crate::tmux_snapshot) fn card_surfaces(&self, width: f32) -> Vec<Div> {
-        let Some(mut layout) = self.card_layout(width) else {
-            return Vec::new();
-        };
-        if let Some(preview) = self.divider_content_preview() {
-            layout = layout.reflow(&preview.regions);
+impl Layout {
+    /// Each pane's opaque card under its cells, on Bezel's panel radius and
+    /// hairline border, sized to the canvas `bounds` it paints in.
+    pub fn paint_cards(
+        &self,
+        bounds: Bounds<Pixels>,
+        background: Hsla,
+        border: Hsla,
+        window: &mut Window,
+    ) {
+        for r in &self.regions {
+            let mut card = self.card_in(r, bounds.size.height);
+            card.origin += bounds.origin;
+            window.paint_quad(quad(
+                card,
+                px(bezel_theme::Theme::panel_radius()),
+                background,
+                px(1.),
+                border,
+                BorderStyle::Solid,
+            ));
         }
-        let theme = self.theme();
-        layout
-            .regions
-            .iter()
-            .map(|r| {
-                let rect = layout.card(r);
-                div()
-                    .absolute()
-                    .left(rect.origin.x)
-                    .top(rect.origin.y)
-                    .w(rect.size.width)
-                    .h(rect.size.height)
-                    .rounded(px(RADIUS))
-                    .bg(rgb(theme.background))
-                    .border_1()
-                    .border_color(super::super::controls::separator(&theme))
-            })
-            .collect()
     }
 }

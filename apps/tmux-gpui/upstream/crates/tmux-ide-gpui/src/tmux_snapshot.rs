@@ -569,6 +569,8 @@ impl SnapshotView {
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
         let separator = controls::separator(&theme);
+        let card_background = design::palette(&theme).terminal_bg;
+        let card_border = design::palette(&theme).border;
         let highlights = self
             .selection
             .as_ref()
@@ -620,11 +622,19 @@ impl SnapshotView {
             // Cards own their opaque surfaces; gutters expose the shell material.
             .when(cards.is_none(), |terminal| terminal.bg(bezel.terminal_bg))
             .overflow_hidden()
-            .children(self.card_surfaces(width))
             .child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, (), window, cx| {
+                        if let Some(layout) = &cards {
+                            let target = resize_preview.as_ref().map(|p| layout.reflow(&p.regions));
+                            target.as_ref().unwrap_or(layout).paint_cards(
+                                bounds,
+                                card_background,
+                                card_border,
+                                window,
+                            );
+                        }
                         if entity.read(cx).terminal_font.revision != font_revision {
                             return;
                         }

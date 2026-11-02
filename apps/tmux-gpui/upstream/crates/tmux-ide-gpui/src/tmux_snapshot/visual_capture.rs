@@ -312,11 +312,7 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
 const OWNER_WIDTH: f32 = 1560.;
 const OWNER_HEIGHT: f32 = 1010.;
 
-fn with_owner_split(
-    mut state: browser::State,
-    cols: usize,
-    rows: usize,
-) -> Result<browser::State> {
+fn with_owner_split(mut state: browser::State, cols: usize, rows: usize) -> Result<browser::State> {
     let frame = Arc::new(
         decode::frame(&fixture_frame_sized(cols, rows)?)
             .map_err(|error| anyhow!("fixture frame: {error}"))?,

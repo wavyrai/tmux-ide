@@ -5,7 +5,6 @@ pub(super) const PAD: f32 = 10.;
 pub(super) const V_PAD: f32 = 4.;
 pub(super) const HEADER: f32 = 34.;
 pub(super) const GAP: f32 = 10.;
-pub(super) const RADIUS: f32 = 10.;
 #[derive(Clone)]
 pub(super) struct Layout {
     pub regions: Vec<Region>,
@@ -107,6 +106,18 @@ impl Layout {
             + HEADER
             + 2. * V_PAD;
         Bounds::new(origin, size(px(right) - origin.x, px(bottom) - origin.y))
+    }
+    /// The card as painted in a canvas `height` tall. Cards on the grid's last
+    /// row reach the canvas's bottom edge: the part of a row the grid can't
+    /// fill joins those cards instead of widening the gap under them, so the
+    /// bottom inset matches the side inset.
+    pub fn card_in(&self, r: &Region, height: Pixels) -> Bounds<Pixels> {
+        let mut card = self.card(r);
+        let last = self.regions.iter().map(|r| r.top + r.height).max();
+        if Some(r.top + r.height) == last && height > card.bottom() {
+            card.size.height = height - card.origin.y;
+        }
+        card
     }
     pub fn content(&self, r: &Region) -> Bounds<Pixels> {
         Bounds::new(
