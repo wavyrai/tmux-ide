@@ -1,5 +1,5 @@
 // Card #703: daemon requests before Home and while Home sits idle, under the
-// ignored Rust Home test. Owned scratch tmux server (-L) and daemon only;
+// ignored Rust Home test (SMOKE_TEST names another, such as Session → Home). Owned scratch tmux server (-L) and daemon only;
 // never the developer's.
 import assert from "node:assert/strict";
 import process from "node:process";
@@ -33,7 +33,7 @@ try {
       "--ignored",
       "--nocapture",
       "--test-threads=1",
-      "home_loads_with_few_requests_and_stays_quiet_when_idle",
+      process.env.SMOKE_TEST ?? "home_loads_with_few_requests_and_stays_quiet_when_idle",
     ],
     {
       env: {
