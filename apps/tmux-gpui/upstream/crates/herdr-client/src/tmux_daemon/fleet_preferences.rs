@@ -253,16 +253,16 @@ impl LocalDaemon {
                     .build()
                     .call()
             }
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
             if response.status().as_u16() != 200 {
-                return Err(Error::RequestStatus(response.status().as_u16()));
+                return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
             }
             let bytes = response
                 .body_mut()
                 .with_config()
                 .limit(RESPONSE_LIMIT)
                 .read_to_vec()
-                .map_err(Error::Network)?;
+                .map_err(|error| self.failed(Error::Network(error)))?;
             self.verify_current()?;
             self.fleet_resource(&bytes)
         })();

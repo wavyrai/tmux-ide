@@ -53,7 +53,7 @@ impl Failure {
     pub(super) fn of(error: &herdr_client::tmux_daemon::Error) -> Self {
         use herdr_client::tmux_daemon::Error as E;
         match error {
-            E::Network(_) | E::RecordChanged => Self::Unreachable,
+            E::Network(_) | E::RecordChanged | E::OwnerExited => Self::Unreachable,
             E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
             E::IdentityFormat | E::IdentityChanged | E::Incompatible(_) => Self::Identity,
             _ => Self::Other,

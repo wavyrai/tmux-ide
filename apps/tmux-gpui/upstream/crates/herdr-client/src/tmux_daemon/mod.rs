@@ -88,7 +88,7 @@ pub use servers::ServerRegistration;
 pub use sessions::{ServerClient, Session};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use url::Url;
 pub use worker::{CatalogAction, CatalogResult, CatalogRetirement, CatalogWorker, WorkerError};
@@ -165,6 +165,8 @@ pub enum Error {
     Retired,
     #[error("Private daemon record verification is unavailable on this platform")]
     UnsupportedPlatform,
+    #[error("The local daemon process has exited")]
+    OwnerExited,
 }
 
 #[derive(Deserialize)]
@@ -222,19 +224,19 @@ impl LocalDaemon {
     }
 
     /// Prove the captured owner before issuing a credential-bearing request.
-    /// The private record is re-read every time, so a restarted daemon (a new
-    /// record) is never trusted on an old proof. One `/identity` proof serves a
-    /// daemon generation until any request to it fails, which also drops the
-    /// proof; a dead or replaced daemon is then proven again before the next
-    /// credential is sent (#703).
+    /// The private record is re-read and its pid checked every time, so a
+    /// restarted or exited daemon is never trusted on an old proof. One
+    /// `/identity` proof serves a daemon generation for at most `PROOF_AGE`,
+    /// and until any request to it fails, which drops the proof (#703).
     pub fn verify_current(&self) -> Result<(), Error> {
         self.check_record()?;
         if proven(&self.fingerprint) {
             return Ok(());
         }
+        let (epoch, started) = (proof_epoch(), Instant::now());
         let result = self.prove_identity();
         if result.is_ok() {
-            prove(self.fingerprint);
+            prove(self.fingerprint, epoch, started);
         } else {
             disprove(&self.fingerprint);
         }
@@ -364,6 +366,12 @@ impl LocalDaemon {
             disprove(&self.fingerprint);
             return Err(Error::RecordChanged);
         }
+        // A daemon that died without a new record leaves its port free for any
+        // local process: no credential goes out once its pid is gone.
+        if !owner_alive(self.record.pid) {
+            disprove(&self.fingerprint);
+            return Err(Error::OwnerExited);
+        }
         Ok(())
     }
     /// A failed request drops this generation's proof before reporting it.
@@ -374,20 +382,35 @@ impl LocalDaemon {
 }
 
 /// The local daemon generation (its record fingerprint) last proven by
-/// `/identity` in this process. Process-wide, so every worker that discovers
-/// the same daemon shares one proof.
-static PROVEN: std::sync::Mutex<Option<[u8; 32]>> = std::sync::Mutex::new(None);
+/// `/identity` in this process, and when that probe started. Process-wide, so
+/// every worker that discovers the same daemon shares one proof. `disproofs`
+/// counts failures: a probe that overlapped one never records its proof.
+struct Proof {
+    proven: Option<([u8; 32], Instant)>,
+    disproofs: u64,
+}
+static PROOF: std::sync::Mutex<Proof> = std::sync::Mutex::new(Proof {
+    proven: None,
+    disproofs: 0,
+});
+/// A proof older than this is probed again, so a daemon that died silently
+/// and a squatter on its port are caught within this window (#703, PM).
+const PROOF_AGE: Duration = Duration::from_secs(5);
 fn proven(fingerprint: &[u8; 32]) -> bool {
     caching()
-        && PROVEN
-            .lock()
-            .is_ok_and(|proven| proven.as_ref() == Some(fingerprint))
+        && PROOF.lock().is_ok_and(|proof| {
+            proof
+                .proven
+                .is_some_and(|(proven, at)| proven == *fingerprint && at.elapsed() < PROOF_AGE)
+        })
 }
-// This crate's scripted-peer tests expect one `/identity` per call; a test opts
-// in to the cache on its own thread. Every other build always caches.
+// This crate's scripted-peer tests expect one `/identity` per call and use
+// made-up pids; a test opts in to the cache and the pid check on its own
+// thread. Every other build always does both.
 #[cfg(test)]
 thread_local! {
     pub(super) static IDENTITY_CACHE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static PID_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 fn caching() -> bool {
     #[cfg(test)]
@@ -399,21 +422,56 @@ fn caching() -> bool {
         true
     }
 }
-fn prove(fingerprint: [u8; 32]) {
+fn proof_epoch() -> Option<u64> {
+    PROOF.lock().ok().map(|proof| proof.disproofs)
+}
+fn prove(fingerprint: [u8; 32], epoch: Option<u64>, started: Instant) {
     if caching()
-        && let Ok(mut proven) = PROVEN.lock()
+        && let Ok(mut proof) = PROOF.lock()
+        && epoch == Some(proof.disproofs)
     {
-        *proven = Some(fingerprint);
+        proof.proven = Some((fingerprint, started));
     }
 }
 fn disprove(fingerprint: &[u8; 32]) {
-    if let Ok(mut proven) = PROVEN.lock()
-        && proven.as_ref() == Some(fingerprint)
+    if caching()
+        && let Ok(mut proof) = PROOF.lock()
     {
-        *proven = None;
+        proof.disproofs = proof.disproofs.wrapping_add(1);
+        if proof
+            .proven
+            .is_some_and(|(proven, _)| proven == *fingerprint)
+        {
+            proof.proven = None;
+        }
     }
 }
-
+/// `kill(pid, 0)`: only "no such process" counts as gone; a pid owned by
+/// another user still exists.
+fn owner_alive(pid: u32) -> bool {
+    #[cfg(test)]
+    if !PID_CHECK.with(std::cell::Cell::get) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Some(pid) = i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            return false;
+        };
+        !matches!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
 fn optional_string<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {

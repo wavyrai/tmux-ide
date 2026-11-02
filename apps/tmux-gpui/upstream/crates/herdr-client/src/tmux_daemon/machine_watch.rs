@@ -139,7 +139,7 @@ impl LocalDaemon {
         };
         let address = SocketAddr::new(ip, endpoint.port_or_known_default().ok_or(Error::Endpoint)?);
         let socket = TcpStream::connect_timeout(&address, Duration::from_millis(2500))
-            .map_err(|e| Error::Network(e.into()))?;
+            .map_err(|e| self.failed(Error::Network(e.into())))?;
         let _lease = cancellation.install(&socket)?;
         self.check_record()?;
         let authority = endpoint[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
