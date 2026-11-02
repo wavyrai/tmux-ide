@@ -18,6 +18,9 @@ pub enum Error {
     Identity,
     #[error("terminal delivery ordering mismatch")]
     Ordering,
+    /// A new delivery began while another was still open on this pane.
+    #[error("terminal delivery overlaps an open delivery")]
+    Overlap,
     #[error("terminal transaction exceeds bounds")]
     Bounds,
     #[error("terminal representation hash mismatch")]
@@ -35,6 +38,7 @@ impl Error {
             Self::Retired => "delivery-retired",
             Self::Identity => "delivery-identity",
             Self::Ordering => "delivery-ordering",
+            Self::Overlap => "delivery-overlap",
             Self::Bounds => "delivery-bounds",
             Self::RepresentationHash => "delivery-hash",
             Self::Envelope(_) => "delivery-envelope",
@@ -230,8 +234,12 @@ impl Receiver {
             }
             Error::Canonical(_) => "decode-failed",
             Error::Bounds => "state-too-large",
-            Error::Identity => "protocol-violation",
-            Error::Retired | Error::Envelope(_) => return None,
+            // Connection-level faults (design, Option A): a wrong nonce, generation
+            // or workspace may mean the wrong stream, and an overlapping flight
+            // breaks the one-flight protocol. Neither is retried with a NACK.
+            Error::Identity | Error::Overlap | Error::Retired | Error::Envelope(_) => {
+                return None;
+            }
         };
         let flight = self.flight.take()?;
         let nack = Nack {
@@ -330,7 +338,7 @@ impl Receiver {
             transaction_id: e.transaction_id.clone(),
         });
         if self.pending.is_some() || self.projection_pending() {
-            return Err(Error::Ordering);
+            return Err(Error::Overlap);
         }
         if e.kind != "terminal.delivery"
             || e.protocol_version != 1

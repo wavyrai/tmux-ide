@@ -403,6 +403,14 @@ impl NativeSession {
     }
 
     /// Takes the latest pending snapshots and every ordered control frame exactly once.
+    /// Test seam: mark panes as the worker would after a NACK or a pane fault.
+    #[cfg(test)]
+    pub(crate) fn mark_panes(&self, reseeding: &[&str], unavailable: &[&str]) {
+        if let Ok(mut mailbox) = self.shared.lock() {
+            mailbox.reseeding = reseeding.iter().map(|p| (*p).to_owned()).collect();
+            mailbox.unavailable = unavailable.iter().map(|p| (*p).to_owned()).collect();
+        }
+    }
     pub fn drain(&self) -> Result<Updates, Error> {
         let mut mailbox = self.shared.lock().map_err(|_| Error::Mailbox)?;
         let panes = std::mem::take(&mut mailbox.pending)
