@@ -107,15 +107,20 @@ impl Layout {
             + 2. * V_PAD;
         Bounds::new(origin, size(px(right) - origin.x, px(bottom) - origin.y))
     }
-    /// The card as painted in a canvas `height` tall. Cards on the grid's last
-    /// row reach the canvas's bottom edge: the part of a row the grid can't
-    /// fill joins those cards instead of widening the gap under them, so the
-    /// bottom inset matches the side inset.
-    pub fn card_in(&self, r: &Region, height: Pixels) -> Bounds<Pixels> {
+    /// The card as painted in a canvas of `canvas` size. The part of a row or
+    /// column the grid can't fill joins the cards on its last row and in its
+    /// last column, so they reach the canvas's bottom and right edges and every
+    /// outer inset is the workspace's. Cells, and so the grid sent to tmux,
+    /// stay where they are.
+    pub fn card_in(&self, r: &Region, canvas: Size<Pixels>) -> Bounds<Pixels> {
         let mut card = self.card(r);
-        let last = self.regions.iter().map(|r| r.top + r.height).max();
-        if Some(r.top + r.height) == last && height > card.bottom() {
-            card.size.height = height - card.origin.y;
+        let bottom = self.regions.iter().map(|r| r.top + r.height).max();
+        if Some(r.top + r.height) == bottom && canvas.height > card.bottom() {
+            card.size.height = canvas.height - card.origin.y;
+        }
+        let right = self.regions.iter().map(|r| r.left + r.width).max();
+        if Some(r.left + r.width) == right && canvas.width > card.right() {
+            card.size.width = canvas.width - card.origin.x;
         }
         card
     }
@@ -222,7 +227,7 @@ impl SnapshotView {
         }
     }
 }
-mod render;
+pub(super) mod render;
 #[cfg(test)]
 mod tests;
 

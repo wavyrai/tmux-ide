@@ -124,29 +124,40 @@ fn native_content_keeps_gutters_and_reflows_without_restoring_the_border_row() {
 }
 
 #[test]
-fn last_row_cards_reach_the_canvas_bottom_so_the_bottom_inset_matches_the_sides() {
+fn edge_cards_take_the_slack_so_every_outer_inset_is_the_workspaces() {
     let layout = Layout::new(&panes(), 8., 20.);
-    let fitted = layout.card(&layout.regions[0]).bottom();
-    // Any part of a row the grid can't fill: 13 px under the last cards.
-    let canvas = fitted + px(13.);
-    let left = layout.card_in(&layout.regions[0], canvas);
-    let top = layout.card_in(&layout.regions[1], canvas);
-    let bottom = layout.card_in(&layout.regions[2], canvas);
-    // The cards start flush with the canvas's left edge; the last row now
-    // ends flush with its bottom edge, so both insets are the workspace's.
-    assert_eq!(left.left(), px(0.));
-    assert_eq!(canvas - left.bottom(), left.left());
-    assert_eq!(bottom.bottom(), canvas);
-    // Only the last row grows; tops, the gap and every terminal cell stay put.
-    assert_eq!(top, layout.card(&layout.regions[1]));
-    assert_eq!(bottom.top() - top.bottom(), px(GAP));
-    assert_eq!(left.origin, layout.card(&layout.regions[0]).origin);
-    for r in &layout.regions {
+    let left = layout.card(&layout.regions[0]);
+    let top = layout.card(&layout.regions[1]);
+    // Any part of a row and of a column the grid can't fill: 13 px under the
+    // last row, 5 px right of the last column.
+    let canvas = size(top.right() + px(5.), left.bottom() + px(13.));
+    let cards: Vec<_> = layout
+        .regions
+        .iter()
+        .map(|r| layout.card_in(r, canvas))
+        .collect();
+    let (left_in, top_in, bottom_in) = (cards[0], cards[1], cards[2]);
+    // The cards start flush with the canvas's left and top edges; the last row
+    // and the last column now end flush with its bottom and right edges, so
+    // every inset is the workspace's.
+    assert_eq!(left_in.origin, point(px(0.), px(0.)));
+    assert_eq!(left_in.bottom(), canvas.height);
+    assert_eq!(bottom_in.bottom(), canvas.height);
+    assert_eq!(top_in.right(), canvas.width);
+    assert_eq!(bottom_in.right(), canvas.width);
+    // The left card is not in the last column, the top card not in the last row.
+    assert_eq!(left_in.right(), left.right());
+    assert_eq!(top_in.bottom(), top.bottom());
+    // Gaps, origins and every terminal cell stay put.
+    assert_eq!(bottom_in.top() - top_in.bottom(), px(GAP));
+    assert_eq!(top_in.left() - left_in.right(), px(GAP));
+    for (r, card) in layout.regions.iter().zip(&cards) {
+        assert_eq!(card.origin, layout.card(r).origin);
         assert_eq!(layout.content(r), Layout::new(&panes(), 8., 20.).content(r));
     }
-    // A canvas shorter than the grid never shrinks a card.
-    assert_eq!(
-        layout.card_in(&layout.regions[0], fitted - px(30.)),
-        layout.card(&layout.regions[0])
-    );
+    // A canvas smaller than the grid never shrinks a card.
+    let small = size(left.right() - px(30.), left.bottom() - px(30.));
+    for r in &layout.regions {
+        assert_eq!(layout.card_in(r, small), layout.card(r));
+    }
 }

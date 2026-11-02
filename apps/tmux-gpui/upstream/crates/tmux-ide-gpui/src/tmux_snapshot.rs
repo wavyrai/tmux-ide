@@ -674,6 +674,11 @@ impl SnapshotView {
                                     )
                             });
                             let cursor_bounds = Bounds::new(origin, size(px(width), px(height)));
+                            // Headers span their cards as painted in this canvas,
+                            // so a new canvas size renders them again.
+                            if view.input_geometry.map(|g| g.0.size) != Some(bounds.size) {
+                                cx.notify();
+                            }
                             view.input_geometry = Some((bounds, cursor_bounds));
                             view.input_cell_width = Some(width);
                             // A translated preview is not evidence that canonical

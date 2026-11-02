@@ -191,6 +191,15 @@ pub(super) struct HeaderInk {
     pub muted: Hsla,
     pub warning: Hsla,
 }
+/// With the chip gone, a focused pane's title differs from the others only
+/// in its ink and this weight.
+pub(super) fn title_weight(focused: bool) -> FontWeight {
+    if focused {
+        FontWeight::SEMIBOLD
+    } else {
+        FontWeight::NORMAL
+    }
+}
 pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
     let bezel = super::design::palette(theme);
     let plate = bezel.terminal_bg;
@@ -232,7 +241,12 @@ impl SnapshotView {
                 layout = layout.reflow(&preview.regions);
             }
             if let Some(r) = layout.regions.iter().find(|r| r.id == header.id) {
-                let mut bounds = layout.card(r);
+                // The header spans its card as painted: a right-edge card
+                // reaches the canvas's right edge, and its controls with it.
+                let mut bounds = match self.input_geometry {
+                    Some((canvas, _)) => layout.card_in(r, canvas.size),
+                    None => layout.card(r),
+                };
                 bounds.size.height = px(super::pane_cards::HEADER);
                 return bounds;
             }
@@ -648,11 +662,7 @@ impl SnapshotView {
             })
             .text_color(tint)
             .text_size(px(size))
-            .font_weight(if selected {
-                FontWeight::SEMIBOLD
-            } else {
-                FontWeight::NORMAL
-            })
+            .font_weight(title_weight(selected))
             .flex()
             .items_center()
             .gap(px(bezel_theme::Theme::SPACE / 2.))

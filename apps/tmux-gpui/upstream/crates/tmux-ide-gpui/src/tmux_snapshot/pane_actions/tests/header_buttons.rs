@@ -122,4 +122,8 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
         .map(|(_, h, t)| (f32::from(*h).to_bits(), f32::from(*t).to_bits()))
         .collect();
     assert_eq!(heights.len(), 1, "{seen:?}");
+    // Ink and weight are what is left to mark focus.
+    use crate::tmux_snapshot::pane_chrome::title_weight;
+    assert_eq!(title_weight(true), FontWeight::SEMIBOLD);
+    assert_eq!(title_weight(false), FontWeight::NORMAL);
 }
