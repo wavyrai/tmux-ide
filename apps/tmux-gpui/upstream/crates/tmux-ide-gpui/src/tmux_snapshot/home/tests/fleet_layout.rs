@@ -54,7 +54,9 @@ fn fleet_hierarchy_keeps_long_labels_and_statuses_separate(cx: &mut TestAppConte
         // Servers sit in from their machine, inside the machine's one card.
         let server = cx.debug_bounds("fleet-server-label-0-0").unwrap();
         let machine = cx.debug_bounds("fleet-machine-header-0").unwrap();
-        assert!(server.left() >= machine.left() + px(crate::tmux_snapshot::home::fleet::ROW_INDENT));
+        assert!(
+            server.left() >= machine.left() + px(crate::tmux_snapshot::home::fleet::ROW_INDENT)
+        );
         let card = cx.debug_bounds("fleet-machine-0").unwrap();
         let row = cx.debug_bounds("fleet-server-0-0").unwrap();
         assert!(row.left() >= card.left() && row.right() <= card.right());

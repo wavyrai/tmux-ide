@@ -14,12 +14,17 @@ fn fleet_fixture() -> browser::fleet::Fleet {
 
 fn shown_machines(cx: &mut VisualTestContext) -> Vec<usize> {
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    ["fleet-machine-0", "fleet-machine-1", "fleet-machine-2", "fleet-machine-3"]
-        .into_iter()
-        .enumerate()
-        .filter(|(_, key)| cx.debug_bounds(key).is_some())
-        .map(|(i, _)| i)
-        .collect()
+    [
+        "fleet-machine-0",
+        "fleet-machine-1",
+        "fleet-machine-2",
+        "fleet-machine-3",
+    ]
+    .into_iter()
+    .enumerate()
+    .filter(|(_, key)| cx.debug_bounds(key).is_some())
+    .map(|(i, _)| i)
+    .collect()
 }
 
 fn fleet_view(view: &Entity<SnapshotView>, cx: &mut VisualTestContext) -> View {
@@ -91,6 +96,90 @@ fn list_selection_follows_pointer_and_keys_and_survives_a_vanished_machine(
     assert!(receiver.try_recv().is_err());
 }
 
+#[gpui::test]
+fn the_table_takes_the_keyboard_from_the_list_and_enter_opens_the_cursor_row(
+    cx: &mut TestAppContext,
+) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.fleet = Some(fleet_fixture());
+        view.frame = None;
+        view.browser_state.frame = None;
+        view
+    });
+    cx.simulate_resize(size(px(1400.), px(1400.)));
+    receiver.try_iter().for_each(drop);
+    let (ids, second) = {
+        let fleet = fleet_fixture();
+        let local = &fleet.groups[0];
+        (
+            [local.sessions[0].id.clone(), local.sessions[1].id.clone()],
+            local.sessions[1].selection.clone().unwrap(),
+        )
+    };
+    let cursor = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| {
+            v.home_filter.as_ref().unwrap().table_cursor.clone()
+        })
+    };
+    let hint = |cx: &mut VisualTestContext, row: usize| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let key = ["fleet-session-enter-0-0", "fleet-session-enter-0-1"][row];
+        cx.debug_bounds(key).is_some()
+    };
+
+    // A click picks the machine and gives the list focus; no hint yet.
+    let entry = cx.debug_bounds("home-nav-machine-0").unwrap();
+    cx.simulate_click(entry.center(), Modifiers::default());
+    assert!(!hint(cx, 0));
+    // → moves into the table, onto its first row, with the ↵ hint there.
+    cx.simulate_keystrokes("right");
+    assert_eq!(cursor(cx), Some(("qa-local".into(), ids[0].clone())));
+    assert!(hint(cx, 0) && !hint(cx, 1));
+    // The arrows now move the table's cursor, not the list.
+    cx.simulate_keystrokes("down down");
+    assert_eq!(cursor(cx), Some(("qa-local".into(), ids[1].clone())));
+    assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
+    assert!(hint(cx, 1) && !hint(cx, 0));
+    assert!(receiver.try_recv().is_err());
+    // Enter opens the cursor's session by its current token.
+    cx.simulate_keystrokes("enter");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::FleetSession { selection, .. } if selection == second
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[gpui::test]
+fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.fleet = Some(fleet_fixture());
+        view.frame = None;
+        view.browser_state.frame = None;
+        view
+    });
+    cx.simulate_resize(size(px(1400.), px(1400.)));
+    receiver.try_iter().for_each(drop);
+    let entry = cx.debug_bounds("home-nav-all").unwrap();
+    cx.simulate_click(entry.center(), Modifiers::default());
+    for back in ["left", "escape"] {
+        cx.simulate_keystrokes("right");
+        cx.simulate_keystrokes(back);
+        // Back on the list, ↓ moves the list again.
+        cx.simulate_keystrokes("down");
+        assert_eq!(fleet_view(&view, cx), View::Favourites, "after {back}");
+        cx.simulate_keystrokes("up");
+    }
+    // An empty table does not take the keyboard: → on Favourites stays put.
+    cx.simulate_keystrokes("down right down");
+    assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
+    assert!(receiver.try_recv().is_err());
+}
+
 fn agents(phase: &str, rows: usize) -> browser::home_agents::Roster {
     let rows: Vec<_> = (0..rows)
         .map(|i| {
@@ -100,9 +189,11 @@ fn agents(phase: &str, rows: usize) -> browser::home_agents::Roster {
                 "attention": false, "available": true})
         })
         .collect();
-    serde_json::from_value(serde_json::json!({"revision": 4, "phase": phase, "rows": rows,
+    serde_json::from_value(
+        serde_json::json!({"revision": 4, "phase": phase, "rows": rows,
         "observedSessions": 1, "totalSessions": 1, "truncatedSessions": 0,
-        "truncatedRows": 0, "note": null}))
+        "truncatedRows": 0, "note": null}),
+    )
     .unwrap()
 }
 
@@ -166,7 +257,9 @@ fn discovering_agents_shows_bezels_loader_only_while_loading(cx: &mut TestAppCon
     let heading = cx.debug_bounds("home-agents-heading").unwrap();
     assert!(loader.size.width > px(0.) && heading.contains(&loader.center()));
     cx.update(|window, cx| {
-        view.update(cx, |v, _| v.browser_state.home_agents = Some(agents("live", 1)));
+        view.update(cx, |v, _| {
+            v.browser_state.home_agents = Some(agents("live", 1))
+        });
         window.draw(cx).clear(cx);
     });
     assert!(cx.debug_bounds("home-agents-loader").is_none());

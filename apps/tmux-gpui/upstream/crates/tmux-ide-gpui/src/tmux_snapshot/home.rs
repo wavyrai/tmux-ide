@@ -283,7 +283,7 @@ impl SnapshotView {
                 }));
         let canvas = self.canvas();
         // One line: the title and summary, then Browse as a field, Refresh and
-        // Theme as glyphs, and New local session as the one primary button.
+        // Theme as glyphs, and New session as the one primary button.
         let mut actions = div()
             .tab_group()
             .flex()
@@ -519,8 +519,7 @@ impl SnapshotView {
                 ),
             );
         }
-        if setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none()
-        {
+        if setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none() {
             body = body.child(
                 div()
                     .w_full()
@@ -533,14 +532,9 @@ impl SnapshotView {
         }
         body = body.child(div().w_full().child(self.new_session_controls(cx)));
         let view_title = match self.home_fleet_view() {
-            fleet_nav::View::All => "All sessions".to_owned(),
-            fleet_nav::View::Favourites => "Favourites".to_owned(),
-            fleet_nav::View::Machine(id) => self
-                .browser_state
-                .fleet
-                .as_ref()
-                .and_then(|f| f.groups.iter().find(|g| g.id == id))
-                .map_or(id, |g| g.label.clone()),
+            fleet_nav::View::All => Some("All sessions"),
+            fleet_nav::View::Favourites => Some("Favourites"),
+            fleet_nav::View::Machine(_) => None,
         };
         let mut detail = div()
             .debug_selector(|| "home-fleet-column".into())
@@ -551,16 +545,19 @@ impl SnapshotView {
             .gap(px(SPACE * 1.5));
         let wide = window.viewport_size().width >= px(COLUMNS_MIN);
         let nav = self.fleet_nav(wide, cx);
-        if let Some(cards) = self.fleet_cards(cx) {
+        if let Some(cards) = self.fleet_cards(window, cx) {
+            // A machine's own header row names it; the filters get a heading.
             detail = detail
-                .child(
-                    div()
-                        .debug_selector(|| "home-fleet-heading".into())
-                        .min_w_0()
-                        .truncate()
-                        .text_style(TextStyle::Title3)
-                        .child(crate::sidebar::label_text(&view_title)),
-                )
+                .when_some(view_title, |detail, title| {
+                    detail.child(
+                        div()
+                            .debug_selector(|| "home-fleet-heading".into())
+                            .min_w_0()
+                            .truncate()
+                            .text_style(TextStyle::Title3)
+                            .child(title),
+                    )
+                })
                 .child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
             let rows = self
@@ -580,10 +577,12 @@ impl SnapshotView {
                         .cursor_pointer()
                         .hover(move |s| s.bg(hover))
                         .child(
-                            bezel_ui::icons::icon(bezel_ui::icons::Icon::asset("icons/terminal.svg"))
-                                .size(px(bezel_ui::widgets::ICON_GLYPH))
-                                .flex_none()
-                                .text_color(muted),
+                            bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(
+                                "icons/terminal.svg",
+                            ))
+                            .size(px(bezel_ui::widgets::ICON_GLYPH))
+                            .flex_none()
+                            .text_color(muted),
                         )
                         .child(
                             div()

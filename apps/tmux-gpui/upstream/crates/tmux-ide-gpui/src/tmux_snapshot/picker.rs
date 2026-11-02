@@ -597,11 +597,7 @@ impl SnapshotView {
         cx.notify();
     }
     /// Opens Add machine: Home's left list and the capture example.
-    pub(super) fn open_add_machine(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn open_add_machine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_picker_mode(Mode::Machine, window, cx);
     }
 

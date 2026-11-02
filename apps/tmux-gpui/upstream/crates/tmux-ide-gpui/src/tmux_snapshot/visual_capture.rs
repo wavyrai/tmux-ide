@@ -305,18 +305,28 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
 /// Home's fleet as the owner's capture had it: Local with one session, and
 /// the remote "spark" with eleven, two of them favourites; plus two agents.
 fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
-    let token = |n: u128| uuid::Uuid::from_u128(0x6840_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
+    let token =
+        |n: u128| uuid::Uuid::from_u128(0x6840_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
     let spark: Vec<serde_json::Value> = [
-        ("demo", 3, false), ("devstack", 3, true), ("growth", 1, false), ("lint", 3, false),
-        ("site", 2, true), ("api", 4, false), ("bezel", 2, false), ("docs", 1, false),
-        ("infra", 3, false), ("notes", 1, false), ("scratch", 1, false),
+        ("demo", 3, false),
+        ("devstack", 3, true),
+        ("growth", 1, false),
+        ("lint", 3, false),
+        ("site", 2, true),
+        ("api", 4, false),
+        ("bezel", 2, false),
+        ("docs", 1, false),
+        ("infra", 3, false),
+        ("notes", 1, false),
+        ("scratch", 1, false),
     ]
     .iter()
     .enumerate()
     .map(|(i, (name, panes, favorite))| {
         let n = i as u128;
         serde_json::json!({"id": format!("spark-{name}"), "name": name, "paneCount": panes,
-            "favorite": favorite, "favoriteAction": token(100 + n), "serverId": "default",
+            "favorite": favorite, "active": *name == "devstack",
+            "favoriteAction": token(100 + n), "serverId": "default",
             "sessionId": format!("${}", i + 10), "selection": token(200 + n)})
     })
     .collect();
@@ -328,7 +338,7 @@ fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
              "collapsed": false, "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
              "servers": [{"id": "default", "label": "default", "state": "online",
                 "generation": token(2), "selection": token(3)}],
-             "sessions": [{"id": "local-0", "name": "0", "paneCount": 2, "active": true,
+             "sessions": [{"id": "local-0", "name": "0", "paneCount": 2,
                 "favoriteAction": token(4), "serverId": "default", "sessionId": "$0",
                 "selection": token(5)}]},
             {"id": "spark", "label": "spark", "state": "ready", "conflict": false,
@@ -469,7 +479,10 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {
-                            controls.fleet_view = super::home::fleet_nav::View::Machine("spark".into());
+                            controls.fleet_view =
+                                super::home::fleet_nav::View::Machine("spark".into());
+                            controls.table_cursor = Some(("spark".into(), "spark-devstack".into()));
+                            controls.fleet_table.clone().focus(window, cx);
                         }
                     }
                     view

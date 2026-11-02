@@ -12,6 +12,8 @@ pub(super) const NAV_WIDTH: f32 = 232.;
 pub(super) const ROW_INDENT: f32 = 36.;
 /// A session row's trailing pane count column.
 const COUNT_WIDTH: f32 = 88.;
+/// The trailing column that holds the keyboard row's ↵ hint.
+const HINT_WIDTH: f32 = 28.;
 
 fn glyph(path: &'static str, color: Hsla) -> Svg {
     bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(path))
@@ -30,6 +32,13 @@ fn machine_tone(bezel: &bezel_theme::Theme, group: &browser::fleet::Group) -> Hs
         browser::fleet::Phase::Connecting => bezel.warning,
         browser::fleet::Phase::Disconnected => bezel.text_muted,
     }
+}
+
+fn sessions(count: usize) -> String {
+    format!(
+        "{count} {}",
+        if count == 1 { "session" } else { "sessions" }
+    )
 }
 
 fn panes(count: u64) -> String {
@@ -158,7 +167,14 @@ impl SnapshotView {
                     row.hover(move |s| s.bg(hover))
                 }
             })
-            .child(glyph(icon, if selected { bezel.text } else { bezel.text_muted }))
+            .child(glyph(
+                icon,
+                if selected {
+                    bezel.text
+                } else {
+                    bezel.text_muted
+                },
+            ))
             .child(
                 div()
                     .flex_1()
@@ -223,7 +239,11 @@ impl SnapshotView {
                 );
             }
             let row = self.fleet_nav_row(index, entry, *entry == current, cx);
-            list = list.child(if wide { row } else { row.w_auto().max_w(px(NAV_WIDTH)) });
+            list = list.child(if wide {
+                row
+            } else {
+                row.w_auto().max_w(px(NAV_WIDTH))
+            });
         }
         if fleet.omitted_groups > 0 {
             list = list.child(
@@ -270,6 +290,7 @@ impl SnapshotView {
         index: usize,
         row: usize,
         session: &browser::fleet::Session,
+        cursor: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let bezel = self.home_palette();
@@ -287,7 +308,9 @@ impl SnapshotView {
             .py(px(4.))
             .pl(px(ROW_INDENT))
             .min_w_0()
-            .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
+            .when(cursor, |d| d.bg(bezel.card_selected_bg()))
+            .when(enabled && !cursor, |d| d.hover(move |d| d.bg(hover)))
+            .when(enabled, |d| d.cursor_pointer())
             .child(self.fleet_preference_button(
                 ("fleet-favorite", index * 128 + row),
                 session.favorite_action.as_deref(),
@@ -319,8 +342,25 @@ impl SnapshotView {
                             .truncate()
                             .text_style(TextStyle::Body)
                             .child(crate::sidebar::label_text(&session.name)),
-                    )
+                    ),
             )
+            .when(session.active, |line| {
+                line.child(
+                    div()
+                        .debug_selector(move || format!("fleet-session-attached-{index}-{row}"))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_style(TextStyle::Callout)
+                        .text_color(bezel.text_muted)
+                        .child(status_dot(bezel.text_muted))
+                        .children(design::ink_probe(move || {
+                            format!("fleet-session-attached-{index}-{row}")
+                        }))
+                        .child("attached"),
+                )
+            })
             .child(
                 div()
                     .debug_selector(move || format!("fleet-session-status-{index}-{row}"))
@@ -337,6 +377,26 @@ impl SnapshotView {
                         panes(session.pane_count)
                     } else {
                         "Unavailable".into()
+                    }),
+            )
+            // The ↵ hint holds its width on every row so the columns line up.
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(HINT_WIDTH))
+                    .flex()
+                    .justify_end()
+                    .when(cursor, |cell| {
+                        cell.child(
+                            bezel_ui::popover::kbd_hint(&bezel, "↵")
+                                .debug_selector(move || {
+                                    format!("fleet-session-enter-{index}-{row}")
+                                })
+                                .text_color(bezel.text_muted)
+                                .children(design::ink_probe(move || {
+                                    format!("fleet-session-enter-{index}-{row}")
+                                })),
+                        )
                     }),
             )
             .on_click(cx.listener(move |view, _, window, cx| {
@@ -409,7 +469,8 @@ impl SnapshotView {
                         "Identity conflict"
                     } else {
                         group.state.label()
-                    }),
+                    })
+                    .child(format!("· {}", sessions(group.sessions.len()))),
             );
         if let Some(token) = group.retry.clone() {
             header = header.child(
@@ -499,7 +560,10 @@ impl SnapshotView {
                     .children(design::ink_probe(move || {
                         format!("fleet-server-label-{index}-{server_index}")
                     }))
-                    .child(crate::sidebar::label_text(&format!("tmux · {}", server.label))),
+                    .child(crate::sidebar::label_text(&format!(
+                        "tmux · {}",
+                        server.label
+                    ))),
             )
             .child(
                 div()
@@ -527,6 +591,34 @@ impl SnapshotView {
             .into_any_element()
     }
 
+    /// The table's column labels, under a machine's header.
+    fn fleet_column_header(&self, index: usize) -> Div {
+        let bezel = self.home_palette();
+        bezel
+            .card_row(false)
+            .debug_selector(move || format!("fleet-columns-{index}"))
+            .py(px(4.))
+            // In line with the session names, past the star and the glyph.
+            .pl(px(ROW_INDENT
+                + bezel_theme::Theme::BUTTON_HEIGHT
+                + bezel_ui::widgets::ICON_GLYPH
+                + 2. * SPACE))
+            .min_w_0()
+            .text_style(TextStyle::Caption)
+            .text_color(bezel.text_muted)
+            .children(design::ink_probe(move || format!("fleet-columns-{index}")))
+            .child(div().flex_1().min_w_0().child("Session"))
+            .child(
+                div()
+                    .flex_none()
+                    .min_w(px(COUNT_WIDTH))
+                    .flex()
+                    .justify_end()
+                    .child("Panes"),
+            )
+            .child(div().flex_none().w(px(HINT_WIDTH)))
+    }
+
     fn fleet_note(&self, text: impl Into<SharedString>) -> Div {
         let bezel = self.home_palette();
         bezel
@@ -539,12 +631,33 @@ impl SnapshotView {
     }
 
     /// The session table for the left list's entry. `None` without a fleet.
-    pub(super) fn fleet_cards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn fleet_cards(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let fleet = self.browser_state.fleet.as_ref()?;
         let bezel = self.home_palette();
         let view = self.home_fleet_view();
+        // The keyboard row, while the table has focus.
+        let cursor = self
+            .home_filter
+            .as_ref()
+            .filter(|c| c.fleet_table.is_focused(window))
+            .and_then(|c| fleet_nav::step_row(&view, Some(fleet), c.table_cursor.as_ref(), ""));
+        let is_cursor = |index: usize, row: usize| {
+            cursor
+                .as_ref()
+                .is_some_and(|key| *key == fleet_nav::row_key(fleet, (index, row)))
+        };
         let mut body = div()
+            .id("home-fleet-table")
             .debug_selector(|| "home-fleet-table".into())
+            .role(Role::Grid)
+            .aria_label("Sessions")
+            .when_some(self.home_filter.as_ref(), |body, c| {
+                body.track_focus(&c.fleet_table)
+            })
             .w_full()
             .min_w_0()
             .flex()
@@ -578,6 +691,8 @@ impl SnapshotView {
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
                 .child(self.fleet_machine_header(index, group, view == View::All, cx));
+            // Column labels go over a machine's first session row.
+            let mut columns = false;
             if let Some(message) = group.connection_hint() {
                 card = card.child(
                     self.fleet_note(message)
@@ -613,8 +728,18 @@ impl SnapshotView {
                 if rows.is_empty() {
                     card = card.child(self.fleet_note("No sessions"));
                 }
+                if !rows.is_empty() && !columns {
+                    columns = true;
+                    card = card.child(self.fleet_column_header(index));
+                }
                 for (row, session) in rows {
-                    card = card.child(self.fleet_session_row(index, row, session, cx));
+                    card = card.child(self.fleet_session_row(
+                        index,
+                        row,
+                        session,
+                        is_cursor(index, row),
+                        cx,
+                    ));
                 }
             }
             for (row, session) in group.sessions.iter().enumerate().filter(|(_, s)| {
@@ -623,13 +748,22 @@ impl SnapshotView {
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
             }) {
-                card = card.child(self.fleet_session_row(index, row, session, cx));
+                if !columns {
+                    columns = true;
+                    card = card.child(self.fleet_column_header(index));
+                }
+                card = card.child(self.fleet_session_row(
+                    index,
+                    row,
+                    session,
+                    is_cursor(index, row),
+                    cx,
+                ));
             }
             if group.omitted_servers > 0 {
-                card = card.child(self.fleet_note(format!(
-                    "{} more servers not shown",
-                    group.omitted_servers
-                )));
+                card = card.child(
+                    self.fleet_note(format!("{} more servers not shown", group.omitted_servers)),
+                );
             }
             if group.omitted_sessions > 0 {
                 card = card.child(self.fleet_note(format!(

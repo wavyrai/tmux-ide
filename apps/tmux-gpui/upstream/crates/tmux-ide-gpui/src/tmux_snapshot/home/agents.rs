@@ -81,17 +81,15 @@ impl SnapshotView {
                     .gap(px(SPACE))
                     .text_style(TextStyle::Headline)
                     .when(roster.phase == Phase::Loading, |line| {
-                        line.child(
-                            div().debug_selector(|| "home-agents-loader".into()).child(
-                                bezel_ui::loaders::pulse_loader(
-                                    "home-agents-loader",
-                                    &bezel,
-                                    4.,
-                                    bezel_motion::Painter::of(cx),
-                                    cx,
-                                ),
+                        line.child(div().debug_selector(|| "home-agents-loader".into()).child(
+                            bezel_ui::loaders::pulse_loader(
+                                "home-agents-loader",
+                                &bezel,
+                                4.,
+                                bezel_motion::Painter::of(cx),
+                                cx,
                             ),
-                        )
+                        ))
                     })
                     .child(heading),
             )

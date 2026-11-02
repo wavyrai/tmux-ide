@@ -92,7 +92,71 @@ pub(super) fn count(view: &View, fleet: Option<&Fleet>) -> usize {
     })
 }
 
+/// A table row's identity: its machine's group id and the session's id. It
+/// survives a republished fleet; indices would not.
+pub(in crate::tmux_snapshot) type RowKey = (String, String);
+
+/// The table's session rows in paint order, as (group index, session index):
+/// per machine, each server's sessions, then sessions on no listed server.
+pub(super) fn table_rows(view: &View, fleet: Option<&Fleet>) -> Vec<(usize, usize)> {
+    let Some(fleet) = fleet else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for (index, group) in fleet.groups.iter().enumerate() {
+        if !view.shows_group(group) {
+            continue;
+        }
+        for server in &group.servers {
+            rows.extend(group.sessions.iter().enumerate().filter_map(|(row, s)| {
+                (s.server_id.as_ref() == Some(&server.id) && view.shows_session(group, s))
+                    .then_some((index, row))
+            }));
+        }
+        rows.extend(group.sessions.iter().enumerate().filter_map(|(row, s)| {
+            (view.shows_session(group, s)
+                && s.server_id
+                    .as_ref()
+                    .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id)))
+            .then_some((index, row))
+        }));
+    }
+    rows
+}
+
+/// The key of the row at (group, session) in `fleet`.
+pub(super) fn row_key(fleet: &Fleet, (group, row): (usize, usize)) -> RowKey {
+    let group = &fleet.groups[group];
+    (group.id.clone(), group.sessions[row].id.clone())
+}
+
+/// The table cursor after `key`: `cursor` if it is still shown, else the first
+/// row; `None` when the table is empty or the key is not a table key.
+pub(super) fn step_row(
+    view: &View,
+    fleet: Option<&Fleet>,
+    cursor: Option<&RowKey>,
+    key: &str,
+) -> Option<RowKey> {
+    let fleet_ref = fleet?;
+    let rows = table_rows(view, fleet);
+    let keys: Vec<RowKey> = rows.iter().map(|&r| row_key(fleet_ref, r)).collect();
+    let last = keys.len().checked_sub(1)?;
+    let current = cursor.and_then(|c| keys.iter().position(|k| k == c));
+    let index = match (key, current) {
+        ("up", Some(i)) => i.saturating_sub(1),
+        ("down", Some(i)) => (i + 1).min(last),
+        ("home", _) => 0,
+        ("end", _) => last,
+        ("up" | "down" | "", None) => 0,
+        ("", Some(i)) => i,
+        _ => return None,
+    };
+    Some(keys[index].clone())
+}
+
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -166,5 +230,47 @@ mod tests {
         assert_eq!(count(&View::All, Some(&fleet)), 4);
         assert_eq!(count(&View::Favourites, Some(&fleet)), 2);
         assert_eq!(count(&machine, Some(&fleet)), 2);
+    }
+
+    #[test]
+    fn the_table_cursor_walks_shown_rows_and_restarts_when_its_row_leaves() {
+        let fleet = fleet(&["local", "spark"]);
+        let f = Some(&fleet);
+        let key = |g: &str, s: &str| (g.to_owned(), format!("{g}-{s}"));
+        // All sessions: every machine's rows, in paint order.
+        assert_eq!(
+            table_rows(&View::All, f),
+            vec![(0, 0), (0, 1), (1, 0), (1, 1)]
+        );
+        assert_eq!(
+            step_row(&View::All, f, None, "down"),
+            Some(key("local", "a"))
+        );
+        let c = key("local", "b");
+        assert_eq!(
+            step_row(&View::All, f, Some(&c), "down"),
+            Some(key("spark", "a"))
+        );
+        assert_eq!(
+            step_row(&View::All, f, Some(&c), "up"),
+            Some(key("local", "a"))
+        );
+        assert_eq!(
+            step_row(&View::All, f, Some(&c), "end"),
+            Some(key("spark", "b"))
+        );
+        assert_eq!(
+            step_row(&View::All, f, Some(&key("spark", "b")), "down"),
+            Some(key("spark", "b"))
+        );
+        assert_eq!(step_row(&View::All, f, Some(&c), "x"), None);
+        // A cursor its view no longer shows restarts at the first row.
+        let spark = View::Machine("spark".into());
+        assert_eq!(step_row(&spark, f, Some(&c), ""), Some(key("spark", "a")));
+        assert_eq!(
+            step_row(&View::Favourites, f, Some(&key("spark", "b")), ""),
+            Some(key("local", "a"))
+        );
+        assert_eq!(step_row(&View::All, None, None, "down"), None);
     }
 }

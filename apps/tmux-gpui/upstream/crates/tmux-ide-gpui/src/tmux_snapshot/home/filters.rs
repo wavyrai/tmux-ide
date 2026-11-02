@@ -50,9 +50,13 @@ pub(in crate::tmux_snapshot) struct Controls {
     pub(super) scroll: ScrollHandle,
     pub(super) page_scroll: ScrollHandle,
     /// What the session table shows: the left list's entry.
-    pub(super) fleet_view: fleet_nav::View,
+    pub(in crate::tmux_snapshot) fleet_view: fleet_nav::View,
     /// The left list's focus, for its arrow keys.
     pub(super) fleet_nav: FocusHandle,
+    /// The session table's focus, for its arrow keys and Enter.
+    pub(in crate::tmux_snapshot) fleet_table: FocusHandle,
+    /// The table row the keyboard is on.
+    pub(in crate::tmux_snapshot) table_cursor: Option<fleet_nav::RowKey>,
     _changed: Subscription,
     theme: crate::config::Theme,
 }
@@ -84,6 +88,8 @@ impl SnapshotView {
                 page_scroll: ScrollHandle::new(),
                 fleet_view: fleet_nav::View::All,
                 fleet_nav: cx.focus_handle(),
+                fleet_table: cx.focus_handle(),
+                table_cursor: None,
                 _changed: changed,
                 theme: theme.clone(),
             });
@@ -210,8 +216,10 @@ impl SnapshotView {
         cx.notify();
         true
     }
-    /// `[` and `]` anywhere on Home, and the arrows, Home and End while the
-    /// left list has focus, move the list's selection.
+    /// `[` and `]` anywhere on Home move the left list's selection, as do the
+    /// arrows, Home and End while the list has focus; there → or Enter moves
+    /// into the session table. In the table the same keys move its cursor,
+    /// Enter opens the cursor's session, and ← or Esc goes back to the list.
     fn home_fleet_nav_key(
         &mut self,
         event: &KeyDownEvent,
@@ -240,15 +248,65 @@ impl SnapshotView {
             return false;
         }
         let list_focused = controls.fleet_nav.is_focused(window);
-        if !matches!(key.key.as_str(), "[" | "]") && !list_focused {
-            return false;
-        }
+        let table_focused = controls.fleet_table.is_focused(window);
         let fleet = self.browser_state.fleet.as_ref();
         let current = fleet_nav::reconcile(&controls.fleet_view, fleet);
-        let Some(next) = fleet_nav::step(&current, fleet, &key.key) else {
-            return false;
-        };
-        controls.fleet_view = next;
+        let key = key.key.as_str();
+        if table_focused && !matches!(key, "[" | "]") {
+            match key {
+                "left" | "escape" => controls.fleet_nav.clone().focus(window, cx),
+                "enter" => {
+                    if event.is_held {
+                        return true;
+                    }
+                    let cursor =
+                        fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "");
+                    let token = cursor.as_ref().and_then(|(group, session)| {
+                        fleet?
+                            .groups
+                            .iter()
+                            .find(|g| &g.id == group)?
+                            .sessions
+                            .iter()
+                            .find(|s| &s.id == session)?
+                            .selection
+                            .clone()
+                    });
+                    controls.table_cursor = cursor;
+                    if let Some(token) = token {
+                        let request = self.browser_request;
+                        self.open_fleet_session(request, &token, window, cx);
+                    }
+                }
+                _ => {
+                    let Some(next) =
+                        fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), key)
+                    else {
+                        return false;
+                    };
+                    controls.table_cursor = Some(next);
+                }
+            }
+        } else if list_focused && matches!(key, "right" | "enter") {
+            if event.is_held {
+                return true;
+            }
+            let Some(cursor) =
+                fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "")
+            else {
+                return false;
+            };
+            controls.table_cursor = Some(cursor);
+            controls.fleet_table.clone().focus(window, cx);
+        } else {
+            if !matches!(key, "[" | "]") && !list_focused {
+                return false;
+            }
+            let Some(next) = fleet_nav::step(&current, fleet, key) else {
+                return false;
+            };
+            controls.fleet_view = next;
+        }
         cx.stop_propagation();
         window.prevent_default();
         cx.notify();

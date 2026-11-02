@@ -297,7 +297,7 @@ impl SnapshotView {
         // On Home's inked palette, like Home's other buttons.
         controls::action_button_on(
             "home-new-local-session",
-            Some("New local session…"),
+            Some("New session…"),
             "Create a session on this Mac",
             controls::Icon::Plus,
             if available {

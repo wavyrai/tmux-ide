@@ -35,7 +35,10 @@ fn home_list_and_table_share_wide_row_and_stack_in_narrow_window(cx: &mut TestAp
             assert_eq!(all.top(), favourites.top());
         }
         // Agents sit under the table, in its column.
-        assert_eq!((agents.left(), agents.right()), (table.left(), table.right()));
+        assert_eq!(
+            (agents.left(), agents.right()),
+            (table.left(), table.right())
+        );
         // The one primary action sits in the header line.
         let new = cx.debug_bounds("home-new-local-session").unwrap();
         assert!(new.top() >= header.top() && new.bottom() <= header.bottom());
