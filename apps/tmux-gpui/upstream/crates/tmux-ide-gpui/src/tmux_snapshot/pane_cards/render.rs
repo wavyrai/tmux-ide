@@ -62,31 +62,6 @@ impl Layout {
         ok
     }
 }
-/// The card rects the last `paint_cards` on this thread painted, in window
-/// coordinates, for tests.
-#[cfg(test)]
-pub(in crate::tmux_snapshot) mod painted {
-    use super::*;
-    use std::cell::RefCell;
-    thread_local! {
-        static CARDS: RefCell<(bool, Vec<(String, Bounds<Pixels>)>)> = Default::default();
-    }
-    pub(super) fn begin() {
-        CARDS.with(|c| c.borrow_mut().0 = true);
-    }
-    pub(super) fn record(id: &str, card: Bounds<Pixels>) {
-        CARDS.with(|c| {
-            let mut c = c.borrow_mut();
-            if std::mem::take(&mut c.0) {
-                c.1.clear();
-            }
-            c.1.push((id.to_owned(), card));
-        });
-    }
-    pub fn cards() -> Vec<(String, Bounds<Pixels>)> {
-        CARDS.with(|c| c.borrow().1.clone())
-    }
-}
 impl Layout {
     /// Each pane's opaque card under its cells, on Bezel's panel radius and
     /// hairline border, sized to the canvas `bounds` it paints in.
@@ -113,5 +88,32 @@ impl Layout {
                 BorderStyle::Solid,
             ));
         }
+    }
+}
+/// The card rects the last `paint_cards` on this thread painted, in window
+/// coordinates, for tests.
+#[cfg(test)]
+pub(in crate::tmux_snapshot) mod painted {
+    use super::*;
+    use std::cell::RefCell;
+    /// Whether the next card starts a new paint, then each card by pane id.
+    type Cards = (bool, Vec<(String, Bounds<Pixels>)>);
+    thread_local! {
+        static CARDS: RefCell<Cards> = Default::default();
+    }
+    pub(super) fn begin() {
+        CARDS.with(|c| c.borrow_mut().0 = true);
+    }
+    pub(super) fn record(id: &str, card: Bounds<Pixels>) {
+        CARDS.with(|c| {
+            let mut c = c.borrow_mut();
+            if std::mem::take(&mut c.0) {
+                c.1.clear();
+            }
+            c.1.push((id.to_owned(), card));
+        });
+    }
+    pub fn cards() -> Vec<(String, Bounds<Pixels>)> {
+        CARDS.with(|c| c.borrow().1.clone())
     }
 }
