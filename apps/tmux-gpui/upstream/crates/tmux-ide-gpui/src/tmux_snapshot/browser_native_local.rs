@@ -551,8 +551,8 @@ impl Local {
             Err(error)
         };
         match reconnecting {
-            Err(error) if outbox::closed(&error) => Err(error),
             Ok(()) => Ok(()),
+            // A gone terminal loop fails this publication too, and ends the actor.
             Err(_) => {
                 match self.unavailable("Something went wrong. Refresh sessions to try again.") {
                     Err(error) if outbox::closed(&error) => Err(error),

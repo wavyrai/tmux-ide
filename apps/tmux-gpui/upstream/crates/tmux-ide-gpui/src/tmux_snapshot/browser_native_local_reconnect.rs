@@ -783,4 +783,44 @@ mod tests {
         drop(input);
         assert!(commands.send(Command::Refresh { request: 3 }).is_err());
     }
+
+    /// An idle actor parks. Events still waiting for room must not wait for a wake
+    /// that never comes: the terminal loop reading its queue does not unpark it.
+    #[test]
+    fn an_idle_actor_delivers_waiting_events_without_being_woken() {
+        let (mut local, _unused) = fixture();
+        local.active = None;
+        let (events, receiver) = mpsc::sync_channel(1);
+        local.events = events.into();
+        let (commands, input) = mpsc::sync_channel(32);
+        let actor = std::thread::spawn(move || local.run(input));
+        // Startup's publication stays unread, so the queue is full.
+        std::thread::sleep(Duration::from_millis(200));
+        commands
+            .send(Command::Presence {
+                active: true,
+                revision: 5,
+            })
+            .unwrap();
+        // The one wake a command brings, as `watch::Commands::send` gives it.
+        actor.thread().unpark();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(Incoming::Catalog(_))
+        ));
+        let next = receiver.recv_timeout(Duration::from_secs(2));
+        assert!(
+            matches!(&next, Ok(Incoming::Catalog(state)) if state.presence_revision == 5),
+            "the waiting publication was not delivered"
+        );
+        drop(commands);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !actor.is_finished() && Instant::now() < deadline {
+            actor.thread().unpark();
+            while receiver.try_recv().is_ok() {}
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(actor.is_finished(), "the actor did not stop with its owner");
+    }
 }
