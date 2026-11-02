@@ -43765,11 +43765,14 @@ function initialize() {
   }
   return native;
 }
+function nativeFnv64() {
+  return initialize();
+}
 function createBufferedFnv64(initialState = OFFSET_BASIS) {
   const hasher = initialize();
   return hasher ? new BufferedHasher(hasher, initialState) : null;
 }
-var SCRATCH_BYTES, OFFSET_BASIS, initialized, native, BufferedHasher;
+var SCRATCH_BYTES, OFFSET_BASIS, initialized, native, FNV64_OFFSET_BASIS, BufferedHasher;
 var init_terminal_fnv64_wasm = __esm({
   "packages/core/src/terminal-fnv64-wasm.ts"() {
     "use strict";
@@ -43778,6 +43781,7 @@ var init_terminal_fnv64_wasm = __esm({
     OFFSET_BASIS = 0xcbf29ce484222325n;
     initialized = false;
     native = null;
+    FNV64_OFFSET_BASIS = OFFSET_BASIS;
     BufferedHasher = class {
       #native;
       #buffer = new Uint8Array(SCRATCH_BYTES);
@@ -43915,6 +43919,12 @@ function hashTerminalReplicaRowCached(row, onMiss, encodingCache) {
   const cached2 = ROW_HASH_CACHE.get(row);
   if (cached2) return cached2;
   onMiss?.();
+  const native2 = nativeFnv64();
+  if (native2) {
+    const digest4 = hashRowBytes(row, native2);
+    if (isTerminalReplicaRowDeeplyFrozen(row)) ROW_HASH_CACHE.set(row, digest4);
+    return digest4;
+  }
   const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
   let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
@@ -43978,6 +43988,10 @@ async function hashTerminalReplicaRowCooperatively(row, yieldControl, bytesPerSl
 }
 function isTerminalReplicaRowDeeplyFrozen(row) {
   if (DEEPLY_FROZEN_ROWS.has(row)) return true;
+  if (isOwnedTerminalReplicaRow(row)) {
+    DEEPLY_FROZEN_ROWS.add(row);
+    return true;
+  }
   if (!Object.isFrozen(row) || !Object.isFrozen(row.cells)) return false;
   for (const cell of row.cells) {
     if (!Object.isFrozen(cell) || !Object.isFrozen(cell.foreground) || !Object.isFrozen(cell.background))
@@ -43986,7 +44000,74 @@ function isTerminalReplicaRowDeeplyFrozen(row) {
   DEEPLY_FROZEN_ROWS.add(row);
   return true;
 }
-var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, SHORT_ASCII_HEADERS, DEFAULT_COLOR_KEYS, DEFAULT_COLOR_KEY_ORDER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache, DECODED_DEFAULT_COLOR;
+function canonicalNumber(value) {
+  const text2 = String(value);
+  return `d${text2.length}:${text2};`;
+}
+function canonicalColor(color3) {
+  if (color3.kind === "default") return "o1:s4:kind;s7:default;;";
+  if (color3.kind === "indexed")
+    return `o2:s5:index;${canonicalNumber(color3.index)}s4:kind;s7:indexed;;`;
+  return `o2:s4:kind;s3:rgb;s5:value;${canonicalNumber(color3.value)};`;
+}
+function encodeCell(cell) {
+  const grapheme = cell.grapheme;
+  let length = grapheme.length;
+  for (let index = 0; index < grapheme.length; index += 1)
+    if (grapheme.charCodeAt(index) > 127) {
+      length = UTF8_ENCODER.encode(grapheme).byteLength;
+      break;
+    }
+  return UTF8_ENCODER.encode(
+    `a5:s${length}:${grapheme};${canonicalNumber(cell.width)}${canonicalColor(
+      cell.foreground
+    )}${canonicalColor(cell.background)}${canonicalNumber(cell.attributes)};`
+  );
+}
+function remember(cache3, key2, bytes) {
+  if (cache3.size >= CELL_BYTES_LIMIT) cache3.clear();
+  cache3.set(key2, bytes);
+  return bytes;
+}
+function cellBytes(cell) {
+  const { grapheme, width, attributes, foreground, background } = cell;
+  if (width === 1 && attributes === 0 && foreground.kind === "default" && background.kind === "default")
+    return PLAIN_CELL_BYTES.get(grapheme) ?? remember(PLAIN_CELL_BYTES, grapheme, encodeCell(cell));
+  const key2 = `${width}\0${attributes}\0${canonicalColor(foreground)}\0${canonicalColor(
+    background
+  )}\0${grapheme}`;
+  return STYLED_CELL_BYTES.get(key2) ?? remember(STYLED_CELL_BYTES, key2, encodeCell(cell));
+}
+function hashRowBytes(row, native2) {
+  const scratch = native2.scratch;
+  const capacity = scratch.byteLength;
+  let state = FNV64_OFFSET_BASIS;
+  let length = 0;
+  const write2 = (bytes) => {
+    if (bytes.byteLength <= capacity - length) {
+      scratch.set(bytes, length);
+      length += bytes.byteLength;
+      return;
+    }
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = Math.min(capacity - length, bytes.byteLength - offset);
+      scratch.set(bytes.subarray(offset, offset + count), length);
+      length += count;
+      offset += count;
+      if (length === capacity) {
+        state = BigInt.asUintN(64, native2.update(state, length));
+        length = 0;
+      }
+    }
+  };
+  write2(ASCII_ENCODER.encode(`a2:${row.wrapped ? "b1;" : "b0;"}a${row.cells.length}:`));
+  for (const cell of row.cells) write2(cellBytes(cell));
+  write2(ROW_TRAILER);
+  state = BigInt.asUintN(64, native2.update(state, length));
+  return state.toString(16).padStart(16, "0");
+}
+var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, SHORT_ASCII_HEADERS, DEFAULT_COLOR_KEYS, DEFAULT_COLOR_KEY_ORDER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache, DECODED_DEFAULT_COLOR, ASCII_ENCODER, CELL_BYTES_LIMIT, PLAIN_CELL_BYTES, STYLED_CELL_BYTES, ROW_TRAILER;
 var init_terminal_replica_hash_cache = __esm({
   "packages/core/src/terminal-replica-hash-cache.ts"() {
     "use strict";
@@ -44233,6 +44314,11 @@ var init_terminal_replica_hash_cache = __esm({
       }
     };
     DECODED_DEFAULT_COLOR = Object.freeze({ kind: "default" });
+    ASCII_ENCODER = new TextEncoder();
+    CELL_BYTES_LIMIT = 4096;
+    PLAIN_CELL_BYTES = /* @__PURE__ */ new Map();
+    STYLED_CELL_BYTES = /* @__PURE__ */ new Map();
+    ROW_TRAILER = ASCII_ENCODER.encode(";;");
   }
 });
 
@@ -44852,6 +44938,16 @@ function resolveFrameHash(update, options, profile) {
   return hash;
 }
 function terminalReplicaFrameIdentity(update) {
+  if (update.type === "terminal.patch") {
+    const { rows, history: history2, historyDelta, ...rest2 } = update.patch;
+    return [
+      "terminal-replica-patch-frame-v2",
+      { ...update, patch: rest2 },
+      rows.map(({ index, row }) => [index, hashTerminalReplicaRow(row)]),
+      history2 === void 0 ? null : hashTerminalReplicaRows(history2),
+      historyDelta === void 0 ? null : [historyDelta.trim, hashTerminalReplicaRows(historyDelta.append)]
+    ];
+  }
   if (update.type !== "terminal.seed") return update;
   const { grid, history, ...rest } = update.snapshot;
   return [
