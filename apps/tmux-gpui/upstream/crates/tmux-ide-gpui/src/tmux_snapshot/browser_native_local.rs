@@ -947,6 +947,9 @@ impl Local {
 #[path = "browser_native_local_fault_log_live_tests.rs"]
 mod fault_log_live_tests;
 #[cfg(test)]
+#[path = "browser_native_local_freeze_live_tests.rs"]
+mod freeze_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_home_live_tests.rs"]
 mod home_live_tests;
 #[cfg(test)]
