@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  lutimesSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -169,6 +178,23 @@ describe("session favicon lookup", () => {
     expect((await resolve(dir))?.data).toBe(b64("<svg>new</svg>"));
     expect(io.readNoFollow).toHaveBeenCalledTimes(2);
     rmSync(file);
+    expect(await resolve(dir)).toBeNull();
+  });
+
+  it("drops a cached hit whose file became a symlink with the same mtime and size", async () => {
+    const outside = tempDir();
+    const target = join(outside, "secret.svg");
+    writeFileSync(target, svg);
+    const dir = tempDir();
+    const file = join(dir, "favicon.svg");
+    writeFileSync(file, "x".repeat(target.length));
+    utimesSync(file, 1_000, 1_000);
+    const resolve = createSessionFaviconResolver();
+    expect((await resolve(dir))?.size).toBe(target.length);
+    rmSync(file);
+    symlinkSync(target, file);
+    lutimesSync(file, 1_000, 1_000);
+    expect(lstatSync(file).size).toBe(target.length);
     expect(await resolve(dir)).toBeNull();
   });
 

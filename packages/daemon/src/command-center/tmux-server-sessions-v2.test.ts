@@ -193,20 +193,26 @@ describe("GET tmux-servers/:server/:generation/sessions?version=2", () => {
   it("drops favicons beyond the response's total favicon budget instead of failing", async () => {
     const dir = tempDir();
     writeFileSync(join(dir, "favicon.png"), Buffer.alloc(30_000, 7));
-    const rows = Array.from({ length: 20 }, (_, index) => ({
+    const small = tempDir();
+    writeFileSync(join(small, "favicon.svg"), svg);
+    const rows = Array.from({ length: 21 }, (_, index) => ({
       liveSessionId: `live-session.${String(index).padStart(20, "0")}`,
       sessionName: `s${index}`,
       paneCount: 1,
       windowCount: 1,
       lastActivity: 1,
-      sessionPath: dir,
+      sessionPath: index === 20 ? small : dir,
     }));
     const f = await fixture(rows);
     const body = await f.get("?version=2");
     const favicons = body.sessions.map((session) => session.favicon);
-    // 17 × 30 000 = 510 000 ≤ 512 KiB; an 18th would be 540 000.
-    expect(favicons.filter((favicon) => favicon !== null)).toHaveLength(17);
-    expect(favicons.slice(17)).toEqual([null, null, null]);
+    // 17 × 30 000 = 510 000 ≤ 512 KiB; an 18th would be 540 000. A small icon after them still fits.
+    expect(favicons.slice(0, 17).every((favicon) => favicon !== null)).toBe(true);
+    expect(favicons.slice(17, 20)).toEqual([null, null, null]);
+    expect(favicons[20]).toEqual({
+      mime: "image/svg+xml",
+      data: Buffer.from(svg).toString("base64"),
+    });
     expect(favicons[0]).toEqual({
       mime: "image/png",
       data: Buffer.alloc(30_000, 7).toString("base64"),
