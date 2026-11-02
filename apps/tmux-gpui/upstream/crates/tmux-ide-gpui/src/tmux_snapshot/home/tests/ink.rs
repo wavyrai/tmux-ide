@@ -155,9 +155,12 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "home-agent-action-0",
             "home-filter-hints",
             "fleet-machine-guidance-3",
-            // The shared quiet buttons, painted from Home's palette.
-            "control-home-theme",
-            "control-tmux-home-refresh",
+            // The shared quiet buttons, painted from Home's palette. Theme and
+            // Refresh are glyphs only, so their icons carry the probe.
+            "home-browse",
+            "home-browse-key",
+            "home-nav-count-0",
+            "home-nav-machines",
             "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
             "control-home-new-local-session",

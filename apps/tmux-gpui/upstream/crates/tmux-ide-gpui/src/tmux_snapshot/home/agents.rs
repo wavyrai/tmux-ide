@@ -1,7 +1,10 @@
 //! Native rows reuse Herdr sidebar label clipping and themed hover surfaces.
 use super::*;
 use crate::tmux_snapshot::browser::home_agents::Phase;
-use bezel_ui::widgets::Content;
+use bezel_ui::widgets::{Content, Scaffolding};
+
+/// The agent list's height before it scrolls.
+const AGENT_LIST_MAX: f32 = 240.;
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn home_agent_select(
         &mut self,
@@ -70,7 +73,28 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_style(TextStyle::Headline).child(heading))
+            .child(
+                div()
+                    .debug_selector(|| "home-agents-heading".into())
+                    .flex()
+                    .items_center()
+                    .gap(px(SPACE))
+                    .text_style(TextStyle::Headline)
+                    .when(roster.phase == Phase::Loading, |line| {
+                        line.child(
+                            div().debug_selector(|| "home-agents-loader".into()).child(
+                                bezel_ui::loaders::pulse_loader(
+                                    "home-agents-loader",
+                                    &bezel,
+                                    4.,
+                                    bezel_motion::Painter::of(cx),
+                                    cx,
+                                ),
+                            ),
+                        )
+                    })
+                    .child(heading),
+            )
             .child(
                 div()
                     .text_style(TextStyle::Callout)
@@ -104,38 +128,32 @@ impl SnapshotView {
                     .id("home-agents-no-matches"),
             );
         }
-        let mut rows = div()
+        // The list is the scroller, so `scroll_to_item` reaches its rows.
+        let mut rows = bezel
+            .group_box()
             .id("home-agent-list")
+            .debug_selector(|| "home-agent-list".into())
             .w_full()
             .min_w_0()
-            .max_h(px(240.))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .when_some(self.home_filter.as_ref(), |element, controls| {
-                element.track_scroll(&controls.scroll)
-            });
-        for (index, row) in roster
+            .max_h(px(AGENT_LIST_MAX));
+        for (shown, (index, row)) in roster
             .rows
             .iter()
             .enumerate()
             .filter(|(_, row)| filter.matches(roster, row, &query))
+            .enumerate()
         {
             let key = row.key.clone();
             let enabled = self.browser_commands.is_some() && roster.available(&key);
-            let mut item = div()
+            let mut item = bezel
+                .card_row(shown == 0)
                 .id(("tmux-home-agent", index))
                 .debug_selector(move || format!("tmux-home-agent-{index}"))
                 .flex_none()
                 .min_w_0()
                 .w_full()
                 .overflow_hidden()
-                .flex()
-                .items_center()
-                .gap_3()
-                .p_3()
-                .rounded(px(bezel_theme::Theme::panel_radius()))
+                .py(px(8.))
                 .bg(
                     if self
                         .home_filter
@@ -205,6 +223,24 @@ impl SnapshotView {
             }
             rows = rows.child(item);
         }
-        Some(body.child(rows).into_any_element())
+        if matches == 0 {
+            return Some(body.into_any_element());
+        }
+        let mut viewport = bezel_ui::scroll::Viewport::new("home-agent-list", rows, Axis::Vertical);
+        if let Some(controls) = &self.home_filter {
+            viewport = viewport.track_scroll(&controls.scroll);
+        }
+        // A wheel over the list stays in the list, at its ends too; the page
+        // scrolls with the pointer off it.
+        let list = bezel_ui::scroll::contain_wheel(
+            div()
+                .id("home-agent-viewport")
+                .debug_selector(|| "home-agent-viewport".into())
+                .w_full()
+                .min_w_0()
+                .child(viewport),
+            bezel_ui::scroll::Axes::Vertical,
+        );
+        Some(body.child(list).into_any_element())
     }
 }

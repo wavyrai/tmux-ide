@@ -129,7 +129,10 @@ fn empty_state_renders_only_when_a_live_catalog_has_no_sessions(cx: &mut TestApp
     draw(&view, cx, |v| v.browser_state.sessions.clear());
     assert_eq!(shown(cx), ["home-empty"]);
     let empty = cx.debug_bounds("home-empty").unwrap();
-    assert!(empty.size.width <= px(CARD_MAX) && empty.size.height > px(80.));
+    // The empty state fills the table's column, as the strips fill the page's.
+    let column = cx.debug_bounds("home-fleet-column").unwrap();
+    assert_eq!((empty.left(), empty.right()), (column.left(), column.right()));
+    assert!(empty.size.height > px(80.));
     draw(&view, cx, |v| {
         v.browser_state.home_phase = browser::HomePhase::Unavailable
     });

@@ -49,6 +49,10 @@ pub(in crate::tmux_snapshot) struct Controls {
     pub(super) visible: Vec<(String, bool)>,
     pub(super) scroll: ScrollHandle,
     pub(super) page_scroll: ScrollHandle,
+    /// What the session table shows: the left list's entry.
+    pub(super) fleet_view: fleet_nav::View,
+    /// The left list's focus, for its arrow keys.
+    pub(super) fleet_nav: FocusHandle,
     _changed: Subscription,
     theme: crate::config::Theme,
 }
@@ -78,6 +82,8 @@ impl SnapshotView {
                 visible: Vec::new(),
                 scroll: ScrollHandle::new(),
                 page_scroll: ScrollHandle::new(),
+                fleet_view: fleet_nav::View::All,
+                fleet_nav: cx.focus_handle(),
                 _changed: changed,
                 theme: theme.clone(),
             });
@@ -115,6 +121,9 @@ impl SnapshotView {
         // Home agent shortcuts must not navigate behind a focused action either.
         if self.home_action_index(window).is_some() {
             return false;
+        }
+        if self.home_fleet_nav_key(event, window, cx) {
+            return true;
         }
         let key = &event.keystroke;
         if self.browser_state.surface != browser::Surface::Home
@@ -196,6 +205,50 @@ impl SnapshotView {
                 _ => return false,
             }
         }
+        cx.stop_propagation();
+        window.prevent_default();
+        cx.notify();
+        true
+    }
+    /// `[` and `]` anywhere on Home, and the arrows, Home and End while the
+    /// left list has focus, move the list's selection.
+    fn home_fleet_nav_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key = &event.keystroke;
+        if self.browser_state.surface != browser::Surface::Home
+            || self.browser_state.fleet.is_none()
+            || self.picker.is_some()
+            || self.new_session.is_some()
+            || self.pane_actions.is_some()
+            || key.modifiers.platform
+            || key.modifiers.control
+            || key.modifiers.alt
+            || key.modifiers.shift
+        {
+            return false;
+        }
+        self.prepare_home_filter(cx);
+        let Some(controls) = &mut self.home_filter else {
+            return false;
+        };
+        let search = controls.search.read(cx);
+        if search.focus.is_focused(window) || search.is_composing() {
+            return false;
+        }
+        let list_focused = controls.fleet_nav.is_focused(window);
+        if !matches!(key.key.as_str(), "[" | "]") && !list_focused {
+            return false;
+        }
+        let fleet = self.browser_state.fleet.as_ref();
+        let current = fleet_nav::reconcile(&controls.fleet_view, fleet);
+        let Some(next) = fleet_nav::step(&current, fleet, &key.key) else {
+            return false;
+        };
+        controls.fleet_view = next;
         cx.stop_propagation();
         window.prevent_default();
         cx.notify();

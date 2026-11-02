@@ -6,6 +6,7 @@ use gpui::{prelude::*, *};
 mod action_focus;
 pub(super) mod filters;
 mod fleet;
+pub(super) mod fleet_nav;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
@@ -15,10 +16,10 @@ const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: wider than Bezel's 768 so the fleet and agents
 /// columns can share a row in a wide window.
 const PAGE_MAX: f32 = 1280.;
-/// A session card's and the empty state's width in the fleet column.
-const CARD_MAX: f32 = 640.;
-/// The window width from which the fleet and agents columns sit side by side.
-const COLUMNS_MIN: f32 = 1060.;
+/// The Browse sessions field's width in the header.
+const BROWSE_WIDTH: f32 = 280.;
+/// The window width from which the left list and the table sit side by side.
+const COLUMNS_MIN: f32 = 900.;
 /// The alpha of `popover::key_cap`'s fill.
 const KEY_CAP_FILL: f32 = 0.05;
 /// The alpha of the status strips' tinted fill.
@@ -280,22 +281,196 @@ impl SnapshotView {
                         .iter()
                         .any(|g| g.state == browser::fleet::Phase::Ready)
                 }));
-        // Bezel's page scaffolding: its column, headline and subtitle.
+        let canvas = self.canvas();
+        // One line: the title and summary, then Browse as a field, Refresh and
+        // Theme as glyphs, and New local session as the one primary button.
+        let mut actions = div()
+            .tab_group()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_end()
+            .gap(px(SPACE));
+        if connected {
+            let action_focus = self
+                .home_filter
+                .as_ref()
+                .map(|controls| controls.actions.clone());
+            let hover = bezel.element_hover;
+            actions = actions
+                .child(
+                    div()
+                        .id("home-browse")
+                        .debug_selector(|| "home-browse".into())
+                        .accessibility_id("home-browse")
+                        .role(Role::Button)
+                        .aria_label("Browse sessions")
+                        .aria_keyshortcuts("Meta+K")
+                        .w(px(BROWSE_WIDTH))
+                        .min_w_0()
+                        .h(px(bezel_theme::Theme::BUTTON_HEIGHT + 4.))
+                        .px(px(SPACE * 1.5))
+                        .flex()
+                        .items_center()
+                        .gap(px(SPACE))
+                        .rounded(px(bezel_theme::Theme::control_radius()))
+                        .border_1()
+                        .border_color(bezel.border)
+                        .bg(bezel.card_glass_bg())
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hover))
+                        .child(
+                            bezel_ui::icons::icon(bezel_ui::icons::Icon::asset("icons/search.svg"))
+                                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                                .flex_none()
+                                .text_color(bezel.text_muted),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_style(TextStyle::Body)
+                                .text_color(bezel.text_muted)
+                                .children(design::ink_probe(|| "home-browse".into()))
+                                .child("Browse sessions…"),
+                        )
+                        .child(
+                            bezel_ui::popover::kbd_hint(&bezel, "⌘K")
+                                .text_color(bezel.text_muted)
+                                .children(design::ink_probe(|| "home-browse-key".into())),
+                        )
+                        .when_some(action_focus.as_ref(), |control, focus| {
+                            action_focus::focus_control(
+                                control,
+                                &focus[0],
+                                0,
+                                theme.foreground,
+                                canvas,
+                            )
+                        })
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            if view.home_action_current(request) {
+                                view.open_picker(window, cx);
+                            }
+                        })),
+                )
+                .child(
+                    native_controls::action_button_on(
+                        "tmux-home-refresh",
+                        setup_phase.map(|_| refresh_label),
+                        refresh_label,
+                        native_controls::Icon::Refresh,
+                        if setup_running {
+                            native_controls::ButtonStyle::Unavailable
+                        } else {
+                            native_controls::ButtonStyle::Quiet
+                        },
+                        &bezel,
+                    )
+                    .when_some(action_focus.as_ref(), |control, focus| {
+                        action_focus::focus_control(
+                            control,
+                            &focus[2],
+                            2,
+                            theme.ink(theme.primary()),
+                            canvas,
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.home_refresh(request, window, cx);
+                    })),
+                )
+                .child(
+                    native_controls::action_button_on(
+                        "home-theme",
+                        None,
+                        "Choose a theme",
+                        native_controls::Icon::Theme,
+                        if theme_ready {
+                            native_controls::ButtonStyle::Quiet
+                        } else {
+                            native_controls::ButtonStyle::Unavailable
+                        },
+                        &bezel,
+                    )
+                    .when(!theme_ready, |control| {
+                        control.aria_description("Appearance settings are not available yet")
+                    })
+                    .when(theme_ready, |control| {
+                        control
+                            .when_some(action_focus.as_ref(), |control, focus| {
+                                action_focus::focus_control(
+                                    control,
+                                    &focus[1],
+                                    1,
+                                    theme.ink(theme.primary()),
+                                    canvas,
+                                )
+                            })
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                if view.home_action_current(request) {
+                                    view.open_theme_picker(window, cx);
+                                }
+                            }))
+                    }),
+                );
+        }
+        actions = actions.child(self.local_session_action(cx).when(
+            self.local_session_available(),
+            |control| {
+                control.when_some(self.home_filter.as_ref(), |control, filters| {
+                    action_focus::focus_control(
+                        control,
+                        &filters.actions[3],
+                        3,
+                        theme.foreground,
+                        canvas,
+                    )
+                })
+            },
+        ));
         let mut body = bezel
             .page_column()
             .id("tmux-home-content")
             .min_w_0()
+            .w_full()
             .max_w(px(PAGE_MAX))
-            .bg(rgb(self.canvas()))
+            .bg(rgb(canvas))
             .text_color(bezel.text)
             .text_style(TextStyle::Body)
             .children(design::ink_probe(|| "home-text".into()))
-            .child(bezel.page_header("tmux-ide", None))
             .child(
-                bezel
-                    .page_subtitle(summary(&self.browser_state, connected))
-                    .children(design::ink_probe(|| "home-summary".into())),
+                div()
+                    .debug_selector(|| "home-header".into())
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(SPACE * 2.))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .flex_wrap()
+                            .items_baseline()
+                            .gap_x(px(SPACE * 1.5))
+                            .child(bezel.page_header("tmux-ide", None))
+                            .child(
+                                bezel
+                                    .page_subtitle(summary(&self.browser_state, connected))
+                                    .mt_0()
+                                    .debug_selector(|| "home-summary".into())
+                                    .children(design::ink_probe(|| "home-summary".into())),
+                            ),
+                    )
+                    .child(actions),
             );
+        // Status, guidance and the new-session form span the whole column,
+        // left-aligned under the header.
         if (connected && setup_phase.is_some())
             || (!is_live && !self.browser_state.status.is_empty())
         {
@@ -313,155 +488,82 @@ impl SnapshotView {
                     .text_color(bezel.danger_muted)
                     .debug_selector(|| "home-status-error".into()),
             };
-            body = body.child(line.children(design::ink_probe(|| "home-status".into())));
+            body = body.child(
+                line.w_full()
+                    .children(design::ink_probe(|| "home-status".into())),
+            );
         }
         if self.home_diagnostics_available() {
             body = body.child(
-                native_controls::button_on(
-                    "home-copy-diagnostics",
-                    Some("Copy diagnostics"),
-                    "Copy safe error details",
-                    native_controls::Icon::Copy,
-                    &bezel,
-                )
-                .when_some(self.home_filter.as_ref(), |control, filter| {
-                    action_focus::focus_control(
-                        control,
-                        &filter.actions[4],
-                        4,
-                        theme.foreground,
-                        self.canvas(),
+                div().w_full().flex().justify_start().child(
+                    native_controls::button_on(
+                        "home-copy-diagnostics",
+                        Some("Copy diagnostics"),
+                        "Copy safe error details",
+                        native_controls::Icon::Copy,
+                        &bezel,
                     )
-                })
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    cx.stop_propagation();
-                    view.home_copy_diagnostics(request, window, cx);
-                })),
+                    .when_some(self.home_filter.as_ref(), |control, filter| {
+                        action_focus::focus_control(
+                            control,
+                            &filter.actions[4],
+                            4,
+                            theme.foreground,
+                            canvas,
+                        )
+                    })
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        cx.stop_propagation();
+                        view.home_copy_diagnostics(request, window, cx);
+                    })),
+                ),
             );
         }
-        if connected {
-            let action_focus = self
-                .home_filter
-                .as_ref()
-                .map(|controls| controls.actions.clone());
+        if setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none()
+        {
             body = body.child(
                 div()
-                    .mt(px(SPACE * 2.))
-                    .tab_group()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(SPACE))
-                    .child(
-                        native_controls::action_button_on(
-                            "home-browse",
-                            Some("Browse sessions"),
-                            "Browse sessions (⌘K)",
-                            native_controls::Icon::Sessions,
-                            native_controls::ButtonStyle::Primary,
-                            &bezel,
-                        )
-                        .when_some(action_focus.as_ref(), |control, focus| {
-                            action_focus::focus_control(
-                                control,
-                                &focus[0],
-                                0,
-                                theme.ink(theme.primary()),
-                                theme.active,
-                            )
-                        })
-                        .on_click(cx.listener(
-                            move |view, _, window, cx| {
-                                if view.home_action_current(request) {
-                                    view.open_picker(window, cx);
-                                }
-                            },
-                        )),
-                    )
-                    .child(
-                        native_controls::action_button_on(
-                            "home-theme",
-                            Some("Theme…"),
-                            "Choose a theme",
-                            native_controls::Icon::Theme,
-                            if theme_ready {
-                                native_controls::ButtonStyle::Quiet
-                            } else {
-                                native_controls::ButtonStyle::Unavailable
-                            },
-                            &bezel,
-                        )
-                        .when(!theme_ready, |control| {
-                            control.aria_description("Appearance settings are not available yet")
-                        })
-                        .when(theme_ready, |control| {
-                            control
-                                .when_some(action_focus.as_ref(), |control, focus| {
-                                    action_focus::focus_control(
-                                        control,
-                                        &focus[1],
-                                        1,
-                                        theme.ink(theme.primary()),
-                                        self.canvas(),
-                                    )
-                                })
-                                .on_click(cx.listener(move |view, _, window, cx| {
-                                    if view.home_action_current(request) {
-                                        view.open_theme_picker(window, cx);
-                                    }
-                                }))
-                        }),
-                    )
-                    .child(
-                        native_controls::action_button_on(
-                            "tmux-home-refresh",
-                            Some(refresh_label),
-                            refresh_label,
-                            native_controls::Icon::Refresh,
-                            if setup_running {
-                                native_controls::ButtonStyle::Unavailable
-                            } else {
-                                native_controls::ButtonStyle::Quiet
-                            },
-                            &bezel,
-                        )
-                        .when_some(action_focus.as_ref(), |control, focus| {
-                            action_focus::focus_control(
-                                control,
-                                &focus[2],
-                                2,
-                                theme.ink(theme.primary()),
-                                self.canvas(),
-                            )
-                        })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.home_refresh(request, window, cx);
-                            },
-                        )),
-                    ),
+                    .w_full()
+                    .debug_selector(|| "home-local-guidance".into())
+                    .text_style(TextStyle::Callout)
+                    .text_color(bezel.text_muted)
+                    .children(design::ink_probe(|| "home-local-guidance".into()))
+                    .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first."),
             );
         }
-        let mut fleet_column = div()
+        body = body.child(div().w_full().child(self.new_session_controls(cx)));
+        let view_title = match self.home_fleet_view() {
+            fleet_nav::View::All => "All sessions".to_owned(),
+            fleet_nav::View::Favourites => "Favourites".to_owned(),
+            fleet_nav::View::Machine(id) => self
+                .browser_state
+                .fleet
+                .as_ref()
+                .and_then(|f| f.groups.iter().find(|g| g.id == id))
+                .map_or(id, |g| g.label.clone()),
+        };
+        let mut detail = div()
             .debug_selector(|| "home-fleet-column".into())
             .min_w_0()
             .flex_1()
-            .child(div().flex().items_center().justify_between().gap(px(SPACE))
-                .child(div().text_style(TextStyle::Headline).child("Your fleet"))
-                .child(self.local_session_action(cx).when(self.local_session_available(), |control| {
-                control.when_some(self.home_filter.as_ref(), |control, filters| {
-                    action_focus::focus_control(control, &filters.actions[3], 3, theme.foreground, self.canvas())
-                })
-            })))
-            .when(setup_phase.is_none() && !self.local_session_available() && self.new_session.is_none(), |column| column.child(
-                div().mt(px(SPACE)).text_style(TextStyle::Callout).text_color(bezel.text_muted)
-                    .children(design::ink_probe(|| "home-local-guidance".into()))
-                    .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first.")))
-            .child(self.new_session_controls(cx));
+            .flex()
+            .flex_col()
+            .gap(px(SPACE * 1.5));
+        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
+        let nav = self.fleet_nav(wide, cx);
         if let Some(cards) = self.fleet_cards(cx) {
-            fleet_column = fleet_column.child(cards);
+            detail = detail
+                .child(
+                    div()
+                        .debug_selector(|| "home-fleet-heading".into())
+                        .min_w_0()
+                        .truncate()
+                        .text_style(TextStyle::Title3)
+                        .child(crate::sidebar::label_text(&view_title)),
+                )
+                .child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
-            let cards = self
+            let rows = self
                 .browser_state
                 .sessions
                 .iter()
@@ -469,63 +571,46 @@ impl SnapshotView {
                 .map(|(index, session)| {
                     let id = session.id.clone();
                     let (hover, muted) = (bezel.element_hover, bezel.text_muted);
-                    div()
+                    bezel
+                        .card_row(index == 0)
                         .id(("tmux-home-session", index))
                         .debug_selector(move || format!("tmux-home-session-{index}"))
+                        .py(px(6.))
                         .min_w_0()
-                        .w_full()
-                        .max_w(px(CARD_MAX))
-                        .flex()
-                        .items_center()
-                        .gap(px(SPACE * 1.5))
-                        .p(px(SPACE * 1.5))
-                        .rounded(px(bezel_theme::Theme::panel_radius()))
-                        .border_1()
-                        .border_color(bezel.border)
-                        .bg(bezel.card_glass_bg())
                         .cursor_pointer()
                         .hover(move |s| s.bg(hover))
+                        .child(
+                            bezel_ui::icons::icon(bezel_ui::icons::Icon::asset("icons/terminal.svg"))
+                                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                                .flex_none()
+                                .text_color(muted),
+                        )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(crate::sidebar::label_text(&session.label)),
-                                )
-                                .children(session.pane_count_label().map(|count| {
-                                    div()
-                                        .debug_selector(move || format!("tmux-home-count-{index}"))
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_style(TextStyle::Callout)
-                                        .text_color(muted)
-                                        .children(design::ink_probe(move || {
-                                            format!("tmux-home-count-{index}")
-                                        }))
-                                        .child(count)
-                                })),
+                                .truncate()
+                                .child(crate::sidebar::label_text(&session.label)),
                         )
-                        .child(div().flex_none().text_color(muted).child("Open"))
+                        .children(session.pane_count_label().map(|count| {
+                            div()
+                                .debug_selector(move || format!("tmux-home-count-{index}"))
+                                .flex_none()
+                                .text_style(TextStyle::Callout)
+                                .text_color(muted)
+                                .children(design::ink_probe(move || {
+                                    format!("tmux-home-count-{index}")
+                                }))
+                                .child(count)
+                        }))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.home_select(request, &id, window, cx);
                         }))
                 });
-            fleet_column = fleet_column.child(
-                div()
-                    .mt(px(SPACE * 2.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(SPACE))
-                    .children(cards),
-            );
+            detail = detail
+                .child(div().text_style(TextStyle::Title3).child("Sessions"))
+                .child(bezel.group_box().min_w_0().children(rows));
         } else if !connected || setup_phase.is_none() {
             let guidance = if !connected {
                 bezel
@@ -560,25 +645,31 @@ impl SnapshotView {
                     )
                     .debug_selector(|| "home-empty".into())
             };
-            fleet_column = fleet_column.child(guidance.max_w(px(CARD_MAX)));
+            detail = detail.child(guidance.w_full());
         }
-        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
+        detail = detail.child(
+            div()
+                .debug_selector(|| "home-agents-column".into())
+                .min_w_0()
+                .w_full()
+                .children(self.home_agent_rows(cx)),
+        );
         body = body.child(
             div()
-                .mt(px(SPACE * 2.))
+                .mt(px(SPACE))
                 .w_full()
                 .min_w_0()
                 .flex()
-                .gap(px(SPACE * 3.))
-                .when(!wide, |columns| columns.flex_col())
-                .child(fleet_column)
-                .child(
-                    div()
-                        .debug_selector(|| "home-agents-column".into())
-                        .min_w_0()
-                        .flex_1()
-                        .children(self.home_agent_rows(cx)),
-                ),
+                .gap(px(SPACE * 4.))
+                .map(|columns| {
+                    if wide {
+                        columns.items_start()
+                    } else {
+                        columns.flex_col().gap(px(SPACE * 2.))
+                    }
+                })
+                .children(nav)
+                .child(detail),
         );
         let page = div()
             .id("tmux-home-page")
@@ -603,7 +694,7 @@ impl SnapshotView {
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(self.canvas()))
+            .bg(rgb(canvas))
             .child(page.fill())
             .into_any_element()
     }

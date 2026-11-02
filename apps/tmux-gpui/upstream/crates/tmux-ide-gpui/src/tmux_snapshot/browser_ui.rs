@@ -743,7 +743,7 @@ impl SnapshotView {
                     .text_style(TextStyle::Callout)
                     .text_color(bezel.text_muted)
                     .children(super::design::ink_probe(|| "sidebar-status".into()))
-                    .child(status.to_owned()),
+                    .child(status.message().to_owned()),
             );
         }
         sidebar = sidebar.children(self.workspace_agent_rows(cx));

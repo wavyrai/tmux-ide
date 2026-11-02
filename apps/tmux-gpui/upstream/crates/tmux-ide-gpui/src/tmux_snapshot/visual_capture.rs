@@ -20,6 +20,8 @@ use std::{
 
 const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
+/// Home's captures (card #684): the owner's window size.
+const HOME_SIZE: (f32, f32) = (1560., 1010.);
 
 /// Saves `<dir>/<theme>.png` for each catalog theme id, in order.
 #[doc(hidden)]
@@ -300,6 +302,57 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
     Ok(state)
 }
 
+/// Home's fleet as the owner's capture had it: Local with one session, and
+/// the remote "spark" with eleven, two of them favourites; plus two agents.
+fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
+    let token = |n: u128| uuid::Uuid::from_u128(0x6840_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
+    let spark: Vec<serde_json::Value> = [
+        ("demo", 3, false), ("devstack", 3, true), ("growth", 1, false), ("lint", 3, false),
+        ("site", 2, true), ("api", 4, false), ("bezel", 2, false), ("docs", 1, false),
+        ("infra", 3, false), ("notes", 1, false), ("scratch", 1, false),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, (name, panes, favorite))| {
+        let n = i as u128;
+        serde_json::json!({"id": format!("spark-{name}"), "name": name, "paneCount": panes,
+            "favorite": favorite, "favoriteAction": token(100 + n), "serverId": "default",
+            "sessionId": format!("${}", i + 10), "selection": token(200 + n)})
+    })
+    .collect();
+    state.fleet = Some(serde_json::from_value(serde_json::json!({
+        "preferences": {"revision": 1, "phase": "ready", "error": null},
+        "omittedGroups": 0,
+        "groups": [
+            {"id": "local", "label": "Local", "state": "ready", "conflict": false,
+             "collapsed": false, "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online",
+                "generation": token(2), "selection": token(3)}],
+             "sessions": [{"id": "local-0", "name": "0", "paneCount": 2, "active": true,
+                "favoriteAction": token(4), "serverId": "default", "sessionId": "$0",
+                "selection": token(5)}]},
+            {"id": "spark", "label": "spark", "state": "ready", "conflict": false,
+             "collapsed": false, "collapseAction": token(6), "disconnect": token(7),
+             "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online",
+                "generation": token(8), "selection": token(9)}],
+             "sessions": spark}
+        ]
+    }))?);
+    state.home_agents = Some(serde_json::from_value(serde_json::json!({
+        "revision": 1, "phase": "live", "observedSessions": 2, "totalSessions": 12,
+        "truncatedSessions": 0, "truncatedRows": 0, "note": null,
+        "rows": [
+            {"key": "agent-a", "sessionId": "spark-devstack", "paneId": "pane-a", "name": "Claude",
+             "sessionLabel": "devstack", "status": "WORKING", "attention": false, "available": true},
+            {"key": "agent-b", "sessionId": "spark-site", "paneId": "pane-b", "name": "Codex",
+             "sessionLabel": "site", "status": "BLOCKED", "attention": true, "available": true}
+        ]
+    }))?);
+    state.surface = browser::Surface::Home;
+    Ok(state)
+}
+
 /// Two panes of one window: the upper scrolled back, so its header offers
 /// Back to live; the lower a browser whose page just refused a click.
 fn with_browser(mut state: browser::State) -> Result<browser::State> {
@@ -369,6 +422,14 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if home {
         state.surface = browser::Surface::Home;
     }
+    // `+home-b` is Home's fleet table (#684), `+home-b+spark` with spark
+    // picked in the left list; both at the owner's window size, no sidebar.
+    let home_b = extras.contains(&"home-b");
+    if home_b {
+        state = with_home_fleet(state)?;
+    }
+    let spark = extras.contains(&"spark");
+    let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
     for extra in &extras {
@@ -390,7 +451,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let (sender, receiver) = mpsc::sync_channel(1024);
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),
-        size: size(px(WIDTH), px(HEIGHT)),
+        size: size(px(width), px(height)),
     };
     let handle = cx.update(|cx| {
         cx.open_window(
@@ -402,12 +463,22 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 ..super::shell::options()
             },
             |window, cx| {
-                let view = cx.new(|cx| capture_view(window, cx, sender, state));
+                let view = cx.new(|cx| {
+                    let mut view = capture_view(window, cx, sender, state);
+                    view.sidebar_hidden = home_b;
+                    if spark {
+                        view.prepare_home_filter(cx);
+                        if let Some(controls) = &mut view.home_filter {
+                            controls.fleet_view = super::home::fleet_nav::View::Machine("spark".into());
+                        }
+                    }
+                    view
+                });
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
                 }
                 if machine {
-                    view.update(cx, |view, cx| view.open_add_machine_for_capture(window, cx));
+                    view.update(cx, |view, cx| view.open_add_machine(window, cx));
                 }
                 super::agent_spinner::window_root(view, window, cx)
             },
