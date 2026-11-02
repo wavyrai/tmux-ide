@@ -145,8 +145,9 @@ fn the_table_takes_the_keyboard_and_its_keys_act_on_the_cursor_row(cx: &mut Test
     let entry = cx.debug_bounds("home-nav-machine-0").unwrap();
     cx.simulate_click(entry.center(), Modifiers::default());
     assert!(!hint(cx, 0));
-    // → moves into the table, onto its first row, with the ↵ hint there.
-    cx.simulate_keystrokes("right");
+    // Enter, like →, moves into the table, onto its first row, with the ↵
+    // hint there.
+    cx.simulate_keystrokes("enter");
     assert_eq!(cursor(cx), Some(("qa-local".into(), ids[0].clone())));
     assert!(hint(cx, 0) && !hint(cx, 1));
     // The arrows now move the table's cursor, not the list.
@@ -212,10 +213,52 @@ fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
         assert_eq!(fleet_view(&view, cx), View::Favourites, "after {back}");
         cx.simulate_keystrokes("up");
     }
-    // An empty table does not take the keyboard: → on Favourites stays put.
-    cx.simulate_keystrokes("down right down");
+    // `[` and `]` still change the list from the table.
+    cx.simulate_keystrokes("right ]");
+    assert_eq!(fleet_view(&view, cx), View::Favourites);
+    cx.simulate_keystrokes("[");
+    assert_eq!(fleet_view(&view, cx), View::All);
+    cx.simulate_keystrokes("left");
+    // An empty table does not take the keyboard: → and Enter on Favourites
+    // stay on the list, and Enter reaches nothing behind it.
+    cx.simulate_keystrokes("down right enter down");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
     assert!(receiver.try_recv().is_err());
+    // Esc on the list hands the keyboard back.
+    cx.simulate_keystrokes("escape");
+    let (list, terminal) = cx.update(|window, cx| {
+        view.read_with(cx, |v, _| {
+            (
+                v.home_filter.as_ref().unwrap().fleet_nav.is_focused(window),
+                v.terminal_focus.is_focused(window),
+            )
+        })
+    });
+    assert!(!list && terminal);
+    cx.simulate_keystrokes("down");
+    assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
+}
+
+#[gpui::test]
+fn the_palette_keeps_its_keys_from_the_list_behind_it(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.fleet = Some(fleet_fixture());
+        view.frame = None;
+        view.browser_state.frame = None;
+        view
+    });
+    cx.simulate_resize(size(px(1400.), px(1400.)));
+    receiver.try_iter().for_each(drop);
+    // Control: without the palette, `]` moves the list.
+    cx.simulate_keystrokes("]");
+    assert_eq!(fleet_view(&view, cx), View::Favourites);
+    cx.simulate_keystrokes("[");
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_picker(window, cx)));
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()));
+    cx.simulate_keystrokes("] ] [");
+    assert_eq!(fleet_view(&view, cx), View::All);
 }
 
 #[gpui::test]

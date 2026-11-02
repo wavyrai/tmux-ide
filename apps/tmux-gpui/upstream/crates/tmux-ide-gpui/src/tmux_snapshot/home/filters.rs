@@ -218,8 +218,9 @@ impl SnapshotView {
     }
     /// `[` and `]` anywhere on Home move the left list's selection, as do the
     /// arrows, Home and End while the list has focus; there → or Enter moves
-    /// into the session table. In the table the same keys move its cursor,
-    /// Enter opens the cursor's session, and ← or Esc goes back to the list.
+    /// into the session table and Esc leaves the list. In the table the same
+    /// keys move its cursor, Enter opens the cursor's session, F and D act on
+    /// its row, and ← or Esc goes back to the list.
     fn home_fleet_nav_key(
         &mut self,
         event: &KeyDownEvent,
@@ -311,16 +312,19 @@ impl SnapshotView {
                 }
             }
         } else if list_focused && matches!(key, "right" | "enter") {
-            if event.is_held {
-                return true;
-            }
-            let Some(cursor) =
-                fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "")
-            else {
+            // An empty table keeps the keyboard on the list; Enter here is
+            // never the agent list's Enter.
+            if !event.is_held
+                && let Some(cursor) =
+                    fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "")
+            {
+                controls.table_cursor = Some(cursor);
+                controls.fleet_table.clone().focus(window, cx);
+            } else if key == "right" && !event.is_held {
                 return false;
-            };
-            controls.table_cursor = Some(cursor);
-            controls.fleet_table.clone().focus(window, cx);
+            }
+        } else if list_focused && key == "escape" {
+            self.terminal_focus.focus(window, cx);
         } else {
             if !matches!(key, "[" | "]") && !list_focused {
                 return false;

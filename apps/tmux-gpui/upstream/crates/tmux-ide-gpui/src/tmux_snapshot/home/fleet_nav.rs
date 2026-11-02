@@ -288,14 +288,19 @@ mod tests {
                 "sessions": [
                     {"id": "loose", "name": "loose", "paneCount": 1, "favorite": true},
                     {"id": "on-a", "name": "on-a", "paneCount": 1, "serverId": "a"},
-                    {"id": "on-b", "name": "on-b", "paneCount": 1, "serverId": "b", "favorite": true}
+                    {"id": "on-b", "name": "on-b", "paneCount": 1, "serverId": "b", "favorite": true},
+                    {"id": "on-gone", "name": "on-gone", "paneCount": 1, "serverId": "gone"}
                 ]
             }]
         }))
         .unwrap();
         let f = Some(&fleet);
-        // Server b's rows, then a's, then sessions on no listed server.
-        assert_eq!(table_rows(&View::All, f), vec![(0, 2), (0, 1), (0, 0)]);
+        // Server b's rows, then a's, then sessions on no listed server,
+        // whether they name no server or one the fleet does not list.
+        assert_eq!(
+            table_rows(&View::All, f),
+            vec![(0, 2), (0, 1), (0, 0), (0, 3)]
+        );
         // Favourites drops the plain session under its server too.
         assert_eq!(table_rows(&View::Favourites, f), vec![(0, 2), (0, 0)]);
     }
