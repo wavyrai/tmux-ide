@@ -99,7 +99,10 @@ fn until_state(
                 s.status.clone()
             ))
         );
-        match bridge.mailbox.lock().unwrap().take() {
+        // Release the lock before sleeping: the transport waits on it, and
+        // holding it across the sleep delayed Session → Home by seconds.
+        let taken = bridge.mailbox.lock().unwrap().take();
+        match taken {
             Some(Some(state)) if done(&state) => return state,
             Some(Some(state)) => last = Some(state),
             Some(None) => panic!("native browser closed"),
