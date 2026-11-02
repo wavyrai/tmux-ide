@@ -197,6 +197,8 @@ fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
         view.browser_state.fleet = Some(fleet_fixture());
+        // An agent behind the list, which a leaked Enter would open.
+        view.browser_state.home_agents = Some(agents("live", 1));
         view.frame = None;
         view.browser_state.frame = None;
         view
