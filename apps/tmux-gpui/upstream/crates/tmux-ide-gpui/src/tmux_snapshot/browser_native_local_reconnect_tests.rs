@@ -889,3 +889,45 @@ fn a_command_wakes_a_parked_actor() {
     }
     assert!(actor.is_finished(), "the actor did not stop with its owner");
 }
+
+/// Review round 1, item 2 (C30): a re-issued stream that fails before Ready
+/// continues the same recovery, so the backoff keeps growing.
+#[test]
+fn a_repeated_drop_continues_the_backoff() {
+    let (mut local, _events) = attached();
+    let target = local.active.as_ref().unwrap().target.clone();
+    let mut delays = Vec::new();
+    for attempt in 1..=4u32 {
+        let before = Instant::now();
+        local.reconnect_start().unwrap();
+        delays.push(delay(&local, before));
+        local.recovery.as_mut().unwrap().due = Some(Instant::now());
+        local.reconnect_tick().unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().attempt(), attempt);
+        // The lease was issued; its stream drops again before Ready.
+        local.active = Some(Route {
+            id: format!("route-{attempt}"),
+            request: 7,
+            target: target.clone(),
+            workspace: "fixture".into(),
+        });
+    }
+    assert_eq!(delays, [250, 500, 1000, 2000]);
+}
+
+/// Review round 1, item 2 (C21): Retry never restarts an attempt in flight.
+#[test]
+fn retry_during_an_attempt_in_flight_changes_nothing() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(local.recovery.as_ref().unwrap().due.is_none());
+    assert!(matches!(local.stage, Some(Stage::Issue { .. })));
+    local
+        .command(Command::RetryReconnect { request: 7 })
+        .unwrap();
+    assert!(local.recovery.as_ref().unwrap().due.is_none());
+    local.reconnect_tick().unwrap();
+    assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
+}
