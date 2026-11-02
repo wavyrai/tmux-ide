@@ -343,6 +343,7 @@ impl SnapshotView {
         {
             body = body.child(
                 div()
+                    .debug_selector(|| "new-session-target".into())
                     .min_w_0()
                     .truncate()
                     .text_color(rgb(self.theme().muted))

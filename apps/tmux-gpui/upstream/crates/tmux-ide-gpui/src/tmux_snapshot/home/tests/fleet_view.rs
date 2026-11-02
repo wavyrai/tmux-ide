@@ -254,6 +254,8 @@ fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAp
     assert!(painted(cx, "fleet-server-default-0-0").is_some());
     assert!(painted(cx, "fleet-use-server-0-0").is_none());
     assert!(painted(cx, "fleet-use-server-0-1").is_some());
+    // The table's marker replaces Home's "New sessions on …" line.
+    assert!(painted(cx, "new-session-target").is_none());
     // Column labels once over the table, not per machine.
     assert!(painted(cx, "fleet-columns").is_some());
 
@@ -296,6 +298,9 @@ fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAp
         v.home_filter.as_mut().unwrap().fleet_view = View::Machine("qa-local".into())
     });
     assert!(painted(cx, "fleet-columns").is_none());
+    // Without a fleet table, the line is how Home names the default.
+    update(cx, &|v| v.browser_state.fleet = None);
+    assert!(painted(cx, "new-session-target").is_some());
 }
 
 fn agents(phase: &str, rows: usize) -> browser::home_agents::Roster {
