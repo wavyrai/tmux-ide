@@ -752,8 +752,13 @@ mod surface_source_socket_tests;
 
 /// Card #703: one `/identity` proof per daemon generation. A failed request
 /// drops it, and a rewritten record is never trusted on the old proof.
+/// The identity proof is process-wide: tests that turn its cache on take turns.
+static IDENTITY_CACHE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn one_identity_proof_serves_a_daemon_until_a_request_fails() {
+    let _turn = IDENTITY_CACHE_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     IDENTITY_CACHE.with(|cache| cache.set(true));
     let (port, worker) = peer_many(5, |index| match index {
         0 | 3 => response(&identity()),
@@ -780,5 +785,23 @@ fn one_identity_proof_serves_a_daemon_until_a_request_fails() {
     replaced["authToken"] = "a-replacement-daemon-token".into();
     fs::write(&path, replaced.to_string()).unwrap();
     assert!(matches!(daemon.verify_current(), Err(Error::RecordChanged)));
+    IDENTITY_CACHE.with(|cache| cache.set(false));
+}
+
+/// The proof belongs to one daemon generation: another record is proven itself.
+#[test]
+fn an_identity_proof_never_covers_another_daemon() {
+    let _turn = IDENTITY_CACHE_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    IDENTITY_CACHE.with(|cache| cache.set(true));
+    let (port_a, worker_a) = peer(|| response(&identity()));
+    let (port_b, worker_b) = peer(|| response(&identity()));
+    let (sandbox_a, sandbox_b) = (Sandbox::new(), Sandbox::new());
+    let a = LocalDaemon::discover(&sandbox_a.record(&value(port_a))).unwrap();
+    a.verify_current().unwrap();
+    LocalDaemon::discover(&sandbox_b.record(&value(port_b))).unwrap();
+    assert!(worker_a.join().unwrap().contains("GET /identity"));
+    assert!(worker_b.join().unwrap().contains("GET /identity"));
     IDENTITY_CACHE.with(|cache| cache.set(false));
 }
