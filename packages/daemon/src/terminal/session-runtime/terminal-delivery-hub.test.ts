@@ -5,6 +5,7 @@ import * as nativeSeeds from "./native-seed-backing.ts";
 import { rememberNativeSeedBacking, takeNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { describe, expect, it, vi } from "vitest";
+import { _resetLogStateForTests, getLogBuffer } from "../../lib/log.ts";
 import * as core from "@tmux-ide/core";
 import type {
   CanonicalTerminalReplicaUpdate,
@@ -3023,5 +3024,58 @@ describe("binary and compact clients sharing canonical delivery", () => {
       await Promise.all(clients.map((client) => client.close()));
       await hub.close();
     }
+  });
+});
+
+describe("terminal delivery fault log", () => {
+  const faultLines = () =>
+    getLogBuffer().filter(
+      (entry) => entry.component === "terminal-delivery" && entry.msg === "fault sent to client",
+    );
+  const offer = {
+    protocolVersions: [1],
+    encodings: ["semantic-v1"],
+    richPlacements: false,
+  } as const;
+
+  it("records a restart fault with its pane and no message text", async () => {
+    _resetLogStateForTests();
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    await hub.open("client", "pane-a", offer, () => undefined);
+    await hub.resetForSessionRestart();
+    await settle();
+    expect(faultLines().map((entry) => entry.data)).toEqual([
+      {
+        reason: "source-closed",
+        cause: "source-restarted",
+        pane: "pane-a",
+        workspace: "workspace",
+      },
+    ]);
+    expect(JSON.stringify(faultLines())).not.toContain("Terminal source restarted");
+    await hub.close();
+  });
+
+  it("records every fault the hub raises for a client", async () => {
+    _resetLogStateForTests();
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open("client", "pane-a", offer, (message) => {
+      messages.push(message);
+    });
+    owner.emit(seed());
+    await settle();
+    owner.emit(tombstone(1));
+    await settle();
+    const sent = messages.filter((message) => message.type === "terminal.delivery.fault");
+    expect(sent.length).toBeGreaterThan(0);
+    expect(faultLines().map((entry) => entry.data?.reason)).toEqual(
+      sent.map((message) => (message as { reason: string }).reason),
+    );
+    expect(faultLines().every((entry) => entry.data?.pane === "pane-a")).toBe(true);
+    await connection.close();
+    await hub.close();
   });
 });
