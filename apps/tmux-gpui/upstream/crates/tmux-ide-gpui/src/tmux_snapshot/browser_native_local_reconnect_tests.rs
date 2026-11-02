@@ -282,6 +282,7 @@ fn daemon_errors_are_classified_for_recovery() {
     let missing = E::RecordIo(std::io::Error::from(std::io::ErrorKind::NotFound));
     assert_eq!(Failure::of(&missing), Failure::Unreachable);
     assert_eq!(Failure::of(&E::RecordChanged), Failure::Unreachable);
+    assert_eq!(Failure::of(&E::OwnerExited), Failure::Unreachable);
     let refused = E::Network(ureq::Error::Io(std::io::Error::from(
         std::io::ErrorKind::ConnectionRefused,
     )));

@@ -749,3 +749,6 @@ mod agent_observation_socket_tests;
 
 #[path = "surface_source_socket_tests.rs"]
 mod surface_source_socket_tests;
+
+#[path = "identity_proof_tests.rs"]
+mod identity_proof_tests;

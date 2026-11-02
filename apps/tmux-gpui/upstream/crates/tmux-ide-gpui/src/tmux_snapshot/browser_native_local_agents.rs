@@ -69,6 +69,9 @@ pub(super) struct Gate {
     enabled: bool,
     cycle: bool,
     due: Option<Instant>,
+    /// Every observed session is on a daemon that pushes agent changes, so no
+    /// periodic re-read is scheduled after a cycle.
+    pushed: bool,
 }
 impl Gate {
     pub(super) fn tab_observation(
@@ -145,6 +148,26 @@ impl Gate {
     }
     pub(super) fn busy(&self) -> bool {
         self.pool.busy()
+    }
+    /// The selected catalog's push state. Push replaces the 5 s re-read only
+    /// when every observed session is on that daemon; a notice re-reads now.
+    pub(super) fn pushed(&mut self, push: bool, notified: bool, machine: &str) {
+        self.pushed = push && self.contexts.iter().all(|c| c.machine == machine);
+        if notified && self.enabled && !self.cycle && self.due.is_none() {
+            self.due = Some(Instant::now());
+        }
+        if !self.pushed
+            && self.enabled
+            && !self.cycle
+            && self.due.is_none()
+            && self
+                .contexts
+                .iter()
+                .any(|c| c.workspace.is_some() && c.readable)
+        {
+            // Push was lost: return to the periodic re-read.
+            self.due = Some(Instant::now() + Duration::from_secs(5));
+        }
     }
     pub(super) fn wait(&self) -> Option<Duration> {
         self.due
@@ -236,11 +259,12 @@ impl Gate {
         }
         if self.cycle && !self.pool.busy() {
             self.cycle = false;
-            self.due = self
-                .contexts
-                .iter()
-                .any(|c| c.workspace.is_some() && c.readable)
-                .then_some(now + Duration::from_secs(5));
+            self.due = (!self.pushed
+                && self
+                    .contexts
+                    .iter()
+                    .any(|c| c.workspace.is_some() && c.readable))
+            .then_some(now + Duration::from_secs(5));
         }
         if eligible && !self.pool.busy() && self.due.is_some_and(|due| now >= due) {
             self.published.clear();

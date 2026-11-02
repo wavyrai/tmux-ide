@@ -293,3 +293,33 @@ fn filtering_precedes_row_limit_and_omitted_rows_lose_selection_rights() {
     assert!(gate.resolve(&key, restored.revision).is_some());
     assert_eq!(gate.published.len(), 1);
 }
+
+/// Card #703: on a daemon that pushes agent changes the 5 s re-read stops, and
+/// the daemon's notice re-reads at once. Any session elsewhere keeps the timer.
+#[test]
+fn a_pushing_daemon_replaces_the_agent_timer_with_its_notices() {
+    let finish_cycle = |gate: &mut Gate| {
+        gate.cycle = true;
+        gate.due = None;
+        gate.poll(false, Instant::now());
+    };
+    let mut gate = Gate::default();
+    gate.configure(vec![context()], 1, false, 0, Instant::now());
+    gate.pushed(true, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_none(), "a pushed cycle scheduled a re-read");
+    gate.pushed(true, true, "local");
+    assert!(gate.due.is_some_and(|due| due <= Instant::now()));
+
+    gate.pushed(false, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_some_and(|due| due > Instant::now()));
+
+    let mut remote = context();
+    remote.machine = "remote".into();
+    let mut gate = Gate::default();
+    gate.configure(vec![context(), remote], 2, false, 0, Instant::now());
+    gate.pushed(true, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_some(), "a remote session lost its re-read");
+}

@@ -47,12 +47,33 @@ fn owner_and_subscription_barriers_precede_live_notifications() {
     let subscribe: Value = serde_json::from_str(&CatalogEvents::subscription(10).unwrap()).unwrap();
     assert_eq!(subscribe["legacyEvents"], false);
     assert_eq!(subscribe["sessions"], json!([]));
-    assert_eq!(subscribe["interests"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        subscribe["interests"],
+        json!([{"resource":"workspace-catalog","workspaceName":null},
+            {"resource":"fleet-catalog","workspaceName":null}])
+    );
     assert_eq!(
         receive(&mut lane, ack()).unwrap(),
         CatalogEventEffect::Invalidate
     );
     assert!(lane.ready());
+    assert!(!lane.needs_fallback());
+}
+/// A daemon without fleet push still serves the workspace catalog; Home then
+/// keeps its periodic fallback refresh.
+#[test]
+fn a_daemon_without_fleet_push_keeps_the_fallback() {
+    let mut lane = lane();
+    hello(&mut lane);
+    assert!(lane.needs_fallback());
+    let mut partial = ack();
+    partial["unavailableInterests"] = json!([{"resource":"fleet-catalog","workspaceName":null}]);
+    assert_eq!(
+        receive(&mut lane, partial).unwrap(),
+        CatalogEventEffect::Invalidate
+    );
+    assert!(lane.ready());
+    assert!(lane.needs_fallback());
 }
 #[test]
 fn mismatched_identity_and_duplicate_hello_retire_the_lane() {
