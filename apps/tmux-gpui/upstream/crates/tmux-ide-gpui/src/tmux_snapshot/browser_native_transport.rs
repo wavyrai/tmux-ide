@@ -37,6 +37,8 @@ mod diagnostics;
 const MAX_PENDING: usize = 64;
 const PENDING_REFUSED: &str = "Terminal busy — input refused. Retype when it catches up.";
 use super::super::browser_native_transition as transition;
+#[path = "browser_native_hold.rs"]
+mod hold;
 enum Incoming {
     NativeOwner(Box<browser_native_owner::Response>),
     Catalog(Box<State>),
@@ -293,6 +295,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut stopped: Option<diagnostics::Stop> = None;
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
+        let mut hold = hold::Hold::default();
         let mut browser_read_at = 0;
         let mut presence = (true, 0);
         let mut pending = std::collections::VecDeque::new();
@@ -603,6 +606,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             pending.retain(|command| !matches!(command, Command::Input { .. }));
                             revoke(&mut None, &mut state);
                         } else {
+                            // Keep the last frame on screen, read-only, while the
+                            // catalog re-issues the stream (card #702).
+                            hold.begin(&state);
                             let notice = Command::NativeTerminalInterrupted {
                                 version: 1,
                                 id: current.id.clone(),
@@ -622,7 +628,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             |stop| stop.status.clone(),
                         );
                         stopped = stop;
-                        state.input_target_rejected = true;
+                        // A held frame refuses input on its own and needs no
+                        // reselection once the stream is back.
+                        state.input_target_rejected = !hold.active();
                         changed = true;
                     }
                 }
@@ -870,6 +878,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     }
                     other => {
                         if navigates(&other) {
+                            hold.clear();
                             if let Command::Pane { request, .. } = &other {
                                 transition.begin(&state, *request, now);
                             } else {
@@ -951,7 +960,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             let expired = transition.expire(now);
             if changed || expired {
                 let publication = transition.publication(&state, presence.0, now);
-                send_state(&incoming, &publication);
+                send_state(&incoming, &hold.publication(&publication));
             }
             if !changed && !admitted {
                 std::thread::sleep(Duration::from_millis(5));

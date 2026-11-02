@@ -357,8 +357,56 @@ fn optional_string<'de, D: serde::Deserializer<'de>>(
     String::deserialize(deserializer).map(Some)
 }
 
+/// Daemon HTTP requests this process has sent through the catalog agent, for
+/// request fan-out checks (#702, #703). Never a request's content: only a count
+/// and the last paths with every id-like segment masked.
+static REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RECENT: std::sync::Mutex<std::collections::VecDeque<(u64, String)>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+pub fn requests_sent() -> u64 {
+    REQUESTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// The masked paths of requests numbered above `after`, oldest first (at most 64).
+pub fn requests_since(after: u64) -> Vec<String> {
+    RECENT.lock().map_or_else(
+        |_| Vec::new(),
+        |recent| {
+            recent
+                .iter()
+                .filter(|(n, _)| *n > after)
+                .map(|(_, path)| path.clone())
+                .collect()
+        },
+    )
+}
+fn count_request(path: &str) {
+    let n = REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let masked = path
+        .split('/')
+        .map(|segment| {
+            let plain =
+                segment.len() <= 24 && segment.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+            if plain { segment } else { ":" }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if let Ok(mut recent) = RECENT.lock() {
+        if recent.len() >= 64 {
+            recent.pop_front();
+        }
+        recent.push_back((n, masked));
+    }
+}
+
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
+        .middleware(
+            |request: ureq::http::Request<ureq::SendBody<'_>>,
+             next: ureq::middleware::MiddlewareNext<'_>| {
+                count_request(request.uri().path());
+                next.handle(request)
+            },
+        )
         .proxy(None)
         .max_redirects(0)
         .http_status_as_error(false)

@@ -212,8 +212,13 @@ impl Local {
                     && self.foreground
                     && presence_revision == self.presence_revision
                 {
-                    self.recovery = None;
+                    let recovered = self.recovery.take().is_some();
                     self.accept_visit()?;
+                    if recovered {
+                        // Drop the Reconnecting badge and Retry button.
+                        self.state.status = "Connected".into();
+                        self.publish()?;
+                    }
                 }
                 Ok(())
             }
@@ -265,6 +270,7 @@ impl Local {
                 }
                 Ok(())
             }
+            Command::RetryReconnect { request } => self.reconnect_now(request),
             Command::NativeTerminalInterrupted {
                 id,
                 request,

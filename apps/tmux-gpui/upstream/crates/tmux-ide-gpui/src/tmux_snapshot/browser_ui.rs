@@ -765,7 +765,9 @@ impl SnapshotView {
             )
             .child(self.sidebar_footer(cx));
         let status = if self.browser_state.retained_preview {
-            if self.browser_state.status.starts_with("Restoring terminal…") {
+            if self.browser_state.status.starts_with("Restoring terminal…")
+                || self.browser_state.reconnect_attempt.is_some()
+            {
                 self.browser_state.status.clone()
             } else {
                 format!("Restoring terminal… — {}", self.browser_state.status)
@@ -862,7 +864,8 @@ impl SnapshotView {
                     .children(super::design::ink_probe(|| "status-text".into()))
                     .child(div().w_full().child(status)),
                 Axis::Vertical,
-            ));
+            ))
+            .children(self.reconnect_retry(cx));
         // Cards own their terminal background; the surrounding canvas exposes gutters.
         let content_background = self.canvas();
         let mut context = Some(context);
