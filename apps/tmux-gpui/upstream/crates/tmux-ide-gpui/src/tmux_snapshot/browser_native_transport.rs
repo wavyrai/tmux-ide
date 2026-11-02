@@ -33,6 +33,9 @@ enum NativeError {
 }
 #[path = "browser_native_diagnostics.rs"]
 mod diagnostics;
+/// Commands that may wait behind one admission before newer ones are refused.
+const MAX_PENDING: usize = 64;
+const PENDING_REFUSED: &str = "Terminal busy — input refused. Retype when it catches up.";
 use super::super::browser_native_transition as transition;
 enum Incoming {
     NativeOwner(Box<browser_native_owner::Response>),
@@ -554,8 +557,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         if !presence.0 && matches!(command, Command::Input { .. }) {
                             continue;
                         }
-                        if pending.len() >= 64 {
-                            break 'worker;
+                        if pending.len() >= MAX_PENDING {
+                            // Refuse the newest command and say so; the connection stays.
+                            state.status = PENDING_REFUSED.into();
+                            changed = true;
+                            continue;
                         }
                         pending.push_back(command);
                     }

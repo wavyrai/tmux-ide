@@ -104,3 +104,66 @@ fn delayed_catalog_cannot_replace_a_newer_navigation() {
     assert_eq!(state.status, "Current pane");
     drop(events);
 }
+
+/// Commands pile up while the owner is slow. Past the bound the newest are refused
+/// with a notice; the terminal loop and its mailbox stay alive.
+#[test]
+fn a_full_pending_queue_refuses_commands_and_keeps_the_loop() {
+    let (_events, receiver) = mpsc::sync_channel(8);
+    let (gate, opened) = mpsc::channel::<()>();
+    let (seen, forwarded) = mpsc::channel();
+    let bridge = start_events(Default::default(), receiver, move || {
+        let mut first = true;
+        move |command| {
+            if first {
+                first = false;
+                let _ = opened.recv_timeout(Duration::from_secs(5));
+            }
+            let _ = seen.send(command);
+            Ok(())
+        }
+    });
+    let commands = bridge.commands.clone();
+    let sender = std::thread::spawn(move || {
+        for request in 0..400 {
+            if commands.send(Command::Refresh { request }).is_err() {
+                break;
+            }
+        }
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    // On failure the loop may already be gone, taking the gate with it.
+    let _ = gate.send(());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut refused = false;
+    while !refused && Instant::now() < deadline {
+        // Never sleep while holding the mailbox: the loop publishes through it.
+        let next = bridge.mailbox.lock().unwrap().take();
+        match next {
+            Some(Some(state)) => {
+                refused =
+                    state.status == "Terminal busy — input refused. Retype when it catches up.";
+            }
+            Some(None) => panic!("the terminal loop exited"),
+            None => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    assert!(refused, "no refusal notice was published");
+    sender.join().unwrap();
+    // Admitted commands keep flowing to the owner after the refusal.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while forwarded.try_recv().is_ok() {}
+    bridge
+        .commands
+        .send(Command::Refresh { request: 999 })
+        .unwrap();
+    let mut delivered = false;
+    while !delivered && Instant::now() < deadline {
+        delivered = matches!(
+            forwarded.recv_timeout(Duration::from_millis(50)),
+            Ok(Command::Refresh { request: 999 })
+        );
+    }
+    assert!(delivered, "the loop stopped forwarding after the refusal");
+    assert!(!matches!(bridge.mailbox.lock().unwrap().take(), Some(None)));
+}
