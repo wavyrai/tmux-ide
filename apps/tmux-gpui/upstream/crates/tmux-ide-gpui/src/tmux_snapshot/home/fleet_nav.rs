@@ -273,4 +273,30 @@ mod tests {
         );
         assert_eq!(step_row(&View::All, None, None, "down"), None);
     }
+
+    #[test]
+    fn table_rows_follow_servers_then_loose_sessions_and_keep_the_views_filter() {
+        let fleet: Fleet = serde_json::from_value(serde_json::json!({
+            "omittedGroups": 0,
+            "groups": [{
+                "id": "spark", "label": "spark", "state": "ready", "conflict": false,
+                "omittedSessions": 0,
+                "servers": [
+                    {"id": "b", "label": "b", "state": "online"},
+                    {"id": "a", "label": "a", "state": "online"}
+                ],
+                "sessions": [
+                    {"id": "loose", "name": "loose", "paneCount": 1, "favorite": true},
+                    {"id": "on-a", "name": "on-a", "paneCount": 1, "serverId": "a"},
+                    {"id": "on-b", "name": "on-b", "paneCount": 1, "serverId": "b", "favorite": true}
+                ]
+            }]
+        }))
+        .unwrap();
+        let f = Some(&fleet);
+        // Server b's rows, then a's, then sessions on no listed server.
+        assert_eq!(table_rows(&View::All, f), vec![(0, 2), (0, 1), (0, 0)]);
+        // Favourites drops the plain session under its server too.
+        assert_eq!(table_rows(&View::Favourites, f), vec![(0, 2), (0, 0)]);
+    }
 }
