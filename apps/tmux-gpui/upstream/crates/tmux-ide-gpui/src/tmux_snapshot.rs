@@ -62,6 +62,8 @@ mod terminal_links;
 #[cfg(test)]
 mod tests;
 #[cfg(feature = "visual-capture")]
+pub(crate) mod home_mockup;
+#[cfg(feature = "visual-capture")]
 pub(crate) mod visual_capture;
 mod workspace_chrome;
 mod workspace_fleet_agents;

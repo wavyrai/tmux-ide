@@ -248,6 +248,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        #[cfg(feature = "visual-capture")]
+        if let Some(variant) = super::home_mockup::active() {
+            let bezel = self.home_palette();
+            return super::home_mockup::render(variant, &bezel, self.canvas(), &self.terminal_focus);
+        }
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
         if self.browser_state.appearance.is_none()

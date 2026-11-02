@@ -20,6 +20,8 @@ use std::{
 
 const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
+/// The Home mockup's window (card #684): the owner's capture size.
+const MOCKUP_SIZE: (f32, f32) = (1560., 1010.);
 
 /// Saves `<dir>/<theme>.png` for each catalog theme id, in order.
 #[doc(hidden)]
@@ -369,6 +371,18 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if home {
         state.surface = browser::Surface::Home;
     }
+    let mockup = if extras.contains(&"mockup-a") {
+        Some(super::home_mockup::Variant::A)
+    } else if extras.contains(&"mockup-b") {
+        Some(super::home_mockup::Variant::B)
+    } else {
+        None
+    };
+    super::home_mockup::set(mockup);
+    if mockup.is_some() {
+        state.surface = browser::Surface::Home;
+    }
+    let (width, height) = if mockup.is_some() { MOCKUP_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
     for extra in &extras {
@@ -390,7 +404,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let (sender, receiver) = mpsc::sync_channel(1024);
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),
-        size: size(px(WIDTH), px(HEIGHT)),
+        size: size(px(width), px(height)),
     };
     let handle = cx.update(|cx| {
         cx.open_window(
@@ -402,7 +416,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 ..super::shell::options()
             },
             |window, cx| {
-                let view = cx.new(|cx| capture_view(window, cx, sender, state));
+                let view = cx.new(|cx| {
+                    let mut view = capture_view(window, cx, sender, state);
+                    view.sidebar_hidden = mockup.is_some();
+                    view
+                });
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
                 }
