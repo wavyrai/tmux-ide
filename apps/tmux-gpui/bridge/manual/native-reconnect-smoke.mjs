@@ -1,8 +1,7 @@
-// Card #702: end the owned daemon's terminal source, freeze the daemon for 10 s,
-// resume it, then restart it, under
-// the ignored Rust reconnect test. The app must keep the frame on screen
-// throughout and accept typing after each step. Owned scratch tmux server (-L)
-// and daemon only; never the developer's.
+// Card #702: under the ignored Rust reconnect test, end the owned daemon's
+// terminal source, freeze the daemon for 10 s, resume it, then restart it. The
+// app must keep the frame on screen throughout and accept typing after each
+// step. Owned scratch tmux server (-L) and daemon only; never the developer's.
 import assert from "node:assert/strict";
 import process from "node:process";
 import console from "node:console";
@@ -14,7 +13,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { stopFixtureChild } from "../fixture-child.mjs";
-const { AbortSignal } = globalThis;
+const { AbortSignal, Buffer } = globalThis;
 
 const [guiTestBinary] = process.argv.slice(2);
 assert(
@@ -112,7 +111,9 @@ try {
   const appLines = output
     .split("\n")
     .filter((line) => line.startsWith("tmux-preview:") || line.startsWith("tmux-ide:"));
-  console.log(JSON.stringify({ steps, appLines, live: live && JSON.parse(live.slice(15)) }, null, 2));
+  console.log(
+    JSON.stringify({ steps, appLines, live: live && JSON.parse(live.slice(15)) }, null, 2),
+  );
   assert.equal(signal, null);
   assert.equal(code, 0, redact(output));
   assert.match(output, /1 passed/);
