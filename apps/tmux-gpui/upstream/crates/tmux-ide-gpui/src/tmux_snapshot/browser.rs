@@ -582,7 +582,6 @@ fn valid_choices(choices: &[Choice]) -> bool {
         })
 }
 // Never include the untrusted publication or serde error text in logs.
-#[cfg(test)]
 fn rejection_reason(error: &Error) -> &'static str {
     match error {
         Error::Invalid(reason) => reason,
