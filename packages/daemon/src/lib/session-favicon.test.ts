@@ -142,6 +142,17 @@ describe("session favicon lookup", () => {
     expect(await resolve("/dev/null")).toBeNull();
   });
 
+  it("never touches the filesystem for an empty or relative session path", async () => {
+    const io = counted();
+    const resolve = createSessionFaviconResolver({ io });
+    expect(await resolve("")).toBeNull();
+    expect(await resolve(".")).toBeNull();
+    expect(await resolve("relative/dir")).toBeNull();
+    expect(await resolve("/tmp/a\0b")).toBeNull();
+    expect(io.lstat).not.toHaveBeenCalled();
+    expect(io.readNoFollow).not.toHaveBeenCalled();
+  });
+
   it("serves a cache hit from memory without reading the file again, and re-reads on change", async () => {
     const dir = tempDir();
     const file = join(dir, "favicon.svg");

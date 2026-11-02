@@ -167,6 +167,29 @@ describe("GET tmux-servers/:server/:generation/sessions?version=2", () => {
     }
   });
 
+  it("fills the favicon budget exactly to 512 KiB and no further", async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, "favicon.png"), Buffer.alloc(32_768, 1));
+    const small = tempDir();
+    writeFileSync(join(small, "favicon.svg"), svg);
+    const row = (index: number, sessionPath: string) => ({
+      liveSessionId: `live-session.${String(index).padStart(20, "0")}`,
+      sessionName: `s${index}`,
+      paneCount: 1,
+      windowCount: 1,
+      lastActivity: 1,
+      sessionPath,
+    });
+    const f = await fixture([
+      ...Array.from({ length: 17 }, (_, index) => row(index, dir)),
+      row(17, small),
+    ]);
+    const favicons = (await f.get("?version=2")).sessions.map((session) => session.favicon);
+    // 16 × 32 768 = 524 288 exactly fills the budget; nothing more fits, not even a tiny icon.
+    expect(favicons.slice(0, 16).every((favicon) => favicon !== null)).toBe(true);
+    expect(favicons.slice(16)).toEqual([null, null]);
+  });
+
   it("drops favicons beyond the response's total favicon budget instead of failing", async () => {
     const dir = tempDir();
     writeFileSync(join(dir, "favicon.png"), Buffer.alloc(30_000, 7));
