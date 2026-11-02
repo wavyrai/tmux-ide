@@ -691,7 +691,8 @@ fn last_catalog(events: &mpsc::Receiver<Incoming>) -> State {
             last = Some(*state);
         }
     }
-    last.expect("a catalog publication")
+    // A publication must exist.
+    last.unwrap()
 }
 
 #[test]
@@ -746,7 +747,8 @@ fn a_changed_daemon_or_session_turns_the_rebind_into_rediscovery() {
         local.recovery.as_mut().unwrap().due = Some(Instant::now());
         local.reconnect_tick().unwrap();
         local.reconnect_retry(failure).unwrap();
-        let recovery = local.recovery.as_ref().expect("rediscovery, not a give-up");
+        // Rediscovery, not a give-up.
+        let recovery = local.recovery.as_ref().unwrap();
         assert!(recovery.rebind.is_none());
         assert_eq!(recovery.others, 0);
         local.recovery.as_mut().unwrap().due = Some(Instant::now());
