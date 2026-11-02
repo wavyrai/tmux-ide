@@ -145,8 +145,17 @@ fn label(state: &State, id: &str) -> String {
                 label
             }
         })
+        .map(|label| {
+            if state.unavailable_panes.iter().any(|p| p == id) {
+                format!("{label} — {UNAVAILABLE}")
+            } else {
+                label
+            }
+        })
         .unwrap_or_else(|| "Pane".into())
 }
+/// A pane whose source the daemon closed keeps its last frame, read-only.
+pub(super) const UNAVAILABLE: &str = "unavailable";
 fn current_header(
     view: &SnapshotView,
     request: u64,

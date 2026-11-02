@@ -213,3 +213,28 @@ mod bezel;
 mod controls;
 #[path = "pane_chrome_tests/ink.rs"]
 mod ink;
+
+/// #701 note N2, in #702 round 2: a pane whose source the daemon closed says so
+/// in its header; other panes don't.
+#[test]
+fn an_unavailable_pane_is_named_in_its_header() {
+    let mut state = State {
+        panes: vec![choice("left", "Shell"), choice("right", "Build")],
+        unavailable_panes: vec!["right".into()],
+        ..State::default()
+    };
+    assert_eq!(label(&state, "left"), "Shell");
+    assert_eq!(label(&state, "right"), format!("Build — {UNAVAILABLE}"));
+    state.unavailable_panes.clear();
+    assert_eq!(label(&state, "right"), "Build");
+}
+fn choice(id: &str, label: &str) -> Choice {
+    Choice {
+        id: id.into(),
+        label: label.into(),
+        pane_count: None,
+        window_id: None,
+        browser_icon: None,
+        window_label: None,
+    }
+}
