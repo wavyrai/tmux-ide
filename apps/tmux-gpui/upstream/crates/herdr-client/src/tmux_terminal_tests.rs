@@ -151,3 +151,186 @@ fn error_codes_name_the_check_without_content() {
         "delivery-hash"
     );
 }
+
+const TXN: &str = "cc840bc1-d8af-4764-a586-c95befc44701";
+fn seed_events(pane: &str, corrupt: bool, chunks: usize) -> (Event, Vec<Event>) {
+    let vectors: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("tmux_delivery/tests/vectors.json")).unwrap();
+    let v = &vectors[0];
+    let wire = v["wire"].as_str().unwrap();
+    let envelope = json!({"type":"terminal.delivery","workspaceName":"workspace","semanticPaneId":pane,
+        "generation":"generation","incarnation":"pane:1","deliveryNonce":"f8da3f73-66c3-4621-bf6f-547ee1d5fd1c",
+        "transactionId":TXN,"protocolVersion":1,"encoding":"semantic-compact-v1",
+        "frame":"seed","baseRevision":serde_json::Value::Null,
+        "canonicalRevision":1,"canonicalStateHash":if corrupt {json!("0000000000000000")} else {v["canonicalHash"].clone()},
+        "representationHash":v["representationHash"],
+        "representationBytes":wire.len(),"chunkCount":1,"canonicalEquivalent":true,"history":"complete","richPlacements":true});
+    let chunk = |index: u8| Event::Chunk {
+        pane: pane.into(),
+        transaction_id: TXN.into(),
+        index,
+        data: STANDARD.encode(wire),
+    };
+    (
+        Event::Envelope {
+            pane: pane.into(),
+            envelope: to_raw_value(&envelope).unwrap(),
+        },
+        (0..chunks)
+            .map(|i| chunk(u8::try_from(i).unwrap()))
+            .collect(),
+    )
+}
+fn two_panes() -> TerminalState {
+    let mut s = TerminalState::new(
+        "generation".into(),
+        "workspace".into(),
+        vec!["pane.a".into(), "pane.b".into()],
+    )
+    .unwrap();
+    s.apply(Event::Ready(
+        serde_json::from_value(json!({"type":"ready","protocolVersion":2,
+        "daemonInstanceId":"generation","requestId":"request","panes":["pane.a","pane.b"],
+        "effectiveViewerMode":"read-only"}))
+        .unwrap(),
+    ))
+    .unwrap();
+    for pane in ["pane.a", "pane.b"] {
+        s.apply(Event::DeliveryReady {
+            pane: pane.into(),
+            negotiation: to_raw_value(&json!({"accepted":true,
+            "negotiated":{"protocolVersion":1,"encoding":"semantic-compact-v1","richPlacements":true,
+            "generation":"generation","deliveryNonce":"f8da3f73-66c3-4621-bf6f-547ee1d5fd1c"}}))
+            .unwrap(),
+        })
+        .unwrap();
+    }
+    s
+}
+
+#[test]
+fn a_rejected_delivery_is_a_nack_naming_its_flight_and_the_pane_accepts_a_reseed() {
+    let mut s = two_panes();
+    let (envelope, chunks) = seed_events("pane.a", true, 1);
+    s.apply(envelope).unwrap();
+    let outcome = s.apply(chunks.into_iter().next().unwrap()).unwrap();
+    let Outcome::Reseed { pane, nack } = outcome else {
+        panic!("expected a reseed");
+    };
+    assert_eq!(pane, "pane.a");
+    assert_eq!(
+        serde_json::to_value(&nack).unwrap(),
+        json!({"type":"terminal.delivery.nack","workspaceName":"workspace","semanticPaneId":"pane.a",
+        "generation":"generation","incarnation":"pane:1","deliveryNonce":"f8da3f73-66c3-4621-bf6f-547ee1d5fd1c",
+        "transactionId":TXN,"reason":"hash-mismatch","appliedRevision":-1})
+    );
+    // The other pane, and the reseed of this one, commit as usual.
+    let (envelope, chunks) = seed_events("pane.b", false, 1);
+    s.apply(envelope).unwrap();
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Ok(Outcome::Updated { .. })
+    ));
+    let (envelope, chunks) = seed_events("pane.a", false, 1);
+    s.apply(envelope).unwrap();
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Ok(Outcome::Updated { .. })
+    ));
+}
+
+#[test]
+fn chunks_already_framed_for_a_nacked_flight_are_ignored() {
+    let mut s = two_panes();
+    // An envelope that fails validation (a patch with no seed) is NACKed at once;
+    // its chunk still arrives and must not count as a second failure.
+    let (envelope, chunks) = seed_events("pane.a", false, 1);
+    let mut raw: serde_json::Value = match &envelope {
+        Event::Envelope { envelope, .. } => serde_json::from_str(envelope.get()).unwrap(),
+        _ => unreachable!(),
+    };
+    raw["frame"] = json!("patch");
+    raw["baseRevision"] = json!(0);
+    let outcome = s
+        .apply(Event::Envelope {
+            pane: "pane.a".into(),
+            envelope: to_raw_value(&raw).unwrap(),
+        })
+        .unwrap();
+    assert!(matches!(&outcome, Outcome::Reseed { nack, .. } if nack.reason == "gap"));
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Ok(Outcome::Pending)
+    ));
+}
+
+#[test]
+fn a_pane_that_keeps_failing_fails_the_stream() {
+    let mut s = two_panes();
+    for _ in 0..3 {
+        let (envelope, chunks) = seed_events("pane.a", true, 1);
+        s.apply(envelope).unwrap();
+        assert!(matches!(
+            s.apply(chunks.into_iter().next().unwrap()),
+            Ok(Outcome::Reseed { .. })
+        ));
+    }
+    let (envelope, chunks) = seed_events("pane.a", true, 1);
+    s.apply(envelope).unwrap();
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Err(Error::Delivery(_))
+    ));
+}
+
+#[test]
+fn a_commit_resets_the_pane_failure_count() {
+    let mut s = two_panes();
+    for _ in 0..3 {
+        for corrupt in [true, true, true, false] {
+            let (envelope, chunks) = seed_events("pane.a", corrupt, 1);
+            s.apply(envelope).unwrap();
+            s.apply(chunks.into_iter().next().unwrap()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn only_a_source_closed_fault_for_a_known_pane_is_pane_local() {
+    let fault = |value: serde_json::Value| Event::Control(to_raw_value(&value).unwrap());
+    let closed = |pane: &str| {
+        fault(
+            json!({"type":"terminal-delivery-fault","pane":pane,"fault":{"reason":"source-closed"}}),
+        )
+    };
+    let mut s = two_panes();
+    assert!(matches!(s.apply(closed("pane.a")), Ok(Outcome::Unavailable(p)) if p == "pane.a"));
+    // Its late events are dropped; the other pane still commits.
+    let (envelope, chunks) = seed_events("pane.a", false, 1);
+    assert!(matches!(s.apply(envelope), Ok(Outcome::Pending)));
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Ok(Outcome::Pending)
+    ));
+    let (envelope, chunks) = seed_events("pane.b", false, 1);
+    s.apply(envelope).unwrap();
+    assert!(matches!(
+        s.apply(chunks.into_iter().next().unwrap()),
+        Ok(Outcome::Updated { .. })
+    ));
+    // The last pane closing ends the stream.
+    assert!(matches!(
+        s.apply(closed("pane.b")),
+        Err(Error::SourceClosed)
+    ));
+
+    for frame in [
+        json!({"type":"terminal-delivery-fault","pane":"pane.a","fault":{"reason":"protocol-violation"}}),
+        json!({"type":"terminal-delivery-fault","fault":{"reason":"source-closed"}}),
+        json!({"type":"terminal-delivery-fault","pane":"pane.zzz","fault":{"reason":"source-closed"}}),
+        json!({"type":"error"}),
+    ] {
+        let mut s = two_panes();
+        assert!(matches!(s.apply(fault(frame)), Err(Error::SourceClosed)));
+    }
+}

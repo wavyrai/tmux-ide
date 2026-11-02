@@ -380,3 +380,19 @@ fn delayed_resize_ack_after_blur_keeps_the_native_connection() {
     drop(response);
     peer.join().unwrap();
 }
+
+#[test]
+fn input_reaches_a_pane_only_while_its_commit_is_current() {
+    let left = std::collections::BTreeSet::from(["left".to_owned()]);
+    let none = std::collections::BTreeSet::new();
+    assert!(selected_live([&none, &none, &none], "left"));
+    for blocked in [
+        [&left, &none, &none],
+        [&none, &left, &none],
+        [&none, &none, &left],
+    ] {
+        assert!(!selected_live(blocked, "left"));
+        // Another pane's state never blocks the selected one.
+        assert!(selected_live(blocked, "right"));
+    }
+}

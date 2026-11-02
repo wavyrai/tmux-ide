@@ -107,6 +107,32 @@ pub struct Ack {
     pub representation_hash: String,
 }
 
+/// The daemon's address for one in-flight delivery: a NACK must name it exactly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Flight {
+    workspace_name: String,
+    semantic_pane_id: String,
+    generation: String,
+    incarnation: String,
+    delivery_nonce: String,
+    transaction_id: String,
+}
+/// `terminal.delivery.nack`: the daemon drops this flight and reseeds the pane.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Nack {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    pub workspace_name: String,
+    pub semantic_pane_id: String,
+    pub generation: String,
+    pub incarnation: String,
+    pub delivery_nonce: String,
+    pub transaction_id: String,
+    pub reason: &'static str,
+    pub applied_revision: i64,
+}
+
 struct Pending {
     envelope: Envelope,
     bytes: Vec<u8>,
@@ -125,6 +151,10 @@ pub struct Receiver {
     changed_rows: Vec<usize>,
     pending: Option<Pending>,
     partial: Option<projection::Partial>,
+    /// The delivery being received; a NACK can name only this one.
+    flight: Option<Flight>,
+    /// A NACKed transaction whose already-framed chunks may still arrive.
+    skip: Option<String>,
 }
 
 fn uuid(value: &str) -> bool {
@@ -184,7 +214,49 @@ impl Receiver {
             changed_rows: Vec::new(),
             pending: None,
             partial: None,
+            flight: None,
+            skip: None,
         })
+    }
+    /// After a failed `begin` or `chunk`: name the failed flight in a NACK and start
+    /// over from an empty receiver that accepts the daemon's reseed. `None` when the
+    /// failure cannot name a flight, or is not the pane's alone; the caller then fails
+    /// the whole stream.
+    pub fn reseed(&mut self, error: &Error) -> Option<Nack> {
+        let reason = match error {
+            Error::Ordering => "gap",
+            Error::RepresentationHash | Error::Canonical(tmux_delivery::Error::Hash) => {
+                "hash-mismatch"
+            }
+            Error::Canonical(_) => "decode-failed",
+            Error::Bounds => "state-too-large",
+            Error::Identity => "protocol-violation",
+            Error::Retired | Error::Envelope(_) => return None,
+        };
+        let flight = self.flight.take()?;
+        let nack = Nack {
+            kind: "terminal.delivery.nack",
+            applied_revision: self
+                .revision
+                .and_then(|v| i64::try_from(v).ok())
+                .unwrap_or(-1),
+            workspace_name: flight.workspace_name,
+            semantic_pane_id: flight.semantic_pane_id,
+            generation: flight.generation,
+            incarnation: flight.incarnation,
+            delivery_nonce: flight.delivery_nonce,
+            transaction_id: flight.transaction_id.clone(),
+            reason,
+        };
+        let fresh = Self::new(
+            self.negotiated.clone(),
+            self.workspace.clone(),
+            self.pane.clone(),
+        )
+        .ok()?;
+        *self = fresh;
+        self.skip = Some(flight.transaction_id);
+        Some(nack)
     }
 
     /// Failed receivers expose no actionable terminal state. Retained external Arcs are preview only.
@@ -244,13 +316,22 @@ impl Receiver {
         if self.retired {
             return Err(Error::Retired);
         }
-        if self.pending.is_some() || self.projection_pending() {
-            return Err(Error::Ordering);
-        }
         if bytes.len() > 1024 * 1024 {
             return Err(Error::Bounds);
         }
         let e: Envelope = serde_json::from_slice(bytes).map_err(Error::Envelope)?;
+        self.skip = None;
+        self.flight = Some(Flight {
+            workspace_name: e.workspace_name.clone(),
+            semantic_pane_id: e.semantic_pane_id.clone(),
+            generation: e.generation.clone(),
+            incarnation: e.incarnation.clone(),
+            delivery_nonce: e.delivery_nonce.clone(),
+            transaction_id: e.transaction_id.clone(),
+        });
+        if self.pending.is_some() || self.projection_pending() {
+            return Err(Error::Ordering);
+        }
         if e.kind != "terminal.delivery"
             || e.protocol_version != 1
             || e.encoding != self.negotiated.encoding
@@ -336,6 +417,9 @@ impl Receiver {
         index: usize,
         bytes: &[u8],
     ) -> Result<Option<Ack>> {
+        if self.skip.as_deref() == Some(transaction) {
+            return Ok(None);
+        }
         if self.retired {
             return Err(Error::Retired);
         }
@@ -388,6 +472,7 @@ impl Receiver {
         self.incarnation = Some(e.incarnation.clone());
         self.revision = Some(revision);
         self.tombstoned = frame == Frame::Tombstone;
+        self.flight = None;
         Ok(Some(Ack {
             kind: "terminal.delivery.ack",
             workspace_name: e.workspace_name,
