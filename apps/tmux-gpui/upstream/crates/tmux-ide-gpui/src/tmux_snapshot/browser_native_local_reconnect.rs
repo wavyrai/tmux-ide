@@ -708,7 +708,8 @@ mod tests {
                 Ok(Incoming::Catalog(state)) => {
                     reconnecting = state.status == "Connection lost. Reconnecting…";
                 }
-                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => actor.thread().unpark(),
+                // Never unpark here: the actor must wake itself while events wait.
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
@@ -762,5 +763,24 @@ mod tests {
         drop(events);
         let error = local.survive(Error::Invalid("picker catalog identity changed"));
         assert!(error.is_err_and(|error| outbox::closed(&error)));
+    }
+
+    #[test]
+    fn a_full_command_queue_waits_for_the_actor_instead_of_failing() {
+        let (sender, input) = mpsc::sync_channel(1);
+        let commands = watch::Commands::new(sender, std::thread::current());
+        commands.send(Command::Refresh { request: 1 }).unwrap();
+        let drain = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let first = input.recv_timeout(Duration::from_secs(5)).unwrap();
+            let second = input.recv_timeout(Duration::from_secs(5)).unwrap();
+            (first, second, input)
+        });
+        commands.send(Command::Refresh { request: 2 }).unwrap();
+        let (first, second, input) = drain.join().unwrap();
+        assert!(matches!(first, Command::Refresh { request: 1 }));
+        assert!(matches!(second, Command::Refresh { request: 2 }));
+        drop(input);
+        assert!(commands.send(Command::Refresh { request: 3 }).is_err());
     }
 }
