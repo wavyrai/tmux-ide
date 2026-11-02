@@ -1,7 +1,7 @@
 //! Home's fleet: the left list (All sessions, Favourites, machines, Add
-//! machine) and the session table for the list's entry. Each machine is one
-//! Bezel group box: a header row with its connection state and actions, then
-//! its servers and sessions as card rows.
+//! machine) and the session table for the list's entry (#684, #705 Option A):
+//! machines are label lines over their rows, with no card and no rules. The
+//! rows themselves are in `fleet_rows`.
 use super::*;
 use bezel_ui::widgets::{Content, status_dot};
 use fleet_nav::View;
@@ -12,17 +12,17 @@ pub(super) const NAV_WIDTH: f32 = 232.;
 pub(super) const ROW_INDENT: f32 = 36.;
 /// Option A's tracks (#705): a row's height and gap, the favicon, the
 /// windows-and-panes column and the last-active column.
-const ROW_HEIGHT: f32 = 34.;
-const ROW_GAP: f32 = SPACE * 1.5;
-const FAVICON: f32 = 16.;
-const LAYOUT_WIDTH: f32 = 150.;
-const ACTIVE_WIDTH: f32 = 96.;
+pub(super) const ROW_HEIGHT: f32 = 34.;
+pub(super) const ROW_GAP: f32 = SPACE * 1.5;
+pub(super) const FAVICON: f32 = 16.;
+pub(super) const LAYOUT_WIDTH: f32 = 150.;
+pub(super) const ACTIVE_WIDTH: f32 = 96.;
 /// The widest the table gets, so a value sits near its name.
 pub(super) const TABLE_MAX: f32 = 760.;
 /// The trailing column that holds the keyboard row's ↵ hint.
-const HINT_WIDTH: f32 = 28.;
+pub(super) const HINT_WIDTH: f32 = 28.;
 
-fn glyph(path: &'static str, color: Hsla) -> Svg {
+pub(super) fn glyph(path: &'static str, color: Hsla) -> Svg {
     bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(path))
         .size(px(bezel_ui::widgets::ICON_GLYPH))
         .flex_none()
@@ -41,7 +41,7 @@ fn machine_tone(bezel: &bezel_theme::Theme, group: &browser::fleet::Group) -> Hs
     }
 }
 
-fn panes(count: u64) -> String {
+pub(super) fn panes(count: u64) -> String {
     format!("{count} {}", if count == 1 { "pane" } else { "panes" })
 }
 
@@ -118,6 +118,7 @@ impl SnapshotView {
         }
         if let Some(controls) = &mut self.home_filter {
             controls.fleet_view = view;
+            controls.waiting_only = false;
             controls.fleet_nav.focus(window, cx);
             cx.notify();
         }
@@ -283,230 +284,6 @@ impl SnapshotView {
                 })),
         );
         Some(list.into_any_element())
-    }
-
-    /// One 34px session row with no rule (#705, Option A): the star (shown
-    /// on a favourite, or under the pointer), the project's favicon or the
-    /// terminal glyph, the name with "attached" and its agent, then windows
-    /// and panes, when it was last active, and the keyboard row's ↵ hint.
-    fn fleet_session_row(
-        &self,
-        index: usize,
-        row: usize,
-        session: &browser::fleet::Session,
-        cursor: bool,
-        now: i64,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let bezel = self.home_palette();
-        let hover = bezel.element_hover;
-        let request = self.browser_request;
-        let token = session.selection.clone();
-        let enabled = token.is_some()
-            && self.browser_commands.is_some()
-            && self.presence.ready()
-            && self.browser_state.request == request;
-        let group: SharedString = format!("fleet-row-{index}-{row}").into();
-        let star = div()
-            .flex_none()
-            .debug_selector(move || format!("fleet-star-{index}-{row}"))
-            .when(!session.favorite, |star| {
-                star.invisible().group_hover(group.clone(), |s| s.visible())
-            })
-            .child(self.fleet_preference_button(
-                ("fleet-favorite", index * 128 + row),
-                session.favorite_action.as_deref(),
-                !session.favorite,
-                if session.favorite {
-                    "Remove favorite"
-                } else {
-                    "Add favorite"
-                },
-                if session.favorite {
-                    "icons/fleet-star-filled.svg"
-                } else {
-                    "icons/fleet-star.svg"
-                },
-                cx,
-            ));
-        let icon = match &session.favicon {
-            Some(image) => img(image.clone())
-                .debug_selector(move || format!("fleet-session-favicon-{index}-{row}"))
-                .size(px(FAVICON))
-                .flex_none()
-                .rounded(px(3.))
-                .into_any_element(),
-            None => div()
-                .debug_selector(move || format!("fleet-session-glyph-{index}-{row}"))
-                .flex_none()
-                .size(px(FAVICON))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(glyph("icons/terminal.svg", bezel.text_muted))
-                .into_any_element(),
-        };
-        let name = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(SPACE * 1.5))
-            .child(
-                div()
-                    .debug_selector(move || format!("fleet-session-label-{index}-{row}"))
-                    .min_w_0()
-                    .truncate()
-                    .text_style(TextStyle::Body)
-                    .child(crate::sidebar::label_text(&session.name)),
-            )
-            .when(session.active, |line| {
-                line.child(
-                    bezel
-                        .badge("attached")
-                        .debug_selector(move || format!("fleet-session-attached-{index}-{row}"))
-                        .text_color(bezel.text_muted)
-                        .children(design::ink_probe(move || {
-                            format!("fleet-session-attached-{index}-{row}")
-                        })),
-                )
-            })
-            .children(self.fleet_session_agent(index, row, session, cx));
-        let layout = layout(session);
-        div()
-            .id(("fleet-session", index * 128 + row))
-            .group(group)
-            .debug_selector(move || format!("fleet-session-{index}-{row}"))
-            .h(px(ROW_HEIGHT))
-            .px(px(ROW_GAP))
-            .flex()
-            .items_center()
-            .gap(px(ROW_GAP))
-            .min_w_0()
-            .rounded(px(bezel_theme::Theme::control_radius()))
-            .when(cursor, |d| d.bg(bezel.card_selected_bg()))
-            .when(enabled && !cursor, |d| d.hover(move |d| d.bg(hover)))
-            .when(enabled, |d| d.cursor_pointer())
-            .child(star)
-            .child(icon)
-            .child(name)
-            .child(
-                div()
-                    .debug_selector(move || format!("fleet-session-status-{index}-{row}"))
-                    .flex_none()
-                    .w(px(LAYOUT_WIDTH))
-                    .text_style(TextStyle::Callout)
-                    .text_color(bezel.text_muted)
-                    .children(design::ink_probe(move || {
-                        format!("fleet-session-status-{index}-{row}")
-                    }))
-                    .child(if enabled {
-                        layout
-                    } else {
-                        "Unavailable".into()
-                    }),
-            )
-            .child(
-                div()
-                    .debug_selector(move || format!("fleet-session-active-{index}-{row}"))
-                    .flex_none()
-                    .w(px(ACTIVE_WIDTH))
-                    .flex()
-                    .justify_end()
-                    .text_style(TextStyle::Callout)
-                    .text_color(bezel.text_muted)
-                    .children(design::ink_probe(move || {
-                        format!("fleet-session-active-{index}-{row}")
-                    }))
-                    .children(session.last_activity.map(|then| last_active(now, then))),
-            )
-            // The ↵ hint holds its width on every row so the columns line up.
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(HINT_WIDTH))
-                    .flex()
-                    .justify_end()
-                    .when(cursor, |cell| {
-                        cell.child(
-                            bezel_ui::popover::kbd_hint(&bezel, "↵")
-                                .debug_selector(move || {
-                                    format!("fleet-session-enter-{index}-{row}")
-                                })
-                                .text_color(bezel.text_muted)
-                                .children(design::ink_probe(move || {
-                                    format!("fleet-session-enter-{index}-{row}")
-                                })),
-                        )
-                    }),
-            )
-            .on_click(cx.listener(move |view, _, window, cx| {
-                cx.stop_propagation();
-                if let Some(token) = &token {
-                    view.open_fleet_session(request, token, window, cx);
-                }
-            }))
-            .into_any_element()
-    }
-
-    /// The session's agent, inline after its name: the agent's name and its
-    /// status badge, and "+N" for more. A click opens that agent.
-    fn fleet_session_agent(
-        &self,
-        index: usize,
-        row: usize,
-        session: &browser::fleet::Session,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let roster = self.browser_state.home_agents.as_ref()?;
-        let live = session.session_id.as_deref()?;
-        let mut agents = roster.rows.iter().filter(|r| r.session_id == live);
-        let agent = agents.next()?;
-        let more = agents.count();
-        let bezel = self.home_palette();
-        let request = self.browser_request;
-        let revision = roster.revision;
-        let key = agent.key.clone();
-        let enabled = self.browser_commands.is_some() && roster.available(&key);
-        Some(
-            div()
-                .id(("fleet-session-agent", index * 128 + row))
-                .debug_selector(move || format!("fleet-session-agent-{index}-{row}"))
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_style(TextStyle::Callout)
-                .child(
-                    div()
-                        .text_color(bezel.text)
-                        .children(design::ink_probe(move || {
-                            format!("fleet-session-agent-{index}-{row}")
-                        }))
-                        .child(crate::sidebar::label_text(&agent.name)),
-                )
-                // The app's agent status: Bezel's colours and the spinner.
-                .child(self.agent_indicator(
-                    agent,
-                    !agent.available
-                        || !matches!(
-                            roster.phase,
-                            browser::home_agents::Phase::Live
-                                | browser::home_agents::Phase::Partial
-                        ),
-                ))
-                .when(more > 0, |line| {
-                    line.child(div().text_color(bezel.text_muted).child(format!("+{more}")))
-                })
-                .when(enabled, |line| {
-                    line.cursor_pointer()
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            view.home_agent_select(request, revision, &key, window, cx);
-                        }))
-                })
-                .into_any_element(),
-        )
     }
 
     /// A machine's quiet label line: its name, any state other than
@@ -704,38 +481,6 @@ impl SnapshotView {
             .into_any_element()
     }
 
-    /// The table's column labels, once at its top, on the rows' tracks.
-    fn fleet_column_header(&self) -> Div {
-        let bezel = self.home_palette();
-        div()
-            .debug_selector(|| "fleet-columns".into())
-            .px(px(ROW_GAP))
-            .pb(px(4.))
-            .flex()
-            .items_center()
-            .gap(px(ROW_GAP))
-            .min_w_0()
-            .text_style(TextStyle::Caption)
-            .text_color(bezel.text_muted)
-            .children(design::ink_probe(|| "fleet-columns".into()))
-            // In line with the session names, past the star and the icon.
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(bezel_theme::Theme::BUTTON_HEIGHT + ROW_GAP + FAVICON)),
-            )
-            .child(div().flex_1().min_w_0().child("Session"))
-            .child(div().flex_none().w(px(LAYOUT_WIDTH)).child("Windows"))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(ACTIVE_WIDTH))
-                    .flex()
-                    .justify_end()
-                    .child("Last active"),
-            )
-            .child(div().flex_none().w(px(HINT_WIDTH)))
-    }
     /// Whether new sessions go to `server`.
     fn fleet_server_is_default(
         &self,
@@ -838,6 +583,21 @@ impl SnapshotView {
         let fleet = self.browser_state.fleet.as_ref()?;
         let bezel = self.home_palette();
         let view = self.home_fleet_view();
+        let waiting = filters::waiting_sessions(
+            &self.browser_state,
+            self.home_filter.as_ref().is_some_and(|c| c.waiting_only),
+        );
+        let only = waiting.as_ref();
+        // A machine shows when its view does, and, under the pill's filter,
+        // when one of its sessions waits.
+        let shows_group = |group: &browser::fleet::Group| {
+            view.shows_group(group)
+                && (only.is_none()
+                    || group
+                        .sessions
+                        .iter()
+                        .any(|s| fleet_nav::shows(&view, only, group, s)))
+        };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -846,7 +606,9 @@ impl SnapshotView {
             .home_filter
             .as_ref()
             .filter(|c| c.fleet_table.is_focused(window))
-            .and_then(|c| fleet_nav::step_row(&view, Some(fleet), c.table_cursor.as_ref(), ""));
+            .and_then(|c| {
+                fleet_nav::step_row(&view, only, Some(fleet), c.table_cursor.as_ref(), "")
+            });
         let is_cursor = |index: usize, row: usize| {
             cursor
                 .as_ref()
@@ -883,16 +645,13 @@ impl SnapshotView {
                 }
             });
         }
-        let no_rows = fleet_nav::table_rows(&view, Some(fleet)).is_empty();
+        let no_rows = fleet_nav::table_rows(&view, only, Some(fleet)).is_empty();
         // Connected machines with no session between them: one invitation
         // instead of an empty table (#705). Favourites keeps its own.
-        let shown_groups: Vec<_> = fleet
-            .groups
-            .iter()
-            .filter(|g| view.shows_group(g))
-            .collect();
+        let shown_groups: Vec<_> = fleet.groups.iter().filter(|g| shows_group(g)).collect();
         if no_rows
             && view != View::Favourites
+            && only.is_none()
             && !shown_groups.is_empty()
             && shown_groups.iter().all(|g| {
                 // A collapsed machine hides its rows; it keeps its line
@@ -925,10 +684,10 @@ impl SnapshotView {
         if !no_rows {
             body = body.child(self.fleet_column_header());
         }
-        let several = fleet.groups.iter().filter(|g| view.shows_group(g)).count() > 1;
+        let several = fleet.groups.iter().filter(|g| shows_group(g)).count() > 1;
         let mut shown = 0;
         for (index, group) in fleet.groups.iter().enumerate() {
-            if !view.shows_group(group) {
+            if !shows_group(group) {
                 continue;
             }
             shown += 1;
@@ -959,16 +718,18 @@ impl SnapshotView {
                     .iter()
                     .enumerate()
                     .filter(|(_, s)| {
-                        s.server_id.as_ref() == Some(&server.id) && view.shows_session(group, s)
+                        s.server_id.as_ref() == Some(&server.id)
+                            && fleet_nav::shows(&view, only, group, s)
                     })
                     .collect();
                 // All sessions hides an empty server only on a collapsed
                 // machine; Favourites hides every server without a favourite.
-                let hide = match &view {
-                    View::All => group.collapsed,
-                    View::Favourites => true,
-                    View::Machine(_) => false,
-                };
+                let hide = only.is_some()
+                    || match &view {
+                        View::All => group.collapsed,
+                        View::Favourites => true,
+                        View::Machine(_) => false,
+                    };
                 if rows.is_empty() && hide {
                     continue;
                 }
@@ -991,7 +752,7 @@ impl SnapshotView {
                 }
             }
             for (row, session) in group.sessions.iter().enumerate().filter(|(_, s)| {
-                view.shows_session(group, s)
+                fleet_nav::shows(&view, only, group, s)
                     && s.server_id
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
@@ -1037,31 +798,5 @@ impl SnapshotView {
             );
         }
         Some(body.into_any_element())
-    }
-}
-
-/// A session's windows and panes; a version 1 daemon reports panes only.
-pub(super) fn layout(session: &browser::fleet::Session) -> String {
-    match session.window_count {
-        Some(windows) => format!(
-            "{} · {}",
-            crate::plural::count(windows, "window", "windows"),
-            panes(session.pane_count)
-        ),
-        None => panes(session.pane_count),
-    }
-}
-
-/// When a session was last active, said the way a person would.
-pub(super) fn last_active(now: i64, then: i64) -> String {
-    let ago = (now - then).max(0);
-    match ago {
-        0..60 => "now".into(),
-        60..3600 => format!("{} min ago", ago / 60),
-        3600..86_400 => format!("{} h ago", ago / 3600),
-        86_400..172_800 => "yesterday".into(),
-        _ if ago < 7 * 86_400 => format!("{} days ago", ago / 86_400),
-        _ if ago < 14 * 86_400 => "last week".into(),
-        _ => format!("{} weeks ago", ago / (7 * 86_400)),
     }
 }

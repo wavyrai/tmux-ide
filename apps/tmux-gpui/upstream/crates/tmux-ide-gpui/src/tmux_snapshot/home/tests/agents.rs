@@ -43,7 +43,7 @@ fn rendered_agent_click_opens_exact_roster_identity(cx: &mut TestAppContext) {
     });
 }
 #[gpui::test]
-fn the_needs_input_pill_counts_waiting_agents_and_opens_the_first(cx: &mut TestAppContext) {
+fn the_needs_input_pill_filters_the_table_to_waiting_sessions(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = catalog_view(window, cx, sender);
@@ -53,34 +53,44 @@ fn the_needs_input_pill_counts_waiting_agents_and_opens_the_first(cx: &mut TestA
         view
     });
     cx.simulate_resize(size(px(1000.), px(900.)));
-    let set_waiting = |cx: &mut VisualTestContext, waiting: bool| {
-        cx.update(|window, cx| {
-            view.update(cx, |v, _| {
-                let roster = v.browser_state.home_agents.as_mut().unwrap();
-                roster.rows[0].attention = waiting;
-                roster.rows[0].status = if waiting {
-                    browser::home_agents::Status::Blocked
-                } else {
-                    browser::home_agents::Status::Working
-                };
-            });
-            window.draw(cx).clear(cx);
-        })
+    let painted = |cx: &mut VisualTestContext, key: &'static str| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(key).is_some()
     };
-    // No agent waiting, no pill; one waiting, the pill.
-    set_waiting(cx, false);
-    assert!(cx.debug_bounds("home-agents-attention").is_none());
-    assert!(
-        cx.debug_bounds("fleet-session-agent-0-1").is_some(),
-        "home not drawn"
-    );
-    set_waiting(cx, true);
+    let click = |cx: &mut VisualTestContext, key: &'static str| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = cx.debug_bounds(key).unwrap();
+        cx.simulate_click(bounds.center(), Modifiers::default());
+    };
     receiver.try_iter().for_each(drop);
-    let pill = cx.debug_bounds("home-agents-attention").unwrap();
-    cx.simulate_click(pill.center(), Modifiers::default());
-    assert!(
-        matches!(receiver.try_recv().unwrap(), browser::Command::OpenAgent { key, .. } if key == "session-two\u{0}agent")
-    );
+    // Off: both sessions.
+    assert!(painted(cx, "fleet-session-0-0") && painted(cx, "fleet-session-0-1"));
+    // On: only the session whose agent waits, and the pill shows it is on.
+    click(cx, "home-agents-attention-off");
+    assert!(painted(cx, "home-agents-attention-on"));
+    assert!(!painted(cx, "fleet-session-0-0"));
+    assert!(painted(cx, "fleet-session-0-1"));
+    // A second click shows them all again.
+    click(cx, "home-agents-attention-on");
+    assert!(painted(cx, "fleet-session-0-0") && painted(cx, "home-agents-attention-off"));
+    // A left-list entry clears it too.
+    click(cx, "home-agents-attention-off");
+    click(cx, "home-nav-all");
+    assert!(painted(cx, "fleet-session-0-0") && painted(cx, "home-agents-attention-off"));
+    // The pill only filters: it sends nothing.
+    assert!(receiver.try_recv().is_err());
+    // No agent waiting: no pill, and a filter left on no longer narrows.
+    cx.update(|window, cx| {
+        view.update(cx, |v, _| {
+            v.home_filter.as_mut().unwrap().waiting_only = true;
+            let roster = v.browser_state.home_agents.as_mut().unwrap();
+            roster.rows[0].attention = false;
+            roster.rows[0].status = browser::home_agents::Status::Working;
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(!painted(cx, "home-agents-attention-off") && !painted(cx, "home-agents-attention-on"));
+    assert!(painted(cx, "fleet-session-0-0"));
 }
 #[gpui::test]
 fn agent_dispatch_rejects_changed_revision_unavailable_and_disconnected(cx: &mut TestAppContext) {

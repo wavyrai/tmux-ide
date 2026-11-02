@@ -19,6 +19,8 @@ pub(in crate::tmux_snapshot) struct Controls {
     pub(in crate::tmux_snapshot) fleet_table: FocusHandle,
     /// The table row the keyboard is on.
     pub(in crate::tmux_snapshot) table_cursor: Option<fleet_nav::RowKey>,
+    /// The needs-input pill is on: the table shows waiting sessions only.
+    pub(in crate::tmux_snapshot) waiting_only: bool,
 }
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn prepare_home_filter(&mut self, cx: &mut Context<Self>) {
@@ -34,6 +36,7 @@ impl SnapshotView {
                 fleet_nav: cx.focus_handle(),
                 fleet_table: cx.focus_handle(),
                 table_cursor: None,
+                waiting_only: false,
             });
         }
     }
@@ -113,6 +116,8 @@ impl SnapshotView {
         };
         let list_focused = controls.fleet_nav.is_focused(window);
         let table_focused = controls.fleet_table.is_focused(window);
+        let waiting = waiting_sessions(&self.browser_state, controls.waiting_only);
+        let only = waiting.as_ref();
         let fleet = self.browser_state.fleet.as_ref();
         let current = fleet_nav::reconcile(&controls.fleet_view, fleet);
         let key = key.key.as_str();
@@ -123,8 +128,13 @@ impl SnapshotView {
                     if event.is_held {
                         return true;
                     }
-                    let cursor =
-                        fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "");
+                    let cursor = fleet_nav::step_row(
+                        &current,
+                        only,
+                        fleet,
+                        controls.table_cursor.as_ref(),
+                        "",
+                    );
                     let row = cursor.as_ref().and_then(|(group, session)| {
                         let group = fleet?.groups.iter().find(|g| &g.id == group)?;
                         Some((group, group.sessions.iter().find(|s| &s.id == session)?))
@@ -166,9 +176,13 @@ impl SnapshotView {
                     }
                 }
                 _ => {
-                    let Some(next) =
-                        fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), key)
-                    else {
+                    let Some(next) = fleet_nav::step_row(
+                        &current,
+                        only,
+                        fleet,
+                        controls.table_cursor.as_ref(),
+                        key,
+                    ) else {
                         return false;
                     };
                     controls.table_cursor = Some(next);
@@ -179,7 +193,7 @@ impl SnapshotView {
             // never the agent list's Enter.
             if !event.is_held
                 && let Some(cursor) =
-                    fleet_nav::step_row(&current, fleet, controls.table_cursor.as_ref(), "")
+                    fleet_nav::step_row(&current, only, fleet, controls.table_cursor.as_ref(), "")
             {
                 controls.table_cursor = Some(cursor);
                 controls.fleet_table.clone().focus(window, cx);
@@ -196,6 +210,7 @@ impl SnapshotView {
                 return false;
             };
             controls.fleet_view = next;
+            controls.waiting_only = false;
         }
         cx.stop_propagation();
         window.prevent_default();
@@ -213,4 +228,20 @@ enum RowAct {
         favourite: bool,
     },
     UseServer(String),
+}
+
+/// The live session ids with an agent waiting for input, while the pill's
+/// filter is on and any agent waits; otherwise `None`, every row.
+pub(in crate::tmux_snapshot) fn waiting_sessions(
+    state: &browser::State,
+    on: bool,
+) -> Option<std::collections::HashSet<String>> {
+    let roster = state.home_agents.as_ref().filter(|_| on)?;
+    let ids: std::collections::HashSet<String> = roster
+        .rows
+        .iter()
+        .filter(|row| row.attention)
+        .map(|row| row.session_id.clone())
+        .collect();
+    (!ids.is_empty()).then_some(ids)
 }

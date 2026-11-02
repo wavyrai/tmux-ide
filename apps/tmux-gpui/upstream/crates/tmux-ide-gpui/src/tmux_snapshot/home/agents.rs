@@ -38,28 +38,33 @@ impl SnapshotView {
             );
         }
     }
-    /// "N need input" by the search field, only while an agent waits; a
-    /// click opens the first one that does.
+    /// "N need input" by the search field, only while an agent waits. A
+    /// click narrows the table to the waiting sessions and a second click,
+    /// or any left-list entry, shows them all again (#705).
     pub(super) fn home_agent_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let roster = self.browser_state.home_agents.as_ref()?;
-        let mut waiting = roster.rows.iter().filter(|row| row.attention);
-        let first = waiting.next()?;
-        let count = 1 + waiting.count();
+        let count = roster.rows.iter().filter(|row| row.attention).count();
+        if count == 0 {
+            return None;
+        }
         let bezel = self.home_palette();
+        let on = self.home_filter.as_ref().is_some_and(|c| c.waiting_only);
+        let tone: Hsla = rgb(super::super::agent_indicator::attention_ink(&self.theme())).into();
+        let canvas: Hsla = rgb(self.canvas()).into();
         let request = self.browser_request;
-        let revision = roster.revision;
-        let key = first.key.clone();
-        let enabled = self.browser_commands.is_some() && roster.available(&key);
         Some(
             div()
                 .id("home-agents-attention")
-                .debug_selector(|| "home-agents-attention".into())
+                .debug_selector(move || {
+                    format!("home-agents-attention-{}", if on { "on" } else { "off" })
+                })
                 .role(Role::Button)
                 .aria_label(crate::plural::count(
                     count,
                     "agent needs input",
                     "agents need input",
                 ))
+                .aria_toggled(if on { Toggled::True } else { Toggled::False })
                 .flex_none()
                 .flex()
                 .items_center()
@@ -67,11 +72,12 @@ impl SnapshotView {
                 .h(px(bezel_theme::Theme::BUTTON_HEIGHT))
                 .px(px(SPACE))
                 .rounded_full()
+                .cursor_pointer()
                 .bg(bezel_theme::flatten(
-                    bezel.warning.opacity(0.14),
-                    rgb(self.canvas()).into(),
+                    tone.opacity(if on { 0.28 } else { 0.14 }),
+                    canvas,
                 ))
-                .child(status_dot(bezel.warning))
+                .child(status_dot(tone))
                 .child(
                     div()
                         .text_style(TextStyle::Callout)
@@ -79,13 +85,23 @@ impl SnapshotView {
                         .children(design::ink_probe(|| "home-agents-attention".into()))
                         .child(crate::plural::count(count, "needs input", "need input")),
                 )
-                .when(enabled, |pill| {
-                    pill.cursor_pointer()
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            view.home_agent_select(request, revision, &key, window, cx);
-                        }))
+                .when(on, |pill| {
+                    pill.child(
+                        bezel_ui::icons::icon(bezel_ui::icons::Icon::asset("icons/x.svg"))
+                            .size(px(12.))
+                            .flex_none()
+                            .text_color(bezel.text),
+                    )
                 })
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    cx.stop_propagation();
+                    if view.home_action_current(request)
+                        && let Some(controls) = &mut view.home_filter
+                    {
+                        controls.waiting_only = !controls.waiting_only;
+                        cx.notify();
+                    }
+                }))
                 .into_any_element(),
         )
     }

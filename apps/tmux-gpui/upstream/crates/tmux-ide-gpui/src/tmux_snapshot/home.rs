@@ -7,6 +7,7 @@ mod action_focus;
 pub(super) mod filters;
 mod fleet;
 pub(super) mod fleet_nav;
+mod fleet_rows;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;

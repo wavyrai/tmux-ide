@@ -3,7 +3,7 @@
 //! say something; agents' state as one quiet line, not a list.
 use super::*;
 use crate::tmux_snapshot::browser::fleet::{FAVICON_MAX, favicon};
-use crate::tmux_snapshot::home::fleet::{last_active, layout};
+use crate::tmux_snapshot::home::fleet_rows::{last_active, layout};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 #[test]
