@@ -117,7 +117,12 @@ import {
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
-import { discoverLiveSessionSummaries, readAdoptedFleet } from "../command-center/discovery.ts";
+import {
+  discoverLiveSessionSummaries,
+  readAdoptedFleet,
+  readAdoptedFleetAsync,
+  type FleetSessionFacts,
+} from "../command-center/discovery.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { WorkspaceOpenHandoffCoordinator } from "./workspace-open-handoff.ts";
@@ -2103,19 +2108,27 @@ async function startEmbeddedDaemonGeneration(
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
-          const fleet = readAdoptedFleet(
-            workspaceRegistry,
-            nativeGenerationTmuxRunner,
-            (sessionName, pane) =>
-              pane.semanticPaneId
-                ? (interactionEvidence?.captureInventoryEndpoint(
-                    sessionName,
-                    pane.runtimePaneId,
-                    pane.semanticPaneId,
-                  ) ?? null)
-                : null,
-            () => observationSelector?.nativeServerEpoch ?? null,
-          );
+          const endpoint = (sessionName: string, pane: FleetSessionFacts["panes"][number]) =>
+            pane.semanticPaneId
+              ? (interactionEvidence?.captureInventoryEndpoint(
+                  sessionName,
+                  pane.runtimePaneId,
+                  pane.semanticPaneId,
+                ) ?? null)
+              : null;
+          const epoch = () => observationSelector?.nativeServerEpoch ?? null;
+          // Same pinned server generation either way. Outside a session
+          // mutation the read must not block the event loop: every concurrent
+          // catalog request queued behind its spawnSync (#709). Inside one,
+          // keep the fenced synchronous runner the mutation relies on.
+          const fleet = sessionMutationFence.active
+            ? readAdoptedFleet(workspaceRegistry, nativeGenerationTmuxRunner, endpoint, epoch)
+            : await readAdoptedFleetAsync(
+                workspaceRegistry,
+                (args) => fleetFactsTmuxRunner(args),
+                endpoint,
+                epoch,
+              );
           if (!fleet) return null;
           const names = await readTeamMemberships(
             fleet.flatMap((session) =>

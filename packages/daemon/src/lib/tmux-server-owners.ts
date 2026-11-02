@@ -59,6 +59,7 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
   #disposed = false;
   #disposePromise: Promise<void> | null = null;
   constructor(readonly options: TmuxServerOwnersOptions<T>) {}
+  #queuedRefresh: Promise<readonly TmuxServerDescriptor[]> | null = null;
   #serial<R>(work: () => Promise<R>): Promise<R> {
     const run = this.#tail.then(() => {
       if (this.#disposed) throw new TmuxServerScopeError("disposed");
@@ -178,11 +179,22 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     this.#entries.set(scope.serverId, { registration, scope, observation, owner });
   }
   refresh(): Promise<readonly TmuxServerDescriptor[]> {
-    return this.#serial(async () => {
+    // A refresh still waiting its turn has not probed anything yet, so it is
+    // as fresh for a later caller as a new one: share it instead of queuing
+    // another full refresh behind it (#709). Once it starts, callers queue anew.
+    if (this.#queuedRefresh) return this.#queuedRefresh;
+    const queued = this.#serial(async () => {
+      if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
       // Sequential admission bounds subprocess work and avoids alias races.
       for (const entry of this.#entries.values()) await this.#refresh(entry);
       return this.list();
     });
+    this.#queuedRefresh = queued;
+    const settle = () => {
+      if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
+    };
+    queued.then(settle, settle);
+    return queued;
   }
   current(scopeInput: TmuxServerScope): T {
     const scope = TmuxServerScopeSchemaZ.parse(scopeInput);

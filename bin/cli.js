@@ -13113,6 +13113,7 @@ var require_package = __commonJS({
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
+        "demo:themes": "bun --preload @opentui/solid/preload docs/scripts/render-theme-gallery.tsx && node docs/scripts/rasterize-theme-gallery.mjs",
         "demo:font": "node docs/scripts/tui-demo-font/build.mjs",
         "readme:media": "node docs/scripts/readme-media.mjs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/testing/styled-frame-oracle.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-transient-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-draw-failure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/guided-tour-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-new-agent-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/agent-team-renderer.test.tsx ./scripts/solid-conditional-props.test.tsx",
@@ -27034,10 +27035,13 @@ function isVisibleFleetSession(name) {
 function readAdoptedSessionNames(runTmux2 = _tmuxRunner) {
   let raw;
   try {
-    raw = runTmux2(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
+    raw = runTmux2(ADOPTED_SESSIONS_ARGS);
   } catch {
     return null;
   }
+  return parseAdoptedSessionNames(raw);
+}
+function parseAdoptedSessionNames(raw) {
   const names = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -27056,16 +27060,51 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry(), runTmux2 = _
   const nativeEpoch = nativeServerEpoch?.() ?? null;
   const adopted = readAdoptedSessionNames(runTmux2);
   if (adopted === null) return null;
-  const adoptedSet = new Set(adopted);
-  if (adoptedSet.size === 0) return [];
-  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
-  const panesBySession = /* @__PURE__ */ new Map();
+  if (adopted.length === 0) return [];
   let panesRaw;
   try {
-    panesRaw = runTmux2(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux2(FLEET_PANES_ARGS);
   } catch {
     panesRaw = "";
   }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+async function readAdoptedFleetAsync(registry, runTmux2, resolveInteractionEndpoint, nativeServerEpoch) {
+  const nativeEpoch = nativeServerEpoch?.() ?? null;
+  let sessionsRaw;
+  try {
+    sessionsRaw = await runTmux2(ADOPTED_SESSIONS_ARGS);
+  } catch {
+    return null;
+  }
+  const adopted = parseAdoptedSessionNames(sessionsRaw);
+  if (adopted.length === 0) return [];
+  let panesRaw;
+  try {
+    panesRaw = await runTmux2(FLEET_PANES_ARGS);
+  } catch {
+    panesRaw = "";
+  }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+function assembleAdoptedFleet(adopted, panesRaw, registry, nativeEpoch, resolveInteractionEndpoint, nativeServerEpoch) {
+  const adoptedSet = new Set(adopted);
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+  const panesBySession = /* @__PURE__ */ new Map();
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
@@ -27153,7 +27192,7 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
+var _tmuxRunner, ADOPTED_SESSIONS_ARGS, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT, FLEET_PANES_ARGS;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
@@ -27170,6 +27209,7 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
+    ADOPTED_SESSIONS_ARGS = ["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`];
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
     FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
     FLEET_PANE_FORMAT = [
@@ -27191,6 +27231,7 @@ var init_discovery = __esm({
       "#{@tmux_ide_team}",
       FLEET_LINE_SENTINEL
     ].join(FLEET_FIELD_SEPARATOR);
+    FLEET_PANES_ARGS = ["list-panes", "-a", "-F", FLEET_PANE_FORMAT];
   }
 });
 
@@ -76334,6 +76375,7 @@ var init_tmux_server_owners = __esm({
       #tail = Promise.resolve();
       #disposed = false;
       #disposePromise = null;
+      #queuedRefresh = null;
       #serial(work) {
         const run = this.#tail.then(() => {
           if (this.#disposed) throw new TmuxServerScopeError("disposed");
@@ -76434,10 +76476,18 @@ var init_tmux_server_owners = __esm({
         this.#entries.set(scope2.serverId, { registration, scope: scope2, observation: observation2, owner });
       }
       refresh() {
-        return this.#serial(async () => {
+        if (this.#queuedRefresh) return this.#queuedRefresh;
+        const queued = this.#serial(async () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
           for (const entry of this.#entries.values()) await this.#refresh(entry);
           return this.list();
         });
+        this.#queuedRefresh = queued;
+        const settle = () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
+        };
+        queued.then(settle, settle);
+        return queued;
       }
       current(scopeInput) {
         const scope2 = TmuxServerScopeSchemaZ.parse(scopeInput);
@@ -95958,15 +96008,17 @@ async function startEmbeddedDaemonGeneration(opts) {
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
-          const fleet = readAdoptedFleet(
+          const endpoint = (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
+            sessionName2,
+            pane.runtimePaneId,
+            pane.semanticPaneId
+          ) ?? null : null;
+          const epoch = () => observationSelector?.nativeServerEpoch ?? null;
+          const fleet = sessionMutationFence.active ? readAdoptedFleet(workspaceRegistry, nativeGenerationTmuxRunner, endpoint, epoch) : await readAdoptedFleetAsync(
             workspaceRegistry,
-            nativeGenerationTmuxRunner,
-            (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
-              sessionName2,
-              pane.runtimePaneId,
-              pane.semanticPaneId
-            ) ?? null : null,
-            () => observationSelector?.nativeServerEpoch ?? null
+            (args) => fleetFactsTmuxRunner(args),
+            endpoint,
+            epoch
           );
           if (!fleet) return null;
           const names = await readTeamMemberships(
