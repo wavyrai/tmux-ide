@@ -218,3 +218,6 @@ fn fleet_summary_counts_use_singular_for_one() {
         "2 machines · 2 available sessions"
     );
 }
+
+#[path = "tests/fleet_view.rs"]
+mod fleet_view;

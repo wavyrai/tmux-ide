@@ -639,3 +639,60 @@ fn healthy_idle_gesture_outlives_ten_seconds_but_stalled_transport_is_bounded() 
 
 mod canonical_cases;
 mod font_metrics;
+
+#[gpui::test]
+fn painted_cards_fill_the_canvas_edges_and_follow_a_divider_preview(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::pane_cards::render::painted;
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state = state(Axis::Cols);
+        view.browser_state.resize_gesture_supported = true;
+        view.frame = view.browser_state.frame.clone();
+        view.painted_frame = view.frame.clone();
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let (canvas, width) = view.read_with(cx, |view, _| {
+        (
+            view.input_geometry.unwrap().0,
+            view.input_cell_width.unwrap(),
+        )
+    });
+    let card = |id: &str| {
+        painted::cards()
+            .into_iter()
+            .find(|(card, _)| card == id)
+            .unwrap()
+            .1
+    };
+    let (a, b) = (card("a"), card("b"));
+    // In window coordinates: the left card starts at the canvas's left and
+    // top edges, both cards end at its bottom edge (the last row), and the
+    // right card ends at its right edge (the last column).
+    assert_eq!(a.origin, canvas.origin);
+    assert_eq!(a.bottom(), canvas.bottom());
+    assert_eq!(b.bottom(), canvas.bottom());
+    assert_eq!(b.right(), canvas.right());
+    assert!(a.right() < b.left());
+    // Each header, and the controls it right-aligns, spans its painted card.
+    for (card, header) in [(a, "pane-card-header:a"), (b, "pane-card-header:b")] {
+        let header = cx.debug_bounds(header).unwrap();
+        assert_eq!((header.left(), header.right()), (card.left(), card.right()));
+    }
+    // Dragging the divider two cells right moves the cards with the preview.
+    let start = view.read_with(cx, |v, _| v.test_cell_point(5.5, 2.));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    let moved = start + point(px(2. * width), px(0.));
+    cx.simulate_mouse_move(moved, Some(MouseButton::Left), Modifiers::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(view.read_with(cx, |v, _| v.divider_content_preview().is_some()));
+    let (a2, b2) = (card("a"), card("b"));
+    assert_eq!(a2.right(), a.right() + px(2. * width));
+    assert_eq!(b2.left(), b.left() + px(2. * width));
+    assert_eq!(b2.right(), canvas.right());
+    cx.simulate_mouse_up(moved, MouseButton::Left, Modifiers::default());
+}

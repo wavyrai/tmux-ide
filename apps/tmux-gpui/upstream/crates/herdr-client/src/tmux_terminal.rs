@@ -26,6 +26,78 @@ pub enum Error {
     Delivery(#[from] tmux_receiver::Error),
 }
 
+impl Error {
+    /// A bounded name for logs. Never the wire content behind the error.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Retired => "retired",
+            Self::Identity => "identity",
+            Self::Budget => "budget",
+            Self::SourceClosed => "source-closed",
+            Self::Json(_) => "json",
+            Self::Base64(_) => "base64",
+            Self::Delivery(error) => error.code(),
+        }
+    }
+}
+
+/// Where a rejected event pointed, for logs: its pane, and the daemon's fault
+/// reason when the event was a fault frame. Both are bounded tokens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Failure {
+    pub pane: Option<String>,
+    pub fault: Option<&'static str>,
+}
+impl Failure {
+    pub fn of(event: &tmux_stream::Event) -> Self {
+        use tmux_stream::Event;
+        match event {
+            Event::DeliveryReady { pane, .. }
+            | Event::ProjectionEnvelope { pane, .. }
+            | Event::Envelope { pane, .. }
+            | Event::Chunk { pane, .. }
+            | Event::BinaryChunk { pane, .. } => Self {
+                pane: Some(pane.clone()),
+                fault: None,
+            },
+            Event::Control(raw) => fault(raw.get()).unwrap_or_default(),
+            Event::Ready(_) | Event::GraphicsBinary(_) => Self::default(),
+        }
+    }
+}
+fn fault(raw: &str) -> Option<Failure> {
+    #[derive(Deserialize)]
+    struct Frame<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: &'a str,
+        #[serde(default, borrow)]
+        pane: Option<&'a str>,
+        #[serde(default, borrow)]
+        fault: Option<Fault<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Fault<'a> {
+        #[serde(default, borrow)]
+        reason: Option<&'a str>,
+    }
+    let frame: Frame<'_> = serde_json::from_str(raw).ok()?;
+    let reason = match frame.kind {
+        "error" => "error",
+        "terminal-delivery-fault" => match frame.fault.and_then(|fault| fault.reason) {
+            Some("source-closed") => "source-closed",
+            Some("protocol-violation") => "protocol-violation",
+            Some("state-too-large") => "state-too-large",
+            _ => "other",
+        },
+        _ => return None,
+    };
+    Some(Failure {
+        // The app checks the pane is a plain token before it logs it.
+        pane: frame.pane.map(str::to_owned),
+        fault: Some(reason),
+    })
+}
+
 pub enum Outcome {
     Pending,
     Materializing(String),

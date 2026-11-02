@@ -34,7 +34,28 @@ const SELECTION_ALPHA: u32 = 0x59;
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_PAINT: Duration = Duration::from_millis(16);
 const SCROLLBAR_INSET: f32 = 1.;
-const SCROLLBAR_ALPHA: u32 = 0xc0;
+
+/// The colours the painter draws over the grid, from the theme's Bezel
+/// palette: the scrollbar thumb, the cursor and the IME composition.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Overlay {
+    pub thumb: Hsla,
+    pub cursor: Hsla,
+    pub composition_text: Hsla,
+    pub composition_bg: Hsla,
+}
+
+impl Overlay {
+    pub(crate) fn new(theme: &Theme) -> Self {
+        let palette = crate::tmux_snapshot::design::palette(theme);
+        Self {
+            thumb: palette.ink(0.2),
+            cursor: palette.cursor.opacity(0.5),
+            composition_text: palette.text,
+            composition_bg: palette.terminal_bg,
+        }
+    }
+}
 
 /// Why a span of cells is tinted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +134,7 @@ pub(crate) struct TerminalPainter {
     font_size: f32,
     cell_height: f32,
     theme: Theme,
+    overlay: Overlay,
     config: Option<Font>,
     // Resolved foreground includes reverse, dim and hidden; only bold/italic
     // affect shaping. Decorations remain at exact cell-grid coordinates.
@@ -135,6 +157,7 @@ impl Default for TerminalPainter {
             font_size: FONT_SIZE,
             cell_height: CELL_HEIGHT,
             theme: Theme::default(),
+            overlay: Overlay::new(&Theme::default()),
             config: None,
             glyphs: GlyphCache::default(),
             cell_width: None,
@@ -266,6 +289,7 @@ impl TerminalPainter {
         if self.font_size != font_size || self.cell_height != cell_height || self.theme != theme {
             self.font_size = font_size;
             self.cell_height = cell_height;
+            self.overlay = Overlay::new(&theme);
             self.theme = theme;
             self.glyphs.clear();
             self.cell_width = None;
@@ -608,7 +632,7 @@ impl TerminalPainter {
                     };
                     window.paint_quad(fill(
                         Bounds::new(position + offset, dimensions),
-                        rgba((self.theme.cursor << 8) | 0x80),
+                        self.overlay.cursor,
                     ));
                     #[cfg(feature = "integration-test")]
                     {
@@ -636,7 +660,7 @@ impl TerminalPainter {
                                     ),
                                 size(px(width), bar.thumb.size.height),
                             ),
-                            rgba((self.theme.muted << 8) | SCROLLBAR_ALPHA),
+                            self.overlay.thumb,
                         )
                         .corner_radii(px(width / 2.)),
                     );
@@ -829,7 +853,7 @@ impl TerminalPainter {
         let line = self.shape(font, 0, text, window);
         let origin = composition_origin(cursor, line.width, grid);
         let bounds = Bounds::new(origin, size(line.width, px(self.cell_height)));
-        let color = rgb(self.theme.foreground);
+        let color: Rgba = self.overlay.composition_text.into();
         // A layer of its own, painted after the frame, keeps it above the
         // cells and the cursor it covers. It clips to the input area, so text
         // wider than a popup never paints over the pane beneath it.
@@ -840,7 +864,7 @@ impl TerminalPainter {
             }),
             |window| {
                 window.paint_layer(bounds, |window| {
-                    window.paint_quad(fill(bounds, rgb(self.theme.background)));
+                    window.paint_quad(fill(bounds, self.overlay.composition_bg));
                     window.paint_quad(fill(
                         Bounds::new(
                             origin + point(px(0.), px(self.cell_height - 2.)),

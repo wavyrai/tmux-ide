@@ -297,7 +297,7 @@ impl SnapshotView {
         // On Home's inked palette, like Home's other buttons.
         controls::action_button_on(
             "home-new-local-session",
-            Some("New local session…"),
+            Some("New session…"),
             "Create a session on this Mac",
             controls::Icon::Plus,
             if available {
@@ -337,9 +337,13 @@ impl SnapshotView {
         .flex_col()
         .items_start()
         .gap_2();
-        if let Some(server) = &self.browser_state.selected_server {
+        // With a fleet, Home's table marks the default server itself.
+        if let Some(server) = &self.browser_state.selected_server
+            && self.browser_state.fleet.is_none()
+        {
             body = body.child(
                 div()
+                    .debug_selector(|| "new-session-target".into())
                     .min_w_0()
                     .truncate()
                     .text_color(rgb(self.theme().muted))

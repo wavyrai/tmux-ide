@@ -28,6 +28,7 @@ import { inflateSync } from "node:zlib";
 import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
+import { logger } from "../../lib/log.ts";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
@@ -988,6 +989,11 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
     this.#open = false;
     this.#cancelDeadline();
     const socket = this.#socket;
+    logger.info("pane-stream", "admission closed", {
+      code,
+      reason,
+      hostClientId: this.hostClientId,
+    });
     this.#detach();
     this.#onRelease(this);
     if (socket) safeCloseSocket(socket, code, reason);
@@ -1386,6 +1392,12 @@ export class PaneStreamLiveConnection {
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
     this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
+    logger.info("pane-stream", "stream closed", {
+      code,
+      reason,
+      session: this.#descriptor.sessionName,
+      clientId: this.#clientId,
+    });
     this.#closed = true;
     for (const demand of this.#surfaceDemands.values()) demand.close();
     this.#surfaceDemands.clear();

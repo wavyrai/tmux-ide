@@ -584,13 +584,13 @@ fn cell_observer_rejects_interactive_and_multi_pane_capabilities() {
     options.descriptor.effective_viewer_mode = tmux_stream::ViewerMode::Interactive;
     assert!(matches!(
         NativeSession::spawn_cell_observer(options, "workspace".into()),
-        Err(Error::Terminal(tmux_terminal::Error::Identity))
+        Err(Error::Terminal(tmux_terminal::Error::Identity, _))
     ));
     let (_listener, mut options) = fixture();
     options.descriptor.panes.push("pane.neighbour".into());
     assert!(matches!(
         NativeSession::spawn_cell_observer(options, "workspace".into()),
-        Err(Error::Terminal(tmux_terminal::Error::Identity))
+        Err(Error::Terminal(tmux_terminal::Error::Identity, _))
     ));
 }
 
@@ -620,5 +620,27 @@ fn cell_observer_retains_only_its_pane_with_neighbour_layout_controls() {
     session.cancel();
     assert!(session.committed("pane.test").unwrap().is_none());
     done_tx.send(()).unwrap();
+    peer.join().unwrap();
+}
+
+#[test]
+fn a_rejected_commit_names_its_pane_and_check() {
+    let (listener, options) = fixture();
+    let peer = thread::spawn(move || {
+        let mut socket = accept(listener);
+        transaction(&mut socket, 0, true);
+        let _ = socket.read();
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let error = until(|| match session.drain().unwrap().status {
+        Status::Failed(error) => Some(error),
+        _ => None,
+    });
+    let Error::Terminal(source, failure) = error.as_ref() else {
+        panic!("expected a terminal state failure, got {error:?}");
+    };
+    assert!(source.code().starts_with("delivery-"), "{}", source.code());
+    assert_eq!(failure.pane.as_deref(), Some("pane.test"));
+    assert_eq!(failure.fault, None);
     peer.join().unwrap();
 }

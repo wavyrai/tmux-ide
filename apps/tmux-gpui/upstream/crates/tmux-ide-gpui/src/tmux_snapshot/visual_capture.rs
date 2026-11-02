@@ -20,6 +20,8 @@ use std::{
 
 const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
+/// Home's captures (card #684): the owner's window size.
+const HOME_SIZE: (f32, f32) = (1560., 1010.);
 
 /// Saves `<dir>/<theme>.png` for each catalog theme id, in order.
 #[doc(hidden)]
@@ -133,6 +135,10 @@ const ROWS: usize = 44;
 
 /// The fixture terminal frame, padded with blank cells to [`COLS`]x[`ROWS`].
 fn fixture_frame() -> Result<Vec<u8>> {
+    fixture_frame_sized(COLS, ROWS)
+}
+
+fn fixture_frame_sized(cols: usize, rows: usize) -> Result<Vec<u8>> {
     let mut snapshot: serde_json::Value =
         serde_json::from_slice(include_bytes!("../../../../../fixtures/snapshot.json"))?;
     let blank = serde_json::json!({
@@ -142,15 +148,15 @@ fn fixture_frame() -> Result<Vec<u8>> {
     let grid = snapshot["grid"]
         .as_array_mut()
         .ok_or_else(|| anyhow!("fixture grid"))?;
-    grid.resize_with(ROWS, || serde_json::json!({"cells": [], "wrapped": false}));
+    grid.resize_with(rows, || serde_json::json!({"cells": [], "wrapped": false}));
     for row in grid.iter_mut() {
         let cells = row["cells"]
             .as_array_mut()
             .ok_or_else(|| anyhow!("fixture row"))?;
-        cells.resize(COLS, blank.clone());
+        cells.resize(cols, blank.clone());
     }
-    snapshot["cols"] = COLS.into();
-    snapshot["rows"] = ROWS.into();
+    snapshot["cols"] = cols.into();
+    snapshot["rows"] = rows.into();
     Ok(serde_json::to_vec(&snapshot)?)
 }
 
@@ -300,8 +306,101 @@ fn with_fleet(mut state: browser::State) -> Result<browser::State> {
     Ok(state)
 }
 
+/// Home's fleet as the owner's capture had it: Local with one session, and
+/// the remote "spark" with eleven, two of them favourites; plus two agents.
+fn with_home_fleet(mut state: browser::State) -> Result<browser::State> {
+    let token =
+        |n: u128| uuid::Uuid::from_u128(0x6840_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
+    let spark: Vec<serde_json::Value> = [
+        ("demo", 3, false),
+        ("devstack", 3, true),
+        ("growth", 1, false),
+        ("lint", 3, false),
+        ("site", 2, true),
+        ("api", 4, false),
+        ("bezel", 2, false),
+        ("docs", 1, false),
+        ("infra", 3, false),
+        ("notes", 1, false),
+        ("scratch", 1, false),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, (name, panes, favorite))| {
+        let n = i as u128;
+        serde_json::json!({"id": format!("spark-{name}"), "name": name, "paneCount": panes,
+            "favorite": favorite, "active": *name == "devstack",
+            "favoriteAction": token(100 + n), "serverId": "default",
+            "sessionId": format!("${}", i + 10), "selection": token(200 + n)})
+    })
+    .collect();
+    state.fleet = Some(serde_json::from_value(serde_json::json!({
+        "preferences": {"revision": 1, "phase": "ready", "error": null},
+        "omittedGroups": 0,
+        "groups": [
+            {"id": "local", "label": "Local", "state": "ready", "conflict": false,
+             "collapsed": false, "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online",
+                "generation": token(2), "selection": token(3)}],
+             "sessions": [{"id": "local-0", "name": "0", "paneCount": 2,
+                "favoriteAction": token(4), "serverId": "default", "sessionId": "$0",
+                "selection": token(5)}]},
+            {"id": "spark", "label": "spark", "state": "ready", "conflict": false,
+             "collapsed": false, "collapseAction": token(6), "disconnect": token(7),
+             "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online",
+                "generation": token(8), "selection": token(9)}],
+             "sessions": spark}
+        ]
+    }))?);
+    // New sessions go to Local's server, so spark offers "use for new sessions".
+    state.selected_server = Some(browser::fleet::SelectedServer {
+        machine_id: "local".into(),
+        machine_label: "Local".into(),
+        server_id: "default".into(),
+        generation: token(2),
+        label: "default".into(),
+    });
+    state.home_agents = Some(serde_json::from_value(serde_json::json!({
+        "revision": 1, "phase": "live", "observedSessions": 2, "totalSessions": 12,
+        "truncatedSessions": 0, "truncatedRows": 0, "note": null,
+        "rows": [
+            {"key": "agent-a", "sessionId": "spark-devstack", "paneId": "pane-a", "name": "Claude",
+             "sessionLabel": "devstack", "status": "WORKING", "attention": false, "available": true},
+            {"key": "agent-b", "sessionId": "spark-site", "paneId": "pane-b", "name": "Codex",
+             "sessionLabel": "site", "status": "BLOCKED", "attention": true, "available": true}
+        ]
+    }))?);
+    state.surface = browser::Surface::Home;
+    Ok(state)
+}
+
 /// Two panes of one window: the upper scrolled back, so its header offers
 /// Back to live; the lower a browser whose page just refused a click.
+/// The owner's window (31 Oct capture): about 1560x1010, two panes side by
+/// side, the right one focused. The first frames run at [`COLS`]x[`ROWS`];
+/// the grid is then refitted to what the window's workspace holds.
+const OWNER_WIDTH: f32 = 1560.;
+const OWNER_HEIGHT: f32 = 1010.;
+
+fn with_owner_split(mut state: browser::State, cols: usize, rows: usize) -> Result<browser::State> {
+    let frame = Arc::new(
+        decode::frame(&fixture_frame_sized(cols, rows)?)
+            .map_err(|error| anyhow!("fixture frame: {error}"))?,
+    );
+    state.frame = Some(DisplayFrame::Legacy(frame));
+    if let Some(pane) = state.panes.iter_mut().find(|pane| pane.id == "pane-b") {
+        pane.window_id = Some("window-1".into());
+    }
+    let left = cols / 2;
+    state.regions = serde_json::from_value(serde_json::json!([
+        {"id": "pane-a", "left": 0, "top": 0, "width": left, "height": rows},
+        {"id": "pane-b", "left": left + 1, "top": 0, "width": cols - left - 1, "height": rows}
+    ]))?;
+    state.selected_pane = Some("pane-b".into());
+    Ok(state)
+}
+
 fn with_browser(mut state: browser::State) -> Result<browser::State> {
     if let Some(pane) = state.panes.iter_mut().find(|pane| pane.id == "pane-b") {
         pane.window_id = Some("window-1".into());
@@ -337,7 +436,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     // `<theme>+fleet` shows the fleet sidebar with an attention badge,
     // `<theme>+palette` the command palette open over the workspace,
     // `<theme>+machine` the Add machine dialog, `<theme>+home` Home, and
-    // `<theme>+browser` a split window with a browser pane's toolbar.
+    // `<theme>+browser` a split window with a browser pane's toolbar, and
+    // `<theme>+owner` the owner's window size with two panes side by side.
     let mut parts = id.split('+');
     let theme = parts.next().unwrap_or(id);
     let extras: Vec<&str> = parts.collect();
@@ -351,6 +451,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let background = super::design::palette(&appearance.native()).window_background_appearance();
     let state = browser_state(appearance)?;
     let state = if fleet { with_fleet(state)? } else { state };
+    let owner = extras.contains(&"owner");
+    let state = if owner {
+        with_owner_split(state, COLS, ROWS)?
+    } else {
+        state
+    };
     let mut state = if browser_pane {
         with_browser(state)?
     } else {
@@ -369,6 +475,14 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if home {
         state.surface = browser::Surface::Home;
     }
+    // `+home-b` is Home's fleet table (#684), `+home-b+spark` with spark
+    // picked in the left list; both at the owner's window size, no sidebar.
+    let home_b = extras.contains(&"home-b");
+    if home_b {
+        state = with_home_fleet(state)?;
+    }
+    let spark = extras.contains(&"spark");
+    let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
     for extra in &extras {
@@ -388,9 +502,14 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         state.surface = browser::Surface::Home;
     }
     let (sender, receiver) = mpsc::sync_channel(1024);
+    let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let bounds = Bounds {
         origin: point(px(-10000.), px(-10000.)),
-        size: size(px(WIDTH), px(HEIGHT)),
+        size: if owner {
+            size(px(OWNER_WIDTH), px(OWNER_HEIGHT))
+        } else {
+            size(px(width), px(height))
+        },
     };
     let handle = cx.update(|cx| {
         cx.open_window(
@@ -402,12 +521,26 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 ..super::shell::options()
             },
             |window, cx| {
-                let view = cx.new(|cx| capture_view(window, cx, sender, state));
+                let view = cx.new(|cx| {
+                    let mut view = capture_view(window, cx, sender, state);
+                    view.sidebar_hidden = home_b;
+                    if spark {
+                        view.prepare_home_filter(cx);
+                        if let Some(controls) = &mut view.home_filter {
+                            controls.fleet_view =
+                                super::home::fleet_nav::View::Machine("spark".into());
+                            controls.table_cursor = Some(("spark".into(), "spark-devstack".into()));
+                            controls.fleet_table.clone().focus(window, cx);
+                        }
+                    }
+                    view
+                });
+                *root.borrow_mut() = Some(view.clone());
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
                 }
                 if machine {
-                    view.update(cx, |view, cx| view.open_add_machine_for_capture(window, cx));
+                    view.update(cx, |view, cx| view.open_add_machine(window, cx));
                 }
                 super::agent_spinner::window_root(view, window, cx)
             },
@@ -417,6 +550,38 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     for _ in 0..3 {
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+    }
+    if owner && let Some(view) = root.borrow().clone() {
+        cx.update(|cx| {
+            view.update(cx, |view, _| -> Result<()> {
+                let (Some((canvas, _)), Some(width)) = (view.input_geometry, view.input_cell_width)
+                else {
+                    return Err(anyhow!("owner capture: no terminal geometry"));
+                };
+                let overhead = view
+                    .card_layout(width)
+                    .map_or(size(px(0.), px(0.)), |l| l.overhead());
+                let (cols, rows) = super::geometry::cell_grid(
+                    f32::from(canvas.size.width - overhead.width),
+                    f32::from(canvas.size.height - overhead.height),
+                    width,
+                    view.terminal_height(),
+                )
+                .ok_or_else(|| anyhow!("owner capture: no fit"))?;
+                let state = with_owner_split(
+                    std::mem::take(&mut view.browser_state),
+                    cols.into(),
+                    rows.into(),
+                )?;
+                view.frame = state.frame.clone();
+                view.browser_state = state;
+                Ok(())
+            })
+        })?;
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+        }
     }
     cx.run_until_parked();
     receiver.try_iter().for_each(drop);

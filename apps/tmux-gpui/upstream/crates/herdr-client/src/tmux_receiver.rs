@@ -28,6 +28,20 @@ pub enum Error {
     Canonical(#[from] tmux_delivery::Error),
 }
 pub type Result<T> = std::result::Result<T, Error>;
+impl Error {
+    /// A bounded name for logs. Never the wire content behind the error.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Retired => "delivery-retired",
+            Self::Identity => "delivery-identity",
+            Self::Ordering => "delivery-ordering",
+            Self::Bounds => "delivery-bounds",
+            Self::RepresentationHash => "delivery-hash",
+            Self::Envelope(_) => "delivery-envelope",
+            Self::Canonical(_) => "delivery-canonical",
+        }
+    }
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

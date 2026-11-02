@@ -62,31 +62,98 @@ impl Layout {
         ok
     }
 }
+/// The cards one terminal canvas paints: the layout, reflowed to a divider
+/// preview while one is active, with the theme's card plate and border.
+pub(in crate::tmux_snapshot) struct CardSurfaces {
+    layout: Layout,
+    background: Hsla,
+    border: Hsla,
+}
+impl CardSurfaces {
+    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+        self.layout
+            .paint_cards(bounds, self.background, self.border, window);
+    }
+}
 impl SnapshotView {
-    pub(in crate::tmux_snapshot) fn card_surfaces(&self, width: f32) -> Vec<Div> {
-        let Some(mut layout) = self.card_layout(width) else {
-            return Vec::new();
-        };
+    pub(in crate::tmux_snapshot) fn card_surfaces(&self, width: f32) -> Option<CardSurfaces> {
+        let mut layout = self.card_layout(width)?;
         if let Some(preview) = self.divider_content_preview() {
             layout = layout.reflow(&preview.regions);
         }
-        let theme = self.theme();
-        layout
-            .regions
-            .iter()
-            .map(|r| {
-                let rect = layout.card(r);
-                div()
-                    .absolute()
-                    .left(rect.origin.x)
-                    .top(rect.origin.y)
-                    .w(rect.size.width)
-                    .h(rect.size.height)
-                    .rounded(px(RADIUS))
-                    .bg(rgb(theme.background))
-                    .border_1()
-                    .border_color(super::super::controls::separator(&theme))
-            })
-            .collect()
+        let palette = super::super::design::palette(&self.theme());
+        Some(CardSurfaces {
+            layout,
+            background: palette.terminal_bg,
+            border: palette.border,
+        })
+    }
+    /// Records the terminal canvas a paint used. Headers span their cards as
+    /// painted in it, so a new canvas size renders them again.
+    pub(in crate::tmux_snapshot) fn record_canvas(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cursor: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.input_geometry.map(|g| g.0.size) != Some(bounds.size) {
+            cx.notify();
+        }
+        self.input_geometry = Some((bounds, cursor));
+    }
+}
+impl Layout {
+    /// Each pane's opaque card under its cells, on Bezel's panel radius and
+    /// hairline border, sized to the canvas `bounds` it paints in.
+    pub fn paint_cards(
+        &self,
+        bounds: Bounds<Pixels>,
+        background: Hsla,
+        border: Hsla,
+        window: &mut Window,
+    ) {
+        #[cfg(test)]
+        painted::begin();
+        for r in &self.regions {
+            let mut card = self.card_in(r, bounds.size);
+            card.origin += bounds.origin;
+            #[cfg(test)]
+            painted::record(&r.id, card);
+            window.paint_quad(quad(
+                card,
+                px(bezel_theme::Theme::panel_radius()),
+                background,
+                px(1.),
+                border,
+                BorderStyle::Solid,
+            ));
+        }
+    }
+}
+/// The card rects the last `paint_cards` on this thread painted, in window
+/// coordinates, for tests.
+#[cfg(test)]
+pub(in crate::tmux_snapshot) mod painted {
+    use super::*;
+    use std::cell::RefCell;
+    /// Whether the next card starts a new paint, then each card by pane id.
+    type Cards = (bool, Vec<(String, Bounds<Pixels>)>);
+    thread_local! {
+        static CARDS: RefCell<Cards> = Default::default();
+    }
+    pub(super) fn begin() {
+        CARDS.with(|c| c.borrow_mut().0 = true);
+    }
+    pub(super) fn record(id: &str, card: Bounds<Pixels>) {
+        CARDS.with(|c| {
+            let mut c = c.borrow_mut();
+            if std::mem::take(&mut c.0) {
+                c.1.clear();
+            }
+            c.1.push((id.to_owned(), card));
+        });
+    }
+    pub fn cards() -> Vec<(String, Bounds<Pixels>)> {
+        CARDS.with(|c| c.borrow().1.clone())
     }
 }

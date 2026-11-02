@@ -512,3 +512,43 @@ fn byte_capability_is_optional_true_only() {
     frame["inputBytes"] = false.into();
     assert!(wire::parse(&frame.to_string(), &options, false).is_err());
 }
+
+#[test]
+fn a_peer_close_reports_its_code_and_a_token_reason() {
+    let at_bound = "a".repeat(64);
+    let over_bound = "a".repeat(65);
+    for (reason, kept) in [
+        ("output-backpressure", Some("output-backpressure")),
+        ("terminal bytes \u{1b}[31m", None),
+        // Review round 1: the 64-character bound and the empty reason.
+        (at_bound.as_str(), Some(at_bound.as_str())),
+        (over_bound.as_str(), None),
+        ("", None),
+    ] {
+        let reason = reason.to_owned();
+        let listener = listener();
+        let options = options(listener.local_addr().unwrap().port());
+        let peer = thread::spawn(move || {
+            let mut socket = accept(listener);
+            text(&mut socket, ready());
+            socket
+                .close(Some(tungstenite::protocol::CloseFrame {
+                    code: 1013.into(),
+                    reason: reason.into(),
+                }))
+                .unwrap();
+            while socket.read().is_ok() {}
+        });
+        let client = PaneStream::spawn(options).unwrap();
+        assert!(matches!(
+            client.events().recv_timeout(WAIT).unwrap(),
+            Event::Ready(_)
+        ));
+        let error = client.completion().recv_timeout(WAIT).unwrap();
+        assert!(
+            matches!(&error, Error::Closed(close) if close.code == 1013 && close.reason.as_deref() == kept),
+            "{error:?}"
+        );
+        peer.join().unwrap();
+    }
+}

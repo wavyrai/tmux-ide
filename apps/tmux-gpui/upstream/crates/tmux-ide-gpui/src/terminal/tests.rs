@@ -133,3 +133,54 @@ fn logical_web_links_resolve_plain_and_explicit_links_but_not_hidden_cells() {
     let row: Vec<&CellData> = long.iter().collect();
     assert_eq!(logical_web_link(&row, 0, &[]), None);
 }
+
+fn scrolled_pane(rows: u16, offset: u64, max: u64) -> PaneSurfacePane {
+    let rect = SurfaceRect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: rows,
+    };
+    PaneSurfacePane {
+        pane_id: "p".into(),
+        content_revision: 1,
+        rect,
+        inner_rect: rect,
+        scrollbar_rect: Some(SurfaceRect {
+            x: 79,
+            width: 1,
+            ..rect
+        }),
+        scroll: Some(herdr_client::protocol::PaneSurfaceScrollMetrics {
+            offset_from_bottom: offset,
+            max_offset_from_bottom: max,
+            viewport_rows: u64::from(rows),
+        }),
+        focused: true,
+        mouse_reporting: false,
+        sgr_pixel_mouse: false,
+        alternate_screen_active: false,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+#[test]
+fn scrollbar_thumb_follows_bezel_scroll_maths() {
+    // 40 rows of 20 px: an 800 px track over 40 visible and 360 hidden rows.
+    let thumb = |offset| {
+        Scrollbar::new(&scrolled_pane(40, offset, 360), 8., 20.)
+            .unwrap()
+            .thumb
+    };
+    // 40 of 400 rows visible: a tenth of the track.
+    assert_eq!(thumb(0).size.height, px(80.));
+    assert_eq!(thumb(0).bottom(), px(800.));
+    assert_eq!(thumb(360).top(), px(0.));
+    assert_eq!(thumb(180).top(), px(360.));
+    // A long history shrinks the thumb only to Bezel's MIN_THUMB.
+    let long = Scrollbar::new(&scrolled_pane(40, 0, 1_000_000), 8., 20.).unwrap();
+    assert_eq!(long.thumb.size.height, bezel_ui::scroll::MIN_THUMB);
+    // A track shorter than MIN_THUMB would be all thumb: no bar, as in Bezel.
+    assert!(Scrollbar::new(&scrolled_pane(1, 0, 10), 8., 20.).is_none());
+}

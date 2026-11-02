@@ -4,14 +4,16 @@ use bezel_theme::{ControlSize, Sizing};
 use bezel_ui::widgets::Buttons;
 use gpui::{prelude::*, *};
 
-/// Quiet structural boundaries are independent of selection and focus accents.
-pub(super) fn separator(theme: &Theme) -> Rgba {
-    let alpha = if theme.contrast == crate::contrast::Contrast::High {
-        0x59
+/// Quiet structural boundaries are independent of selection and focus accents:
+/// Bezel's faint hairline, its strong one under high contrast. The idle rails
+/// and the drag preview both paint this one colour.
+pub(super) fn separator(theme: &Theme) -> Hsla {
+    let palette = super::design::palette(theme);
+    if theme.contrast == crate::contrast::Contrast::High {
+        palette.border_strong
     } else {
-        0x14
-    };
-    rgba((theme.foreground << 8) | alpha)
+        palette.border_faint
+    }
 }
 
 pub(super) const CONTROL_HEIGHT: f32 = 32.;

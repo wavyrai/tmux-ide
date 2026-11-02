@@ -99,3 +99,55 @@ mod binary;
 
 #[path = "tmux_terminal_projection_tests.rs"]
 mod projection;
+
+#[test]
+fn a_failure_names_the_pane_and_the_daemon_fault_reason() {
+    let chunk = Event::Chunk {
+        pane: "pane.one".into(),
+        transaction_id: "t".into(),
+        index: 0,
+        data: String::new(),
+    };
+    assert_eq!(
+        Failure::of(&chunk),
+        Failure {
+            pane: Some("pane.one".into()),
+            fault: None
+        }
+    );
+    let fault =
+        |raw: &str| Failure::of(&Event::Control(RawValue::from_string(raw.into()).unwrap())).fault;
+    assert_eq!(
+        fault(
+            r#"{"type":"terminal-delivery-fault","pane":"pane.one","fault":{"reason":"source-closed","message":"private"}}"#
+        ),
+        Some("source-closed")
+    );
+    assert_eq!(
+        fault(r#"{"type":"terminal-delivery-fault","fault":{"reason":"<script>"}}"#),
+        Some("other")
+    );
+    assert_eq!(fault(r#"{"type":"error"}"#), Some("error"));
+    assert_eq!(fault(r#"{"type":"layout"}"#), None);
+    let raw = r#"{"type":"terminal-delivery-fault","pane":"pane.one","fault":{"reason":"source-closed"}}"#;
+    assert_eq!(
+        Failure::of(&Event::Control(RawValue::from_string(raw.into()).unwrap())),
+        Failure {
+            pane: Some("pane.one".into()),
+            fault: Some("source-closed")
+        }
+    );
+}
+
+#[test]
+fn error_codes_name_the_check_without_content() {
+    assert_eq!(Error::SourceClosed.code(), "source-closed");
+    assert_eq!(
+        Error::Delivery(tmux_receiver::Error::Ordering).code(),
+        "delivery-ordering"
+    );
+    assert_eq!(
+        Error::Delivery(tmux_receiver::Error::RepresentationHash).code(),
+        "delivery-hash"
+    );
+}

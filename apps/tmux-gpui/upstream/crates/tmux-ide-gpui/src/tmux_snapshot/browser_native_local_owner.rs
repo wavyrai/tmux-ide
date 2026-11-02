@@ -86,7 +86,7 @@ impl Local {
         Ok(())
     }
     pub(super) fn owner_completed(
-        &self,
+        &mut self,
         request: Request,
         receipt: Option<CreatedPane>,
     ) -> Result<(), Error> {

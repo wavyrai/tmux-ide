@@ -1,6 +1,5 @@
 //! Explicit, acknowledged local-owner preferences; never terminal input.
 use super::*;
-use bezel_ui::widgets::{Buttons, Layout};
 use browser::fleet::PreferencePhase;
 impl SnapshotView {
     fn preference_ready(
@@ -85,59 +84,71 @@ impl SnapshotView {
             .as_ref()
             .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value, cx));
         let palette = self.home_palette();
-        let glyph = match icon {
-            "icons/chevron-right.svg" => palette.disclosure(false),
-            "icons/chevron-down.svg" => palette.disclosure(true),
-            _ => bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(icon))
-                .size(px(bezel_ui::widgets::ICON_GLYPH))
-                .text_color(palette.text_muted),
-        };
-        let control = if enabled {
-            palette.ghost(id)
-        } else {
-            div().id(id).opacity(0.5)
-        };
-        control
-            .role(Role::Button)
-            .aria_label(label)
-            .accessibility_id(format!("{}-{}", id.0, id.1))
-            .debug_selector(move || format!("{}-{}", id.0, id.1))
-            .size(px(28.))
-            .p_0()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(!enabled, |d| d.cursor_default())
-            .child(glyph)
-            .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(label, window, cx))
-            .on_click(cx.listener(move |view, _, _, cx| {
+        // Bezel's button owns the disabled state: no tab stop, no activation,
+        // its faded paint. The glyph keeps Home's inked muted.
+        let button = bezel_ui::widgets::Button::new(id, label)
+            .icon(bezel_ui::icons::Icon::asset(icon))
+            .label_hidden()
+            .enabled(enabled)
+            .text_color(palette.text_muted)
+            .on_press(cx.listener(move |view, _, _, cx| {
                 cx.stop_propagation();
                 if let Some(action) = &action {
                     view.change_fleet_preference(request, revision, action, enabled_value, cx);
                 }
-            }))
+            }));
+        div()
+            .id(SharedString::from(format!("{}-{}-tip", id.0, id.1)))
+            .accessibility_id(format!("{}-{}", id.0, id.1))
+            .debug_selector(move || format!("{}-{}", id.0, id.1))
+            .flex_shrink_0()
+            .child(
+                div()
+                    .debug_selector(move || {
+                        let state = if enabled { "enabled" } else { "disabled" };
+                        format!("{}-{}-{state}", id.0, id.1)
+                    })
+                    .child(button),
+            )
+            .when(enabled, |tip| {
+                tip.tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(label, window, cx))
+            })
             .into_any_element()
     }
-    pub(in crate::tmux_snapshot) fn fleet_preference_status(&self) -> Option<&str> {
+    /// Saving progress, or why a preference did not apply.
+    pub(in crate::tmux_snapshot) fn fleet_preference_status(&self) -> Option<Status<'_>> {
         if self
             .home_filter
             .as_ref()
             .is_some_and(|c| c.preference_error)
         {
-            return Some("Preference not queued — try again");
+            return Some(Status::Error("Preference not queued — try again"));
         }
         let p = self.browser_state.fleet.as_ref()?.preferences.as_ref()?;
         match p.phase {
             PreferencePhase::Ready => None,
-            PreferencePhase::Loading => Some("Loading fleet preferences…"),
-            PreferencePhase::Saving => Some("Saving fleet preferences…"),
-            PreferencePhase::Unavailable => Some("Fleet preferences unavailable"),
-            PreferencePhase::Failed => Some(
+            PreferencePhase::Loading => Some(Status::Progress("Loading fleet preferences…")),
+            PreferencePhase::Saving => Some(Status::Progress("Saving fleet preferences…")),
+            PreferencePhase::Unavailable => Some(Status::Error("Fleet preferences unavailable")),
+            PreferencePhase::Failed => Some(Status::Error(
                 p.error
                     .as_deref()
                     .unwrap_or("Could not save fleet preferences"),
-            ),
+            )),
+        }
+    }
+}
+
+/// What [`SnapshotView::fleet_preference_status`] reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tmux_snapshot) enum Status<'a> {
+    Progress(&'a str),
+    Error(&'a str),
+}
+impl<'a> Status<'a> {
+    pub(in crate::tmux_snapshot) fn message(self) -> &'a str {
+        match self {
+            Self::Progress(message) | Self::Error(message) => message,
         }
     }
 }

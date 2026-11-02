@@ -91,8 +91,6 @@ pub fn cell_colors(cell: &CellData, theme: &Theme) -> (u32, u32) {
     (fg, bg)
 }
 
-const MIN_THUMB: f32 = 24.;
-
 /// A pane's scrollbar in grid pixels. The daemon draws it as cells, which
 /// move the thumb a whole row per many lines; this places it to the pixel.
 /// Painting and dragging share it so the thumb is where it is grabbed.
@@ -119,19 +117,22 @@ impl Scrollbar {
                 px(f32::from(rect.height) * cell_height),
             ),
         );
-        let height = f32::from(track.size.height);
-        let max = scroll.max_offset_from_bottom as f32;
-        let visible = scroll.viewport_rows as f32;
-        let thumb = (height * visible / (max + visible))
-            .max(MIN_THUMB)
-            .min(height);
+        // Bezel's thumb maths in rows: content past the viewport is
+        // `max_offset_from_bottom` rows, and the offset runs from the top.
+        let row = track.size.height / scroll.viewport_rows.max(1) as f32;
+        let max = row * scroll.max_offset_from_bottom as f32;
         let offset = scroll.offset_from_bottom.min(scroll.max_offset_from_bottom) as f32;
-        let top = (height - thumb) * (1. - offset / max);
+        let range = bezel_ui::scroll::thumb(
+            track.size.height,
+            max,
+            -(max - row * offset),
+            bezel_ui::scroll::MIN_THUMB,
+        )?;
         Some(Self {
             track,
             thumb: Bounds::new(
-                track.origin + point(px(0.), px(top)),
-                size(track.size.width, px(thumb)),
+                track.origin + point(px(0.), range.start),
+                size(track.size.width, range.end - range.start),
             ),
             max: scroll.max_offset_from_bottom,
         })

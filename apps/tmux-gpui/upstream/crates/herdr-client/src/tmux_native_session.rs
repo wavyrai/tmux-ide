@@ -30,7 +30,7 @@ pub enum Error {
     #[error("native terminal transport failed")]
     Transport(#[from] tmux_stream::Error),
     #[error("native terminal state failed")]
-    Terminal(#[from] tmux_terminal::Error),
+    Terminal(#[source] tmux_terminal::Error, tmux_terminal::Failure),
     #[error("native terminal acknowledgement encoding failed")]
     Ack(#[source] serde_json::Error),
     #[error("native terminal control backlog exceeded bounds")]
@@ -51,6 +51,12 @@ pub enum Error {
     Mailbox,
     #[error("native terminal worker could not start")]
     Spawn(#[source] std::io::Error),
+}
+
+impl From<tmux_terminal::Error> for Error {
+    fn from(error: tmux_terminal::Error) -> Self {
+        Self::Terminal(error, tmux_terminal::Failure::default())
+    }
 }
 
 impl std::fmt::Debug for Error {
@@ -232,7 +238,7 @@ impl NativeSession {
         if options.descriptor.effective_viewer_mode != tmux_stream::ViewerMode::ReadOnly
             || options.descriptor.panes.len() != 1
         {
-            return Err(Error::Terminal(tmux_terminal::Error::Identity));
+            return Err(tmux_terminal::Error::Identity.into());
         }
         Self::spawn_offered(options, workspace, false, None, true, false)
     }
@@ -580,7 +586,8 @@ fn run(
                     publish_graphics(shared, stream, update)?;
                     continue;
                 }
-                let outcome = state.apply(event)?;
+                let failure = tmux_terminal::Failure::of(&event);
+                let outcome = state.apply(event).map_err(|error| Error::Terminal(error, failure))?;
                 // ACK follows validated retained state, and is queued before publication.
                 if let Outcome::Updated { ack, .. } = &outcome {
                     let json = serde_json::to_string(&serde_json::json!({"type":"terminal-delivery-ack","ack":ack})).map_err(Error::Ack)?;
