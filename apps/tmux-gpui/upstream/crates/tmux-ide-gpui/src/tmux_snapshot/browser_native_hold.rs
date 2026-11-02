@@ -56,6 +56,11 @@ impl Hold {
     pub fn active(&self) -> bool {
         self.held.is_some()
     }
+    /// Whether the held frame reports keys lost; `None` when nothing is held.
+    #[cfg(test)]
+    pub fn lost_input(&self) -> Option<bool> {
+        self.held.as_ref().map(|held| held.lost_input)
+    }
     /// What the UI sees. The held frame stands in while the same request has no
     /// live frame; navigation, a give-up, or a live frame ends the hold.
     pub fn publication(&mut self, state: &State) -> State {
