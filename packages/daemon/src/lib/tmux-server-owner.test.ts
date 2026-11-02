@@ -27,7 +27,7 @@ it("refreshes only volatile membership and preserves durable aliases and missing
   const catalog = createNativeTmuxServerCatalog(
     registry,
     async () =>
-      `22\t$0\t1234\tnative\t%0\t${dir}\n22\t$1\t1234\tnew\t%1\t${dir}\n22\t$1\t1234\tnew\t%1\t${dir}`,
+      `22\t$0\t1234\tnative\t%0\t@0\t1234\t${dir}\n22\t$1\t1234\tnew\t%1\t@1\t1234\t${dir}\n22\t$1\t1234\tnew\t%1\t@1\t1234\t${dir}`,
   );
   expect((await catalog()).map((row) => [row.sessionName, row.paneCount])).toEqual([
     ["native", 1],
@@ -65,7 +65,7 @@ it("does not replace durable workspace intent when a discovered session name col
   registry.add({ name: "collision", sessionName: "other", projectDir: dir });
   const catalog = createNativeTmuxServerCatalog(
     registry,
-    async () => `22\t$0\t1234\tcollision\t%0\t${dir}`,
+    async () => `22\t$0\t1234\tcollision\t%0\t@0\t1234\t${dir}`,
   );
   expect((await catalog())[0]!.sessionName).toBe("collision");
   expect(registry.get("collision")!.sessionName).toBe("other");
@@ -78,7 +78,7 @@ it("adopts spaced native names without poisoning healthy strict terminal invento
   const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
   const names = ["prototyper mgt", "sfora"];
   const catalog = createNativeTmuxServerCatalog(registry, async () =>
-    names.map((name, i) => `22\t$${i}\t1234\t${name}\t%${i}\t${dir}`).join("\n"),
+    names.map((name, i) => `22\t$${i}\t1234\t${name}\t%${i}\t@${i}\t1234\t${dir}`).join("\n"),
   );
   await catalog();
   const separator = "|tmux-ide-field-v2|";
@@ -145,7 +145,7 @@ it("keeps deterministic aliases distinct across collisions and volatile rename r
   const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
   let names = ["prototyper mgt", "prototyper-mgt", "prototyper  mgt", "constructor"];
   const catalog = createNativeTmuxServerCatalog(registry, async () =>
-    names.map((name, i) => `22\t$${i}\t1234\t${name}\t%${i}\t${dir}`).join("\n"),
+    names.map((name, i) => `22\t$${i}\t1234\t${name}\t%${i}\t@${i}\t1234\t${dir}`).join("\n"),
   );
   await catalog();
   const old = registry.list().find((row) => row.sessionName === names[0])!;
@@ -166,4 +166,61 @@ it("keeps deterministic aliases distinct across collisions and volatile rename r
   expect(registry.has(replacement.name)).toBe(false);
   expect(registry.list().some((row) => row.sessionName === "renamed native")).toBe(true);
   expect(registry.get(old.name)?.sessionName).toBe("durable-other");
+});
+
+it("reads windows, last activity and the session path from the same list-panes call", async () => {
+  const dir = mkdtempSync("/tmp/tmux-owner-catalog-");
+  directories.push(dir);
+  const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
+  const calls: (readonly string[])[] = [];
+  const tabbed = `${dir}/a\tb`;
+  const catalog = createNativeTmuxServerCatalog(registry, async (args) => {
+    calls.push(args);
+    return [
+      `22\t$0\t1234\tweb\t%0\t@0\t1793635178\t${tabbed}`,
+      `22\t$0\t1234\tweb\t%1\t@0\t1793635178\t${tabbed}`,
+      `22\t$0\t1234\tweb\t%2\t@3\t1793635178\t${tabbed}`,
+      `22\t$1\t1234\tidle\t%3\t@4\t\t${dir}`,
+      `22\t$2\t1234\todd\t%4\t@5\t17x\t${dir}`,
+    ].join("\n");
+  });
+  expect(await catalog()).toEqual([
+    {
+      liveSessionId: expect.stringMatching(/^live-session\./u),
+      sessionName: "web",
+      paneCount: 3,
+      windowCount: 2,
+      lastActivity: 1793635178,
+      sessionPath: tabbed,
+    },
+    {
+      liveSessionId: expect.stringMatching(/^live-session\./u),
+      sessionName: "idle",
+      paneCount: 1,
+      windowCount: 1,
+      lastActivity: null,
+      sessionPath: dir,
+    },
+    {
+      liveSessionId: expect.stringMatching(/^live-session\./u),
+      sessionName: "odd",
+      paneCount: 1,
+      windowCount: 1,
+      lastActivity: null,
+      sessionPath: dir,
+    },
+  ]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.at(-1)).toContain(
+    "'#{pid}\t#{session_id}\t#{session_created}\t#{session_name}\t#{pane_id}\t#{window_id}\t#{session_activity}\t#{session_path}'",
+  );
+});
+
+it("rejects a row whose window id is not a tmux window id", async () => {
+  const dir = mkdtempSync("/tmp/tmux-owner-catalog-");
+  directories.push(dir);
+  const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
+  await expect(
+    createNativeTmuxServerCatalog(registry, async () => `22\t$0\t1234\tweb\t%0\tx\t1\t${dir}`)(),
+  ).rejects.toThrow("Invalid native server catalog");
 });
