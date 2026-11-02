@@ -610,13 +610,13 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         } else {
                             // Keep the last frame on screen, read-only, while the
                             // catalog re-issues the stream (card #702).
-                            // Keys in flight or still queued die with the stream;
-                            // say so instead of dropping them silently.
-                            let lost_input = current.input.busy()
-                                || pending.iter().any(|c| matches!(c, Command::Input { .. }));
-                            pending.retain(|command| !matches!(command, Command::Input { .. }));
-                            hold.begin(&state, lost_input);
-                            let notice = loss::interrupted(current, presence.1);
+                            let notice = loss::stream_lost(
+                                current,
+                                &mut pending,
+                                &mut hold,
+                                &state,
+                                presence.1,
+                            );
                             revoke_connection(&mut active, &mut state, &mut output);
                             if output(notice).is_err() {
                                 break 'worker;
@@ -753,6 +753,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 {
                     break 'worker;
                 }
+                let failed_input = matches!(command, Command::Input { .. });
                 let result = match command {
                     Command::OpenEditor { request, id, token } => {
                         if let Some(current) = active
@@ -897,9 +898,14 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     // A key that cannot be sent means the stream is unusable. Recover
                     // it like a lost stream: keep the frame, report the keys, and ask
                     // the catalog to re-issue the route (card #702).
-                    let notice = active.as_ref().map(|a| loss::interrupted(a, presence.1));
-                    hold.begin(&state, true);
-                    pending.retain(|command| !matches!(command, Command::Input { .. }));
+                    let notice = loss::command_failed(
+                        active.as_ref(),
+                        failed_input,
+                        &mut pending,
+                        &mut hold,
+                        &state,
+                        presence.1,
+                    );
                     revoke_connection(&mut active, &mut state, &mut output);
                     if let Some(notice) = notice
                         && output(notice).is_err()
