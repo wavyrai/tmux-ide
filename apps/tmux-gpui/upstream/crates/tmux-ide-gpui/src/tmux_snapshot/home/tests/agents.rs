@@ -7,8 +7,10 @@ fn fleet() -> browser::fleet::Fleet {
     serde_json::from_value(
         serde_json::json!({"omittedGroups":0,"groups":[{"id":"local",
         "label":"Local","state":"ready","conflict":false,"omittedSessions":0,"sessions":[
-        {"id":"local-one","name":"Same name","paneCount":1,"sessionId":"session-one"},
-        {"id":"local-two","name":"Same name","paneCount":1,"sessionId":"session-two"}]}]}),
+        {"id":"local-one","name":"Same name","paneCount":1,"sessionId":"session-one",
+         "selection":"70500000-0000-4000-8000-000000000001"},
+        {"id":"local-two","name":"Same name","paneCount":1,"sessionId":"session-two",
+         "selection":"70500000-0000-4000-8000-000000000002"}]}]}),
     )
     .unwrap()
 }
@@ -51,23 +53,34 @@ fn the_needs_input_pill_counts_waiting_agents_and_opens_the_first(cx: &mut TestA
         view
     });
     cx.simulate_resize(size(px(1000.), px(900.)));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let set_waiting = |cx: &mut VisualTestContext, waiting: bool| {
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                let roster = v.browser_state.home_agents.as_mut().unwrap();
+                roster.rows[0].attention = waiting;
+                roster.rows[0].status = if waiting {
+                    browser::home_agents::Status::Blocked
+                } else {
+                    browser::home_agents::Status::Working
+                };
+            });
+            window.draw(cx).clear(cx);
+        })
+    };
+    // No agent waiting, no pill; one waiting, the pill.
+    set_waiting(cx, false);
+    assert!(cx.debug_bounds("home-agents-attention").is_none());
+    assert!(
+        cx.debug_bounds("fleet-session-agent-0-1").is_some(),
+        "home not drawn"
+    );
+    set_waiting(cx, true);
     receiver.try_iter().for_each(drop);
     let pill = cx.debug_bounds("home-agents-attention").unwrap();
     cx.simulate_click(pill.center(), Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::OpenAgent { key, .. } if key == "session-two\u{0}agent")
     );
-    // No agent waiting, no pill.
-    cx.update(|window, cx| {
-        view.update(cx, |v, _| {
-            let roster = v.browser_state.home_agents.as_mut().unwrap();
-            roster.rows[0].attention = false;
-            roster.rows[0].status = browser::home_agents::Status::Working;
-        });
-        window.draw(cx).clear(cx);
-    });
-    assert!(cx.debug_bounds("home-agents-attention").is_none());
 }
 #[gpui::test]
 fn agent_dispatch_rejects_changed_revision_unavailable_and_disconnected(cx: &mut TestAppContext) {
