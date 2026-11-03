@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.16
+
+- Keep the Mac app connected when one pane's update is rejected: the daemon re-sends that pane alone, the other panes keep updating, and the "Input interrupted — reselect pane" failure no longer takes every pane down.
+- Reconnect only the terminal stream after a drop. The last frame stays on screen, read-only, with a "Reconnecting… attempt N" badge and a Retry button. Retries continue with backoff for as long as it is the same daemon. Keys typed during a drop are refused with a notice and never replayed.
+- Recover typing after a daemon freeze or a Mac sleep, and keep a pane whose source closed on screen with an "unavailable" badge.
+- Open sessions whose panes tmux paused (after sleep or a stalled daemon) without hanging at "Connecting terminal": frame identity reuses cached row hashes, so 8 panes open in about 1 s after a pause instead of 2–4 s or more.
+- Keep the app's session catalog alive after a single error instead of closing it; it reconnects or shows a notice with backoff.
+- Push the session catalog and agent state from the daemon instead of polling. An idle Home makes 3 requests a minute instead of 291, and Home appears after 8–9 requests instead of about 45.
+- Cache the daemon identity check per daemon instance, behind a live-process check and a 5 s re-check, so credentials never go to a process that took over a dead daemon's port.
+- Keep agent rows on screen while they refresh and update only the rows that change. The daemon reads agent state every 500 ms, so state changes show within about half a second in the app and the TUI.
+- Redesign Home: one table of sessions grouped by machine, with each project's own favicon, windows and panes, last activity, "attached", and the agent's state on its session's row. A "needs input" pill filters to sessions waiting on you. The separate Agents section is gone.
+- Add a v2 sessions resource with favicons, window counts and last activity. Favicons are read only from fixed names in the session's folder, without following symlinks, capped at 32 KB and cached. Older apps and daemons keep working.
+- Remove the tab-style pane titles and shrink the pane margins to 8 pt.
+- Log the cause of every stream drop on both sides: the app names the rejecting check and pane, and the daemon logs each fault and stream close.
+- Print a notice when `tmux-ide open` falls back to a browser that has no native controls. The check is bounded to 2 s and never applies to the bundled browser.
+- Fix a startup crash when the Mac app binary runs without arguments.
+
 ## 2.9.15
 
 - Discover the browser bundled with the managed Mac app when running `tmux-ide open`, while preserving explicit browser overrides and PATH fallback.

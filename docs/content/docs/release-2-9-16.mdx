@@ -1,0 +1,97 @@
+---
+title: tmux-ide 2.9.16
+metaTitle: "What's new in 2.9.16"
+description: "A Mac app that stays connected, a new Home with project favicons, and faster recovery after sleep."
+---
+
+`2.9.16` accompanies native macOS alpha `0.1.12`. The CLI/daemon and native app
+remain separate installations. Install links are updated after the matching
+release assets are published.
+
+This release is about connection stability. The Mac app now recovers from the
+faults that used to drop it, the way the TUI already did.
+
+## The app stays connected
+
+When the daemon rejects one pane's update, the app asks for that pane again and
+keeps the others running. Before, one bad update ended the stream for every pane
+and showed "Input interrupted — reselect pane".
+
+When the stream itself drops, only the stream reconnects:
+
+- The last frame stays on screen, read-only, with a "Reconnecting… attempt N"
+  badge and a Retry button.
+- Retries continue with backoff, up to 30 s apart, for as long as it is the same
+  daemon. A different daemon goes back through Home.
+- Keys typed during a drop are refused with a notice. They are never replayed
+  into the pane after it reconnects.
+- A pane whose source closed keeps its last frame with an "unavailable" badge.
+
+The session catalog also survives a single error. It reconnects, or shows a
+notice and retries with backoff, instead of closing.
+
+## After sleep
+
+When a Mac sleeps or the daemon stalls, tmux pauses the daemon's view of each
+pane. Reopening such a session used to rebuild every pane's full history and
+could stay at "Connecting terminal" for 10 s or more. Frames now reuse row hashes
+the daemon has already computed. After a 5 s stall, a session with 8 panes opens
+in about 1 s and one with 12 panes in about 1.4 s. Without a stall, 8 panes open
+in under 0.5 s. Typing after a freeze or a wake works without reselecting the
+pane.
+
+## A new Home
+
+Home is one table of sessions, grouped by machine:
+
+- Each session shows its project's favicon, when the project has one, or a
+  terminal icon.
+- Rows show windows and panes, last activity and "attached".
+- An agent's state appears on its own session's row, such as "Claude · Working"
+  or "Codex · Needs input". The separate Agents section is gone.
+- A "needs input" pill appears when an agent is waiting. Click it to show only
+  those sessions.
+
+Favicons come from fixed names in the session's folder, such as `favicon.ico`
+or `public/favicon.svg`. The daemon never follows symlinks, caps each icon at
+32 KB, and caches it. Favicons, window counts and last activity arrive with the
+session list the app already fetches, in a new v2 sessions resource, so they add
+no requests. Older apps and daemons keep working with each other.
+
+Pane titles no longer look like tabs, and the margins around panes are 8 pt.
+
+## Less background work
+
+The daemon now pushes catalog and agent changes to the app instead of the app
+polling every 5 s:
+
+- An idle Home makes 3 requests a minute, down from 291, and doesn't redraw.
+- Home appears after 8–9 requests, down from about 45.
+- Agent rows stay on screen while they refresh. Only a row whose agent changed
+  updates. The daemon reads agent state every 500 ms, so a change shows within
+  about half a second, in the app and in the TUI.
+
+The app checks the daemon's identity once per daemon instance instead of before
+every request. Before it sends credentials, it confirms the daemon's process is
+still alive and re-checks after 5 s, so a process that takes over a dead
+daemon's port never receives them.
+
+## Diagnostics and smaller fixes
+
+- When a stream drops, the app's log names the check that rejected it, the pane,
+  and the daemon's reason. The daemon logs every fault it sends and every stream
+  it closes.
+- `tmux-ide open` prints a notice when it falls back to a browser that has no
+  native controls. The check waits at most 2 s and never applies to the browser
+  bundled with the Mac app.
+- The Mac app binary no longer crashes when started without arguments.
+
+## Known issue
+
+Splitting a pane into the session you're viewing from outside the app, for
+example with `tmux-ide open`, can drop that session's connection. Going back to
+Home and reopening the session restores it. A fix is planned for the next release.
+
+Update the CLI/daemon and [native app](/docs/native-alpha) separately. Existing
+tmux sessions are preserved. Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
