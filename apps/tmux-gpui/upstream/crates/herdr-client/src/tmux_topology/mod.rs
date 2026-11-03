@@ -17,6 +17,10 @@ pub enum Error {
     Bounds,
     #[error("native terminal topology identity mismatch")]
     Identity,
+    /// The layout names a pane this stream's lease doesn't cover: the session's
+    /// panes changed (a split from another client). Re-lease, don't fail.
+    #[error("native terminal topology names a pane outside this stream's lease")]
+    Unissued,
     #[error("native terminal topology revision regressed")]
     Revision,
     #[error("native terminal topology is retired")]
