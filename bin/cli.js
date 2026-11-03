@@ -98009,13 +98009,13 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
   };
-  const ready = async (previousInstance) => {
+  const ready = async (previousInstance, retiredPid) => {
     const deadline = Date.now() + deps2.waitMs;
     do {
       const state = deps2.inspect();
       if (!boundTo(state, plan.supervisionId))
         refused("Service reservation changed during startup");
-      if (state.status === "valid" && state.info.instanceId !== previousInstance) {
+      if (state.status === "valid" && state.info.instanceId !== previousInstance && state.info.pid !== retiredPid) {
         const identity4 = await deps2.probe(state.info);
         const service2 = await inspectManager();
         if (identity4 && service2.active && service2.pid === state.info.pid && identity4.pid === state.info.pid && identity4.instanceId === state.info.instanceId && identity4.startedAt === state.info.startedAt && identity4.protocolVersion === state.info.protocolVersion)
@@ -98118,7 +98118,10 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
     if (action === "install" && service.active) return await ready();
     if (service.loaded) await manager.restart(service.pid !== null);
     else await manager.install();
-    return await ready(before.status === "valid" ? before.info.instanceId : void 0);
+    return await ready(
+      before.status === "valid" ? before.info.instanceId : void 0,
+      service.loaded ? service.pid : null
+    );
   } catch (error) {
     if (!activationAttempted && wroteRecord) {
       if (wroteUnit && ownedFile(plan.unitPath) === contents) unlinkSync9(plan.unitPath);
