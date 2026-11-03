@@ -28,10 +28,18 @@ const tmux = (...args) =>
   });
 let daemon, child;
 try {
-  daemon = await startDaemon(fleet, process.env.SMOKE_CLI ? { cliPath: process.env.SMOKE_CLI } : {});
+  daemon = await startDaemon(
+    fleet,
+    process.env.SMOKE_CLI ? { cliPath: process.env.SMOKE_CLI } : {},
+  );
   child = spawn(
     guiTestBinary,
-    ["--ignored", "--nocapture", "--test-threads=1", "a_pane_split_in_or_closed_from_outside_keeps_the_open_stream"],
+    [
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1",
+      "a_pane_split_in_or_closed_from_outside_keeps_the_open_stream",
+    ],
     {
       env: {
         ...process.env,

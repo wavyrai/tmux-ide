@@ -1,8 +1,9 @@
 #![allow(clippy::unwrap_used)]
-//! Live: a pane is split into the viewed session from outside the app (another
-//! tmux client). The stream must take the new pane without dropping, or at
-//! worst re-lease once and continue. The harness splits after
-//! `TOPOLOGY_SPLIT_READY` and writes `split-done`.
+//! Live (card #720): a pane is split into the viewed session from another tmux
+//! client, then closed again. The stream must carry on each time, keeping its
+//! frame, and typing must land after each change. The harness splits after
+//! `TOPOLOGY_SPLIT_READY` and closes after `TOPOLOGY_CLOSE_READY`, writing
+//! `split-done` and `close-done`.
 use super::*;
 use crate::tmux_snapshot::keys::Input;
 
