@@ -973,7 +973,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             *slot = Some(None);
         }
     });
-    Bridge { mailbox, commands }
+    Bridge {
+        mailbox,
+        commands,
+        holds_frames: hold_frames,
+    }
 }
 
 #[cfg(test)]

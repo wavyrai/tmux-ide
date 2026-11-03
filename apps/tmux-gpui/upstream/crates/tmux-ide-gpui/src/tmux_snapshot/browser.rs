@@ -250,6 +250,11 @@ pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
 pub(super) struct Bridge {
     pub mailbox: Mailbox,
     pub commands: mpsc::SyncSender<Command>,
+    /// Whether a lost stream keeps its last frame on screen while the catalog
+    /// reconnects (#702). Only the native catalog ends such a hold. Read by
+    /// tests that pin which entry point holds frames.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub holds_frames: bool,
 }
 #[derive(Default)]
 struct Reader {
