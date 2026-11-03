@@ -42,6 +42,8 @@ tmux-native-surface-sdk = { path = "crates/tmux-native-surface-sdk" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
 interprocess         = "2.4.2"
 image                = { default-features = false, features = ["gif", "jpeg", "png", "webp"], version = "0.25.10" }
+# The SVG parser GPUI renders favicons with; #719 checks an SVG with it first.
+usvg                 = { default-features = false, version = "=0.46.0" }
 # Helix's fzf-style scorer behind the command palette.
 nucleo-matcher       = "0.3.1"
 objc2                = "0.6.4"

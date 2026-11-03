@@ -66,6 +66,19 @@ fn bmp_header(width: i32, height: i32) -> Vec<u8> {
     b
 }
 
+fn webp_vp8(width: u16, height: u16) -> Vec<u8> {
+    let mut b = b"RIFF\x00\x00\x00\x00WEBPVP8 \x0a\x00\x00\x00\x00\x00\x00\x9d\x01\x2a".to_vec();
+    b.extend(width.to_le_bytes());
+    b.extend(height.to_le_bytes());
+    b
+}
+
+fn webp_vp8l(width: u32, height: u32) -> Vec<u8> {
+    let mut b = b"RIFF\x00\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f".to_vec();
+    b.extend(((width - 1) | (height - 1) << 14).to_le_bytes());
+    b
+}
+
 #[test]
 fn small_files_declaring_huge_images_are_refused_before_decoding() {
     assert!(!decoded("image/png", &png(30_000, 30_000)));
@@ -110,10 +123,14 @@ fn an_svg_declaring_a_huge_canvas_is_refused() {
         r#"<svg viewBox="0 0 30000 30000"/>"#,
         r#"<svg width="16" viewBox="0 0 1 100000"/>"#,
         r#"<svg width="100in" height="100in"/>"#,
-        r#"<svg width="huge" height="16"/>"#,
     ] {
         assert!(!decoded("image/svg+xml", svg.as_bytes()), "{svg}");
     }
+    // The renderer ignores a width it can't read (100 px), so this one is small.
+    assert!(decoded(
+        "image/svg+xml",
+        br#"<svg width="huge" height="16"/>"#
+    ));
 }
 
 #[test]
@@ -143,4 +160,79 @@ fn truncated_headers_are_refused() {
     ] {
         assert!(!decoded(mime, &bytes), "{mime}");
     }
+}
+
+/// Review round 1, item 2: each side is checked on its own.
+#[test]
+fn a_huge_height_or_width_alone_is_refused() {
+    for (w, h) in [(16, 30_000), (30_000, 16)] {
+        assert!(!decoded("image/png", &png(w, h)), "png {w}x{h}");
+        assert!(
+            !decoded("image/jpeg", &jpeg(w as u16, h as u16)),
+            "jpeg {w}x{h}"
+        );
+        assert!(!decoded("image/webp", &webp_vp8x(w, h)), "vp8x {w}x{h}");
+        assert!(
+            !decoded("image/gif", &gif(w as u16, h as u16, 1, 1, 1)),
+            "gif {w}x{h}"
+        );
+        assert!(
+            !decoded("image/x-icon", &ico(&png(w, h))),
+            "ico png {w}x{h}"
+        );
+        assert!(
+            !decoded("image/x-icon", &ico(&bmp_header(w as i32, h as i32))),
+            "ico bmp {w}x{h}"
+        );
+    }
+    // VP8 and VP8L carry 14-bit sizes.
+    for (w, h) in [(16, 16_000), (16_000, 16)] {
+        assert!(!decoded("image/webp", &webp_vp8(w, h)), "vp8 {w}x{h}");
+        assert!(
+            !decoded("image/webp", &webp_vp8l(w.into(), h.into())),
+            "vp8l {w}x{h}"
+        );
+    }
+    assert!(decoded("image/webp", &webp_vp8(16, 16)));
+    assert!(decoded("image/webp", &webp_vp8l(16, 16)));
+}
+
+/// Review round 1, item 3.
+#[test]
+fn an_icon_entry_pointing_past_its_data_is_refused() {
+    let mut short = ico(&png(16, 16));
+    short.truncate(short.len() - 4);
+    assert!(!decoded("image/x-icon", &short));
+    let mut far = ico(&png(16, 16));
+    far[18..22].copy_from_slice(&4096u32.to_le_bytes());
+    assert!(!decoded("image/x-icon", &far));
+}
+
+/// Review round 1, item 1: the size and references usvg itself reads, not a
+/// text scan's guess. Each of these declares a decoy small size.
+#[test]
+fn an_svg_is_read_the_way_the_renderer_reads_it() {
+    for svg in [
+        r#"<!-- <svg width="16" height="16"> --><svg width="8192" height="8192"/>"#,
+        r#"<svg viewbox="0 0 16 16" viewBox="0 0 8192 8192"/>"#,
+        r#"<svg WIDTH="16" HEIGHT="16" width="8192" height="8192"/>"#,
+        r#"<svg data-x=" width=1 height=1" width="8192" height="8192"/>"#,
+        r#"<?decoy <svg width="16" height="16"?><svg width="8192" height="8192"/>"#,
+        r##"<svg width="16" height="16"><image href='"#/x' width="1" height="1"/></svg>"##,
+    ] {
+        assert!(!decoded("image/svg+xml", svg.as_bytes()), "{svg}");
+    }
+    // PM, 3 Nov: GPUI renders an SVG at 2x, so 512 a side is the limit.
+    assert!(decoded(
+        "image/svg+xml",
+        br#"<svg width="512" height="512"/>"#
+    ));
+    assert!(!decoded(
+        "image/svg+xml",
+        br#"<svg width="513" height="16"/>"#
+    ));
+    assert!(!decoded(
+        "image/svg+xml",
+        br#"<svg width="16" height="513"/>"#
+    ));
 }

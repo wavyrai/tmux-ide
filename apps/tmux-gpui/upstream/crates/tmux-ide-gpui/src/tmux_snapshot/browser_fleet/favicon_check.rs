@@ -9,6 +9,8 @@ use gpui::ImageFormat;
 pub(super) const MAX_SIDE: u64 = 1024;
 /// The decoded pixels allowed in total, GIF frames included (about 4 MB RGBA).
 pub(super) const MAX_PIXELS: u64 = MAX_SIDE * MAX_SIDE;
+/// GPUI rasterizes an SVG at twice its size, so 512 a side is also about 4 MB.
+pub(super) const MAX_SVG_SIDE: u64 = 512;
 
 pub(super) fn admissible(format: ImageFormat, bytes: &[u8]) -> bool {
     let pixels = match format {
@@ -199,16 +201,20 @@ fn ico(b: &[u8]) -> Option<(u64, u64)> {
     Some(largest)
 }
 
-/// The size the renderer rasterizes at (its declared width and height, or
-/// its viewBox), and only references inside the document itself.
+/// The size GPUI's renderer would give the document, read by that renderer's
+/// own parser (usvg) with image loading replaced by a recorder: any image the
+/// document asks for (a file, URL or `data:` image) refuses it. A cheap text
+/// pass first refuses DTDs, imported style sheets and non-fragment
+/// references without parsing.
 fn svg(b: &[u8]) -> Option<(u64, u64)> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     let text = std::str::from_utf8(b).ok()?.to_ascii_lowercase();
-    // No DTD (entities), no imported style sheets.
     if text.contains("<!doctype") || text.contains("<!entity") || text.contains("@import") {
         return None;
     }
-    // Every href (and xlink:href) and every CSS url() must point inside the
-    // document: a file path, URL or data: image would be loaded and decoded.
     for (at, _) in text.match_indices("href") {
         let rest = text[at + 4..].trim_start();
         let Some(rest) = rest.strip_prefix('=') else {
@@ -231,79 +237,28 @@ fn svg(b: &[u8]) -> Option<(u64, u64)> {
             return None;
         }
     }
-    let start = text.match_indices("<svg").map(|(at, _)| at).find(|&at| {
-        text[at + 4..].starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/')
-    })?;
-    let tag = &text[start..start + text[start..].find('>')?];
-    let attribute = |name: &str| -> Option<&str> {
-        let mut search = 0;
-        while let Some(found) = tag[search..].find(name) {
-            let at = search + found;
-            search = at + name.len();
-            if !tag[..at].ends_with(|c: char| c.is_whitespace()) {
-                continue;
-            }
-            let rest = tag[search..].trim_start().strip_prefix('=')?.trim_start();
-            let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
-            let value = &rest[1..];
-            return Some(&value[..value.find(quote)?]);
-        }
-        None
+    let requested = Arc::new(AtomicBool::new(false));
+    let (on_data, on_string) = (requested.clone(), requested.clone());
+    let options = usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(move |_, _, _| {
+                on_data.store(true, Ordering::Relaxed);
+                None
+            }),
+            resolve_string: Box::new(move |_, _| {
+                on_string.store(true, Ordering::Relaxed);
+                None
+            }),
+        },
+        ..usvg::Options::default()
     };
-    let length = |name: &str| -> Option<Option<f64>> {
-        let Some(value) = attribute(name) else {
-            return Some(None);
-        };
-        let value = value.trim();
-        if value.ends_with('%') {
-            return Some(None);
-        }
-        let units = [
-            ("px", 1.0),
-            ("pt", 4.0 / 3.0),
-            ("pc", 16.0),
-            ("mm", 96.0 / 25.4),
-            ("cm", 96.0 / 2.54),
-            ("in", 96.0),
-            ("em", 16.0),
-            ("ex", 8.0),
-        ];
-        let (number, scale) = units
-            .iter()
-            .find_map(|(unit, scale)| value.strip_suffix(unit).map(|n| (n, *scale)))
-            .unwrap_or((value, 1.0));
-        let number: f64 = number.trim().parse().ok()?;
-        (number.is_finite() && number >= 0.0).then_some(Some(number * scale))
-    };
-    let (width, height) = (length("width")?, length("height")?);
-    let view_box = match attribute("viewbox") {
-        Some(value) => {
-            let numbers: Vec<f64> = value
-                .split(|c: char| c.is_whitespace() || c == ',')
-                .filter(|s| !s.is_empty())
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            let [_, _, w, h] = numbers[..] else {
-                return None;
-            };
-            (w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0).then_some((w, h))?;
-            Some((w, h))
-        }
-        None => None,
-    };
-    // The renderer's own rules: a missing side follows the viewBox's aspect;
-    // with neither, the document is 100×100.
-    let (w, h) = match (width, height, view_box) {
-        (Some(w), Some(h), _) => (w, h),
-        (Some(w), None, Some((vw, vh))) => (w, w * vh / vw),
-        (None, Some(h), Some((vw, vh))) => (h * vw / vh, h),
-        (None, None, Some((vw, vh))) => (vw, vh),
-        (Some(w), None, None) => (w, 100.0),
-        (None, Some(h), None) => (100.0, h),
-        (None, None, None) => (100.0, 100.0),
-    };
-    if !(w.is_finite() && h.is_finite()) || w > MAX_SIDE as f64 || h > MAX_SIDE as f64 {
+    let tree = usvg::Tree::from_data(b, &options).ok()?;
+    if requested.load(Ordering::Relaxed) {
+        return None;
+    }
+    let size = tree.size();
+    let (w, h) = (f64::from(size.width()), f64::from(size.height()));
+    if !(w.is_finite() && h.is_finite()) || w > MAX_SVG_SIDE as f64 || h > MAX_SVG_SIDE as f64 {
         return None;
     }
     Some((w.ceil().max(1.0) as u64, h.ceil().max(1.0) as u64))
