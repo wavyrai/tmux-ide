@@ -93,6 +93,96 @@ fn the_needs_input_pill_filters_the_table_to_waiting_sessions(cx: &mut TestAppCo
     assert!(painted(cx, "fleet-session-0-0"));
 }
 #[gpui::test]
+fn table_keys_act_on_the_row_the_needs_input_filter_shows(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = catalog_view(window, cx, sender);
+        view.browser_state.request = 7;
+        view.browser_state.home_agents = Some(roster());
+        let mut fleet = fleet();
+        fleet.preferences = Some(
+            serde_json::from_value(serde_json::json!({"revision":4,"phase":"ready","error":null}))
+                .unwrap(),
+        );
+        // Each row has its own favourite action, so F says which row it acted on.
+        fleet.groups[0].sessions[0].favorite_action =
+            Some("70500000-0000-4000-8000-0000000000f1".into());
+        fleet.groups[0].sessions[1].favorite_action =
+            Some("70500000-0000-4000-8000-0000000000f2".into());
+        view.browser_state.fleet = Some(fleet);
+        view
+    });
+    cx.simulate_resize(size(px(1000.), px(900.)));
+    let painted = |cx: &mut VisualTestContext, key: &'static str| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(key).is_some()
+    };
+    receiver.try_iter().for_each(drop);
+    // The pill's filter on: only session-two, whose agent waits, shows.
+    assert!(painted(cx, "home-agents-attention-off"));
+    let pill = cx.debug_bounds("home-agents-attention-off").unwrap();
+    cx.simulate_click(pill.center(), Modifiers::default());
+    assert!(!painted(cx, "fleet-session-0-0") && painted(cx, "fleet-session-0-1"));
+    // The table takes the keyboard with no cursor yet.
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            let controls = v.home_filter.as_mut().unwrap();
+            controls.table_cursor = None;
+            controls.fleet_table.clone().focus(window, cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    // F and Enter act on the row that shows, never on the hidden first row.
+    cx.simulate_keystrokes("f");
+    assert_eq!(
+        serde_json::to_value(receiver.try_recv().unwrap()).unwrap(),
+        serde_json::json!({"type":"fleet-preference","request":7,"revision":4,
+            "action":"70500000-0000-4000-8000-0000000000f2","enabled":true})
+    );
+    cx.simulate_keystrokes("enter");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::FleetSession { selection, .. }
+            if selection == "70500000-0000-4000-8000-000000000002"
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+#[gpui::test]
+fn the_list_keys_clear_the_needs_input_filter(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = catalog_view(window, cx, sender);
+        view.browser_state.request = 7;
+        view.browser_state.home_agents = Some(roster());
+        view.browser_state.fleet = Some(fleet());
+        view
+    });
+    cx.simulate_resize(size(px(1000.), px(900.)));
+    let waiting_only = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        view.read_with(cx, |v, _| v.home_filter.as_ref().unwrap().waiting_only)
+    };
+    for key in ["]", "["] {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let pill = cx.debug_bounds("home-agents-attention-off").unwrap();
+        cx.simulate_click(pill.center(), Modifiers::default());
+        assert!(waiting_only(cx), "the pill turned the filter on");
+        // Like a click on a left-list entry, [ and ] show every row again.
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.home_filter
+                    .as_ref()
+                    .unwrap()
+                    .fleet_nav
+                    .clone()
+                    .focus(window, cx)
+            })
+        });
+        cx.simulate_keystrokes(key);
+        assert!(!waiting_only(cx), "{key} left the filter on");
+    }
+}
+#[gpui::test]
 fn agent_dispatch_rejects_changed_revision_unavailable_and_disconnected(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {

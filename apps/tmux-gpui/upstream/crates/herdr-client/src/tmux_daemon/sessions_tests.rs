@@ -59,6 +59,10 @@ fn version_2_carries_windows_activity_and_favicon() {
         (favicon.mime.as_str(), favicon.data.as_str()),
         ("image/svg+xml", "PHN2Zy8+")
     );
+    // A later version is refused, even with every version 2 field in place.
+    let mut future = resource_v2();
+    future["version"] = 3.into();
+    assert!(parse(&serde_json::to_vec(&future).unwrap(), &scope()).is_err());
     // Activity and favicon may be null; windows may not.
     let mut nulls = resource_v2();
     nulls["sessions"][0]["lastActivity"] = serde_json::Value::Null;
