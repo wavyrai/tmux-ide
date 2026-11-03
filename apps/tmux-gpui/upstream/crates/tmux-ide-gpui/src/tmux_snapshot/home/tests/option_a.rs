@@ -6,32 +6,61 @@ use crate::tmux_snapshot::browser::fleet::{FAVICON_MAX, favicon};
 use crate::tmux_snapshot::home::fleet_rows::{last_active, layout};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
+/// A 16×16 PNG header: the smallest bytes #719's header check accepts as a PNG.
+fn png_header() -> Vec<u8> {
+    let mut b = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+    b.extend(16u32.to_be_bytes());
+    b.extend(16u32.to_be_bytes());
+    b.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    b
+}
+
 #[test]
 fn a_favicon_decodes_from_its_type_and_bounded_base64_or_not_at_all() {
-    for (mime, format) in [
-        ("image/png", ImageFormat::Png),
-        ("image/svg+xml", ImageFormat::Svg),
-        ("image/x-icon", ImageFormat::Ico),
-        ("image/jpeg", ImageFormat::Jpeg),
-        ("image/webp", ImageFormat::Webp),
-        ("image/gif", ImageFormat::Gif),
+    // Each type with a minimal header of its own kind (#719 reads headers).
+    let mut bmp = 40u32.to_le_bytes().to_vec();
+    bmp.extend(16i32.to_le_bytes());
+    bmp.extend(32i32.to_le_bytes());
+    bmp.extend([0; 28]);
+    let mut ico = vec![0, 0, 1, 0, 1, 0, 16, 16, 0, 0, 1, 0, 32, 0];
+    ico.extend((bmp.len() as u32).to_le_bytes());
+    ico.extend(22u32.to_le_bytes());
+    ico.extend(&bmp);
+    let jpeg = vec![
+        0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 16, 0, 16, 1, 1, 0x11, 0, 0xff, 0xda,
+    ];
+    let mut webp = b"RIFF\x00\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x00\x00\x00\x00".to_vec();
+    webp.extend([15, 0, 0, 15, 0, 0]);
+    let gif = b"GIF89a\x10\x00\x10\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x10\x00\x10\x00\x00\x02\x02\x4c\x01\x00\x3b".to_vec();
+    for (mime, format, bytes) in [
+        ("image/png", ImageFormat::Png, png_header()),
+        ("image/svg+xml", ImageFormat::Svg, b"<svg/>".to_vec()),
+        ("image/x-icon", ImageFormat::Ico, ico),
+        ("image/jpeg", ImageFormat::Jpeg, jpeg),
+        ("image/webp", ImageFormat::Webp, webp),
+        ("image/gif", ImageFormat::Gif, gif),
     ] {
-        let image = favicon(mime, "PHN2Zy8+").unwrap();
+        let image = favicon(mime, &STANDARD.encode(&bytes)).unwrap();
         assert_eq!(
             (image.format, image.bytes.as_slice()),
-            (format, b"<svg/>".as_slice())
+            (format, bytes.as_slice())
         );
     }
     assert!(favicon("text/html", "PHN2Zy8+").is_none());
     assert!(favicon("image/png", "not base64!").is_none());
     assert!(favicon("image/png", "").is_none());
-    let largest = STANDARD.encode(vec![7u8; FAVICON_MAX]);
+    let mut largest = png_header();
+    largest.resize(FAVICON_MAX, 7);
     assert_eq!(
-        favicon("image/png", &largest).unwrap().bytes.len(),
+        favicon("image/png", &STANDARD.encode(&largest))
+            .unwrap()
+            .bytes
+            .len(),
         FAVICON_MAX
     );
-    let over = STANDARD.encode(vec![7u8; FAVICON_MAX + 1]);
-    assert!(favicon("image/png", &over).is_none());
+    let mut over = png_header();
+    over.resize(FAVICON_MAX + 1, 7);
+    assert!(favicon("image/png", &STANDARD.encode(&over)).is_none());
 }
 
 #[test]
