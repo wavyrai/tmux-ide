@@ -115,6 +115,47 @@ export function validateBrowserOpen(url: string | undefined, options: OpenBrowse
 }
 
 type Run = (args: readonly string[]) => string;
+
+/** Printed when the opened browser never publishes tmux-ide's native controls. */
+export const NO_NATIVE_CONTROLS_NOTICE =
+  "This browser has no tmux-ide controls; install the native app for back/forward/reload.";
+
+/** A browser bundled in a native app publishes its controls; a standalone one may never. */
+function isBundledBrowser(executable: string): boolean {
+  return /\/[^/]+\.app\/Contents\/Resources\/browser\//u.test(executable);
+}
+
+export interface ControlsWait {
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Watches the new pane for @tmux_ide_browser_control, which only a browser with
+ * native controls sets. The browser's path sets how long to wait: about 5 s for
+ * one bundled in an app, 2 s otherwise. Returns the notice when the option never
+ * appears, and null once it does or when the pane is already gone.
+ */
+export async function nativeControlsNotice(
+  run: Run,
+  pane: string,
+  executable: string,
+  wait: ControlsWait = {},
+): Promise<string | null> {
+  const sleep = wait.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const step = 250;
+  const limit = isBundledBrowser(executable) ? 5000 : 2000;
+  for (let waited = 0; ; waited += step) {
+    let control: string;
+    try {
+      control = run(["display-message", "-p", "-t", pane, "#{@tmux_ide_browser_control}"]).trim();
+    } catch {
+      return null;
+    }
+    if (control) return null;
+    if (waited >= limit) return NO_NATIVE_CONTROLS_NOTICE;
+    await sleep(step);
+  }
+}
 export function createBrowserPane(
   run: Run,
   executable: string,
@@ -220,9 +261,24 @@ export function createBrowserPane(
   return { pane: pane!, session: createdSession!, window: createdWindow!, status: "created" };
 }
 
-export function openBrowser(url: string | undefined, options: OpenBrowserOptions = {}) {
+export async function openBrowser(
+  url: string | undefined,
+  options: OpenBrowserOptions = {},
+  notice: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+) {
   validateBrowserOpen(url, options);
   const executable = resolveTerminalBrowser();
+  const { result, run } = createPinnedBrowserPane(executable, url, options);
+  const message = await nativeControlsNotice(run, result.pane, executable);
+  if (message) notice(message);
+  return result;
+}
+
+function createPinnedBrowserPane(
+  executable: string,
+  url: string | undefined,
+  options: OpenBrowserOptions,
+) {
   try {
     const namespace = { ...runtimeNamespaceEnvironment(resolveRuntimeNamespace()) };
     const authority = resolveWorkspacePaneTmuxAuthority();
@@ -230,7 +286,16 @@ export function openBrowser(url: string | undefined, options: OpenBrowserOptions
     const run = createPinnedWorkspaceTmuxRunner(authority, {
       timeoutMs: 10_000,
     });
-    return createBrowserPane(run, executable, url, options, process.env, process.cwd(), namespace);
+    const result = createBrowserPane(
+      run,
+      executable,
+      url,
+      options,
+      process.env,
+      process.cwd(),
+      namespace,
+    );
+    return { result, run };
   } catch (error) {
     if (error instanceof IdeError) throw error;
     throw new IdeError(

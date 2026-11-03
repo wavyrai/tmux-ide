@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { createBrowserPane, resolveTerminalBrowser, validateBrowserOpen } from "./open-browser.ts";
+import {
+  NO_NATIVE_CONTROLS_NOTICE,
+  createBrowserPane,
+  nativeControlsNotice,
+  resolveTerminalBrowser,
+  validateBrowserOpen,
+} from "./open-browser.ts";
 
 describe("browser pane creation", () => {
   function fixture(options = {}, url: string | undefined = "https://example.com") {
@@ -150,5 +156,68 @@ describe("managed native browser discovery", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("native controls notice", () => {
+  const bundled =
+    "/Users/u/Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app/Contents/Resources/browser/terminal-browser";
+  const standalone = "/Users/u/.local/share/terminal-browser/app/bin/terminal-browser";
+  // The pane's @tmux_ide_browser_control after each read; the last value repeats.
+  function probe(values: string[], options: { throws?: boolean } = {}) {
+    const reads: string[][] = [];
+    const slept: number[] = [];
+    const run = (args: readonly string[]) => {
+      reads.push([...args]);
+      if (options.throws) throw new Error("can't find pane: %9");
+      return `${values[Math.min(reads.length - 1, values.length - 1)]}\n`;
+    };
+    const sleep = async (ms: number) => {
+      slept.push(ms);
+    };
+    return { run, sleep, reads, slept };
+  }
+  const control = '{"version":1,"pid":7,"socket":"/tmp/b.sock","instance":"i","pane":"%9"}';
+
+  it("says nothing once the browser publishes its controls", async () => {
+    const p = probe(["", "", control]);
+    expect(await nativeControlsNotice(p.run, "%9", bundled, { sleep: p.sleep })).toBeNull();
+    expect(p.reads[0]).toEqual([
+      "display-message",
+      "-p",
+      "-t",
+      "%9",
+      "#{@tmux_ide_browser_control}",
+    ]);
+    expect(p.reads).toHaveLength(3);
+  });
+
+  it("prints the notice when a standalone browser never publishes controls", async () => {
+    const p = probe([""]);
+    expect(await nativeControlsNotice(p.run, "%9", standalone, { sleep: p.sleep })).toBe(
+      NO_NATIVE_CONTROLS_NOTICE,
+    );
+    // A standalone browser gets a short wait; a bundled one a longer one.
+    const standaloneWait = p.slept.reduce((a, b) => a + b, 0);
+    const q = probe([""]);
+    expect(await nativeControlsNotice(q.run, "%9", bundled, { sleep: q.sleep })).toBe(
+      NO_NATIVE_CONTROLS_NOTICE,
+    );
+    const bundledWait = q.slept.reduce((a, b) => a + b, 0);
+    expect(standaloneWait).toBeGreaterThan(0);
+    expect(standaloneWait).toBeLessThanOrEqual(2000);
+    expect(bundledWait).toBeGreaterThan(standaloneWait);
+    expect(bundledWait).toBeLessThanOrEqual(5000);
+  });
+
+  it("names the native app in one line", () => {
+    expect(NO_NATIVE_CONTROLS_NOTICE).not.toContain("\n");
+    expect(NO_NATIVE_CONTROLS_NOTICE).toMatch(/native app/u);
+    expect(NO_NATIVE_CONTROLS_NOTICE).toMatch(/back\/forward\/reload/u);
+  });
+
+  it("stays quiet about controls when the pane is already gone", async () => {
+    const p = probe([""], { throws: true });
+    expect(await nativeControlsNotice(p.run, "%9", standalone, { sleep: p.sleep })).toBeNull();
   });
 });
