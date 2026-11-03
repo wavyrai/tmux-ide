@@ -26,7 +26,7 @@ impl Gate {
         result
             .agents
             .iter()
-            .map(|agent| self.row_key(&slot.context, agent))
+            .map(|agent| self.row_key(slot, agent))
             .collect()
     }
     fn workspace_scope(&mut self, request: u64) -> Option<u64> {
@@ -99,7 +99,7 @@ impl Local {
                 continue;
             };
             for agent in &result.agents {
-                let key = self.agents.row_key(&slot.context, agent);
+                let key = self.agents.row_key(slot, agent);
                 if roster.rows.iter().any(|r| r.key == key) {
                     sessions.insert(
                         key,

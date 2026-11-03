@@ -944,6 +944,9 @@ impl Local {
 }
 
 #[cfg(test)]
+#[path = "browser_native_local_agent_idle_live_tests.rs"]
+mod agent_idle_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_fault_log_live_tests.rs"]
 mod fault_log_live_tests;
 #[cfg(test)]
