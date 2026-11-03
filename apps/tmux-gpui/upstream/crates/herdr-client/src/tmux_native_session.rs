@@ -107,6 +107,10 @@ pub struct PaneGraphics {
 }
 pub struct Updates {
     pub materializing: BTreeSet<String>,
+    /// Panes waiting for the daemon's reseed after a NACK. Their last commit stays.
+    pub reseeding: BTreeSet<String>,
+    /// Panes whose source the daemon closed. Their last commit stays, read-only.
+    pub unavailable: BTreeSet<String>,
     pub status: Status,
     pub panes: BTreeMap<String, PaneUpdate>,
     pub controls: Vec<Box<RawValue>>,
@@ -123,6 +127,8 @@ struct Pending {
 
 struct Mailbox {
     materializing: BTreeSet<String>,
+    reseeding: BTreeSet<String>,
+    unavailable: BTreeSet<String>,
     status: Status,
     retired: bool,
     current: BTreeMap<String, Arc<CommittedPane>>,
@@ -140,6 +146,8 @@ impl Mailbox {
     fn new() -> Self {
         Self {
             materializing: BTreeSet::new(),
+            reseeding: BTreeSet::new(),
+            unavailable: BTreeSet::new(),
             status: Status::Connecting,
             retired: false,
             current: BTreeMap::new(),
@@ -202,6 +210,7 @@ impl Mailbox {
         {
             self.materializing.remove(&pane);
         }
+        self.reseeding.remove(&pane);
         let height = committed
             .snapshot
             .as_ref()
@@ -394,6 +403,14 @@ impl NativeSession {
     }
 
     /// Takes the latest pending snapshots and every ordered control frame exactly once.
+    /// Test seam: mark panes as the worker would after a NACK or a pane fault.
+    #[cfg(test)]
+    pub(crate) fn mark_panes(&self, reseeding: &[&str], unavailable: &[&str]) {
+        if let Ok(mut mailbox) = self.shared.lock() {
+            mailbox.reseeding = reseeding.iter().map(|p| (*p).to_owned()).collect();
+            mailbox.unavailable = unavailable.iter().map(|p| (*p).to_owned()).collect();
+        }
+    }
     pub fn drain(&self) -> Result<Updates, Error> {
         let mut mailbox = self.shared.lock().map_err(|_| Error::Mailbox)?;
         let panes = std::mem::take(&mut mailbox.pending)
@@ -414,6 +431,8 @@ impl NativeSession {
         let had_graphics = !mailbox.graphics.is_empty();
         let updates = Updates {
             materializing: mailbox.materializing.clone(),
+            reseeding: mailbox.reseeding.clone(),
+            unavailable: mailbox.unavailable.clone(),
             status: mailbox.status.clone(),
             panes,
             controls: std::mem::take(&mut mailbox.controls),
@@ -593,6 +612,10 @@ fn run(
                     let json = serde_json::to_string(&serde_json::json!({"type":"terminal-delivery-ack","ack":ack})).map_err(Error::Ack)?;
                     stream.try_send(Command::from_json(json)?)?;
                 }
+                if let Outcome::Reseed { nack, .. } = &outcome {
+                    let json = serde_json::to_string(&serde_json::json!({"type":"terminal-delivery-nack","nack":nack})).map_err(Error::Ack)?;
+                    stream.try_send(Command::from_json(json)?)?;
+                }
                 if let Outcome::Projected {receipt,..} = &outcome {
                     let json=serde_json::to_string(&serde_json::json!({"type":"terminal-projection-receipt","receipt":receipt})).map_err(Error::Ack)?;
                     stream.try_send(Command::from_json(json)?)?;
@@ -678,6 +701,13 @@ fn publish_locked(mailbox: &mut Mailbox, outcome: Outcome) -> Result<(), Error> 
         Outcome::Pending => {}
         Outcome::Materializing(pane) => {
             mailbox.materializing.insert(pane);
+        }
+        Outcome::Reseed { pane, .. } => {
+            mailbox.reseeding.insert(pane);
+        }
+        Outcome::Unavailable(pane) => {
+            mailbox.reseeding.remove(&pane);
+            mailbox.unavailable.insert(pane);
         }
 
         Outcome::Ready(ready) => mailbox.status = Status::Ready(Arc::new(ready)),

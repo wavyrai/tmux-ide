@@ -37,6 +37,10 @@ mod diagnostics;
 const MAX_PENDING: usize = 64;
 const PENDING_REFUSED: &str = "Terminal busy — input refused. Retype when it catches up.";
 use super::super::browser_native_transition as transition;
+#[path = "browser_native_hold.rs"]
+mod hold;
+#[path = "browser_native_loss.rs"]
+mod loss;
 enum Incoming {
     NativeOwner(Box<browser_native_owner::Response>),
     Catalog(Box<State>),
@@ -270,7 +274,7 @@ pub(in crate::tmux_snapshot) fn start_io<R: BufRead, W: Write>(
 ) -> Bridge {
     let (tx, rx) = mpsc::sync_channel(8);
     std::thread::spawn(move || read_pipe(input(), binary, tx));
-    start_events(kitty, rx, move || {
+    start_events(kitty, rx, false, move || {
         let mut output = output();
         move |command| write_pipe_command(&mut output, &command)
     })
@@ -281,11 +285,14 @@ pub(in crate::tmux_snapshot) fn start_io<R: BufRead, W: Write>(
 fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     kitty: super::super::kitty_graphics::Store,
     rx: mpsc::Receiver<Incoming>,
+    hold_frames: bool,
     output: impl FnOnce() -> F + Send + 'static,
 ) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
+    let mut hold = hold::Hold::new(hold_frames);
+    let holds_frames = hold.enabled();
     std::thread::spawn(move || {
         let mut active: Option<Active> = None;
         let history_cache: Cache = Default::default();
@@ -293,6 +300,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut stopped: Option<diagnostics::Stop> = None;
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
+        let mut releases = loss::Releases::default();
         let mut browser_read_at = 0;
         let mut presence = (true, 0);
         let mut pending = std::collections::VecDeque::new();
@@ -579,7 +587,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         );
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.
-                        let structural = current.actions.interrupted().is_some_and(|c| c.reissue);
+                        // So is a pane split in from another client (re-lease with its panes).
+                        let structural = current.actions.interrupted().is_some_and(|c| c.reissue)
+                            || releases.admit(&error, current.request, now);
                         // Reconnecting cannot help a daemon that lacks a required capability.
                         let stop = diagnostics::Stop::new(
                             &error,
@@ -603,15 +613,15 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             pending.retain(|command| !matches!(command, Command::Input { .. }));
                             revoke(&mut None, &mut state);
                         } else {
-                            let notice = Command::NativeTerminalInterrupted {
-                                version: 1,
-                                id: current.id.clone(),
-                                request: current.request,
-                                pane: current.controller.selected().into(),
-                                live_session_id: current.session.clone(),
-                                generation: current.generation.clone(),
-                                presence_revision: presence.1,
-                            };
+                            // Keep the last frame on screen, read-only, while the
+                            // catalog re-issues the stream (card #702).
+                            let notice = loss::stream_lost(
+                                current,
+                                &mut pending,
+                                &mut hold,
+                                &state,
+                                presence.1,
+                            );
                             revoke_connection(&mut active, &mut state, &mut output);
                             if output(notice).is_err() {
                                 break 'worker;
@@ -622,7 +632,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             |stop| stop.status.clone(),
                         );
                         stopped = stop;
-                        state.input_target_rejected = true;
+                        // A held frame refuses input on its own and needs no
+                        // reselection once the stream is back.
+                        state.input_target_rejected = !hold.active();
                         changed = true;
                     }
                 }
@@ -746,6 +758,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 {
                     break 'worker;
                 }
+                let failed_input = matches!(command, Command::Input { .. });
                 let result = match command {
                     Command::OpenEditor { request, id, token } => {
                         if let Some(current) = active
@@ -870,6 +883,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     }
                     other => {
                         if navigates(&other) {
+                            hold.clear();
                             if let Command::Pane { request, .. } = &other {
                                 transition.begin(&state, *request, now);
                             } else {
@@ -884,32 +898,27 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         Ok(())
                     }
                 };
-                let fatal = match &result {
-                    Ok(()) => false,
-                    Err(NativeError::Input(
-                        browser_native_input::Error::Scope
-                        | browser_native_input::Error::Unsupported
-                        | browser_native_input::Error::Scheduler(
-                            herdr_client::tmux_input::Error::Busy,
-                        ),
-                    )) => active.as_ref().is_some_and(|a| a.input.retired()),
-                    Err(NativeError::Owner(browser_native_owner::Error::Rejected)) => false,
-                    Err(NativeError::Action(
-                        browser_native_actions::Error::Stale
-                        | browser_native_actions::Error::BrokerRequired,
-                    )) => false,
-                    Err(NativeError::Action(browser_native_actions::Error::Controller(
-                        herdr_client::tmux_controller::Error::Control(
-                            herdr_client::tmux_control::Error::Busy
-                            | herdr_client::tmux_control::Error::Lifetime,
-                        ),
-                    ))) => false,
-                    Err(_) => true,
-                };
+                let fatal = loss::fatal(&result, active.as_ref());
                 if fatal {
+                    // A key that cannot be sent means the stream is unusable. Recover
+                    // it like a lost stream: keep the frame, report the keys, and ask
+                    // the catalog to re-issue the route (card #702).
+                    let notice = loss::command_failed(
+                        active.as_ref(),
+                        failed_input,
+                        &mut pending,
+                        &mut hold,
+                        &state,
+                        presence.1,
+                    );
                     revoke_connection(&mut active, &mut state, &mut output);
-                    state.status = "Terminal input interrupted — reopen the pane".into();
-                    state.input_target_rejected = true;
+                    if let Some(notice) = notice
+                        && output(notice).is_err()
+                    {
+                        break 'worker;
+                    }
+                    state.status = "Terminal connection interrupted — recovering".into();
+                    state.input_target_rejected = !hold.active();
                     changed = true;
                 }
             }
@@ -951,7 +960,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             let expired = transition.expire(now);
             if changed || expired {
                 let publication = transition.publication(&state, presence.0, now);
-                send_state(&incoming, &publication);
+                let shown = hold.publication(&publication);
+                hold.observe(&shown);
+                send_state(&incoming, &shown);
             }
             if !changed && !admitted {
                 std::thread::sleep(Duration::from_millis(5));
@@ -963,7 +974,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             *slot = Some(None);
         }
     });
-    Bridge { mailbox, commands }
+    Bridge::new(mailbox, commands, holds_frames)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DaemonFleetFactsObserver,
+  FLEET_FACTS_POLL_MS,
   parseAgentStateFacts,
   parseSessionCompositionFacts,
   type SessionCompositionFacts,
@@ -42,6 +43,73 @@ describe("DaemonFleetFactsObserver", () => {
     expect(
       parseAgentStateFacts("work\t%1\tpane.editor\tworking:1\tcodex").get("work")?.get("%1"),
     ).toEqual({ paneStamp: "pane.editor", state: "working:1", command: "codex" });
+  });
+
+  it("re-reads every 500 ms by default so an agent flip shows within 1 s (#716)", async () => {
+    const setTimer = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>);
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => emptySessions(),
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer,
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["agents"]);
+    await handle.ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(FLEET_FACTS_POLL_MS).toBe(500);
+    expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 500);
+    handle.release();
+  });
+
+  it("leaves no timer behind when the last subscriber leaves mid-cycle (#716)", async () => {
+    // The tick runs every 500 ms, so a stray re-arm after the last release
+    // would keep the daemon waking up with nobody subscribed.
+    const timers = new Map<number, () => void>();
+    let nextTimer = 0;
+    const setTimer = vi.fn((callback: () => void) => {
+      nextTimer += 1;
+      timers.set(nextTimer, callback);
+      return nextTimer as unknown as ReturnType<typeof setTimeout>;
+    });
+    const clearTimer = vi.fn((timer: ReturnType<typeof setTimeout>) => {
+      timers.delete(timer as unknown as number);
+    });
+    const blocked = deferred<Map<string, never>>();
+    let reads = 0;
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => emptySessions(),
+      readAgents: async () => {
+        reads += 1;
+        return reads === 2 ? blocked.promise : new Map();
+      },
+      ...callbacks(),
+      setTimer,
+      clearTimer,
+    });
+    const settle = async () => {
+      for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    const handle = observer.acquire(["agents"]);
+    await handle.ready;
+    await settle();
+    const fire = () => {
+      for (const [id, callback] of [...timers]) {
+        timers.delete(id);
+        callback();
+      }
+    };
+    fire();
+    await settle();
+    expect(reads).toBe(2);
+    handle.release();
+    blocked.resolve(new Map());
+    await settle();
+    for (let round = 0; round < 3 && timers.size > 0; round += 1) {
+      fire();
+      await settle();
+    }
+    expect(timers.size).toBe(0);
   });
 
   it("invalidates agent-free topology when a pane or durable stamp changes", async () => {

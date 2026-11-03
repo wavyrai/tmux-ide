@@ -11,6 +11,10 @@ pub(super) fn frame(view: &SnapshotView) -> usize {
 pub(super) fn slot_colors(view: &SnapshotView) -> Vec<gpui::Hsla> {
     view.agent_animation.colors()
 }
+/// Each reserved slot's glyph box, in window coordinates.
+pub(super) fn slot_bounds(view: &SnapshotView) -> Vec<gpui::Bounds<gpui::Pixels>> {
+    view.agent_animation.slot_bounds()
+}
 /// Counts the notifications the spinner overlay receives.
 pub(super) fn observe_overlay(
     view: &Entity<SnapshotView>,

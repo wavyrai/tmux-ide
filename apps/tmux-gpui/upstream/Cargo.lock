@@ -5954,6 +5954,7 @@ dependencies = [
  "unicode-width",
  "ureq",
  "url",
+ "usvg",
  "uuid",
 ]
 

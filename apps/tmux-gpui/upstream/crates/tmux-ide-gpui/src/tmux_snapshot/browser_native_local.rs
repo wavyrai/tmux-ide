@@ -349,7 +349,7 @@ fn start_source(
         })?;
     let commands = watch::Commands::new(commands, actor.thread().clone());
     Ok((
-        start_events(kitty, receiver, move || {
+        start_events(kitty, receiver, true, move || {
             move |command| commands.send(command)
         }),
         sources,
@@ -385,6 +385,7 @@ impl Local {
         state.machines = Some(self.registry.publication());
         self.publish_tabs(&mut state);
         state.session_history = self.navigation.publication(state.request, self.foreground);
+        state.reconnect_attempt = self.recovery.as_ref().map(reconnect::Recovery::attempt);
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
@@ -692,6 +693,8 @@ impl Local {
                     Err(error) => {
                         let setup = matches!(stage, Stage::Servers);
                         if self.recovery.is_some() {
+                            // Bounded messages only: codes and numbers, no payloads.
+                            eprintln!("tmux-ide: reconnect attempt failed: {error}");
                             self.reconnect_retry(reconnect::Failure::of(&error))?;
                         } else {
                             self.unavailable(
@@ -941,14 +944,29 @@ impl Local {
 }
 
 #[cfg(test)]
+#[path = "browser_native_local_agent_idle_live_tests.rs"]
+mod agent_idle_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_fault_log_live_tests.rs"]
 mod fault_log_live_tests;
 #[cfg(test)]
+#[path = "browser_native_local_home_live_tests.rs"]
+mod home_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_open_live_tests.rs"]
+mod open_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_reconnect_live_tests.rs"]
+mod reconnect_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_restart_live_tests.rs"]
 mod restart_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "browser_native_local_topology_live_tests.rs"]
+mod topology_live_tests;

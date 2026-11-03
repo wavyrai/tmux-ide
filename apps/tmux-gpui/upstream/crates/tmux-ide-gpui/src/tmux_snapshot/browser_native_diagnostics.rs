@@ -17,6 +17,9 @@ pub(super) fn code(error: &NativeError) -> &'static str {
             tmux_controller::Error::Control(_) => "controller-control",
             tmux_controller::Error::Session(error) => session(error),
             tmux_controller::Error::Stopped(error) => session(error),
+            tmux_controller::Error::Topology(herdr_client::tmux_topology::Error::Unissued) => {
+                "controller-topology-panes-changed"
+            }
             tmux_controller::Error::Topology(_) => "controller-topology",
             tmux_controller::Error::Json(_) => "controller-json",
             tmux_controller::Error::Transport(error) => transport(error),

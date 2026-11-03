@@ -17,6 +17,7 @@ mod browser_native_preview;
 mod browser_native_surfaces;
 mod browser_native_transition;
 mod browser_state;
+mod browser_tick;
 mod browser_toolbar;
 mod browser_ui;
 mod chrome;
@@ -49,6 +50,7 @@ mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
+mod reconnect_retry;
 mod renderer_probe;
 mod roster_counts;
 mod selection;
@@ -323,32 +325,7 @@ fn show_owned(
                                 cx.background_executor()
                                     .timer(std::time::Duration::from_millis(16))
                                     .await;
-                                if entity
-                                    .update(cx, |view, cx| {
-                                        if let Some(sender) = &view.browser_commands {
-                                            view.presence.flush(sender);
-                                        }
-                                        view.flush_resize_gesture(cx);
-                                        view.flush_pending_input(cx);
-                                        renderer_probe::runtime::tick();
-                                        if !view.terminal_input_ready()
-                                            || view.selection.is_some()
-                                            || view.divider.is_some()
-                                        {
-                                            view.fit_settle.clear();
-                                        } else if view.fit_settle.due(std::time::Instant::now()) {
-                                            cx.notify();
-                                        }
-                                        view.flush_attention();
-                                        view.flush_palette(cx);
-                                        view.flush_kitty_graphics(cx);
-                                        view.tick_agent_indicators(cx);
-                                        if view.chrome.take_policy_change() {
-                                            cx.notify();
-                                        }
-                                    })
-                                    .is_err()
-                                {
+                                if entity.update(cx, |view, cx| view.browser_tick(cx)).is_err() {
                                     break;
                                 }
                                 let update =
@@ -558,6 +535,10 @@ impl Render for SnapshotView {
         if self.browsing {
             return self.browser_render(window, cx);
         }
+        // The preview windows have no browsing shell to install Bezel's theme,
+        // and the terminal reads it before drawing anything (#713).
+        let theme = self.theme();
+        design::prepare(&theme, false, cx);
         self.terminal_render(window, cx)
     }
 }
@@ -967,3 +948,7 @@ mod fit_test_support;
 
 #[cfg(feature = "integration-test")]
 pub(crate) mod journey_probe;
+
+#[cfg(test)]
+#[path = "tmux_snapshot/preview_window_tests.rs"]
+mod preview_window_tests;

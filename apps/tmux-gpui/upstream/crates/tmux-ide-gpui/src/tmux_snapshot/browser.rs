@@ -129,6 +129,11 @@ pub(super) struct State {
     pub request: u64,
     pub input_ready: bool,
     pub retained_preview: bool,
+    /// `Some(attempt)` while the stream is being re-established; the last frame
+    /// stays on screen, read-only, with the attempt count and a Retry button.
+    pub reconnect_attempt: Option<u32>,
+    /// Panes whose source the daemon closed; their headers say so (#701, #702).
+    pub unavailable_panes: Vec<String>,
     pub native_frame_scope: Option<super::browser_native_preview::Route>,
     pub native_retained_preview: Option<super::browser_native_preview::Route>,
     pub history_offset: u32,
@@ -245,6 +250,25 @@ pub(super) type Mailbox = Arc<Mutex<Option<Option<State>>>>;
 pub(super) struct Bridge {
     pub mailbox: Mailbox,
     pub commands: mpsc::SyncSender<Command>,
+    /// Whether a lost stream keeps its last frame on screen while the catalog
+    /// reconnects (#702). Only the native catalog ends such a hold. Read by
+    /// tests that pin which entry point holds frames.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub holds_frames: bool,
+}
+impl Bridge {
+    /// `holds_frames` is the hold the terminal loop actually runs with.
+    pub(super) fn new(
+        mailbox: Mailbox,
+        commands: mpsc::SyncSender<Command>,
+        holds_frames: bool,
+    ) -> Self {
+        Self {
+            mailbox,
+            commands,
+            holds_frames,
+        }
+    }
 }
 #[derive(Default)]
 struct Reader {
@@ -544,6 +568,8 @@ impl Reader {
             request: p.request,
             input_ready: p.input_ready,
             retained_preview,
+            reconnect_attempt: None,
+            unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
             native_retained_preview: p.native_retained_preview,
             history_offset: p.history_offset,

@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { createBrowserPane, resolveTerminalBrowser, validateBrowserOpen } from "./open-browser.ts";
+import {
+  NO_NATIVE_CONTROLS_NOTICE,
+  createBrowserPane,
+  nativeControlsNotice,
+  openBrowser,
+  resolveTerminalBrowser,
+  validateBrowserOpen,
+} from "./open-browser.ts";
 
 describe("browser pane creation", () => {
   function fixture(options = {}, url: string | undefined = "https://example.com") {
@@ -149,6 +156,105 @@ describe("managed native browser discovery", () => {
       expect(() => resolveTerminalBrowser(env, "darwin")).toThrow("not installed");
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("native controls notice", () => {
+  const bundled =
+    "/Users/u/Library/Application Support/tmux-ide/native-alpha/TmuxIDE.app/Contents/Resources/browser/terminal-browser";
+  const standalone = "/Users/u/.local/share/terminal-browser/app/bin/terminal-browser";
+  const control = '{"version":1,"pid":7,"socket":"/tmp/b.sock","instance":"i","pane":"%9"}';
+  // The pane's @tmux_ide_browser_control after each read (the last value repeats),
+  // on a fake clock that only sleeps move.
+  function probe(values: string[], options: { throws?: boolean } = {}) {
+    const reads: string[][] = [];
+    let clock = 0;
+    const run = (args: readonly string[]) => {
+      reads.push([...args]);
+      if (options.throws) throw new Error("can't find pane: %9");
+      return `${values[Math.min(reads.length - 1, values.length - 1)]}\n`;
+    };
+    const wait = {
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    return { run, wait, reads, elapsed: () => clock };
+  }
+
+  it("says nothing once the browser publishes its controls", async () => {
+    const p = probe(["", "", control]);
+    expect(await nativeControlsNotice(p.run, "%9", standalone, p.wait)).toBeNull();
+    expect(p.reads[0]).toEqual([
+      "display-message",
+      "-p",
+      "-t",
+      "%9",
+      "#{@tmux_ide_browser_control}",
+    ]);
+    expect(p.reads).toHaveLength(3);
+  });
+
+  it("prints the notice when a standalone browser never publishes controls", async () => {
+    const p = probe([""]);
+    expect(await nativeControlsNotice(p.run, "%9", standalone, p.wait)).toBe(
+      NO_NATIVE_CONTROLS_NOTICE,
+    );
+    expect(p.elapsed()).toBeGreaterThanOrEqual(2000);
+    expect(p.elapsed()).toBeLessThan(2250);
+  });
+
+  it("never reports a browser bundled in the native app, even a slow one", async () => {
+    const p = probe([""]);
+    expect(await nativeControlsNotice(p.run, "%9", bundled, p.wait)).toBeNull();
+    expect(p.reads).toHaveLength(0);
+    expect(p.elapsed()).toBe(0);
+  });
+
+  it("bounds the wait by wall-clock time when tmux answers slowly", async () => {
+    // Each read blocks for 400 ms, as on a loaded machine; the real clock and sleep.
+    const slow = () => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+      return "\n";
+    };
+    const started = Date.now();
+    expect(await nativeControlsNotice(slow, "%9", standalone)).toBe(NO_NATIVE_CONTROLS_NOTICE);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("names the native app in one line", () => {
+    expect(NO_NATIVE_CONTROLS_NOTICE).not.toContain("\n");
+    expect(NO_NATIVE_CONTROLS_NOTICE).toMatch(/native app/u);
+    expect(NO_NATIVE_CONTROLS_NOTICE).toMatch(/back\/forward\/reload/u);
+  });
+
+  it("stays quiet about controls when the pane is already gone", async () => {
+    const p = probe([""], { throws: true });
+    expect(await nativeControlsNotice(p.run, "%9", standalone, p.wait)).toBeNull();
+  });
+
+  it("openBrowser prints the notice once for a standalone browser and returns the pane", async () => {
+    for (const [executable, expected] of [
+      [standalone, [NO_NATIVE_CONTROLS_NOTICE]],
+      [bundled, []],
+    ] as const) {
+      const p = probe([""]);
+      const lines: string[] = [];
+      const pane = { pane: "%9", session: "$2", window: "@4", status: "created" as const };
+      const result = await openBrowser(
+        "https://example.com",
+        {},
+        {
+          executable: () => executable,
+          create: () => ({ result: pane, run: p.run }),
+          notice: (line) => lines.push(line),
+          wait: p.wait,
+        },
+      );
+      expect(result).toEqual(pane);
+      expect(lines).toEqual(expected);
     }
   });
 });

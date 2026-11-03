@@ -53,6 +53,8 @@ pub struct Update {
     pub graphics_placements: BTreeMap<String, Arc<tmux_native_session::PaneGraphics>>,
     pub cell_pixels: bool,
     pub precise_cell_pixels: bool,
+    /// Panes whose source the daemon closed: their last frame stays, read-only.
+    pub unavailable: std::collections::BTreeSet<String>,
 }
 pub struct Controller {
     session: NativeSession,
@@ -457,8 +459,14 @@ impl Controller {
             paint: window.paint.clone(),
             coherent: window.coherent,
         });
-        self.actionable = !updates.materializing.contains(&self.selected)
-            && self.pending_selection.is_none()
+        self.actionable = selected_live(
+            [
+                &updates.materializing,
+                &updates.reseeding,
+                &updates.unavailable,
+            ],
+            &self.selected,
+        ) && self.pending_selection.is_none()
             && window.as_ref().is_some_and(|window| window.coherent);
         self.flush_viewport(now)?;
         Ok(Update {
@@ -476,8 +484,15 @@ impl Controller {
             graphics_placements: updates.graphics_placements,
             cell_pixels: updates.cell_pixels,
             precise_cell_pixels: updates.precise_cell_pixels,
+            unavailable: updates.unavailable,
         })
     }
+}
+/// Input goes only to a pane whose last commit is current: not one materializing
+/// history, waiting for a reseed after a NACK, or closed by the daemon.
+/// The sets are the session's materializing, reseeding and unavailable panes.
+fn selected_live(sets: [&std::collections::BTreeSet<String>; 3], selected: &str) -> bool {
+    sets.iter().all(|set| !set.contains(selected))
 }
 #[cfg(test)]
 #[path = "tmux_controller_tests.rs"]

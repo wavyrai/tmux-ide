@@ -882,7 +882,7 @@ try {
           exitCode: 2,
         });
       const { openBrowser } = await import("../packages/daemon/src/open-browser.ts");
-      const result = openBrowser(positionals[1], {
+      const result = await openBrowser(positionals[1], {
         session: values.session,
         pane: values.pane,
         split: values.split,

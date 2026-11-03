@@ -121,8 +121,11 @@ impl Presentation {
         let mut regions = Vec::new();
         for (index, pane) in layout.panes.iter().enumerate() {
             let id = pane.pane.as_ref().ok_or(Error::Identity)?;
-            if !seen.insert(id) || !topology.issued.contains(id) {
+            if !seen.insert(id) {
                 return Err(Error::Identity);
+            }
+            if !topology.issued.contains(id) {
+                return Err(Error::Unissued);
             }
             if pane.left + pane.width > layout.cols || pane.top + pane.height > layout.rows {
                 return Err(Error::Bounds);

@@ -9,6 +9,8 @@ pub(super) struct Gate {
     last: Option<FleetCatalog>,
     dirty: bool,
     failure: Option<herdr_client::tmux_daemon::Error>,
+    /// A push notification arrived since the agents last asked.
+    notified: bool,
 }
 enum Notice {
     Changed(FleetCatalog),
@@ -67,7 +69,10 @@ impl Gate {
             .flatten()
         {
             match notice {
-                Ok(()) => self.dirty = true,
+                Ok(()) => {
+                    self.dirty = true;
+                    self.notified = true;
+                }
                 Err(error) => {
                     self.watch.take();
                     self.reader.take();
@@ -171,6 +176,20 @@ impl Owner {
             owned.catalog.last.clone()
         })
     }
+    /// Whether the selected catalog's daemon pushes fleet changes (registered
+    /// servers, sessions, agents), and whether one arrived since the last call.
+    pub(in crate::tmux_snapshot) fn catalog_push(&self) -> Result<(bool, bool), Error> {
+        let mut owned = self
+            .0
+            .lock()
+            .map_err(|_| Error::Invalid("native owner closed"))?;
+        let catalog = &mut owned.catalog;
+        let push = catalog
+            .watch
+            .as_ref()
+            .is_some_and(CatalogWatchWorker::fleet_push);
+        Ok((push, std::mem::take(&mut catalog.notified)))
+    }
     fn poll_catalog(&self, visible: bool, eligible: bool) -> Result<Option<Notice>, Error> {
         let mut owned = self
             .0
@@ -188,10 +207,13 @@ impl Local {
         let home = self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live;
         let visible = self.foreground
             && (home || self.workspace_catalog_observing() || self.picker_observing());
-        match self
+        let notice = self
             .sources
-            .poll_catalog(visible, visible && self.stage.is_none())?
-        {
+            .poll_catalog(visible, visible && self.stage.is_none())?;
+        // With fleet push, agent rows refresh on the daemon's notice, not a timer.
+        let (push, notified) = self.sources.catalog_push()?;
+        self.agents.pushed(push, notified, &self.machine_id);
+        match notice {
             Some(Notice::Changed(snapshot)) if home => self.receive_catalog(snapshot, false),
             Some(Notice::Changed(snapshot)) => self.picker_catalog(&snapshot),
             Some(Notice::Failed(_)) if !home => self.workspace_catalog_failed(),

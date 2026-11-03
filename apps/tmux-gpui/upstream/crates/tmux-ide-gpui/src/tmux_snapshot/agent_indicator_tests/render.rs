@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
-use super::mount::{frame, mount, observe_overlay, painted, slot_colors};
+use super::mount::{frame, mount, observe_overlay, painted, slot_bounds, slot_colors};
 use crate::tmux_snapshot::{SnapshotView, browser};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
@@ -56,6 +56,12 @@ fn open(cx: &mut TestAppContext) -> (Entity<SnapshotView>, &mut VisualTestContex
             view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":5,"phase":"live","rows":[
                 {"key":"busy","sessionId":"s","paneId":"p1","name":"Busy","sessionLabel":"Session","status":"WORKING","attention":false,"available":true}],
                 "observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
+            // Home shows an agent on its session's row (#705): the fleet has
+            // the session the agent runs in.
+            view.browser_state.fleet = Some(serde_json::from_value(serde_json::json!({
+                "omittedGroups":0,"groups":[{"id":"local","label":"Local","state":"ready",
+                "conflict":false,"omittedSessions":0,"sessions":[{"id":"local-s","name":"Session",
+                "paneCount":1,"sessionId":"s"}]}]})).unwrap());
             view
         });
         let content = mount(snapshot.clone(), window, cx);
@@ -193,4 +199,18 @@ fn a_spinner_tick_invalidates_and_paints_the_overlay(cx: &mut TestAppContext) {
             "tick {tick} did not paint frame {frame}: {painted:?}"
         );
     }
+}
+#[gpui::test]
+fn the_spinner_paints_inside_its_badge(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    let badge = cx.debug_bounds("agent-badge").unwrap();
+    let slots = cx.update(|_, cx| slot_bounds(snapshot.read(cx)));
+    assert_eq!(slots.len(), 1, "one working agent reserves one slot");
+    let slot = slots[0];
+    // The frame sits in the badge's row, before its label, not a line below.
+    assert!(
+        slot.top() >= badge.top() && slot.bottom() <= badge.bottom(),
+        "slot {slot:?} is outside badge {badge:?}"
+    );
+    assert!(slot.left() >= badge.left() && slot.right() <= badge.right());
 }

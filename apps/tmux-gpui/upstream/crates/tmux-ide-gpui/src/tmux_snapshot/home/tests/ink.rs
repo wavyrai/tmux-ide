@@ -130,7 +130,13 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         view.browser_state.fleet.as_mut().unwrap().groups[0].sessions[0].active = true;
         // A default server among several, for its marker's ink.
         view.browser_state.selected_server = Some(server_on(&view, 0, 0));
-        view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":4,"phase":"live","rows":[{"key":"s\u{0}a","sessionId":"s","paneId":"p","name":"Agent","sessionLabel":"Main","status":"WORKING","attention":false,"available":true}],"observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
+        view.browser_state.home_agents = Some(serde_json::from_value(serde_json::json!({"revision":4,"phase":"live","rows":[{"key":"s\u{0}a","sessionId":"s","paneId":"p","name":"Agent","sessionLabel":"Main","status":"WORKING","attention":false,"available":true},{"key":"s\u{0}b","sessionId":"s","paneId":"q","name":"Waiting","sessionLabel":"Main","status":"BLOCKED","attention":true,"available":true}],"observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap());
+        // Option A's row (#705): its agent, its windows and when it was
+        // last active, each in its own ink.
+        let session = &mut view.browser_state.fleet.as_mut().unwrap().groups[0].sessions[0];
+        session.session_id = Some("s".into());
+        session.window_count = Some(2);
+        session.last_activity = Some(0);
         view
     });
     receiver.try_iter().for_each(drop);
@@ -165,14 +171,14 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         let mut failures = Vec::new();
         for key in [
             "home-text",
-            "home-summary",
-            "home-agent-counts",
-            "home-agent-context-0",
-            "home-agent-action-0",
-            "home-filter-hints",
+            "home-agents-attention",
+            "fleet-session-agent-0-0",
+            "fleet-session-status-0-0",
+            "fleet-session-active-0-0",
+            "fleet-machine-label-0",
             "fleet-machine-guidance-3",
-            // The shared quiet buttons, painted from Home's palette. Theme and
-            // Refresh are glyphs only, so their icons carry the probe.
+            // The shared quiet buttons, painted from Home's palette, with
+            // their words (#705) and their glyphs.
             "home-browse",
             "home-browse-key",
             "home-nav-count-0",
@@ -183,6 +189,8 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             "fleet-server-default-0-0",
             "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
+            "control-home-theme",
+            "control-tmux-home-refresh",
             "control-home-new-local-session",
         ] {
             let Some(&text) = probes.get(key) else {

@@ -180,6 +180,12 @@ impl Local {
             id: stable_key,
             name: session.session_name.clone(),
             pane_count: u64::from(session.pane_count),
+            window_count: session.window_count.map(u64::from),
+            last_activity: session.last_activity,
+            favicon: session
+                .favicon
+                .as_ref()
+                .and_then(|f| fleet::favicon(&f.mime, &f.data)),
             session_id: Some(session.live_session_id.clone()),
             selection: Some(token.into()),
         });

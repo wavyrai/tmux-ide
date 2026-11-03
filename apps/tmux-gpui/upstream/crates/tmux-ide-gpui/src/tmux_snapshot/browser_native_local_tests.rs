@@ -808,3 +808,30 @@ mod agent_live;
 
 #[path = "browser_native_local_agent_picker_live_tests.rs"]
 mod picker_live;
+
+/// Review of 9330d3a1: the native catalog keeps #702's held frame, and the
+/// legacy pipe does not (it never ends a hold). Both through their real entry
+/// points; no daemon is needed to build them.
+#[test]
+fn the_native_catalog_holds_frames_and_the_legacy_pipe_does_not() {
+    let root = std::env::temp_dir().join(format!("tmux-ide-hold-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let (bridge, owner) = start(root.join("daemon.json"), Default::default()).unwrap();
+    assert!(
+        bridge.holds_frames,
+        "the native catalog would drop #702's held frame"
+    );
+    let _ = owner.shutdown();
+    // `start_io` is the legacy pipe's entry point (`start` and `start_journey` wrap it).
+    let pipe = start_io(
+        Default::default(),
+        || BufReader::new(std::io::empty()),
+        std::io::sink,
+        false,
+    );
+    assert!(
+        !pipe.holds_frames,
+        "the legacy pipe would hold frames forever"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

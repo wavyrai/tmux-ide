@@ -22,6 +22,7 @@ import {
   TmuxServerScopeSchemaZ,
   TmuxServersResourceSchemaZ,
   TmuxServerSessionsResourceSchemaZ,
+  TmuxServerSessionsResourceV2SchemaZ,
   WorkspaceMultiplexerMutationRequestSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspaceSessionCreateArgumentsSchemaZ,
@@ -32,6 +33,7 @@ import {
   TmuxServerScopeError,
 } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
+import { createSessionFaviconResolver, type SessionFavicon } from "../lib/session-favicon.ts";
 import { WorkspaceMultiplexerError } from "../lib/workspace-multiplexer-verbs.ts";
 import { WorkspacePaneCreationError } from "../lib/workspace-pane-creation.ts";
 import { ownerBearerMatches } from "./owner-authority.ts";
@@ -41,7 +43,11 @@ import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-in
 export interface TmuxServerRoutesOptions {
   readonly ownerToken: string | null;
   readonly owners: TmuxServerOwners<NativeTmuxServerOwner>;
+  /** Project favicon lookup for the version 2 sessions resource. */
+  readonly resolveSessionFavicon?: (sessionPath: string) => Promise<SessionFavicon | null>;
 }
+/** Total raw favicon bytes one version 2 sessions response may carry. */
+export const SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES = 512 * 1024;
 const registrationSchema = TmuxServerRegistrationSchemaZ.omit({ serverId: true }).strict();
 const workspaceSchema = z
   .string()
@@ -94,6 +100,7 @@ function failure(c: Context, error: unknown): Response {
 /** Owner capability is mandatory even when the ordinary local HTTP surface is open. */
 export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOptions): void {
   const base = TMUX_SERVERS_API_PATH;
+  const resolveSessionFavicon = options.resolveSessionFavicon ?? createSessionFaviconResolver();
   const authorize = async (c: Context, next: () => Promise<void>) => {
     c.header("Cache-Control", "no-store");
     if (!ownerBearerMatches(c.req.header("Authorization"), options.ownerToken))
@@ -271,19 +278,56 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     `${scoped}/sessions`,
     route(async (c) => {
       const server = scope(c);
+      const v2 = c.req.query("version") === "2";
+      const { rows, favicons } = await options.owners.withOwner(server, async (owner) => {
+        const sessions = await owner.catalog();
+        const workspaces = owner.workspaceRegistry.list();
+        const rows = sessions.map((session) => {
+          const aliases = workspaces.filter(
+            (workspace) => workspace.sessionName === session.sessionName,
+          );
+          return { session, workspaceName: aliases.length === 1 ? aliases[0]!.name : null };
+        });
+        const favicons = v2
+          ? await Promise.all(
+              sessions.map((session) =>
+                resolveSessionFavicon(session.sessionPath).catch(() => null),
+              ),
+            )
+          : [];
+        return { rows, favicons };
+      });
+      if (!v2)
+        return c.json(
+          TmuxServerSessionsResourceSchemaZ.parse({
+            version: 1,
+            server,
+            sessions: rows.map(({ session, workspaceName }) => ({
+              liveSessionId: session.liveSessionId,
+              sessionName: session.sessionName,
+              paneCount: session.paneCount,
+              workspaceName,
+            })),
+          }),
+        );
+      let budget = SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES;
       return c.json(
-        TmuxServerSessionsResourceSchemaZ.parse({
-          version: 1,
+        TmuxServerSessionsResourceV2SchemaZ.parse({
+          version: 2,
           server,
-          sessions: await options.owners.withOwner(server, async (owner) => {
-            const sessions = await owner.catalog();
-            const workspaces = owner.workspaceRegistry.list();
-            return sessions.map((session) => {
-              const aliases = workspaces.filter(
-                (workspace) => workspace.sessionName === session.sessionName,
-              );
-              return { ...session, workspaceName: aliases.length === 1 ? aliases[0]!.name : null };
-            });
+          sessions: rows.map(({ session, workspaceName }, index) => {
+            const found = favicons[index] ?? null;
+            const favicon = found && found.size <= budget ? found : null;
+            if (favicon) budget -= favicon.size;
+            return {
+              liveSessionId: session.liveSessionId,
+              sessionName: session.sessionName,
+              workspaceName,
+              paneCount: session.paneCount,
+              windowCount: session.windowCount,
+              lastActivity: session.lastActivity,
+              favicon: favicon ? { mime: favicon.mime, data: favicon.data } : null,
+            };
           }),
         }),
       );

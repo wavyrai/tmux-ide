@@ -2,14 +2,7 @@
 use super::*;
 use browser::fleet::PreferencePhase;
 impl SnapshotView {
-    fn preference_ready(
-        &self,
-        request: u64,
-        revision: u64,
-        action: &str,
-        enabled: bool,
-        cx: &App,
-    ) -> bool {
+    fn preference_ready(&self, request: u64, revision: u64, action: &str, enabled: bool) -> bool {
         self.browser_request == request
             && self.browser_state.request == request
             && matches!(
@@ -25,7 +18,6 @@ impl SnapshotView {
             && self.home_filter.as_ref().is_some_and(|c| {
                 c.preference_queued
                     != Some((request, revision, self.browser_state.presence_revision))
-                    && !c.search.read(cx).is_composing()
             })
             && self
                 .browser_state
@@ -41,7 +33,7 @@ impl SnapshotView {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.preference_ready(request, revision, action, enabled, cx) {
+        if !self.preference_ready(request, revision, action, enabled) {
             return;
         }
         let queued = self.browser_commands.as_ref().is_some_and(|sender| {
@@ -82,7 +74,7 @@ impl SnapshotView {
         let action = action.map(str::to_owned);
         let enabled = action
             .as_ref()
-            .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value, cx));
+            .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value));
         let palette = self.home_palette();
         // Bezel's button owns the disabled state: no tab stop, no activation,
         // its faded paint. The glyph keeps Home's inked muted.

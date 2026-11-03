@@ -40,6 +40,9 @@ pub(super) enum TabObservation<'a> {
 struct Slot {
     context: Context,
     observed: Observed,
+    /// The observation batch `observed` came from. Its rows keep their keys
+    /// until a different observation replaces it (card #716).
+    epoch: Option<uuid::Uuid>,
 }
 #[derive(Default)]
 pub(super) struct Gate {
@@ -69,6 +72,9 @@ pub(super) struct Gate {
     enabled: bool,
     cycle: bool,
     due: Option<Instant>,
+    /// Every observed session is on a daemon that pushes agent changes, so no
+    /// periodic re-read is scheduled after a cycle.
+    pushed: bool,
 }
 impl Gate {
     pub(super) fn tab_observation(
@@ -146,6 +152,26 @@ impl Gate {
     pub(super) fn busy(&self) -> bool {
         self.pool.busy()
     }
+    /// The selected catalog's push state. Push replaces the 5 s re-read only
+    /// when every observed session is on that daemon; a notice re-reads now.
+    pub(super) fn pushed(&mut self, push: bool, notified: bool, machine: &str) {
+        self.pushed = push && self.contexts.iter().all(|c| c.machine == machine);
+        if notified && self.enabled && !self.cycle && self.due.is_none() {
+            self.due = Some(Instant::now());
+        }
+        if !self.pushed
+            && self.enabled
+            && !self.cycle
+            && self.due.is_none()
+            && self
+                .contexts
+                .iter()
+                .any(|c| c.workspace.is_some() && c.readable)
+        {
+            // Push was lost: return to the periodic re-read.
+            self.due = Some(Instant::now() + Duration::from_secs(5));
+        }
+    }
     pub(super) fn wait(&self) -> Option<Duration> {
         self.due
             .map(|due| due.saturating_duration_since(Instant::now()))
@@ -204,8 +230,44 @@ impl Gate {
                     Observed::Failed
                 },
                 context,
+                epoch: None,
             })
             .collect();
+    }
+    /// A re-read of the same sessions keeps every shown observation until its
+    /// replacement arrives, so rows never blank while they reload (card #716).
+    /// One session's observation from batch `epoch`. The same agents again
+    /// change nothing: no publication, and the rows keep their keys.
+    fn apply(
+        &mut self,
+        key: &str,
+        epoch: uuid::Uuid,
+        result: Result<AgentObservation, herdr_client::tmux_daemon::AgentObservationError>,
+    ) -> bool {
+        if self.epoch != Some(epoch) {
+            return false;
+        }
+        let Some(slot) = self.slots.iter_mut().find(|slot| slot.context.key == key) else {
+            return false;
+        };
+        if let (Observed::Ready(old), Ok(new)) = (&slot.observed, &result)
+            && old == new
+        {
+            return false;
+        }
+        slot.observed = result.map_or(Observed::Failed, Observed::Ready);
+        slot.epoch = Some(epoch);
+        true
+    }
+    fn refresh_slots(&mut self) {
+        for slot in &mut self.slots {
+            if !(slot.context.workspace.is_some() && slot.context.readable) {
+                slot.observed = Observed::Failed;
+                slot.epoch = None;
+            } else if !matches!(slot.observed, Observed::Ready(_)) {
+                slot.observed = Observed::Loading;
+            }
+        }
     }
     fn suspend(&mut self) -> bool {
         if !self.enabled {
@@ -224,27 +286,19 @@ impl Gate {
     fn poll(&mut self, eligible: bool, now: Instant) -> bool {
         let mut changed = false;
         for event in self.pool.poll() {
-            if self.epoch == Some(event.epoch)
-                && let Some(slot) = self
-                    .slots
-                    .iter_mut()
-                    .find(|slot| slot.context.key == event.key)
-            {
-                slot.observed = event.result.map_or(Observed::Failed, Observed::Ready);
-                changed = true;
-            }
+            changed |= self.apply(&event.key, event.epoch, event.result);
         }
         if self.cycle && !self.pool.busy() {
             self.cycle = false;
-            self.due = self
-                .contexts
-                .iter()
-                .any(|c| c.workspace.is_some() && c.readable)
-                .then_some(now + Duration::from_secs(5));
+            self.due = (!self.pushed
+                && self
+                    .contexts
+                    .iter()
+                    .any(|c| c.workspace.is_some() && c.readable))
+            .then_some(now + Duration::from_secs(5));
         }
         if eligible && !self.pool.busy() && self.due.is_some_and(|due| now >= due) {
-            self.published.clear();
-            self.prepare_slots();
+            self.refresh_slots();
             let requests = self
                 .contexts
                 .iter()
@@ -292,7 +346,7 @@ impl Gate {
         for slot in &self.slots {
             if let Observed::Ready(result) = &slot.observed {
                 for agent in &result.agents {
-                    if self.row_key(&slot.context, agent) == key && available(agent) {
+                    if self.row_key(slot, agent) == key && available(agent) {
                         return Some((slot.context.clone(), agent.clone()));
                     }
                 }
@@ -300,11 +354,11 @@ impl Gate {
         }
         None
     }
-    fn row_key(&self, context: &Context, agent: &ObservedAgent) -> String {
+    fn row_key(&self, slot: &Slot, agent: &ObservedAgent) -> String {
         format!(
             "{}\0{}\0{}",
-            self.epoch.map_or_else(String::new, |e| e.to_string()),
-            context.key,
+            slot.epoch.map_or_else(String::new, |e| e.to_string()),
+            slot.context.key,
             agent.id
         )
     }

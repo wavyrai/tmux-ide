@@ -32,6 +32,9 @@ fn created() -> (CreatedSession, FleetCatalog) {
                 session_name: "Fixture".into(),
                 workspace_name: None,
                 pane_count: 1,
+                window_count: None,
+                last_activity: None,
+                favicon: None,
             }],
         }],
     };

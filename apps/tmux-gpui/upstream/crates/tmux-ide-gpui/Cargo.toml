@@ -35,9 +35,10 @@ tracing.workspace              = true
 unicode-width.workspace        = true
 ureq.workspace                 = true
 uuid.workspace                 = true
+usvg.workspace                 = true
+base64.workspace               = true
 
 [dev-dependencies]
-base64.workspace = true
 tungstenite.workspace = true
 gpui = { features = ["test-support"], workspace = true }
 

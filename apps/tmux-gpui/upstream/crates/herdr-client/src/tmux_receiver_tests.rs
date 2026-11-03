@@ -159,3 +159,22 @@ mod binary;
 
 #[path = "tmux_receiver_projection_tests.rs"]
 mod projection;
+
+/// Review round 1, item 1 (B4): errors that cannot name a flight, or that are
+/// connection-level, never become a NACK, even with a flight recorded.
+#[test]
+fn only_pane_local_errors_become_a_nack() {
+    let mut r = receiver();
+    r.begin(envelope(0).to_string().as_bytes()).unwrap();
+    for error in [
+        Error::Retired,
+        Error::Identity,
+        Error::Overlap,
+        Error::Envelope(serde_json::from_str::<Value>("{").unwrap_err()),
+    ] {
+        let mut r = receiver();
+        r.begin(envelope(0).to_string().as_bytes()).unwrap();
+        assert!(r.reseed(&error).is_none(), "{error}");
+    }
+    assert!(r.reseed(&Error::Ordering).is_some());
+}

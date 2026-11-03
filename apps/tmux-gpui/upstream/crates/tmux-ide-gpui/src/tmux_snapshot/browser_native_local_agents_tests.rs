@@ -44,6 +44,7 @@ pub(super) fn ready() -> Gate {
     let context = context();
     gate.configure(vec![context.clone()], 1, false, 0, Instant::now());
     gate.epoch = Some(uuid::Uuid::new_v4());
+    gate.slots[0].epoch = gate.epoch;
     gate.slots[0].observed = Observed::Ready(AgentObservation {
         scope: context.scope,
         live_session_id: context.live,
@@ -75,7 +76,8 @@ fn observed_rows_keep_context_and_private_revision_bound_selection() {
             .is_none()
     );
     assert!(gate.resolve("unknown", updated.revision).is_none());
-    gate.epoch = Some(uuid::Uuid::new_v4());
+    // A different observation replaces this one: its old keys stop resolving.
+    gate.slots[0].epoch = Some(uuid::Uuid::new_v4());
     let refreshed = gate.publication();
     assert!(gate.resolve(&roster.rows[0].key, roster.revision).is_none());
     assert!(
@@ -170,6 +172,9 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
                 session_name: "Same session".into(),
                 workspace_name: c.workspace.clone(),
                 pane_count: 1,
+                window_count: None,
+                last_activity: None,
+                favicon: None,
             }],
         }],
     };
@@ -205,10 +210,12 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
         Slot {
             context: a,
             observed: Observed::Ready(result.clone()),
+            epoch: None,
         },
         Slot {
             context: b,
             observed: Observed::Ready(result),
+            epoch: None,
         },
     ];
     let roster = gate.publication();
@@ -292,4 +299,110 @@ fn filtering_precedes_row_limit_and_omitted_rows_lose_selection_rights() {
     assert!(gate.resolve(&key, filtered.revision).is_none());
     assert!(gate.resolve(&key, restored.revision).is_some());
     assert_eq!(gate.published.len(), 1);
+}
+
+/// Card #703: on a daemon that pushes agent changes the 5 s re-read stops, and
+/// the daemon's notice re-reads at once. Any session elsewhere keeps the timer.
+#[test]
+fn a_pushing_daemon_replaces_the_agent_timer_with_its_notices() {
+    let finish_cycle = |gate: &mut Gate| {
+        gate.cycle = true;
+        gate.due = None;
+        gate.poll(false, Instant::now());
+    };
+    let mut gate = Gate::default();
+    gate.configure(vec![context()], 1, false, 0, Instant::now());
+    gate.pushed(true, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_none(), "a pushed cycle scheduled a re-read");
+    gate.pushed(true, true, "local");
+    assert!(gate.due.is_some_and(|due| due <= Instant::now()));
+
+    gate.pushed(false, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_some_and(|due| due > Instant::now()));
+
+    let mut remote = context();
+    remote.machine = "remote".into();
+    let mut gate = Gate::default();
+    gate.configure(vec![context(), remote], 2, false, 0, Instant::now());
+    gate.pushed(true, false, "local");
+    finish_cycle(&mut gate);
+    assert!(gate.due.is_some(), "a remote session lost its re-read");
+}
+
+/// Card #716: a re-read keeps the shown rows until each replacement arrives,
+/// and the same agents again neither publish nor re-key; a changed agent does.
+#[test]
+fn a_reread_keeps_rows_and_only_a_change_rekeys() {
+    let mut gate = ready();
+    let shown = gate.publication();
+    let Observed::Ready(observation) = &gate.slots[0].observed else {
+        unreachable!()
+    };
+    let observation = observation.clone();
+    gate.refresh_slots();
+    let reloading = gate.publication();
+    assert_eq!(reloading.rows.len(), 1, "the rows blanked while reloading");
+    assert_eq!(reloading.rows[0].key, shown.rows[0].key);
+    assert!(reloading.phase == home_agents::Phase::Live);
+
+    let key = gate.slots[0].context.key.clone();
+    let next = uuid::Uuid::new_v4();
+    gate.epoch = Some(next);
+    assert!(
+        !gate.apply(&key, next, Ok(observation.clone())),
+        "the same agents published"
+    );
+    let same = gate.publication();
+    assert_eq!(
+        same.rows[0].key, shown.rows[0].key,
+        "the same agents were re-keyed"
+    );
+    assert!(gate.resolve(&shown.rows[0].key, same.revision).is_some());
+
+    let mut blocked = observation.clone();
+    blocked.agents[0].attention = true;
+    assert!(
+        !gate.apply(&key, uuid::Uuid::new_v4(), Ok(blocked.clone())),
+        "an old batch applied"
+    );
+    assert!(gate.apply(&key, next, Ok(blocked)), "a change was dropped");
+    let changed = gate.publication();
+    assert!(changed.rows[0].attention);
+    assert_ne!(changed.rows[0].key, shown.rows[0].key);
+    assert!(gate.resolve(&shown.rows[0].key, changed.revision).is_none());
+}
+
+/// Review round 1, item 1: rows now outlive a re-read, so a re-read that
+/// fails is what retires them. It drops the session's rows and its old keys
+/// stop resolving, so a revoked or unreadable session can't be opened.
+#[test]
+fn a_failed_reread_drops_the_shown_rows_and_their_keys() {
+    let mut gate = ready();
+    let shown = gate.publication();
+    assert_eq!(shown.rows.len(), 1);
+    let (key, live) = (
+        gate.slots[0].context.key.clone(),
+        gate.slots[0].context.live.clone(),
+    );
+    let next = uuid::Uuid::new_v4();
+    gate.epoch = Some(next);
+    gate.refresh_slots();
+    let failure = herdr_client::tmux_daemon::AgentObservationError::Read(
+        herdr_client::tmux_daemon::Error::RecordChanged,
+    );
+    assert!(
+        gate.apply(&key, next, Err(failure)),
+        "a failed re-read changed nothing"
+    );
+    let after = gate.publication();
+    assert!(
+        after.rows.iter().all(|row| row.session_id != live),
+        "a session that failed to read kept its rows"
+    );
+    assert!(
+        gate.resolve(&shown.rows[0].key, after.revision).is_none(),
+        "a row from a failed read can still be opened"
+    );
 }

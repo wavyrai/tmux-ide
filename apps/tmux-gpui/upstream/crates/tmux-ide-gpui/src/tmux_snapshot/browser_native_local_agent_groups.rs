@@ -12,7 +12,7 @@ impl Gate {
                 continue;
             };
             for agent in &result.agents {
-                let key = self.row_key(&slot.context, agent);
+                let key = self.row_key(slot, agent);
                 if !retained.contains(key.as_str()) {
                     continue;
                 }

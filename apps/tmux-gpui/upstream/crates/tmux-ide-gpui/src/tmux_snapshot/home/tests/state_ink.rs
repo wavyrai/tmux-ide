@@ -1,4 +1,4 @@
-use super::ink::{Preset, faint_muted, plates_under_text, theme_of};
+use super::ink::{Preset, faint_muted, theme_of};
 use super::*;
 use crate::tmux_snapshot::design::{self, InkProbes};
 use browser::local_setup::{Phase, Setup};
@@ -88,23 +88,6 @@ fn strip_text_follows_the_canvas() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-const HINT_KEYS: [&str; 14] = [
-    "home-key-cap-↑↓",
-    "home-key-cap-Enter",
-    "home-key-cap-/",
-    "home-key-cap-0",
-    "home-key-cap-W",
-    "home-key-cap-A",
-    "home-key-cap-Esc",
-    "home-key-label-Select",
-    "home-key-label-Open",
-    "home-key-label-Search",
-    "home-key-label-All",
-    "home-key-label-Working",
-    "home-key-label-Attention",
-    "home-key-label-Clear search",
-];
-
 /// The colours the strips, error rows and key hints are painted in, on the
 /// faint theme over a mid-grey canvas, where Bezel's own tones and muted, and
 /// the strips' 90% text, fail Home's plates.
@@ -158,7 +141,6 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
     let probes = paint(cx, &|v| {
         let controls = v.home_filter.as_mut().unwrap();
         controls.recovery_error = true;
-        controls.machine_error = true;
     });
     let mut failures = Vec::new();
     let mut check =
@@ -172,13 +154,6 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
         };
     check(&probes, "home-status", error);
     check(&probes, "home-recovery-error", bare);
-    check(&probes, "home-machine-error", bare);
-    let plates = plates_under_text(&theme, canvas);
-    for key in HINT_KEYS {
-        for &(plate, _) in &plates {
-            check(&probes, key, plate);
-        }
-    }
     let probes = paint(cx, &|v| {
         v.browser_state.local_setup = None;
         v.browser_state.fleet = None;

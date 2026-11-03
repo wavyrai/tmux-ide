@@ -62,6 +62,15 @@ pub(in crate::tmux_snapshot) struct Session {
     pub id: String,
     pub name: String,
     pub pane_count: u64,
+    /// The session's windows, when the daemon reports them (#705).
+    #[serde(default)]
+    pub window_count: Option<u64>,
+    /// tmux's last activity on the session, in epoch seconds.
+    #[serde(default)]
+    pub last_activity: Option<i64>,
+    /// The project's favicon, decoded once when the catalog arrives.
+    #[serde(default, deserialize_with = "favicon_field")]
+    pub favicon: Option<std::sync::Arc<gpui::Image>>,
     pub session_id: Option<String>,
     pub selection: Option<String>,
 }
@@ -254,3 +263,52 @@ impl Group {
 #[cfg(test)]
 #[path = "browser_fleet/preferences_tests.rs"]
 mod preferences_tests;
+
+#[path = "browser_fleet/favicon_check.rs"]
+mod favicon_check;
+
+/// The largest favicon Home decodes, the daemon's own cap (#705).
+pub(in crate::tmux_snapshot) const FAVICON_MAX: usize = 32 * 1024;
+
+/// A daemon favicon as an image, or `None` for an unknown type, bad base64,
+/// a file over [`FAVICON_MAX`], or one its header shows too large or (an SVG)
+/// referring outside itself; Home then shows its terminal glyph.
+pub(in crate::tmux_snapshot) fn favicon(
+    mime: &str,
+    data: &str,
+) -> Option<std::sync::Arc<gpui::Image>> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let format = match mime {
+        "image/png" => gpui::ImageFormat::Png,
+        "image/svg+xml" => gpui::ImageFormat::Svg,
+        "image/x-icon" => gpui::ImageFormat::Ico,
+        "image/jpeg" => gpui::ImageFormat::Jpeg,
+        "image/webp" => gpui::ImageFormat::Webp,
+        "image/gif" => gpui::ImageFormat::Gif,
+        _ => return None,
+    };
+    if data.len() > FAVICON_MAX.div_ceil(3) * 4 {
+        return None;
+    }
+    let bytes = STANDARD.decode(data).ok()?;
+    if bytes.is_empty() || bytes.len() > FAVICON_MAX {
+        return None;
+    }
+    // Judge the declared size and, for SVG, its references before any decode (#719).
+    if !favicon_check::admissible(format, &bytes) {
+        return None;
+    }
+    Some(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
+}
+
+fn favicon_field<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<std::sync::Arc<gpui::Image>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wire {
+        mime: String,
+        data: String,
+    }
+    Ok(Option::<Wire>::deserialize(deserializer)?.and_then(|w| favicon(&w.mime, &w.data)))
+}

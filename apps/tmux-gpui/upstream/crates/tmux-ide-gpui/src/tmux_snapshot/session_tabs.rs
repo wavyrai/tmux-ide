@@ -129,7 +129,7 @@ pub(super) fn shortcut(key: &Keystroke) -> bool {
     key.key == "f9" && !key.modifiers.platform
 }
 impl SnapshotView {
-    fn session_tabs_allowed(&self, window: &Window, cx: &Context<Self>) -> bool {
+    fn session_tabs_allowed(&self) -> bool {
         self.presence.ready()
             && self.browser_state.request == self.browser_request
             && self.marked.is_empty()
@@ -137,7 +137,6 @@ impl SnapshotView {
             && self.new_session.is_none()
             && self.pane_actions.is_none()
             && self.divider.is_none()
-            && !self.home_search_composing(window, cx)
             && self.session_tabs.pending.is_none()
             && self.session_history.pending.is_none()
             && self.palette.pending.is_none()
@@ -157,7 +156,7 @@ impl SnapshotView {
         window.prevent_default();
         if event.is_held
             || (event.keystroke.modifiers.control && event.keystroke.modifiers.shift)
-            || !self.session_tabs_allowed(window, cx)
+            || !self.session_tabs_allowed()
         {
             return true;
         }
@@ -187,7 +186,7 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) {
         if request != self.browser_request
-            || !self.session_tabs_allowed(window, cx)
+            || !self.session_tabs_allowed()
             || !self.browser_state.session_tabs.as_ref().is_some_and(|p| {
                 p.request == request && p.revision == revision && p.valid() && p.has_action(action)
             })

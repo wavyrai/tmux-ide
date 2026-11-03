@@ -38,6 +38,8 @@ impl From<tungstenite::Error> for CatalogWatchError {
 struct Cancellation {
     stopped: Arc<AtomicBool>,
     socket: Mutex<Option<TcpStream>>,
+    /// Set once the live lane confirms the daemon pushes fleet changes.
+    fleet_push: AtomicBool,
 }
 impl Cancellation {
     fn check(&self) -> Result<(), CatalogWatchError> {
@@ -115,6 +117,11 @@ impl CatalogWatchWorker {
     pub fn poll(&self) -> Result<Option<Result<(), CatalogWatchError>>, WorkerError> {
         Ok(self.mailbox.lock().map_err(|_| WorkerError::Closed)?.take())
     }
+    /// True while this live lane is pushed fleet changes: registered servers,
+    /// sessions and agents. Callers may then drop their own periodic reads.
+    pub fn fleet_push(&self) -> bool {
+        self.cancel.fleet_push.load(Ordering::Acquire) && self.cancel.check().is_ok()
+    }
     pub fn cancel(&self) {
         self.cancel.cancel();
         if let Ok(mut slot) = self.mailbox.lock() {
@@ -190,9 +197,13 @@ fn run(
         {
             return Err(CatalogWatchError::Timeout);
         }
-        // Root push cannot observe every separately registered tmux owner.
-        // Match Home's bounded fallback; this never reconnects a stopped lane.
-        if lane.ready() && now.duration_since(refresh) >= Duration::from_secs(5) {
+        // Fleet push covers separately registered tmux owners. Only a daemon
+        // without it keeps Home's bounded fallback; this never reconnects a
+        // stopped lane.
+        if lane.ready()
+            && lane.needs_fallback()
+            && now.duration_since(refresh) >= Duration::from_secs(5)
+        {
             changed();
             refresh = now;
         }
@@ -220,6 +231,9 @@ fn run(
                     CatalogEvents::subscription(after_sequence)?.into(),
                 ))?,
                 CatalogEventEffect::Invalidate => {
+                    cancel
+                        .fleet_push
+                        .store(lane.ready() && !lane.needs_fallback(), Ordering::Release);
                     changed();
                     refresh = Instant::now();
                 }
