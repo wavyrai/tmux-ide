@@ -47,6 +47,7 @@ impl MailboxSlot {
             mailbox: self,
         }
     }
+    /// Sets the flag before waking, so the woken task's poll sees it.
     fn wake(&self) {
         self.published.store(true, Ordering::Release);
         let waker = self.waker.lock().ok().and_then(|mut waker| waker.take());
@@ -92,10 +93,13 @@ impl Future for Published<'_> {
         if mailbox.published.swap(false, Ordering::AcqRel) {
             return Poll::Ready(());
         }
+        #[cfg(test)]
+        tests::between_check_and_store();
         if let Ok(mut waker) = mailbox.waker.lock() {
             *waker = Some(cx.waker().clone());
         }
-        // A publication between the first check and storing the waker.
+        // A publication between the first check and storing the waker found
+        // no waker to wake; only this second check sees it.
         if mailbox.published.swap(false, Ordering::AcqRel) {
             return Poll::Ready(());
         }
