@@ -274,7 +274,7 @@ pub(in crate::tmux_snapshot) fn start_io<R: BufRead, W: Write>(
 ) -> Bridge {
     let (tx, rx) = mpsc::sync_channel(8);
     std::thread::spawn(move || read_pipe(input(), binary, tx));
-    start_events(kitty, rx, move || {
+    start_events(kitty, rx, false, move || {
         let mut output = output();
         move |command| write_pipe_command(&mut output, &command)
     })
@@ -285,6 +285,7 @@ pub(in crate::tmux_snapshot) fn start_io<R: BufRead, W: Write>(
 fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     kitty: super::super::kitty_graphics::Store,
     rx: mpsc::Receiver<Incoming>,
+    hold_frames: bool,
     output: impl FnOnce() -> F + Send + 'static,
 ) -> Bridge {
     let mailbox = Arc::new(Mutex::new(None));
@@ -297,7 +298,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut stopped: Option<diagnostics::Stop> = None;
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
-        let mut hold = hold::Hold::default();
+        let mut hold = hold::Hold::new(hold_frames);
         let mut releases = loss::Releases::default();
         let mut browser_read_at = 0;
         let mut presence = (true, 0);

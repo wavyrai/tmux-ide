@@ -188,3 +188,48 @@ fn a_pane_split_in_or_closed_from_outside_keeps_the_open_stream() {
         );
     }
 }
+
+/// The selected pane is replaced from outside: another client splits a new
+/// pane in, then kills the selected one. The stream must move to the pane that
+/// remains, not keep reconnecting to the one that is gone.
+#[test]
+#[ignore = "requires a scratch daemon and a harness that replaces the selected pane"]
+fn the_selected_pane_replaced_from_outside_moves_to_the_pane_left() {
+    let record = std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap();
+    let signals = PathBuf::from(std::env::var_os("TMUX_IDE_TEST_SIGNAL_DIR").unwrap());
+    let (bridge, owner) = start(record.into(), Default::default()).unwrap();
+    let home = until(&bridge, "Home", Duration::from_secs(30), |s| {
+        s.home_phase == HomePhase::Live && s.session_catalog_complete && !s.sessions.is_empty()
+    });
+    let request = home.request + 1;
+    bridge
+        .commands
+        .send(Command::Session {
+            request,
+            id: home.sessions[0].id.clone(),
+        })
+        .unwrap();
+    let live = until(&bridge, "session", Duration::from_secs(30), |s| {
+        s.request == request && s.frame.is_some() && s.input_ready && !s.panes.is_empty()
+    });
+    let original = live.selected_pane.clone().unwrap();
+    eprintln!("TOPOLOGY_REPLACE_READY");
+    let (replaced, after, report) = settle(&bridge, request, 1, &signals.join("replace-done"));
+    let moved = after
+        .as_ref()
+        .is_some_and(|s| s.selected_pane.as_deref() != Some(original.as_str()));
+    let typed = after
+        .as_ref()
+        .is_some_and(|s| moved && type_line(&bridge, s));
+    eprintln!(
+        "TOPOLOGY_LIVE {}",
+        serde_json::json!({"replace": report, "moved": moved, "typedAfterReplace": typed})
+    );
+    owner.shutdown().unwrap();
+    assert!(
+        replaced.is_some() && moved,
+        "the stream stayed on the replaced pane"
+    );
+    assert!(typed, "typing did not land in the remaining pane");
+    assert_eq!(report["frameless"], 0, "a publication dropped the frame");
+}

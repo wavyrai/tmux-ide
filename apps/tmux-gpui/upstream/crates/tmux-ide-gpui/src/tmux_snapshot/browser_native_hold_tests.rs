@@ -161,3 +161,16 @@ fn keys_lost_with_the_stream_are_reported_while_reconnecting() {
         "Reconnecting… attempt 2"
     );
 }
+
+/// The legacy pipe catalog never ends a hold (it recovers on its own and
+/// publishes no reconnect attempt), so its transport holds no frames: a lost
+/// stream clears the frame as before #702.
+#[test]
+fn a_disabled_hold_never_holds_a_frame() {
+    let mut hold = Hold::new(false);
+    hold.observe(&live(7));
+    hold.begin(&live(7), true);
+    assert!(!hold.active(), "the legacy pipe held a frame");
+    let shown = hold.publication(&reconnecting(7, 1));
+    assert!(shown.frame.is_none(), "a disabled hold published a frame");
+}

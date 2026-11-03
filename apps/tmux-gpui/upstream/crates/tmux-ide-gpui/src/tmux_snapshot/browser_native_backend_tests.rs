@@ -18,7 +18,7 @@ fn next_state(mailbox: &Mailbox) -> Option<State> {
 fn typed_backend_moves_ordered_commands_and_closes_when_owner_disconnects() {
     let (events, receiver) = mpsc::sync_channel(8);
     let (commands, output) = mpsc::sync_channel(8);
-    let bridge = start_events(Default::default(), receiver, move || {
+    let bridge = start_events(Default::default(), receiver, true, move || {
         move |command| {
             commands
                 .try_send(command)
@@ -66,7 +66,7 @@ fn typed_backend_moves_ordered_commands_and_closes_when_owner_disconnects() {
 #[test]
 fn typed_backend_command_failure_closes_the_authoritative_mailbox() {
     let (_events, receiver) = mpsc::sync_channel(8);
-    let bridge = start_events(Default::default(), receiver, || {
+    let bridge = start_events(Default::default(), receiver, true, || {
         |_| Err(Error::Invalid("owner unavailable"))
     });
     bridge.commands.send(Command::Home { request: 1 }).unwrap();
@@ -76,7 +76,7 @@ fn typed_backend_command_failure_closes_the_authoritative_mailbox() {
 #[test]
 fn delayed_catalog_cannot_replace_a_newer_navigation() {
     let (events, receiver) = mpsc::sync_channel(8);
-    let bridge = start_events(Default::default(), receiver, || |_| Ok(()));
+    let bridge = start_events(Default::default(), receiver, true, || |_| Ok(()));
     events
         .send(Incoming::Catalog(Box::new(State {
             request: 7,
@@ -112,7 +112,7 @@ fn a_full_pending_queue_refuses_commands_and_keeps_the_loop() {
     let (_events, receiver) = mpsc::sync_channel(8);
     let (gate, opened) = mpsc::channel::<()>();
     let (seen, forwarded) = mpsc::channel();
-    let bridge = start_events(Default::default(), receiver, move || {
+    let bridge = start_events(Default::default(), receiver, true, move || {
         let mut first = true;
         move |command| {
             if first {

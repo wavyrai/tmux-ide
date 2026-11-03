@@ -38,7 +38,7 @@ try {
       "--ignored",
       "--nocapture",
       "--test-threads=1",
-      "a_pane_split_in_or_closed_from_outside_keeps_the_open_stream",
+      process.env.SMOKE_TEST ?? "a_pane_split_in_or_closed_from_outside_keeps_the_open_stream",
     ],
     {
       env: {
@@ -63,6 +63,14 @@ try {
         const pane = fleet.initialPanes.find((p) => p.sessionName === fleet.sessionNames[0]).paneId;
         tmux("split-window", "-h", "-t", pane, "-d");
         writeFileSync(join(signals, "split-done"), String(Date.now()));
+      }
+      if (output.includes("TOPOLOGY_REPLACE_READY") && !closed) {
+        closed = true;
+        // Another client splits a new pane in, then kills the selected one.
+        const pane = fleet.initialPanes.find((p) => p.sessionName === fleet.sessionNames[0]).paneId;
+        tmux("split-window", "-d", "-t", pane, "sh -i");
+        tmux("kill-pane", "-t", pane);
+        writeFileSync(join(signals, "replace-done"), String(Date.now()));
       }
       if (!closed && output.includes("TOPOLOGY_CLOSE_READY")) {
         closed = true;

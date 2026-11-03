@@ -349,7 +349,7 @@ fn start_source(
         })?;
     let commands = watch::Commands::new(commands, actor.thread().clone());
     Ok((
-        start_events(kitty, receiver, move || {
+        start_events(kitty, receiver, true, move || {
             move |command| commands.send(command)
         }),
         sources,

@@ -20,12 +20,23 @@ struct Held {
 pub(super) const LOST_INPUT: &str = "keys typed just before the drop were not sent; retype them";
 #[derive(Default)]
 pub(super) struct Hold {
+    /// The catalog recovers a lost stream itself and ends the hold (the native
+    /// catalog). The legacy pipe catalog recovers on its own terms and never
+    /// ends a hold, so it gets none and keeps its pre-#702 behaviour.
+    disabled: bool,
     held: Option<Held>,
     /// The last live frame the UI was shown. A catalog publication can replace the
     /// transport's state, frame included, in the same turn the stream fails.
     last: Option<Held>,
 }
 impl Hold {
+    /// `hold_frames` is false for the legacy pipe catalog: no held frames.
+    pub fn new(hold_frames: bool) -> Self {
+        Self {
+            disabled: !hold_frames,
+            ..Self::default()
+        }
+    }
     /// Remember what the UI is shown, when it is a live workspace frame.
     pub fn observe(&mut self, shown: &State) {
         if let Some(live) = live(shown)
@@ -41,6 +52,9 @@ impl Hold {
     /// `lost_input`: keys were in flight or queued when the stream dropped. They
     /// are dropped, never replayed, so the held status asks the user to retype.
     pub fn begin(&mut self, state: &State, lost_input: bool) {
+        if self.disabled {
+            return;
+        }
         self.held = live(state).or_else(|| {
             self.last
                 .take()
