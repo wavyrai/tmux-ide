@@ -21,8 +21,8 @@ When the stream itself drops, only the stream reconnects:
 
 - The last frame stays on screen, read-only, with a "Reconnecting… attempt N"
   badge and a Retry button.
-- Retries continue with backoff, up to 30 s apart, for as long as it is the same
-  daemon. A different daemon goes back through Home.
+- Retries continue with backoff, up to 30 s apart. A restarted daemon is found
+  again and the same session reopens.
 - Keys typed during a drop are refused with a notice. They are never replayed
   into the pane after it reconnects.
 - A pane whose source closed keeps its last frame with an "unavailable" badge.
@@ -30,15 +30,14 @@ When the stream itself drops, only the stream reconnects:
 The session catalog also survives a single error. It reconnects, or shows a
 notice and retries with backoff, instead of closing.
 
-## After sleep
+## After a stall
 
-When a Mac sleeps or the daemon stalls, tmux pauses the daemon's view of each
-pane. Reopening such a session used to rebuild every pane's full history and
-could stay at "Connecting terminal" for 10 s or more. Frames now reuse row hashes
+When the daemon stalls, as it does while a Mac sleeps, tmux pauses the daemon's
+view of each pane. Reopening such a session used to rebuild every pane's full history and
+could stay at "Connecting terminal" for several seconds. Frames now reuse row hashes
 the daemon has already computed. After a 5 s stall, a session with 8 panes opens
 in about 1 s and one with 12 panes in about 1.4 s. Without a stall, 8 panes open
-in under 0.5 s. Typing after a freeze or a wake works without reselecting the
-pane.
+in under 0.5 s. Typing after a daemon freeze works without reselecting the pane.
 
 ## A new Home
 
@@ -66,15 +65,15 @@ The daemon now pushes catalog and agent changes to the app instead of the app
 polling every 5 s:
 
 - An idle Home makes 3 requests a minute, down from 291, and doesn't redraw.
-- Home appears after 8–9 requests, down from about 45.
+- Home appears after 8–9 requests, down from 16 in the same test.
 - Agent rows stay on screen while they refresh. Only a row whose agent changed
   updates. The daemon reads agent state every 500 ms, so a change shows within
-  about half a second, in the app and in the TUI.
+  about 1 s, in the app and in the TUI.
 
 The app checks the daemon's identity once per daemon instance instead of before
 every request. Before it sends credentials, it confirms the daemon's process is
-still alive and re-checks after 5 s, so a process that takes over a dead
-daemon's port never receives them.
+still alive and re-checks it every 5 s, so a dead daemon's port doesn't receive
+them.
 
 ## Diagnostics and smaller fixes
 
