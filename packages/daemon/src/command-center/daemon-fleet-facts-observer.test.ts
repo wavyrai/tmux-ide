@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DaemonFleetFactsObserver,
+  FLEET_FACTS_POLL_MS,
   parseAgentStateFacts,
   parseSessionCompositionFacts,
   type SessionCompositionFacts,
@@ -42,6 +43,23 @@ describe("DaemonFleetFactsObserver", () => {
     expect(
       parseAgentStateFacts("work\t%1\tpane.editor\tworking:1\tcodex").get("work")?.get("%1"),
     ).toEqual({ paneStamp: "pane.editor", state: "working:1", command: "codex" });
+  });
+
+  it("re-reads every 500 ms by default so an agent flip shows within 1 s (#716)", async () => {
+    const setTimer = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>);
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => emptySessions(),
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer,
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["agents"]);
+    await handle.ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(FLEET_FACTS_POLL_MS).toBe(500);
+    expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 500);
+    handle.release();
   });
 
   it("invalidates agent-free topology when a pane or durable stamp changes", async () => {

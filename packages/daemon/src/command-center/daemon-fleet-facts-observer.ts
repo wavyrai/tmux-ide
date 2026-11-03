@@ -90,7 +90,7 @@ export class DaemonFleetFactsObserver {
 
   constructor(options: DaemonFleetFactsObserverOptions) {
     this.#options = options;
-    this.#intervalMs = options.intervalMs ?? 2_000;
+    this.#intervalMs = options.intervalMs ?? FLEET_FACTS_POLL_MS;
     this.#setTimer =
       options.setTimer ??
       ((callback, delayMs) => {
@@ -548,6 +548,14 @@ export function createDefaultFleetFactsReaders(): Pick<
   };
   return createSharedFleetFactsReaders(execute);
 }
+
+/**
+ * How often subscribed clients' tmux facts (sessions, panes, agent stamps) are
+ * read. Hook-stamped agent changes reach clients within one tick, so 500 ms
+ * keeps a state flip visible within 1 s (#716). One `list-panes -a` per tick,
+ * only while a client is subscribed.
+ */
+export const FLEET_FACTS_POLL_MS = 500;
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
   "list-panes",
