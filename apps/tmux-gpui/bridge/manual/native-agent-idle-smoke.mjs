@@ -13,7 +13,7 @@ import { isAbsolute, join } from "node:path";
 import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { stopFixtureChild } from "../fixture-child.mjs";
-const { AbortSignal } = globalThis;
+const { AbortSignal, setTimeout } = globalThis;
 
 const [guiTestBinary] = process.argv.slice(2);
 assert(
@@ -82,10 +82,13 @@ try {
         if (!done.has(phase) && output.includes(`AGENT_FLIP_READY ${phase}`)) {
           done.add(phase);
           // A random offset keeps the flip from lining up with the daemon's tick.
-          setTimeout(() => {
-            tmux("set-option", "-p", "-t", panes[0], "@agent_state", stamp(state));
-            writeFileSync(join(signals, `flipped-${phase}`), String(Date.now()));
-          }, Math.floor(Math.random() * 2000));
+          setTimeout(
+            () => {
+              tmux("set-option", "-p", "-t", panes[0], "@agent_state", stamp(state));
+              writeFileSync(join(signals, `flipped-${phase}`), String(Date.now()));
+            },
+            Math.floor(Math.random() * 2000),
+          );
         }
     });
   const [code, signal] = await once(child, "close", { signal: AbortSignal.timeout(300000) });
