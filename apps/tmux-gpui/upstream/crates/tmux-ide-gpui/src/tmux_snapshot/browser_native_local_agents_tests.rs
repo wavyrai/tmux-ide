@@ -370,3 +370,36 @@ fn a_reread_keeps_rows_and_only_a_change_rekeys() {
     assert_ne!(changed.rows[0].key, shown.rows[0].key);
     assert!(gate.resolve(&shown.rows[0].key, changed.revision).is_none());
 }
+
+/// Review round 1, item 1: rows now outlive a re-read, so a re-read that
+/// fails is what retires them. It drops the session's rows and its old keys
+/// stop resolving, so a revoked or unreadable session can't be opened.
+#[test]
+fn a_failed_reread_drops_the_shown_rows_and_their_keys() {
+    let mut gate = ready();
+    let shown = gate.publication();
+    assert_eq!(shown.rows.len(), 1);
+    let (key, live) = (
+        gate.slots[0].context.key.clone(),
+        gate.slots[0].context.live.clone(),
+    );
+    let next = uuid::Uuid::new_v4();
+    gate.epoch = Some(next);
+    gate.refresh_slots();
+    let failure = herdr_client::tmux_daemon::AgentObservationError::Read(
+        herdr_client::tmux_daemon::Error::RecordChanged,
+    );
+    assert!(
+        gate.apply(&key, next, Err(failure)),
+        "a failed re-read changed nothing"
+    );
+    let after = gate.publication();
+    assert!(
+        after.rows.iter().all(|row| row.session_id != live),
+        "a session that failed to read kept its rows"
+    );
+    assert!(
+        gate.resolve(&shown.rows[0].key, after.revision).is_none(),
+        "a row from a failed read can still be opened"
+    );
+}
