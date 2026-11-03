@@ -369,3 +369,23 @@ fn a_layout_pane_outside_the_lease_is_unissued_not_an_identity_fault() {
     // A foreign stream generation stays an identity fault:
     // `stale_generation_and_invalid_geometry_clear_cache`.
 }
+
+/// Review #720 item 1: a pane listed twice, or a pane with no id, is still an
+/// identity fault, never a pane-set change to re-lease for. Wire validation
+/// rejects both on arrival; these pin the presentation's own check.
+#[test]
+fn a_duplicate_or_missing_pane_id_stays_an_identity_fault() {
+    for (label, pane) in [("duplicate", Some("left".to_owned())), ("missing", None)] {
+        let mut state = topology(&frames()[0]);
+        let layout = state.layouts.values_mut().next().unwrap();
+        layout.panes[1].pane = pane;
+        let mut presentation = Presentation::new("left".into()).unwrap();
+        assert!(
+            matches!(
+                presentation.update(&state, &sources(2), true),
+                Err(Error::Identity)
+            ),
+            "{label} pane id"
+        );
+    }
+}

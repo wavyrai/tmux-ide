@@ -180,4 +180,11 @@ fn a_pane_split_in_or_closed_from_outside_keeps_the_open_stream() {
         close.is_some() && close_typed,
         "the stream did not carry on after a close"
     );
+    // Review #720 N1: the existing panes keep their frames throughout.
+    for (phase, report) in [("split", &split_report), ("close", &close_report)] {
+        assert_eq!(
+            report["frameless"], 0,
+            "{phase}: a publication dropped the frame"
+        );
+    }
 }
