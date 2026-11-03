@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 //! Window-level spinner tests. They run against both sides of the change: only
 //! `mount.rs` (how production mounts the window content) differs.
-use super::mount::{frame, mount, observe_overlay, painted, slot_colors};
+use super::mount::{frame, mount, observe_overlay, painted, slot_bounds, slot_colors};
 use crate::tmux_snapshot::{SnapshotView, browser};
 use core::prelude::v1::test;
 use gpui::{prelude::*, *};
@@ -199,4 +199,18 @@ fn a_spinner_tick_invalidates_and_paints_the_overlay(cx: &mut TestAppContext) {
             "tick {tick} did not paint frame {frame}: {painted:?}"
         );
     }
+}
+#[gpui::test]
+fn the_spinner_paints_inside_its_badge(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    let badge = cx.debug_bounds("agent-badge").unwrap();
+    let slots = cx.update(|_, cx| slot_bounds(snapshot.read(cx)));
+    assert_eq!(slots.len(), 1, "one working agent reserves one slot");
+    let slot = slots[0];
+    // The frame sits in the badge's row, before its label, not a line below.
+    assert!(
+        slot.top() >= badge.top() && slot.bottom() <= badge.bottom(),
+        "slot {slot:?} is outside badge {badge:?}"
+    );
+    assert!(slot.left() >= badge.left() && slot.right() <= badge.right());
 }

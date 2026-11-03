@@ -92,6 +92,16 @@ impl Slots {
             .map(|slot| slot.color)
             .collect()
     }
+    /// Each reserved slot's glyph box, in window coordinates.
+    #[cfg(test)]
+    pub(super) fn slot_bounds(&self) -> Vec<Bounds<Pixels>> {
+        self.0
+            .slots
+            .borrow()
+            .iter()
+            .map(|slot| Bounds::new(slot.origin, size(px(16.), slot.line_height)))
+            .collect()
+    }
     /// The frame each slot was painted with since the last call.
     #[cfg(test)]
     pub(super) fn take_painted(&self) -> Vec<SharedString> {

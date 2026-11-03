@@ -316,6 +316,11 @@ fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAp
     let header = painted(cx, "fleet-machine-header-0").unwrap();
     let use_server = painted(cx, "fleet-use-server-0-0").unwrap();
     assert!(header.contains(&use_server.center()));
+    // It says what it does, as "Default" does once chosen: not a lone ✓.
+    assert!(
+        use_server.size.width > px(80.),
+        "an icon-only control: {use_server:?}"
+    );
     // Its sessions still show, and the button picks the lone server.
     assert!(painted(cx, "fleet-session-0-0").is_some());
     let token = view.read_with(cx, |v, _| {

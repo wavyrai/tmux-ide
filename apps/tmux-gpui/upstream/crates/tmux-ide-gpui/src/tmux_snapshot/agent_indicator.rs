@@ -88,6 +88,7 @@ impl SnapshotView {
         let theme = self.theme();
         super::design::palette(&theme)
             .badge("")
+            .debug_selector(|| "agent-badge".into())
             .flex()
             .items_center()
             .gap_1()
@@ -108,7 +109,11 @@ impl SnapshotView {
                                 |_, _, _| (),
                                 move |bounds, _, window, _| slots.reserve(bounds, window),
                             )
+                            // Pinned to the slot: without an inset, an absolute
+                            // child sits at its static position, one line below.
                             .absolute()
+                            .top_0()
+                            .left_0()
                             .size_full(),
                         )
                     }),

@@ -497,9 +497,10 @@ impl SnapshotView {
             })
     }
 
-    /// Where a server's "Use for new sessions" lives: a small Bezel button
+    /// Where a server's "Use for new sessions" lives: a labelled Bezel button
     /// while it is not the default, a muted "Default" once it is, but only
-    /// where there is more than one place new sessions could go.
+    /// where there is more than one place new sessions could go. The tooltip
+    /// names the server.
     fn fleet_server_default(
         &self,
         index: usize,
@@ -535,17 +536,16 @@ impl SnapshotView {
         let enabled = self.browser_commands.is_some()
             && self.presence.ready()
             && self.browser_state.request == request;
-        let label: SharedString = format!("Use {} for new sessions", server.label).into();
-        let tip = label.clone();
-        let button = bezel_ui::widgets::Button::new(("fleet-use-server", id), label)
-            .icon(bezel_ui::icons::Icon::asset("icons/check.svg"))
-            .label_hidden()
-            .enabled(enabled)
-            .text_color(bezel.text_muted)
-            .on_press(cx.listener(move |view, _, window, cx| {
-                cx.stop_propagation();
-                view.open_fleet_server(request, &token, window, cx);
-            }));
+        let tip: SharedString = format!("Use {} for new sessions", server.label).into();
+        let button =
+            bezel_ui::widgets::Button::new(("fleet-use-server", id), "Use for new sessions")
+                .icon(bezel_ui::icons::Icon::asset("icons/check.svg"))
+                .enabled(enabled)
+                .text_color(bezel.text_muted)
+                .on_press(cx.listener(move |view, _, window, cx| {
+                    cx.stop_propagation();
+                    view.open_fleet_server(request, &token, window, cx);
+                }));
         Some(
             div()
                 .id(("fleet-use-server-tip", id))
