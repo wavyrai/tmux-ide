@@ -264,11 +264,15 @@ impl Group {
 #[path = "browser_fleet/preferences_tests.rs"]
 mod preferences_tests;
 
+#[path = "browser_fleet/favicon_check.rs"]
+mod favicon_check;
+
 /// The largest favicon Home decodes, the daemon's own cap (#705).
 pub(in crate::tmux_snapshot) const FAVICON_MAX: usize = 32 * 1024;
 
-/// A daemon favicon as an image, or `None` for an unknown type, bad base64
-/// or a file over [`FAVICON_MAX`]; Home then shows its terminal glyph.
+/// A daemon favicon as an image, or `None` for an unknown type, bad base64,
+/// a file over [`FAVICON_MAX`], or one its header shows too large or (an SVG)
+/// referring outside itself; Home then shows its terminal glyph.
 pub(in crate::tmux_snapshot) fn favicon(
     mime: &str,
     data: &str,
@@ -288,6 +292,10 @@ pub(in crate::tmux_snapshot) fn favicon(
     }
     let bytes = STANDARD.decode(data).ok()?;
     if bytes.is_empty() || bytes.len() > FAVICON_MAX {
+        return None;
+    }
+    // Judge the declared size and, for SVG, its references before any decode (#719).
+    if !favicon_check::admissible(format, &bytes) {
         return None;
     }
     Some(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
