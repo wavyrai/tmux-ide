@@ -62253,6 +62253,14 @@ function joinBytes(chunks) {
   }
   return joined;
 }
+function logDeliveryFault(client, reason, cause) {
+  logger.info("terminal-delivery", "fault sent to client", {
+    reason,
+    ...cause ? { cause } : {},
+    pane: client.paneId,
+    workspace: client.deliveryWorkspaceName
+  });
+}
 var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
@@ -62261,6 +62269,7 @@ var init_terminal_delivery_hub = __esm({
     init_src2();
     init_src3();
     init_stock_capture_fidelity();
+    init_log();
     init_native_seed_backing();
     init_src2();
     init_src3();
@@ -62442,6 +62451,11 @@ var init_terminal_delivery_hub = __esm({
           };
         } catch (error) {
           if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
+          logDeliveryFault(
+            { paneId: semanticPaneId3, deliveryWorkspaceName: address },
+            "source-closed",
+            "capture-unavailable"
+          );
           await accept({
             type: "terminal.delivery.fault",
             reason: "source-closed",
@@ -62600,6 +62614,7 @@ var init_terminal_delivery_hub = __esm({
           this.#cancelEncoding(client);
           client.outgoing.length = 0;
           client.inFlight = null;
+          logDeliveryFault(client, "source-closed", "source-restarted");
           this.#enqueue(client, {
             type: "terminal.delivery.fault",
             reason: "source-closed",
@@ -63587,6 +63602,7 @@ var init_terminal_delivery_hub = __esm({
         this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
       }
       #fault(client, reason, message, selectionObservation = null) {
+        logDeliveryFault(client, reason);
         if (this.#observability.enabled)
           try {
             const atMicros = this.#observability.nowMicros();
@@ -72683,6 +72699,7 @@ var init_pane_stream_websocket = __esm({
     init_src2();
     init_src2();
     init_src2();
+    init_log();
     init_src2();
     init_admission_util();
     init_registry2();
@@ -73191,6 +73208,11 @@ var init_pane_stream_websocket = __esm({
         this.#open = false;
         this.#cancelDeadline();
         const socket = this.#socket;
+        logger.info("pane-stream", "admission closed", {
+          code: code2,
+          reason,
+          hostClientId: this.hostClientId
+        });
         this.#detach();
         this.#onRelease(this);
         if (socket) safeCloseSocket(socket, code2, reason);
@@ -73442,6 +73464,12 @@ var init_pane_stream_websocket = __esm({
       close(code2 = 1e3, reason = "stream-closed") {
         if (this.#closed) return;
         this.#recordDiagnosticLifecycle("pane-stream-terminal", code2, reason);
+        logger.info("pane-stream", "stream closed", {
+          code: code2,
+          reason,
+          session: this.#descriptor.sessionName,
+          clientId: this.#clientId
+        });
         this.#closed = true;
         for (const demand of this.#surfaceDemands.values()) demand.close();
         this.#surfaceDemands.clear();
@@ -97157,7 +97185,9 @@ var init_stop = __esm({
 // packages/daemon/src/open-browser.ts
 var open_browser_exports = {};
 __export(open_browser_exports, {
+  NO_NATIVE_CONTROLS_NOTICE: () => NO_NATIVE_CONTROLS_NOTICE,
   createBrowserPane: () => createBrowserPane,
+  nativeControlsNotice: () => nativeControlsNotice,
   openBrowser: () => openBrowser,
   resolveTerminalBrowser: () => resolveTerminalBrowser,
   validateBrowserOpen: () => validateBrowserOpen
@@ -97234,6 +97264,26 @@ function validateBrowserOpen(url, options) {
       exitCode: 2
     });
 }
+function isBundledBrowser(executable) {
+  return /\/[^/]+\.app\/Contents\/Resources\/browser\//u.test(executable);
+}
+async function nativeControlsNotice(run, pane, executable, wait = {}) {
+  if (isBundledBrowser(executable)) return null;
+  const sleep3 = wait.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const now = wait.now ?? Date.now;
+  const deadline = now() + STANDALONE_WAIT_MS;
+  for (; ; ) {
+    let control;
+    try {
+      control = run(["display-message", "-p", "-t", pane, "#{@tmux_ide_browser_control}"]).trim();
+    } catch {
+      return null;
+    }
+    if (control) return null;
+    if (now() >= deadline) return NO_NATIVE_CONTROLS_NOTICE;
+    await sleep3(250);
+  }
+}
 function createBrowserPane(run, executable, url, options, environment, cwd, namespace) {
   validateBrowserOpen(url, options);
   const inheritedPane = /^%\d+$/u.test(environment.TMUX_PANE ?? "") ? environment.TMUX_PANE : void 0;
@@ -97305,9 +97355,21 @@ function createBrowserPane(run, executable, url, options, environment, cwd, name
     });
   return { pane, session: createdSession, window: createdWindow, status: "created" };
 }
-function openBrowser(url, options = {}) {
+async function openBrowser(url, options = {}, dependencies = {}) {
   validateBrowserOpen(url, options);
-  const executable = resolveTerminalBrowser();
+  const executable = (dependencies.executable ?? resolveTerminalBrowser)();
+  const { result: result2, run } = (dependencies.create ?? createPinnedBrowserPane)(
+    executable,
+    url,
+    options
+  );
+  const message = await nativeControlsNotice(run, result2.pane, executable, dependencies.wait);
+  if (message)
+    (dependencies.notice ?? ((line) => process.stderr.write(`${line}
+`)))(message);
+  return result2;
+}
+function createPinnedBrowserPane(executable, url, options) {
   try {
     const namespace = { ...runtimeNamespaceEnvironment(resolveRuntimeNamespace()) };
     const authority2 = resolveWorkspacePaneTmuxAuthority();
@@ -97315,7 +97377,16 @@ function openBrowser(url, options = {}) {
     const run = createPinnedWorkspaceTmuxRunner(authority2, {
       timeoutMs: 1e4
     });
-    return createBrowserPane(run, executable, url, options, process.env, process.cwd(), namespace);
+    const result2 = createBrowserPane(
+      run,
+      executable,
+      url,
+      options,
+      process.env,
+      process.cwd(),
+      namespace
+    );
+    return { result: result2, run };
   } catch (error) {
     if (error instanceof IdeError) throw error;
     throw new IdeError(
@@ -97327,12 +97398,15 @@ function openBrowser(url, options = {}) {
     );
   }
 }
+var NO_NATIVE_CONTROLS_NOTICE, STANDALONE_WAIT_MS;
 var init_open_browser = __esm({
   "packages/daemon/src/open-browser.ts"() {
     "use strict";
     init_errors2();
     init_runtime_namespace();
     init_workspace_pane_creation2();
+    NO_NATIVE_CONTROLS_NOTICE = "This browser has no tmux-ide controls; install the native app for back/forward/reload.";
+    STANDALONE_WAIT_MS = 2e3;
   }
 });
 
@@ -103068,7 +103142,7 @@ try {
           exitCode: 2
         });
       const { openBrowser: openBrowser2 } = await Promise.resolve().then(() => (init_open_browser(), open_browser_exports));
-      const result2 = openBrowser2(positionals[1], {
+      const result2 = await openBrowser2(positionals[1], {
         session: values.session,
         pane: values.pane,
         split: values.split,

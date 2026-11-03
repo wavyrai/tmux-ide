@@ -115,6 +115,54 @@ export function validateBrowserOpen(url: string | undefined, options: OpenBrowse
 }
 
 type Run = (args: readonly string[]) => string;
+
+/** Printed when the opened browser never publishes tmux-ide's native controls. */
+export const NO_NATIVE_CONTROLS_NOTICE =
+  "This browser has no tmux-ide controls; install the native app for back/forward/reload.";
+
+/** A browser bundled in a native app publishes its controls; a standalone one may not. */
+function isBundledBrowser(executable: string): boolean {
+  return /\/[^/]+\.app\/Contents\/Resources\/browser\//u.test(executable);
+}
+
+export interface ControlsWait {
+  sleep?: (ms: number) => Promise<void>;
+  /** Milliseconds; Date.now by default. */
+  now?: () => number;
+}
+
+/** How long a standalone browser has to publish its controls. */
+const STANDALONE_WAIT_MS = 2000;
+
+/**
+ * Watches the new pane for @tmux_ide_browser_control, which only a browser with
+ * native controls sets. A browser bundled in an app is never reported: if it is
+ * slow, its controls appear when it is ready. A standalone browser gets 2 s of
+ * wall-clock time, however slow tmux answers, and then the notice. Returns
+ * null once the option appears or when the pane is already gone.
+ */
+export async function nativeControlsNotice(
+  run: Run,
+  pane: string,
+  executable: string,
+  wait: ControlsWait = {},
+): Promise<string | null> {
+  if (isBundledBrowser(executable)) return null;
+  const sleep = wait.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = wait.now ?? Date.now;
+  const deadline = now() + STANDALONE_WAIT_MS;
+  for (;;) {
+    let control: string;
+    try {
+      control = run(["display-message", "-p", "-t", pane, "#{@tmux_ide_browser_control}"]).trim();
+    } catch {
+      return null;
+    }
+    if (control) return null;
+    if (now() >= deadline) return NO_NATIVE_CONTROLS_NOTICE;
+    await sleep(250);
+  }
+}
 export function createBrowserPane(
   run: Run,
   executable: string,
@@ -220,9 +268,37 @@ export function createBrowserPane(
   return { pane: pane!, session: createdSession!, window: createdWindow!, status: "created" };
 }
 
-export function openBrowser(url: string | undefined, options: OpenBrowserOptions = {}) {
+/** Seams for tests; the CLI uses the defaults. */
+export interface OpenBrowserDependencies {
+  notice?: (line: string) => void;
+  executable?: () => string;
+  create?: typeof createPinnedBrowserPane;
+  wait?: ControlsWait;
+}
+
+export async function openBrowser(
+  url: string | undefined,
+  options: OpenBrowserOptions = {},
+  dependencies: OpenBrowserDependencies = {},
+) {
   validateBrowserOpen(url, options);
-  const executable = resolveTerminalBrowser();
+  const executable = (dependencies.executable ?? resolveTerminalBrowser)();
+  const { result, run } = (dependencies.create ?? createPinnedBrowserPane)(
+    executable,
+    url,
+    options,
+  );
+  const message = await nativeControlsNotice(run, result.pane, executable, dependencies.wait);
+  if (message)
+    (dependencies.notice ?? ((line: string) => process.stderr.write(`${line}\n`)))(message);
+  return result;
+}
+
+function createPinnedBrowserPane(
+  executable: string,
+  url: string | undefined,
+  options: OpenBrowserOptions,
+): { result: ReturnType<typeof createBrowserPane>; run: Run } {
   try {
     const namespace = { ...runtimeNamespaceEnvironment(resolveRuntimeNamespace()) };
     const authority = resolveWorkspacePaneTmuxAuthority();
@@ -230,7 +306,16 @@ export function openBrowser(url: string | undefined, options: OpenBrowserOptions
     const run = createPinnedWorkspaceTmuxRunner(authority, {
       timeoutMs: 10_000,
     });
-    return createBrowserPane(run, executable, url, options, process.env, process.cwd(), namespace);
+    const result = createBrowserPane(
+      run,
+      executable,
+      url,
+      options,
+      process.env,
+      process.cwd(),
+      namespace,
+    );
+    return { result, run };
   } catch (error) {
     if (error instanceof IdeError) throw error;
     throw new IdeError(
