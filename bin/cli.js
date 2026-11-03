@@ -97268,10 +97268,11 @@ function isBundledBrowser(executable) {
   return /\/[^/]+\.app\/Contents\/Resources\/browser\//u.test(executable);
 }
 async function nativeControlsNotice(run, pane, executable, wait = {}) {
+  if (isBundledBrowser(executable)) return null;
   const sleep3 = wait.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  const step = 250;
-  const limit = isBundledBrowser(executable) ? 5e3 : 2e3;
-  for (let waited = 0; ; waited += step) {
+  const now = wait.now ?? Date.now;
+  const deadline = now() + STANDALONE_WAIT_MS;
+  for (; ; ) {
     let control;
     try {
       control = run(["display-message", "-p", "-t", pane, "#{@tmux_ide_browser_control}"]).trim();
@@ -97279,8 +97280,8 @@ async function nativeControlsNotice(run, pane, executable, wait = {}) {
       return null;
     }
     if (control) return null;
-    if (waited >= limit) return NO_NATIVE_CONTROLS_NOTICE;
-    await sleep3(step);
+    if (now() >= deadline) return NO_NATIVE_CONTROLS_NOTICE;
+    await sleep3(250);
   }
 }
 function createBrowserPane(run, executable, url, options, environment, cwd, namespace) {
@@ -97354,13 +97355,18 @@ function createBrowserPane(run, executable, url, options, environment, cwd, name
     });
   return { pane, session: createdSession, window: createdWindow, status: "created" };
 }
-async function openBrowser(url, options = {}, notice = (line) => process.stderr.write(`${line}
-`)) {
+async function openBrowser(url, options = {}, dependencies = {}) {
   validateBrowserOpen(url, options);
-  const executable = resolveTerminalBrowser();
-  const { result: result2, run } = createPinnedBrowserPane(executable, url, options);
-  const message = await nativeControlsNotice(run, result2.pane, executable);
-  if (message) notice(message);
+  const executable = (dependencies.executable ?? resolveTerminalBrowser)();
+  const { result: result2, run } = (dependencies.create ?? createPinnedBrowserPane)(
+    executable,
+    url,
+    options
+  );
+  const message = await nativeControlsNotice(run, result2.pane, executable, dependencies.wait);
+  if (message)
+    (dependencies.notice ?? ((line) => process.stderr.write(`${line}
+`)))(message);
   return result2;
 }
 function createPinnedBrowserPane(executable, url, options) {
@@ -97392,7 +97398,7 @@ function createPinnedBrowserPane(executable, url, options) {
     );
   }
 }
-var NO_NATIVE_CONTROLS_NOTICE;
+var NO_NATIVE_CONTROLS_NOTICE, STANDALONE_WAIT_MS;
 var init_open_browser = __esm({
   "packages/daemon/src/open-browser.ts"() {
     "use strict";
@@ -97400,6 +97406,7 @@ var init_open_browser = __esm({
     init_runtime_namespace();
     init_workspace_pane_creation2();
     NO_NATIVE_CONTROLS_NOTICE = "This browser has no tmux-ide controls; install the native app for back/forward/reload.";
+    STANDALONE_WAIT_MS = 2e3;
   }
 });
 
