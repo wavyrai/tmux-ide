@@ -98,7 +98,22 @@ pub(in crate::tmux_snapshot) type RowKey = (String, String);
 
 /// The table's session rows in paint order, as (group index, session index):
 /// per machine, each server's sessions, then sessions on no listed server.
-pub(super) fn table_rows(view: &View, fleet: Option<&Fleet>) -> Vec<(usize, usize)> {
+/// The live session ids the table narrows to while the needs-input pill is
+/// on (#705); `None` shows every row the view does.
+pub(in crate::tmux_snapshot) type Only<'a> = Option<&'a std::collections::HashSet<String>>;
+
+/// Whether the table shows `session` under `group`, for `view` and `only`.
+pub(super) fn shows(view: &View, only: Only, group: &Group, session: &Session) -> bool {
+    view.shows_session(group, session)
+        && only.is_none_or(|only| {
+            session
+                .session_id
+                .as_ref()
+                .is_some_and(|id| only.contains(id))
+        })
+}
+
+pub(super) fn table_rows(view: &View, only: Only, fleet: Option<&Fleet>) -> Vec<(usize, usize)> {
     let Some(fleet) = fleet else {
         return Vec::new();
     };
@@ -109,12 +124,12 @@ pub(super) fn table_rows(view: &View, fleet: Option<&Fleet>) -> Vec<(usize, usiz
         }
         for server in &group.servers {
             rows.extend(group.sessions.iter().enumerate().filter_map(|(row, s)| {
-                (s.server_id.as_ref() == Some(&server.id) && view.shows_session(group, s))
+                (s.server_id.as_ref() == Some(&server.id) && shows(view, only, group, s))
                     .then_some((index, row))
             }));
         }
         rows.extend(group.sessions.iter().enumerate().filter_map(|(row, s)| {
-            (view.shows_session(group, s)
+            (shows(view, only, group, s)
                 && s.server_id
                     .as_ref()
                     .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id)))
@@ -134,12 +149,13 @@ pub(super) fn row_key(fleet: &Fleet, (group, row): (usize, usize)) -> RowKey {
 /// row; `None` when the table is empty or the key is not a table key.
 pub(super) fn step_row(
     view: &View,
+    only: Only,
     fleet: Option<&Fleet>,
     cursor: Option<&RowKey>,
     key: &str,
 ) -> Option<RowKey> {
     let fleet_ref = fleet?;
-    let rows = table_rows(view, fleet);
+    let rows = table_rows(view, only, fleet);
     let keys: Vec<RowKey> = rows.iter().map(|&r| row_key(fleet_ref, r)).collect();
     let last = keys.len().checked_sub(1)?;
     let current = cursor.and_then(|c| keys.iter().position(|k| k == c));
@@ -239,39 +255,42 @@ mod tests {
         let key = |g: &str, s: &str| (g.to_owned(), format!("{g}-{s}"));
         // All sessions: every machine's rows, in paint order.
         assert_eq!(
-            table_rows(&View::All, f),
+            table_rows(&View::All, None, f),
             vec![(0, 0), (0, 1), (1, 0), (1, 1)]
         );
         assert_eq!(
-            step_row(&View::All, f, None, "down"),
+            step_row(&View::All, None, f, None, "down"),
             Some(key("local", "a"))
         );
         let c = key("local", "b");
         assert_eq!(
-            step_row(&View::All, f, Some(&c), "down"),
+            step_row(&View::All, None, f, Some(&c), "down"),
             Some(key("spark", "a"))
         );
         assert_eq!(
-            step_row(&View::All, f, Some(&c), "up"),
+            step_row(&View::All, None, f, Some(&c), "up"),
             Some(key("local", "a"))
         );
         assert_eq!(
-            step_row(&View::All, f, Some(&c), "end"),
+            step_row(&View::All, None, f, Some(&c), "end"),
             Some(key("spark", "b"))
         );
         assert_eq!(
-            step_row(&View::All, f, Some(&key("spark", "b")), "down"),
+            step_row(&View::All, None, f, Some(&key("spark", "b")), "down"),
             Some(key("spark", "b"))
         );
-        assert_eq!(step_row(&View::All, f, Some(&c), "x"), None);
+        assert_eq!(step_row(&View::All, None, f, Some(&c), "x"), None);
         // A cursor its view no longer shows restarts at the first row.
         let spark = View::Machine("spark".into());
-        assert_eq!(step_row(&spark, f, Some(&c), ""), Some(key("spark", "a")));
         assert_eq!(
-            step_row(&View::Favourites, f, Some(&key("spark", "b")), ""),
+            step_row(&spark, None, f, Some(&c), ""),
+            Some(key("spark", "a"))
+        );
+        assert_eq!(
+            step_row(&View::Favourites, None, f, Some(&key("spark", "b")), ""),
             Some(key("local", "a"))
         );
-        assert_eq!(step_row(&View::All, None, None, "down"), None);
+        assert_eq!(step_row(&View::All, None, None, None, "down"), None);
     }
 
     #[test]
@@ -298,10 +317,29 @@ mod tests {
         // Server b's rows, then a's, then sessions on no listed server,
         // whether they name no server or one the fleet does not list.
         assert_eq!(
-            table_rows(&View::All, f),
+            table_rows(&View::All, None, f),
             vec![(0, 2), (0, 1), (0, 0), (0, 3)]
         );
         // Favourites drops the plain session under its server too.
-        assert_eq!(table_rows(&View::Favourites, f), vec![(0, 2), (0, 0)]);
+        assert_eq!(table_rows(&View::Favourites, None, f), vec![(0, 2), (0, 0)]);
+    }
+
+    #[test]
+    fn a_waiting_filter_narrows_the_rows_and_the_cursor() {
+        // The fixture's sessions carry no live id; give two of them one.
+        let mut fleet = fleet(&["local", "spark"]);
+        fleet.groups[0].sessions[1].session_id = Some("live-1".into());
+        fleet.groups[1].sessions[0].session_id = Some("live-2".into());
+        let f = Some(&fleet);
+        let only: std::collections::HashSet<String> =
+            ["live-1".to_owned(), "live-2".to_owned()].into();
+        assert_eq!(table_rows(&View::All, Some(&only), f), vec![(0, 1), (1, 0)]);
+        assert_eq!(table_rows(&View::All, None, f).len(), 4);
+        let first = step_row(&View::All, Some(&only), f, None, "");
+        assert_eq!(first, Some(("local".into(), "local-b".into())));
+        assert_eq!(
+            step_row(&View::All, Some(&only), f, first.as_ref(), "down"),
+            Some(("spark".into(), "spark-a".into()))
+        );
     }
 }

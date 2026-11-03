@@ -307,6 +307,9 @@ fn stable_session_identity_survives_refresh_without_reusing_selection_authority(
         session_name: "Build".into(),
         workspace_name: None,
         pane_count: 1,
+        window_count: None,
+        last_activity: None,
+        favicon: None,
     };
     let old = uuid::Uuid::new_v4().to_string();
     local.catalog_session(&old, &scope, &session).unwrap();

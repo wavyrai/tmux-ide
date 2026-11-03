@@ -44,20 +44,15 @@ fn phase_and_catalog_are_truthful_without_inventing_counts_or_targets() {
         sessions: vec![choice("one", "same"), choice("two", "same")],
         ..Default::default()
     };
-    assert_eq!(summary(&state, true), "Loading sessions…");
     assert!(!current(&state, true, 7, 7, "one"));
     state.home_phase = browser::HomePhase::Unavailable;
-    assert_eq!(summary(&state, true), "Session catalog unavailable");
     assert!(!current(&state, true, 7, 7, "one"));
     state.home_phase = browser::HomePhase::Live;
-    assert_eq!(summary(&state, true), "2 live sessions");
     assert!(current(&state, true, 7, 7, "two"));
     assert!(!current(&state, true, 7, 7, "same"));
     assert!(!current(&state, true, 8, 7, "two"));
     assert!(!current(&state, false, 7, 7, "two"));
-    assert_eq!(summary(&state, false), "Session catalog unavailable");
     state.sessions.clear();
-    assert_eq!(summary(&state, true), "No live sessions");
     assert!(!current(&state, true, 7, 7, "two"));
 }
 
@@ -149,17 +144,8 @@ fn home_dispatch_fences_request_surface_catalog_and_channel(cx: &mut TestAppCont
 #[path = "tests/render.rs"]
 mod render;
 
-#[path = "tests/filters.rs"]
-mod filters;
-
 #[path = "tests/fleet.rs"]
 mod fleet;
-
-#[path = "tests/filter_keys.rs"]
-mod filter_keys;
-
-#[path = "tests/context.rs"]
-mod context;
 
 #[path = "tests/preferences.rs"]
 mod preferences;
@@ -188,36 +174,8 @@ mod states;
 #[path = "tests/state_ink.rs"]
 mod state_ink;
 
-#[test]
-fn fleet_summary_counts_use_singular_for_one() {
-    let fleet = |machines: usize, sessions: usize| {
-        let sessions: Vec<_> = (0..sessions)
-            .map(|i| serde_json::json!({"id":format!("s{i}"),"name":"main","paneCount":1,"sessionId":null,"selection":"pick"}))
-            .collect();
-        let groups: Vec<_> = (0..machines)
-            .map(|i| serde_json::json!({"id":format!("m{i}"),"label":"Mac","state":"ready","conflict":false,"omittedSessions":0,"sessions":if i == 0 { sessions.clone() } else { vec![] }}))
-            .collect();
-        browser::State {
-            fleet: Some(
-                serde_json::from_value(serde_json::json!({"groups":groups,"omittedGroups":0}))
-                    .unwrap(),
-            ),
-            ..Default::default()
-        }
-    };
-    assert_eq!(
-        summary(&fleet(0, 0), true),
-        "0 machines · 0 available sessions"
-    );
-    assert_eq!(
-        summary(&fleet(1, 1), true),
-        "1 machine · 1 available session"
-    );
-    assert_eq!(
-        summary(&fleet(2, 2), true),
-        "2 machines · 2 available sessions"
-    );
-}
-
 #[path = "tests/fleet_view.rs"]
 mod fleet_view;
+
+#[path = "tests/option_a.rs"]
+mod option_a;

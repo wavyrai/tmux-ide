@@ -97,13 +97,23 @@ function discoveredWorkspaceName(registry: WorkspaceRegistry, sessionName: strin
   throw new Error("Unable to allocate discovered workspace identity");
 }
 
+/** A live session row with the facts the native app's Home shows beside it. */
+export interface NativeLiveSessionSummary extends LiveSessionSummary {
+  /** Distinct tmux windows of the session (at least one). */
+  readonly windowCount: number;
+  /** tmux `#{session_activity}` in epoch seconds, or null when tmux reports none. */
+  readonly lastActivity: number | null;
+  /** tmux `#{session_path}`, the session's working directory. */
+  readonly sessionPath: string;
+}
+
 /** Refresh discovered live membership without changing durable workspace intent or aliases. */
 export function createNativeTmuxServerCatalog(
   workspaceRegistry: WorkspaceRegistry,
   run: (args: readonly string[], signal?: AbortSignal) => Promise<string>,
   assertOpen: () => void = () => undefined,
-): () => Promise<LiveSessionSummary[]> {
-  return async (): Promise<LiveSessionSummary[]> => {
+): () => Promise<NativeLiveSessionSummary[]> {
+  return async (): Promise<NativeLiveSessionSummary[]> => {
     assertOpen();
     const raw = await run(
       [
@@ -116,7 +126,8 @@ export function createNativeTmuxServerCatalog(
           "list-panes",
           "-a",
           "-F",
-          "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}\t#{pane_id}\t#{session_path}",
+          // session_path stays last: tmux rejects tabs in session names but not in paths.
+          "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}\t#{pane_id}\t#{window_id}\t#{session_activity}\t#{session_path}",
         ]
           .map(shellEscape)
           .join(" "),
@@ -126,13 +137,20 @@ export function createNativeTmuxServerCatalog(
     assertOpen();
     const rows = new Map<
       string,
-      { summary: LiveSessionSummary; panes: Set<string>; dir: string }
+      {
+        summary: LiveSessionSummary;
+        panes: Set<string>;
+        windows: Set<string>;
+        dir: string;
+        activity: number | null;
+      }
     >();
     // Only the successful server-side zero-session branch proves emptiness.
     // Command errors, unsupported formats and unwitnessed blank output stay failures.
     const lines = raw.trim() === "tmux-ide-empty-catalog-v1" ? [] : raw.trim().split("\n");
     for (const line of lines) {
-      const [pid, id, created, name, pane, dir] = line.split("\t");
+      const [pid, id, created, name, pane, window, activity, ...pathParts] = line.split("\t");
+      const dir = pathParts.join("\t");
       if (
         !pid ||
         !/^\d+$/.test(pid) ||
@@ -143,6 +161,8 @@ export function createNativeTmuxServerCatalog(
         !name ||
         !pane ||
         !/^%\d+$/.test(pane) ||
+        !window ||
+        !/^@\d+$/.test(window) ||
         !dir
       )
         throw new Error("Invalid native server catalog");
@@ -151,9 +171,12 @@ export function createNativeTmuxServerCatalog(
       const row = rows.get(liveSessionId) ?? {
         summary: { liveSessionId, sessionName: name, paneCount: 0 },
         panes: new Set<string>(),
+        windows: new Set<string>(),
         dir,
+        activity: activity && /^\d+$/.test(activity) ? Number(activity) : null,
       };
       row.panes.add(pane);
+      row.windows.add(window);
       rows.set(liveSessionId, row);
     }
     const names = new Set([...rows.values()].map(({ summary }) => summary.sessionName));
@@ -170,7 +193,13 @@ export function createNativeTmuxServerCatalog(
           projectDir: dir,
           persistence: "volatile",
         });
-    return [...rows.values()].map(({ summary, panes }) => ({ ...summary, paneCount: panes.size }));
+    return [...rows.values()].map(({ summary, panes, windows, dir, activity }) => ({
+      ...summary,
+      paneCount: panes.size,
+      windowCount: windows.size,
+      lastActivity: activity,
+      sessionPath: dir,
+    }));
   };
 }
 

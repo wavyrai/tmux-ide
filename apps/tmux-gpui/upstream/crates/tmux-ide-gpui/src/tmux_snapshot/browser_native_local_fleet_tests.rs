@@ -23,6 +23,9 @@ fn catalog(environment: &str, generation: &str, rows: usize) -> FleetCatalog {
                     session_name: format!("Session {n}"),
                     workspace_name: None,
                     pane_count: 1,
+                    window_count: None,
+                    last_activity: None,
+                    favicon: None,
                 })
                 .collect(),
         }],
@@ -357,4 +360,33 @@ fn repeated_catalog_reads_do_not_republish_but_changes_and_recovery_do() {
         Err(herdr_client::tmux_daemon::Error::Retired)
     )));
     assert!(gate.accept_catalog(event(incarnation, Ok(renamed))));
+}
+#[test]
+fn a_version_2_row_carries_windows_activity_and_a_decoded_favicon() {
+    let mut own = catalog("local-env", "local-generation", 2);
+    let rows = &mut own.sessions[0].sessions;
+    rows[0].window_count = Some(3);
+    rows[0].last_activity = Some(1_793_635_178);
+    rows[0].favicon = Some(herdr_client::tmux_daemon::Favicon {
+        mime: "image/svg+xml".into(),
+        data: "PHN2Zy8+".into(),
+    });
+    // An unknown type is dropped, never an error for the catalog.
+    rows[1].favicon = Some(herdr_client::tmux_daemon::Favicon {
+        mime: "text/html".into(),
+        data: "PHN2Zy8+".into(),
+    });
+    let group = group("local", "Local", Some(&own), false).unwrap();
+    let (first, second) = (&group.sessions[0], &group.sessions[1]);
+    assert_eq!(
+        (first.window_count, first.last_activity),
+        (Some(3), Some(1_793_635_178))
+    );
+    let image = first.favicon.as_ref().unwrap();
+    assert_eq!(
+        (image.format, image.bytes.as_slice()),
+        (gpui::ImageFormat::Svg, b"<svg/>".as_slice())
+    );
+    assert!(second.favicon.is_none());
+    assert_eq!((second.window_count, second.last_activity), (None, None));
 }

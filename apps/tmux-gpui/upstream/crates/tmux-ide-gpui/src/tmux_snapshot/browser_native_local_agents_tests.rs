@@ -172,6 +172,9 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
                 session_name: "Same session".into(),
                 workspace_name: c.workspace.clone(),
                 pane_count: 1,
+                window_count: None,
+                last_activity: None,
+                favicon: None,
             }],
         }],
     };

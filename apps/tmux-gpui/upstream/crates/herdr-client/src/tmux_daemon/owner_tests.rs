@@ -33,7 +33,7 @@ fn remote_owner_reuses_catalog_validation_without_local_authority() {
         let servers = serde_json::json!({"version":1,"servers":[{"state":"online","serverId":served_scope.server_id,"label":"Remote","generation":served_scope.generation}]});
         let sessions = serde_json::json!({"version":1,"server":{"serverId":served_scope.server_id,"generation":served_scope.generation},"sessions":[{"liveSessionId":format!("live-session.{}", "a".repeat(20)),"sessionName":"remote-fixture","workspaceName":null,"paneCount":1}]});
         let session_path = format!(
-            "/api/v1/tmux-servers/{}/{}/sessions",
+            "/api/v1/tmux-servers/{}/{}/sessions?version=2",
             served_scope.server_id, served_scope.generation
         );
         for (index, (path, body)) in [

@@ -8,6 +8,13 @@ fn preference_fleet() -> browser::fleet::Fleet {
     fixture["fleet"]["preferences"] =
         serde_json::json!({"revision":4,"phase":"ready","error":null});
     fixture["fleet"]["groups"][0]["collapseAction"] = ACTION.into();
+    // A second machine: a lone machine has no collapse to offer (#705).
+    let second = serde_json::json!({"id":"second","label":"Second","state":"ready",
+        "conflict":false,"omittedSessions":0,"sessions":[]});
+    fixture["fleet"]["groups"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
     serde_json::from_value(fixture["fleet"].clone()).unwrap()
 }
 #[gpui::test]

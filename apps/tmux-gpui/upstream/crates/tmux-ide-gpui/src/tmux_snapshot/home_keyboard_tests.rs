@@ -88,9 +88,6 @@ fn home_without_terminal_surface_owns_shortcuts_and_picker_text(cx: &mut TestApp
     });
 }
 
-#[path = "home_keyboard_tests/selection.rs"]
-mod selection;
-
 #[path = "home_keyboard_tests/recovery.rs"]
 mod recovery;
 

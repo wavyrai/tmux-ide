@@ -50,13 +50,18 @@ fn label(row: &Row, unavailable: bool) -> &'static str {
         _ => "Idle",
     }
 }
+/// The one colour "needs input" wears everywhere, in every theme: the agent's
+/// badge and Home's pill (#705).
+pub(super) fn attention_ink(theme: &crate::config::Theme) -> u32 {
+    theme.ink(theme.palette[3])
+}
 fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     if unavailable || matches!(row.status, Status::Disconnected) {
         theme.muted
     } else if matches!(row.status, Status::Failed) {
         theme.ink(theme.palette[1])
     } else if row.attention || matches!(row.status, Status::Blocked) {
-        theme.ink(theme.palette[3])
+        attention_ink(theme)
     } else if matches!(row.status, Status::Idle) {
         theme.muted
     } else if matches!(row.status, Status::Done) {
@@ -83,6 +88,7 @@ impl SnapshotView {
         let theme = self.theme();
         super::design::palette(&theme)
             .badge("")
+            .debug_selector(|| "agent-badge".into())
             .flex()
             .items_center()
             .gap_1()
@@ -103,7 +109,11 @@ impl SnapshotView {
                                 |_, _, _| (),
                                 move |bounds, _, window, _| slots.reserve(bounds, window),
                             )
+                            // Pinned to the slot: without an inset, an absolute
+                            // child sits at its static position, one line below.
                             .absolute()
+                            .top_0()
+                            .left_0()
                             .size_full(),
                         )
                     }),

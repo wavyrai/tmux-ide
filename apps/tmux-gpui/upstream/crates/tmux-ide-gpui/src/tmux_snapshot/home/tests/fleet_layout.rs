@@ -20,10 +20,12 @@ fn fleet_hierarchy_keeps_long_labels_and_statuses_separate(cx: &mut TestAppConte
         cx.simulate_resize(size(px(width), px(1800.)));
         cx.update(|window, cx| window.draw(cx).clear(cx));
         for (label, status, owner) in [
+            // A connected machine's line says nothing more; a disconnected
+            // one keeps its status (#705).
             (
-                "fleet-machine-label-0",
-                "fleet-machine-status-0",
-                "fleet-machine-header-0",
+                "fleet-machine-label-1",
+                "fleet-machine-status-1",
+                "fleet-machine-header-1",
             ),
             (
                 "fleet-server-label-0-0",

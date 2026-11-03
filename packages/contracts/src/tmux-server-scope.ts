@@ -151,6 +151,60 @@ export const TmuxServerSessionsResourceSchemaZ = z
   })
   .strict();
 
+/** Raw (decoded) byte limit for one session favicon on the sessions resource. */
+export const TMUX_SERVER_SESSION_FAVICON_MAX_BYTES = 32_768;
+export const TmuxServerSessionFaviconMimeSchemaZ = z.enum([
+  "image/png",
+  "image/svg+xml",
+  "image/x-icon",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+export type TmuxServerSessionFaviconMime = z.infer<typeof TmuxServerSessionFaviconMimeSchemaZ>;
+function base64DecodedLength(data: string): number {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return (data.length / 4) * 3 - padding;
+}
+export const TmuxServerSessionFaviconSchemaZ = z
+  .object({
+    mime: TmuxServerSessionFaviconMimeSchemaZ,
+    data: z
+      .string()
+      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)
+      .refine(
+        (data) => base64DecodedLength(data) <= TMUX_SERVER_SESSION_FAVICON_MAX_BYTES,
+        "favicon exceeds 32 KiB",
+      ),
+  })
+  .strict();
+export type TmuxServerSessionFavicon = z.infer<typeof TmuxServerSessionFaviconSchemaZ>;
+
+/**
+ * Version 2 of the sessions resource, served only for `?version=2`. Version 1
+ * stays byte-for-byte for clients that parse it with unknown fields denied.
+ */
+export const TmuxServerSessionsResourceV2SchemaZ = z
+  .object({
+    version: z.literal(2),
+    server: TmuxServerScopeSchemaZ,
+    sessions: z.array(
+      z
+        .object({
+          liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
+          sessionName: z.string().min(1).max(160),
+          workspaceName: z.string().min(1).max(160).nullable(),
+          paneCount: z.number().int().nonnegative(),
+          windowCount: z.number().int().min(1),
+          lastActivity: z.number().int().nonnegative().nullable(),
+          favicon: TmuxServerSessionFaviconSchemaZ.nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type TmuxServerSessionsResourceV2 = z.infer<typeof TmuxServerSessionsResourceV2SchemaZ>;
+
 /** Selector intent is interpreted only by the daemon on its own host. */
 export const TmuxServerRegistrationRequestSchemaZ = z
   .object({

@@ -457,6 +457,12 @@ fn group(
                 )?,
                 name: session.session_name.clone(),
                 pane_count: session.pane_count.into(),
+                window_count: session.window_count.map(u64::from),
+                last_activity: session.last_activity,
+                favicon: session
+                    .favicon
+                    .as_ref()
+                    .and_then(|f| fleet::favicon(&f.mime, &f.data)),
                 server_id: Some(scoped.scope.server_id.clone()),
                 session_id: Some(session.live_session_id.clone()),
                 favorite: false,

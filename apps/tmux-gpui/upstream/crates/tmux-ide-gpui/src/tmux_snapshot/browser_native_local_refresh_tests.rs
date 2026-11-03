@@ -20,6 +20,9 @@ fn changed_home_catalog_preserves_current_tokens_but_retires_changed_generations
                 session_name: "Build".into(),
                 workspace_name: None,
                 pane_count: 1,
+                window_count: None,
+                last_activity: None,
+                favicon: None,
             }],
         }],
     };

@@ -316,6 +316,11 @@ fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAp
     let header = painted(cx, "fleet-machine-header-0").unwrap();
     let use_server = painted(cx, "fleet-use-server-0-0").unwrap();
     assert!(header.contains(&use_server.center()));
+    // It says what it does, as "Default" does once chosen: not a lone ✓.
+    assert!(
+        use_server.size.width > px(80.),
+        "an icon-only control: {use_server:?}"
+    );
     // Its sessions still show, and the button picks the lone server.
     assert!(painted(cx, "fleet-session-0-0").is_some());
     let token = view.read_with(cx, |v, _| {
@@ -338,11 +343,11 @@ fn a_lone_server_folds_into_its_machine_and_two_servers_get_rows(cx: &mut TestAp
     });
     assert!(painted(cx, "fleet-server-default-0-0").is_none());
     assert!(painted(cx, "fleet-use-server-0-0").is_none());
-    // A machine's own view has its header row, not the column labels.
     update(cx, &|v| {
         v.home_filter.as_mut().unwrap().fleet_view = View::Machine("qa-local".into())
     });
-    assert!(painted(cx, "fleet-columns").is_none());
+    // Option A (#705): the column labels head every view.
+    assert!(painted(cx, "fleet-columns").is_some());
     // Without a fleet table, the line is how Home names the default.
     update(cx, &|v| v.browser_state.fleet = None);
     assert!(painted(cx, "new-session-target").is_some());
@@ -365,52 +370,6 @@ fn agents(phase: &str, rows: usize) -> browser::home_agents::Roster {
     .unwrap()
 }
 
-fn wheel(position: Point<Pixels>, dy: f32) -> ScrollWheelEvent {
-    ScrollWheelEvent {
-        position,
-        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
-        touch_phase: TouchPhase::Moved,
-        ..Default::default()
-    }
-}
-
-#[gpui::test]
-fn a_wheel_over_the_agent_list_stays_in_the_list(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|window, cx| {
-        let mut view = make_view(window, cx, sender);
-        view.browser_state.home_agents = Some(agents("live", 30));
-        view.frame = None;
-        view.browser_state.frame = None;
-        view
-    });
-    cx.simulate_resize(size(px(1400.), px(700.)));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    receiver.try_iter().for_each(drop);
-    let offsets = |cx: &mut VisualTestContext| {
-        view.read_with(cx, |v, _| {
-            let c = v.home_filter.as_ref().unwrap();
-            (c.scroll.offset().y, c.page_scroll.offset().y)
-        })
-    };
-    let list = cx.debug_bounds("home-agent-viewport").unwrap();
-    assert!(list.bottom() < px(700.), "list off screen: {list:?}");
-    // Far past the list's end: the list moves, the page never does.
-    for _ in 0..40 {
-        cx.simulate_event(wheel(list.center(), -120.));
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-    }
-    let (list_offset, page_offset) = offsets(cx);
-    assert!(list_offset < px(0.), "list did not scroll");
-    assert_eq!(page_offset, px(0.), "the page took the list's wheel");
-    // Off the list, the page scrolls.
-    let header = cx.debug_bounds("home-header").unwrap();
-    cx.simulate_event(wheel(header.center(), -120.));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(offsets(cx).1 < px(0.), "page did not scroll");
-    assert!(receiver.try_recv().is_err());
-}
-
 #[gpui::test]
 fn discovering_agents_shows_bezels_loader_only_while_loading(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -422,8 +381,8 @@ fn discovering_agents_shows_bezels_loader_only_while_loading(cx: &mut TestAppCon
     cx.simulate_resize(size(px(1400.), px(900.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let loader = cx.debug_bounds("home-agents-loader").unwrap();
-    let heading = cx.debug_bounds("home-agents-heading").unwrap();
-    assert!(loader.size.width > px(0.) && heading.contains(&loader.center()));
+    let status = cx.debug_bounds("home-agents-status").unwrap();
+    assert!(loader.size.width > px(0.) && status.contains(&loader.center()));
     cx.update(|window, cx| {
         view.update(cx, |v, _| {
             v.browser_state.home_agents = Some(agents("live", 1))
@@ -444,6 +403,13 @@ fn preference_fleet(phase: &str, error: Option<&str>) -> browser::fleet::Fleet {
     fixture["fleet"]["preferences"] =
         serde_json::json!({"revision": 4, "phase": phase, "error": error});
     fixture["fleet"]["groups"][0]["collapseAction"] = ACTION.into();
+    // A second machine: a lone machine has no collapse to offer (#705).
+    let second = serde_json::json!({"id":"second","label":"Second","state":"ready",
+        "conflict":false,"omittedSessions":0,"sessions":[]});
+    fixture["fleet"]["groups"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
     serde_json::from_value(fixture["fleet"].clone()).unwrap()
 }
 

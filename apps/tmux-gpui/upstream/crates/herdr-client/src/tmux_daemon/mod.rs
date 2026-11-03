@@ -85,7 +85,7 @@ mod worker;
 pub use create_session::{CreateOutcome, CreatedSession};
 use serde::Deserialize;
 pub use servers::ServerRegistration;
-pub use sessions::{ServerClient, Session};
+pub use sessions::{Favicon, ServerClient, Session};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
