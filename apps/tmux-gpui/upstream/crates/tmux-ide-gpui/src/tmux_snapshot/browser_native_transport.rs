@@ -298,6 +298,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
         let mut hold = hold::Hold::default();
+        let mut releases = loss::Releases::default();
         let mut browser_read_at = 0;
         let mut presence = (true, 0);
         let mut pending = std::collections::VecDeque::new();
@@ -584,7 +585,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         );
                         // A submitted close/split can retire its stream before the receipt.
                         // Reconcile inventory once; never replay the mutation or queued input.
-                        let structural = current.actions.interrupted().is_some_and(|c| c.reissue);
+                        // So is a pane split in from another client (re-lease with its panes).
+                        let structural = current.actions.interrupted().is_some_and(|c| c.reissue)
+                            || releases.admit(&error, current.request, now);
                         // Reconnecting cannot help a daemon that lacks a required capability.
                         let stop = diagnostics::Stop::new(
                             &error,

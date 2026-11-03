@@ -351,3 +351,21 @@ fn browser_icons_update_without_changing_pane_geometry() {
     frame["layouts"][0]["panes"][0]["browserIcon"] = json!("https://site/favicon");
     assert!(state.apply_control(&to_raw_value(&frame).unwrap()).is_err());
 }
+
+/// A pane split into the session from outside the app appears in the layout
+/// before this stream's lease covers it. That is a topology change the app
+/// re-leases for, not an identity fault (the 2.9.16 known issue).
+#[test]
+fn a_layout_pane_outside_the_lease_is_unissued_not_an_identity_fault() {
+    let mut state = Topology::new(GENERATION.into(), vec!["left".into()]).unwrap();
+    state
+        .apply_control(&to_raw_value(&frames()[0]).unwrap())
+        .unwrap();
+    let mut presentation = Presentation::new("left".into()).unwrap();
+    assert!(matches!(
+        presentation.update(&state, &sources(2), true),
+        Err(Error::Unissued)
+    ));
+    // A foreign stream generation stays an identity fault:
+    // `stale_generation_and_invalid_geometry_clear_cache`.
+}

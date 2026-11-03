@@ -176,3 +176,35 @@ fn only_unusable_stream_errors_are_fatal() {
         "an invalid owner reply kept the stream"
     );
 }
+
+/// A pane split in from another client re-leases the route, a bounded number
+/// of times per request; other topology faults never do.
+#[test]
+fn a_pane_set_change_re_leases_a_bounded_number_of_times() {
+    use herdr_client::{tmux_controller::Error as Controller, tmux_topology::Error as Topology};
+    let unissued = NativeError::Controller(Controller::Topology(Topology::Unissued));
+    let identity = NativeError::Controller(Controller::Topology(Topology::Identity));
+    let mut releases = Releases::default();
+    assert!(
+        !releases.admit(&identity, 3, 0),
+        "an identity fault re-leased"
+    );
+    for at in [0, 100, 200] {
+        assert!(
+            releases.admit(&unissued, 3, at),
+            "a pane change at {at} ms was not re-leased"
+        );
+    }
+    assert!(
+        !releases.admit(&unissued, 3, 300),
+        "a fourth re-lease within 10 s"
+    );
+    assert!(
+        releases.admit(&unissued, 3, 10_001),
+        "the window never reopened"
+    );
+    assert!(
+        releases.admit(&unissued, 4, 10_002),
+        "a new request inherited the count"
+    );
+}

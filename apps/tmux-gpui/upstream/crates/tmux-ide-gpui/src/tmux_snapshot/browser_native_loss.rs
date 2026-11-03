@@ -7,6 +7,42 @@ use super::{
 };
 use std::collections::VecDeque;
 
+/// Re-leases for a pane split into the session from another client. The
+/// stream's lease names the session's panes when it was issued, so a pane
+/// added later fails the layout as `Unissued`. Re-opening the route leases the
+/// current panes. At most `RELEASES` per request within `WINDOW_MS`, so an
+/// inventory that still lacks the pane falls back to the reconnect backoff.
+#[derive(Default)]
+pub(super) struct Releases {
+    request: u64,
+    at: VecDeque<u64>,
+}
+const RELEASES: usize = 3;
+const WINDOW_MS: u64 = 10_000;
+impl Releases {
+    /// Whether this poll error is a pane-set change to re-lease for now.
+    pub(super) fn admit(&mut self, error: &NativeError, request: u64, now: u64) -> bool {
+        if !matches!(
+            error,
+            NativeError::Controller(herdr_client::tmux_controller::Error::Topology(
+                herdr_client::tmux_topology::Error::Unissued
+            ))
+        ) {
+            return false;
+        }
+        if self.request != request {
+            self.request = request;
+            self.at.clear();
+        }
+        self.at.retain(|at| now.saturating_sub(*at) < WINDOW_MS);
+        if self.at.len() >= RELEASES {
+            return false;
+        }
+        self.at.push_back(now);
+        true
+    }
+}
+
 /// Queued keys are never replayed onto a new stream. Whether any were dropped.
 fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     let before = pending.len();

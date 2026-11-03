@@ -967,3 +967,6 @@ mod restart_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "browser_native_local_topology_live_tests.rs"]
+mod topology_live_tests;
