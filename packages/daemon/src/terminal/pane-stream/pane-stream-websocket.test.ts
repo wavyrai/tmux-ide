@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { deflateSync, inflateSync } from "node:zlib";
 import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { describe, expect, it, vi } from "vitest";
+import { _resetLogStateForTests, getLogBuffer } from "../../lib/log.ts";
 import {
   decodeTerminalGraphicsBinary,
   decodeTerminalGraphicsCompressed,
@@ -871,6 +872,52 @@ describe("PaneStreamAdmissionCoordinator", () => {
       authority: { generation: INSTANCE, incarnation: null },
       terminalDelivery: { paneStreamCloseCode: 1000, paneStreamCloseReason: "peer-closed" },
     });
+  });
+
+  it("logs every stream close with its code and reason", async () => {
+    _resetLogStateForTests();
+    const h = harness();
+    const { socket } = await connect(h, { semanticDelivery: true });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    socket.emit("close");
+    const closes = getLogBuffer().filter(
+      (entry) => entry.component === "pane-stream" && entry.msg === "stream closed",
+    );
+    expect(closes).toHaveLength(1);
+    expect(closes[0]!.level).toBe("info");
+    expect(closes[0]!.data).toMatchObject({ code: 1000, reason: "peer-closed", session: SESSION });
+  });
+
+  it("logs an admission closed before redemption with its code and reason", async () => {
+    _resetLogStateForTests();
+    const h = harness();
+    await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId: freshRequestId(),
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error("upgrade rejected");
+    decision.admission.cancelBeforeBind();
+    const closes = getLogBuffer().filter(
+      (entry) => entry.component === "pane-stream" && entry.msg === "admission closed",
+    );
+    expect(closes.map((entry) => entry.data)).toEqual([
+      expect.objectContaining({ code: 1008, reason: "upgrade-rejected" }),
+    ]);
   });
 
   it("answers normalized clock probes only on the negotiated authenticated connection", async () => {

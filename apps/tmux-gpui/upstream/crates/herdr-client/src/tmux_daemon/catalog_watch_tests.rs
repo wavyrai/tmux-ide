@@ -133,7 +133,7 @@ fn same_socket_proof_precedes_credentials_and_notifications_coalesce() {
         let subscribe: Value =
             serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(subscribe["legacyEvents"], false);
-        assert_eq!(subscribe["interests"].as_array().unwrap().len(), 1);
+        assert_eq!(subscribe["interests"].as_array().unwrap().len(), 2);
         socket.send(Message::Text(json!({"type":"resource.interests-ack","interestRevision":1,"sequence":0,"unavailableInterests":[]}).to_string().into())).unwrap();
         for sequence in 1..=20 {
             socket.send(Message::Text(json!({"type":"resource.changed","sequence":sequence,"resource":"workspace-catalog","workspaceName":null,"revision":sequence,"causeOperationId":null}).to_string().into())).unwrap();
@@ -192,7 +192,48 @@ fn cancellation_interrupts_idle_socket_before_hello() {
 }
 
 #[test]
-fn healthy_idle_watch_requests_bounded_fallback_without_reconnecting() {
+fn without_fleet_push_an_idle_watch_requests_the_bounded_fallback() {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut socket = upgrade(socket);
+        let mut daemon = identity;
+        daemon.as_object_mut().unwrap().remove("pid");
+        daemon.as_object_mut().unwrap().remove("ok");
+        socket
+            .send(Message::Text(
+                json!({"type":"hello","daemon":daemon,"sessions":[],"eventSequence":0})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+        assert!(matches!(socket.read().unwrap(), Message::Text(_)));
+        socket.send(Message::Text(json!({"type":"resource.interests-ack","interestRevision":1,"sequence":0,"unavailableInterests":[{"resource":"fleet-catalog","workspaceName":null}]}).to_string().into())).unwrap();
+        assert!(socket.read().is_err());
+    });
+    let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
+    until(&worker).unwrap();
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(8);
+    loop {
+        if let Some(result) = worker.poll().unwrap() {
+            result.unwrap();
+            assert!(start.elapsed() >= Duration::from_secs(4));
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    worker.shutdown().unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn with_fleet_push_an_idle_watch_never_polls() {
     let (_sandbox, listener, source, identity, expected) = fixture();
     let server = thread::spawn(move || {
         let mut socket = proofs(&listener, &identity);
@@ -217,15 +258,13 @@ fn healthy_idle_watch_requests_bounded_fallback_without_reconnecting() {
     });
     let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
     until(&worker).unwrap();
+    // The fallback fired after 5 s; with push nothing arrives without an event.
     let start = Instant::now();
-    let deadline = start + Duration::from_secs(8);
-    loop {
-        if let Some(result) = worker.poll().unwrap() {
-            result.unwrap();
-            assert!(start.elapsed() >= Duration::from_secs(4));
-            break;
-        }
-        assert!(Instant::now() < deadline);
+    while start.elapsed() < Duration::from_secs(7) {
+        assert!(
+            worker.poll().unwrap().is_none(),
+            "an idle pushed watch refreshed"
+        );
         thread::sleep(Duration::from_millis(10));
     }
     worker.shutdown().unwrap();

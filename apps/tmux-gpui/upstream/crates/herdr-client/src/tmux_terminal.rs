@@ -4,9 +4,15 @@ use crate::{tmux_delivery::Snapshot, tmux_receiver, tmux_stream};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 const MAX_PENDING_BYTES: usize = 64 * 1024 * 1024;
+/// NACKs one pane may send without a commit in between. Past this the pane's
+/// stream is broken, not one delivery, and the whole stream fails.
+const MAX_RESEEDS: u8 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -24,6 +30,78 @@ pub enum Error {
     Base64(#[source] base64::DecodeError),
     #[error(transparent)]
     Delivery(#[from] tmux_receiver::Error),
+}
+
+impl Error {
+    /// A bounded name for logs. Never the wire content behind the error.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Retired => "retired",
+            Self::Identity => "identity",
+            Self::Budget => "budget",
+            Self::SourceClosed => "source-closed",
+            Self::Json(_) => "json",
+            Self::Base64(_) => "base64",
+            Self::Delivery(error) => error.code(),
+        }
+    }
+}
+
+/// Where a rejected event pointed, for logs: its pane, and the daemon's fault
+/// reason when the event was a fault frame. Both are bounded tokens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Failure {
+    pub pane: Option<String>,
+    pub fault: Option<&'static str>,
+}
+impl Failure {
+    pub fn of(event: &tmux_stream::Event) -> Self {
+        use tmux_stream::Event;
+        match event {
+            Event::DeliveryReady { pane, .. }
+            | Event::ProjectionEnvelope { pane, .. }
+            | Event::Envelope { pane, .. }
+            | Event::Chunk { pane, .. }
+            | Event::BinaryChunk { pane, .. } => Self {
+                pane: Some(pane.clone()),
+                fault: None,
+            },
+            Event::Control(raw) => fault(raw.get()).unwrap_or_default(),
+            Event::Ready(_) | Event::GraphicsBinary(_) => Self::default(),
+        }
+    }
+}
+fn fault(raw: &str) -> Option<Failure> {
+    #[derive(Deserialize)]
+    struct Frame<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: &'a str,
+        #[serde(default, borrow)]
+        pane: Option<&'a str>,
+        #[serde(default, borrow)]
+        fault: Option<Fault<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Fault<'a> {
+        #[serde(default, borrow)]
+        reason: Option<&'a str>,
+    }
+    let frame: Frame<'_> = serde_json::from_str(raw).ok()?;
+    let reason = match frame.kind {
+        "error" => "error",
+        "terminal-delivery-fault" => match frame.fault.and_then(|fault| fault.reason) {
+            Some("source-closed") => "source-closed",
+            Some("protocol-violation") => "protocol-violation",
+            Some("state-too-large") => "state-too-large",
+            _ => "other",
+        },
+        _ => return None,
+    };
+    Some(Failure {
+        // The app checks the pane is a plain token before it logs it.
+        pane: frame.pane.map(str::to_owned),
+        fault: Some(reason),
+    })
 }
 
 pub enum Outcome {
@@ -44,6 +122,14 @@ pub enum Outcome {
         receipt: tmux_receiver::ProjectionReceipt,
     },
     Control(Box<RawValue>),
+    /// This pane's delivery failed alone. Send the NACK; the daemon reseeds the pane,
+    /// and every other pane keeps updating.
+    Reseed {
+        pane: String,
+        nack: tmux_receiver::Nack,
+    },
+    /// The daemon closed this pane's source. Other panes keep updating.
+    Unavailable(String),
 }
 
 #[derive(Deserialize)]
@@ -62,6 +148,8 @@ pub struct TerminalState {
     alternate_screen_projection: bool,
     retired: bool,
     receivers: BTreeMap<String, tmux_receiver::Receiver>,
+    reseeds: BTreeMap<String, u8>,
+    unavailable: BTreeSet<String>,
 }
 
 impl TerminalState {
@@ -108,6 +196,8 @@ impl TerminalState {
             alternate_screen_projection,
             retired: false,
             receivers: BTreeMap::new(),
+            reseeds: BTreeMap::new(),
+            unavailable: BTreeSet::new(),
         })
     }
     pub fn retire(&mut self) {
@@ -134,6 +224,9 @@ impl TerminalState {
         bytes: Vec<u8>,
         binary: bool,
     ) -> Result<Outcome, Error> {
+        if self.unavailable.contains(&pane) {
+            return Ok(Outcome::Pending);
+        }
         let receiver = self.receivers.get_mut(&pane).ok_or(Error::Identity)?;
         if receiver.binary() != binary || (binary && !self.binary_cells) {
             return Err(Error::Identity);
@@ -152,14 +245,35 @@ impl TerminalState {
                 None => Ok(Outcome::Pending),
             };
         }
-        match receiver.chunk(&transaction_id, usize::from(index), &bytes)? {
-            Some(ack) => Ok(Outcome::Updated {
-                pane,
-                snapshot: receiver.snapshot().cloned(),
-                changed_rows: receiver.changed_rows().to_vec(),
-                ack,
-            }),
-            None => Ok(Outcome::Pending),
+        match receiver.chunk(&transaction_id, usize::from(index), &bytes) {
+            Ok(Some(ack)) => {
+                let outcome = Outcome::Updated {
+                    pane,
+                    snapshot: receiver.snapshot().cloned(),
+                    changed_rows: receiver.changed_rows().to_vec(),
+                    ack,
+                };
+                if let Outcome::Updated { pane, .. } = &outcome {
+                    self.reseeds.remove(pane);
+                }
+                Ok(outcome)
+            }
+            Ok(None) => Ok(Outcome::Pending),
+            Err(error) => self.reseed(pane, error),
+        }
+    }
+    /// One pane's failed delivery becomes that pane's NACK when the receiver can
+    /// name the flight; anything else still fails the stream.
+    fn reseed(&mut self, pane: String, error: tmux_receiver::Error) -> Result<Outcome, Error> {
+        let count = self.reseeds.entry(pane.clone()).or_default();
+        *count = count.saturating_add(1);
+        if *count > MAX_RESEEDS {
+            return Err(error.into());
+        }
+        let receiver = self.receivers.get_mut(&pane).ok_or(Error::Identity)?;
+        match receiver.reseed(&error) {
+            Some(nack) => Ok(Outcome::Reseed { pane, nack }),
+            None => Err(error.into()),
         }
     }
     fn apply_inner(&mut self, event: tmux_stream::Event) -> Result<Outcome, Error> {
@@ -228,9 +342,14 @@ impl TerminalState {
                 Ok(Outcome::Pending)
             }
             tmux_stream::Event::Envelope { pane, envelope } => {
+                if self.unavailable.contains(&pane) {
+                    return Ok(Outcome::Pending);
+                }
                 let receiver = self.receivers.get_mut(&pane).ok_or(Error::Identity)?;
                 let materializing = receiver.projection_receipt().is_some();
-                receiver.begin(envelope.get().as_bytes())?;
+                if let Err(error) = receiver.begin(envelope.get().as_bytes()) {
+                    return self.reseed(pane, error);
+                }
                 if self
                     .receivers
                     .values()
@@ -272,11 +391,28 @@ impl TerminalState {
                 }
                 let kind: Kind<'_> = serde_json::from_str(value.get()).map_err(Error::Json)?;
                 if matches!(kind.kind, "terminal-delivery-fault" | "error") {
-                    return Err(Error::SourceClosed);
+                    return self.fault(&value);
                 }
                 Ok(Outcome::Control(value))
             }
         }
+    }
+    /// A source-closed fault for one pane retires only that pane, until no pane is
+    /// left. Any other fault, or one without a known pane, fails the stream.
+    fn fault(&mut self, raw: &RawValue) -> Result<Outcome, Error> {
+        let failure = fault(raw.get()).unwrap_or_default();
+        let Some(pane) = failure.pane.filter(|pane| {
+            failure.fault == Some("source-closed") && self.receivers.contains_key(pane)
+        }) else {
+            return Err(Error::SourceClosed);
+        };
+        self.receivers.remove(&pane);
+        self.reseeds.remove(&pane);
+        self.unavailable.insert(pane.clone());
+        if self.unavailable.len() >= self.panes.len() {
+            return Err(Error::SourceClosed);
+        }
+        Ok(Outcome::Unavailable(pane))
     }
 }
 

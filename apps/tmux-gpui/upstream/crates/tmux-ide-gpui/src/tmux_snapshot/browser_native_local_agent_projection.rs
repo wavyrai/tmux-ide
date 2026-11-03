@@ -121,7 +121,7 @@ impl Gate {
                 if !matches(&slot.context, result, agent) {
                     continue;
                 }
-                rows.push(rank(agent), self.row_key(&slot.context, agent), |key| {
+                rows.push(rank(agent), self.row_key(slot, agent), |key| {
                     home_agents::Row {
                         key,
                         session_id: slot.context.live.clone(),

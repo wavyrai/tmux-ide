@@ -94,7 +94,7 @@ impl Local {
         self.submitted = false;
     }
     pub(super) fn editor_completed(
-        &self,
+        &mut self,
         request: Request,
         result: Result<(), herdr_client::tmux_daemon::Error>,
     ) -> Result<(), Error> {

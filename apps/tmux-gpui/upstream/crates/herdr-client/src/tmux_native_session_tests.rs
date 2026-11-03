@@ -100,12 +100,15 @@ fn send(socket: &mut WebSocket<TcpStream>, value: Value) {
 }
 
 fn transaction(socket: &mut WebSocket<TcpStream>, index: usize, corrupt: bool) {
+    transaction_on(socket, "pane.test", index, corrupt);
+}
+fn transaction_on(socket: &mut WebSocket<TcpStream>, pane: &str, index: usize, corrupt: bool) {
     let vector = &vectors()[index];
     let wire = vector["wire"].as_str().unwrap();
     send(
         socket,
-        json!({"type":"terminal-delivery-envelope","pane":"pane.test","envelope":{
-        "type":"terminal.delivery","workspaceName":"workspace","semanticPaneId":"pane.test",
+        json!({"type":"terminal-delivery-envelope","pane":pane,"envelope":{
+        "type":"terminal.delivery","workspaceName":"workspace","semanticPaneId":pane,
         "generation":INSTANCE,"incarnation":"pane:1","deliveryNonce":NONCE,"transactionId":TRANSACTION,
         "protocolVersion":1,"encoding":"semantic-compact-v1","frame":if index==0 {"seed"}else{"patch"},
         "baseRevision":if index==0 {Value::Null}else{json!(1)},"canonicalRevision":index+1,
@@ -115,7 +118,7 @@ fn transaction(socket: &mut WebSocket<TcpStream>, index: usize, corrupt: bool) {
     );
     send(
         socket,
-        json!({"type":"terminal-delivery-chunk","pane":"pane.test","transactionId":TRANSACTION,
+        json!({"type":"terminal-delivery-chunk","pane":pane,"transactionId":TRANSACTION,
         "index":0,"data":STANDARD.encode(wire)}),
     );
 }
@@ -202,18 +205,39 @@ fn commits_acknowledge_off_ui_and_coalesced_deltas_keep_the_latest_baseline() {
     peer.join().unwrap();
 }
 
+/// The next client frame, which must be a NACK for the fixture's flight on `pane`.
+fn nack(socket: &mut WebSocket<TcpStream>, pane: &str, reason: &str, applied: i64) {
+    let frame: Value = serde_json::from_str(&socket.read().unwrap().into_text().unwrap()).unwrap();
+    assert_eq!(
+        frame,
+        json!({"type":"terminal-delivery-nack","nack":{
+        "type":"terminal.delivery.nack","workspaceName":"workspace","semanticPaneId":pane,
+        "generation":INSTANCE,"incarnation":"pane:1","deliveryNonce":NONCE,
+        "transactionId":TRANSACTION,"reason":reason,"appliedRevision":applied}})
+    );
+}
+
 #[test]
-fn rejected_commit_never_acknowledges_and_clears_current_state() {
+fn rejected_commit_is_nacked_never_acknowledged_and_the_reseed_commits() {
     let (listener, options) = fixture();
+    let (done_tx, done_rx) = bounded::<()>(1);
     let peer = thread::spawn(move || {
         let mut socket = accept(listener);
         transaction(&mut socket, 0, true);
-        assert!(socket.read().is_err());
+        nack(&mut socket, "pane.test", "hash-mismatch", -1);
+        transaction(&mut socket, 0, false);
+        ack(&mut socket, 0);
+        // Keep the socket open: a closed peer would retire the session's commits.
+        let _ = done_rx.recv_timeout(WAIT);
     });
     let session = NativeSession::spawn(options, "workspace".into()).unwrap();
-    until(|| matches!(session.drain().unwrap().status, Status::Failed(_)).then_some(()));
-    assert!(session.snapshot("pane.test").unwrap().is_none());
-    assert!(session.committed("pane.test").unwrap().is_none());
+    let committed = until(|| session.committed("pane.test").unwrap());
+    assert_eq!(committed.identity.canonical_revision, 1);
+    assert!(!matches!(
+        session.drain().unwrap().status,
+        Status::Failed(_)
+    ));
+    done_tx.send(()).unwrap();
     peer.join().unwrap();
 }
 
@@ -584,13 +608,13 @@ fn cell_observer_rejects_interactive_and_multi_pane_capabilities() {
     options.descriptor.effective_viewer_mode = tmux_stream::ViewerMode::Interactive;
     assert!(matches!(
         NativeSession::spawn_cell_observer(options, "workspace".into()),
-        Err(Error::Terminal(tmux_terminal::Error::Identity))
+        Err(Error::Terminal(tmux_terminal::Error::Identity, _))
     ));
     let (_listener, mut options) = fixture();
     options.descriptor.panes.push("pane.neighbour".into());
     assert!(matches!(
         NativeSession::spawn_cell_observer(options, "workspace".into()),
-        Err(Error::Terminal(tmux_terminal::Error::Identity))
+        Err(Error::Terminal(tmux_terminal::Error::Identity, _))
     ));
 }
 
@@ -620,5 +644,174 @@ fn cell_observer_retains_only_its_pane_with_neighbour_layout_controls() {
     session.cancel();
     assert!(session.committed("pane.test").unwrap().is_none());
     done_tx.send(()).unwrap();
+    peer.join().unwrap();
+}
+
+#[test]
+fn a_pane_that_keeps_failing_ends_the_stream_naming_its_pane_and_check() {
+    let (listener, options) = fixture();
+    let peer = thread::spawn(move || {
+        let mut socket = accept(listener);
+        for _ in 0..3 {
+            transaction(&mut socket, 0, true);
+            nack(&mut socket, "pane.test", "hash-mismatch", -1);
+        }
+        transaction(&mut socket, 0, true);
+        let _ = socket.read();
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let error = until(|| match session.drain().unwrap().status {
+        Status::Failed(error) => Some(error),
+        _ => None,
+    });
+    let Error::Terminal(source, failure) = error.as_ref() else {
+        panic!("expected a terminal state failure, got {error:?}");
+    };
+    assert!(source.code().starts_with("delivery-"), "{}", source.code());
+    assert_eq!(failure.pane.as_deref(), Some("pane.test"));
+    assert_eq!(failure.fault, None);
+    peer.join().unwrap();
+}
+
+fn fixture_panes(panes: &[&str]) -> (TcpListener, ConnectOptions) {
+    let (listener, mut options) = fixture();
+    options.descriptor.panes = panes.iter().map(|pane| (*pane).to_owned()).collect();
+    (listener, options)
+}
+#[allow(clippy::result_large_err)] // tungstenite fixes this callback's error type.
+fn accept_panes(listener: TcpListener, panes: &[&str]) -> WebSocket<TcpStream> {
+    let (stream, _) = listener.accept().unwrap();
+    stream.set_read_timeout(Some(WAIT)).unwrap();
+    let mut socket =
+        tungstenite::accept_hdr(stream, |_request: &Request, mut response: Response| {
+            response.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                tmux_stream::SUBPROTOCOL.parse().unwrap(),
+            );
+            Ok(response)
+        })
+        .unwrap();
+    let _redeem = socket.read().unwrap();
+    send(
+        &mut socket,
+        json!({"type":"ready","protocolVersion":2,"daemonInstanceId":INSTANCE,
+        "requestId":REQUEST,"panes":panes,"effectiveViewerMode":"read-only"}),
+    );
+    for pane in panes {
+        send(
+            &mut socket,
+            json!({"type":"terminal-delivery-ready","pane":pane,"negotiation":{"accepted":true,
+            "negotiated":{"protocolVersion":1,"encoding":"semantic-compact-v1","richPlacements":true,
+            "generation":INSTANCE,"deliveryNonce":NONCE,"alternateScreenProjection":null}}}),
+        );
+    }
+    socket
+}
+fn revision(session: &NativeSession, pane: &str) -> Option<u64> {
+    session
+        .committed(pane)
+        .unwrap()
+        .map(|committed| committed.identity.canonical_revision)
+}
+
+/// Card #701: one pane's corrupted update is that pane's NACK and reseed. The
+/// other pane keeps committing meanwhile, and the stream never fails.
+#[test]
+fn a_corrupt_update_on_one_pane_reseeds_it_while_the_other_keeps_updating() {
+    let (listener, options) = fixture_panes(&["pane.a", "pane.b"]);
+    let (reseed_tx, reseed_rx) = bounded(1);
+    let (done_tx, done_rx) = bounded::<()>(1);
+    let peer = thread::spawn(move || {
+        let mut socket = accept_panes(listener, &["pane.a", "pane.b"]);
+        transaction_on(&mut socket, "pane.a", 0, false);
+        ack(&mut socket, 0);
+        transaction_on(&mut socket, "pane.b", 0, false);
+        ack(&mut socket, 0);
+        transaction_on(&mut socket, "pane.a", 1, true);
+        nack(&mut socket, "pane.a", "hash-mismatch", 1);
+        transaction_on(&mut socket, "pane.b", 1, false);
+        ack(&mut socket, 1);
+        reseed_rx.recv_timeout(WAIT).unwrap();
+        // The daemon answers a NACK with a seed.
+        transaction_on(&mut socket, "pane.a", 0, false);
+        ack(&mut socket, 0);
+        // Keep the socket open: a closed peer would retire the session's commits.
+        let _ = done_rx.recv_timeout(WAIT);
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let mut reseeding_while_b_moved = false;
+    until(|| {
+        let updates = session.drain().unwrap();
+        assert!(
+            !matches!(updates.status, Status::Failed(_)),
+            "the stream failed"
+        );
+        if revision(&session, "pane.b") == Some(2) {
+            reseeding_while_b_moved |= updates.reseeding.contains("pane.a");
+            return Some(());
+        }
+        None
+    });
+    assert!(
+        reseeding_while_b_moved,
+        "pane.a was not reseeding while pane.b updated"
+    );
+    // Pane A keeps its last commit on screen until the reseed lands.
+    assert_eq!(revision(&session, "pane.a"), Some(1));
+    reseed_tx.send(()).unwrap();
+    until(|| {
+        let updates = session.drain().unwrap();
+        assert!(
+            !matches!(updates.status, Status::Failed(_)),
+            "the stream failed"
+        );
+        (!updates.reseeding.contains("pane.a")).then_some(())
+    });
+    assert_eq!(revision(&session, "pane.a"), Some(1));
+    assert_eq!(revision(&session, "pane.b"), Some(2));
+    done_tx.send(()).unwrap();
+    peer.join().unwrap();
+}
+
+#[test]
+fn a_source_closed_fault_retires_only_its_pane_until_none_is_left() {
+    let (listener, options) = fixture_panes(&["pane.a", "pane.b"]);
+    let (closed_tx, closed_rx) = bounded(1);
+    let peer = thread::spawn(move || {
+        let mut socket = accept_panes(listener, &["pane.a", "pane.b"]);
+        transaction_on(&mut socket, "pane.a", 0, false);
+        ack(&mut socket, 0);
+        transaction_on(&mut socket, "pane.b", 0, false);
+        ack(&mut socket, 0);
+        send(
+            &mut socket,
+            json!({"type":"terminal-delivery-fault","pane":"pane.a","fault":{
+            "type":"terminal.delivery.fault","reason":"source-closed","message":"private",
+            "deliveryNonce":NONCE}}),
+        );
+        transaction_on(&mut socket, "pane.b", 1, false);
+        ack(&mut socket, 1);
+        closed_rx.recv_timeout(WAIT).unwrap();
+        send(
+            &mut socket,
+            json!({"type":"terminal-delivery-fault","pane":"pane.b","fault":{
+            "type":"terminal.delivery.fault","reason":"source-closed","message":"private",
+            "deliveryNonce":NONCE}}),
+        );
+        let _ = socket.read();
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let unavailable = until(|| {
+        let updates = session.drain().unwrap();
+        assert!(
+            !matches!(updates.status, Status::Failed(_)),
+            "the stream failed"
+        );
+        (revision(&session, "pane.b") == Some(2)).then_some(updates.unavailable)
+    });
+    assert!(unavailable.contains("pane.a"), "{unavailable:?}");
+    assert!(!unavailable.contains("pane.b"));
+    closed_tx.send(()).unwrap();
+    until(|| matches!(session.drain().unwrap().status, Status::Failed(_)).then_some(()));
     peer.join().unwrap();
 }

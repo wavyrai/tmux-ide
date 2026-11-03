@@ -764,24 +764,7 @@ impl SnapshotView {
                     .fill(),
             )
             .child(self.sidebar_footer(cx));
-        let status = if self.browser_state.retained_preview {
-            if self.browser_state.status.starts_with("Restoring terminal…") {
-                self.browser_state.status.clone()
-            } else {
-                format!("Restoring terminal… — {}", self.browser_state.status)
-            }
-        } else if self.selection.is_some() {
-            "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
-        } else if self.browser_state.input_target_rejected {
-            "Input interrupted — reselect pane, then retype".into()
-        } else if self.input_interrupted {
-            format!(
-                "Input interrupted; click terminal when ready, then retype — {}",
-                self.browser_state.status
-            )
-        } else {
-            self.browser_state.status.clone()
-        };
+        let status = self.status_line();
         // Routine window navigation must not insert a notice beside the tabs:
         // its width would move the entire strip during every retained frame.
         // Keep failures and developer diagnostics visible without rearming input.
@@ -862,7 +845,8 @@ impl SnapshotView {
                     .children(super::design::ink_probe(|| "status-text".into()))
                     .child(div().w_full().child(status)),
                 Axis::Vertical,
-            ));
+            ))
+            .children(self.reconnect_retry(cx));
         // Cards own their terminal background; the surrounding canvas exposes gutters.
         let content_background = self.canvas();
         let mut context = Some(context);

@@ -13113,6 +13113,7 @@ var require_package = __commonJS({
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
+        "demo:themes": "bun --preload @opentui/solid/preload docs/scripts/render-theme-gallery.tsx && node docs/scripts/rasterize-theme-gallery.mjs",
         "demo:font": "node docs/scripts/tui-demo-font/build.mjs",
         "readme:media": "node docs/scripts/readme-media.mjs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/testing/styled-frame-oracle.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-transient-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/terminal-draw-failure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/guided-tour-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-new-agent-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/agent-team-renderer.test.tsx ./scripts/solid-conditional-props.test.tsx",
@@ -44563,8 +44564,13 @@ async function applyTerminalReplicaUpdateCooperatively(current, update, options)
   }
   const authenticated = options.authenticatedFrameHash;
   const frameStart = readProfileClock(options.instrumentation);
-  const frameHash = authenticated && /^[0-9a-f]{16}$/u.test(authenticated) ? authenticated : await hashCanonicalTerminalValueCooperatively(
-    { ...admitted, snapshot: snapshot3 },
+  const reuseAuthenticated = Boolean(authenticated && /^[0-9a-f]{16}$/u.test(authenticated));
+  if (!reuseAuthenticated) {
+    await primeTerminalReplicaRowsHashCooperatively(snapshot3.grid, yieldControl);
+    await primeTerminalReplicaRowsHashCooperatively(snapshot3.history, yieldControl);
+  }
+  const frameHash = reuseAuthenticated ? authenticated : await hashCanonicalTerminalValueCooperatively(
+    terminalReplicaFrameIdentity({ ...admitted, snapshot: snapshot3 }),
     yieldControl,
     // Bound frame hashing without scheduling a task per few cells.
     32 * 1024
@@ -44841,9 +44847,19 @@ function resolveFrameHash(update, options, profile) {
     return authenticated;
   }
   const started = readProfileClock(options.instrumentation);
-  const hash = hashStable(update);
+  const hash = hashStable(terminalReplicaFrameIdentity(update));
   addProfileDuration(profile, "updateHash", started, options.instrumentation);
   return hash;
+}
+function terminalReplicaFrameIdentity(update) {
+  if (update.type !== "terminal.seed") return update;
+  const { grid, history, ...rest } = update.snapshot;
+  return [
+    "terminal-replica-frame-v2",
+    { ...update, snapshot: rest },
+    hashTerminalReplicaRows(grid),
+    hashTerminalReplicaRows(history)
+  ];
 }
 function readProfileClock(instrumentation) {
   if (!instrumentation) return void 0;
@@ -62237,6 +62253,14 @@ function joinBytes(chunks) {
   }
   return joined;
 }
+function logDeliveryFault(client, reason, cause) {
+  logger.info("terminal-delivery", "fault sent to client", {
+    reason,
+    ...cause ? { cause } : {},
+    pane: client.paneId,
+    workspace: client.deliveryWorkspaceName
+  });
+}
 var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
@@ -62245,6 +62269,7 @@ var init_terminal_delivery_hub = __esm({
     init_src2();
     init_src3();
     init_stock_capture_fidelity();
+    init_log();
     init_native_seed_backing();
     init_src2();
     init_src3();
@@ -62426,6 +62451,11 @@ var init_terminal_delivery_hub = __esm({
           };
         } catch (error) {
           if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
+          logDeliveryFault(
+            { paneId: semanticPaneId3, deliveryWorkspaceName: address },
+            "source-closed",
+            "capture-unavailable"
+          );
           await accept({
             type: "terminal.delivery.fault",
             reason: "source-closed",
@@ -62584,6 +62614,7 @@ var init_terminal_delivery_hub = __esm({
           this.#cancelEncoding(client);
           client.outgoing.length = 0;
           client.inFlight = null;
+          logDeliveryFault(client, "source-closed", "source-restarted");
           this.#enqueue(client, {
             type: "terminal.delivery.fault",
             reason: "source-closed",
@@ -63571,6 +63602,7 @@ var init_terminal_delivery_hub = __esm({
         this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
       }
       #fault(client, reason, message, selectionObservation = null) {
+        logDeliveryFault(client, reason);
         if (this.#observability.enabled)
           try {
             const atMicros = this.#observability.nowMicros();
@@ -72667,6 +72699,7 @@ var init_pane_stream_websocket = __esm({
     init_src2();
     init_src2();
     init_src2();
+    init_log();
     init_src2();
     init_admission_util();
     init_registry2();
@@ -73175,6 +73208,11 @@ var init_pane_stream_websocket = __esm({
         this.#open = false;
         this.#cancelDeadline();
         const socket = this.#socket;
+        logger.info("pane-stream", "admission closed", {
+          code: code2,
+          reason,
+          hostClientId: this.hostClientId
+        });
         this.#detach();
         this.#onRelease(this);
         if (socket) safeCloseSocket(socket, code2, reason);
@@ -73426,6 +73464,12 @@ var init_pane_stream_websocket = __esm({
       close(code2 = 1e3, reason = "stream-closed") {
         if (this.#closed) return;
         this.#recordDiagnosticLifecycle("pane-stream-terminal", code2, reason);
+        logger.info("pane-stream", "stream closed", {
+          code: code2,
+          reason,
+          session: this.#descriptor.sessionName,
+          clientId: this.#clientId
+        });
         this.#closed = true;
         for (const demand of this.#surfaceDemands.values()) demand.close();
         this.#surfaceDemands.clear();
@@ -97141,7 +97185,9 @@ var init_stop = __esm({
 // packages/daemon/src/open-browser.ts
 var open_browser_exports = {};
 __export(open_browser_exports, {
+  NO_NATIVE_CONTROLS_NOTICE: () => NO_NATIVE_CONTROLS_NOTICE,
   createBrowserPane: () => createBrowserPane,
+  nativeControlsNotice: () => nativeControlsNotice,
   openBrowser: () => openBrowser,
   resolveTerminalBrowser: () => resolveTerminalBrowser,
   validateBrowserOpen: () => validateBrowserOpen
@@ -97218,6 +97264,26 @@ function validateBrowserOpen(url, options) {
       exitCode: 2
     });
 }
+function isBundledBrowser(executable) {
+  return /\/[^/]+\.app\/Contents\/Resources\/browser\//u.test(executable);
+}
+async function nativeControlsNotice(run, pane, executable, wait = {}) {
+  if (isBundledBrowser(executable)) return null;
+  const sleep3 = wait.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const now = wait.now ?? Date.now;
+  const deadline = now() + STANDALONE_WAIT_MS;
+  for (; ; ) {
+    let control;
+    try {
+      control = run(["display-message", "-p", "-t", pane, "#{@tmux_ide_browser_control}"]).trim();
+    } catch {
+      return null;
+    }
+    if (control) return null;
+    if (now() >= deadline) return NO_NATIVE_CONTROLS_NOTICE;
+    await sleep3(250);
+  }
+}
 function createBrowserPane(run, executable, url, options, environment, cwd, namespace) {
   validateBrowserOpen(url, options);
   const inheritedPane = /^%\d+$/u.test(environment.TMUX_PANE ?? "") ? environment.TMUX_PANE : void 0;
@@ -97289,9 +97355,21 @@ function createBrowserPane(run, executable, url, options, environment, cwd, name
     });
   return { pane, session: createdSession, window: createdWindow, status: "created" };
 }
-function openBrowser(url, options = {}) {
+async function openBrowser(url, options = {}, dependencies = {}) {
   validateBrowserOpen(url, options);
-  const executable = resolveTerminalBrowser();
+  const executable = (dependencies.executable ?? resolveTerminalBrowser)();
+  const { result: result2, run } = (dependencies.create ?? createPinnedBrowserPane)(
+    executable,
+    url,
+    options
+  );
+  const message = await nativeControlsNotice(run, result2.pane, executable, dependencies.wait);
+  if (message)
+    (dependencies.notice ?? ((line) => process.stderr.write(`${line}
+`)))(message);
+  return result2;
+}
+function createPinnedBrowserPane(executable, url, options) {
   try {
     const namespace = { ...runtimeNamespaceEnvironment(resolveRuntimeNamespace()) };
     const authority2 = resolveWorkspacePaneTmuxAuthority();
@@ -97299,7 +97377,16 @@ function openBrowser(url, options = {}) {
     const run = createPinnedWorkspaceTmuxRunner(authority2, {
       timeoutMs: 1e4
     });
-    return createBrowserPane(run, executable, url, options, process.env, process.cwd(), namespace);
+    const result2 = createBrowserPane(
+      run,
+      executable,
+      url,
+      options,
+      process.env,
+      process.cwd(),
+      namespace
+    );
+    return { result: result2, run };
   } catch (error) {
     if (error instanceof IdeError) throw error;
     throw new IdeError(
@@ -97311,12 +97398,15 @@ function openBrowser(url, options = {}) {
     );
   }
 }
+var NO_NATIVE_CONTROLS_NOTICE, STANDALONE_WAIT_MS;
 var init_open_browser = __esm({
   "packages/daemon/src/open-browser.ts"() {
     "use strict";
     init_errors2();
     init_runtime_namespace();
     init_workspace_pane_creation2();
+    NO_NATIVE_CONTROLS_NOTICE = "This browser has no tmux-ide controls; install the native app for back/forward/reload.";
+    STANDALONE_WAIT_MS = 2e3;
   }
 });
 
@@ -103052,7 +103142,7 @@ try {
           exitCode: 2
         });
       const { openBrowser: openBrowser2 } = await Promise.resolve().then(() => (init_open_browser(), open_browser_exports));
-      const result2 = openBrowser2(positionals[1], {
+      const result2 = await openBrowser2(positionals[1], {
         session: values.session,
         pane: values.pane,
         split: values.split,

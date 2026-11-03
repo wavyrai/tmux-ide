@@ -9,13 +9,26 @@ impl Commands {
     pub(super) fn new(sender: mpsc::SyncSender<Command>, actor: std::thread::Thread) -> Self {
         Self { sender, actor }
     }
-    pub(super) fn send(&self, command: Command) -> Result<(), Error> {
-        let result = self
-            .sender
-            .try_send(command)
-            .map_err(|_| Error::Invalid("native catalog command queue closed or full"));
-        self.actor.unpark();
-        result
+    /// A full queue is backpressure: wait for the actor to drain it. Only a closed
+    /// actor, or one that drains nothing for two seconds, is an error.
+    pub(super) fn send(&self, mut command: Command) -> Result<(), Error> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = self.sender.try_send(command);
+            self.actor.unpark();
+            match result {
+                Ok(()) => return Ok(()),
+                Err(mpsc::TrySendError::Full(pending)) if Instant::now() < deadline => {
+                    command = pending;
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(_) => {
+                    return Err(Error::Invalid(
+                        "native catalog command queue closed or stalled",
+                    ));
+                }
+            }
+        }
     }
 }
 impl Drop for Commands {

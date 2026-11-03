@@ -11,7 +11,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             machine_label: "Local".into(),
             catalog_identity: None,
             worker: CatalogWorker::spawn(path.clone()).unwrap(),
-            events,
+            events: events.into(),
             state: State {
                 home_phase: HomePhase::Live,
                 ..State::default()

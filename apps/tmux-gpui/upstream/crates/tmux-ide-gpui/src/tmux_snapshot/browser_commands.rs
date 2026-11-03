@@ -283,6 +283,11 @@ pub(in crate::tmux_snapshot) enum Command {
     Refresh {
         request: u64,
     },
+    /// Retry a lost terminal stream now instead of waiting out the backoff.
+    #[serde(rename = "retry-reconnect")]
+    RetryReconnect {
+        request: u64,
+    },
     #[serde(rename = "local-setup")]
     LocalSetup {
         request: u64,

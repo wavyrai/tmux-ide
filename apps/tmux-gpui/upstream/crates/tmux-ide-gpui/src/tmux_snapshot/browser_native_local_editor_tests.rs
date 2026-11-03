@@ -96,7 +96,7 @@ fn focus_and_pane_changes_cancel_editor_without_retiring_terminal() {
         machine_label: "Local".into(),
         catalog_identity: None,
         worker: CatalogWorker::spawn(path.clone()).unwrap(),
-        events,
+        events: events.into(),
         state: State {
             request: 1,
             selected_pane: Some(request.pane.clone()),

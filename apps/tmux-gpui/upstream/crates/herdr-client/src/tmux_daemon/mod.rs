@@ -88,7 +88,7 @@ pub use servers::ServerRegistration;
 pub use sessions::{Favicon, ServerClient, Session};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use url::Url;
 pub use worker::{CatalogAction, CatalogResult, CatalogRetirement, CatalogWorker, WorkerError};
@@ -165,6 +165,8 @@ pub enum Error {
     Retired,
     #[error("Private daemon record verification is unavailable on this platform")]
     UnsupportedPlatform,
+    #[error("The local daemon process has exited")]
+    OwnerExited,
 }
 
 #[derive(Deserialize)]
@@ -221,10 +223,26 @@ impl LocalDaemon {
         &self.record.instance_id
     }
 
-    /// Re-prove the captured owner before issuing a credential-bearing request.
-    /// Checking before and after the network operation rejects replacement races.
+    /// Prove the captured owner before issuing a credential-bearing request.
+    /// The private record is re-read and its pid checked every time, so a
+    /// restarted or exited daemon is never trusted on an old proof. One
+    /// `/identity` proof serves a daemon generation for at most `PROOF_AGE`,
+    /// and until any request to it fails, which drops the proof (#703).
     pub fn verify_current(&self) -> Result<(), Error> {
         self.check_record()?;
+        if proven(&self.fingerprint) {
+            return Ok(());
+        }
+        let (epoch, started) = (proof_epoch(), Instant::now());
+        let result = self.prove_identity();
+        if result.is_ok() {
+            prove(self.fingerprint, epoch, started);
+        } else {
+            disprove(&self.fingerprint);
+        }
+        result
+    }
+    fn prove_identity(&self) -> Result<(), Error> {
         let endpoint = self
             .base_url
             .join("identity")
@@ -275,16 +293,16 @@ impl LocalDaemon {
             .header("Authorization", self.record.authorization()?)
             .header("Cache-Control", "no-store")
             .call()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         if response.status().as_u16() != 200 {
-            return Err(Error::RequestStatus(response.status().as_u16()));
+            return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
         }
         let bytes = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         self.check_record()?;
         Ok(bytes)
     }
@@ -328,16 +346,16 @@ impl LocalDaemon {
             .timeout_global(Some(timeout))
             .build()
             .send(body)
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         if response.status().as_u16() != 200 {
-            return Err(Error::RequestStatus(response.status().as_u16()));
+            return Err(self.failed(Error::RequestStatus(response.status().as_u16())));
         }
         let bytes = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(Error::Network)?;
+            .map_err(|error| self.failed(Error::Network(error)))?;
         self.check_record()?;
         Ok(bytes)
     }
@@ -345,20 +363,171 @@ impl LocalDaemon {
     fn check_record(&self) -> Result<(), Error> {
         let (_, fingerprint) = record::read(&self.path)?;
         if fingerprint != self.fingerprint {
+            disprove(&self.fingerprint);
             return Err(Error::RecordChanged);
+        }
+        // A daemon that died without a new record leaves its port free for any
+        // local process: no credential goes out once its pid is gone.
+        if !owner_alive(self.record.pid) {
+            disprove(&self.fingerprint);
+            return Err(Error::OwnerExited);
         }
         Ok(())
     }
+    /// A failed request drops this generation's proof before reporting it.
+    pub(super) fn failed(&self, error: Error) -> Error {
+        disprove(&self.fingerprint);
+        error
+    }
 }
 
+/// The local daemon generation (its record fingerprint) last proven by
+/// `/identity` in this process, and when that probe started. Process-wide, so
+/// every worker that discovers the same daemon shares one proof. `disproofs`
+/// counts failures: a probe that overlapped one never records its proof.
+struct Proof {
+    proven: Option<([u8; 32], Instant)>,
+    disproofs: u64,
+}
+static PROOF: std::sync::Mutex<Proof> = std::sync::Mutex::new(Proof {
+    proven: None,
+    disproofs: 0,
+});
+/// A proof older than this is probed again, so a daemon that died silently
+/// and a squatter on its port are caught within this window (#703, PM).
+const PROOF_AGE: Duration = Duration::from_secs(5);
+fn proven(fingerprint: &[u8; 32]) -> bool {
+    caching()
+        && PROOF.lock().is_ok_and(|proof| {
+            proof
+                .proven
+                .is_some_and(|(proven, at)| proven == *fingerprint && at.elapsed() < PROOF_AGE)
+        })
+}
+// This crate's scripted-peer tests expect one `/identity` per call and use
+// made-up pids; a test opts in to the cache and the pid check on its own
+// thread. Every other build always does both.
+#[cfg(test)]
+thread_local! {
+    pub(super) static IDENTITY_CACHE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static PID_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+fn caching() -> bool {
+    #[cfg(test)]
+    {
+        IDENTITY_CACHE.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+fn proof_epoch() -> Option<u64> {
+    PROOF.lock().ok().map(|proof| proof.disproofs)
+}
+fn prove(fingerprint: [u8; 32], epoch: Option<u64>, started: Instant) {
+    if caching()
+        && let Ok(mut proof) = PROOF.lock()
+        && epoch == Some(proof.disproofs)
+    {
+        proof.proven = Some((fingerprint, started));
+    }
+}
+fn disprove(fingerprint: &[u8; 32]) {
+    if caching()
+        && let Ok(mut proof) = PROOF.lock()
+    {
+        proof.disproofs = proof.disproofs.wrapping_add(1);
+        if proof
+            .proven
+            .is_some_and(|(proven, _)| proven == *fingerprint)
+        {
+            proof.proven = None;
+        }
+    }
+}
+/// `kill(pid, 0)`: only "no such process" counts as gone; a pid owned by
+/// another user still exists.
+fn owner_alive(pid: u32) -> bool {
+    #[cfg(test)]
+    if !PID_CHECK.with(std::cell::Cell::get) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Some(pid) = i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            return false;
+        };
+        !matches!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
 fn optional_string<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     String::deserialize(deserializer).map(Some)
 }
 
+/// Daemon HTTP requests this process has sent through the catalog agent, for
+/// request fan-out checks (#702, #703). Never a request's content: only a count
+/// and the last paths with every id-like segment masked.
+static REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RECENT: std::sync::Mutex<std::collections::VecDeque<(u64, String)>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+pub fn requests_sent() -> u64 {
+    REQUESTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// The masked paths of requests numbered above `after`, oldest first (at most 64).
+pub fn requests_since(after: u64) -> Vec<String> {
+    RECENT.lock().map_or_else(
+        |_| Vec::new(),
+        |recent| {
+            recent
+                .iter()
+                .filter(|(n, _)| *n > after)
+                .map(|(_, path)| path.clone())
+                .collect()
+        },
+    )
+}
+fn count_request(path: &str) {
+    let n = REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let masked = path
+        .split('/')
+        .map(|segment| {
+            let plain =
+                segment.len() <= 24 && segment.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+            if plain { segment } else { ":" }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if let Ok(mut recent) = RECENT.lock() {
+        if recent.len() >= 64 {
+            recent.pop_front();
+        }
+        recent.push_back((n, masked));
+    }
+}
+
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
+        .middleware(
+            |request: ureq::http::Request<ureq::SendBody<'_>>,
+             next: ureq::middleware::MiddlewareNext<'_>| {
+                count_request(request.uri().path());
+                next.handle(request)
+            },
+        )
         .proxy(None)
         .max_redirects(0)
         .http_status_as_error(false)

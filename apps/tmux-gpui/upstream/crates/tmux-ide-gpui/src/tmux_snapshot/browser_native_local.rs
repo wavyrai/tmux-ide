@@ -38,6 +38,8 @@ mod editor;
 mod local_creation;
 #[path = "browser_native_local_navigation.rs"]
 mod navigation;
+#[path = "browser_native_local_outbox.rs"]
+mod outbox;
 #[path = "browser_native_local_owner.rs"]
 mod owner;
 #[path = "browser_native_local_preferences.rs"]
@@ -233,7 +235,7 @@ struct Local {
     machine_label: String,
     catalog_identity: Option<herdr_client::tmux_daemon::CatalogIdentity>,
     worker: CatalogWorker,
-    events: mpsc::SyncSender<Incoming>,
+    events: outbox::Events,
     state: State,
     targets: BTreeMap<String, Target>,
     stage: Option<Stage>,
@@ -305,7 +307,7 @@ fn start_source(
         machine_label,
         catalog_identity: None,
         worker,
-        events,
+        events: events.into(),
         state: State {
             home_phase: HomePhase::Loading,
             status: "Loading sessions".into(),
@@ -354,10 +356,8 @@ fn start_source(
     ))
 }
 impl Local {
-    fn emit(&self, event: Incoming) -> Result<(), Error> {
-        self.events
-            .try_send(event)
-            .map_err(|_| Error::Invalid("native catalog event queue closed or full"))
+    fn emit(&mut self, event: Incoming) -> Result<(), Error> {
+        self.events.emit(event)
     }
     fn publish(&mut self) -> Result<(), Error> {
         let mut state = self.state.clone();
@@ -385,6 +385,7 @@ impl Local {
         state.machines = Some(self.registry.publication());
         self.publish_tabs(&mut state);
         state.session_history = self.navigation.publication(state.request, self.foreground);
+        state.reconnect_attempt = self.recovery.as_ref().map(reconnect::Recovery::attempt);
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
@@ -516,184 +517,239 @@ impl Local {
         self.state.appearance = self.appearance.as_ref().map(|owner| owner.publication());
         self.sources.start_watch(self.local_record.clone())?;
         self.publish()?;
+        let mut failures = 0u32;
         loop {
-            loop {
-                match input.try_recv() {
-                    Ok(command) => self.command(command)?,
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => return self.cancel(),
-                }
-            }
-            if self.browser_controls_tick().is_err() {
-                // Optional browser chrome must never tear down terminal delivery.
-                self.browser_controls = Default::default();
-                self.state.browser_controls.clear();
-                self.publish()?;
-            }
-            self.setup_tick()?;
-            self.watch_tick()?;
-            self.fleet_tick()?;
-            self.selected_catalog_tick()?;
-            self.reconnect_tick()?;
-            if !self.submitted
-                && let Some(stage) = &self.stage
-            {
-                // Do not create an interactive lease while backgrounded.
-                if self.foreground || !matches!(stage, Stage::Issue { .. }) {
-                    let action = stage.action();
-                    let worker = if stage.local_owner() {
-                        self.registry_worker.as_mut()
-                    } else {
-                        Some(&mut self.worker)
-                    };
-                    let Some(worker) = worker else {
-                        let selecting = matches!(
-                            stage,
-                            Stage::AddMachine { .. } | Stage::MachineSelection { .. }
-                        );
-                        self.stage = None;
-                        self.registry.finish(Err(
-                            herdr_client::tmux_daemon::Error::LocalAuthorityRequired,
-                        ));
-                        if selecting {
-                            self.unavailable("Saved machines require a local daemon record")?;
-                        } else {
-                            self.publish()?;
-                        }
-                        continue;
-                    };
-                    match worker.submit(action) {
-                        Ok(()) => self.submitted = true,
-                        Err(WorkerError::Busy) => {}
-                        Err(error) => return Err(error.into()),
+            match self.turn(&input) {
+                Ok(None) => failures = 0,
+                Ok(Some(result)) => return result,
+                Err(error) => {
+                    failures = failures.saturating_add(1);
+                    self.survive(error)?;
+                    if failures > 1 {
+                        // A fault that repeats every turn must not spin the actor.
+                        let backoff = 50u64 << failures.min(5);
+                        std::thread::sleep(Duration::from_millis(backoff));
                     }
                 }
             }
-            let result = if self.stage.as_ref().is_some_and(Stage::local_owner) {
-                self.registry_worker
-                    .as_mut()
-                    .map(CatalogWorker::poll)
-                    .transpose()?
-                    .flatten()
-            } else {
-                self.worker.poll()?
-            };
-            if let Some(result) = result {
-                self.submitted = false;
-                if let Some(stage) = self.stage.take() {
-                    match result {
-                        Ok(result) => self.completed(stage, result)?,
-                        Err(error)
-                            if matches!(
-                                stage,
-                                Stage::LocalProve
-                                    | Stage::LocalCreate { .. }
-                                    | Stage::LocalCatalog { .. }
-                            ) =>
+        }
+    }
+    /// One catalog error is a status and a reconnect, never the end of the actor.
+    /// Only a gone terminal loop ends it: nothing is left to show a recovery.
+    fn survive(&mut self, error: Error) -> Result<(), Error> {
+        if outbox::closed(&error) {
+            return Err(error);
+        }
+        eprintln!(
+            "tmux-ide: native catalog recovered from: {}",
+            rejection_reason(&error)
+        );
+        let reconnecting = if self.recovery.is_some() {
+            self.reconnect_retry(reconnect::Failure::Other)
+        } else if self.active.is_some() {
+            self.reconnect_start()
+        } else {
+            Err(error)
+        };
+        match reconnecting {
+            Ok(()) => Ok(()),
+            // A gone terminal loop fails this publication too, and ends the actor.
+            Err(_) => {
+                match self.unavailable("Something went wrong. Refresh sessions to try again.") {
+                    Err(error) if outbox::closed(&error) => Err(error),
+                    _ => Ok(()),
+                }
+            }
+        }
+    }
+    /// One pass of the actor. `Some` ends it with that result.
+    fn turn(
+        &mut self,
+        input: &mpsc::Receiver<Command>,
+    ) -> Result<Option<Result<(), Error>>, Error> {
+        self.events.flush()?;
+        loop {
+            match input.try_recv() {
+                Ok(command) => self.command(command)?,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(Some(self.cancel())),
+            }
+        }
+        if self.browser_controls_tick().is_err() {
+            // Optional browser chrome must never tear down terminal delivery.
+            self.browser_controls = Default::default();
+            self.state.browser_controls.clear();
+            self.publish()?;
+        }
+        self.setup_tick()?;
+        self.watch_tick()?;
+        self.fleet_tick()?;
+        self.selected_catalog_tick()?;
+        self.reconnect_tick()?;
+        if !self.submitted
+            && let Some(stage) = &self.stage
+        {
+            // Do not create an interactive lease while backgrounded.
+            if self.foreground || !matches!(stage, Stage::Issue { .. }) {
+                let action = stage.action();
+                let worker = if stage.local_owner() {
+                    self.registry_worker.as_mut()
+                } else {
+                    Some(&mut self.worker)
+                };
+                let Some(worker) = worker else {
+                    let selecting = matches!(
+                        stage,
+                        Stage::AddMachine { .. } | Stage::MachineSelection { .. }
+                    );
+                    self.stage = None;
+                    self.registry.finish(Err(
+                        herdr_client::tmux_daemon::Error::LocalAuthorityRequired,
+                    ));
+                    if selecting {
+                        self.unavailable("Saved machines require a local daemon record")?;
+                    } else {
+                        self.publish()?;
+                    }
+                    return Ok(None);
+                };
+                match worker.submit(action) {
+                    Ok(()) => self.submitted = true,
+                    Err(WorkerError::Busy) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        let result = if self.stage.as_ref().is_some_and(Stage::local_owner) {
+            self.registry_worker
+                .as_mut()
+                .map(CatalogWorker::poll)
+                .transpose()?
+                .flatten()
+        } else {
+            self.worker.poll()?
+        };
+        if let Some(result) = result {
+            self.submitted = false;
+            if let Some(stage) = self.stage.take() {
+                match result {
+                    Ok(result) => self.completed(stage, result)?,
+                    Err(error)
+                        if matches!(
+                            stage,
+                            Stage::LocalProve
+                                | Stage::LocalCreate { .. }
+                                | Stage::LocalCatalog { .. }
+                        ) =>
+                    {
+                        self.local_creation_failed(stage, error)?
+                    }
+                    Err(_) if matches!(stage, Stage::Preferences { .. }) => {
+                        self.preference_failed()?
+                    }
+                    Err(error) if stage.registry() => {
+                        let selecting = matches!(
+                            stage,
+                            Stage::MachineSelection { .. } | Stage::AddMachine { .. }
+                        );
+                        self.registry_failed(error)?;
+                        if selecting {
+                            self.unavailable(
+                                "Saved machine verification failed — refresh and select it again",
+                            )?;
+                        }
+                    }
+                    Err(_) if matches!(stage, Stage::Owner { .. }) => {
+                        if let Stage::Owner { request, .. } = stage {
+                            self.owner_completed(request, None)?;
+                        }
+                    }
+                    Err(error) if matches!(stage, Stage::Editor { .. }) => {
+                        if let Stage::Editor { request, .. } = stage {
+                            self.editor_completed(request, Err(error))?;
+                        }
+                    }
+                    Err(error) if matches!(stage, Stage::History { .. }) => {
+                        if let Stage::History {
+                            id,
+                            request,
+                            operation_id,
+                            ..
+                        } = stage
                         {
-                            self.local_creation_failed(stage, error)?
-                        }
-                        Err(_) if matches!(stage, Stage::Preferences { .. }) => {
-                            self.preference_failed()?
-                        }
-                        Err(error) if stage.registry() => {
-                            let selecting = matches!(
-                                stage,
-                                Stage::MachineSelection { .. } | Stage::AddMachine { .. }
-                            );
-                            self.registry_failed(error)?;
-                            if selecting {
-                                self.unavailable("Saved machine verification failed — refresh and select it again")?;
-                            }
-                        }
-                        Err(_) if matches!(stage, Stage::Owner { .. }) => {
-                            if let Stage::Owner { request, .. } = stage {
-                                self.owner_completed(request, None)?;
-                            }
-                        }
-                        Err(error) if matches!(stage, Stage::Editor { .. }) => {
-                            if let Stage::Editor { request, .. } = stage {
-                                self.editor_completed(request, Err(error))?;
-                            }
-                        }
-                        Err(error) if matches!(stage, Stage::History { .. }) => {
-                            if let Stage::History {
+                            self.emit(Incoming::History(Response::from_native(
                                 id,
                                 request,
                                 operation_id,
-                                ..
-                            } = stage
-                            {
-                                self.emit(Incoming::History(Response::from_native(
-                                    id,
-                                    request,
-                                    operation_id,
-                                    Err(error),
-                                )))?;
-                            }
+                                Err(error),
+                            )))?;
                         }
-                        Err(error) if matches!(stage, Stage::Create { .. }) => {
-                            if let Stage::Create { operation_id, .. } = stage {
-                                self.creation_failed(operation_id, error)?;
-                            }
+                    }
+                    Err(error) if matches!(stage, Stage::Create { .. }) => {
+                        if let Stage::Create { operation_id, .. } = stage {
+                            self.creation_failed(operation_id, error)?;
                         }
-                        Err(error) => {
-                            let setup = matches!(stage, Stage::Servers);
-                            if self.recovery.is_some() {
-                                self.reconnect_retry(reconnect::Failure::of(&error))?;
-                            } else {
-                                self.unavailable(
-                                    "Session changed or is unavailable — refresh to retry",
-                                )?;
-                                if setup {
-                                    self.offer_local_setup()?;
-                                }
+                    }
+                    Err(error) => {
+                        let setup = matches!(stage, Stage::Servers);
+                        if self.recovery.is_some() {
+                            // Bounded messages only: codes and numbers, no payloads.
+                            eprintln!("tmux-ide: reconnect attempt failed: {error}");
+                            self.reconnect_retry(reconnect::Failure::of(&error))?;
+                        } else {
+                            self.unavailable(
+                                "Session changed or is unavailable — refresh to retry",
+                            )?;
+                            if setup {
+                                self.offer_local_setup()?;
                             }
                         }
                     }
                 }
             }
-            if let Some(response) = self.split.poll(self.active.as_ref())? {
-                self.emit(Incoming::Split(response))?;
-            }
-            self.preference_tick()?;
-            self.agent_tick()?;
-            if self.foreground
-                && self.recovery.as_ref().is_some_and(|r| r.waiting())
-                && self.stage.is_none()
-            {
-                match input.recv_timeout(Duration::from_millis(50)) {
-                    Ok(command) => self.command(command)?,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return self.cancel(),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-            } else if !self.sources.catalog_busy()?
-                && !self.background_fleet.busy()
-                && !self.split.busy()
-                && !self.agents.busy()
-                && (self.stage.is_none()
-                    || (!self.foreground
-                        && !self.submitted
-                        && matches!(self.stage, Some(Stage::Issue { .. }))))
-            {
-                // Idle catalogs have no polling timer. Only outstanding HTTP
-                // work needs periodic mailbox checks; terminal IO has its own loop.
-                // Both commands and registry notifications unpark this actor.
-                // The unpark token closes the mailbox-check/begin-wait race.
-                if let Some(wait) = self
-                    .fleet_recovery_wait()
-                    .into_iter()
-                    .chain(self.agents.wait())
-                    .min()
-                {
-                    std::thread::park_timeout(wait);
-                } else {
-                    std::thread::park();
-                }
-            } else {
-                std::thread::sleep(Duration::from_millis(5));
-            }
         }
+        if let Some(response) = self.split.poll(self.active.as_ref())? {
+            self.emit(Incoming::Split(response))?;
+        }
+        self.preference_tick()?;
+        self.agent_tick()?;
+        if self.foreground
+            && self.recovery.as_ref().is_some_and(|r| r.waiting())
+            && self.stage.is_none()
+        {
+            match input.recv_timeout(Duration::from_millis(50)) {
+                Ok(command) => self.command(command)?,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(Some(self.cancel())),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        } else if !self.events.pending()
+            && !self.sources.catalog_busy()?
+            && !self.background_fleet.busy()
+            && !self.split.busy()
+            && !self.agents.busy()
+            && (self.stage.is_none()
+                || (!self.foreground
+                    && !self.submitted
+                    && matches!(self.stage, Some(Stage::Issue { .. }))))
+        {
+            // Idle catalogs have no polling timer. Only outstanding HTTP
+            // work needs periodic mailbox checks; terminal IO has its own loop.
+            // Both commands and registry notifications unpark this actor.
+            // The unpark token closes the mailbox-check/begin-wait race.
+            if let Some(wait) = self
+                .fleet_recovery_wait()
+                .into_iter()
+                .chain(self.agents.wait())
+                .min()
+            {
+                std::thread::park_timeout(wait);
+            } else {
+                std::thread::park();
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(None)
     }
     fn completed(&mut self, stage: Stage, result: CatalogResult) -> Result<(), Error> {
         match (stage, result) {
@@ -888,11 +944,26 @@ impl Local {
 }
 
 #[cfg(test)]
+#[path = "browser_native_local_agent_idle_live_tests.rs"]
+mod agent_idle_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_fault_log_live_tests.rs"]
+mod fault_log_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_home_live_tests.rs"]
+mod home_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_reconnect_live_tests.rs"]
+mod reconnect_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_restart_live_tests.rs"]
 mod restart_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "browser_native_local_open_live_tests.rs"]
+mod open_live_tests;

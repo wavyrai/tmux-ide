@@ -24,7 +24,7 @@ fn fixture() -> Local {
         machine_label: "Local".into(),
         catalog_identity: None,
         worker: CatalogWorker::spawn(path.clone()).unwrap(),
-        events,
+        events: events.into(),
         state: State {
             request: 1,
             selected_pane: Some("pane-a".into()),
