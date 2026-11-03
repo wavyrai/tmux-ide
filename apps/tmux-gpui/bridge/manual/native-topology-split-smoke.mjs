@@ -31,7 +31,7 @@ try {
   daemon = await startDaemon(fleet, process.env.SMOKE_CLI ? { cliPath: process.env.SMOKE_CLI } : {});
   child = spawn(
     guiTestBinary,
-    ["--ignored", "--nocapture", "--test-threads=1", "a_pane_split_in_from_outside_joins_the_open_stream"],
+    ["--ignored", "--nocapture", "--test-threads=1", "a_pane_split_in_or_closed_from_outside_keeps_the_open_stream"],
     {
       env: {
         ...process.env,
@@ -44,6 +44,7 @@ try {
   );
   let output = "";
   let split = false;
+  let closed = false;
   for (const stream of [child.stdout, child.stderr])
     stream.on("data", (chunk) => {
       output = (output + chunk).slice(-262144);
@@ -54,6 +55,19 @@ try {
         const pane = fleet.initialPanes.find((p) => p.sessionName === fleet.sessionNames[0]).paneId;
         tmux("split-window", "-h", "-t", pane, "-d");
         writeFileSync(join(signals, "split-done"), String(Date.now()));
+      }
+      if (!closed && output.includes("TOPOLOGY_CLOSE_READY")) {
+        closed = true;
+        // Another tmux client closes the pane it split in.
+        const session = fleet.sessionNames[0];
+        const first = fleet.initialPanes.find((p) => p.sessionName === session).paneId;
+        const added = tmux("list-panes", "-s", "-t", session, "-F", "#{pane_id}")
+          .toString()
+          .trim()
+          .split("\n")
+          .find((pane) => pane !== first);
+        if (added) tmux("kill-pane", "-t", added);
+        writeFileSync(join(signals, "close-done"), String(Date.now()));
       }
     });
   const [code, signal] = await once(child, "close", { signal: AbortSignal.timeout(180000) });

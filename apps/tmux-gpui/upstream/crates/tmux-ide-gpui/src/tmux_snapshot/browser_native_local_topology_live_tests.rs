@@ -40,12 +40,15 @@ fn contains(state: &State, needle: &str) -> bool {
 }
 /// Type a line into the selected pane after the split, as the owner would.
 fn type_line(bridge: &Bridge, state: &State) -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static TYPED: AtomicU32 = AtomicU32::new(0);
+    let marker = format!("after-change-{}", TYPED.fetch_add(1, Ordering::Relaxed));
     let pane = state.selected_pane.clone().unwrap();
     let Some(target) = state.input_targets.iter().find(|t| t.id == pane) else {
         return false;
     };
     for input in [
-        Input::Text("printf 'typed-%s\\n' after-split".into()),
+        Input::Text(format!("printf 'typed-%s\\n' {marker}")),
         Input::Key("Enter".into()),
     ] {
         bridge
@@ -60,7 +63,7 @@ fn type_line(bridge: &Bridge, state: &State) -> bool {
     }
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(15) {
-        if take(bridge).is_some_and(|s| contains(&s, "typed-after-split")) {
+        if take(bridge).is_some_and(|s| contains(&s, &format!("typed-{marker}"))) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -68,9 +71,68 @@ fn type_line(bridge: &Bridge, state: &State) -> bool {
     false
 }
 
+/// Wait for the session to show `panes` panes, ready and not reconnecting.
+/// Records each distinct state, and any publication of this request without a
+/// frame (the existing panes must keep their frames).
+fn settle(
+    bridge: &Bridge,
+    request: u64,
+    panes: usize,
+    signal: &std::path::Path,
+) -> (Option<u128>, Option<State>, serde_json::Value) {
+    let started = Instant::now();
+    let (mut trail, mut frameless, mut max_attempt, mut signalled) =
+        (Vec::<String>::new(), 0u64, 0u32, None);
+    while started.elapsed() < Duration::from_secs(60) {
+        if signalled.is_none() && signal.exists() {
+            signalled = Some(started.elapsed().as_millis());
+        }
+        if let Some(s) = take(bridge) {
+            max_attempt = max_attempt.max(s.reconnect_attempt.unwrap_or(0));
+            if s.request == request && s.frame.is_none() {
+                frameless += 1;
+            }
+            let line = format!(
+                "r={} panes={} frame={} ready={} attempt={:?} {}",
+                s.request,
+                s.panes.len(),
+                s.frame.is_some(),
+                s.input_ready,
+                s.reconnect_attempt,
+                s.status.chars().take(80).collect::<String>()
+            );
+            if trail
+                .last()
+                .is_none_or(|l: &String| l.split_once(' ').map(|x| x.1) != Some(line.as_str()))
+            {
+                trail.push(format!("{} ms {line}", started.elapsed().as_millis()));
+            }
+            if signalled.is_some()
+                && s.request == request
+                && s.input_ready
+                && s.reconnect_attempt.is_none()
+                && s.panes.len() == panes
+            {
+                let at = started.elapsed().as_millis();
+                let report = serde_json::json!({
+                    "signalledAtMs": signalled, "settledAtMs": at, "maxAttempt": max_attempt,
+                    "frameless": frameless, "trail": trail,
+                });
+                return (Some(at), Some(s), report);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let report = serde_json::json!({
+        "signalledAtMs": signalled, "settledAtMs": null, "maxAttempt": max_attempt,
+        "frameless": frameless, "trail": trail,
+    });
+    (None, None, report)
+}
+
 #[test]
-#[ignore = "requires a scratch daemon and a harness that splits a pane"]
-fn a_pane_split_in_from_outside_joins_the_open_stream() {
+#[ignore = "requires a scratch daemon and a harness that splits and closes a pane"]
+fn a_pane_split_in_or_closed_from_outside_keeps_the_open_stream() {
     let record = std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap();
     let signals = PathBuf::from(std::env::var_os("TMUX_IDE_TEST_SIGNAL_DIR").unwrap());
     let (bridge, owner) = start(record.into(), Default::default()).unwrap();
@@ -89,59 +151,32 @@ fn a_pane_split_in_from_outside_joins_the_open_stream() {
         s.request == request && s.frame.is_some() && s.input_ready && !s.panes.is_empty()
     });
     let before = live.panes.len();
-    eprintln!(
-        "TOPOLOGY_SPLIT_READY {}",
-        live.selected_pane.clone().unwrap_or_default()
-    );
-    let started = Instant::now();
-    let (mut trail, mut max_attempt, mut split_at) = (Vec::<String>::new(), 0u32, None);
-    let (mut recovered, mut typed) = (None, false);
-    while started.elapsed() < Duration::from_secs(60) {
-        if split_at.is_none() && signals.join("split-done").exists() {
-            split_at = Some(started.elapsed().as_millis());
-        }
-        if let Some(s) = take(&bridge) {
-            max_attempt = max_attempt.max(s.reconnect_attempt.unwrap_or(0));
-            let line = format!(
-                "{} ms r={} panes={} ready={} attempt={:?} {}",
-                started.elapsed().as_millis(),
-                s.request,
-                s.panes.len(),
-                s.input_ready,
-                s.reconnect_attempt,
-                s.status.chars().take(80).collect::<String>()
-            );
-            if trail
-                .last()
-                .is_none_or(|l| l.split_once(' ').map(|x| x.1) != line.split_once(' ').map(|x| x.1))
-            {
-                trail.push(line);
-            }
-            if split_at.is_some()
-                && s.request == request
-                && s.input_ready
-                && s.reconnect_attempt.is_none()
-                && s.panes.len() == before + 1
-            {
-                recovered = Some(started.elapsed().as_millis());
-                typed = type_line(&bridge, &s);
-                break;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    eprintln!("TOPOLOGY_SPLIT_READY");
+    let (split, after_split, split_report) =
+        settle(&bridge, request, before + 1, &signals.join("split-done"));
+    let split_typed = after_split.as_ref().is_some_and(|s| type_line(&bridge, s));
+    eprintln!("TOPOLOGY_CLOSE_READY");
+    let (close, after_close, close_report) = if split.is_some() {
+        settle(&bridge, request, before, &signals.join("close-done"))
+    } else {
+        (None, None, serde_json::Value::Null)
+    };
+    let close_typed = after_close.as_ref().is_some_and(|s| type_line(&bridge, s));
     eprintln!(
         "TOPOLOGY_LIVE {}",
         serde_json::json!({
             "panesBefore": before,
-            "splitAtMs": split_at,
-            "recoveredAtMs": recovered,
-            "maxAttempt": max_attempt,
-            "typedAfterSplit": typed,
-            "trail": trail,
+            "split": split_report, "typedAfterSplit": split_typed,
+            "close": close_report, "typedAfterClose": close_typed,
         })
     );
     owner.shutdown().unwrap();
-    assert!(recovered.is_some(), "the stream never took the split pane");
-    assert!(typed, "typing did not land after the split");
+    assert!(
+        split.is_some() && split_typed,
+        "the stream did not carry on after a split"
+    );
+    assert!(
+        close.is_some() && close_typed,
+        "the stream did not carry on after a close"
+    );
 }
