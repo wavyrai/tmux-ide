@@ -84,15 +84,15 @@ applications_entry() {
 }
 applications_entry check
 base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026110301
-installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4
-archive_sha=@ARCHIVE_SHA256@
+installer_sha=98cc545d26643ba03853effc5aa49ac01ed1aefec6cb81441627e73002280456
+archive_sha=e55005ae8f9d0f4c56e56c2e44797d328a1a82ad602244da66bcdfca33a59ecc
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --max-time 300 --max-filesize 536870912 "$1" -o "$2"; }
 verify() { actual=$(shasum -a 256 "$1" | awk '{print $1}'); [ "$actual" = "$2" ] || fail 'Downloaded asset checksum mismatch'; }
-fetch "$base/tmux-ide-install-v4.mjs" "$scratch/installer.mjs"
+fetch "$base/tmux-ide-install-v5.mjs" "$scratch/installer.mjs"
 verify "$scratch/installer.mjs" "$installer_sha"
 printf '%s\n' '{"teamId":"7HWMF997US","bundleId":"com.tmux-ide.gpui.alpha","architecture":"arm64","minimumMacOS":"14.2"}' > "$scratch/policy.json"
 mkdir -p "$(dirname "$prefix")"
