@@ -37,6 +37,10 @@ impl Hold {
             ..Self::default()
         }
     }
+    /// Whether this hold keeps frames at all.
+    pub fn enabled(&self) -> bool {
+        !self.disabled
+    }
     /// Remember what the UI is shown, when it is a live workspace frame.
     pub fn observe(&mut self, shown: &State) {
         if let Some(live) = live(shown)

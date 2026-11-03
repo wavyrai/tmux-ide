@@ -256,6 +256,20 @@ pub(super) struct Bridge {
     #[cfg_attr(not(test), allow(dead_code))]
     pub holds_frames: bool,
 }
+impl Bridge {
+    /// `holds_frames` is the hold the terminal loop actually runs with.
+    pub(super) fn new(
+        mailbox: Mailbox,
+        commands: mpsc::SyncSender<Command>,
+        holds_frames: bool,
+    ) -> Self {
+        Self {
+            mailbox,
+            commands,
+            holds_frames,
+        }
+    }
+}
 #[derive(Default)]
 struct Reader {
     connection: Option<String>,

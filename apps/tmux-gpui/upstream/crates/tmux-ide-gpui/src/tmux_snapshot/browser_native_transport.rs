@@ -291,6 +291,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     let mailbox = Arc::new(Mutex::new(None));
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
+    let mut hold = hold::Hold::new(hold_frames);
+    let holds_frames = hold.enabled();
     std::thread::spawn(move || {
         let mut active: Option<Active> = None;
         let history_cache: Cache = Default::default();
@@ -298,7 +300,6 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut stopped: Option<diagnostics::Stop> = None;
         let mut previews = super::super::browser_native_preview::Cache::default();
         let mut transition = transition::Transition::default();
-        let mut hold = hold::Hold::new(hold_frames);
         let mut releases = loss::Releases::default();
         let mut browser_read_at = 0;
         let mut presence = (true, 0);
@@ -973,11 +974,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             *slot = Some(None);
         }
     });
-    Bridge {
-        mailbox,
-        commands,
-        holds_frames: hold_frames,
-    }
+    Bridge::new(mailbox, commands, holds_frames)
 }
 
 #[cfg(test)]
