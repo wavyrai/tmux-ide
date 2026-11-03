@@ -26,6 +26,10 @@ When the stream itself drops, only the stream reconnects:
 - Keys typed during a drop are refused with a notice. They are never replayed
   into the pane after it reconnects.
 - A pane whose source closed keeps its last frame with an "unavailable" badge.
+- When a pane is split in or closed from outside the app, for example by
+  `tmux-ide open` or another tmux client, the app reconnects with the session's
+  new panes in about 0.5–1 s and keeps the frame on screen. A short
+  "Reconnecting…" badge can show while it does.
 
 The session catalog also survives a single error. It reconnects, or shows a
 notice and retries with backoff, instead of closing.
@@ -57,6 +61,11 @@ or `public/favicon.svg`. The daemon never follows symlinks, caps each icon at
 session list the app already fetches, in a new v2 sessions resource, so they add
 no requests. Older apps and daemons keep working with each other.
 
+Before the app draws a favicon, it reads the image's header. Images larger than
+1024 px a side, or 512 px for SVG, are refused, as is anything that would decode
+to more than about 4 MB. An SVG that refers to any file, URL or embedded image
+is refused too. A refused favicon shows the terminal icon.
+
 Pane titles no longer look like tabs, and the margins around panes are 8 pt.
 
 ## Less background work
@@ -84,12 +93,6 @@ them.
   native controls. The check waits at most 2 s and never applies to the browser
   bundled with the Mac app.
 - The Mac app binary no longer crashes when started without arguments.
-
-## Known issue
-
-Splitting a pane into the session you're viewing from outside the app, for
-example with `tmux-ide open`, can drop that session's connection. Going back to
-Home and reopening the session restores it. A fix is planned for the next release.
 
 Update the CLI/daemon and [native app](/docs/native-alpha) separately. Existing
 tmux sessions are preserved. Full list of changes:
