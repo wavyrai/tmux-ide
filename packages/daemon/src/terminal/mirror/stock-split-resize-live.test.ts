@@ -401,7 +401,12 @@ describe.skipIf(binaries.length === 0).each(binaries)("stock tmux %s", (binary) 
         "sleep 300",
       );
       rig.tmux("split-window", "-d", "-v", "-t", middle, "sleep 300");
+      const bottom = rig
+        .tmux("list-panes", "-t", "zz-stock", "-F", "#{pane_id}")
+        .split("\n")
+        .at(-1)!;
       rig.tmux("resize-pane", "-t", middle, "-y", "1");
+      rig.tmux("resize-pane", "-t", bottom, "-y", "2");
       const { target } = await open(rig);
       const noNative = async () => {
         throw new Error("native runner");
@@ -435,6 +440,65 @@ describe.skipIf(binaries.length === 0).each(binaries)("stock tmux %s", (binary) 
           await vi.waitFor(async () => {
             await rig.mirror.readWindowSplitLayout("zz-stock", target());
           });
+        }
+      }
+      for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+    }
+  });
+
+  it("never refuses or misplaces a move across random layouts", async () => {
+    let seed = 20261104;
+    const random = (limit: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % limit;
+    };
+    for (const status of ["off", "top", "bottom"]) {
+      const rig = await server(binary);
+      rig.tmux("set-option", "-g", "pane-border-status", status);
+      for (let split = 0; split < 5; split++) {
+        const panes = rig.tmux("list-panes", "-t", "zz-stock", "-F", "#{pane_id}").split("\n");
+        rig.tmux(
+          "split-window",
+          "-d",
+          random(2) ? "-h" : "-v",
+          "-t",
+          panes[random(panes.length)]!,
+          "sleep 300",
+        );
+      }
+      const { target } = await open(rig);
+      const live = () => rig.mirror.readWindowSplitLayout("zz-stock", target());
+      await vi.waitFor(async () => expect((await live()).panes).toHaveLength(6));
+      for (let round = 0; round < 48; round++) {
+        let resource = await live().catch(() => null);
+        for (let wait = 0; !resource && wait < 100; wait++) {
+          await new Promise((settled) => setTimeout(settled, 10));
+          resource = await live().catch(() => null);
+        }
+        expect(resource).not.toBeNull();
+        if (resource!.splits.length === 0) continue;
+        const edge = resource!.splits[random(resource!.splits.length)]!;
+        const wanted = Math.max(0, edge.boundary + random(13) - 6);
+        const result = await rig.mirror.resizeWindowSplit(
+          "zz-stock",
+          {
+            window: target(),
+            layoutId: resource!.layoutId,
+            splitId: edge.splitId,
+            boundary: wanted,
+          },
+          "77777777-7777-4777-8777-777777777777",
+          () => {},
+          async () => {
+            throw new Error("native runner");
+          },
+        );
+        expect(result.status, `${status} round ${round} ${edge.axis}`).toBe("applied");
+        if (result.status === "applied") {
+          const low = Math.min(edge.boundary, wanted);
+          const high = Math.max(edge.boundary, wanted);
+          expect(result.boundary).toBeGreaterThanOrEqual(low);
+          expect(result.boundary).toBeLessThanOrEqual(high);
         }
       }
       for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
