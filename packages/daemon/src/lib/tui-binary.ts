@@ -477,7 +477,7 @@ export async function downloadTuiBinary(
       const hint =
         error instanceof PermanentDownloadError
           ? "Check that the release published both exact-version assets."
-          : "Check your network connection, then retry with `tmux-ide update --tui-binary`.";
+          : "Check your network connection, then retry with `tmux-ide update --tui-binary`, or run the installer again if tmux-ide is not installed yet.";
       throw new Error(
         `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error },

@@ -4,14 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## 2.9.17
 
-- Fix `tmux-ide update` on connections below about 1 MB/s. The runtime download had 30 s for the whole transfer; it now aborts only after 30 s with no data, within a 15-minute budget, and retries transient failures up to 3 times per file. Stalls and network errors no longer blame the release assets.
-- Say so when a download waits behind another one of the same version, instead of waiting silently.
-- Give up on stalled downloads, not slow ones, in `install.sh`. It allowed 180 s per file, and Node.js alone is over 50 MB, so it needed about 300 KB/s. It now allows 900 s and aborts after 30 s with no data.
-- Stop concurrent daemon requests queueing behind synchronous tmux calls: 8 concurrent `/api/v1/tmux-servers` requests take about 2× one request instead of 7×, and `/api/resources/fleet-catalog` about 2× instead of 8×.
-- Hash terminal rows more cheaply in the daemon during heavy output, with the same digests. Time to finish a large flood is about the same as before.
-- Wake the Mac app's browser pane when new page state arrives, instead of on the next 16 ms tick.
+- Fix `tmux-ide update` on slow connections, below about 1 MB/s on macOS and 1.6 MB/s on Linux. The runtime download had 30 s for the whole transfer; it now aborts only after about 30 s with no data, within a 15-minute budget, with up to 3 attempts per file for transient failures. Stalls and network errors no longer blame the release assets.
+- Say so when `tmux-ide update --tui-binary` or `tmux-ide app` waits behind another download of the same version.
+- Give up on stalled downloads, not slow ones, in `install.sh`. It allowed 180 s per attempt, and Node.js alone is over 50 MB, so it needed about 300 KB/s. It now allows 900 s per attempt and aborts after about 30 s with no data. The native alpha installer gets the same limits, up from 300 s for a 144.6 MB archive.
+- Queue fewer concurrent daemon requests: 8 concurrent `/api/v1/tmux-servers` requests take about 2× one request instead of 7×, because callers share a refresh that is still queued, and `/api/resources/fleet-catalog` about 2× instead of 8×, because it no longer blocks on tmux.
+- Hash terminal rows more cheaply in the daemon during heavy output, with the same digests. Large floods do not finish faster.
+- Wake the Mac app's UI when new app state arrives, instead of on the next 16 ms tick. This ships in native alpha 0.1.13.
 - Fix a `daemon service restart` race that could report a daemon that was shutting down, followed by a stale record in `daemon info`.
-- Point the website's release pill and release metadata at the current version. They still linked to 2.9.4.
+- Point the website's release pill, release metadata and retired-page redirects at the current version. They still linked to 2.9.4.
 
 ## 2.9.16
 

@@ -290,11 +290,14 @@ export async function manageDaemonService(
     }
     const before = deps.inspect();
     if (action === "install" && service.active) return await ready();
-    if (service.loaded) await manager.restart(service.pid !== null);
+    // Read the manager again: a relaunch may have replaced the process while this
+    // waited for the lock, and the restart terminates whichever one runs now.
+    const current = service.loaded ? await inspectManager() : service;
+    if (current.loaded) await manager.restart(current.pid !== null);
     else await manager.install();
     return await ready(
       before.status === "valid" ? before.info.instanceId : undefined,
-      service.loaded ? service.pid : null,
+      current.loaded ? current.pid : null,
     );
   } catch (error) {
     // Never discard ownership after an uncertain OS activation. The retained

@@ -1,49 +1,65 @@
 ---
 title: tmux-ide 2.9.17
 metaTitle: "What's new in 2.9.17"
-description: "Updates and installs that work on slow connections, and a daemon that answers concurrent requests without queueing."
+description: "Updates and installs that work on slow connections, and fewer daemon requests waiting on each other."
 ---
 
-`2.9.17` is about slow connections and daemon responsiveness.
+`2.9.17` accompanies native macOS alpha `0.1.13`. The CLI/daemon and native app
+remain separate installations. Install links are updated after the matching
+release assets are published.
 
 ## Updates work on slow connections
 
-`tmux-ide update` could fail with "Could not download the tmux-ide app runtime"
-on any connection below about 1 MB/s. The 28.7 MB runtime had 30 s for the whole
-transfer, and the error blamed the release.
+`tmux-ide update` could fail with "Could not download the tmux-ide app runtime" on
+a slow connection. The runtime had 30 s for the whole transfer, which needs about
+1 MB/s on macOS (28.7 MB) and 1.6 MB/s on Linux (about 49 MB). The error blamed
+the release.
 
-- A download now aborts only after 30 s with no data. A slow one keeps going.
+- A download now aborts only after about 30 s with no data. A slow one keeps going.
 - The manifest, the runtime and all retries share a 15-minute budget.
 - Timeouts, network errors and HTTP 408, 429 and 5xx responses are retried, up to
   3 attempts per file. Each retry restarts the file. A missing asset or a checksum
   mismatch is not retried.
 - A stall or network error now points at your connection and the retry command.
-- A second update that waits behind a running download says so.
+- `tmux-ide update --tui-binary` and `tmux-ide app` say so when they wait behind
+  another download of the same version.
 
-`install.sh` had the same kind of limit: 180 s per file, while the Node.js archive
-alone is over 50 MB. It now allows 900 s per file and aborts after 30 s with no data.
+`install.sh` had the same kind of limit: 180 s per attempt, while the Node.js
+archive alone is over 50 MB. It now allows 900 s per attempt and aborts after about
+30 s with no data. A file that stalls completely fails after about 2.5 minutes,
+retries included. The native alpha installer gets the same limits, up from 300 s
+for a 144.6 MB archive.
 
-## The daemon answers concurrent requests
+## Fewer daemon requests wait on each other
 
-The daemon's session routes read tmux synchronously, so requests queued behind
-each other. Those reads are now asynchronous, and callers that arrive while a
-refresh is queued share it.
+Requests to two routes took much longer when several arrived at once:
+
+- `/api/v1/tmux-servers` runs its refreshes one at a time. Callers that arrive while
+  a refresh is still queued now share it.
+- `/api/resources/fleet-catalog` read tmux synchronously, which blocked the daemon.
+  It now reads asynchronously, except inside a session change.
 
 | Route                          | 8 concurrent requests vs 1, before | After |
 | ------------------------------ | ---------------------------------- | ----- |
 | `/api/v1/tmux-servers`         | 7×                                 | 2×    |
 | `/api/resources/fleet-catalog` | 8×                                 | 2×    |
 
-During heavy output the daemon hashes each terminal row in about 19 µs, down from
-about 30 µs, with the same digests. A large flood takes about as long to finish as
-before, because the daemon uses the saved time to process output more often.
+## Heavy output
+
+Hashing a terminal row in the daemon takes less CPU, with the same digests: 19 µs
+against 84 µs on the old per-cell path in a micro-benchmark. Large floods do not
+finish faster. In our test, 2 MB of output took 3.5–4.6 s, against 3.3–3.6 s before,
+because the daemon uses the saved time to process output more often.
 
 ## Smaller fixes
 
-- `daemon service restart` no longer reports a daemon that the restart is shutting
-  down. That race could leave a stale record in `daemon info`.
-- The Mac app's browser pane applies new page state when it arrives, instead of on
-  the next 16 ms tick.
+- A race in `daemon service restart` is fixed. It could report a daemon that the
+  restart was shutting down and leave a stale record in `daemon info`.
+- In Mac app 0.1.13, the UI picks up new app state when it arrives, instead of on
+  the next 16 ms tick. We have not measured this in a running app yet.
+- The home page's release pill and retired docs pages now point at the current
+  release. They still pointed at 2.9.4.
 
-Existing tmux sessions are preserved. Full list of changes:
+Update the CLI/daemon and [native app](/docs/native-alpha) separately. Existing
+tmux sessions are preserved. Full list of changes:
 [CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

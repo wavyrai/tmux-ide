@@ -12690,7 +12690,7 @@ async function downloadTuiBinary(opts = {}) {
       gz = await readWithRetries(fetchImpl, url, limits.maxCompressedBytes, policy, log);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const hint = error instanceof PermanentDownloadError ? "Check that the release published both exact-version assets." : "Check your network connection, then retry with `tmux-ide update --tui-binary`.";
+      const hint = error instanceof PermanentDownloadError ? "Check that the release published both exact-version assets." : "Check your network connection, then retry with `tmux-ide update --tui-binary`, or run the installer again if tmux-ide is not installed yet.";
       throw new Error(
         `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error }
@@ -98349,11 +98349,12 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
     }
     const before = deps2.inspect();
     if (action === "install" && service.active) return await ready();
-    if (service.loaded) await manager.restart(service.pid !== null);
+    const current = service.loaded ? await inspectManager() : service;
+    if (current.loaded) await manager.restart(current.pid !== null);
     else await manager.install();
     return await ready(
       before.status === "valid" ? before.info.instanceId : void 0,
-      service.loaded ? service.pid : null
+      current.loaded ? current.pid : null
     );
   } catch (error) {
     if (!activationAttempted && wroteRecord) {

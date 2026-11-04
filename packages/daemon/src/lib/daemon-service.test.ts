@@ -182,6 +182,32 @@ describe("managed daemon service lifecycle", () => {
     expect(restarted.pid).toBe(replacement);
   });
 
+  it("retires the process running at restart, not the one seen before the lock", async () => {
+    const { run, manager, deps, setState, startOwner, stopOwner } = fixture();
+    await run("install");
+    stopOwner();
+    const definitionPath = deps.plan().unitPath;
+    const relaunched = 2147483300;
+    const replacement = 2147483400;
+    setState({ loaded: true, active: true, pid: relaunched, definitionPath });
+    // The first look predates a KeepAlive relaunch; every later look sees it.
+    manager.inspect.mockImplementationOnce(async () => ({
+      loaded: true,
+      active: true,
+      pid: 2147483299,
+      definitionPath,
+    }));
+    deps.waitMs = 3000;
+    manager.restart.mockImplementationOnce(async () => {
+      startOwner(relaunched);
+      setTimeout(() => {
+        stopOwner();
+        startOwner(replacement);
+      }, 150);
+    });
+    expect((await run("restart")).pid).toBe(replacement);
+  });
+
   it("keeps an uncertain failed activation reserved and explicitly removable", async () => {
     const { run, plan, manager } = fixture();
     manager.install.mockRejectedValueOnce(new Error("activation uncertain"));

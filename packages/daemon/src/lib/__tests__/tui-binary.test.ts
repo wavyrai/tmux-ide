@@ -487,6 +487,26 @@ describe("downloadTuiBinary — bounded, verified, recoverable installation", ()
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry a download over the size limit", async () => {
+    const fixture = releaseFixture(Buffer.alloc(2048, 7));
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith(".sha256")
+        ? new Response(fixture.manifest)
+        : new Response(new Uint8Array(4096)),
+    );
+    await expect(
+      downloadTuiBinary({
+        version: VERSION,
+        home: scratchHome(),
+        tag: TAG,
+        fetch,
+        retryDelayMs: 0,
+        limits: { ...TEST_LIMITS, maxCompressedBytes: 1024 },
+      }),
+    ).rejects.toThrow(/download exceeds 1024 bytes.*exact-version assets/u);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("retries a transient server error", async () => {
     const home = scratchHome();
     const fixture = releaseFixture();
