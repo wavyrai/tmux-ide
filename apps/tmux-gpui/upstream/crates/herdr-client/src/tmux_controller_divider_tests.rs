@@ -349,6 +349,296 @@ mod live {
         c.retire();
         peer.join().unwrap();
     }
+
+    /// A controller with the layout and links of one two-pane window, and a
+    /// divider state holding the first read of that window, already taken.
+    fn scoped() -> (
+        Controller,
+        mpsc::Sender<Value>,
+        thread::JoinHandle<()>,
+        DividerState,
+        u64,
+    ) {
+        let (mut c, _observed, response, peer) = fixture();
+        c.topology.apply_control(&serde_json::value::to_raw_value(&json!({
+            "type":"layout-snapshot","topologyEpoch":1,"layouts":[{
+            "type":"layout","semanticWindowId":"window.one","currentWindow":true,
+            "cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off",
+            "panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":4,"height":2,"active":false}]
+            }],"windowLinks":{"liveSessionId":"live-session.01234567890123456789",
+            "linkRevision":1,"activeLinkId":format!("window-link.{}","a".repeat(32)),
+            "links":[{"linkId":format!("window-link.{}","a".repeat(32)),"semanticWindowId":"window.one","displayIndex":0}]}
+        })).unwrap()).unwrap();
+        assert!(c.owns(Authority::Input));
+        let mut state = DividerState::default();
+        state.observe(&mut c, &update(), 0).unwrap();
+        let first = state.take_read().unwrap().sequence;
+        (c, response, peer, state, first)
+    }
+    fn resource(window: WindowLink) -> SplitLayout {
+        SplitLayout {
+            version: 1,
+            window,
+            layout_id: gesture().target.layout_id,
+            cols: 9,
+            rows: 2,
+            panes: ["left", "right"]
+                .iter()
+                .zip([0, 5])
+                .map(|(pane, left)| tmux_control::SplitPane {
+                    semantic_pane_id: (*pane).into(),
+                    left,
+                    top: 0,
+                    width: 4,
+                    height: 2,
+                })
+                .collect(),
+            splits: vec![tmux_control::SplitBoundary {
+                split_id: gesture().target.split_id,
+                axis: Axis::Cols,
+                boundary: 4,
+                start: 0,
+                length: 2,
+            }],
+        }
+    }
+    /// Observes at `now` and returns the sequence of any read that issues.
+    fn read_at(c: &mut Controller, state: &mut DividerState, now: u64) -> Option<u64> {
+        state.observe(c, &update(), now).unwrap();
+        state.take_read().map(|read| read.sequence)
+    }
+
+    #[test]
+    fn a_failed_read_is_retried_without_a_geometry_change_and_stops_on_success() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        assert_eq!(read_at(&mut c, &mut state, 1), None, "no tight retry");
+        assert_eq!(
+            read_at(&mut c, &mut state, 500),
+            None,
+            "first delay is 500 ms"
+        );
+        let second = read_at(&mut c, &mut state, 501).unwrap();
+        assert_eq!(second, first + 1);
+        assert_eq!(read_at(&mut c, &mut state, 502), None, "one read at a time");
+        let window = state.scope.as_ref().unwrap().window.clone();
+        assert!(
+            state
+                .accept_resource(&mut c, second, resource(window))
+                .unwrap()
+        );
+        assert!(state.resource().is_some(), "handles can be issued again");
+        for now in [1_000, 100_000, 10_000_000] {
+            assert_eq!(
+                read_at(&mut c, &mut state, now),
+                None,
+                "no polling on success"
+            );
+        }
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_success_restarts_the_delay_for_the_next_lost_read() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        let second = read_at(&mut c, &mut state, 501).unwrap();
+        state.read_failed(second);
+        assert_eq!(read_at(&mut c, &mut state, 502), None);
+        let third = read_at(&mut c, &mut state, 1_502).unwrap();
+        let window = state.scope.as_ref().unwrap().window.clone();
+        assert!(
+            state
+                .accept_resource(&mut c, third, resource(window))
+                .unwrap()
+        );
+        // As a settled gesture does: the next read replaces the installed layout.
+        state.resource = None;
+        state.rebind_request().unwrap();
+        let fourth = state.take_read().unwrap().sequence;
+        state.read_failed(fourth);
+        assert_eq!(read_at(&mut c, &mut state, 2_000), None);
+        assert_eq!(read_at(&mut c, &mut state, 2_500), Some(fourth + 1));
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_response_dropped_as_not_actionable_is_read_again() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        let window = state.scope.as_ref().unwrap().window.clone();
+        c.actionable = false;
+        assert!(
+            !state
+                .accept_resource(&mut c, first, resource(window.clone()))
+                .unwrap()
+        );
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        assert_eq!(
+            read_at(&mut c, &mut state, 5_000),
+            None,
+            "waits until actionable"
+        );
+        c.actionable = true;
+        let second = read_at(&mut c, &mut state, 5_001).unwrap();
+        assert!(
+            state
+                .accept_resource(&mut c, second, resource(window))
+                .unwrap()
+        );
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_stale_response_does_not_schedule_another_read() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        let second = read_at(&mut c, &mut state, 501).unwrap();
+        state.read_failed(first);
+        let window = state.scope.as_ref().unwrap().window.clone();
+        assert!(
+            !state
+                .accept_resource(&mut c, first, resource(window))
+                .unwrap()
+        );
+        assert_eq!(read_at(&mut c, &mut state, 502), None);
+        assert_eq!(
+            read_at(&mut c, &mut state, 59_000),
+            None,
+            "the current read is still open"
+        );
+        assert_eq!(state.read_sequence, second);
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_window_that_always_refuses_backs_off_to_one_read_a_minute() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        let mut sequence = first;
+        let mut reads = Vec::new();
+        state.read_failed(sequence);
+        // Polled every 100 ms for ten minutes, as the worker does at most.
+        let mut now = 1;
+        while now <= 600_000 {
+            if let Some(next) = read_at(&mut c, &mut state, now) {
+                reads.push(now);
+                sequence = next;
+                state.read_failed(sequence);
+            }
+            now += 100;
+        }
+        let gaps: Vec<u64> = reads.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        assert!(gaps.iter().all(|gap| *gap <= 60_200), "{gaps:?}");
+        assert!(gaps.windows(2).all(|pair| pair[1] >= pair[0]), "{gaps:?}");
+        assert_eq!(gaps.first().map(|gap| gap / 1_000), Some(1), "{gaps:?}");
+        assert!(
+            gaps.iter().rev().take(5).all(|gap| *gap >= 60_000),
+            "{gaps:?}"
+        );
+        // Seven quick reads, then one a minute: about 17 in ten minutes.
+        assert!(reads.len() <= 18, "{} reads: {reads:?}", reads.len());
+        assert!(reads.len() >= 12, "{} reads: {reads:?}", reads.len());
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_background_window_holds_a_due_retry_until_it_returns() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        c.desired_presence = Some((false, 1));
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        assert_eq!(
+            read_at(&mut c, &mut state, 600_000),
+            None,
+            "no reads in the background"
+        );
+        c.desired_presence = None;
+        assert_eq!(read_at(&mut c, &mut state, 600_001), Some(first + 1));
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_read_that_never_answers_is_issued_again_after_the_worker_limit() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        assert_eq!(
+            read_at(&mut c, &mut state, 59_999),
+            None,
+            "the daemon may take 45 s"
+        );
+        assert_eq!(read_at(&mut c, &mut state, 60_000), None);
+        assert_eq!(read_at(&mut c, &mut state, 60_501), Some(first + 1));
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_retry_never_disturbs_an_accepted_gesture() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        let mut accepted = gesture();
+        accepted.operation = Some("accepted".into());
+        accepted.deadline = u64::MAX;
+        state.active = Some(accepted);
+        state.read_failed(first);
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        assert_eq!(read_at(&mut c, &mut state, 600_000), None);
+        assert!(state.busy(), "the gesture survives a failed read");
+        state.active = None;
+        assert_eq!(read_at(&mut c, &mut state, 600_001), Some(first + 1));
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn a_geometry_change_restarts_the_backoff_and_replaces_the_due_retry() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        let mut sequence = first;
+        let mut now = 1;
+        for _ in 0..6 {
+            state.read_failed(sequence);
+            assert_eq!(read_at(&mut c, &mut state, now), None);
+            let next = (now..now + 60_001)
+                .step_by(100)
+                .find_map(|at| {
+                    now = at;
+                    read_at(&mut c, &mut state, at)
+                })
+                .unwrap();
+            sequence = next;
+        }
+        state.read_failed(sequence);
+        c.topology.apply_control(&serde_json::value::to_raw_value(&json!({
+            "type":"layout-snapshot","topologyEpoch":2,"layouts":[{
+            "type":"layout","semanticWindowId":"window.one","currentWindow":true,
+            "cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off",
+            "panes":[{"pane":"left","left":0,"top":0,"width":5,"height":2,"active":true},{"pane":"right","left":6,"top":0,"width":3,"height":2,"active":false}]
+            }],"windowLinks":{"liveSessionId":"live-session.01234567890123456789",
+            "linkRevision":1,"activeLinkId":format!("window-link.{}","a".repeat(32)),
+            "links":[{"linkId":format!("window-link.{}","a".repeat(32)),"semanticWindowId":"window.one","displayIndex":0}]}
+        })).unwrap()).unwrap();
+        now += 1;
+        let moved = read_at(&mut c, &mut state, now).unwrap();
+        assert_eq!(
+            read_at(&mut c, &mut state, now + 59_000),
+            None,
+            "the old retry is gone"
+        );
+        state.read_failed(moved);
+        assert_eq!(read_at(&mut c, &mut state, now + 59_001), None);
+        assert_eq!(
+            read_at(&mut c, &mut state, now + 59_501),
+            Some(moved + 1),
+            "the delay starts over"
+        );
+        c.retire();
+        peer.join().unwrap();
+    }
 }
 
 #[test]

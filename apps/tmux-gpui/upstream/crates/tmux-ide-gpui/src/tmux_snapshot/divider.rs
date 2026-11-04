@@ -399,6 +399,7 @@ impl SnapshotView {
                     let rect = layout.gutter(s.axis, edge, s.start, s.span);
                     handle(&super::design::palette(&self.theme()), s.axis, false)
                         .id(("pane-card-divider", i))
+                        .debug_selector(|| "pane-card-divider".into())
                         .absolute()
                         .left(rect.origin.x)
                         .top(rect.origin.y)

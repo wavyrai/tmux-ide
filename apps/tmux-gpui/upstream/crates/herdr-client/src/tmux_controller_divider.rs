@@ -8,6 +8,18 @@ use crate::{
     tmux_topology::Layout,
 };
 use std::collections::BTreeMap;
+/// The delay before the first retry of a lost layout read, in milliseconds.
+const READ_RETRY_BASE_MS: u64 = 500;
+/// The longest delay between retries: a window the daemon always refuses costs
+/// one read a minute while it is in the foreground.
+const READ_RETRY_CAP_MS: u64 = 60_000;
+/// A read with no answer by now is lost. The daemon may take 45 s to answer.
+const READ_ANSWER_LIMIT_MS: u64 = 60_000;
+fn read_retry_delay(attempts: u32) -> u64 {
+    READ_RETRY_BASE_MS
+        .saturating_mul(1u64 << attempts.saturating_sub(1).min(16))
+        .min(READ_RETRY_CAP_MS)
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Scope {
     window: WindowLink,
@@ -54,6 +66,10 @@ pub struct DividerState {
     resource: Option<SplitLayout>,
     read: Option<SplitRead>,
     read_sequence: u64,
+    read_issued_at: Option<u64>,
+    read_lost: bool,
+    read_attempts: u32,
+    read_retry_due: Option<u64>,
     active: Option<Gesture>,
     publication: Option<SplitPublication>,
     revision: u64,
@@ -100,6 +116,67 @@ impl DividerState {
     }
     /// Observe every controller update before admitting a gesture. No read is triggered by focus alone.
     pub fn observe(&mut self, c: &mut Controller, update: &Update, now: u64) -> Result<(), Error> {
+        let result = self.observe_update(c, update, now);
+        if self.read.is_some() {
+            self.read_issued_at = Some(now);
+        }
+        result
+    }
+    fn issue_read(&mut self, window: WindowLink) -> Result<(), Error> {
+        self.read_sequence = self.read_sequence.checked_add(1).ok_or(Error::Invalid)?;
+        self.read = Some(SplitRead {
+            sequence: self.read_sequence,
+            window,
+        });
+        self.read_issued_at = None;
+        self.read_lost = false;
+        self.read_retry_due = None;
+        Ok(())
+    }
+    fn reset_read_retry(&mut self) {
+        self.read_issued_at = None;
+        self.read_lost = false;
+        self.read_attempts = 0;
+        self.read_retry_due = None;
+    }
+    /// Reads a window's layout again after a read was lost, with growing delays.
+    /// Geometry may never change again, so nothing else would recover its handles.
+    /// A read cannot start during a gesture, and only the foreground owner reads.
+    fn retry_read(&mut self, c: &Controller, now: u64) -> Result<(), Error> {
+        if self.read.is_some() {
+            return Ok(());
+        }
+        if self
+            .read_issued_at
+            .is_some_and(|at| now.saturating_sub(at) >= READ_ANSWER_LIMIT_MS)
+        {
+            self.read_issued_at = None;
+            self.read_lost = true;
+        }
+        if std::mem::take(&mut self.read_lost) {
+            self.read_attempts = self.read_attempts.saturating_add(1);
+            self.read_retry_due = Some(now.saturating_add(read_retry_delay(self.read_attempts)));
+        }
+        if self.read_retry_due.is_none_or(|due| now < due)
+            || self.active.is_some()
+            || self.geometry.is_none()
+            || !c.actionable
+            || c.topology.awaiting_authority()
+            || !c.owns(Authority::Input)
+        {
+            return Ok(());
+        }
+        match self.scope.as_ref().map(|scope| scope.window.clone()) {
+            Some(window) => self.issue_read(window),
+            None => Ok(()),
+        }
+    }
+    fn observe_update(
+        &mut self,
+        c: &mut Controller,
+        update: &Update,
+        now: u64,
+    ) -> Result<(), Error> {
         let next = capture(c);
         if next.as_ref().map(|(scope, _)| scope) != self.scope.as_ref() {
             self.cancel();
@@ -107,6 +184,7 @@ impl DividerState {
             self.geometry = None;
             self.resource = None;
             self.read = None;
+            self.reset_read_retry();
             self.lifetime = uuid::Uuid::new_v4().to_string();
         }
         self.finish_cancelled(update, now);
@@ -126,11 +204,8 @@ impl DividerState {
             self.resource = None;
             c.policy
                 .bind_split_layout(&self.lifetime, scope.window.clone(), None)?;
-            self.read_sequence = self.read_sequence.checked_add(1).ok_or(Error::Invalid)?;
-            self.read = Some(SplitRead {
-                sequence: self.read_sequence,
-                window: scope.window,
-            });
+            self.reset_read_retry();
+            self.issue_read(scope.window)?;
             if self
                 .active
                 .as_ref()
@@ -166,20 +241,19 @@ impl DividerState {
                 // A successor is only a receipt. Read its canonical resource separately,
                 // including unchanged rectangles with newly issued ancestry handles.
                 self.resource = None;
-                self.read_sequence = self.read_sequence.checked_add(1).ok_or(Error::Invalid)?;
-                if let Some(scope) = &self.scope {
+                if let Some(window) = self.scope.as_ref().map(|scope| scope.window.clone()) {
                     c.policy
-                        .bind_split_layout(&self.lifetime, scope.window.clone(), None)?;
-                    self.read = Some(SplitRead {
-                        sequence: self.read_sequence,
-                        window: scope.window.clone(),
-                    });
+                        .bind_split_layout(&self.lifetime, window.clone(), None)?;
+                    self.issue_read(window)?;
+                } else {
+                    self.read_sequence = self.read_sequence.checked_add(1).ok_or(Error::Invalid)?;
                 }
             } else if update.intent_timeouts.contains(operation) {
                 self.fail(SplitPhase::Failed);
                 return Ok(());
             }
         }
+        self.retry_read(c, now)?;
         self.advance(c, now)
     }
     /// Rebind an aborted broker read after same-window request advancement.
@@ -188,22 +262,19 @@ impl DividerState {
         if self.resource.is_some() || self.active.is_some() || self.geometry.is_none() {
             return Ok(());
         }
-        let Some(scope) = &self.scope else {
+        let Some(window) = self.scope.as_ref().map(|scope| scope.window.clone()) else {
             return Ok(());
         };
-        self.read_sequence = self.read_sequence.checked_add(1).ok_or(Error::Invalid)?;
-        self.read = Some(SplitRead {
-            sequence: self.read_sequence,
-            window: scope.window.clone(),
-        });
-        Ok(())
+        self.issue_read(window)
     }
-    /// A failed metadata read disables handles until geometry changes; never retry it automatically.
+    /// A failed read costs no handles for good: `observe` schedules another.
     pub fn read_failed(&mut self, sequence: u64) {
         if sequence != self.read_sequence || self.resource.is_some() {
             return;
         }
         self.read = None;
+        self.read_issued_at = None;
+        self.read_lost = true;
         if self.active.as_ref().is_some_and(|g| g.operation.is_none()) {
             self.fail(SplitPhase::Failed);
         }
@@ -216,10 +287,13 @@ impl DividerState {
         resource: SplitLayout,
     ) -> Result<bool, Error> {
         resource.validate()?;
-        if !c.actionable || c.topology.awaiting_authority() {
+        if sequence != self.read_sequence || self.resource.is_some() {
             return Ok(false);
         }
-        if sequence != self.read_sequence || self.resource.is_some() {
+        // Until this response is installed, this read is lost and `observe` retries it.
+        self.read_issued_at = None;
+        self.read_lost = true;
+        if !c.actionable || c.topology.awaiting_authority() {
             return Ok(false);
         }
         let Some((scope, geometry)) = capture(c) else {
@@ -238,6 +312,7 @@ impl DividerState {
         c.policy
             .bind_split_layout(&self.lifetime, scope.window, Some(resource.clone()))?;
         self.resource = Some(resource);
+        self.reset_read_retry();
         Ok(true)
     }
     pub fn begin(
