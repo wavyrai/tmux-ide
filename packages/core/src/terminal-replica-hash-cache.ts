@@ -1,9 +1,15 @@
 import {
+  isOwnedTerminalReplicaRow,
   isSchemaValidProjectedTerminalReplicaRow,
   TERMINAL_REPLICA_DEFAULT_COLOR,
 } from "./terminal-replica-owned-row.ts";
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
-import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
+import {
+  createBufferedFnv64,
+  FNV64_OFFSET_BASIS,
+  nativeFnv64,
+  type BufferedFnv64,
+} from "./terminal-fnv64-wasm.ts";
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
@@ -425,6 +431,12 @@ export function hashTerminalReplicaRowCached(
   const cached = ROW_HASH_CACHE.get(row);
   if (cached) return cached;
   onMiss?.();
+  const native = nativeFnv64();
+  if (native) {
+    const digest = hashRowBytes(row, native);
+    if (isTerminalReplicaRowDeeplyFrozen(row)) ROW_HASH_CACHE.set(row, digest);
+    return digest;
+  }
   const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
   let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
@@ -631,6 +643,11 @@ export function primeTerminalReplicaRowHash(row: TerminalReplicaRow, digest: str
 
 export function isTerminalReplicaRowDeeplyFrozen(row: TerminalReplicaRow): boolean {
   if (DEEPLY_FROZEN_ROWS.has(row)) return true;
+  // Every owned-row constructor freezes the row, its cells and their colors.
+  if (isOwnedTerminalReplicaRow(row as unknown)) {
+    DEEPLY_FROZEN_ROWS.add(row);
+    return true;
+  }
   if (!Object.isFrozen(row) || !Object.isFrozen(row.cells)) return false;
   for (const cell of row.cells) {
     if (
@@ -642,4 +659,94 @@ export function isTerminalReplicaRowDeeplyFrozen(row: TerminalReplicaRow): boole
   }
   DEEPLY_FROZEN_ROWS.add(row);
   return true;
+}
+
+// #708: the same canonical row bytes as hashTerminalReplicaRowCached's
+// CanonicalFnv64 path, assembled from per-cell byte strings and hashed in
+// WASM in 4 KiB chunks instead of several small JS writes per cell.
+const ASCII_ENCODER = new TextEncoder();
+const CELL_BYTES_LIMIT = 4_096;
+const PLAIN_CELL_BYTES = new Map<string, Uint8Array>();
+const STYLED_CELL_BYTES = new Map<string, Uint8Array>();
+const ROW_TRAILER = ASCII_ENCODER.encode(";;");
+
+function canonicalNumber(value: number): string {
+  const text = String(value);
+  return `d${text.length}:${text};`;
+}
+
+function canonicalColor(color: TerminalReplicaColor): string {
+  if (color.kind === "default") return "o1:s4:kind;s7:default;;";
+  if (color.kind === "indexed")
+    return `o2:s5:index;${canonicalNumber(color.index)}s4:kind;s7:indexed;;`;
+  return `o2:s4:kind;s3:rgb;s5:value;${canonicalNumber(color.value)};`;
+}
+
+function encodeCell(cell: TerminalReplicaRow["cells"][number]): Uint8Array {
+  const grapheme = cell.grapheme;
+  let length = grapheme.length;
+  for (let index = 0; index < grapheme.length; index += 1)
+    if (grapheme.charCodeAt(index) > 0x7f) {
+      length = UTF8_ENCODER.encode(grapheme).byteLength;
+      break;
+    }
+  return UTF8_ENCODER.encode(
+    `a5:s${length}:${grapheme};${canonicalNumber(cell.width)}${canonicalColor(
+      cell.foreground,
+    )}${canonicalColor(cell.background)}${canonicalNumber(cell.attributes)};`,
+  );
+}
+
+function remember(cache: Map<string, Uint8Array>, key: string, bytes: Uint8Array): Uint8Array {
+  if (cache.size >= CELL_BYTES_LIMIT) cache.clear();
+  cache.set(key, bytes);
+  return bytes;
+}
+
+function cellBytes(cell: TerminalReplicaRow["cells"][number]): Uint8Array {
+  const { grapheme, width, attributes, foreground, background } = cell;
+  if (
+    width === 1 &&
+    attributes === 0 &&
+    foreground.kind === "default" &&
+    background.kind === "default"
+  )
+    return PLAIN_CELL_BYTES.get(grapheme) ?? remember(PLAIN_CELL_BYTES, grapheme, encodeCell(cell));
+  const key = `${width}\u0000${attributes}\u0000${canonicalColor(foreground)}\u0000${canonicalColor(
+    background,
+  )}\u0000${grapheme}`;
+  return STYLED_CELL_BYTES.get(key) ?? remember(STYLED_CELL_BYTES, key, encodeCell(cell));
+}
+
+function hashRowBytes(
+  row: TerminalReplicaRow,
+  native: NonNullable<ReturnType<typeof nativeFnv64>>,
+): string {
+  const scratch = native.scratch;
+  const capacity = scratch.byteLength;
+  let state = FNV64_OFFSET_BASIS;
+  let length = 0;
+  const write = (bytes: Uint8Array) => {
+    if (bytes.byteLength <= capacity - length) {
+      scratch.set(bytes, length);
+      length += bytes.byteLength;
+      return;
+    }
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = Math.min(capacity - length, bytes.byteLength - offset);
+      scratch.set(bytes.subarray(offset, offset + count), length);
+      length += count;
+      offset += count;
+      if (length === capacity) {
+        state = BigInt.asUintN(64, native.update(state, length));
+        length = 0;
+      }
+    }
+  };
+  write(ASCII_ENCODER.encode(`a2:${row.wrapped ? "b1;" : "b0;"}a${row.cells.length}:`));
+  for (const cell of row.cells) write(cellBytes(cell));
+  write(ROW_TRAILER);
+  state = BigInt.asUintN(64, native.update(state, length));
+  return state.toString(16).padStart(16, "0");
 }

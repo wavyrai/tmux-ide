@@ -10,7 +10,7 @@ export interface BufferedFnv64 {
   digest(): string;
 }
 
-interface NativeHasher {
+export interface NativeHasher {
   readonly scratch: Uint8Array;
   readonly update: (state: bigint, length: number) => bigint;
 }
@@ -48,6 +48,13 @@ function initialize(): NativeHasher | null {
   }
   return native;
 }
+
+/** Direct access to the WASM scratch buffer and its update, for one synchronous
+ * hash at a time. Callers must not yield between filling the scratch and update. */
+export function nativeFnv64(): NativeHasher | null {
+  return initialize();
+}
+export const FNV64_OFFSET_BASIS = OFFSET_BASIS;
 
 /** Internal optional accelerator. Canonical serialization remains the caller's responsibility. */
 export function createBufferedFnv64(initialState = OFFSET_BASIS): BufferedFnv64 | null {

@@ -253,6 +253,9 @@ describe("terminal canonical hash cache", () => {
             background: { kind: "indexed" as const, index: index % 256 },
           };
           const row = { wrapped: index % 2 === 0, cells: [first, cell, base] };
+          // Row hashing uses its own cell bytes when WASM is available (#708);
+          // fill the run cache directly so its bound is still exercised.
+          cache.prepare(cell);
           expect(hashTerminalReplicaRowCached(row, undefined, cache)).toBe(
             hashTerminalReplicaRowCached(row),
           );
