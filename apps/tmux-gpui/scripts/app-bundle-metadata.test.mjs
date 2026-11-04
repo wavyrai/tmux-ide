@@ -106,7 +106,9 @@ test("packaged icon is bound to its source artwork and a complete ICNS container
   assert.equal(hash(source), provenance.sourceSha256);
   assert.equal(hash(icon), provenance.outputSha256);
   const iconRoot = new URL("../../../native/macos/notifier/AppIcon.icon/", import.meta.url);
-  const layers = (await readdir(new URL("Assets/", iconRoot))).map((name) => `Assets/${name}`);
+  const layers = (await readdir(new URL("Assets/", iconRoot)))
+    .filter((name) => name.endsWith(".svg"))
+    .map((name) => `Assets/${name}`);
   const catalogSource = createHash("sha256");
   for (const file of ["icon.json", ...layers.sort()])
     catalogSource.update(`${file}\0`).update(await readFile(new URL(file, iconRoot)));
