@@ -3,7 +3,9 @@
 // destination is a built page and no source shadows one. When a docs page is
 // removed or renamed, add its old path here.
 
-const CURRENT_RELEASE = "/docs/release-2-9-4";
+import packageMetadata from "../../package.json" with { type: "json" };
+
+const CURRENT_RELEASE = `/docs/release-${packageMetadata.version.replaceAll(".", "-")}`;
 // Missions, tasks and validation contracts never shipped; agent coordination
 // (send, wait, team groups, Claude Code agent teams) is the closest real page.
 const AGENT_COORDINATION = "/docs/multi-agent-teams";
