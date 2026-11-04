@@ -46,8 +46,9 @@ Requests to two routes took much longer when several arrived at once:
 
 ## Heavy output
 
-Hashing a terminal row in the daemon takes less CPU, with the same digests: 19 µs
-against 84 µs on the old per-cell path in a micro-benchmark. Large floods do not
+Hashing a terminal row in the daemon takes less CPU, with the same digests. In a
+micro-benchmark it takes 19 µs, against about 30 µs for the daemon's old path in a
+profile. Large floods do not
 finish faster. In our test, 2 MB of output took 3.5–4.6 s, against 3.3–3.6 s before,
 because the daemon uses the saved time to process output more often.
 
