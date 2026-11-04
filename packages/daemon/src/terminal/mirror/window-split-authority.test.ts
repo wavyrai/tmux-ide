@@ -280,6 +280,17 @@ describe("stock mode", () => {
     expect(authority(TWO, [1, 2], true).read(window).splits).toHaveLength(1);
     expect(() => authority(TWO, [1, 2], false).read(window)).toThrow(WindowSplitLayoutUnavailable);
   });
+  it("leaves out a boundary with no room, using the window's border status", () => {
+    const layout = "0000,20x4,0,0[20x1,0,0,1,20x2,0,2,2]";
+    const handles = (paneBorderStatus: string) =>
+      new WindowSplitAuthority({
+        describe: () => ({ ...snapshot(layout, [1, 2]), paneBorderStatus }),
+        serverEpoch: () => "11111111-1111-4111-8111-111111111111",
+        stock: true,
+      }).read(window).splits.length;
+    expect(handles("off")).toBe(1);
+    expect(handles("top")).toBe(0);
+  });
   it("leaves out a boundary tmux has no pane to address", () => {
     const layout =
       "0000,119x40,0,0{40x40,0,0[40x20,0,0{20x20,0,0,1,19x20,21,0,2},40x19,0,21{20x19,0,21,3,19x19,21,21,4}],39x40,41,0[39x20,41,0{20x20,41,0,5,18x20,62,0,6},39x19,41,21{20x19,41,21,7,18x19,62,21,8}],38x40,81,0,9}";
