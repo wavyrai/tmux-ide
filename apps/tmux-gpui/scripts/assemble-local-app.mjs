@@ -78,6 +78,7 @@ try {
   await mkdir(macos, { recursive: true });
   await mkdir(resources, { recursive: true });
   await copyFile(join(project, "assets/AppIcon.icns"), join(resources, "AppIcon.icns"));
+  await copyFile(join(project, "assets/Assets.car"), join(resources, "Assets.car"));
   await copyFile(native, join(macos, "tmux-ide-gpui"));
   await copyFile(receipt, join(resources, "native-build-receipt.json"));
   await verifyNativeBuildReceipt(
@@ -168,7 +169,11 @@ exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resour
           sha256: await digest(join(resources, "native-build-receipt.json")),
           scope: "local source/binary consistency; not trusted build attestation",
         },
-        icon: { file: "AppIcon.icns", sha256: await digest(join(resources, "AppIcon.icns")) },
+        icon: {
+          file: "AppIcon.icns",
+          sha256: await digest(join(resources, "AppIcon.icns")),
+          catalog: { file: "Assets.car", sha256: await digest(join(resources, "Assets.car")) },
+        },
         ...(node
           ? {
               nodeSha256: await digest(join(resources, "node")),

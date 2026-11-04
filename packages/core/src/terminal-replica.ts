@@ -1001,6 +1001,20 @@ function resolveFrameHash(
  * seed whose frame hash differs is a protocol conflict, not idempotent.
  */
 function terminalReplicaFrameIdentity(update: CanonicalTerminalReplicaUpdate): unknown {
+  if (update.type === "terminal.patch") {
+    // #708: a flood patch appends many history rows the interpreter has just
+    // hashed; enter them, and the changed screen rows, by their row hashes.
+    const { rows, history, historyDelta, ...rest } = update.patch;
+    return [
+      "terminal-replica-patch-frame-v2",
+      { ...update, patch: rest },
+      rows.map(({ index, row }) => [index, hashTerminalReplicaRow(row)]),
+      history === undefined ? null : hashTerminalReplicaRows(history),
+      historyDelta === undefined
+        ? null
+        : [historyDelta.trim, hashTerminalReplicaRows(historyDelta.append)],
+    ];
+  }
   if (update.type !== "terminal.seed") return update;
   const { grid, history, ...rest } = update.snapshot;
   return [

@@ -21,6 +21,7 @@ test("strict preview metadata generates exact safe plist fields; development def
     "tmux-ide-launcher",
     "CFBundleIconFile",
     "AppIcon.icns",
+    "CFBundleIconName",
   ])
     assert.ok(plist.includes(text));
   assert.match(bundlePlist(), /com\.tmux-ide\.gpui\.development/);
@@ -84,17 +85,24 @@ test("bounded metadata file rejects links/oversize; invalid explicit assembly me
   }
 });
 
-test("packaged icon is bound to existing tmux-ide artwork and a complete ICNS container", async () => {
+test("packaged icon is bound to its source artwork and a complete ICNS container", async () => {
   const provenance = JSON.parse(
     await readFile(new URL("../assets/app-icon-source.json", import.meta.url), "utf8"),
   );
-  assert.equal(provenance.source, "docs/app/icon.png");
+  assert.equal(provenance.source, "apps/tmux-gpui/assets/AppIcon-1024.png");
   assert.equal(provenance.output, "AppIcon.icns");
-  const source = await readFile(new URL("../../../docs/app/icon.png", import.meta.url));
+  const source = await readFile(new URL("../assets/AppIcon-1024.png", import.meta.url));
   const icon = await readFile(new URL("../assets/AppIcon.icns", import.meta.url));
   const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
   assert.equal(hash(source), provenance.sourceSha256);
   assert.equal(hash(icon), provenance.outputSha256);
+  const catalogSource = await readFile(
+    new URL("../../../native/macos/notifier/AppIcon.icon/icon.json", import.meta.url),
+  );
+  const catalog = await readFile(new URL("../assets/Assets.car", import.meta.url));
+  assert.equal(provenance.catalog.output, "Assets.car");
+  assert.equal(hash(catalogSource), provenance.catalog.sourceSha256);
+  assert.equal(hash(catalog), provenance.catalog.outputSha256);
   assert.equal(icon.toString("ascii", 0, 4), "icns");
   assert.equal(icon.readUInt32BE(4), icon.length);
   const representations = new Set();

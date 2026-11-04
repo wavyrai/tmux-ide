@@ -12403,7 +12403,10 @@ __export(tui_binary_exports, {
   MAX_TUI_COMPRESSED_BYTES: () => MAX_TUI_COMPRESSED_BYTES,
   MIN_TUI_BINARY_BYTES: () => MIN_TUI_BINARY_BYTES,
   RELEASE_REPO: () => RELEASE_REPO,
-  TUI_DOWNLOAD_TIMEOUT_MS: () => TUI_DOWNLOAD_TIMEOUT_MS,
+  TUI_DOWNLOAD_MAX_ATTEMPTS: () => TUI_DOWNLOAD_MAX_ATTEMPTS,
+  TUI_DOWNLOAD_RETRY_DELAY_MS: () => TUI_DOWNLOAD_RETRY_DELAY_MS,
+  TUI_DOWNLOAD_STALL_TIMEOUT_MS: () => TUI_DOWNLOAD_STALL_TIMEOUT_MS,
+  TUI_DOWNLOAD_TOTAL_TIMEOUT_MS: () => TUI_DOWNLOAD_TOTAL_TIMEOUT_MS,
   bunTargetForTag: () => bunTargetForTag,
   downloadTuiBinary: () => downloadTuiBinary,
   downloadedTuiPath: () => downloadedTuiPath,
@@ -12548,30 +12551,54 @@ function purgeCachedBinary(path2) {
     }
   }
 }
-async function readBoundedResponse(fetchImpl, url, maxBytes, timeoutMs) {
+function isTransientHttpStatus(status2) {
+  return status2 === 408 || status2 === 429 || status2 >= 500;
+}
+async function readBoundedResponse(fetchImpl, url, maxBytes, policy) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let total = 0;
+  let timeoutMessage = null;
+  const abortWith = (message) => () => {
+    timeoutMessage = message();
+    controller.abort();
+  };
+  const overallTimer = setTimeout(
+    abortWith(() => `download did not finish within ${policy.totalTimeoutMs}ms`),
+    Math.max(0, policy.deadline - Date.now())
+  );
+  const onStall = abortWith(
+    () => `download stalled: no data for ${policy.stallTimeoutMs}ms after ${total} bytes`
+  );
+  let stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  const markProgress = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  };
   try {
     const response3 = await fetchImpl(url, { signal: controller.signal });
     if (!response3.ok) {
-      throw new Error(`HTTP ${response3.status} ${response3.statusText}`);
+      const message = `HTTP ${response3.status} ${response3.statusText}`;
+      if (isTransientHttpStatus(response3.status)) throw new Error(message);
+      throw new PermanentDownloadError(message);
     }
+    markProgress();
     const declaredLength = Number(response3.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-      throw new Error(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
+      throw new PermanentDownloadError(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
     }
     if (!response3.body) throw new Error("response has no body");
     const chunks = [];
-    let total = 0;
     const reader = response3.body.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (value.byteLength === 0) continue;
+        markProgress();
         total += value.byteLength;
         if (total > maxBytes) {
           await reader.cancel();
-          throw new Error(`download exceeds ${maxBytes} bytes`);
+          throw new PermanentDownloadError(`download exceeds ${maxBytes} bytes`);
         }
         chunks.push(Buffer.from(value));
       }
@@ -12580,12 +12607,27 @@ async function readBoundedResponse(fetchImpl, url, maxBytes, timeoutMs) {
     }
     return Buffer.concat(chunks, total);
   } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`download timed out after ${timeoutMs}ms`, { cause: error });
-    }
+    if (timeoutMessage) throw new Error(timeoutMessage, { cause: error });
     throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(overallTimer);
+    clearTimeout(stallTimer);
+    controller.abort();
+  }
+}
+async function readWithRetries(fetchImpl, url, maxBytes, policy, log) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await readBoundedResponse(fetchImpl, url, maxBytes, policy);
+    } catch (error) {
+      const delayMs = policy.retryDelayMs * attempt;
+      if (error instanceof PermanentDownloadError || attempt >= policy.maxAttempts || Date.now() + delayMs >= policy.deadline) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      log(`download attempt ${attempt}/${policy.maxAttempts} failed (${message}); retrying`);
+      await new Promise((resolve45) => setTimeout(resolve45, delayMs));
+    }
   }
 }
 async function downloadTuiBinary(opts = {}) {
@@ -12606,14 +12648,18 @@ async function downloadTuiBinary(opts = {}) {
   const limits = {
     minBinaryBytes: opts.limits?.minBinaryBytes ?? MIN_TUI_BINARY_BYTES,
     maxCompressedBytes: opts.limits?.maxCompressedBytes ?? MAX_TUI_COMPRESSED_BYTES,
-    maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES,
-    timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS
+    maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES
   };
+  const totalTimeoutMs = opts.totalTimeoutMs ?? TUI_DOWNLOAD_TOTAL_TIMEOUT_MS;
   mkdirSync5(dirname9(dest), { recursive: true });
+  const lockNotice = setTimeout(
+    () => log("waiting for another tmux-ide download of this version to finish"),
+    TUI_DOWNLOAD_LOCK_NOTICE_MS
+  );
   const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
-    limits.timeoutMs * 2 + 5e3
-  );
+    totalTimeoutMs + TUI_DOWNLOAD_LOCK_MARGIN_MS
+  ).finally(() => clearTimeout(lockNotice));
   const suffix = `${process.pid}.${randomUUID2()}.tmp`;
   const binaryTmp = `${dest}.${suffix}`;
   const checksumTmp = `${checksumPath(dest)}.${suffix}`;
@@ -12622,21 +12668,31 @@ async function downloadTuiBinary(opts = {}) {
     if (cached2) return { path: dest, bytes: cached2.bytes };
     purgeCachedBinary(dest);
     const fetchImpl = opts.fetch ?? globalThis.fetch;
+    const policy = {
+      stallTimeoutMs: opts.stallTimeoutMs ?? TUI_DOWNLOAD_STALL_TIMEOUT_MS,
+      deadline: Date.now() + totalTimeoutMs,
+      totalTimeoutMs,
+      maxAttempts: opts.maxAttempts ?? TUI_DOWNLOAD_MAX_ATTEMPTS,
+      retryDelayMs: opts.retryDelayMs ?? TUI_DOWNLOAD_RETRY_DELAY_MS
+    };
     log(`downloading checksum manifest ${checksumUrl}`);
     let manifestBytes;
     let gz;
     try {
-      manifestBytes = await readBoundedResponse(
+      manifestBytes = await readWithRetries(
         fetchImpl,
         checksumUrl,
         MAX_CHECKSUM_MANIFEST_BYTES,
-        limits.timeoutMs
+        policy,
+        log
       );
-      gz = await readBoundedResponse(fetchImpl, url, limits.maxCompressedBytes, limits.timeoutMs);
+      log(`downloading ${url}`);
+      gz = await readWithRetries(fetchImpl, url, limits.maxCompressedBytes, policy, log);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const hint = error instanceof PermanentDownloadError ? "Check that the release published both exact-version assets." : "Check your network connection, then retry with `tmux-ide update --tui-binary`, or run the installer again if tmux-ide is not installed yet.";
       throw new Error(
-        `could not download the TUI binary and checksum for v${version} (${message}). Check that the release published both exact-version assets.`,
+        `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error }
       );
     }
@@ -12681,7 +12737,7 @@ async function downloadTuiBinary(opts = {}) {
     releaseLock();
   }
 }
-var RELEASE_REPO, MIN_TUI_BINARY_BYTES, MAX_TUI_COMPRESSED_BYTES, MAX_TUI_BINARY_BYTES, TUI_DOWNLOAD_TIMEOUT_MS, MAX_CHECKSUM_MANIFEST_BYTES, SUPPORTED;
+var RELEASE_REPO, MIN_TUI_BINARY_BYTES, MAX_TUI_COMPRESSED_BYTES, MAX_TUI_BINARY_BYTES, TUI_DOWNLOAD_STALL_TIMEOUT_MS, TUI_DOWNLOAD_TOTAL_TIMEOUT_MS, TUI_DOWNLOAD_MAX_ATTEMPTS, TUI_DOWNLOAD_RETRY_DELAY_MS, MAX_CHECKSUM_MANIFEST_BYTES, TUI_DOWNLOAD_LOCK_NOTICE_MS, TUI_DOWNLOAD_LOCK_MARGIN_MS, SUPPORTED, PermanentDownloadError;
 var init_tui_binary = __esm({
   "packages/daemon/src/lib/tui-binary.ts"() {
     "use strict";
@@ -12692,12 +12748,19 @@ var init_tui_binary = __esm({
     MIN_TUI_BINARY_BYTES = 10 * 1024 * 1024;
     MAX_TUI_COMPRESSED_BYTES = 128 * 1024 * 1024;
     MAX_TUI_BINARY_BYTES = 256 * 1024 * 1024;
-    TUI_DOWNLOAD_TIMEOUT_MS = 3e4;
+    TUI_DOWNLOAD_STALL_TIMEOUT_MS = 3e4;
+    TUI_DOWNLOAD_TOTAL_TIMEOUT_MS = 15 * 6e4;
+    TUI_DOWNLOAD_MAX_ATTEMPTS = 3;
+    TUI_DOWNLOAD_RETRY_DELAY_MS = 1e3;
     MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
+    TUI_DOWNLOAD_LOCK_NOTICE_MS = 2e3;
+    TUI_DOWNLOAD_LOCK_MARGIN_MS = 5e3;
     SUPPORTED = {
       "darwin-arm64": "darwin-arm64",
       "linux-x64": "linux-x64",
       "linux-arm64": "linux-arm64"
+    };
+    PermanentDownloadError = class extends Error {
     };
   }
 });
@@ -13082,7 +13145,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.16",
+      version: "2.9.17",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -27074,10 +27137,13 @@ function isVisibleFleetSession(name) {
 function readAdoptedSessionNames(runTmux2 = _tmuxRunner) {
   let raw;
   try {
-    raw = runTmux2(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
+    raw = runTmux2(ADOPTED_SESSIONS_ARGS);
   } catch {
     return null;
   }
+  return parseAdoptedSessionNames(raw);
+}
+function parseAdoptedSessionNames(raw) {
   const names = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -27096,16 +27162,51 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry(), runTmux2 = _
   const nativeEpoch = nativeServerEpoch?.() ?? null;
   const adopted = readAdoptedSessionNames(runTmux2);
   if (adopted === null) return null;
-  const adoptedSet = new Set(adopted);
-  if (adoptedSet.size === 0) return [];
-  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
-  const panesBySession = /* @__PURE__ */ new Map();
+  if (adopted.length === 0) return [];
   let panesRaw;
   try {
-    panesRaw = runTmux2(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux2(FLEET_PANES_ARGS);
   } catch {
     panesRaw = "";
   }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+async function readAdoptedFleetAsync(registry, runTmux2, resolveInteractionEndpoint, nativeServerEpoch) {
+  const nativeEpoch = nativeServerEpoch?.() ?? null;
+  let sessionsRaw;
+  try {
+    sessionsRaw = await runTmux2(ADOPTED_SESSIONS_ARGS);
+  } catch {
+    return null;
+  }
+  const adopted = parseAdoptedSessionNames(sessionsRaw);
+  if (adopted.length === 0) return [];
+  let panesRaw;
+  try {
+    panesRaw = await runTmux2(FLEET_PANES_ARGS);
+  } catch {
+    panesRaw = "";
+  }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+function assembleAdoptedFleet(adopted, panesRaw, registry, nativeEpoch, resolveInteractionEndpoint, nativeServerEpoch) {
+  const adoptedSet = new Set(adopted);
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+  const panesBySession = /* @__PURE__ */ new Map();
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
@@ -27193,7 +27294,7 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
+var _tmuxRunner, ADOPTED_SESSIONS_ARGS, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT, FLEET_PANES_ARGS;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
@@ -27210,6 +27311,7 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
+    ADOPTED_SESSIONS_ARGS = ["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`];
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
     FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
     FLEET_PANE_FORMAT = [
@@ -27231,6 +27333,7 @@ var init_discovery = __esm({
       "#{@tmux_ide_team}",
       FLEET_LINE_SENTINEL
     ].join(FLEET_FIELD_SEPARATOR);
+    FLEET_PANES_ARGS = ["list-panes", "-a", "-F", FLEET_PANE_FORMAT];
   }
 });
 
@@ -43804,11 +43907,14 @@ function initialize() {
   }
   return native;
 }
+function nativeFnv64() {
+  return initialize();
+}
 function createBufferedFnv64(initialState = OFFSET_BASIS) {
   const hasher = initialize();
   return hasher ? new BufferedHasher(hasher, initialState) : null;
 }
-var SCRATCH_BYTES, OFFSET_BASIS, initialized, native, BufferedHasher;
+var SCRATCH_BYTES, OFFSET_BASIS, initialized, native, FNV64_OFFSET_BASIS, BufferedHasher;
 var init_terminal_fnv64_wasm = __esm({
   "packages/core/src/terminal-fnv64-wasm.ts"() {
     "use strict";
@@ -43817,6 +43923,7 @@ var init_terminal_fnv64_wasm = __esm({
     OFFSET_BASIS = 0xcbf29ce484222325n;
     initialized = false;
     native = null;
+    FNV64_OFFSET_BASIS = OFFSET_BASIS;
     BufferedHasher = class {
       #native;
       #buffer = new Uint8Array(SCRATCH_BYTES);
@@ -43954,6 +44061,12 @@ function hashTerminalReplicaRowCached(row, onMiss, encodingCache) {
   const cached2 = ROW_HASH_CACHE.get(row);
   if (cached2) return cached2;
   onMiss?.();
+  const native2 = nativeFnv64();
+  if (native2) {
+    const digest4 = hashRowBytes(row, native2);
+    if (isTerminalReplicaRowDeeplyFrozen(row)) ROW_HASH_CACHE.set(row, digest4);
+    return digest4;
+  }
   const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
   let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
@@ -44017,6 +44130,10 @@ async function hashTerminalReplicaRowCooperatively(row, yieldControl, bytesPerSl
 }
 function isTerminalReplicaRowDeeplyFrozen(row) {
   if (DEEPLY_FROZEN_ROWS.has(row)) return true;
+  if (isOwnedTerminalReplicaRow(row)) {
+    DEEPLY_FROZEN_ROWS.add(row);
+    return true;
+  }
   if (!Object.isFrozen(row) || !Object.isFrozen(row.cells)) return false;
   for (const cell of row.cells) {
     if (!Object.isFrozen(cell) || !Object.isFrozen(cell.foreground) || !Object.isFrozen(cell.background))
@@ -44025,7 +44142,74 @@ function isTerminalReplicaRowDeeplyFrozen(row) {
   DEEPLY_FROZEN_ROWS.add(row);
   return true;
 }
-var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, SHORT_ASCII_HEADERS, DEFAULT_COLOR_KEYS, DEFAULT_COLOR_KEY_ORDER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache, DECODED_DEFAULT_COLOR;
+function canonicalNumber(value) {
+  const text2 = String(value);
+  return `d${text2.length}:${text2};`;
+}
+function canonicalColor(color3) {
+  if (color3.kind === "default") return "o1:s4:kind;s7:default;;";
+  if (color3.kind === "indexed")
+    return `o2:s5:index;${canonicalNumber(color3.index)}s4:kind;s7:indexed;;`;
+  return `o2:s4:kind;s3:rgb;s5:value;${canonicalNumber(color3.value)};`;
+}
+function encodeCell(cell) {
+  const grapheme = cell.grapheme;
+  let length = grapheme.length;
+  for (let index = 0; index < grapheme.length; index += 1)
+    if (grapheme.charCodeAt(index) > 127) {
+      length = UTF8_ENCODER.encode(grapheme).byteLength;
+      break;
+    }
+  return UTF8_ENCODER.encode(
+    `a5:s${length}:${grapheme};${canonicalNumber(cell.width)}${canonicalColor(
+      cell.foreground
+    )}${canonicalColor(cell.background)}${canonicalNumber(cell.attributes)};`
+  );
+}
+function remember(cache3, key2, bytes) {
+  if (cache3.size >= CELL_BYTES_LIMIT) cache3.clear();
+  cache3.set(key2, bytes);
+  return bytes;
+}
+function cellBytes(cell) {
+  const { grapheme, width, attributes, foreground, background } = cell;
+  if (width === 1 && attributes === 0 && foreground.kind === "default" && background.kind === "default")
+    return PLAIN_CELL_BYTES.get(grapheme) ?? remember(PLAIN_CELL_BYTES, grapheme, encodeCell(cell));
+  const key2 = `${width}\0${attributes}\0${canonicalColor(foreground)}\0${canonicalColor(
+    background
+  )}\0${grapheme}`;
+  return STYLED_CELL_BYTES.get(key2) ?? remember(STYLED_CELL_BYTES, key2, encodeCell(cell));
+}
+function hashRowBytes(row, native2) {
+  const scratch = native2.scratch;
+  const capacity = scratch.byteLength;
+  let state = FNV64_OFFSET_BASIS;
+  let length = 0;
+  const write2 = (bytes) => {
+    if (bytes.byteLength <= capacity - length) {
+      scratch.set(bytes, length);
+      length += bytes.byteLength;
+      return;
+    }
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = Math.min(capacity - length, bytes.byteLength - offset);
+      scratch.set(bytes.subarray(offset, offset + count), length);
+      length += count;
+      offset += count;
+      if (length === capacity) {
+        state = BigInt.asUintN(64, native2.update(state, length));
+        length = 0;
+      }
+    }
+  };
+  write2(ASCII_ENCODER.encode(`a2:${row.wrapped ? "b1;" : "b0;"}a${row.cells.length}:`));
+  for (const cell of row.cells) write2(cellBytes(cell));
+  write2(ROW_TRAILER);
+  state = BigInt.asUintN(64, native2.update(state, length));
+  return state.toString(16).padStart(16, "0");
+}
+var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, SHORT_ASCII_HEADERS, DEFAULT_COLOR_KEYS, DEFAULT_COLOR_KEY_ORDER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache, DECODED_DEFAULT_COLOR, ASCII_ENCODER, CELL_BYTES_LIMIT, PLAIN_CELL_BYTES, STYLED_CELL_BYTES, ROW_TRAILER;
 var init_terminal_replica_hash_cache = __esm({
   "packages/core/src/terminal-replica-hash-cache.ts"() {
     "use strict";
@@ -44272,6 +44456,11 @@ var init_terminal_replica_hash_cache = __esm({
       }
     };
     DECODED_DEFAULT_COLOR = Object.freeze({ kind: "default" });
+    ASCII_ENCODER = new TextEncoder();
+    CELL_BYTES_LIMIT = 4096;
+    PLAIN_CELL_BYTES = /* @__PURE__ */ new Map();
+    STYLED_CELL_BYTES = /* @__PURE__ */ new Map();
+    ROW_TRAILER = ASCII_ENCODER.encode(";;");
   }
 });
 
@@ -44891,6 +45080,16 @@ function resolveFrameHash(update, options, profile) {
   return hash;
 }
 function terminalReplicaFrameIdentity(update) {
+  if (update.type === "terminal.patch") {
+    const { rows, history: history2, historyDelta, ...rest2 } = update.patch;
+    return [
+      "terminal-replica-patch-frame-v2",
+      { ...update, patch: rest2 },
+      rows.map(({ index, row }) => [index, hashTerminalReplicaRow(row)]),
+      history2 === void 0 ? null : hashTerminalReplicaRows(history2),
+      historyDelta === void 0 ? null : [historyDelta.trim, hashTerminalReplicaRows(historyDelta.append)]
+    ];
+  }
   if (update.type !== "terminal.seed") return update;
   const { grid, history, ...rest } = update.snapshot;
   return [
@@ -76428,6 +76627,8 @@ var init_tmux_server_owners = __esm({
       #tail = Promise.resolve();
       #disposed = false;
       #disposePromise = null;
+      #queuedRefresh = null;
+      #queuedRefreshTail = null;
       #serial(work) {
         const run = this.#tail.then(() => {
           if (this.#disposed) throw new TmuxServerScopeError("disposed");
@@ -76528,10 +76729,19 @@ var init_tmux_server_owners = __esm({
         this.#entries.set(scope2.serverId, { registration, scope: scope2, observation: observation2, owner });
       }
       refresh() {
-        return this.#serial(async () => {
+        if (this.#queuedRefresh && this.#tail === this.#queuedRefreshTail) return this.#queuedRefresh;
+        const queued = this.#serial(async () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
           for (const entry of this.#entries.values()) await this.#refresh(entry);
           return this.list();
         });
+        this.#queuedRefresh = queued;
+        this.#queuedRefreshTail = this.#tail;
+        const settle = () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
+        };
+        queued.then(settle, settle);
+        return queued;
       }
       current(scopeInput) {
         const scope2 = TmuxServerScopeSchemaZ.parse(scopeInput);
@@ -80684,6 +80894,22 @@ var init_daemon_shutdown = __esm({
     daemonInstanceId = null;
     shutdownInProgress = false;
     restartBackend = null;
+  }
+});
+
+// packages/daemon/src/lib/catalog-fleet-read.ts
+async function readCatalogFleet(registry, runners, resolveInteractionEndpoint, nativeServerEpoch) {
+  return runners.fence.active ? readAdoptedFleet(registry, runners.fencedSync, resolveInteractionEndpoint, nativeServerEpoch) : readAdoptedFleetAsync(
+    registry,
+    runners.generationFencedAsync,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+var init_catalog_fleet_read = __esm({
+  "packages/daemon/src/lib/catalog-fleet-read.ts"() {
+    "use strict";
+    init_discovery();
   }
 });
 
@@ -84873,7 +85099,7 @@ function createSessionFaviconResolver(options = {}) {
   const missTtlMs = options.missTtlMs ?? 3e4;
   const maxEntries = options.maxEntries ?? 256;
   const cache3 = /* @__PURE__ */ new Map();
-  const remember = (sessionPath, entry) => {
+  const remember2 = (sessionPath, entry) => {
     cache3.delete(sessionPath);
     cache3.set(sessionPath, entry);
     while (cache3.size > maxEntries) cache3.delete(cache3.keys().next().value);
@@ -84918,18 +85144,18 @@ function createSessionFaviconResolver(options = {}) {
     if (!sessionPath || !isAbsolute24(sessionPath) || sessionPath.includes("\0")) return null;
     const cached2 = cache3.get(sessionPath);
     if (cached2?.kind === "miss" && now() - cached2.at < missTtlMs) {
-      remember(sessionPath, cached2);
+      remember2(sessionPath, cached2);
       return null;
     }
     if (cached2?.kind === "hit") {
       const stats = await lstatOrNull(io, cached2.file);
       if (stats && stats.isFile() && stats.mtimeMs === cached2.mtimeMs && stats.size === cached2.size) {
-        remember(sessionPath, cached2);
+        remember2(sessionPath, cached2);
         return cached2.favicon;
       }
     }
     const entry = await scan(sessionPath);
-    remember(sessionPath, entry);
+    remember2(sessionPath, entry);
     return entry.kind === "hit" ? entry.favicon : null;
   };
 }
@@ -96230,15 +96456,21 @@ async function startEmbeddedDaemonGeneration(opts) {
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
-          const fleet = readAdoptedFleet(
+          const endpoint = (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
+            sessionName2,
+            pane.runtimePaneId,
+            pane.semanticPaneId
+          ) ?? null : null;
+          const epoch = () => observationSelector?.nativeServerEpoch ?? null;
+          const fleet = await readCatalogFleet(
             workspaceRegistry,
-            nativeGenerationTmuxRunner,
-            (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
-              sessionName2,
-              pane.runtimePaneId,
-              pane.semanticPaneId
-            ) ?? null : null,
-            () => observationSelector?.nativeServerEpoch ?? null
+            {
+              fence: sessionMutationFence,
+              fencedSync: nativeGenerationTmuxRunner,
+              generationFencedAsync: (args) => fleetFactsTmuxRunner(args)
+            },
+            endpoint,
+            epoch
           );
           if (!fleet) return null;
           const names = await readTeamMemberships(
@@ -96690,6 +96922,7 @@ var init_daemon_embed = __esm({
     init_workspace_registry();
     init_workspace_pane_creation2();
     init_discovery();
+    init_catalog_fleet_read();
     init_workspace_open2();
     init_workspace_promotion2();
     init_workspace_open_handoff2();
@@ -98009,13 +98242,13 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
   };
-  const ready = async (previousInstance) => {
+  const ready = async (previousInstance, retiredPid) => {
     const deadline = Date.now() + deps2.waitMs;
     do {
       const state = deps2.inspect();
       if (!boundTo(state, plan.supervisionId))
         refused("Service reservation changed during startup");
-      if (state.status === "valid" && state.info.instanceId !== previousInstance) {
+      if (state.status === "valid" && state.info.instanceId !== previousInstance && state.info.pid !== retiredPid) {
         const identity4 = await deps2.probe(state.info);
         const service2 = await inspectManager();
         if (identity4 && service2.active && service2.pid === state.info.pid && identity4.pid === state.info.pid && identity4.instanceId === state.info.instanceId && identity4.startedAt === state.info.startedAt && identity4.protocolVersion === state.info.protocolVersion)
@@ -98116,9 +98349,13 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
     }
     const before = deps2.inspect();
     if (action === "install" && service.active) return await ready();
-    if (service.loaded) await manager.restart(service.pid !== null);
+    const current = service.loaded ? await inspectManager() : service;
+    if (current.loaded) await manager.restart(current.pid !== null);
     else await manager.install();
-    return await ready(before.status === "valid" ? before.info.instanceId : void 0);
+    return await ready(
+      before.status === "valid" ? before.info.instanceId : void 0,
+      current.loaded ? current.pid : null
+    );
   } catch (error) {
     if (!activationAttempted && wroteRecord) {
       if (wroteUnit && ownedFile(plan.unitPath) === contents) unlinkSync9(plan.unitPath);

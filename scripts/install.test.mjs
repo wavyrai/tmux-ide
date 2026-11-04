@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -571,4 +572,57 @@ launchdTest("a failed launchd restart restores the previous job definition", (t)
     result.stdout,
     /Could not restart launchd job com\.tmux-ide\.daemon; restored its previous definition/,
   );
+});
+
+/** Runs the installer's own fetch() through real curl, with the stall window shortened. */
+function realFetch(url, out) {
+  const line = fs
+    .readFileSync(installer, "utf8")
+    .split("\n")
+    .find((candidate) => candidate.startsWith("fetch() {"));
+  assert.match(line, /--speed-limit 1 --speed-time 30 --max-time 900/);
+  const shortened = line
+    .replace("--retry 3 --retry-max-time 900 ", "")
+    .replace("--speed-time 30", "--speed-time 1");
+  return new Promise((resolve) => {
+    spawn("/bin/sh", ["-c", `${shortened}\nfetch "$1" "$2"`, "sh", url, out], {
+      stdio: "ignore",
+    }).on("exit", resolve);
+  });
+}
+
+async function chunkServer(t, respond) {
+  const server = http.createServer(respond);
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${server.address().port}/asset`;
+}
+
+test("fetch keeps a slow transfer that outlasts the stall window", async (t) => {
+  const url = await chunkServer(t, (_request, response) => {
+    let sent = 0;
+    const timer = setInterval(() => {
+      response.write("x".repeat(64));
+      sent += 1;
+      if (sent === 25) {
+        clearInterval(timer);
+        response.end();
+      }
+    }, 100);
+  });
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tmux-fetch-")), "asset");
+  assert.equal(await realFetch(url, out), 0);
+  assert.equal(fs.statSync(out).size, 25 * 64);
+});
+
+test("fetch gives up on a transfer that stops sending", async (t) => {
+  const url = await chunkServer(t, (_request, response) => {
+    response.writeHead(200, { "content-length": "1000" });
+    response.write("x".repeat(64));
+  });
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tmux-fetch-")), "asset");
+  assert.equal(await realFetch(url, out), 28);
 });

@@ -52,6 +52,8 @@ export const TUI_DOWNLOAD_MAX_ATTEMPTS = 3;
 export const TUI_DOWNLOAD_RETRY_DELAY_MS = 1_000;
 
 const MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
+/** A second installer says why it is quiet once the wait is longer than a lock handover. */
+const TUI_DOWNLOAD_LOCK_NOTICE_MS = 2_000;
 /** Lets a lock waiter outlast the holder's verify and install after its download budget. */
 const TUI_DOWNLOAD_LOCK_MARGIN_MS = 5_000;
 
@@ -432,10 +434,14 @@ export async function downloadTuiBinary(
   };
   const totalTimeoutMs = opts.totalTimeoutMs ?? TUI_DOWNLOAD_TOTAL_TIMEOUT_MS;
   mkdirSync(dirname(dest), { recursive: true });
+  const lockNotice = setTimeout(
+    () => log("waiting for another tmux-ide download of this version to finish"),
+    TUI_DOWNLOAD_LOCK_NOTICE_MS,
+  );
   const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
     totalTimeoutMs + TUI_DOWNLOAD_LOCK_MARGIN_MS,
-  );
+  ).finally(() => clearTimeout(lockNotice));
   const suffix = `${process.pid}.${randomUUID()}.tmp`;
   const binaryTmp = `${dest}.${suffix}`;
   const checksumTmp = `${checksumPath(dest)}.${suffix}`;
@@ -471,7 +477,7 @@ export async function downloadTuiBinary(
       const hint =
         error instanceof PermanentDownloadError
           ? "Check that the release published both exact-version assets."
-          : "Check your network connection, then retry with `tmux-ide update --tui-binary`.";
+          : "Check your network connection, then retry with `tmux-ide update --tui-binary`, or run the installer again if tmux-ide is not installed yet.";
       throw new Error(
         `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error },

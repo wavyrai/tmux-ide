@@ -65,7 +65,9 @@ function fixture() {
     claim = null;
   };
   cleanup.push(stopOwner);
-  const startOwner = () => {
+  // Each simulated daemon is its own process.
+  let nextPid = 2147483000;
+  const startOwner = (pid = nextPid++) => {
     const acquired = tryAcquireCanonicalDaemonClaim({
       kind: "supervised",
       supervisionId: plan.supervisionId,
@@ -73,7 +75,7 @@ function fixture() {
     if (acquired.status !== "acquired") throw new Error("fixture owner claim refused");
     claim = acquired.claim;
     info = {
-      pid: 2147483647,
+      pid,
       port: 12345,
       bindHostname: "127.0.0.1",
       instanceId: randomUUID(),
@@ -127,6 +129,8 @@ function fixture() {
     setState: (next: DaemonServiceState) => {
       state = next;
     },
+    startOwner,
+    stopOwner,
   };
 }
 
@@ -147,6 +151,61 @@ describe("managed daemon service lifecycle", () => {
     expect(inspectCanonicalDaemonInfo().status).toBe("missing");
     expect(existsSync(plan.unitPath)).toBe(false);
     expect(existsSync(plan.recordPath)).toBe(false);
+  });
+
+  it("never reports the daemon this restart is terminating", async () => {
+    // v2.9.16 release qualification: launchd's KeepAlive started daemon B just
+    // before `restart`, which saw B's process but not yet its record. The restart
+    // sent B SIGTERM; B then published while still shutting down. Readiness must
+    // wait for the replacement A, not report B, which is about to exit.
+    const { run, manager, deps, setState, startOwner, stopOwner } = fixture();
+    await run("install");
+    stopOwner();
+    const terminating = 2147483100;
+    const replacement = 2147483200;
+    setState({
+      loaded: true,
+      active: true,
+      pid: terminating,
+      definitionPath: deps.plan().unitPath,
+    });
+    deps.waitMs = 3000;
+    manager.restart.mockImplementationOnce(async () => {
+      startOwner(terminating);
+      setTimeout(() => {
+        stopOwner();
+        startOwner(replacement);
+      }, 150);
+    });
+    const restarted = await run("restart");
+    expect(restarted.status).toBe("running");
+    expect(restarted.pid).toBe(replacement);
+  });
+
+  it("retires the process running at restart, not the one seen before the lock", async () => {
+    const { run, manager, deps, setState, startOwner, stopOwner } = fixture();
+    await run("install");
+    stopOwner();
+    const definitionPath = deps.plan().unitPath;
+    const relaunched = 2147483300;
+    const replacement = 2147483400;
+    setState({ loaded: true, active: true, pid: relaunched, definitionPath });
+    // The first look predates a KeepAlive relaunch; every later look sees it.
+    manager.inspect.mockImplementationOnce(async () => ({
+      loaded: true,
+      active: true,
+      pid: 2147483299,
+      definitionPath,
+    }));
+    deps.waitMs = 3000;
+    manager.restart.mockImplementationOnce(async () => {
+      startOwner(relaunched);
+      setTimeout(() => {
+        stopOwner();
+        startOwner(replacement);
+      }, 150);
+    });
+    expect((await run("restart")).pid).toBe(replacement);
   });
 
   it("keeps an uncertain failed activation reserved and explicitly removable", async () => {
@@ -217,11 +276,11 @@ describe("managed daemon service lifecycle", () => {
 
   it("accepts the OS canonical spelling of the same owned definition", async () => {
     const { run, plan, setState } = fixture();
-    await run("install");
+    const installed = await run("install");
     setState({
       loaded: true,
       active: true,
-      pid: 2147483647,
+      pid: installed.pid,
       definitionPath: realpathSync(plan.unitPath),
     });
     expect((await run("status")).status).toBe("running");
@@ -230,13 +289,13 @@ describe("managed daemon service lifecycle", () => {
 
   it("accepts a manager-created link to the owned definition, but refuses a different target", async () => {
     const { run, plan, setState, manager } = fixture();
-    await run("install");
+    const installed = await run("install");
     const managerLink = join(root, "manager-linked.service");
     symlinkSync(plan.unitPath, managerLink);
     setState({
       loaded: true,
       active: true,
-      pid: 2147483647,
+      pid: installed.pid,
       definitionPath: managerLink,
     });
     expect((await run("status")).status).toBe("running");

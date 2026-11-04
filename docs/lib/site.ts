@@ -19,7 +19,8 @@ export const PUBLISHER_URL = "https://www.prototyper.co";
 export const PUBLISHER_ID = `${PUBLISHER_URL}/#organization`;
 export const INSTALL_COMMAND = "curl -fsSL https://tmux-ide.com/install.sh | sh";
 export const APP_COMMAND = "tmux-ide app";
-export const CURRENT_RELEASE_PATH = "/docs/release-2-9-4";
+/** check:product-docs fails the build when this version has no release page. */
+export const CURRENT_RELEASE_PATH = `/docs/release-${SOFTWARE_VERSION.replaceAll(".", "-")}`;
 
 export function absoluteUrl(path = "/"): string {
   return new URL(path, `${SITE_URL}/`).toString();

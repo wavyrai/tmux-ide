@@ -149,13 +149,20 @@ export async function manageDaemonService(
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
   };
-  const ready = async (previousInstance?: string) => {
+  // `retiredPid` is the process this restart terminated. It can publish a record
+  // while it shuts down (a KeepAlive relaunch just before the restart), so it is
+  // never the replacement, whatever its instance id.
+  const ready = async (previousInstance?: string, retiredPid?: number | null) => {
     const deadline = Date.now() + deps.waitMs;
     do {
       const state = deps.inspect();
       if (!boundTo(state, plan.supervisionId))
         refused("Service reservation changed during startup");
-      if (state.status === "valid" && state.info.instanceId !== previousInstance) {
+      if (
+        state.status === "valid" &&
+        state.info.instanceId !== previousInstance &&
+        state.info.pid !== retiredPid
+      ) {
         const identity = await deps.probe(state.info);
         const service = await inspectManager();
         if (
@@ -283,9 +290,15 @@ export async function manageDaemonService(
     }
     const before = deps.inspect();
     if (action === "install" && service.active) return await ready();
-    if (service.loaded) await manager.restart(service.pid !== null);
+    // Read the manager again: a relaunch may have replaced the process while this
+    // waited for the lock, and the restart terminates whichever one runs now.
+    const current = service.loaded ? await inspectManager() : service;
+    if (current.loaded) await manager.restart(current.pid !== null);
     else await manager.install();
-    return await ready(before.status === "valid" ? before.info.instanceId : undefined);
+    return await ready(
+      before.status === "valid" ? before.info.instanceId : undefined,
+      current.loaded ? current.pid : null,
+    );
   } catch (error) {
     // Never discard ownership after an uncertain OS activation. The retained
     // record/reservation gives the explicit remove/restart commands a recovery path.

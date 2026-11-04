@@ -62,6 +62,7 @@ export function bundlePlist(metadata = developmentMetadata) {
     CFBundleName: metadata === developmentMetadata ? "tmux-ide Development" : "tmux-ide Preview",
     CFBundlePackageType: "APPL",
     CFBundleIconFile: "AppIcon.icns",
+    CFBundleIconName: "AppIcon",
     CFBundleShortVersionString: value.version,
     CFBundleVersion: value.buildNumber,
     LSMinimumSystemVersion: "14.2",

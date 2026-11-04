@@ -208,10 +208,16 @@ export function isVisibleFleetSession(name: string): boolean {
 export function readAdoptedSessionNames(runTmux: TmuxRunner = _tmuxRunner): string[] | null {
   let raw: string;
   try {
-    raw = runTmux(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
+    raw = runTmux(ADOPTED_SESSIONS_ARGS);
   } catch {
     return null;
   }
+  return parseAdoptedSessionNames(raw);
+}
+
+const ADOPTED_SESSIONS_ARGS = ["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`];
+
+function parseAdoptedSessionNames(raw: string): string[] {
   const names: string[] = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -312,18 +318,77 @@ export function readAdoptedFleet(
   const nativeEpoch = nativeServerEpoch?.() ?? null;
   const adopted = readAdoptedSessionNames(runTmux);
   if (adopted === null) return null;
-  const adoptedSet = new Set(adopted);
-  if (adoptedSet.size === 0) return [];
-
-  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
-
-  const panesBySession = new Map<string, FleetPaneFacts[]>();
+  if (adopted.length === 0) return [];
   let panesRaw: string;
   try {
-    panesRaw = runTmux(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux(FLEET_PANES_ARGS);
   } catch {
     panesRaw = "";
   }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch,
+  );
+}
+
+/**
+ * {@link readAdoptedFleet} over an asynchronous tmux runner: the same two reads
+ * in the same order, without blocking the event loop while tmux answers (#709).
+ */
+export async function readAdoptedFleetAsync(
+  registry: { list(): { sessionName: string }[] },
+  runTmux: (args: string[]) => Promise<string>,
+  resolveInteractionEndpoint?: (
+    sessionName: string,
+    pane: FleetPaneFacts,
+  ) => Extract<InteractionPaneEndpoint, { kind: "pane" }> | null,
+  nativeServerEpoch?: () => string | null,
+): Promise<FleetSessionFacts[] | null> {
+  const nativeEpoch = nativeServerEpoch?.() ?? null;
+  let sessionsRaw: string;
+  try {
+    sessionsRaw = await runTmux(ADOPTED_SESSIONS_ARGS);
+  } catch {
+    return null;
+  }
+  const adopted = parseAdoptedSessionNames(sessionsRaw);
+  if (adopted.length === 0) return [];
+  let panesRaw: string;
+  try {
+    panesRaw = await runTmux(FLEET_PANES_ARGS);
+  } catch {
+    panesRaw = "";
+  }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch,
+  );
+}
+
+const FLEET_PANES_ARGS = ["list-panes", "-a", "-F", FLEET_PANE_FORMAT];
+
+function assembleAdoptedFleet(
+  adopted: string[],
+  panesRaw: string,
+  registry: { list(): { sessionName: string }[] },
+  nativeEpoch: string | null,
+  resolveInteractionEndpoint?: (
+    sessionName: string,
+    pane: FleetPaneFacts,
+  ) => Extract<InteractionPaneEndpoint, { kind: "pane" }> | null,
+  nativeServerEpoch?: () => string | null,
+): FleetSessionFacts[] {
+  const adoptedSet = new Set(adopted);
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+  const panesBySession = new Map<string, FleetPaneFacts[]>();
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);

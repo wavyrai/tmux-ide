@@ -216,4 +216,72 @@ describe("independent tmux server owners", () => {
     expect(ownerB.dispose).not.toHaveBeenCalled();
     await f.owners.dispose();
   });
+
+  // #709: GET /api/v1/tmux-servers refreshes every owner. Refreshes run one at
+  // a time, so 8 concurrent requests used to cost 8 sequential refreshes.
+  it("shares one queued refresh between callers that arrive while it waits", async () => {
+    const f = fixture();
+    f.observations.set("a", observation("a"));
+    await f.register("a");
+    const gate = deferred<void>();
+    const original = f.probe.getMockImplementation()!;
+    f.probe.mockImplementation(async (selector) => {
+      await gate.promise;
+      return original(selector);
+    });
+    f.probe.mockClear();
+    const running = f.owners.refresh();
+    await Promise.resolve();
+    // Arrive while the first refresh runs: one more refresh is queued for all of them.
+    const waiting = Array.from({ length: 7 }, () => f.owners.refresh());
+    gate.resolve();
+    const results = await Promise.all([running, ...waiting]);
+    expect(f.probe).toHaveBeenCalledTimes(2);
+    for (const result of results) expect(result).toEqual(f.owners.list());
+    await f.owners.dispose();
+  });
+
+  it("never answers a caller with a refresh that started before it called", async () => {
+    const f = fixture();
+    await f.register("a");
+    const gate = deferred<void>();
+    const original = f.probe.getMockImplementation()!;
+    f.probe.mockImplementation(async (selector) => {
+      const seen = await original(selector);
+      await gate.promise;
+      return seen;
+    });
+    const before = f.owners.refresh();
+    await vi.waitFor(() => expect(f.probe).toHaveBeenCalled());
+    // The server comes online after the first refresh has already probed.
+    f.observations.set("a", observation("a"));
+    const after = f.owners.refresh();
+    gate.resolve();
+    expect((await before)[0]).toMatchObject({ state: "offline" });
+    expect((await after)[0]).toMatchObject({ state: "online" });
+    await f.owners.dispose();
+  });
+
+  // Review N1: a refresh stays ordered after a mutation queued before it.
+  it("does not share a queued refresh with a caller that queued a mutation after it", async () => {
+    const f = fixture();
+    f.observations.set("a", observation("a"));
+    f.observations.set("b", observation("b"));
+    await f.register("a");
+    const gate = deferred<void>();
+    const original = f.probe.getMockImplementation()!;
+    f.probe.mockImplementation(async (selector) => {
+      await gate.promise;
+      return original(selector);
+    });
+    const running = f.owners.refresh();
+    await Promise.resolve();
+    const queued = f.owners.refresh();
+    const registering = f.register("b");
+    const after = f.owners.refresh();
+    gate.resolve();
+    await Promise.all([running, queued, registering]);
+    expect((await after).map((descriptor) => descriptor.label)).toEqual(["a", "b"]);
+    await f.owners.dispose();
+  });
 });
