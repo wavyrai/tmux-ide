@@ -84,13 +84,13 @@ test("bounded metadata file rejects links/oversize; invalid explicit assembly me
   }
 });
 
-test("packaged icon is bound to existing tmux-ide artwork and a complete ICNS container", async () => {
+test("packaged icon is bound to its source artwork and a complete ICNS container", async () => {
   const provenance = JSON.parse(
     await readFile(new URL("../assets/app-icon-source.json", import.meta.url), "utf8"),
   );
-  assert.equal(provenance.source, "docs/app/icon.png");
+  assert.equal(provenance.source, "apps/tmux-gpui/assets/AppIcon-1024.png");
   assert.equal(provenance.output, "AppIcon.icns");
-  const source = await readFile(new URL("../../../docs/app/icon.png", import.meta.url));
+  const source = await readFile(new URL("../assets/AppIcon-1024.png", import.meta.url));
   const icon = await readFile(new URL("../assets/AppIcon.icns", import.meta.url));
   const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
   assert.equal(hash(source), provenance.sourceSha256);

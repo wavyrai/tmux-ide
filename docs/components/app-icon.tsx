@@ -2,7 +2,7 @@ import Image from "next/image";
 import { cn } from "@/lib/cn";
 
 /**
- * The tmux-ide app icon. Two artworks — the blue-gradient tile for light
+ * The tmux-ide app icon. Two artworks — the light grey tile for light
  * surfaces, the black tile for dark ones — swapped by the theme class rather
  * than by JS, so there's no flash on first paint.
  *

@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Hash terminal rows more cheaply in the daemon during heavy output, with the same digests. Large floods do not finish faster.
 - Wake the Mac app's UI when new app state arrives, instead of on the next 16 ms tick. This ships in native alpha 0.1.13.
 - Fix a `daemon service restart` race that could report a daemon that was shutting down, followed by a stale record in `daemon info`.
+- Use the new tmux-ide icon in the notifier, the website and the README. The Mac app gets it in native alpha 0.1.13.
 - Point the website's release pill, release metadata and retired-page redirects at the current version. They still linked to 2.9.4.
 
 ## 2.9.16

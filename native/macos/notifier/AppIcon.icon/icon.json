@@ -1,63 +1,117 @@
 {
-  "fill-specializations" : [
+  "fill-specializations": [
     {
-      "value" : {
-        "linear-gradient" : [
-          "srgb:0.00000,0.00000,0.00000,1.00000",
-          "display-p3:0.23230,0.39258,0.67236,1.00000"
+      "value": {
+        "linear-gradient": [
+          "srgb:0.90196,0.90196,0.92157,1.00000",
+          "srgb:0.71373,0.71765,0.75294,1.00000"
         ],
-        "orientation" : {
-          "start" : {
-            "x" : 0.5,
-            "y" : 0
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
           },
-          "stop" : {
-            "x" : 0.5,
-            "y" : 0.7
+          "stop": {
+            "x": 0.5,
+            "y": 1
           }
         }
       }
     },
     {
-      "appearance" : "dark",
-      "value" : {
-        "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "srgb:0.21176,0.21176,0.21961,1.00000",
+          "srgb:0.00000,0.00000,0.00000,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 1
+          }
+        }
       }
     }
   ],
-  "groups" : [
+  "groups": [
     {
-      "layers" : [
+      "layers": [
         {
-          "blend-mode" : "plus-lighter",
-          "fill" : "none",
-          "glass" : true,
-          "image-name" : "ghost-frost-happy-transparent@8x.png",
-          "name" : "ghost-frost-happy-transparent@8x",
-          "opacity" : 1,
-          "position" : {
-            "scale" : 0.44,
-            "translation-in-points" : [
+          "fill": "none",
+          "glass": true,
+          "image-name": "sticker-4.svg",
+          "name": "sticker-4",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill": "none",
+          "glass": true,
+          "image-name": "sticker-3.svg",
+          "name": "sticker-3",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill": "none",
+          "glass": true,
+          "image-name": "sticker-2.svg",
+          "name": "sticker-2",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill": "none",
+          "glass": true,
+          "image-name": "sticker-1.svg",
+          "name": "sticker-1",
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
               0,
               0
             ]
           }
         }
       ],
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
       },
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.5
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
       }
     }
   ],
-  "supported-platforms" : {
-    "circles" : [
+  "supported-platforms": {
+    "circles": [
       "watchOS"
     ],
-    "squares" : "shared"
+    "squares": "shared"
   }
 }

@@ -1,8 +1,8 @@
 {
-  "source": "docs/app/icon.png",
-  "sourceSha256": "7532f99afa0bde79f8f2c0b9fecfd723cba7bc383a316ad8a53cd3d88dbd2af5",
+  "source": "apps/tmux-gpui/assets/AppIcon-1024.png",
+  "sourceSha256": "b30cf10c3b3dd85cacb8a8a7d738912306a748c679bad5b60fc3ada964440168",
   "output": "AppIcon.icns",
-  "outputSha256": "45250f0dee732eeacfed8519e0b02d45e5e01620830521bf86abec47da7e3b5c",
-  "conversion": "macOS sips -z (16,32,128,256,512 at 1x and 2x), iconutil -c icns",
-  "scope": "Existing tmux-ide artwork; larger representations upscale the 256px source, no new artwork."
+  "outputSha256": "7bc5fbd37b661b90e6c46767063990eb644f8fb2beca556d281cd521e1e5ba3a",
+  "conversion": "Owner's icon pack, 4 Nov 2026: 4-older-macOS/default. The .icns and the 1024 px source are copied unchanged.",
+  "scope": "An .icns has no dark variant, so the app uses the light tile in both appearances."
 }
