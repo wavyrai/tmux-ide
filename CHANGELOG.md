@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.17
+
+- Fix `tmux-ide update` on connections below about 1 MB/s. The runtime download had 30 s for the whole transfer; it now aborts only after 30 s with no data, within a 15-minute budget, and retries transient failures up to 3 times per file. Stalls and network errors no longer blame the release assets.
+- Say so when a download waits behind another one of the same version, instead of waiting silently.
+- Give up on stalled downloads, not slow ones, in `install.sh`. It allowed 180 s per file, and Node.js alone is over 50 MB, so it needed about 300 KB/s. It now allows 900 s and aborts after 30 s with no data.
+- Stop concurrent daemon requests queueing behind synchronous tmux calls: 8 concurrent `/api/v1/tmux-servers` requests take about 2× one request instead of 7×, and `/api/resources/fleet-catalog` about 2× instead of 8×.
+- Hash terminal rows more cheaply in the daemon during heavy output, with the same digests. Time to finish a large flood is about the same as before.
+- Wake the Mac app's browser pane when new page state arrives, instead of on the next 16 ms tick.
+- Fix a `daemon service restart` race that could report a daemon that was shutting down, followed by a stale record in `daemon info`.
+- Point the website's release pill and release metadata at the current version. They still linked to 2.9.4.
+
 ## 2.9.16
 
 - Keep the Mac app connected when one pane's update is rejected: the daemon re-sends that pane alone, the other panes keep updating, and the "Input interrupted — reselect pane" failure no longer takes every pane down.

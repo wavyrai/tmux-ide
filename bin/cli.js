@@ -12403,7 +12403,10 @@ __export(tui_binary_exports, {
   MAX_TUI_COMPRESSED_BYTES: () => MAX_TUI_COMPRESSED_BYTES,
   MIN_TUI_BINARY_BYTES: () => MIN_TUI_BINARY_BYTES,
   RELEASE_REPO: () => RELEASE_REPO,
-  TUI_DOWNLOAD_TIMEOUT_MS: () => TUI_DOWNLOAD_TIMEOUT_MS,
+  TUI_DOWNLOAD_MAX_ATTEMPTS: () => TUI_DOWNLOAD_MAX_ATTEMPTS,
+  TUI_DOWNLOAD_RETRY_DELAY_MS: () => TUI_DOWNLOAD_RETRY_DELAY_MS,
+  TUI_DOWNLOAD_STALL_TIMEOUT_MS: () => TUI_DOWNLOAD_STALL_TIMEOUT_MS,
+  TUI_DOWNLOAD_TOTAL_TIMEOUT_MS: () => TUI_DOWNLOAD_TOTAL_TIMEOUT_MS,
   bunTargetForTag: () => bunTargetForTag,
   downloadTuiBinary: () => downloadTuiBinary,
   downloadedTuiPath: () => downloadedTuiPath,
@@ -12548,30 +12551,54 @@ function purgeCachedBinary(path2) {
     }
   }
 }
-async function readBoundedResponse(fetchImpl, url, maxBytes, timeoutMs) {
+function isTransientHttpStatus(status2) {
+  return status2 === 408 || status2 === 429 || status2 >= 500;
+}
+async function readBoundedResponse(fetchImpl, url, maxBytes, policy) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let total = 0;
+  let timeoutMessage = null;
+  const abortWith = (message) => () => {
+    timeoutMessage = message();
+    controller.abort();
+  };
+  const overallTimer = setTimeout(
+    abortWith(() => `download did not finish within ${policy.totalTimeoutMs}ms`),
+    Math.max(0, policy.deadline - Date.now())
+  );
+  const onStall = abortWith(
+    () => `download stalled: no data for ${policy.stallTimeoutMs}ms after ${total} bytes`
+  );
+  let stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  const markProgress = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  };
   try {
     const response3 = await fetchImpl(url, { signal: controller.signal });
     if (!response3.ok) {
-      throw new Error(`HTTP ${response3.status} ${response3.statusText}`);
+      const message = `HTTP ${response3.status} ${response3.statusText}`;
+      if (isTransientHttpStatus(response3.status)) throw new Error(message);
+      throw new PermanentDownloadError(message);
     }
+    markProgress();
     const declaredLength = Number(response3.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-      throw new Error(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
+      throw new PermanentDownloadError(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
     }
     if (!response3.body) throw new Error("response has no body");
     const chunks = [];
-    let total = 0;
     const reader = response3.body.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (value.byteLength === 0) continue;
+        markProgress();
         total += value.byteLength;
         if (total > maxBytes) {
           await reader.cancel();
-          throw new Error(`download exceeds ${maxBytes} bytes`);
+          throw new PermanentDownloadError(`download exceeds ${maxBytes} bytes`);
         }
         chunks.push(Buffer.from(value));
       }
@@ -12580,12 +12607,27 @@ async function readBoundedResponse(fetchImpl, url, maxBytes, timeoutMs) {
     }
     return Buffer.concat(chunks, total);
   } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`download timed out after ${timeoutMs}ms`, { cause: error });
-    }
+    if (timeoutMessage) throw new Error(timeoutMessage, { cause: error });
     throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(overallTimer);
+    clearTimeout(stallTimer);
+    controller.abort();
+  }
+}
+async function readWithRetries(fetchImpl, url, maxBytes, policy, log) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await readBoundedResponse(fetchImpl, url, maxBytes, policy);
+    } catch (error) {
+      const delayMs = policy.retryDelayMs * attempt;
+      if (error instanceof PermanentDownloadError || attempt >= policy.maxAttempts || Date.now() + delayMs >= policy.deadline) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      log(`download attempt ${attempt}/${policy.maxAttempts} failed (${message}); retrying`);
+      await new Promise((resolve45) => setTimeout(resolve45, delayMs));
+    }
   }
 }
 async function downloadTuiBinary(opts = {}) {
@@ -12606,14 +12648,18 @@ async function downloadTuiBinary(opts = {}) {
   const limits = {
     minBinaryBytes: opts.limits?.minBinaryBytes ?? MIN_TUI_BINARY_BYTES,
     maxCompressedBytes: opts.limits?.maxCompressedBytes ?? MAX_TUI_COMPRESSED_BYTES,
-    maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES,
-    timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS
+    maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES
   };
+  const totalTimeoutMs = opts.totalTimeoutMs ?? TUI_DOWNLOAD_TOTAL_TIMEOUT_MS;
   mkdirSync5(dirname9(dest), { recursive: true });
+  const lockNotice = setTimeout(
+    () => log("waiting for another tmux-ide download of this version to finish"),
+    TUI_DOWNLOAD_LOCK_NOTICE_MS
+  );
   const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
-    limits.timeoutMs * 2 + 5e3
-  );
+    totalTimeoutMs + TUI_DOWNLOAD_LOCK_MARGIN_MS
+  ).finally(() => clearTimeout(lockNotice));
   const suffix = `${process.pid}.${randomUUID2()}.tmp`;
   const binaryTmp = `${dest}.${suffix}`;
   const checksumTmp = `${checksumPath(dest)}.${suffix}`;
@@ -12622,21 +12668,31 @@ async function downloadTuiBinary(opts = {}) {
     if (cached2) return { path: dest, bytes: cached2.bytes };
     purgeCachedBinary(dest);
     const fetchImpl = opts.fetch ?? globalThis.fetch;
+    const policy = {
+      stallTimeoutMs: opts.stallTimeoutMs ?? TUI_DOWNLOAD_STALL_TIMEOUT_MS,
+      deadline: Date.now() + totalTimeoutMs,
+      totalTimeoutMs,
+      maxAttempts: opts.maxAttempts ?? TUI_DOWNLOAD_MAX_ATTEMPTS,
+      retryDelayMs: opts.retryDelayMs ?? TUI_DOWNLOAD_RETRY_DELAY_MS
+    };
     log(`downloading checksum manifest ${checksumUrl}`);
     let manifestBytes;
     let gz;
     try {
-      manifestBytes = await readBoundedResponse(
+      manifestBytes = await readWithRetries(
         fetchImpl,
         checksumUrl,
         MAX_CHECKSUM_MANIFEST_BYTES,
-        limits.timeoutMs
+        policy,
+        log
       );
-      gz = await readBoundedResponse(fetchImpl, url, limits.maxCompressedBytes, limits.timeoutMs);
+      log(`downloading ${url}`);
+      gz = await readWithRetries(fetchImpl, url, limits.maxCompressedBytes, policy, log);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const hint = error instanceof PermanentDownloadError ? "Check that the release published both exact-version assets." : "Check your network connection, then retry with `tmux-ide update --tui-binary`.";
       throw new Error(
-        `could not download the TUI binary and checksum for v${version} (${message}). Check that the release published both exact-version assets.`,
+        `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error }
       );
     }
@@ -12681,7 +12737,7 @@ async function downloadTuiBinary(opts = {}) {
     releaseLock();
   }
 }
-var RELEASE_REPO, MIN_TUI_BINARY_BYTES, MAX_TUI_COMPRESSED_BYTES, MAX_TUI_BINARY_BYTES, TUI_DOWNLOAD_TIMEOUT_MS, MAX_CHECKSUM_MANIFEST_BYTES, SUPPORTED;
+var RELEASE_REPO, MIN_TUI_BINARY_BYTES, MAX_TUI_COMPRESSED_BYTES, MAX_TUI_BINARY_BYTES, TUI_DOWNLOAD_STALL_TIMEOUT_MS, TUI_DOWNLOAD_TOTAL_TIMEOUT_MS, TUI_DOWNLOAD_MAX_ATTEMPTS, TUI_DOWNLOAD_RETRY_DELAY_MS, MAX_CHECKSUM_MANIFEST_BYTES, TUI_DOWNLOAD_LOCK_NOTICE_MS, TUI_DOWNLOAD_LOCK_MARGIN_MS, SUPPORTED, PermanentDownloadError;
 var init_tui_binary = __esm({
   "packages/daemon/src/lib/tui-binary.ts"() {
     "use strict";
@@ -12692,12 +12748,19 @@ var init_tui_binary = __esm({
     MIN_TUI_BINARY_BYTES = 10 * 1024 * 1024;
     MAX_TUI_COMPRESSED_BYTES = 128 * 1024 * 1024;
     MAX_TUI_BINARY_BYTES = 256 * 1024 * 1024;
-    TUI_DOWNLOAD_TIMEOUT_MS = 3e4;
+    TUI_DOWNLOAD_STALL_TIMEOUT_MS = 3e4;
+    TUI_DOWNLOAD_TOTAL_TIMEOUT_MS = 15 * 6e4;
+    TUI_DOWNLOAD_MAX_ATTEMPTS = 3;
+    TUI_DOWNLOAD_RETRY_DELAY_MS = 1e3;
     MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
+    TUI_DOWNLOAD_LOCK_NOTICE_MS = 2e3;
+    TUI_DOWNLOAD_LOCK_MARGIN_MS = 5e3;
     SUPPORTED = {
       "darwin-arm64": "darwin-arm64",
       "linux-x64": "linux-x64",
       "linux-arm64": "linux-arm64"
+    };
+    PermanentDownloadError = class extends Error {
     };
   }
 });
@@ -13082,7 +13145,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.16",
+      version: "2.9.17",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -85036,7 +85099,7 @@ function createSessionFaviconResolver(options = {}) {
   const missTtlMs = options.missTtlMs ?? 3e4;
   const maxEntries = options.maxEntries ?? 256;
   const cache3 = /* @__PURE__ */ new Map();
-  const remember = (sessionPath, entry) => {
+  const remember2 = (sessionPath, entry) => {
     cache3.delete(sessionPath);
     cache3.set(sessionPath, entry);
     while (cache3.size > maxEntries) cache3.delete(cache3.keys().next().value);
@@ -85081,18 +85144,18 @@ function createSessionFaviconResolver(options = {}) {
     if (!sessionPath || !isAbsolute24(sessionPath) || sessionPath.includes("\0")) return null;
     const cached2 = cache3.get(sessionPath);
     if (cached2?.kind === "miss" && now() - cached2.at < missTtlMs) {
-      remember(sessionPath, cached2);
+      remember2(sessionPath, cached2);
       return null;
     }
     if (cached2?.kind === "hit") {
       const stats = await lstatOrNull(io, cached2.file);
       if (stats && stats.isFile() && stats.mtimeMs === cached2.mtimeMs && stats.size === cached2.size) {
-        remember(sessionPath, cached2);
+        remember2(sessionPath, cached2);
         return cached2.favicon;
       }
     }
     const entry = await scan(sessionPath);
-    remember(sessionPath, entry);
+    remember2(sessionPath, entry);
     return entry.kind === "hit" ? entry.favicon : null;
   };
 }
