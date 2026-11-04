@@ -21,6 +21,7 @@ test("strict preview metadata generates exact safe plist fields; development def
     "tmux-ide-launcher",
     "CFBundleIconFile",
     "AppIcon.icns",
+    "CFBundleIconName",
   ])
     assert.ok(plist.includes(text));
   assert.match(bundlePlist(), /com\.tmux-ide\.gpui\.development/);
@@ -95,6 +96,13 @@ test("packaged icon is bound to its source artwork and a complete ICNS container
   const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
   assert.equal(hash(source), provenance.sourceSha256);
   assert.equal(hash(icon), provenance.outputSha256);
+  const catalogSource = await readFile(
+    new URL("../../../native/macos/notifier/AppIcon.icon/icon.json", import.meta.url),
+  );
+  const catalog = await readFile(new URL("../assets/Assets.car", import.meta.url));
+  assert.equal(provenance.catalog.output, "Assets.car");
+  assert.equal(hash(catalogSource), provenance.catalog.sourceSha256);
+  assert.equal(hash(catalog), provenance.catalog.outputSha256);
   assert.equal(icon.toString("ascii", 0, 4), "icns");
   assert.equal(icon.readUInt32BE(4), icon.length);
   const representations = new Set();

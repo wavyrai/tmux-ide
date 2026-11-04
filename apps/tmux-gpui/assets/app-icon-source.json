@@ -4,5 +4,12 @@
   "output": "AppIcon.icns",
   "outputSha256": "7bc5fbd37b661b90e6c46767063990eb644f8fb2beca556d281cd521e1e5ba3a",
   "conversion": "Owner's icon pack, 4 Nov 2026: 4-older-macOS/default. The .icns and the 1024 px source are copied unchanged.",
-  "scope": "An .icns has no dark variant, so the app uses the light tile in both appearances."
+  "scope": "Assets.car carries the light and dark icon, which macOS picks through CFBundleIconName. AppIcon.icns is the light tile, for readers that only take an .icns.",
+  "catalog": {
+    "source": "native/macos/notifier/AppIcon.icon",
+    "sourceSha256": "4fa36ed6d94fb2dbc22b68400abc07b2f7350857b59094a67548af753181da4d",
+    "output": "Assets.car",
+    "outputSha256": "775174cc3ded7f4ba24f8dc3ff9cce63f004617eb3dd4def2b7e9d2e4f74fae4",
+    "conversion": "xcrun actool AppIcon.icon --compile . --platform macosx --minimum-deployment-target 14.2 --target-device mac --app-icon AppIcon --standalone-icon-behavior all"
+  }
 }

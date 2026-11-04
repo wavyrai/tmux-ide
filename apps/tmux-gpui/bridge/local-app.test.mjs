@@ -42,6 +42,7 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
       manifests[0] === "assembly-manifest.json" ? "tmux-ide Preview" : "tmux-ide Development",
     LSMinimumSystemVersion: "14.2",
     CFBundleIconFile: "AppIcon.icns",
+    CFBundleIconName: "AppIcon",
   })) {
     assert.equal(
       (
@@ -61,6 +62,11 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
   assert.deepEqual(
     await readFile(join(resources, "AppIcon.icns")),
     await readFile(new URL("../assets/AppIcon.icns", import.meta.url)),
+  );
+  assert.equal(manifest.icon.catalog.file, "Assets.car");
+  assert.deepEqual(
+    await readFile(join(resources, "Assets.car")),
+    await readFile(new URL("../assets/Assets.car", import.meta.url)),
   );
   const upstream = fileURLToPath(new URL("../upstream/", import.meta.url));
   assert.equal(manifest.nativeBuild.file, "native-build-receipt.json");
@@ -91,6 +97,7 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
     [join(root, "Contents/MacOS/tmux-ide-gpui"), manifest.nativeSha256],
     ...(withNode ? [[join(resources, "node"), manifest.nodeSha256]] : []),
     [join(resources, "AppIcon.icns"), manifest.icon.sha256],
+    [join(resources, "Assets.car"), manifest.icon.catalog.sha256],
     [join(resources, manifest.nativeBuild.file), manifest.nativeBuild.sha256],
     [join(resources, manifest.rustNotices.file), manifest.rustNotices.sha256],
   ]) {
