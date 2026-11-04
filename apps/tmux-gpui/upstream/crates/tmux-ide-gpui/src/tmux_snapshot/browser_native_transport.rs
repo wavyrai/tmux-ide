@@ -288,7 +288,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     hold_frames: bool,
     output: impl FnOnce() -> F + Send + 'static,
 ) -> Bridge {
-    let mailbox = Arc::new(Mutex::new(None));
+    let mailbox = Arc::new(MailboxSlot::default());
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
     let mut hold = hold::Hold::new(hold_frames);

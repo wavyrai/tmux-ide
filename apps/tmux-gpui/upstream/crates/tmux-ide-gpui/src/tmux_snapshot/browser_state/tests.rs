@@ -50,7 +50,7 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
 ) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
-    let mailbox: browser::Mailbox = Arc::new(std::sync::Mutex::new(None));
+    let mailbox: browser::Mailbox = Default::default();
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -137,7 +137,7 @@ fn reselecting_a_pane_of_the_painted_window_keeps_its_frame_until_confirmation(
 ) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
-    let mailbox: browser::Mailbox = Arc::new(std::sync::Mutex::new(None));
+    let mailbox: browser::Mailbox = Default::default();
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

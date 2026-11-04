@@ -321,30 +321,7 @@ fn show_owned(
                     let browser_task = browser.as_ref().map(|bridge| {
                         let mailbox = bridge.mailbox.clone();
                         cx.spawn_in(window, async move |entity, cx| {
-                            loop {
-                                cx.background_executor()
-                                    .timer(std::time::Duration::from_millis(16))
-                                    .await;
-                                if entity.update(cx, |view, cx| view.browser_tick(cx)).is_err() {
-                                    break;
-                                }
-                                let update =
-                                    mailbox.try_lock().ok().and_then(|mut slot| slot.take());
-                                if let Some(state) = update {
-                                    let done = state.is_none();
-                                    if entity
-                                        .update_in(cx, |view, window, cx| {
-                                            view.apply_browser_state(state, cx);
-                                            view.finish_session_open(window, cx);
-                                            view.finish_header_actions(window, cx);
-                                        })
-                                        .is_err()
-                                        || done
-                                    {
-                                        break;
-                                    }
-                                }
-                            }
+                            browser_tick::run_browser(entity, mailbox, cx).await
                         })
                     });
                     let activation = cx.observe_window_activation(window, |view, window, cx| {
