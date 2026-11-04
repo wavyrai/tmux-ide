@@ -32,6 +32,7 @@ import { InstallCommand, InstallTabs } from "@/components/marketing/install-tabs
 import {
   APP_COMMAND,
   CURRENT_RELEASE_PATH,
+  SOFTWARE_VERSION,
   INSTALL_COMMAND,
   SITE_DESCRIPTION,
   SITE_TITLE,
@@ -93,7 +94,7 @@ export default function HomePage() {
                 className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
               >
                 <span className="text-fd-muted-foreground">New</span>
-                <span>The tmux-ide app in 2.9</span>
+                <span>What&apos;s new in {SOFTWARE_VERSION}</span>
                 <span aria-hidden className="text-fd-muted-foreground">
                   →
                 </span>

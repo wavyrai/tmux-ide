@@ -12,6 +12,7 @@ const packageVersion = JSON.parse(readRoot("package.json")).version;
 const cliSource = readRoot("bin/cli.ts");
 const commandsDoc = readRoot("docs/content/docs/commands.mdx");
 const templatesDoc = readRoot("docs/content/docs/templates.mdx");
+const overviewDoc = readRoot("docs/content/docs/index.mdx");
 const releasePath = `release-${packageVersion.replaceAll(".", "-")}.mdx`;
 const releaseDoc = readRoot(`docs/content/docs/${releasePath}`);
 const configurationDoc = readRoot("docs/content/docs/configuration.mdx");
@@ -19,6 +20,7 @@ const configurationDoc = readRoot("docs/content/docs/configuration.mdx");
 for (const [path, content] of [
   ["commands.mdx", commandsDoc],
   ["templates.mdx", templatesDoc],
+  ["index.mdx", overviewDoc],
   [releasePath, releaseDoc],
 ]) {
   if (!content.includes(packageVersion)) {
