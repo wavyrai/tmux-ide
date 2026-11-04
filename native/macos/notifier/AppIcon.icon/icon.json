@@ -44,7 +44,7 @@
         {
           "fill": "none",
           "glass": true,
-          "image-name": "sticker-4.svg",
+          "image-name": "sticker-4.png",
           "name": "sticker-4",
           "opacity": 1,
           "position": {
@@ -58,7 +58,7 @@
         {
           "fill": "none",
           "glass": true,
-          "image-name": "sticker-3.svg",
+          "image-name": "sticker-3.png",
           "name": "sticker-3",
           "opacity": 1,
           "position": {
@@ -72,7 +72,7 @@
         {
           "fill": "none",
           "glass": true,
-          "image-name": "sticker-2.svg",
+          "image-name": "sticker-2.png",
           "name": "sticker-2",
           "opacity": 1,
           "position": {
@@ -86,7 +86,7 @@
         {
           "fill": "none",
           "glass": true,
-          "image-name": "sticker-1.svg",
+          "image-name": "sticker-1.png",
           "name": "sticker-1",
           "opacity": 1,
           "position": {
