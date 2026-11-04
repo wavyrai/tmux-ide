@@ -27074,10 +27074,13 @@ function isVisibleFleetSession(name) {
 function readAdoptedSessionNames(runTmux2 = _tmuxRunner) {
   let raw;
   try {
-    raw = runTmux2(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
+    raw = runTmux2(ADOPTED_SESSIONS_ARGS);
   } catch {
     return null;
   }
+  return parseAdoptedSessionNames(raw);
+}
+function parseAdoptedSessionNames(raw) {
   const names = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -27096,16 +27099,51 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry(), runTmux2 = _
   const nativeEpoch = nativeServerEpoch?.() ?? null;
   const adopted = readAdoptedSessionNames(runTmux2);
   if (adopted === null) return null;
-  const adoptedSet = new Set(adopted);
-  if (adoptedSet.size === 0) return [];
-  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
-  const panesBySession = /* @__PURE__ */ new Map();
+  if (adopted.length === 0) return [];
   let panesRaw;
   try {
-    panesRaw = runTmux2(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux2(FLEET_PANES_ARGS);
   } catch {
     panesRaw = "";
   }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+async function readAdoptedFleetAsync(registry, runTmux2, resolveInteractionEndpoint, nativeServerEpoch) {
+  const nativeEpoch = nativeServerEpoch?.() ?? null;
+  let sessionsRaw;
+  try {
+    sessionsRaw = await runTmux2(ADOPTED_SESSIONS_ARGS);
+  } catch {
+    return null;
+  }
+  const adopted = parseAdoptedSessionNames(sessionsRaw);
+  if (adopted.length === 0) return [];
+  let panesRaw;
+  try {
+    panesRaw = await runTmux2(FLEET_PANES_ARGS);
+  } catch {
+    panesRaw = "";
+  }
+  return assembleAdoptedFleet(
+    adopted,
+    panesRaw,
+    registry,
+    nativeEpoch,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+function assembleAdoptedFleet(adopted, panesRaw, registry, nativeEpoch, resolveInteractionEndpoint, nativeServerEpoch) {
+  const adoptedSet = new Set(adopted);
+  const appCreatedSessions = new Set(registry.list().map((workspace) => workspace.sessionName));
+  const panesBySession = /* @__PURE__ */ new Map();
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
@@ -27193,7 +27231,7 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT;
+var _tmuxRunner, ADOPTED_SESSIONS_ARGS, FLEET_FIELD_SEPARATOR, FLEET_LINE_SENTINEL, FLEET_PANE_FORMAT, FLEET_PANES_ARGS;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
@@ -27210,6 +27248,7 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
+    ADOPTED_SESSIONS_ARGS = ["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`];
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
     FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
     FLEET_PANE_FORMAT = [
@@ -27231,6 +27270,7 @@ var init_discovery = __esm({
       "#{@tmux_ide_team}",
       FLEET_LINE_SENTINEL
     ].join(FLEET_FIELD_SEPARATOR);
+    FLEET_PANES_ARGS = ["list-panes", "-a", "-F", FLEET_PANE_FORMAT];
   }
 });
 
@@ -76524,6 +76564,8 @@ var init_tmux_server_owners = __esm({
       #tail = Promise.resolve();
       #disposed = false;
       #disposePromise = null;
+      #queuedRefresh = null;
+      #queuedRefreshTail = null;
       #serial(work) {
         const run = this.#tail.then(() => {
           if (this.#disposed) throw new TmuxServerScopeError("disposed");
@@ -76624,10 +76666,19 @@ var init_tmux_server_owners = __esm({
         this.#entries.set(scope2.serverId, { registration, scope: scope2, observation: observation2, owner });
       }
       refresh() {
-        return this.#serial(async () => {
+        if (this.#queuedRefresh && this.#tail === this.#queuedRefreshTail) return this.#queuedRefresh;
+        const queued = this.#serial(async () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
           for (const entry of this.#entries.values()) await this.#refresh(entry);
           return this.list();
         });
+        this.#queuedRefresh = queued;
+        this.#queuedRefreshTail = this.#tail;
+        const settle = () => {
+          if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
+        };
+        queued.then(settle, settle);
+        return queued;
       }
       current(scopeInput) {
         const scope2 = TmuxServerScopeSchemaZ.parse(scopeInput);
@@ -80780,6 +80831,22 @@ var init_daemon_shutdown = __esm({
     daemonInstanceId = null;
     shutdownInProgress = false;
     restartBackend = null;
+  }
+});
+
+// packages/daemon/src/lib/catalog-fleet-read.ts
+async function readCatalogFleet(registry, runners, resolveInteractionEndpoint, nativeServerEpoch) {
+  return runners.fence.active ? readAdoptedFleet(registry, runners.fencedSync, resolveInteractionEndpoint, nativeServerEpoch) : readAdoptedFleetAsync(
+    registry,
+    runners.generationFencedAsync,
+    resolveInteractionEndpoint,
+    nativeServerEpoch
+  );
+}
+var init_catalog_fleet_read = __esm({
+  "packages/daemon/src/lib/catalog-fleet-read.ts"() {
+    "use strict";
+    init_discovery();
   }
 });
 
@@ -96326,15 +96393,21 @@ async function startEmbeddedDaemonGeneration(opts) {
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
-          const fleet = readAdoptedFleet(
+          const endpoint = (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
+            sessionName2,
+            pane.runtimePaneId,
+            pane.semanticPaneId
+          ) ?? null : null;
+          const epoch = () => observationSelector?.nativeServerEpoch ?? null;
+          const fleet = await readCatalogFleet(
             workspaceRegistry,
-            nativeGenerationTmuxRunner,
-            (sessionName2, pane) => pane.semanticPaneId ? interactionEvidence?.captureInventoryEndpoint(
-              sessionName2,
-              pane.runtimePaneId,
-              pane.semanticPaneId
-            ) ?? null : null,
-            () => observationSelector?.nativeServerEpoch ?? null
+            {
+              fence: sessionMutationFence,
+              fencedSync: nativeGenerationTmuxRunner,
+              generationFencedAsync: (args) => fleetFactsTmuxRunner(args)
+            },
+            endpoint,
+            epoch
           );
           if (!fleet) return null;
           const names = await readTeamMemberships(
@@ -96786,6 +96859,7 @@ var init_daemon_embed = __esm({
     init_workspace_registry();
     init_workspace_pane_creation2();
     init_discovery();
+    init_catalog_fleet_read();
     init_workspace_open2();
     init_workspace_promotion2();
     init_workspace_open_handoff2();
