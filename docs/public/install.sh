@@ -2,7 +2,8 @@
 # curl -fsSL https://tmux-ide.com/install.sh | sh
 set -eu
 fail() { printf 'tmux-ide: %s\n' "$*" >&2; exit 1; }
-fetch() { curl -fLsS --retry 3 --connect-timeout 15 --max-time 180 "$1" -o "$2"; }
+# Give up on a stalled download, not a slow one: Node.js alone is over 50 MB.
+fetch() { curl -fLsS --retry 3 --retry-max-time 900 --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 900 "$1" -o "$2"; }
 digest() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
 }

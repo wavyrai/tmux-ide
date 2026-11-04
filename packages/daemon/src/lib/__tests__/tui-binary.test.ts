@@ -446,12 +446,14 @@ describe("downloadTuiBinary — bounded, verified, recoverable installation", ()
       const fetch = binaryFetch((signal) =>
         paced(fixture.compressed, { chunks: 24, gapMs: 5_000 }, signal),
       );
+      const logs: string[] = [];
       const options = {
         version: VERSION,
         home,
         tag: TAG,
         fetch,
         limits: TEST_LIMITS,
+        log: (message: string) => logs.push(message),
       } as const;
       const results = await settle(
         Promise.all([downloadTuiBinary(options), downloadTuiBinary(options)]),
@@ -459,7 +461,21 @@ describe("downloadTuiBinary — bounded, verified, recoverable installation", ()
       );
       expect(results).toHaveLength(2);
       expect(fetch).toHaveBeenCalledTimes(2);
+      expect(logs.filter((line) => line.startsWith("waiting for another"))).toHaveLength(1);
     });
+  });
+
+  it("stays quiet when the lock is free", async () => {
+    const logs: string[] = [];
+    await downloadTuiBinary({
+      version: VERSION,
+      home: scratchHome(),
+      tag: TAG,
+      fetch: fixtureFetch(releaseFixture()),
+      limits: TEST_LIMITS,
+      log: (message) => logs.push(message),
+    });
+    expect(logs.filter((line) => line.startsWith("waiting for another"))).toEqual([]);
   });
 
   it("does not retry a missing asset and points at the release", async () => {
