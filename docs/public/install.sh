@@ -499,8 +499,8 @@ if [ "${1:-}" = --native-alpha ]; then
   native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")
   trap 'rm -rf "$native_stage"' 0
   trap 'exit 1' INT TERM
-  fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026110401/install-native-alpha-v9.sh "$native_stage/install.sh"
-  [ "$(digest "$native_stage/install.sh")" = e4e91a54d94eb07dd8c8c27514f04e11d1f0313f11e846330955f69ac40d0006 ] || fail 'Native installer checksum mismatch'
+  fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026110402/install-native-alpha-v10.sh "$native_stage/install.sh"
+  [ "$(digest "$native_stage/install.sh")" = 416b12df5dcbc551279bec6c27fb83c537efa92a8f6d909f54d687bfe09bf493 ] || fail 'Native installer checksum mismatch'
   sh "$native_stage/install.sh" "$@"
 else
   main "$@"
