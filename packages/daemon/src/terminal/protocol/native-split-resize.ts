@@ -60,7 +60,7 @@ export async function supportsNativeSplitResize(runTmux: NativeSplitRunner): Pro
   }
 }
 
-function validTree(tree: LayoutTreeNode): boolean {
+export function validSplitTree(tree: LayoutTreeNode): boolean {
   let budget = 5;
   const visit = (node: LayoutTreeNode): boolean => {
     if (node.left + node.width > 4096 || node.top + node.height > 4096) return false;
@@ -74,7 +74,7 @@ function validTree(tree: LayoutTreeNode): boolean {
   };
   return visit(tree);
 }
-function locate(tree: LayoutTreeNode, path: readonly number[]) {
+export function locateSplit(tree: LayoutTreeNode, path: readonly number[]) {
   let node = tree;
   let parent: Extract<LayoutTreeNode, { kind: "split" }> | undefined;
   for (const index of path) {
@@ -84,7 +84,7 @@ function locate(tree: LayoutTreeNode, path: readonly number[]) {
   }
   return parent && path.at(-1)! < parent.children.length - 1 ? { parent, node } : null;
 }
-function edge(node: LayoutTreeNode, axis: "cols" | "rows") {
+export function splitEdge(node: LayoutTreeNode, axis: "cols" | "rows") {
   return axis === "cols" ? node.left + node.width : node.top + node.height;
 }
 function sameRect(a: LayoutTreeNode, b: LayoutTreeNode) {
@@ -93,7 +93,7 @@ function sameRect(a: LayoutTreeNode, b: LayoutTreeNode) {
 /** Only geometry inside the exact parent may change, along the requested axis.
  * Native redistribution can affect multiple siblings. This verifies convergence,
  * not exclusive causation or authentication of the returned layout. */
-function preservesTree(
+export function preservesSplitTree(
   before: LayoutTreeNode,
   after: LayoutTreeNode,
   affected: LayoutTreeNode,
@@ -116,7 +116,7 @@ function preservesTree(
     before.axis === after.axis &&
     before.children.length === after.children.length &&
     before.children.every((child, index) =>
-      preservesTree(child, after.children[index]!, affected, axis, inside),
+      preservesSplitTree(child, after.children[index]!, affected, axis, inside),
     )
   );
 }
@@ -151,8 +151,8 @@ export async function resizeNativeSplit(
     )
       return { status: "refused", reason: "invalid-request" };
     const tree = parseLayoutTree(request.expectedLayout);
-    if (!tree || !validTree(tree)) return { status: "refused", reason: "invalid-request" };
-    const selected = locate(tree, request.path);
+    if (!tree || !validSplitTree(tree)) return { status: "refused", reason: "invalid-request" };
+    const selected = locateSplit(tree, request.path);
     if (!selected || selected.parent.axis !== request.axis)
       return { status: "refused", reason: "invalid-request" };
     before = tree;
@@ -200,15 +200,15 @@ export async function resizeNativeSplit(
     )
       return { status: "uncertain", reason: "invalid-receipt" };
     const after = parseLayoutTree(receipt.layout);
-    const original = locate(before, captured.path)!;
-    const actual = after && locate(after, captured.path);
-    const previous = edge(original.node, captured.axis);
+    const original = locateSplit(before, captured.path)!;
+    const actual = after && locateSplit(after, captured.path);
+    const previous = splitEdge(original.node, captured.axis);
     if (
       !after ||
-      !validTree(after) ||
+      !validSplitTree(after) ||
       !actual ||
-      !preservesTree(before, after, original.parent, captured.axis) ||
-      receipt.boundary !== edge(actual.node, captured.axis) ||
+      !preservesSplitTree(before, after, original.parent, captured.axis) ||
+      receipt.boundary !== splitEdge(actual.node, captured.axis) ||
       receipt.boundary < Math.min(previous, captured.boundary) ||
       receipt.boundary > Math.max(previous, captured.boundary)
     )

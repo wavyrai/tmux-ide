@@ -1,10 +1,10 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseLayoutTree } from "../protocol/layout-parse.ts";
 import {
   SplitLayoutPublicationPending,
   type NativeSplitLayoutSnapshot,
 } from "./session-channel.ts";
-import { WindowSplitAuthority } from "./window-split-authority.ts";
+import { WindowSplitAuthority, WindowSplitLayoutUnavailable } from "./window-split-authority.ts";
 const epoch = "11111111-1111-4111-8111-111111111111";
 const window = {
   liveSessionId: `live-session.${"a".repeat(20)}`,
@@ -245,4 +245,50 @@ it("returns an immediate successor for an unchanged clamp and refuses lifetime/e
     if (change === "noop") expect(result?.resource).toEqual(r.resource);
     else expect(result).toBeNull();
   }
+});
+
+describe("stock mode", () => {
+  const window = {
+    liveSessionId: "live-session.01234567890123456789",
+    linkId: `window-link.${"a".repeat(32)}`,
+    linkRevision: 1,
+    expectedSemanticWindowId: "window.one",
+  };
+  const panes = (ids: number[]) =>
+    ids.map((id) => ({
+      runtimePaneId: `%${id}`,
+      semanticPaneId: `pane.${id}`,
+      nativePaneBirthId: "",
+    }));
+  const snapshot = (rawLayout: string, ids: number[]) => ({
+    sessionName: "s",
+    sessionCreated: "1700000000",
+    runtimeSessionId: "$1",
+    runtimeWindowId: "@1",
+    semanticWindowId: "window.one",
+    rawLayout,
+    panes: panes(ids),
+  });
+  const authority = (rawLayout: string, ids: number[], stock: boolean) =>
+    new WindowSplitAuthority({
+      describe: () => snapshot(rawLayout, ids),
+      serverEpoch: () => "11111111-1111-4111-8111-111111111111",
+      stock,
+    });
+  const TWO = "0000,100x10,0,0{50x10,0,0,1,49x10,51,0,2}";
+  it("issues handles without pane birth ids only for a stock server", () => {
+    expect(authority(TWO, [1, 2], true).read(window).splits).toHaveLength(1);
+    expect(() => authority(TWO, [1, 2], false).read(window)).toThrow(WindowSplitLayoutUnavailable);
+  });
+  it("leaves out a boundary tmux has no pane to address", () => {
+    const layout =
+      "0000,119x40,0,0{40x40,0,0[40x20,0,0{20x20,0,0,1,19x20,21,0,2},40x19,0,21{20x19,0,21,3,19x19,21,21,4}],39x40,41,0[39x20,41,0{20x20,41,0,5,18x20,62,0,6},39x19,41,21{20x19,41,21,7,18x19,62,21,8}],38x40,81,0,9}";
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const rootBoundaries = (stock: boolean) =>
+      authority(layout, ids, stock)
+        .read(window)
+        .splits.filter((row) => row.axis === "cols" && row.length === 40)
+        .map((row) => row.boundary);
+    expect(rootBoundaries(true)).toEqual([80]);
+  });
 });

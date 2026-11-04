@@ -3,7 +3,12 @@
  * text depends only on a DiscoveredAgent[], so no io is needed here.
  */
 import { describe, expect, it } from "vitest";
-import { agentIntegrationRows, daemonProvenanceRow, hooksTargetRow } from "./doctor.ts";
+import {
+  agentIntegrationRows,
+  daemonProvenanceRow,
+  hooksTargetRow,
+  tmuxFeaturesRow,
+} from "./doctor.ts";
 import type { DiscoveredAgent } from "./lib/agent-discovery.ts";
 import type { DaemonProvenanceReport } from "./lib/daemon-provenance.ts";
 
@@ -244,5 +249,31 @@ describe("daemonProvenanceRow", () => {
         }),
       ).detail,
     ).toBe("not running (reserved for supervisor svc)");
+  });
+});
+
+describe("tmux features row", () => {
+  const answers = () => {};
+  const refuses = (stderr: string) => () => {
+    throw Object.assign(new Error("Command failed"), { stderr });
+  };
+  const STOCK = refuses("unknown command: tmux-ide-resize-split\n");
+  const NONE = refuses("no server running on /tmp/s\n");
+  it("names stock tmux and bundled tmux from the running server", () => {
+    expect(tmuxFeaturesRow(STOCK, answers).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(answers, STOCK).detail).toBe("bundled tmux: full features");
+    expect(tmuxFeaturesRow(STOCK, answers)).toMatchObject({ pass: true, optional: true });
+  });
+  it("asks the binary only when no server is running", () => {
+    expect(tmuxFeaturesRow(NONE, STOCK).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(NONE, answers).detail).toBe("bundled tmux: full features");
+    expect(tmuxFeaturesRow(refuses("error connecting to /tmp/s\n"), STOCK).detail).toBe(
+      "stock tmux: reduced features",
+    );
+  });
+  it("never calls another failure stock", () => {
+    const row = tmuxFeaturesRow(refuses("something else\n"), STOCK);
+    expect(row.pass).toBe(false);
+    expect(row.detail).not.toContain("stock");
   });
 });

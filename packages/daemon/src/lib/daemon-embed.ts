@@ -5,6 +5,7 @@ import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
 import {
   createNativeSplitCapabilityProbe,
   createNativeSplitReadiness,
+  createStockSplitProbe,
 } from "./native-split-capability.ts";
 import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
 import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
@@ -1599,6 +1600,9 @@ async function startEmbeddedDaemonGeneration(
           }),
           splitLayoutCapability: createNativeSplitCapabilityProbe({
             observation: () => observationSelector ?? null,
+            runPinnedTmux: nativeGenerationTmuxRunner,
+          }),
+          splitLayoutStock: createStockSplitProbe({
             runPinnedTmux: nativeGenerationTmuxRunner,
           }),
           createOwnedViewerAdapter: () => ownedViewerFactory?.(),

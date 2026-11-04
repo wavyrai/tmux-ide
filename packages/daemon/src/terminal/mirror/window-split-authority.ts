@@ -12,6 +12,7 @@ import {
 import { supportsNativeSessionGuard } from "../../lib/native-operation-command.ts";
 import type { NativeSplitResizeRequest } from "../protocol/native-split-resize.ts";
 import { parseLayoutTree, type LayoutTreeNode } from "../protocol/layout-parse.ts";
+import { stockSplitTarget } from "../protocol/stock-split-resize.ts";
 import {
   SplitLayoutPublicationPending,
   type NativeSplitLayoutSnapshot,
@@ -44,6 +45,8 @@ export class WindowSplitAuthority {
     private readonly options: {
       describe(window: WindowLinkTarget): NativeSplitLayoutSnapshot;
       serverEpoch(): string | null;
+      /** A stock server has no pane birth ids, and some splits have no resize target. */
+      stock?: boolean;
     },
   ) {}
 
@@ -69,9 +72,10 @@ export class WindowSplitAuthority {
       if (
         !/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) ||
         Number(pane.runtimePaneId.slice(1)) > 0xffffffff ||
-        !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
-          pane.nativePaneBirthId,
-        ).success
+        (!this.options.stock &&
+          !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
+            pane.nativePaneBirthId,
+          ).success)
       )
         throw new WindowSplitLayoutUnavailable();
     });
@@ -98,7 +102,10 @@ export class WindowSplitAuthority {
       }
       node.children.forEach((child, index) => {
         const childPath = [...path, index];
-        if (index < node.children.length - 1) {
+        if (
+          index < node.children.length - 1 &&
+          (!this.options.stock || stockSplitTarget(tree, childPath, node.axis))
+        ) {
           const splitId = randomUUID();
           paths.set(splitId, childPath);
           splits.push({

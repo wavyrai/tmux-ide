@@ -1,5 +1,6 @@
 import { requireSupportedTmuxVersion } from "./lib/tmux-version.ts";
 import { resolveTmuxExecutable } from "./lib/tmux-client-execution.ts";
+import { TMUX_SOCKET_PATH_ENV } from "./lib/runtime-namespace.ts";
 import { execSync, execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -176,6 +177,67 @@ function check(
   }
 }
 
+type TmuxProbe = (args: readonly string[]) => void;
+
+/** Answers whether tmux knows a native command. The patched `-V` starts no server. */
+function nativeCommandKnown(probe: TmuxProbe): "yes" | "no" | "no-server" | "unknown" {
+  try {
+    probe(["tmux-ide-resize-split", "-V"]);
+    return "yes";
+  } catch (error) {
+    const text = String((error as { stderr?: unknown }).stderr ?? (error as Error).message);
+    if (/unknown command: tmux-ide-resize-split/u.test(text)) return "no";
+    return /no server running|error connecting/u.test(text) ? "no-server" : "unknown";
+  }
+}
+
+/** Reads the server a session would use. With none running, a throwaway private
+ * server shows what the resolved binary would start. */
+export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe): CheckResult {
+  let known = nativeCommandKnown(probeServer);
+  if (known === "no-server") known = nativeCommandKnown(probeBinary);
+  return {
+    label: "tmux features",
+    pass: known !== "unknown",
+    detail:
+      known === "yes"
+        ? "bundled tmux: full features"
+        : known === "no"
+          ? "stock tmux: reduced features"
+          : "could not read the tmux server's features",
+    optional: true,
+  };
+}
+
+function runTmuxFeatureProbes(executable: string): CheckResult {
+  const run =
+    (prefix: readonly string[]): TmuxProbe =>
+    (args) => {
+      execFileSync(executable, [...prefix, ...args], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 3000,
+      });
+    };
+  const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+  const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+  const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+  const scratch = ["-L", `tmux-ide-doctor-${process.pid}`, "-f", "/dev/null"];
+  const probeBinary: TmuxProbe = (args) => {
+    run(scratch)(["new-session", "-d", "-s", "probe"]);
+    try {
+      run(scratch)(args);
+    } finally {
+      try {
+        run(scratch)(["kill-server"]);
+      } catch {
+        // The server is already gone.
+      }
+    }
+  };
+  return tmuxFeaturesRow(run(server), probeBinary);
+}
+
 export function nodeVersionRow(version: string): CheckResult {
   const major = Number(version.split(".")[0]);
   const pass = Number.isInteger(major) && major >= 20;
@@ -226,6 +288,12 @@ export async function doctor({
       return `${version} (${executable})`;
     }),
   );
+
+  try {
+    checks.push(runTmuxFeatureProbes(resolveTmuxExecutable()));
+  } catch {
+    // The tmux version row above already reports a missing executable.
+  }
 
   checks.push(nodeVersionRow(process.versions.node));
 
