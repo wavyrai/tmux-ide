@@ -27,8 +27,8 @@ the release.
 `install.sh` had the same kind of limit: 180 s per attempt, while the Node.js
 archive alone is over 50 MB. It now allows 900 s per attempt and aborts after about
 30 s with no data. A file that stalls completely fails after about 2.5 minutes,
-retries included. The native alpha installer gets the same limits, up from 300 s
-for a 144.6 MB archive.
+retries included. The native alpha installer gets the same per-attempt limits, without retries, up
+from 300 s for a 144.6 MB archive.
 
 ## Fewer daemon requests wait on each other
 
@@ -55,7 +55,7 @@ because the daemon uses the saved time to process output more often.
 ## Smaller fixes
 
 - tmux-ide has a new icon, in the notifier, on this website and in Mac app 0.1.13, which has light and dark
-  versions.
+  versions on macOS 26. The browser tab icon follows your system appearance.
 - A race in `daemon service restart` is fixed. It could report a daemon that the
   restart was shutting down and leave a stale record in `daemon info`.
 - In Mac app 0.1.13, the UI picks up new app state when it arrives, instead of on

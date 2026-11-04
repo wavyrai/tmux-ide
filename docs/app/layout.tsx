@@ -68,8 +68,13 @@ export const metadata: Metadata = {
   publisher: PUBLISHER_NAME,
   category: "Developer Tools",
   alternates: { canonical: "/" },
+  // public/favicon.ico stays a fallback for clients that ask for it by path; a file in
+  // app/ would add an unconditional link that outranks the media-specific ones.
   icons: {
-    icon: "/icon.png",
+    icon: [
+      { url: "/icon.png", sizes: "256x256", media: "(prefers-color-scheme: light)" },
+      { url: "/icon-dark-256.png", sizes: "256x256", media: "(prefers-color-scheme: dark)" },
+    ],
     apple: "/apple-icon.png",
   },
   openGraph: {
