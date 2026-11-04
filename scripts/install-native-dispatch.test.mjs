@@ -158,7 +158,7 @@ test("dispatcher pin matches the maintained native bootstrap bytes", () => {
     .update(readFileSync(resolve("docs/public/install-native-alpha.sh")))
     .digest("hex");
   assert.equal(nativeBootstrapDigest, digest);
-  assert.ok(source.includes("native-alpha-2026110401/install-native-alpha-v9.sh"));
+  assert.ok(source.includes("native-alpha-2026110402/install-native-alpha-v10.sh"));
 });
 
 for (const args of [[], ["--update"]]) {
