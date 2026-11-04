@@ -43,9 +43,17 @@ export const MIN_TUI_BINARY_BYTES = 10 * 1024 * 1024;
 /** Hard download/decompression ceilings: release binaries are currently ~70MB. */
 export const MAX_TUI_COMPRESSED_BYTES = 128 * 1024 * 1024;
 export const MAX_TUI_BINARY_BYTES = 256 * 1024 * 1024;
-export const TUI_DOWNLOAD_TIMEOUT_MS = 30_000;
+/** Abort a request when no bytes arrive for this long; a slow transfer never trips it. */
+export const TUI_DOWNLOAD_STALL_TIMEOUT_MS = 30_000;
+/** One budget for the manifest, the binary, and every retry: ~145 KB/s at the size ceiling. */
+export const TUI_DOWNLOAD_TOTAL_TIMEOUT_MS = 15 * 60_000;
+/** Attempts per file; only transient failures are retried. */
+export const TUI_DOWNLOAD_MAX_ATTEMPTS = 3;
+export const TUI_DOWNLOAD_RETRY_DELAY_MS = 1_000;
 
 const MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
+/** Lets a lock waiter outlast the holder's verify and install after its download budget. */
+const TUI_DOWNLOAD_LOCK_MARGIN_MS = 5_000;
 
 const SUPPORTED: Record<string, TuiPlatformTag> = {
   "darwin-arm64": "darwin-arm64",
@@ -162,8 +170,18 @@ interface DownloadLimits {
   readonly minBinaryBytes: number;
   readonly maxCompressedBytes: number;
   readonly maxBinaryBytes: number;
-  readonly timeoutMs: number;
 }
+
+interface DownloadPolicy {
+  readonly stallTimeoutMs: number;
+  readonly deadline: number;
+  readonly totalTimeoutMs: number;
+  readonly maxAttempts: number;
+  readonly retryDelayMs: number;
+}
+
+/** A failure a retry cannot fix: the release asset is missing or breaks a hard limit. */
+class PermanentDownloadError extends Error {}
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -269,36 +287,61 @@ function purgeCachedBinary(path: string): void {
   }
 }
 
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 async function readBoundedResponse(
   fetchImpl: FetchLike,
   url: string,
   maxBytes: number,
-  timeoutMs: number,
+  policy: DownloadPolicy,
 ): Promise<Buffer> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let total = 0;
+  let timeoutMessage: string | null = null;
+  const abortWith = (message: () => string) => () => {
+    timeoutMessage = message();
+    controller.abort();
+  };
+  const overallTimer = setTimeout(
+    abortWith(() => `download did not finish within ${policy.totalTimeoutMs}ms`),
+    Math.max(0, policy.deadline - Date.now()),
+  );
+  const onStall = abortWith(
+    () => `download stalled: no data for ${policy.stallTimeoutMs}ms after ${total} bytes`,
+  );
+  let stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  const markProgress = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(onStall, policy.stallTimeoutMs);
+  };
   try {
     const response = await fetchImpl(url, { signal: controller.signal });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      const message = `HTTP ${response.status} ${response.statusText}`;
+      if (isTransientHttpStatus(response.status)) throw new Error(message);
+      throw new PermanentDownloadError(message);
     }
+    markProgress();
     const declaredLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-      throw new Error(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
+      throw new PermanentDownloadError(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
     }
     if (!response.body) throw new Error("response has no body");
 
     const chunks: Buffer[] = [];
-    let total = 0;
     const reader = response.body.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (value.byteLength === 0) continue;
+        markProgress();
         total += value.byteLength;
         if (total > maxBytes) {
           await reader.cancel();
-          throw new Error(`download exceeds ${maxBytes} bytes`);
+          throw new PermanentDownloadError(`download exceeds ${maxBytes} bytes`);
         }
         chunks.push(Buffer.from(value));
       }
@@ -307,12 +350,39 @@ async function readBoundedResponse(
     }
     return Buffer.concat(chunks, total);
   } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`download timed out after ${timeoutMs}ms`, { cause: error });
-    }
+    if (timeoutMessage) throw new Error(timeoutMessage, { cause: error });
     throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(overallTimer);
+    clearTimeout(stallTimer);
+    // Releases the connection of any response whose body was not fully read.
+    controller.abort();
+  }
+}
+
+async function readWithRetries(
+  fetchImpl: FetchLike,
+  url: string,
+  maxBytes: number,
+  policy: DownloadPolicy,
+  log: (msg: string) => void,
+): Promise<Buffer> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await readBoundedResponse(fetchImpl, url, maxBytes, policy);
+    } catch (error) {
+      const delayMs = policy.retryDelayMs * attempt;
+      if (
+        error instanceof PermanentDownloadError ||
+        attempt >= policy.maxAttempts ||
+        Date.now() + delayMs >= policy.deadline
+      ) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      log(`download attempt ${attempt}/${policy.maxAttempts} failed (${message}); retrying`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 }
 
@@ -333,8 +403,11 @@ export async function downloadTuiBinary(
     home?: string;
     tag?: TuiPlatformTag | null;
     fetch?: FetchLike;
-    timeoutMs?: number;
-    limits?: Partial<Omit<DownloadLimits, "timeoutMs">>;
+    stallTimeoutMs?: number;
+    totalTimeoutMs?: number;
+    maxAttempts?: number;
+    retryDelayMs?: number;
+    limits?: Partial<DownloadLimits>;
   } = {},
 ): Promise<{ path: string; bytes: number }> {
   if (resolveRuntimeNamespace().development)
@@ -356,12 +429,12 @@ export async function downloadTuiBinary(
     minBinaryBytes: opts.limits?.minBinaryBytes ?? MIN_TUI_BINARY_BYTES,
     maxCompressedBytes: opts.limits?.maxCompressedBytes ?? MAX_TUI_COMPRESSED_BYTES,
     maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES,
-    timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS,
   };
+  const totalTimeoutMs = opts.totalTimeoutMs ?? TUI_DOWNLOAD_TOTAL_TIMEOUT_MS;
   mkdirSync(dirname(dest), { recursive: true });
   const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
-    limits.timeoutMs * 2 + 5_000,
+    totalTimeoutMs + TUI_DOWNLOAD_LOCK_MARGIN_MS,
   );
   const suffix = `${process.pid}.${randomUUID()}.tmp`;
   const binaryTmp = `${dest}.${suffix}`;
@@ -372,22 +445,35 @@ export async function downloadTuiBinary(
     purgeCachedBinary(dest);
 
     const fetchImpl = opts.fetch ?? globalThis.fetch;
+    // Starts after the lock so the budget matches what a lock waiter allows for.
+    const policy: DownloadPolicy = {
+      stallTimeoutMs: opts.stallTimeoutMs ?? TUI_DOWNLOAD_STALL_TIMEOUT_MS,
+      deadline: Date.now() + totalTimeoutMs,
+      totalTimeoutMs,
+      maxAttempts: opts.maxAttempts ?? TUI_DOWNLOAD_MAX_ATTEMPTS,
+      retryDelayMs: opts.retryDelayMs ?? TUI_DOWNLOAD_RETRY_DELAY_MS,
+    };
     log(`downloading checksum manifest ${checksumUrl}`);
     let manifestBytes: Buffer;
     let gz: Buffer;
     try {
-      manifestBytes = await readBoundedResponse(
+      manifestBytes = await readWithRetries(
         fetchImpl,
         checksumUrl,
         MAX_CHECKSUM_MANIFEST_BYTES,
-        limits.timeoutMs,
+        policy,
+        log,
       );
-      gz = await readBoundedResponse(fetchImpl, url, limits.maxCompressedBytes, limits.timeoutMs);
+      log(`downloading ${url}`);
+      gz = await readWithRetries(fetchImpl, url, limits.maxCompressedBytes, policy, log);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const hint =
+        error instanceof PermanentDownloadError
+          ? "Check that the release published both exact-version assets."
+          : "Check your network connection, then retry with `tmux-ide update --tui-binary`.";
       throw new Error(
-        `could not download the TUI binary and checksum for v${version} (${message}). ` +
-          `Check that the release published both exact-version assets.`,
+        `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
         { cause: error },
       );
     }

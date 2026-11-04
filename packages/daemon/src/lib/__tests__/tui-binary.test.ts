@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bunTargetForTag,
   downloadTuiBinary,
@@ -20,6 +20,7 @@ import {
   releaseAssetChecksumUrl,
   releaseAssetName,
   releaseAssetUrl,
+  TUI_DOWNLOAD_MAX_ATTEMPTS,
   tuiPlatformTag,
   type TuiPlatformTag,
 } from "../tui-binary.ts";
@@ -68,6 +69,37 @@ function releaseFixture(binary = Buffer.from("verified executable bytes")): {
     ].join("\n"),
   );
   return { binary, compressed, manifest };
+}
+
+/** A body delivered in chunks on a timer; aborting errors it, as a real fetch body does. */
+function paced(
+  bytes: Buffer,
+  options: { readonly chunks: number; readonly gapMs: number; readonly stallAfter?: number },
+  signal: AbortSignal | null | undefined,
+): Response {
+  const size = Math.ceil(bytes.length / options.chunks);
+  let sent = 0;
+  let index = 0;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal?.addEventListener("abort", () => controller.error(new Error("aborted")), {
+          once: true,
+        });
+      },
+      async pull(controller) {
+        // A stalled body never settles this pull; the abort listener ends it.
+        if (index === options.stallAfter) return new Promise<void>(() => {});
+        await new Promise((resolve) => setTimeout(resolve, options.gapMs));
+        if (signal?.aborted) return;
+        const chunk = bytes.subarray(sent, sent + size);
+        sent += chunk.length;
+        index += 1;
+        controller.enqueue(chunk);
+        if (sent >= bytes.length) controller.close();
+      },
+    }),
+  );
 }
 
 function fixtureFetch(fixture: ReturnType<typeof releaseFixture>): ReturnType<typeof vi.fn> {
@@ -278,7 +310,7 @@ describe("downloadTuiBinary — bounded, verified, recoverable installation", ()
     ).rejects.toThrow(/could not safely decompress/u);
   });
 
-  it("aborts a stalled fetch at the configured timeout", async () => {
+  it("aborts a fetch that never responds at the stall timeout", async () => {
     const home = scratchHome();
     const stalledFetch = vi.fn(
       async (_input: string | URL | Request, init?: RequestInit): Promise<Response> =>
@@ -295,10 +327,170 @@ describe("downloadTuiBinary — bounded, verified, recoverable installation", ()
         home,
         tag: TAG,
         fetch: stalledFetch,
-        timeoutMs: 10,
+        stallTimeoutMs: 10,
+        maxAttempts: 1,
         limits: TEST_LIMITS,
       }),
-    ).rejects.toThrow(/timed out after 10ms/u);
+    ).rejects.toThrow(/download stalled: no data for 10ms after 0 bytes/u);
+  });
+
+  describe("slow and stalled transfers", () => {
+    const fixture = releaseFixture(Buffer.alloc(2048, 7));
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function binaryFetch(respond: (signal: AbortSignal | null | undefined) => Response) {
+      return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith(".sha256")) return new Response(fixture.manifest);
+        return respond(init?.signal);
+      });
+    }
+
+    /** Settles `promise` under fake timers, returning its rejection instead of throwing. */
+    async function settle<T>(promise: Promise<T>, ms: number): Promise<T | Error> {
+      const settled = promise.catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(ms);
+      return settled;
+    }
+
+    it("installs a transfer far longer than the stall timeout with default limits", async () => {
+      const home = scratchHome();
+      // The reported failure: ~59s at 490 KB/s against a 30s limit on the whole transfer.
+      const fetch = binaryFetch((signal) =>
+        paced(fixture.compressed, { chunks: 24, gapMs: 5_000 }, signal),
+      );
+      const installed = await settle(
+        downloadTuiBinary({ version: VERSION, home, tag: TAG, fetch, limits: TEST_LIMITS }),
+        125_000,
+      );
+      expect(installed).toMatchObject({ bytes: fixture.binary.length });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives up on a body that stops making progress, with a network hint", async () => {
+      const home = scratchHome();
+      const fetch = binaryFetch((signal) =>
+        paced(fixture.compressed, { chunks: 4, gapMs: 1_000, stallAfter: 1 }, signal),
+      );
+      const logs: string[] = [];
+      const failure = await settle(
+        downloadTuiBinary({
+          version: VERSION,
+          home,
+          tag: TAG,
+          fetch,
+          limits: TEST_LIMITS,
+          log: (message) => logs.push(message),
+        }),
+        200_000,
+      );
+      expect(failure).toBeInstanceOf(Error);
+      const { message } = failure as Error;
+      expect(message).toMatch(/download stalled: no data for 30000ms after \d+ bytes/u);
+      expect(message).toMatch(/Check your network connection/u);
+      expect(message).not.toMatch(/exact-version assets/u);
+      expect(fetch).toHaveBeenCalledTimes(1 + TUI_DOWNLOAD_MAX_ATTEMPTS);
+      expect(logs.filter((line) => line.includes("retrying"))).toHaveLength(
+        TUI_DOWNLOAD_MAX_ATTEMPTS - 1,
+      );
+      const path = downloadedTuiPath(home, TAG, VERSION);
+      expect(existsSync(path)).toBe(false);
+      expect(existsSync(`${path}.lock`)).toBe(false);
+    });
+
+    it("recovers when a retry follows a stalled attempt", async () => {
+      const home = scratchHome();
+      let binaryRequests = 0;
+      const fetch = binaryFetch((signal) => {
+        binaryRequests += 1;
+        return binaryRequests === 1
+          ? paced(fixture.compressed, { chunks: 4, gapMs: 1_000, stallAfter: 1 }, signal)
+          : new Response(fixture.compressed);
+      });
+      const installed = await settle(
+        downloadTuiBinary({ version: VERSION, home, tag: TAG, fetch, limits: TEST_LIMITS }),
+        60_000,
+      );
+      expect(installed).toMatchObject({ bytes: fixture.binary.length });
+      expect(binaryRequests).toBe(2);
+    });
+
+    it("enforces the overall budget on a transfer that never finishes", async () => {
+      const home = scratchHome();
+      const fetch = binaryFetch((signal) =>
+        paced(fixture.compressed, { chunks: 1_000, gapMs: 1_000 }, signal),
+      );
+      const failure = await settle(
+        downloadTuiBinary({
+          version: VERSION,
+          home,
+          tag: TAG,
+          fetch,
+          totalTimeoutMs: 10_000,
+          limits: TEST_LIMITS,
+        }),
+        20_000,
+      );
+      expect((failure as Error).message).toMatch(/did not finish within 10000ms/u);
+      // Out of budget: a retry could not finish either.
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a second installer waiting for a holder past the old lock limit", async () => {
+      const home = scratchHome();
+      const fetch = binaryFetch((signal) =>
+        paced(fixture.compressed, { chunks: 24, gapMs: 5_000 }, signal),
+      );
+      const options = {
+        version: VERSION,
+        home,
+        tag: TAG,
+        fetch,
+        limits: TEST_LIMITS,
+      } as const;
+      const results = await settle(
+        Promise.all([downloadTuiBinary(options), downloadTuiBinary(options)]),
+        125_000,
+      );
+      expect(results).toHaveLength(2);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("does not retry a missing asset and points at the release", async () => {
+    const home = scratchHome();
+    const fetch = vi.fn(async () => new Response(null, { status: 404, statusText: "Not Found" }));
+    await expect(
+      downloadTuiBinary({ version: VERSION, home, tag: TAG, fetch, limits: TEST_LIMITS }),
+    ).rejects.toThrow(/HTTP 404 Not Found.*exact-version assets/u);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a transient server error", async () => {
+    const home = scratchHome();
+    const fixture = releaseFixture();
+    let failures = 1;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (failures-- > 0) return new Response(null, { status: 503 });
+      return new Response(
+        String(input).endsWith(".sha256") ? fixture.manifest : fixture.compressed,
+      );
+    });
+    const installed = await downloadTuiBinary({
+      version: VERSION,
+      home,
+      tag: TAG,
+      fetch,
+      retryDelayMs: 0,
+      limits: TEST_LIMITS,
+    });
+    expect(readFileSync(installed.path)).toEqual(fixture.binary);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it("purges corrupt or non-executable caches so a later download can recover", async () => {
