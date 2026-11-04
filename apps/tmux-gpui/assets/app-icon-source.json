@@ -7,9 +7,10 @@
   "scope": "Assets.car carries the light and dark icon, which macOS picks through CFBundleIconName. AppIcon.icns is the light tile, for readers that only take an .icns.",
   "catalog": {
     "source": "native/macos/notifier/AppIcon.icon",
-    "sourceSha256": "4fa36ed6d94fb2dbc22b68400abc07b2f7350857b59094a67548af753181da4d",
+    "sourceSha256": "2f4ff909a45a425e9f0bd2861fa404cfe58b5ed435cd442c0cbaadfb309d25ab",
     "output": "Assets.car",
     "outputSha256": "775174cc3ded7f4ba24f8dc3ff9cce63f004617eb3dd4def2b7e9d2e4f74fae4",
-    "conversion": "xcrun actool AppIcon.icon --compile . --platform macosx --minimum-deployment-target 14.2 --target-device mac --app-icon AppIcon --standalone-icon-behavior all"
+    "conversion": "xcrun actool AppIcon.icon --compile . --platform macosx --minimum-deployment-target 14.2 --target-device mac --app-icon AppIcon --standalone-icon-behavior all",
+    "note": "sourceSha256 covers icon.json and every layer, each as path, NUL, bytes, in sorted order. outputSha256 pins the committed file: actool writes new UUIDs on every run, so a rebuild has a different hash."
   }
 }

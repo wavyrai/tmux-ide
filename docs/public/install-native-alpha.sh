@@ -83,14 +83,14 @@ applications_entry() {
   ' "$1" "$HOME" "$prefix" "$action"
 }
 applications_entry check
-base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026110301
+base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026110401
 installer_sha=98cc545d26643ba03853effc5aa49ac01ed1aefec6cb81441627e73002280456
-archive_sha=e55005ae8f9d0f4c56e56c2e44797d328a1a82ad602244da66bcdfca33a59ecc
+archive_sha=d206c2a9b190938175830e5cca71bf67430c590f7bdec5406f209fa7f6f37cac
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --max-time 300 --max-filesize 536870912 "$1" -o "$2"; }
+fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 900 --max-filesize 536870912 "$1" -o "$2"; }
 verify() { actual=$(shasum -a 256 "$1" | awk '{print $1}'); [ "$actual" = "$2" ] || fail 'Downloaded asset checksum mismatch'; }
 fetch "$base/tmux-ide-install-v5.mjs" "$scratch/installer.mjs"
 verify "$scratch/installer.mjs" "$installer_sha"
@@ -100,7 +100,7 @@ case "$action" in
   uninstall) "$node" "$scratch/installer.mjs" uninstall --prefix "$prefix" ;;
   rollback) "$node" "$scratch/installer.mjs" rollback --prefix "$prefix" --policy "$scratch/policy.json" ;;
   install|update)
-    fetch "$base/tmux-ide-gpui-0.1.12-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
+    fetch "$base/tmux-ide-gpui-0.1.13-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
     verify "$scratch/app.tar.gz" "$archive_sha"
     # Only the pinned, checksum-verified archive reaches tar. Bound both reads.
     "$node" --input-type=module -e '
@@ -113,7 +113,7 @@ case "$action" in
       const extraction=spawnSync("/usr/bin/tar",["-xzf",archive,"-C",destination],{stdio:"inherit",timeout:120000});
       if(extraction.error || extraction.status!==0) process.exit(1);
     ' "$scratch/app.tar.gz" "$scratch"
-    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.12-2026110301 ;;
+    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.13-2026110401 ;;
 esac
 case "$action" in
   uninstall) applications_entry remove ;;

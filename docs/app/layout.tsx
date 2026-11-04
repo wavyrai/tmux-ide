@@ -69,7 +69,10 @@ export const metadata: Metadata = {
   category: "Developer Tools",
   alternates: { canonical: "/" },
   icons: {
-    icon: "/icon.png",
+    icon: [
+      { url: "/icon.png", media: "(prefers-color-scheme: light)" },
+      { url: "/icon-dark-256.png", media: "(prefers-color-scheme: dark)" },
+    ],
     apple: "/apple-icon.png",
   },
   openGraph: {

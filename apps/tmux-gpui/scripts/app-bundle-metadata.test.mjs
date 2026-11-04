@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, writeFile, readFile, rm, lstat, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  realpath,
+  writeFile,
+  readFile,
+  rm,
+  lstat,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -96,12 +105,14 @@ test("packaged icon is bound to its source artwork and a complete ICNS container
   const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
   assert.equal(hash(source), provenance.sourceSha256);
   assert.equal(hash(icon), provenance.outputSha256);
-  const catalogSource = await readFile(
-    new URL("../../../native/macos/notifier/AppIcon.icon/icon.json", import.meta.url),
-  );
+  const iconRoot = new URL("../../../native/macos/notifier/AppIcon.icon/", import.meta.url);
+  const layers = (await readdir(new URL("Assets/", iconRoot))).map((name) => `Assets/${name}`);
+  const catalogSource = createHash("sha256");
+  for (const file of ["icon.json", ...layers.sort()])
+    catalogSource.update(`${file}\0`).update(await readFile(new URL(file, iconRoot)));
   const catalog = await readFile(new URL("../assets/Assets.car", import.meta.url));
   assert.equal(provenance.catalog.output, "Assets.car");
-  assert.equal(hash(catalogSource), provenance.catalog.sourceSha256);
+  assert.equal(catalogSource.digest("hex"), provenance.catalog.sourceSha256);
   assert.equal(hash(catalog), provenance.catalog.outputSha256);
   assert.equal(icon.toString("ascii", 0, 4), "icns");
   assert.equal(icon.readUInt32BE(4), icon.length);
