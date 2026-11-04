@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WindowLinkTarget, WindowSplitLayoutResource } from "@tmux-ide/contracts";
 import { createStockSplitProbe } from "../../lib/native-split-capability.ts";
+import { parseStockSplitOptions } from "../protocol/stock-split-resize.ts";
 import { createServerGenerationFencedTmuxRunner } from "../../lib/tmux-server-generation-runner.ts";
 import { MirrorControlChannel } from "./control-channel.ts";
 import { MirrorService } from "./mirror-service.ts";
@@ -125,6 +126,9 @@ function split(resource: WindowSplitLayoutResource, axis: "cols" | "rows", bound
 }
 
 const binaries = stockBinaries();
+it.skipIf(binaries.length > 0)("needs a stock tmux on PATH or in TMUX_IDE_TEST_STOCK_TMUX", () => {
+  expect(binaries).toEqual([]);
+});
 describe.skipIf(binaries.length === 0).each(binaries)("stock tmux %s", (binary) => {
   it("reads the layout and moves one boundary, with a successor from the published layout", async () => {
     const rig = await server(binary);
@@ -299,6 +303,169 @@ describe.skipIf(binaries.length === 0).each(binaries)("stock tmux %s", (binary) 
     const rig = await server(binary);
     const probe = createStockSplitProbe({ runPinnedTmux: rig.pinned });
     await expect(probe()).resolves.toBe(true);
+  });
+
+  it.each(["off", "top", "bottom"])(
+    "moves each boundary exactly, both ways, with pane-border-status %s",
+    async (status) => {
+      const rig = await server(binary);
+      rig.tmux("set-option", "-g", "pane-border-status", status);
+      const right = rig.tmux(
+        "split-window",
+        "-d",
+        "-h",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        rig.first,
+        "sleep 300",
+      );
+      const low = rig.tmux(
+        "split-window",
+        "-d",
+        "-v",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        right,
+        "sleep 300",
+      );
+      rig.tmux("split-window", "-d", "-v", "-t", low, "sleep 300");
+      rig.tmux("select-layout", "-t", "zz-stock", "-E");
+      const { target } = await open(rig);
+      const noNative = async () => {
+        throw new Error("native runner");
+      };
+      const move = async (
+        pick: (rows: WindowSplitLayoutResource["splits"]) => (typeof rows)[number],
+        by: number,
+      ) => {
+        let result: Awaited<ReturnType<typeof rig.mirror.resizeWindowSplit>> | undefined;
+        await vi.waitFor(async () => {
+          const resource = await rig.mirror.readWindowSplitLayout("zz-stock", target());
+          const edge = pick(resource.splits);
+          result = await rig.mirror.resizeWindowSplit(
+            "zz-stock",
+            {
+              window: target(),
+              layoutId: resource.layoutId,
+              splitId: edge.splitId,
+              boundary: edge.boundary + by,
+            },
+            "55555555-5555-4555-8555-555555555555",
+            () => {},
+            noNative,
+          );
+          expect(result).toMatchObject({ status: "applied", boundary: edge.boundary + by });
+        });
+        return result!;
+      };
+      const rowsSorted = (rows: WindowSplitLayoutResource["splits"]) =>
+        rows.filter((row) => row.axis === "rows").sort((a, b) => a.boundary - b.boundary);
+      const picks = [
+        (rows: WindowSplitLayoutResource["splits"]) => rows.find((row) => row.axis === "cols")!,
+        (rows: WindowSplitLayoutResource["splits"]) => rowsSorted(rows)[0]!,
+        (rows: WindowSplitLayoutResource["splits"]) => rowsSorted(rows)[1]!,
+      ];
+      for (const pick of picks) for (const by of [3, -1, -2, 1, -3, 2]) await move(pick, by);
+    },
+  );
+
+  it("moves or withholds every handle in tight layouts, under each border status", async () => {
+    for (const status of ["off", "top", "bottom"]) {
+      const rig = await server(binary);
+      rig.tmux("set-option", "-g", "pane-border-status", status);
+      // Three rows with the middle one as small as tmux allows, and a column beside them.
+      const side = rig.tmux(
+        "split-window",
+        "-d",
+        "-h",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        rig.first,
+        "sleep 300",
+      );
+      const middle = rig.tmux(
+        "split-window",
+        "-d",
+        "-v",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        side,
+        "sleep 300",
+      );
+      rig.tmux("split-window", "-d", "-v", "-t", middle, "sleep 300");
+      rig.tmux("resize-pane", "-t", middle, "-y", "1");
+      const { target } = await open(rig);
+      const noNative = async () => {
+        throw new Error("native runner");
+      };
+      await vi.waitFor(async () => {
+        const count = (await rig.mirror.readWindowSplitLayout("zz-stock", target())).splits.length;
+        expect(count).toBeGreaterThan(0);
+      });
+      for (const by of [-100, 100, -1, 1]) {
+        const resource = await rig.mirror.readWindowSplitLayout("zz-stock", target());
+        for (const edge of resource.splits) {
+          const fresh = await rig.mirror.readWindowSplitLayout("zz-stock", target());
+          const same = fresh.splits.find(
+            (row) =>
+              row.axis === edge.axis && row.start === edge.start && row.boundary === edge.boundary,
+          );
+          if (!same) continue;
+          const result = await rig.mirror.resizeWindowSplit(
+            "zz-stock",
+            {
+              window: target(),
+              layoutId: fresh.layoutId,
+              splitId: same.splitId,
+              boundary: Math.max(0, same.boundary + by),
+            },
+            "66666666-6666-4666-8666-666666666666",
+            () => {},
+            noNative,
+          );
+          expect(result.status, `${status} ${same.axis} ${same.boundary} by ${by}`).toBe("applied");
+          await vi.waitFor(async () => {
+            await rig.mirror.readWindowSplitLayout("zz-stock", target());
+          });
+        }
+      }
+      for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+    }
+  });
+
+  it("keeps later replies aligned when the guarded resize itself fails", async () => {
+    const rig = await server(binary);
+    rig.tmux("split-window", "-d", "-h", "-t", rig.first, "sleep 300");
+    await open(rig);
+    const channel = (
+      rig.mirror as unknown as {
+        channels: Map<
+          string,
+          {
+            channel: {
+              stockSplitCommand(c: string): Promise<string[]>;
+              stockSplitOptions(w: string): Promise<string[]>;
+            };
+          }
+        >;
+      }
+    ).channels.get("zz-stock")!.channel;
+    const windowId = rig.tmux("display-message", "-p", "-t", "zz-stock", "#{window_id}");
+    await expect(
+      channel.stockSplitCommand(
+        `if-shell -F 1 'resize-pane -t %999 -R 1 ; display-message -p skipped' 'display-message -p a ; display-message -p b'`,
+      ),
+    ).rejects.toThrow("Stock split command failed");
+    const options = await channel.stockSplitOptions(windowId);
+    expect(parseStockSplitOptions(options[0])).not.toBeNull();
   });
 
   it("issues no handles for a zoomed window", async () => {

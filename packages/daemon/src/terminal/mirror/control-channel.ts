@@ -805,7 +805,8 @@ export class ControlChannelCore {
           }
           if (event.kind === "error" && sink.index !== sink.state.resultIndex)
             this.discardedErrors += 1;
-          if (event.kind === "error" && sink.index === 0) {
+          if (event.kind === "error") {
+            // tmux drops the failed command's remaining group, so those replies never come.
             while (this.pending[0]?.kind === "command-list" && this.pending[0].state === sink.state)
               this.pending.shift();
             if (!sink.state.settled) {
@@ -813,7 +814,7 @@ export class ControlChannelCore {
               sink.state.onReply({
                 ok: false,
                 lines:
-                  sink.state.budget || sink.state.resultIndex === 0
+                  sink.index > 0 || sink.state.budget || sink.state.resultIndex === 0
                     ? sink.state.lines
                     : sink.state.leadingErrorLines,
               });

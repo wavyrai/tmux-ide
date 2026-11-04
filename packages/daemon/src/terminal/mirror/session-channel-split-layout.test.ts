@@ -141,3 +141,15 @@ it("refuses fresh layout membership not yet joined to verified pane records", as
     await r.channel.dispose();
   }
 });
+
+it("allows a missing native birth identity only on a stock server", async () => {
+  const r = await rig("");
+  try {
+    expect(() => r.channel.describeSplitLayout(r.target)).toThrow("identity incomplete");
+    const snapshot = r.channel.describeSplitLayout(r.target, true);
+    expect(snapshot.panes.every((pane) => pane.nativePaneBirthId === "")).toBe(true);
+    expect(snapshot.paneBorderStatus).toBeDefined();
+  } finally {
+    await r.channel.dispose();
+  }
+});

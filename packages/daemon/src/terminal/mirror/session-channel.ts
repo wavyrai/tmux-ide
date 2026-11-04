@@ -1,3 +1,4 @@
+import { STOCK_SPLIT_OPTIONS_FORMAT } from "../protocol/stock-split-resize.ts";
 import { layoutContentRows } from "./layout-content-rows.ts";
 import {
   decodeNativeAtomicSnapshot,
@@ -440,6 +441,8 @@ export interface NativeSplitLayoutSnapshot {
   readonly runtimeWindowId: string;
   readonly semanticWindowId: string;
   readonly rawLayout: string;
+  /** Set on a stock server, where it decides how small tmux lets a pane get. */
+  readonly paneBorderStatus?: string;
   readonly panes: readonly {
     readonly runtimePaneId: string;
     readonly semanticPaneId: string;
@@ -1023,8 +1026,13 @@ export class SessionChannel {
       runtimeWindowId: resolved.runtimeWindowId,
       semanticWindowId: window.semanticId,
       rawLayout: layout.rawLayout,
+      ...(stock ? { paneBorderStatus: window.paneBorderStatus } : {}),
       panes: Object.freeze(panes),
     });
+  }
+
+  stockSplitOptions(windowId: string): Promise<string[]> {
+    return this.io.request(`display-message -p -t ${windowId} "${STOCK_SPLIT_OPTIONS_FORMAT}"`);
   }
 
   /** One guarded resize on this control connection, for a stock tmux server. */

@@ -32,7 +32,7 @@ function json(text: string, limit: number): unknown {
     throw new Error("Bounded native response required");
   return JSON.parse(text);
 }
-function capability(text: string): boolean {
+export function nativeSplitCapability(text: string): boolean {
   const value = json(text, 1024);
   return (
     object(value, [
@@ -54,7 +54,7 @@ function capability(text: string): boolean {
 /** Read-only, uncached probe; the caller pins and bounds the selected server. */
 export async function supportsNativeSplitResize(runTmux: NativeSplitRunner): Promise<boolean> {
   try {
-    return capability(await runTmux(["tmux-ide-resize-split", "-V"]));
+    return nativeSplitCapability(await runTmux(["tmux-ide-resize-split", "-V"]));
   } catch {
     return false;
   }
@@ -162,7 +162,7 @@ export async function resizeNativeSplit(
     return { status: "refused", reason: "invalid-request" };
   }
   try {
-    if (!capability(await runTmux(["tmux-ide-resize-split", "-V"])))
+    if (!nativeSplitCapability(await runTmux(["tmux-ide-resize-split", "-V"])))
       return { status: "refused", reason: "unsupported" };
   } catch {
     return { status: "refused", reason: "unsupported" };

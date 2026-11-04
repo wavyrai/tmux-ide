@@ -12,7 +12,7 @@ import {
 import { supportsNativeSessionGuard } from "../../lib/native-operation-command.ts";
 import type { NativeSplitResizeRequest } from "../protocol/native-split-resize.ts";
 import { parseLayoutTree, type LayoutTreeNode } from "../protocol/layout-parse.ts";
-import { stockSplitTarget } from "../protocol/stock-split-resize.ts";
+import { stockSplitMovable } from "../protocol/stock-split-resize.ts";
 import {
   SplitLayoutPublicationPending,
   type NativeSplitLayoutSnapshot,
@@ -104,7 +104,11 @@ export class WindowSplitAuthority {
         const childPath = [...path, index];
         if (
           index < node.children.length - 1 &&
-          (!this.options.stock || stockSplitTarget(tree, childPath, node.axis))
+          (!this.options.stock ||
+            stockSplitMovable(tree, childPath, node.axis, {
+              borderStatus: snapshot.paneBorderStatus ?? "off",
+              scrollbar: 0,
+            }))
         ) {
           const splitId = randomUUID();
           paths.set(splitId, childPath);

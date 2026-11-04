@@ -252,3 +252,38 @@ it("refuses when native preparation fails and the server is not positively stock
   expect(capability).not.toHaveBeenCalled();
   await r.service.dispose();
 });
+
+it("keeps a channel on the kind of authority it first issued", async () => {
+  let native = true;
+  const stock = vi.fn(async () => true);
+  const nativeFirst = rig(
+    undefined,
+    false,
+    async () => true,
+    async () => native,
+    stock,
+  );
+  const first = await retained(nativeFirst.service);
+  await nativeFirst.service.readWindowSplitLayout(FIXTURE.session, first.target);
+  native = false;
+  await expect(
+    nativeFirst.service.readWindowSplitLayout(FIXTURE.session, first.target),
+  ).rejects.toThrow("unavailable or stale");
+  await nativeFirst.service.dispose();
+
+  native = false;
+  const stockFirst = rig(
+    undefined,
+    false,
+    async () => true,
+    async () => native,
+    stock,
+  );
+  const second = await retained(stockFirst.service);
+  await stockFirst.service.readWindowSplitLayout(FIXTURE.session, second.target);
+  native = true;
+  await expect(
+    stockFirst.service.readWindowSplitLayout(FIXTURE.session, second.target),
+  ).rejects.toThrow("unavailable or stale");
+  await stockFirst.service.dispose();
+});

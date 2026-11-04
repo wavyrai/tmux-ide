@@ -505,9 +505,10 @@ export class MirrorService {
       authorizeBeforeEffect();
     };
     const result = entry!.stockSplitEpoch
-      ? await resizeStockSplit(resolved.request, resolved.session.created, authorize, (command) =>
-          entry!.channel.stockSplitCommand(command),
-        )
+      ? await resizeStockSplit(resolved.request, resolved.session.created, authorize, {
+          readOptions: (windowId) => entry!.channel.stockSplitOptions(windowId),
+          send: (command) => entry!.channel.stockSplitCommand(command),
+        })
       : await runNative(resolved.request, {
           operationId,
           serverEpoch: resolved.serverEpoch,
