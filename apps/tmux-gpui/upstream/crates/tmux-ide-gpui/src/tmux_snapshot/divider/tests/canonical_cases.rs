@@ -205,3 +205,58 @@ fn painted_gutters_reject_changed_authority_geometry_and_content_insets() {
         assert!(!owner.matches_painted_gutters(&changed, 10., 20.));
     }
 }
+
+/// A layout that arrives after a lost read must end in a handle a person can
+/// find. The test platform does not report the window's resolved cursor, so this
+/// pins the cursor the handle asks for and the gutter it asks for it on, and that
+/// the mouse starts a drag there.
+#[gpui::test]
+fn a_layout_issued_after_a_lost_read_draws_a_resize_handle_on_the_gutter(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        let mut state = canonical_state(Axis::Cols);
+        state.split_layout = None;
+        view.browser_state = state;
+        view.frame = view.browser_state.frame.clone();
+        view.painted_frame = view.frame.clone();
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("pane-card-divider").is_none());
+    let start = view.read_with(cx, |view, _| view.test_cell_point(5.5, 2.));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(start, MouseButton::Left, Modifiers::default());
+    view.read_with(cx, |view, _| assert!(view.divider.is_none()));
+
+    view.update(cx, |view, cx| {
+        view.browser_state.split_layout = canonical_state(Axis::Cols).split_layout;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let handle = cx.debug_bounds("pane-card-divider").unwrap();
+    assert!(handle.size.width > px(0.) && handle.size.height > px(0.));
+    let start = view.read_with(cx, |view, _| {
+        let origin = view.input_geometry.unwrap().0.origin;
+        let layout = view.card_layout(view.input_cell_width.unwrap()).unwrap();
+        let gutter = layout.gutter(Axis::Cols, 5, 0, 9);
+        assert_eq!(handle, Bounds::new(origin + gutter.origin, gutter.size));
+        origin + gutter.center()
+    });
+    let palette = cx.update(|_, cx| crate::tmux_snapshot::design::palette(&view.read(cx).theme()));
+    for (axis, cursor) in [
+        (Axis::Cols, CursorStyle::ResizeColumn),
+        (Axis::Rows, CursorStyle::ResizeRow),
+    ] {
+        assert_eq!(
+            super::super::handle(&palette, axis, false)
+                .style()
+                .mouse_cursor,
+            Some(cursor)
+        );
+    }
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    view.read_with(cx, |view, _| assert!(view.divider.is_some()));
+}
