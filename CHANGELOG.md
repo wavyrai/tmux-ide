@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.18
+
+- Show pane dividers in the Mac app on a tmux server started by a tmux without tmux-ide's own commands, such as Homebrew's 3.7c or 3.8. They had no dividers, and the app gave no reason. Each drag is one `resize-pane` that tmux runs only if the window's layout still matches; if anything changed it, nothing moves.
+- Report which tmux a server runs in `tmux doctor`: "bundled tmux: full features", "stock tmux: reduced features", or "this tmux has only some tmux-ide commands: no pane dividers".
+- Keep the daemon's tmux replies in step when one command in a list fails: tmux skips the rest of that list, and the daemon now expects that.
+
 ## 2.9.17
 
 - Fix `tmux-ide update` on slow connections, below about 1 MB/s on macOS and 1.6 MB/s on Linux. The runtime download had 30 s for the whole transfer; it now aborts only after about 30 s with no data, within a 15-minute budget, with up to 3 attempts per file for transient failures. Stalls and network errors no longer blame the release assets.

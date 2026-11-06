@@ -1294,9 +1294,9 @@ function parseMacOSVersion(value) {
     throw new Error("Invalid bundled tmux macOS version metadata");
   return value.split(".").map(Number);
 }
-function isMacOSVersionCompatible(current, minimum) {
+function isMacOSVersionCompatible(current, minimum2) {
   const actual = parseMacOSVersion(current);
-  const required = parseMacOSVersion(minimum);
+  const required = parseMacOSVersion(minimum2);
   for (let index = 0; index < 3; index += 1) {
     const difference = (actual[index] ?? 0) - (required[index] ?? 0);
     if (difference !== 0) return difference > 0;
@@ -4775,16 +4775,16 @@ function projectAgentGraphOverlay(input) {
   }
   const edges = [];
   const seenEdges = /* @__PURE__ */ new Set();
-  for (const edge2 of input.edges) {
-    if (edge2.from === edge2.to) {
+  for (const edge of input.edges) {
+    if (edge.from === edge.to) {
       truncated = true;
       continue;
     }
-    if (!nodeIds.has(edge2.from) || !nodeIds.has(edge2.to)) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
       truncated = true;
       continue;
     }
-    const key2 = `${edge2.kind}\0${edge2.from}\0${edge2.to}`;
+    const key2 = `${edge.kind}\0${edge.from}\0${edge.to}`;
     if (seenEdges.has(key2)) {
       truncated = true;
       continue;
@@ -4794,7 +4794,7 @@ function projectAgentGraphOverlay(input) {
       continue;
     }
     seenEdges.add(key2);
-    edges.push({ from: edge2.from, to: edge2.to, kind: edge2.kind });
+    edges.push({ from: edge.from, to: edge.to, kind: edge.kind });
   }
   const groups = [];
   const seenGroupIds = /* @__PURE__ */ new Set();
@@ -4897,22 +4897,22 @@ var init_agent_graph_overlay = __esm({
           }
         }
         const nodeIds = new Set(nodeEntries.map(([key2]) => key2));
-        for (const [index, edge2] of overlay.edges.entries()) {
-          if (edge2.from === edge2.to) {
+        for (const [index, edge] of overlay.edges.entries()) {
+          if (edge.from === edge.to) {
             ctx.addIssue({
               code: z27.ZodIssueCode.custom,
               message: "edge must not be a self-edge",
               path: ["edges", index]
             });
           }
-          if (!nodeIds.has(edge2.from)) {
+          if (!nodeIds.has(edge.from)) {
             ctx.addIssue({
               code: z27.ZodIssueCode.custom,
               message: "edge references an unknown node",
               path: ["edges", index, "from"]
             });
           }
-          if (!nodeIds.has(edge2.to)) {
+          if (!nodeIds.has(edge.to)) {
             ctx.addIssue({
               code: z27.ZodIssueCode.custom,
               message: "edge references an unknown node",
@@ -13145,7 +13145,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.17",
+      version: "2.9.18",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -17476,19 +17476,19 @@ function pickBool2(value, fallback) {
 }
 function inQuietHours(now, quiet) {
   if (!quiet) return false;
-  const start2 = parseHHMM(quiet.start);
+  const start3 = parseHHMM(quiet.start);
   const end = parseHHMM(quiet.end);
-  if (start2 === null || end === null || start2 === end) return false;
+  if (start3 === null || end === null || start3 === end) return false;
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  return start2 < end ? nowMin >= start2 && nowMin < end : nowMin >= start2 || nowMin < end;
+  return start3 < end ? nowMin >= start3 && nowMin < end : nowMin >= start3 || nowMin < end;
 }
 function parseQuietHours(value) {
   const o = asObject2(value);
-  const start2 = typeof o.start === "string" ? o.start : null;
+  const start3 = typeof o.start === "string" ? o.start : null;
   const end = typeof o.end === "string" ? o.end : null;
-  if (start2 === null || end === null) return null;
-  if (parseHHMM(start2) === null || parseHHMM(end) === null) return null;
-  return { start: start2, end };
+  if (start3 === null || end === null) return null;
+  if (parseHHMM(start3) === null || parseHHMM(end) === null) return null;
+  return { start: start3, end };
 }
 function parseNotificationPrefs(rawConfig) {
   const base2 = parseAppConfig(rawConfig).notifications;
@@ -17995,7 +17995,7 @@ function writeChips(deps2, adopted, panes, theme) {
     writeChip(pane.paneId, chip);
   }
 }
-function diffPaneTransitions(prev, panes, locate2) {
+function diffPaneTransitions(prev, panes, locate) {
   const events = [];
   const next = /* @__PURE__ */ new Map();
   for (const pane of panes) {
@@ -18010,7 +18010,7 @@ function diffPaneTransitions(prev, panes, locate2) {
       paneId: pane.paneId,
       windowIndex: pane.windowIndex,
       agent: pane.agent,
-      location: notifiable && locate2 ? locate2(pane.paneId) : pane.sessionName
+      location: notifiable && locate ? locate(pane.paneId) : pane.sessionName
     });
   }
   prev.clear();
@@ -20762,12 +20762,12 @@ function decodeUtf8Strict(value, path2) {
 function isPromiseLike(value) {
   return (typeof value === "object" || typeof value === "function") && value !== null && "then" in value && typeof value.then === "function";
 }
-function normalizeLockDuration(value, fallback, minimum, maximum, field) {
+function normalizeLockDuration(value, fallback, minimum2, maximum, field) {
   const resolved2 = value ?? fallback;
-  if (!Number.isSafeInteger(resolved2) || resolved2 < minimum || resolved2 > maximum) {
+  if (!Number.isSafeInteger(resolved2) || resolved2 < minimum2 || resolved2 > maximum) {
     throw new InvalidJsonValueError(
       `$.${field}`,
-      `${field} must be an integer between ${minimum} and ${maximum}`
+      `${field} must be an integer between ${minimum2} and ${maximum}`
     );
   }
   return resolved2;
@@ -22761,8 +22761,8 @@ async function resolveHarness(workspace, canonicalRoot, harnessProfileId) {
       harnessProfileId
     });
   }
-  const capability2 = matches[0];
-  if (capability2.kind === "shell" || capability2.installation !== "available" || capability2.commandReadiness !== "ready") {
+  const capability = matches[0];
+  if (capability.kind === "shell" || capability.installation !== "available" || capability.commandReadiness !== "ready") {
     throw new WorkspacePaneCreationError("harness_unavailable", {
       workspaceName: workspace.name,
       harnessProfileId
@@ -22770,9 +22770,9 @@ async function resolveHarness(workspace, canonicalRoot, harnessProfileId) {
   }
   const configured = configuredProfiles[harnessProfileId];
   const resolved2 = {
-    id: capability2.id,
-    label: capability2.label,
-    command: [...capability2.command],
+    id: capability.id,
+    label: capability.label,
+    command: [...capability.command],
     environment: Object.freeze({ ...configured?.env ?? {} })
   };
   assertBoundedLaunch(resolved2);
@@ -25088,8 +25088,8 @@ async function clearAgentAuthority(paneId) {
 }
 function paneStartAndPath(paneId) {
   return tmuxRun(["display", "-p", "-t", paneId, "#{pane_start_command}	#{pane_current_path}"]).then((out) => {
-    const [start2 = "", path2 = ""] = out.split("	");
-    return { start: start2, path: path2 };
+    const [start3 = "", path2 = ""] = out.split("	");
+    return { start: start3, path: path2 };
   }).catch(() => null);
 }
 async function stopAgent(paneId) {
@@ -26827,7 +26827,7 @@ function json(text2, limit) {
     throw new Error("Bounded native response required");
   return JSON.parse(text2);
 }
-function capability(text2) {
+function nativeSplitCapability(text2) {
   const value = json(text2, 1024);
   return object(value, [
     "schemaVersion",
@@ -26840,12 +26840,12 @@ function capability(text2) {
 }
 async function supportsNativeSplitResize(runTmux2) {
   try {
-    return capability(await runTmux2(["tmux-ide-resize-split", "-V"]));
+    return nativeSplitCapability(await runTmux2(["tmux-ide-resize-split", "-V"]));
   } catch {
     return false;
   }
 }
-function validTree(tree) {
+function validSplitTree(tree) {
   let budget2 = 5;
   const visit = (node) => {
     if (node.left + node.width > 4096 || node.top + node.height > 4096) return false;
@@ -26859,7 +26859,7 @@ function validTree(tree) {
   };
   return visit(tree);
 }
-function locate(tree, path2) {
+function locateSplit(tree, path2) {
   let node = tree;
   let parent;
   for (const index of path2) {
@@ -26869,13 +26869,13 @@ function locate(tree, path2) {
   }
   return parent && path2.at(-1) < parent.children.length - 1 ? { parent, node } : null;
 }
-function edge(node, axis) {
+function splitEdge(node, axis) {
   return axis === "cols" ? node.left + node.width : node.top + node.height;
 }
 function sameRect(a, b) {
   return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
 }
-function preservesTree(before, after, affected, axis, inside = false) {
+function preservesSplitTree(before, after, affected, axis, inside = false) {
   const begins = before === affected;
   if (before.kind !== after.kind || (!inside || begins) && !sameRect(before, after)) return false;
   inside ||= begins;
@@ -26883,7 +26883,7 @@ function preservesTree(before, after, affected, axis, inside = false) {
     return false;
   if (before.kind === "leaf") return after.kind === "leaf" && before.id === after.id;
   return after.kind === "split" && before.axis === after.axis && before.children.length === after.children.length && before.children.every(
-    (child, index) => preservesTree(child, after.children[index], affected, axis, inside)
+    (child, index) => preservesSplitTree(child, after.children[index], affected, axis, inside)
   );
 }
 async function resizeNativeSplit(request3, runTmux2) {
@@ -26892,8 +26892,8 @@ async function resizeNativeSplit(request3, runTmux2) {
     if (!object(request3, ["sessionId", "windowId", "expectedLayout", "path", "axis", "boundary"]) || typeof request3.sessionId !== "string" || !/^\$(0|[1-9][0-9]{0,9})$/.test(request3.sessionId) || Number(request3.sessionId.slice(1)) > 4294967295 || typeof request3.windowId !== "string" || !/^@(0|[1-9][0-9]{0,9})$/.test(request3.windowId) || Number(request3.windowId.slice(1)) > 4294967295 || typeof request3.expectedLayout !== "string" || !Array.isArray(request3.path) || request3.path.length < 1 || request3.path.length >= 64 || request3.path.some((index) => !Number.isInteger(index) || index < 0 || index > 511) || request3.path.join(".").length > 256 || request3.axis !== "cols" && request3.axis !== "rows" || !Number.isInteger(request3.boundary) || request3.boundary < 0 || request3.boundary > 4096)
       return { status: "refused", reason: "invalid-request" };
     const tree = parseLayoutTree(request3.expectedLayout);
-    if (!tree || !validTree(tree)) return { status: "refused", reason: "invalid-request" };
-    const selected = locate(tree, request3.path);
+    if (!tree || !validSplitTree(tree)) return { status: "refused", reason: "invalid-request" };
+    const selected = locateSplit(tree, request3.path);
     if (!selected || selected.parent.axis !== request3.axis)
       return { status: "refused", reason: "invalid-request" };
     before = tree;
@@ -26902,7 +26902,7 @@ async function resizeNativeSplit(request3, runTmux2) {
     return { status: "refused", reason: "invalid-request" };
   }
   try {
-    if (!capability(await runTmux2(["tmux-ide-resize-split", "-V"])))
+    if (!nativeSplitCapability(await runTmux2(["tmux-ide-resize-split", "-V"])))
       return { status: "refused", reason: "unsupported" };
   } catch {
     return { status: "refused", reason: "unsupported" };
@@ -26932,10 +26932,10 @@ async function resizeNativeSplit(request3, runTmux2) {
     if (!object(receipt, ["schemaVersion", "boundary", "layout"]) || receipt.schemaVersion !== 1 || typeof receipt.layout !== "string" || typeof receipt.boundary !== "number" || !Number.isInteger(receipt.boundary) || receipt.boundary < 0 || receipt.boundary > 4096)
       return { status: "uncertain", reason: "invalid-receipt" };
     const after = parseLayoutTree(receipt.layout);
-    const original = locate(before, captured.path);
-    const actual = after && locate(after, captured.path);
-    const previous = edge(original.node, captured.axis);
-    if (!after || !validTree(after) || !actual || !preservesTree(before, after, original.parent, captured.axis) || receipt.boundary !== edge(actual.node, captured.axis) || receipt.boundary < Math.min(previous, captured.boundary) || receipt.boundary > Math.max(previous, captured.boundary))
+    const original = locateSplit(before, captured.path);
+    const actual = after && locateSplit(after, captured.path);
+    const previous = splitEdge(original.node, captured.axis);
+    if (!after || !validSplitTree(after) || !actual || !preservesSplitTree(before, after, original.parent, captured.axis) || receipt.boundary !== splitEdge(actual.node, captured.axis) || receipt.boundary < Math.min(previous, captured.boundary) || receipt.boundary > Math.max(previous, captured.boundary))
       return { status: "uncertain", reason: "invalid-receipt" };
     return {
       status: "applied",
@@ -27005,11 +27005,28 @@ function createNativeSplitReadiness(options) {
     pending = null;
   });
 }
+function createStockSplitProbe(options) {
+  return async () => {
+    for (const command3 of NATIVE_COMMANDS) {
+      try {
+        await options.runPinnedTmux([command3, "-V"]);
+        return false;
+      } catch (error) {
+        const failure4 = error;
+        const text2 = String(failure4?.cause?.stderr ?? failure4?.stderr ?? "");
+        if (!new RegExp(`^unknown command: ${command3}$`, "mu").test(text2)) return false;
+      }
+    }
+    return true;
+  };
+}
+var NATIVE_COMMANDS;
 var init_native_split_capability = __esm({
   "packages/daemon/src/lib/native-split-capability.ts"() {
     "use strict";
     init_src2();
     init_native_split_resize();
+    NATIVE_COMMANDS = ["tmux-ide-resize-split", "tmux-ide-events"];
   }
 });
 
@@ -28706,11 +28723,11 @@ var init_workspace_multiplexer_verbs = __esm({
             return null;
           }
         };
-        const record2 = (operation, start2) => {
+        const record2 = (operation, start3) => {
           const end = now();
-          if (start2 !== null && end !== null) {
+          if (start3 !== null && end !== null) {
             try {
-              timing?.record(operation, start2, end);
+              timing?.record(operation, start3, end);
             } catch {
             }
           }
@@ -28841,9 +28858,9 @@ var init_workspace_multiplexer_verbs = __esm({
             reason: "pane_identity_changed_during_read"
           });
         }
-        let start2 = Math.max(0, bytes.byteLength - SESSION_RUNTIME_PANE_READ_MAX_BYTES);
-        while (start2 < bytes.byteLength && (bytes[start2] & 192) === 128) start2++;
-        const text2 = bytes.subarray(start2).toString("utf8");
+        let start3 = Math.max(0, bytes.byteLength - SESSION_RUNTIME_PANE_READ_MAX_BYTES);
+        while (start3 < bytes.byteLength && (bytes[start3] & 192) === 128) start3++;
+        const text2 = bytes.subarray(start3).toString("utf8");
         return SessionRuntimePaneReadResultSchemaZ.parse({
           verb: "workspace.pane.read",
           operationId,
@@ -28853,9 +28870,9 @@ var init_workspace_multiplexer_verbs = __esm({
           format: "ansi",
           availability: "available",
           text: text2,
-          byteCount: bytes.byteLength - start2,
+          byteCount: bytes.byteLength - start3,
           capturedByteCount: bytes.byteLength,
-          truncated: start2 > 0
+          truncated: start3 > 0
         });
       }
       dispose() {
@@ -29506,7 +29523,7 @@ var init_workspace_multiplexer_verbs = __esm({
       /** Optional metadata path; null alone permits pre-dispatch stock fallback. */
       #runAuthored(operationId, execution, pane, expectedKinds, commands2, dispatch, options) {
         if (execution && pane.nativePaneBirthId && this.#io.runAuthoredNative) {
-          const nativeCommands = commands2.filter(
+          const nativeCommands2 = commands2.filter(
             (command3) => !(command3[0] === "set-option" && command3[1] === "-p" && command3[2] === "-t" && command3[3] === pane.paneId && (command3[4] === INTERNAL_SEND_OPERATION_OPTION || command3[4] === INTERNAL_READ_OPERATION_OPTION))
           );
           dispatch.native = true;
@@ -29516,7 +29533,7 @@ var init_workspace_multiplexer_verbs = __esm({
               context: execution,
               targetPaneId: pane.paneId,
               targetBirthId: pane.nativePaneBirthId,
-              commands: nativeCommands,
+              commands: nativeCommands2,
               expectedKinds
             },
             options
@@ -29966,6 +29983,158 @@ var init_guarded_native_split_resize = __esm({
     init_native_split_resize();
     init_native_operation_command();
     init_native_operation_reply();
+  }
+});
+
+// packages/daemon/src/terminal/protocol/stock-split-resize.ts
+import { randomUUID as randomUUID14 } from "node:crypto";
+function minimum(node, axis, sizes, root) {
+  if (node.kind === "leaf") {
+    if (axis === "cols") return 1 + sizes.scrollbar;
+    const onEdge = sizes.borderStatus === "top" && node.top === root.top || sizes.borderStatus === "bottom" && node.top + node.height === root.top + root.height;
+    return onEdge ? 2 : 1;
+  }
+  const mins = node.children.map((child) => minimum(child, axis, sizes, root));
+  return node.axis === axis ? mins.reduce((sum, size) => sum + size, node.children.length - 1) : Math.max(...mins);
+}
+function reachingLeaf(node, axis) {
+  if (node.kind === "leaf") return node.id;
+  if (node.axis === axis) return null;
+  for (const child of node.children) {
+    const leaf = reachingLeaf(child, axis);
+    if (leaf) return leaf;
+  }
+  return null;
+}
+function stockSplitTarget(tree, path2, axis) {
+  const located = locateSplit(tree, path2);
+  if (!located || located.parent.axis !== axis) return null;
+  const leading = reachingLeaf(located.node, axis);
+  if (leading) return leading;
+  const index = path2.at(-1);
+  if (index + 1 !== located.parent.children.length - 1) return null;
+  return reachingLeaf(located.parent.children[index + 1], axis);
+}
+function stockSplitRange(tree, path2, axis, sizes) {
+  const located = locateSplit(tree, path2);
+  if (!located) return null;
+  const after = located.parent.children[path2.at(-1) + 1];
+  const low = start(located.node, axis) + minimum(located.node, axis, sizes, tree);
+  const high = start(after, axis) + span(after, axis) - minimum(after, axis, sizes, tree) - 1;
+  return { low, high };
+}
+function stockSplitMovable(tree, path2, axis, sizes) {
+  const range = stockSplitRange(tree, path2, axis, sizes);
+  return stockSplitTarget(tree, path2, axis) !== null && range !== null && range.high > range.low;
+}
+function planStockSplitResize(tree, path2, axis, boundary2, sizes) {
+  const paneId = stockSplitTarget(tree, path2, axis);
+  const range = stockSplitRange(tree, path2, axis, sizes);
+  const located = locateSplit(tree, path2);
+  if (!paneId || !range || !located || range.high < range.low) return null;
+  const clamped = Math.min(range.high, Math.max(range.low, boundary2));
+  return { paneId, boundary: clamped, delta: clamped - splitEdge(located.node, axis) };
+}
+function formatLiteral(layout) {
+  return layout.replaceAll(",", "#,").replaceAll("}", "#}");
+}
+function leafCount(node) {
+  return node.kind === "leaf" ? 1 : node.children.reduce((sum, child) => sum + leafCount(child), 0);
+}
+function stockSplitCommand(request3, sessionCreated, plan, panes, options, marker) {
+  const equal = (name, value) => `#{==:#{${name}},${value}}`;
+  const condition = [
+    equal("window_id", request3.windowId),
+    equal("session_id", request3.sessionId),
+    equal("session_created", sessionCreated),
+    equal("window_zoomed_flag", 0),
+    // Control clients' layouts leave out floating panes; this count includes them.
+    equal("window_panes", panes),
+    equal("pane-border-status", options.borderStatus),
+    equal("pane-scrollbars", options.scrollbars),
+    equal("window_layout", formatLiteral(request3.expectedLayout))
+  ].reduceRight((rest, next) => `#{&&:${next},${rest}}`);
+  const flag = request3.axis === "cols" ? plan.delta > 0 ? "-R" : "-L" : plan.delta > 0 ? "-D" : "-U";
+  const move = plan.delta === 0 ? `display-message -p ""` : `resize-pane -t ${plan.paneId} ${flag} ${Math.abs(plan.delta)}`;
+  const readback = `display-message -p -t ${request3.windowId} "${marker} #{window_layout}"`;
+  return `if-shell -F -t '${request3.sessionId}:${request3.windowId}' '${condition}' '${move} ; ${readback}' 'display-message -p ${marker} ; display-message -p ${marker}'`;
+}
+function parseStockSplitOptions(line) {
+  const [borderStatus, scrollbars, style] = (line ?? "").split("	");
+  if (!/^(off|top|bottom)$/u.test(borderStatus ?? "") || !/^[a-z]+$/u.test(scrollbars ?? ""))
+    return null;
+  const field = (name) => Number(new RegExp(`\\b${name}=(\\d+)`, "u").exec(style ?? "")?.[1] ?? 0);
+  return {
+    borderStatus,
+    scrollbars,
+    scrollbar: scrollbars === "off" ? 0 : Math.max(field("width"), 1) + field("pad")
+  };
+}
+async function resizeStockSplit(request3, sessionCreated, authorizeBeforeEffect, io) {
+  const before = parseLayoutTree(request3.expectedLayout);
+  if (!before || !validSplitTree(before) || !/^\$\d+$/u.test(request3.sessionId) || !/^@\d+$/u.test(request3.windowId) || !/^[1-9]\d*$/u.test(sessionCreated))
+    return { status: "refused", reason: "invalid-request" };
+  let options;
+  try {
+    options = parseStockSplitOptions((await io.readOptions(request3.windowId))[0]);
+  } catch {
+    return { status: "refused", reason: "unsupported" };
+  }
+  if (!options) return { status: "refused", reason: "unsupported" };
+  const plan = planStockSplitResize(before, request3.path, request3.axis, request3.boundary, options);
+  if (!plan) return { status: "refused", reason: "invalid-request" };
+  const marker = `tmux-ide-split-${randomUUID14()}`;
+  const command3 = stockSplitCommand(
+    request3,
+    sessionCreated,
+    plan,
+    leafCount(before),
+    options,
+    marker
+  );
+  authorizeBeforeEffect();
+  let reply;
+  try {
+    reply = await io.send(command3);
+  } catch {
+    return { status: "uncertain", reason: "command-failed" };
+  }
+  const answer = reply.join("\n");
+  if (answer === marker) return { status: "refused", reason: "stale-layout" };
+  if (reply.length !== 1 || !answer.startsWith(`${marker} `))
+    return { status: "uncertain", reason: "invalid-receipt" };
+  const layout = answer.slice(marker.length + 1);
+  const after = parseLayoutTree(layout);
+  const original = locateSplit(before, request3.path);
+  const actual = after && locateSplit(after, request3.path);
+  if (!after || !validSplitTree(after) || !actual || !preservesSplitTree(before, after, original.parent, request3.axis))
+    return { status: "uncertain", reason: "invalid-receipt" };
+  const edges = (parent) => parent.children.map((child) => splitEdge(child, request3.axis));
+  const moved = request3.path.at(-1);
+  const others = edges(actual.parent);
+  if (edges(original.parent).some((edge, index) => index !== moved && edge !== others[index]))
+    return { status: "uncertain", reason: "invalid-receipt" };
+  const boundary2 = splitEdge(actual.node, request3.axis);
+  const previous = splitEdge(original.node, request3.axis);
+  if (boundary2 < Math.min(previous, plan.boundary) || boundary2 > Math.max(previous, plan.boundary))
+    return { status: "uncertain", reason: "invalid-receipt" };
+  return {
+    status: "applied",
+    boundary: boundary2,
+    layout,
+    tree: after,
+    changed: layout !== request3.expectedLayout
+  };
+}
+var span, start, STOCK_SPLIT_OPTIONS_FORMAT;
+var init_stock_split_resize = __esm({
+  "packages/daemon/src/terminal/protocol/stock-split-resize.ts"() {
+    "use strict";
+    init_layout_parse();
+    init_native_split_resize();
+    span = (node, axis) => axis === "cols" ? node.width : node.height;
+    start = (node, axis) => axis === "cols" ? node.left : node.top;
+    STOCK_SPLIT_OPTIONS_FORMAT = "#{pane-border-status}	#{pane-scrollbars}	#{pane-scrollbars-style}";
   }
 });
 
@@ -31257,6 +31426,7 @@ var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS,
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
+    init_stock_split_resize();
     init_layout_content_rows();
     init_native_atomic_snapshot();
     init_tmux_interaction_retention();
@@ -31701,7 +31871,7 @@ var init_session_channel = __esm({
         };
       }
       /** Exact native ancestry, never reconstructed from published pane rectangles. */
-      describeSplitLayout(target) {
+      describeSplitLayout(target, stock = false) {
         const authority2 = this.windowLinkAuthority;
         const identity4 = this.attachedIdentity;
         const generation = this.attachedServerGeneration;
@@ -31723,14 +31893,14 @@ var init_session_channel = __esm({
         const panes = native2.leaves.map((leaf) => {
           const pane = this.panesByRuntime.get(leaf.id);
           const birth = pane?.descriptor?.nativePaneBirthId;
-          if (!pane || pane.windowRuntimeId !== resolved2.runtimeWindowId || pane.descriptor?.runtimeSessionId !== identity4.runtimeSessionId || pane.descriptor?.windowId !== resolved2.runtimeWindowId || this.panesBySemantic.get(pane.semanticId) !== pane || !birth || !/^[1-9]\d*$/u.test(birth) || !layout.leaves.some(
+          if (!pane || pane.windowRuntimeId !== resolved2.runtimeWindowId || pane.descriptor?.runtimeSessionId !== identity4.runtimeSessionId || pane.descriptor?.windowId !== resolved2.runtimeWindowId || this.panesBySemantic.get(pane.semanticId) !== pane || !stock && (!birth || !/^[1-9]\d*$/u.test(birth)) || !layout.leaves.some(
             (visible) => visible.id === leaf.id && visible.left === leaf.left && visible.top === leaf.top && visible.width === leaf.width && visible.height === leaf.height
           ))
             throw new Error("Split layout pane identity incomplete");
           return Object.freeze({
             runtimePaneId: pane.runtimeId,
             semanticPaneId: pane.semanticId,
-            nativePaneBirthId: birth
+            nativePaneBirthId: stock ? "" : birth
           });
         });
         return Object.freeze({
@@ -31740,7 +31910,21 @@ var init_session_channel = __esm({
           runtimeWindowId: resolved2.runtimeWindowId,
           semanticWindowId: window2.semanticId,
           rawLayout: layout.rawLayout,
+          ...stock ? { paneBorderStatus: window2.paneBorderStatus } : {},
           panes: Object.freeze(panes)
+        });
+      }
+      stockSplitOptions(windowId) {
+        return this.io.request(`display-message -p -t ${windowId} "${STOCK_SPLIT_OPTIONS_FORMAT}"`);
+      }
+      /** One guarded resize on this control connection, for a stock tmux server. */
+      stockSplitCommand(command3) {
+        return new Promise((resolve45, reject) => {
+          const onReply = (reply) => reply.ok ? resolve45(reply.lines) : reject(new Error("Stock split command failed"));
+          const limits = { maxBytes: 16 * 1024, maxLines: 4 };
+          if (this.io.commandListBoundedInline)
+            this.io.commandListBoundedInline(command3, 3, 2, limits, onReply);
+          else this.io.commandListInline(command3, 3, 2, onReply);
         });
       }
       async executeWindowLinkAction(request3) {
@@ -34273,7 +34457,7 @@ var init_session_channel = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/window-split-authority.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 import { z as z99 } from "zod";
 var MAX_RETAINED_WINDOWS, WindowSplitLayoutUnavailable, WindowSplitAuthority;
 var init_window_split_authority = __esm({
@@ -34282,6 +34466,7 @@ var init_window_split_authority = __esm({
     init_src2();
     init_native_operation_command();
     init_layout_parse();
+    init_stock_split_resize();
     init_session_channel();
     MAX_RETAINED_WINDOWS = 32;
     WindowSplitLayoutUnavailable = class extends Error {
@@ -34311,7 +34496,7 @@ var init_window_split_authority = __esm({
         if (!tree || tree.width > 4096 || tree.height > 4096 || snapshot3.panes.length > 256)
           throw new WindowSplitLayoutUnavailable();
         snapshot3.panes.forEach((pane) => {
-          if (!/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) || Number(pane.runtimePaneId.slice(1)) > 4294967295 || !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
+          if (!/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) || Number(pane.runtimePaneId.slice(1)) > 4294967295 || !this.options.stock && !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
             pane.nativePaneBirthId
           ).success)
             throw new WindowSplitLayoutUnavailable();
@@ -34339,8 +34524,11 @@ var init_window_split_authority = __esm({
           }
           node.children.forEach((child, index) => {
             const childPath = [...path2, index];
-            if (index < node.children.length - 1) {
-              const splitId = randomUUID14();
+            if (index < node.children.length - 1 && (!this.options.stock || stockSplitMovable(tree, childPath, node.axis, {
+              borderStatus: snapshot3.paneBorderStatus ?? "off",
+              scrollbar: 0
+            }))) {
+              const splitId = randomUUID15();
               paths.set(splitId, childPath);
               splits.push({
                 splitId,
@@ -34359,7 +34547,7 @@ var init_window_split_authority = __esm({
         const resource3 = WindowSplitLayoutResourceSchemaZ.parse({
           version: 1,
           window: window2,
-          layoutId: randomUUID14(),
+          layoutId: randomUUID15(),
           cols: tree.width,
           rows: tree.height,
           panes,
@@ -34486,7 +34674,7 @@ var init_tmux_version = __esm({
 });
 
 // packages/daemon/src/terminal/graphics/local-image-store.ts
-import { randomUUID as randomUUID15, webcrypto } from "node:crypto";
+import { randomUUID as randomUUID16, webcrypto } from "node:crypto";
 import { constants as constants11 } from "node:fs";
 import { chmod, link, lstat as lstat2, mkdtemp, open, realpath, rmdir, unlink } from "node:fs/promises";
 import { join as join31 } from "node:path";
@@ -34594,7 +34782,7 @@ var init_local_image_store = __esm({
             this.#bytes += entry.bytes;
           }
           const lease = Object.freeze({
-            id: randomUUID15(),
+            id: randomUUID16(),
             generation: this.generation,
             client,
             digest: digest3,
@@ -34611,7 +34799,7 @@ var init_local_image_store = __esm({
       }
       async #write(digest3, data) {
         const path2 = join31(this.directory, digest3);
-        const temporary = join31(this.directory, `.pending-${randomUUID15()}`);
+        const temporary = join31(this.directory, `.pending-${randomUUID16()}`);
         const file = await open(
           temporary,
           constants11.O_CREAT | constants11.O_EXCL | constants11.O_WRONLY | constants11.O_NOFOLLOW,
@@ -34711,7 +34899,7 @@ var init_local_image_store = __esm({
 });
 
 // packages/daemon/src/terminal/graphics/local-image-owner.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 import { constants as constants12 } from "node:fs";
 import {
   link as link2,
@@ -34942,7 +35130,7 @@ var init_local_image_owner = __esm({
             throw new Error("Local image manifest replaced");
           if (JSON.stringify(current.manifest) === encoded) return;
         }
-        const temporary = join32(this.path, `.owner-${randomUUID16()}`);
+        const temporary = join32(this.path, `.owner-${randomUUID17()}`);
         const file = await open2(
           temporary,
           constants12.O_CREAT | constants12.O_EXCL | constants12.O_WRONLY | constants12.O_NOFOLLOW,
@@ -35224,7 +35412,7 @@ var init_pane_source_discovery = __esm({
 });
 
 // packages/daemon/src/lib/background-native-capture.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 function createBackgroundNativeCapture(options) {
   return async (request3, signal) => {
     signal?.throwIfAborted();
@@ -35235,7 +35423,7 @@ function createBackgroundNativeCapture(options) {
       return null;
     if (request3.mode !== "agent-status" && request3.mode !== "fleet-preview")
       throw new TypeError("Invalid background capture mode");
-    const operationId = randomUUID17();
+    const operationId = randomUUID18();
     const command3 = [
       "capture-pane",
       "-p",
@@ -35358,7 +35546,7 @@ var init_background_native_capture = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/owned-viewer-adapter.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 var commands, OwnedViewerAdapter;
 var init_owned_viewer_adapter = __esm({
   "packages/daemon/src/terminal/mirror/owned-viewer-adapter.ts"() {
@@ -35383,18 +35571,18 @@ var init_owned_viewer_adapter = __esm({
         });
       }
       controlOptions() {
-        let capability2;
+        let capability;
         try {
-          capability2 = this.authority.capability();
+          capability = this.authority.capability();
         } catch {
           this.#uncertain();
           return void 0;
         }
-        if (this.#disposed || !capability2) return void 0;
+        if (this.#disposed || !capability) return void 0;
         return {
-          serverEpoch: capability2.serverEpoch,
+          serverEpoch: capability.serverEpoch,
           onIdentity: (identity4) => {
-            if (this.#disposed || !this.#io || this.#connection || identity4.serverEpoch !== capability2.serverEpoch || this.authority.capability()?.serverEpoch !== identity4.serverEpoch)
+            if (this.#disposed || !this.#io || this.#connection || identity4.serverEpoch !== capability.serverEpoch || this.authority.capability()?.serverEpoch !== identity4.serverEpoch)
               return false;
             const connection = this.authority.register(identity4);
             if (!connection) return false;
@@ -35412,9 +35600,9 @@ var init_owned_viewer_adapter = __esm({
       /** Available only on the actual attached issuer, never the journal reader. */
       atomicSnapshotEpoch(io, representation = "native") {
         try {
-          const capability2 = this.authority.capability();
+          const capability = this.authority.capability();
           const actual = io.nativeViewerIdentity;
-          return !this.#disposed && io === this.#io && this.#connection && this.#identity && (representation === "dual" ? capability2?.atomicPaneSnapshotDual : capability2?.atomicPaneSnapshot) === true && actual && actual.connectionId === this.#identity.connectionId && actual.serverEpoch === this.#identity.serverEpoch && capability2?.serverEpoch === actual.serverEpoch ? actual.serverEpoch : null;
+          return !this.#disposed && io === this.#io && this.#connection && this.#identity && (representation === "dual" ? capability?.atomicPaneSnapshotDual : capability?.atomicPaneSnapshot) === true && actual && actual.connectionId === this.#identity.connectionId && actual.serverEpoch === this.#identity.serverEpoch && capability?.serverEpoch === actual.serverEpoch ? actual.serverEpoch : null;
         } catch {
           this.#uncertain();
           return null;
@@ -35423,20 +35611,20 @@ var init_owned_viewer_adapter = __esm({
       tryDispatch(io, request3, onReply) {
         const identity4 = this.#identity, connection = this.#connection;
         let actual;
-        let capability2;
+        let capability;
         try {
           actual = io.nativeViewerIdentity;
-          capability2 = this.authority.capability();
+          capability = this.authority.capability();
         } catch {
           this.#uncertain();
           return false;
         }
-        if (this.#disposed || io !== this.#io || !identity4 || !connection || !actual || actual.serverEpoch !== identity4.serverEpoch || request3.expectedServerEpoch !== void 0 && request3.expectedServerEpoch !== identity4.serverEpoch || actual.connectionId !== identity4.connectionId || capability2?.serverEpoch !== identity4.serverEpoch || !io.commandNativeViewerInline || !/^%(0|[1-9][0-9]*)$/.test(request3.paneId) || !/^[1-9][0-9]*$/.test(request3.paneBirthId) || request3.commands.length === 0 || request3.commands.length > 64 || request3.commands.some((argv) => !commands.has(argv[0] ?? "")))
+        if (this.#disposed || io !== this.#io || !identity4 || !connection || !actual || actual.serverEpoch !== identity4.serverEpoch || request3.expectedServerEpoch !== void 0 && request3.expectedServerEpoch !== identity4.serverEpoch || actual.connectionId !== identity4.connectionId || capability?.serverEpoch !== identity4.serverEpoch || !io.commandNativeViewerInline || !/^%(0|[1-9][0-9]*)$/.test(request3.paneId) || !/^[1-9][0-9]*$/.test(request3.paneBirthId) || request3.commands.length === 0 || request3.commands.length > 64 || request3.commands.some((argv) => !commands.has(argv[0] ?? "")))
           return false;
         let permit;
         try {
           permit = this.authority.admit({
-            operationId: randomUUID18(),
+            operationId: randomUUID19(),
             role: "viewer",
             source: null,
             connection,
@@ -36180,7 +36368,7 @@ var init_authored_native_receipt_staging = __esm({
 
 // packages/daemon/src/lib/owned-native-interaction-bindings.ts
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 function isOwnedNativePlanCompletion(value) {
   return value !== null && typeof value === "object" && ownedCompletions.has(value);
 }
@@ -36266,7 +36454,7 @@ var init_owned_native_interaction_bindings = __esm({
           return null;
         if ([...this.#connections.values()].some((c) => c.identity.connectionId === identity4.connectionId))
           return null;
-        const token2 = Object.freeze({ bindingId: randomUUID19() });
+        const token2 = Object.freeze({ bindingId: randomUUID20() });
         this.#connections.set(token2, {
           token: token2,
           identity: freeze(identity4),
@@ -36608,7 +36796,7 @@ var init_owned_native_interaction_bindings = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-generation-runner.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 function fenceNativeTmuxCommand(args, expected) {
   const { pid, startTime } = expected;
   if (!/^[1-9][0-9]*$/u.test(pid) || !/^[1-9][0-9]*$/u.test(startTime))
@@ -36627,7 +36815,7 @@ function fenceNativeTmuxCommand(args, expected) {
   if (firstCommand === args.length) throw new Error("Missing tmux command");
   const condition = `#{&&:#{==:#{pid},${pid}},#{==:#{start_time},${startTime}}}`;
   const command3 = args.slice(firstCommand).map((arg) => arg === ";" ? ";" : shellEscape(arg)).join(" ");
-  const refusal = `tmux-server-stale.${randomUUID20()}`;
+  const refusal = `tmux-server-stale.${randomUUID21()}`;
   return {
     argv: [...globalFlags, "if-shell", "-F", condition, command3, `display-message -p '${refusal}'`],
     verify(output) {
@@ -36737,9 +36925,9 @@ var init_native_journal_control_connection = __esm({
         try {
           if (this.#failure) throw this.#failure;
           if (lines.length !== 2) throw new Error("Invalid native journal greeting");
-          const capability2 = NativeJournalCapabilitySchemaZ.parse(JSON.parse(lines[0]));
+          const capability = NativeJournalCapabilitySchemaZ.parse(JSON.parse(lines[0]));
           const identity4 = NativeJournalIdentitySchemaZ.parse(JSON.parse(lines[1]));
-          if (capability2.readerTransport !== "sessionless-control-v1" || !capability2.enabled || capability2.serverEpoch !== this.#serverEpoch || identity4.serverEpoch !== this.#serverEpoch)
+          if (capability.readerTransport !== "sessionless-control-v1" || !capability.enabled || capability.serverEpoch !== this.#serverEpoch || identity4.serverEpoch !== this.#serverEpoch)
             throw new Error("Native journal peer incarnation mismatch");
           this.#connectionId = identity4.connectionId;
         } catch (error) {
@@ -37100,45 +37288,45 @@ var init_native_tmux_interaction_observer = __esm({
         }
       }
       async #probe() {
-        let capability2;
+        let capability;
         const output = await this.#request(["tmux-ide-events", "-V"], this.#commandMs);
         try {
-          capability2 = NativeJournalCapabilitySchemaZ.parse(JSON.parse(output));
+          capability = NativeJournalCapabilitySchemaZ.parse(JSON.parse(output));
         } catch {
           this.#state("incompatible");
           return false;
         }
-        if (this.#options.expectedServerEpoch !== void 0 && this.#options.expectedServerEpoch !== capability2.serverEpoch || this.#capability && this.#capability.serverEpoch !== capability2.serverEpoch || this.#cursor && this.#cursor.serverEpoch !== capability2.serverEpoch) {
+        if (this.#options.expectedServerEpoch !== void 0 && this.#options.expectedServerEpoch !== capability.serverEpoch || this.#capability && this.#capability.serverEpoch !== capability.serverEpoch || this.#cursor && this.#cursor.serverEpoch !== capability.serverEpoch) {
           this.#state("retired");
           return false;
         }
-        this.#capability = capability2;
-        if (!capability2.enabled && this.#options.enable) {
+        this.#capability = capability;
+        if (!capability.enabled && this.#options.enable) {
           const enabled = NativeJournalCapabilitySchemaZ.parse(
             JSON.parse(await this.#request(["tmux-ide-events", "-e"], this.#commandMs))
           );
-          if (enabled.serverEpoch !== capability2.serverEpoch) {
+          if (enabled.serverEpoch !== capability.serverEpoch) {
             this.#state("retired");
             return false;
           }
-          this.#capability = capability2 = enabled;
+          this.#capability = capability = enabled;
         }
-        if (!capability2.enabled) {
+        if (!capability.enabled) {
           this.#state("disabled");
           return false;
         }
-        if (capability2.degraded) {
+        if (capability.degraded) {
           this.#state("degraded");
           return false;
         }
         if (!this.#cursor)
           this.#cursor = {
-            serverEpoch: capability2.serverEpoch,
-            journalEpoch: capability2.journalEpoch,
+            serverEpoch: capability.serverEpoch,
+            journalEpoch: capability.journalEpoch,
             sequence: "0"
           };
-        else if (this.#cursor.journalEpoch !== capability2.journalEpoch)
-          this.#reset(capability2.journalEpoch);
+        else if (this.#cursor.journalEpoch !== capability.journalEpoch)
+          this.#reset(capability.journalEpoch);
         this.#state("ready");
         return true;
       }
@@ -37497,22 +37685,22 @@ var init_owner_interaction_observation = __esm({
           cursor: null
         });
       }
-      #ready(capability2, cursor2) {
+      #ready(capability, cursor2) {
         this.#selection = "native";
-        this.#capability = capability2;
-        if (capability2.ownedOperationTransport === "direct-wrapper-v1")
+        this.#capability = capability;
+        if (capability.ownedOperationTransport === "direct-wrapper-v1")
           this.#bindings ??= new OwnedNativeInteractionBindings({
             environmentId: this.#options.environmentId,
             serverScope: this.#options.serverScope,
-            serverEpoch: capability2.serverEpoch,
+            serverEpoch: capability.serverEpoch,
             onPlanComplete: this.#options.onOwnedPlanComplete
           });
         this.#projector ??= new NativeInteractionProjector({
           environmentId: this.#options.environmentId,
           serverScope: this.#options.serverScope,
-          serverEpoch: capability2.serverEpoch
+          serverEpoch: capability.serverEpoch
         });
-        this.#options.status.setNativeReady(capability2.schemaVersion, cursor2);
+        this.#options.status.setNativeReady(capability.schemaVersion, cursor2);
       }
       #publish(items) {
         if (this.#disposed) return;
@@ -38336,7 +38524,7 @@ var init_fleet_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
-import { createHash as createHash16, randomUUID as randomUUID21 } from "node:crypto";
+import { createHash as createHash16, randomUUID as randomUUID22 } from "node:crypto";
 import { isAbsolute as isAbsolute16, resolve as resolve21 } from "node:path";
 import { realpath as realpath3, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep2, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
@@ -38627,7 +38815,7 @@ var init_fleet_lifecycle_authority = __esm({
             "tmux did not return a pane identity."
           );
         }
-        const semanticPaneId3 = `pane.agent.${randomUUID21()}`;
+        const semanticPaneId3 = `pane.agent.${randomUUID22()}`;
         try {
           this.#runTmux(["set-option", "-p", "-t", paneId, "@tmux_ide_pane_id", semanticPaneId3]);
           this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_launch", input.command]);
@@ -38743,8 +38931,8 @@ var init_fleet_lifecycle_authority = __esm({
         } catch {
           throw new FleetLifecycleAuthorityError("agent_not_found", "Agent pane disappeared.");
         }
-        const [start2 = "", path2 = ""] = output.split("	");
-        return { start: start2, path: path2 };
+        const [start3 = "", path2 = ""] = output.split("	");
+        return { start: start3, path: path2 };
       }
       async #stopAgent(paneId) {
         this.#paneStartAndPath(paneId);
@@ -38829,7 +39017,7 @@ var init_tmux_server_session_create = __esm({
 
 // packages/daemon/src/lib/tmux-session-mutation-fence.ts
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 function createTmuxSessionMutationFence() {
   const context = new AsyncLocalStorage();
   return {
@@ -38844,7 +39032,7 @@ function createTmuxSessionMutationFence() {
       return (args) => {
         const selected = context.getStore();
         if (!selected) return run(args);
-        const sentinel = `tmux-session-stale.${randomUUID22()}`;
+        const sentinel = `tmux-session-stale.${randomUUID23()}`;
         const output = run([
           "if-shell",
           "-t",
@@ -39984,7 +40172,7 @@ var init_workspace_promotion2 = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-session-open.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
+import { randomUUID as randomUUID24 } from "node:crypto";
 function createNativeTmuxSessionOpener(options) {
   let disposed = false;
   let tail = Promise.resolve();
@@ -40007,7 +40195,7 @@ function createNativeTmuxSessionOpener(options) {
     const [, nativeSessionId, created, name] = matches[0];
     const run = async (args) => {
       assertOpen();
-      const sentinel = `tmux-session-stale.${randomUUID23()}`;
+      const sentinel = `tmux-session-stale.${randomUUID24()}`;
       const condition = `#{&&:#{==:#{session_id},${nativeSessionId}},#{==:#{session_created},${created}}}`;
       const command3 = args.map((arg) => arg === ";" ? ";" : shellEscape(arg)).join(" ");
       const output = await options.run([
@@ -40033,7 +40221,7 @@ function createNativeTmuxSessionOpener(options) {
     });
     try {
       const result2 = await promotion.promote({
-        operationId: randomUUID23(),
+        operationId: randomUUID24(),
         expectedDaemonInstanceId: options.generation,
         intent: { sessionId: fleetSessionIdForName(name) }
       });
@@ -40066,7 +40254,7 @@ function createNativeTmuxSessionOpener(options) {
       const observed = observedAgentSchema.parse(input);
       assertOpen();
       if (pending.size >= 16) throw new Error("Session admission capacity reached");
-      const key2 = randomUUID23();
+      const key2 = randomUUID24();
       const operation = tail.then(async () => {
         const result2 = await open5(liveSessionId, observed);
         if (!result2.semanticPaneId) throw new Error("Agent admission returned no target");
@@ -40215,7 +40403,7 @@ var init_tmux_pane_editor_context = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/runtime-observability.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { randomUUID as randomUUID25 } from "node:crypto";
 import { z as z104 } from "zod";
 function createSessionRuntimeObservability(options = {}) {
   const capacity = options.capacity ?? 1024;
@@ -40225,7 +40413,7 @@ function createSessionRuntimeObservability(options = {}) {
   const processId = options.processId ?? `daemon:${process.pid}`;
   const clockId = options.clockId ?? "node-performance-now";
   const clockKind = options.clockKind ?? "performance-now";
-  const createTraceId = options.createTraceId ?? randomUUID24;
+  const createTraceId = options.createTraceId ?? randomUUID25;
   const spans = [];
   let cursor2 = 0;
   let droppedSpans = 0;
@@ -40240,7 +40428,7 @@ function createSessionRuntimeObservability(options = {}) {
       });
     },
     recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared, terminalDelivery, terminalReseed) {
-      const span = Object.freeze({
+      const span2 = Object.freeze({
         traceId: trace?.traceId ?? null,
         scenario: trace?.scenario ?? null,
         authority: trace?.authority ?? null,
@@ -40258,13 +40446,13 @@ function createSessionRuntimeObservability(options = {}) {
         ...terminalDelivery ? { terminalDelivery: Object.freeze({ ...terminalDelivery }) } : {},
         ...terminalReseed ? { terminalReseed: Object.freeze({ ...terminalReseed }) } : {}
       });
-      if (spans.length < capacity) spans.push(span);
+      if (spans.length < capacity) spans.push(span2);
       else {
-        spans[cursor2] = span;
+        spans[cursor2] = span2;
         cursor2 = (cursor2 + 1) % capacity;
         droppedSpans += 1;
       }
-      options.onSpan?.(span);
+      options.onSpan?.(span2);
     },
     snapshot() {
       const ordered = spans.length < capacity || cursor2 === 0 ? [...spans] : [...spans.slice(cursor2), ...spans.slice(0, cursor2)];
@@ -40875,14 +41063,14 @@ var init_control_channel = __esm({
               }
               if (event.kind === "error" && sink.index !== sink.state.resultIndex)
                 this.discardedErrors += 1;
-              if (event.kind === "error" && sink.index === 0) {
+              if (event.kind === "error") {
                 while (this.pending[0]?.kind === "command-list" && this.pending[0].state === sink.state)
                   this.pending.shift();
                 if (!sink.state.settled) {
                   sink.state.settled = true;
                   sink.state.onReply({
                     ok: false,
-                    lines: sink.state.budget || sink.state.resultIndex === 0 ? sink.state.lines : sink.state.leadingErrorLines
+                    lines: sink.index > 0 || sink.state.budget || sink.state.resultIndex === 0 ? sink.state.lines : sink.state.leadingErrorLines
                   });
                 }
               } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
@@ -41611,6 +41799,7 @@ var init_control_mode_ownership = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/mirror-service.ts
+import { randomUUID as randomUUID26 } from "node:crypto";
 import { setTimeout as waitForPublication } from "node:timers/promises";
 import { accessSync as accessSync7, constants as constants13, realpathSync as realpathSync15, statSync as statSync12 } from "node:fs";
 import { isAbsolute as isAbsolute19 } from "node:path";
@@ -41621,6 +41810,7 @@ var init_mirror_service = __esm({
     "use strict";
     init_src2();
     init_window_split_authority();
+    init_stock_split_resize();
     init_shared_window_index();
     init_registered_window_guard();
     init_tmux_client_execution();
@@ -41828,9 +42018,16 @@ var init_mirror_service = __esm({
             ready = await this.opts.splitLayoutPrepare();
           } catch {
           }
-          if (!ready || this.disposed || entry.retired || this.channels.get(session) !== entry)
+          if (!ready) {
+            const stock = await this.#stockSplitServer();
+            if (!stock || this.disposed || entry.retired || this.channels.get(session) !== entry)
+              throw new WindowSplitLayoutUnavailable();
+            return this.#readStockSplitLayout(entry, target);
+          }
+          if (this.disposed || entry.retired || this.channels.get(session) !== entry)
             throw new WindowSplitLayoutUnavailable();
         }
+        if (entry.stockSplitEpoch) throw new WindowSplitLayoutUnavailable();
         const epoch = this.opts.splitLayoutEpoch?.();
         let supported = false;
         try {
@@ -41842,6 +42039,23 @@ var init_mirror_service = __esm({
         entry.splitAuthority ??= new WindowSplitAuthority({
           describe: (window2) => entry.channel.describeSplitLayout(window2),
           serverEpoch: () => this.opts.splitLayoutEpoch?.() ?? null
+        });
+        return entry.splitAuthority.read(target);
+      }
+      async #stockSplitServer() {
+        try {
+          return await this.opts.splitLayoutStock?.() === true;
+        } catch {
+          return false;
+        }
+      }
+      #readStockSplitLayout(entry, target) {
+        if (entry.splitAuthority && !entry.stockSplitEpoch) throw new WindowSplitLayoutUnavailable();
+        const epoch = entry.stockSplitEpoch ??= randomUUID26();
+        entry.splitAuthority ??= new WindowSplitAuthority({
+          describe: (window2) => entry.channel.describeSplitLayout(window2, true),
+          serverEpoch: () => epoch,
+          stock: true
         });
         return entry.splitAuthority.read(target);
       }
@@ -41859,15 +42073,19 @@ var init_mirror_service = __esm({
         await entry.started;
         const resolved2 = current().resolve(captured);
         const successor = current().prepareSuccessor(captured);
-        const result2 = await runNative(resolved2.request, {
+        const authorize = () => {
+          current().resolve(captured);
+          authorizeBeforeEffect();
+        };
+        const result2 = entry.stockSplitEpoch ? await resizeStockSplit(resolved2.request, resolved2.session.created, authorize, {
+          readOptions: (windowId) => entry.channel.stockSplitOptions(windowId),
+          send: (command3) => entry.channel.stockSplitCommand(command3)
+        }) : await runNative(resolved2.request, {
           operationId,
           serverEpoch: resolved2.serverEpoch,
           session: resolved2.session,
           anchor: resolved2.anchor,
-          authorizeBeforeEffect: () => {
-            current().resolve(captured);
-            authorizeBeforeEffect();
-          }
+          authorizeBeforeEffect: authorize
         });
         if (result2.status !== "applied") return result2;
         const deadline = performance.now() + 100;
@@ -42473,7 +42691,7 @@ var init_semantic_mutation_resource_changes = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
-import { randomUUID as randomUUID25 } from "node:crypto";
+import { randomUUID as randomUUID27 } from "node:crypto";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "node:util";
 import { z as z105 } from "zod";
 function replayedResult(result2) {
@@ -42740,7 +42958,7 @@ var init_semantic_mutation_executor = __esm({
           this.#publish(operationId, intent, "rejected", null, void 0, origin, interactionContext);
           throw error;
         }
-        const executionId = randomUUID25();
+        const executionId = randomUUID27();
         const needsTmuxObservation = sessionRuntimeIntentNeedsTmuxObservation(intent);
         let observed = null;
         if (needsTmuxObservation) {
@@ -42959,7 +43177,7 @@ var init_semantic_mutation_executor = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/history-anchor-owner.ts
-import { randomUUID as randomUUID26 } from "node:crypto";
+import { randomUUID as randomUUID28 } from "node:crypto";
 var MAX_TOKENS, PROOF_TTL_MS, HistoryAnchorOwner;
 var init_history_anchor_owner = __esm({
   "packages/daemon/src/terminal/session-runtime/history-anchor-owner.ts"() {
@@ -43053,7 +43271,7 @@ var init_history_anchor_owner = __esm({
         const ordinal = known.first + historyIndex;
         if (ordinal < this.#first || ordinal >= this.#first + this.#length) return { status: "lost" };
         while (this.#tokens.size >= MAX_TOKENS) this.#tokens.delete(this.#tokens.keys().next().value);
-        const token2 = randomUUID26();
+        const token2 = randomUUID28();
         this.#tokens.set(token2, { ordinal });
         return { status: "captured", token: token2 };
       }
@@ -43442,15 +43660,15 @@ var init_terminal_conformance = __esm({
 
 // packages/core/src/terminal-compact-capability.ts
 function consumeCompactReplicaCapability(owner, baseline, hash) {
-  const capability2 = compactReplicaCapabilities.get(owner);
+  const capability = compactReplicaCapabilities.get(owner);
   compactReplicaCapabilities.delete(owner);
-  if (!capability2 || capability2.baseline !== baseline || capability2.hash !== hash) return void 0;
-  return capability2.snapshot;
+  if (!capability || capability.baseline !== baseline || capability.hash !== hash) return void 0;
+  return capability.snapshot;
 }
 function consumeVerifiedTombstoneInterval(owner, baseline, hash, baseRevision, revision) {
-  const capability2 = compactReplicaCapabilities.get(owner);
+  const capability = compactReplicaCapabilities.get(owner);
   compactReplicaCapabilities.delete(owner);
-  return capability2 !== void 0 && capability2.baseline === baseline && capability2.snapshot === null && capability2.hash === hash && capability2.tombstoneInterval?.baseRevision === baseRevision && capability2.tombstoneInterval.revision === revision;
+  return capability !== void 0 && capability.baseline === baseline && capability.snapshot === null && capability.hash === hash && capability.tombstoneInterval?.baseRevision === baseRevision && capability.tombstoneInterval.revision === revision;
 }
 var compactReplicaCapabilities;
 var init_terminal_compact_capability = __esm({
@@ -43943,9 +44161,9 @@ var init_terminal_fnv64_wasm = __esm({
         let offset = 0;
         while (offset < value.length) {
           const count = Math.min(SCRATCH_BYTES - this.#length, value.length - offset);
-          const start2 = this.#length;
+          const start3 = this.#length;
           for (let index = 0; index < count; index++)
-            this.#buffer[start2 + index] = value.charCodeAt(offset + index);
+            this.#buffer[start3 + index] = value.charCodeAt(offset + index);
           this.#length += count;
           offset += count;
           if (this.#length === SCRATCH_BYTES) this.#flush();
@@ -46859,10 +47077,10 @@ function projectNativeGridRow(source, columns, startColumn = 0, wrapped = false)
     const clippedOwner = x === 0 && (native2.flags & 4) !== 0 && previous?.width === 2 && !(previous.flags & 4);
     const styled = paint(clippedOwner ? previous : native2);
     if (native2.flags & (4 | 64 | 128) || native2.width < 1 || native2.width > 2 || x + native2.width > columns) {
-      const span = native2.flags & 128 ? Math.max(1, Math.min(native2.width, columns - x)) : 1;
+      const span2 = native2.flags & 128 ? Math.max(1, Math.min(native2.width, columns - x)) : 1;
       const blank = freezePaint({ ...styled, grapheme: "", width: 1 });
-      for (let offset = 0; offset < span; offset++) cells[x + offset] = blank;
-      x += span - 1;
+      for (let offset = 0; offset < span2; offset++) cells[x + offset] = blank;
+      x += span2 - 1;
       continue;
     }
     cells[x] = freezePaint(styled);
@@ -46941,9 +47159,9 @@ function stringFromCodePoint(codePoint) {
   }
   return String.fromCharCode(codePoint);
 }
-function utf32ToString(data, start2 = 0, end = data.length) {
+function utf32ToString(data, start3 = 0, end = data.length) {
   let result2 = "";
-  for (let i = start2; i < end; ++i) {
+  for (let i = start3; i < end; ++i) {
     let codepoint = data[i];
     if (codepoint > 65535) {
       codepoint -= 65536;
@@ -49856,30 +50074,30 @@ ${stackTraceFormattedLines.join("\n")}
           this.setCellFromCodepoint(pos, 0, 1, fillCellData);
         }
       }
-      replaceCells(start2, end, fillCellData, respectProtect = false) {
+      replaceCells(start3, end, fillCellData, respectProtect = false) {
         if (respectProtect) {
-          if (start2 && this.getWidth(start2 - 1) === 2 && !this.isProtected(start2 - 1)) {
-            this.setCellFromCodepoint(start2 - 1, 0, 1, fillCellData);
+          if (start3 && this.getWidth(start3 - 1) === 2 && !this.isProtected(start3 - 1)) {
+            this.setCellFromCodepoint(start3 - 1, 0, 1, fillCellData);
           }
           if (end < this.length && this.getWidth(end - 1) === 2 && !this.isProtected(end)) {
             this.setCellFromCodepoint(end, 0, 1, fillCellData);
           }
-          while (start2 < end && start2 < this.length) {
-            if (!this.isProtected(start2)) {
-              this.setCell(start2, fillCellData);
+          while (start3 < end && start3 < this.length) {
+            if (!this.isProtected(start3)) {
+              this.setCell(start3, fillCellData);
             }
-            start2++;
+            start3++;
           }
           return;
         }
-        if (start2 && this.getWidth(start2 - 1) === 2) {
-          this.setCellFromCodepoint(start2 - 1, 0, 1, fillCellData);
+        if (start3 && this.getWidth(start3 - 1) === 2) {
+          this.setCellFromCodepoint(start3 - 1, 0, 1, fillCellData);
         }
         if (end < this.length && this.getWidth(end - 1) === 2) {
           this.setCellFromCodepoint(end, 0, 1, fillCellData);
         }
-        while (start2 < end && start2 < this.length) {
-          this.setCell(start2++, fillCellData);
+        while (start3 < end && start3 < this.length) {
+          this.setCell(start3++, fillCellData);
         }
       }
       /**
@@ -50344,22 +50562,22 @@ ${stackTraceFormattedLines.join("\n")}
        * @param deleteCount The number of elements to delete.
        * @param items The items to insert.
        */
-      splice(start2, deleteCount, ...items) {
+      splice(start3, deleteCount, ...items) {
         if (deleteCount) {
-          for (let i = start2; i < this._length - deleteCount; i++) {
+          for (let i = start3; i < this._length - deleteCount; i++) {
             this._array[this._getCyclicIndex(i)] = this._array[this._getCyclicIndex(i + deleteCount)];
           }
           this._length -= deleteCount;
-          this.onDeleteEmitter.fire({ index: start2, amount: deleteCount });
+          this.onDeleteEmitter.fire({ index: start3, amount: deleteCount });
         }
-        for (let i = this._length - 1; i >= start2; i--) {
+        for (let i = this._length - 1; i >= start3; i--) {
           this._array[this._getCyclicIndex(i + items.length)] = this._array[this._getCyclicIndex(i)];
         }
         for (let i = 0; i < items.length; i++) {
-          this._array[this._getCyclicIndex(start2 + i)] = items[i];
+          this._array[this._getCyclicIndex(start3 + i)] = items[i];
         }
         if (items.length) {
-          this.onInsertEmitter.fire({ index: start2, amount: items.length });
+          this.onInsertEmitter.fire({ index: start3, amount: items.length });
         }
         if (this._length + items.length > this._maxLength) {
           const countToTrim = this._length + items.length - this._maxLength;
@@ -50382,21 +50600,21 @@ ${stackTraceFormattedLines.join("\n")}
         this._length -= count;
         this.onTrimEmitter.fire(count);
       }
-      shiftElements(start2, count, offset) {
+      shiftElements(start3, count, offset) {
         if (count <= 0) {
           return;
         }
-        if (start2 < 0 || start2 >= this._length) {
+        if (start3 < 0 || start3 >= this._length) {
           throw new Error("start argument out of range");
         }
-        if (start2 + offset < 0) {
+        if (start3 + offset < 0) {
           throw new Error("Cannot shift elements in list beyond index 0");
         }
         if (offset > 0) {
           for (let i = count - 1; i >= 0; i--) {
-            this.set(start2 + i + offset, this.get(start2 + i));
+            this.set(start3 + i + offset, this.get(start3 + i));
           }
-          const expandListBy = start2 + count + offset - this._length;
+          const expandListBy = start3 + count + offset - this._length;
           if (expandListBy > 0) {
             this._length += expandListBy;
             while (this._length > this._maxLength) {
@@ -50407,7 +50625,7 @@ ${stackTraceFormattedLines.join("\n")}
           }
         } else {
           for (let i = 0; i < count; i++) {
-            this.set(start2 + i + offset, this.get(start2 + i));
+            this.set(start3 + i + offset, this.get(start3 + i));
           }
         }
       }
@@ -52365,10 +52583,10 @@ ${stackTraceFormattedLines.join("\n")}
         const res = [];
         for (let i = 0; i < this.length; ++i) {
           res.push(this.params[i]);
-          const start2 = this._subParamsIdx[i] >> 8;
+          const start3 = this._subParamsIdx[i] >> 8;
           const end = this._subParamsIdx[i] & 255;
-          if (end - start2 > 0) {
-            res.push(Array.prototype.slice.call(this._subParams, start2, end));
+          if (end - start3 > 0) {
+            res.push(Array.prototype.slice.call(this._subParams, start3, end));
           }
         }
         return res;
@@ -52436,10 +52654,10 @@ ${stackTraceFormattedLines.join("\n")}
        * the values if you need to hold them in nonlocal scope.
        */
       getSubParams(idx) {
-        const start2 = this._subParamsIdx[idx] >> 8;
+        const start3 = this._subParamsIdx[idx] >> 8;
         const end = this._subParamsIdx[idx] & 255;
-        if (end - start2 > 0) {
-          return this._subParams.subarray(start2, end);
+        if (end - start3 > 0) {
+          return this._subParams.subarray(start3, end);
         }
         return null;
       }
@@ -52450,10 +52668,10 @@ ${stackTraceFormattedLines.join("\n")}
       getSubParamsAll() {
         const result2 = {};
         for (let i = 0; i < this.length; ++i) {
-          const start2 = this._subParamsIdx[i] >> 8;
+          const start3 = this._subParamsIdx[i] >> 8;
           const end = this._subParamsIdx[i] & 255;
-          if (end - start2 > 0) {
-            result2[i] = this._subParams.slice(start2, end);
+          if (end - start3 > 0) {
+            result2[i] = this._subParams.slice(start3, end);
           }
         }
         return result2;
@@ -52535,12 +52753,12 @@ ${stackTraceFormattedLines.join("\n")}
           }
         }
       }
-      _put(data, start2, end) {
+      _put(data, start3, end) {
         if (!this._active.length) {
-          this._handlerFb(this._id, "PUT", utf32ToString(data, start2, end));
+          this._handlerFb(this._id, "PUT", utf32ToString(data, start3, end));
         } else {
           for (let j = this._active.length - 1; j >= 0; j--) {
-            this._active[j].put(data, start2, end);
+            this._active[j].put(data, start3, end);
           }
         }
       }
@@ -52555,13 +52773,13 @@ ${stackTraceFormattedLines.join("\n")}
        * Payload chunks are not further processed and get
        * directly passed to the handlers.
        */
-      put(data, start2, end) {
+      put(data, start3, end) {
         if (this._state === 3) {
           return;
         }
         if (this._state === 1) {
-          while (start2 < end) {
-            const code2 = data[start2++];
+          while (start3 < end) {
+            const code2 = data[start3++];
             if (code2 === 59) {
               this._state = 2;
               this._start();
@@ -52577,8 +52795,8 @@ ${stackTraceFormattedLines.join("\n")}
             this._id = this._id * 10 + code2 - 48;
           }
         }
-        if (this._state === 2 && end - start2 > 0) {
-          this._put(data, start2, end);
+        if (this._state === 2 && end - start3 > 0) {
+          this._put(data, start3, end);
         }
       }
       /**
@@ -52646,11 +52864,11 @@ ${stackTraceFormattedLines.join("\n")}
         this._data = "";
         this._hitLimit = false;
       }
-      put(data, start2, end) {
+      put(data, start3, end) {
         if (this._hitLimit) {
           return;
         }
-        this._data += utf32ToString(data, start2, end);
+        this._data += utf32ToString(data, start3, end);
         if (this._data.length > PAYLOAD_LIMIT) {
           this._data = "";
           this._hitLimit = true;
@@ -52738,12 +52956,12 @@ ${stackTraceFormattedLines.join("\n")}
           }
         }
       }
-      put(data, start2, end) {
+      put(data, start3, end) {
         if (!this._active.length) {
-          this._handlerFb(this._ident, "PUT", utf32ToString(data, start2, end));
+          this._handlerFb(this._ident, "PUT", utf32ToString(data, start3, end));
         } else {
           for (let j = this._active.length - 1; j >= 0; j--) {
-            this._active[j].put(data, start2, end);
+            this._active[j].put(data, start3, end);
           }
         }
       }
@@ -52802,11 +53020,11 @@ ${stackTraceFormattedLines.join("\n")}
         this._data = "";
         this._hitLimit = false;
       }
-      put(data, start2, end) {
+      put(data, start3, end) {
         if (this._hitLimit) {
           return;
         }
-        this._data += utf32ToString(data, start2, end);
+        this._data += utf32ToString(data, start3, end);
         if (this._data.length > PAYLOAD_LIMIT) {
           this._data = "";
           this._hitLimit = true;
@@ -52873,7 +53091,7 @@ ${stackTraceFormattedLines.join("\n")}
       const table2 = new TransitionTable(4095);
       const BYTE_VALUES = 256;
       const blueprint = Array.apply(null, Array(BYTE_VALUES)).map((unused, i) => i);
-      const r = (start2, end) => blueprint.slice(start2, end);
+      const r = (start3, end) => blueprint.slice(start3, end);
       const PRINTABLES = r(32, 127);
       const EXECUTABLES = r(0, 24);
       EXECUTABLES.push(25);
@@ -53522,7 +53740,7 @@ ${stackTraceFormattedLines.join("\n")}
         this._params.addParam(0);
         this._collect = 0;
         this.precedingJoinState = 0;
-        this._printHandlerFb = (data, start2, end) => {
+        this._printHandlerFb = (data, start3, end) => {
         };
         this._executeHandlerFb = (code2) => {
         };
@@ -53747,12 +53965,12 @@ ${stackTraceFormattedLines.join("\n")}
       parse(data, length, promiseResult) {
         let code2 = 0;
         let transition = 0;
-        let start2 = 0;
+        let start3 = 0;
         let handlerResult;
         if (this._parseStack.state) {
           if (this._parseStack.state === 2) {
             this._parseStack.state = 0;
-            start2 = this._parseStack.chunkPos + 1;
+            start3 = this._parseStack.chunkPos + 1;
           } else {
             if (promiseResult === void 0 || this._parseStack.state === 1) {
               this._parseStack.state = 1;
@@ -53813,12 +54031,12 @@ ${stackTraceFormattedLines.join("\n")}
                 break;
             }
             this._parseStack.state = 0;
-            start2 = this._parseStack.chunkPos + 1;
+            start3 = this._parseStack.chunkPos + 1;
             this.precedingJoinState = 0;
             this.currentState = this._parseStack.transition & 15;
           }
         }
-        for (let i = start2; i < length; ++i) {
+        for (let i = start3; i < length; ++i) {
           code2 = data[i];
           transition = this._transitions.table[this.currentState << 8 | (code2 < 160 ? code2 : NON_ASCII_PRINTABLE)];
           switch (transition >> 4) {
@@ -54066,7 +54284,7 @@ ${stackTraceFormattedLines.join("\n")}
           }
           this._logService.debug("Unknown DCS code: ", { identifier: this._parser.identToString(ident), action, payload });
         });
-        this._parser.setPrintHandler((data, start2, end) => this.print(data, start2, end));
+        this._parser.setPrintHandler((data, start3, end) => this.print(data, start3, end));
         this._parser.registerCsiHandler({ final: "@" }, (params) => this.insertChars(params));
         this._parser.registerCsiHandler({ intermediates: " ", final: "@" }, (params) => this.scrollLeft(params));
         this._parser.registerCsiHandler({ final: "A" }, (params) => this.cursorUp(params));
@@ -54220,7 +54438,7 @@ ${stackTraceFormattedLines.join("\n")}
         let result2;
         let cursorStartX = this._activeBuffer.x;
         let cursorStartY = this._activeBuffer.y;
-        let start2 = 0;
+        let start3 = 0;
         const wasPaused = this._parseStack.paused;
         if (wasPaused) {
           if (result2 = this._parser.parse(this._parseBuffer, this._parseStack.decodedLength, promiseResult)) {
@@ -54231,7 +54449,7 @@ ${stackTraceFormattedLines.join("\n")}
           cursorStartY = this._parseStack.cursorStartY;
           this._parseStack.paused = false;
           if (data.length > MAX_PARSEBUFFER_LENGTH) {
-            start2 = this._parseStack.position + MAX_PARSEBUFFER_LENGTH;
+            start3 = this._parseStack.position + MAX_PARSEBUFFER_LENGTH;
           }
         }
         if (this._logService.logLevel <= 1) {
@@ -54252,7 +54470,7 @@ ${stackTraceFormattedLines.join("\n")}
           this._dirtyRowTracker.clearRange();
         }
         if (data.length > MAX_PARSEBUFFER_LENGTH) {
-          for (let i = start2; i < data.length; i += MAX_PARSEBUFFER_LENGTH) {
+          for (let i = start3; i < data.length; i += MAX_PARSEBUFFER_LENGTH) {
             const end = i + MAX_PARSEBUFFER_LENGTH < data.length ? i + MAX_PARSEBUFFER_LENGTH : data.length;
             const len = typeof data === "string" ? this._stringDecoder.decode(data.substring(i, end), this._parseBuffer) : this._utf8Decoder.decode(data.subarray(i, end), this._parseBuffer);
             if (result2 = this._parser.parse(this._parseBuffer, len)) {
@@ -54283,7 +54501,7 @@ ${stackTraceFormattedLines.join("\n")}
           });
         }
       }
-      print(data, start2, end) {
+      print(data, start3, end) {
         let code2;
         let chWidth;
         const charset = this._charsetService.charset;
@@ -54294,11 +54512,11 @@ ${stackTraceFormattedLines.join("\n")}
         const curAttr = this._curAttrData;
         let bufferRow = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
         this._dirtyRowTracker.markDirty(this._activeBuffer.y);
-        if (this._activeBuffer.x && end - start2 > 0 && bufferRow.getWidth(this._activeBuffer.x - 1) === 2) {
+        if (this._activeBuffer.x && end - start3 > 0 && bufferRow.getWidth(this._activeBuffer.x - 1) === 2) {
           bufferRow.setCellFromCodepoint(this._activeBuffer.x - 1, 0, 1, curAttr);
         }
         let precedingJoinState = this._parser.precedingJoinState;
-        for (let pos = start2; pos < end; ++pos) {
+        for (let pos = start3; pos < end; ++pos) {
           code2 = data[pos];
           if (code2 < 127 && charset) {
             const ch = charset[String.fromCharCode(code2)];
@@ -54382,7 +54600,7 @@ ${stackTraceFormattedLines.join("\n")}
           }
         }
         this._parser.precedingJoinState = precedingJoinState;
-        if (this._activeBuffer.x < cols && end - start2 > 0 && bufferRow.getWidth(this._activeBuffer.x) === 0 && !bufferRow.hasContent(this._activeBuffer.x)) {
+        if (this._activeBuffer.x < cols && end - start3 > 0 && bufferRow.getWidth(this._activeBuffer.x) === 0 && !bufferRow.hasContent(this._activeBuffer.x)) {
           bufferRow.setCellFromCodepoint(this._activeBuffer.x, 0, 1, curAttr);
         }
         this._dirtyRowTracker.markDirty(this._activeBuffer.y);
@@ -54808,15 +55026,15 @@ ${stackTraceFormattedLines.join("\n")}
        * @param clearWrap clear the isWrapped flag
        * @param respectProtect Whether to respect the protection attribute (DECSCA).
        */
-      _eraseInBufferLine(y, start2, end, clearWrap = false, respectProtect = false) {
+      _eraseInBufferLine(y, start3, end, clearWrap = false, respectProtect = false) {
         const line = this._activeBuffer.lines.get(this._activeBuffer.ybase + y);
         line.replaceCells(
-          start2,
+          start3,
           end,
           this._activeBuffer.getNullCell(this._eraseAttrData()),
           respectProtect
         );
-        if (!respectProtect && start2 === 0 && end >= this._bufferService.cols) line.tmuxCellUsed = 0;
+        if (!respectProtect && start3 === 0 && end >= this._bufferService.cols) line.tmuxCellUsed = 0;
         if (clearWrap) {
           line.isWrapped = false;
         }
@@ -64387,7 +64605,7 @@ var init_authority_arbiter = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
-import { randomUUID as randomUUID27 } from "node:crypto";
+import { randomUUID as randomUUID29 } from "node:crypto";
 import { z as z109 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
@@ -64585,7 +64803,7 @@ var init_registry2 = __esm({
           observability: options.semanticMutations.observability ?? this.#observability
         }) : null;
         this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
-        this.#createControllerToken = options.createControllerToken ?? randomUUID27;
+        this.#createControllerToken = options.createControllerToken ?? randomUUID29;
         this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
         this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
           this.#sessions.get(session)?.noteControlExit();
@@ -66974,7 +67192,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash21, randomBytes as randomBytes5, randomUUID as randomUUID28, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash21, randomBytes as randomBytes5, randomUUID as randomUUID30, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 import { z as z113 } from "zod";
 function positiveDuration(value, fallback, label4) {
   const resolved2 = value ?? fallback;
@@ -67047,7 +67265,7 @@ var init_lease_manager = __esm({
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes5;
-        this.#createId = options.createId ?? randomUUID28;
+        this.#createId = options.createId ?? randomUUID30;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
         this.#maxLeaseTtlMs = positiveDuration(
@@ -69794,7 +70012,7 @@ var init_tmux_view_executor = __esm({
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
 import { accessSync as accessSync8, constants as constants14, realpathSync as realpathSync16, statSync as statSync14 } from "node:fs";
 import { delimiter as delimiter3, isAbsolute as isAbsolute20, join as join35 } from "node:path";
-import { randomUUID as randomUUID29 } from "node:crypto";
+import { randomUUID as randomUUID31 } from "node:crypto";
 import { execFileSync as execFileSync16 } from "node:child_process";
 function defaultSchedule2(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
@@ -69988,7 +70206,7 @@ var init_pty_tmux_attachment_launcher = __esm({
         if (existing) this.#dispose(existing);
         this.#reservedAttachments.add(request3.identity.attachmentId);
         const lifecycleEpoch = this.#lifecycleEpoch;
-        const attemptId = randomUUID29();
+        const attemptId = randomUUID31();
         let resolveOutcome;
         const outcome = new Promise((resolve45) => {
           resolveOutcome = resolve45;
@@ -72328,7 +72546,7 @@ var init_agent_status_probe = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash22, randomBytes as randomBytes6, randomUUID as randomUUID30, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash22, randomBytes as randomBytes6, randomUUID as randomUUID32, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z117 } from "zod";
 function positiveDuration2(value, fallback, label4) {
   const resolved2 = value ?? fallback;
@@ -72381,7 +72599,7 @@ var init_lease_manager2 = __esm({
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes6;
-        this.#createId = options.createId ?? randomUUID30;
+        this.#createId = options.createId ?? randomUUID32;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
           options.redemptionProcessingTtlMs,
@@ -72549,7 +72767,7 @@ var init_lease_manager2 = __esm({
 });
 
 // packages/daemon/src/terminal/graphics/native-surface-viewer.ts
-import { randomUUID as randomUUID31 } from "node:crypto";
+import { randomUUID as randomUUID33 } from "node:crypto";
 var MAX_RETAINED, NativeSurfaceViewer;
 var init_native_surface_viewer = __esm({
   "packages/daemon/src/terminal/graphics/native-surface-viewer.ts"() {
@@ -72582,7 +72800,7 @@ var init_native_surface_viewer = __esm({
             this.#active?.session.fallback("unsupported");
             this.#active = null;
             this.#prune();
-            this.#nonce = available ? randomUUID31() : null;
+            this.#nonce = available ? randomUUID33() : null;
             this.#used = false;
             this.#send({
               type: "terminal-surface-available",
@@ -74454,9 +74672,9 @@ var init_pane_stream_websocket = __esm({
         if (!batch || this.#closed || channel.closed) return;
         let seed = batch.seed ?? new Uint8Array(0);
         if (seed.byteLength > PANE_STREAM_MAX_SEED_BYTES) {
-          let start2 = seed.byteLength - PANE_STREAM_MAX_SEED_BYTES;
-          while (start2 < seed.byteLength && seed[start2] !== 10) start2 += 1;
-          seed = seed.subarray(Math.min(start2 + 1, seed.byteLength));
+          let start3 = seed.byteLength - PANE_STREAM_MAX_SEED_BYTES;
+          while (start3 < seed.byteLength && seed[start3] !== 10) start3 += 1;
+          seed = seed.subarray(Math.min(start3 + 1, seed.byteLength));
         }
         const held = chunkBytes(concatBytes(batch.held), PANE_STREAM_MAX_OUTPUT_BYTES).slice(
           0,
@@ -75757,7 +75975,7 @@ var init_interaction_observation_status = __esm({
 });
 
 // packages/daemon/src/lib/interaction-evidence-authority.ts
-import { randomUUID as randomUUID32 } from "node:crypto";
+import { randomUUID as randomUUID34 } from "node:crypto";
 var HISTORY_CAPACITY, HISTORY_MS, runtimeKey, bindingKey, InteractionEvidenceAuthority;
 var init_interaction_evidence_authority = __esm({
   "packages/daemon/src/lib/interaction-evidence-authority.ts"() {
@@ -75820,7 +76038,7 @@ var init_interaction_evidence_authority = __esm({
           if (!/^\$(?:0|[1-9][0-9]*)$/u.test(row.sessionId) || !/^%(?:0|[1-9][0-9]*)$/u.test(row.runtimePaneId) || !row.semanticPaneId)
             continue;
           const lifetimeKey = `${row.runtimePaneId}\0${row.semanticPaneId}`;
-          const paneLifetimeId = lifetimes.get(lifetimeKey) ?? randomUUID32();
+          const paneLifetimeId = lifetimes.get(lifetimeKey) ?? randomUUID34();
           const result2 = InteractionPaneEndpointSchemaZ.safeParse({
             kind: "pane",
             environmentId: this.#environmentId,
@@ -75864,7 +76082,7 @@ var init_interaction_evidence_authority = __esm({
           kind: "unresolved-pane",
           environmentId: this.#environmentId,
           serverScope: structuredClone(this.#serverScope),
-          observationRef: randomUUID32()
+          observationRef: randomUUID34()
         };
       }
       /** Join a fresh fleet row only to the exact current native binding. */
@@ -75890,7 +76108,7 @@ var init_interaction_evidence_authority = __esm({
           kind: "unresolved-pane",
           environmentId: this.#environmentId,
           serverScope: structuredClone(this.#serverScope),
-          observationRef: randomUUID32()
+          observationRef: randomUUID34()
         };
       }
       /** Grant must come directly from the current credential authority, never caller JSON. */
@@ -75919,10 +76137,10 @@ var init_interaction_evidence_authority = __esm({
 });
 
 // packages/daemon/src/lib/tmux-interaction-observation-handler.ts
-import { randomUUID as randomUUID33 } from "node:crypto";
+import { randomUUID as randomUUID35 } from "node:crypto";
 function externalTmuxInteractionDraft(observation2, destination) {
   const { workspaceName, semanticPaneId: semanticPaneId3, operationKind } = observation2;
-  const operationId = randomUUID33();
+  const operationId = randomUUID35();
   const at = (/* @__PURE__ */ new Date()).toISOString();
   return {
     evidence: InteractionEvidenceSchemaZ.parse({
@@ -75974,7 +76192,7 @@ var init_tmux_interaction_observation_handler = __esm({
 
 // packages/daemon/src/lib/tmux-server-owner.ts
 import { execFileSync as execFileSync17 } from "node:child_process";
-import { createHash as createHash23, randomUUID as randomUUID34 } from "node:crypto";
+import { createHash as createHash23, randomUUID as randomUUID36 } from "node:crypto";
 import { mkdirSync as mkdirSync21 } from "node:fs";
 import { z as z119 } from "zod";
 function discoveredWorkspaceName(registry, sessionName) {
@@ -76230,6 +76448,7 @@ async function createNativeTmuxServerOwner(options) {
         observation: () => observationSelector ?? null,
         runPinnedTmux: generationRun
       }),
+      splitLayoutStock: createStockSplitProbe({ runPinnedTmux: generationRun }),
       createOwnedViewerAdapter: createOwnedViewerAdapterFactory({
         environmentId: options.environmentId,
         serverScope: { serverId: options.serverId, generation },
@@ -76307,7 +76526,7 @@ async function createNativeTmuxServerOwner(options) {
         gap.reason === "overflow" ? "retention-overflow" : gap.reason === "hooks-replaced" ? "hooks-replaced" : "uncertain-consume"
       );
     },
-    internalReadOwnerToken: randomUUID34(),
+    internalReadOwnerToken: randomUUID36(),
     registry: workspaceRegistry,
     tmuxAuthority: authority2,
     io: { runTmux: generationRunAsync },
@@ -76599,7 +76818,7 @@ var init_tmux_server_owner = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-owners.ts
-import { randomUUID as randomUUID35 } from "node:crypto";
+import { randomUUID as randomUUID37 } from "node:crypto";
 var MAX_TMUX_SERVER_OWNERS, TmuxServerSelectorSchemaZ, TmuxServerRegistrationSchemaZ, TmuxServerScopeError, TmuxServerOwners;
 var init_tmux_server_owners = __esm({
   "packages/daemon/src/lib/tmux-server-owners.ts"() {
@@ -76671,7 +76890,7 @@ var init_tmux_server_owners = __esm({
           (other) => other !== entry && other.observation?.fingerprint === next.fingerprint && other.observation.valid()
         );
         if (duplicate) return;
-        const scope2 = { serverId: entry.registration.serverId, generation: randomUUID35() };
+        const scope2 = { serverId: entry.registration.serverId, generation: randomUUID37() };
         let owner;
         try {
           owner = await this.options.create(entry.registration, scope2, next);
@@ -76690,7 +76909,7 @@ var init_tmux_server_owners = __esm({
         return this.#serial(async () => {
           const registration = TmuxServerRegistrationSchemaZ.parse({
             ...input,
-            serverId: input.serverId ?? `tmux-server.${randomUUID35().replaceAll("-", "")}`
+            serverId: input.serverId ?? `tmux-server.${randomUUID37().replaceAll("-", "")}`
           });
           const sameSelector = [...this.#entries.values()].find(
             (entry2) => JSON.stringify(entry2.registration.selector) === JSON.stringify(registration.selector)
@@ -76791,7 +77010,7 @@ var init_tmux_server_owners = __esm({
 // packages/daemon/src/lib/tmux-server-registration.ts
 import { execFile as execFile11 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
-import { createHash as createHash24, randomUUID as randomUUID36 } from "node:crypto";
+import { createHash as createHash24, randomUUID as randomUUID38 } from "node:crypto";
 import {
   mkdirSync as mkdirSync22,
   readFileSync as readFileSync24,
@@ -76813,7 +77032,7 @@ function readTmuxServerRegistrations(path2) {
 function writeTmuxServerRegistrations(path2, registrations) {
   const file = FileSchema2.parse({ version: 1, servers: registrations });
   mkdirSync22(dirname29(path2), { recursive: true, mode: 448 });
-  const temporary = `${path2}.${randomUUID36()}.tmp`;
+  const temporary = `${path2}.${randomUUID38()}.tmp`;
   try {
     writeFileSync19(temporary, `${JSON.stringify(file, null, 2)}
 `, { mode: 384, flag: "wx" });
@@ -77010,7 +77229,7 @@ var init_pane_stream_upgrade = __esm({
 });
 
 // packages/daemon/src/lib/embedded-tmux-server-owners.ts
-import { randomUUID as randomUUID37 } from "node:crypto";
+import { randomUUID as randomUUID39 } from "node:crypto";
 import { join as join36 } from "node:path";
 async function createEmbeddedTmuxServerOwners(options) {
   const path2 = join36(options.stateDirectory, "tmux-servers.json");
@@ -77030,7 +77249,7 @@ async function createEmbeddedTmuxServerOwners(options) {
     }
   }
   const defaultRegistration = established ?? {
-    serverId: `tmux-server.${randomUUID37().replaceAll("-", "")}`,
+    serverId: `tmux-server.${randomUUID39().replaceAll("-", "")}`,
     label: "Default",
     selector: options.defaultAuthority.socketSelector
   };
@@ -77497,7 +77716,7 @@ var init_terminal_native_backing_route = __esm({
 });
 
 // packages/daemon/src/lib/embedded-daemon-lifecycle.ts
-async function startOwnedEmbeddedDaemon(options, start2) {
+async function startOwnedEmbeddedDaemon(options, start3) {
   let closed = false;
   let available = false;
   let current;
@@ -77505,7 +77724,7 @@ async function startOwnedEmbeddedDaemon(options, start2) {
   let stopping = null;
   let pendingRequest = null;
   const launch2 = async (nextOptions) => {
-    const generation = await start2({
+    const generation = await start3({
       ...nextOptions,
       requestRestart: (request3) => restart2(generation, request3)
     });
@@ -81658,7 +81877,7 @@ var init_workspace_open2 = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open-handoff.ts
-import { randomUUID as randomUUID38 } from "node:crypto";
+import { randomUUID as randomUUID40 } from "node:crypto";
 var WorkspaceOpenHandoffError, WorkspaceOpenHandoffCoordinator;
 var init_workspace_open_handoff2 = __esm({
   "packages/daemon/src/lib/workspace-open-handoff.ts"() {
@@ -81722,7 +81941,7 @@ var init_workspace_open_handoff2 = __esm({
           const preferredPaneId = "initialPaneId" in opened.resource ? opened.resource.initialPaneId : void 0;
           const proof = await this.#deps.prepareRuntime(workspaceName, preferredPaneId);
           this.#assertCurrent(ownerClientId, revision, expectedDaemonInstanceId);
-          const token2 = randomUUID38();
+          const token2 = randomUUID40();
           const result2 = {
             operationId,
             daemonInstanceId: this.#deps.daemonInstanceId,
@@ -82811,11 +83030,11 @@ function boundedCoordinate(value, path2) {
   }
   return Math.max(-APP_WINDOW_COORDINATE_LIMIT, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
 }
-function boundedExtent(value, minimum, path2) {
+function boundedExtent(value, minimum2, path2) {
   if (!Number.isFinite(value)) {
     throw new AppWindowKernelError("INVALID_INPUT", path2, "extent must be finite");
   }
-  return Math.max(minimum, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
+  return Math.max(minimum2, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
 }
 function requireTimestamp(previous, value) {
   let timestamp;
@@ -83597,7 +83816,7 @@ var init_terminal_attachment_upgrade = __esm({
 });
 
 // packages/daemon/src/terminal/graphics/native-surface-provider-channel.ts
-import { randomUUID as randomUUID39 } from "node:crypto";
+import { randomUUID as randomUUID41 } from "node:crypto";
 import { z as z123 } from "zod";
 var Register, Offer, WatchDemand, NativeSurfaceProviderChannel;
 var init_native_surface_provider_channel = __esm({
@@ -83703,7 +83922,7 @@ var init_native_surface_provider_channel = __esm({
       #open(context) {
         if (this.#closed || this.#connections.size >= 32)
           throw new Error("Native provider unavailable");
-        const connection = randomUUID39();
+        const connection = randomUUID41();
         this.#connections.set(connection, context);
         return {
           start: () => {
@@ -83851,7 +84070,7 @@ var init_active_projects = __esm({
 });
 
 // packages/daemon/src/lib/environment-identity.ts
-import { randomUUID as randomUUID40 } from "node:crypto";
+import { randomUUID as randomUUID42 } from "node:crypto";
 import { linkSync as linkSync3, mkdirSync as mkdirSync24, readFileSync as readFileSync26, rmSync as rmSync4, writeFileSync as writeFileSync21 } from "node:fs";
 import { dirname as dirname32, join as join39 } from "node:path";
 function environmentIdentityPath() {
@@ -83868,7 +84087,7 @@ function readPersistedEnvironmentId(path2) {
   }
 }
 function persistEnvironmentId(path2, environmentId) {
-  const temporary = `${path2}.${process.pid}.${randomUUID40()}.tmp`;
+  const temporary = `${path2}.${process.pid}.${randomUUID42()}.tmp`;
   try {
     mkdirSync24(dirname32(path2), { recursive: true });
     writeFileSync21(
@@ -83894,7 +84113,7 @@ function readOrMintEnvironmentId() {
     rmSync4(path2, { force: true });
   } catch {
   }
-  const minted = randomUUID40();
+  const minted = randomUUID42();
   persistEnvironmentId(path2, minted);
   return readPersistedEnvironmentId(path2) ?? minted;
 }
@@ -84432,7 +84651,7 @@ var init_daemon_provenance = __esm({
 });
 
 // packages/daemon/src/lib/automation-operation-registry.ts
-import { createHash as createHash26, randomUUID as randomUUID41 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID43 } from "node:crypto";
 var AutomationOperationUnavailableError, AutomationOperationRegistry;
 var init_automation_operation_registry = __esm({
   "packages/daemon/src/lib/automation-operation-registry.ts"() {
@@ -84444,7 +84663,7 @@ var init_automation_operation_registry = __esm({
       }
     };
     AutomationOperationRegistry = class {
-      #generation = randomUUID41();
+      #generation = randomUUID43();
       #entries = /* @__PURE__ */ new Map();
       #capacity;
       #retentionMs;
@@ -84464,7 +84683,7 @@ var init_automation_operation_registry = __esm({
         this.#prune();
         if (this.#entries.size >= this.#capacity)
           throw new Error("Automation operation capacity reached");
-        const operationId = randomUUID41();
+        const operationId = randomUUID43();
         this.#entries.set(operationId, {
           fingerprint: this.#fingerprint(canonicalIntent),
           expiresAt: this.#now() + this.#retentionMs,
@@ -86151,7 +86370,7 @@ var init_workspace_admission_route = __esm({
 });
 
 // packages/daemon/src/lib/saved-machines.ts
-import { randomUUID as randomUUID42 } from "node:crypto";
+import { randomUUID as randomUUID44 } from "node:crypto";
 import {
   closeSync as closeSync9,
   fstatSync as fstatSync7,
@@ -86221,7 +86440,7 @@ function persistSavedMachines(registry, path2) {
   if (Buffer.byteLength(contents) > MAX_REGISTRY_BYTES)
     throw new Error("Saved machine registry exceeds size limit");
   mkdirSync25(dirname33(path2), { recursive: true });
-  const temporary = `${path2}.${randomUUID42()}.tmp`;
+  const temporary = `${path2}.${randomUUID44()}.tmp`;
   try {
     writeFileSync22(temporary, contents, { flag: "wx", mode: 384 });
     renameSync15(temporary, path2);
@@ -86483,7 +86702,7 @@ import {
   unlinkSync as unlinkSync8,
   writeFileSync as writeFileSync23
 } from "node:fs";
-import { randomUUID as randomUUID43 } from "node:crypto";
+import { randomUUID as randomUUID45 } from "node:crypto";
 import { dirname as dirname34, join as join43 } from "node:path";
 function fleetClientStatePath() {
   return runtimeOwnedPath(join43(resolveRuntimeNamespace().registryDir, "fleet-view.json"));
@@ -86514,7 +86733,7 @@ function updateFleetClientState(change, path2 = fleetClientStatePath()) {
   if (Buffer.byteLength(contents) > MAX_BYTES3)
     throw new Error("Fleet view state exceeds its size limit");
   mkdirSync26(dirname34(path2), { recursive: true });
-  const temporary = `${path2}.${randomUUID43()}.tmp`;
+  const temporary = `${path2}.${randomUUID45()}.tmp`;
   try {
     writeFileSync23(temporary, contents, { flag: "wx", mode: 384 });
     renameSync16(temporary, path2);
@@ -90910,14 +91129,14 @@ var init_workspace_files_authority = __esm({
 // packages/daemon/src/command-center/resources/workspace-changes-git.ts
 function splitNul(buffer) {
   const tokens = [];
-  let start2 = 0;
+  let start3 = 0;
   for (let i = 0; i < buffer.length; i += 1) {
     if (buffer[i] === 0) {
-      tokens.push(buffer.toString("utf8", start2, i));
-      start2 = i + 1;
+      tokens.push(buffer.toString("utf8", start3, i));
+      start3 = i + 1;
     }
   }
-  if (start2 < buffer.length) tokens.push(buffer.toString("utf8", start2));
+  if (start3 < buffer.length) tokens.push(buffer.toString("utf8", start3));
   return tokens;
 }
 function mapStatusLetter(letter) {
@@ -92889,7 +93108,7 @@ function projectApplicationShellAgentGraphOverlay(input) {
     }
   }
   const groundTruthPairs = /* @__PURE__ */ new Set();
-  for (const edge2 of edges) groundTruthPairs.add(pairKey(edge2.from, edge2.to));
+  for (const edge of edges) groundTruthPairs.add(pairKey(edge.from, edge.to));
   const groundTruthGroupMembers = groups.map((group) => new Set(group.memberWindowIds));
   const emittedInferredPairs = /* @__PURE__ */ new Set();
   const emitInferred = (from, to, kind) => {
@@ -93364,7 +93583,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash33, randomUUID as randomUUID45 } from "node:crypto";
+import { createHash as createHash33, randomUUID as randomUUID47 } from "node:crypto";
 import {
   chmodSync as chmodSync7,
   existsSync as existsSync33,
@@ -93465,11 +93684,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync33(paths.data)) {
-    const temporary = join47(root, `.${assetId}.${randomUUID45()}.bin`);
+    const temporary = join47(root, `.${assetId}.${randomUUID47()}.bin`);
     writeFileSync25(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync18(temporary, paths.data);
   }
-  const metadataTemporary = join47(root, `.${assetId}.${randomUUID45()}.json`);
+  const metadataTemporary = join47(root, `.${assetId}.${randomUUID47()}.json`);
   writeFileSync25(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync18(metadataTemporary, paths.metadata);
@@ -93541,7 +93760,7 @@ import { z as z130 } from "zod";
 import { realpathSync as realpathSync25 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { isAbsolute as isAbsolute28, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID46 } from "node:crypto";
+import { randomUUID as randomUUID48 } from "node:crypto";
 import { WebSocketServer as WebSocketServer4 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -93679,7 +93898,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID46(),
+    instanceId: randomUUID48(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -94253,7 +94472,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id2) id2 = randomUUID46();
+      if (!id2) id2 = randomUUID48();
       try {
         const upsertInput = {
           id: id2,
@@ -94678,7 +94897,7 @@ function createApp(options = {}) {
     if (!existsSync34(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID46();
+    const jobId = randomUUID48();
     const command3 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -94982,7 +95201,7 @@ var init_types = __esm({
 // packages/daemon/src/lib/daemon-embed.ts
 import { dirname as dirname39, join as join49 } from "node:path";
 import { execFileSync as execFileSync21 } from "node:child_process";
-import { randomBytes as randomBytes9, randomUUID as randomUUID47 } from "node:crypto";
+import { randomBytes as randomBytes9, randomUUID as randomUUID49 } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
@@ -95681,7 +95900,7 @@ async function startEmbeddedDaemonGeneration(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID47();
+    const instanceId = randomUUID49();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
@@ -95741,7 +95960,7 @@ async function startEmbeddedDaemonGeneration(opts) {
       for (const workspace of workspaceRegistry.list()) {
         await workspacePromotion.promote({
           expectedDaemonInstanceId: instanceId,
-          operationId: randomUUID47(),
+          operationId: randomUUID49(),
           intent: { sessionId: fleetSessionIdForName(workspace.sessionName) }
         });
       }
@@ -95945,11 +96164,11 @@ async function startEmbeddedDaemonGeneration(opts) {
         // retain tens of thousands of frozen span objects or induce GC
         // pauses on the daemon's input/output event loop.
         capacity: 1024,
-        onSpan: (span) => {
+        onSpan: (span2) => {
           runtimeTraceWriter?.append(() => ({
             version: 1,
             type: "performance.stage",
-            ...span
+            ...span2
           }));
         }
       }) : void 0;
@@ -95964,7 +96183,7 @@ async function startEmbeddedDaemonGeneration(opts) {
         };
         const diagnostics = {
           nowMicros: () => Math.floor(performance3.now() * 1e3),
-          createTraceId: randomUUID47,
+          createTraceId: randomUUID49,
           publish: publishObserverDiagnostic
         };
         externalInteractionObserver.setDiagnostics(diagnostics);
@@ -96010,6 +96229,9 @@ async function startEmbeddedDaemonGeneration(opts) {
             observation: () => observationSelector ?? null,
             runPinnedTmux: nativeGenerationTmuxRunner
           }),
+          splitLayoutStock: createStockSplitProbe({
+            runPinnedTmux: nativeGenerationTmuxRunner
+          }),
           createOwnedViewerAdapter: () => ownedViewerFactory?.(),
           nativeServerIdentity: initialNativeServerIdentity,
           executable: tmuxAuthority.executablePath,
@@ -96037,7 +96259,7 @@ async function startEmbeddedDaemonGeneration(opts) {
           const consumer = sessionRuntimeRegistry.connect(
             record2.sessionName,
             "workspace-open-prepare",
-            `workspace-open-${randomUUID47()}`
+            `workspace-open-${randomUUID49()}`
           );
           try {
             const layout = await consumer.describe();
@@ -98164,7 +98386,7 @@ import {
   realpathSync as realpathSync28,
   linkSync as linkSync4
 } from "node:fs";
-import { randomUUID as randomUUID48 } from "node:crypto";
+import { randomUUID as randomUUID50 } from "node:crypto";
 import { dirname as dirname41, join as join54 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 import { z as z131 } from "zod";
@@ -98306,7 +98528,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
       );
       wroteRecord = true;
       mkdirSync30(dirname41(plan.unitPath), { recursive: true, mode: 448 });
-      const unitStage = `${plan.unitPath}.${randomUUID48()}.tmp`;
+      const unitStage = `${plan.unitPath}.${randomUUID50()}.tmp`;
       writeFileSync28(unitStage, contents, { flag: "wx", mode: 384 });
       try {
         linkSync4(unitStage, plan.unitPath);
@@ -98330,7 +98552,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
         refused("Service manager has not confirmed the daemon stopped; reservation retained");
       assertFiles(allowMissingUnit);
       const removalRecord = JSON.stringify({ ...record2, removing: true }) + "\n";
-      const temporaryRecord = `${plan.recordPath}.${randomUUID48()}.tmp`;
+      const temporaryRecord = `${plan.recordPath}.${randomUUID50()}.tmp`;
       writeFileSync28(temporaryRecord, removalRecord, { flag: "wx", mode: 384 });
       try {
         if (ownedFile(plan.recordPath) !== previousRecord)
@@ -98987,11 +99209,13 @@ __export(doctor_exports, {
   hooksTargetRow: () => hooksTargetRow,
   nodeVersionRow: () => nodeVersionRow,
   notifierRow: () => notifierRow,
+  tmuxFeaturesRow: () => tmuxFeaturesRow,
   workspaceConfigRow: () => workspaceConfigRow
 });
 import { execSync as execSync3, execFileSync as execFileSync22 } from "node:child_process";
-import { accessSync as accessSync12, constants as constants19, existsSync as existsSync37 } from "node:fs";
-import { resolve as resolve39, dirname as dirname43 } from "node:path";
+import { accessSync as accessSync12, constants as constants19, existsSync as existsSync37, mkdtempSync, rmSync as rmSync7 } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve as resolve39, dirname as dirname43, join as join56 } from "node:path";
 import { fileURLToPath as fileURLToPath13 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
@@ -99091,6 +99315,83 @@ function check(label4, fn, { optional = false } = {}) {
     return { label: label4, pass: false, detail: e.message, optional };
   }
 }
+function nativeCommands(probe) {
+  const ask = (command3) => {
+    try {
+      return { output: probe([command3, "-V"]) };
+    } catch (error) {
+      const failure4 = error;
+      return { failure: String(failure4.stderr ?? failure4.message ?? "") };
+    }
+  };
+  const split = ask("tmux-ide-resize-split");
+  const events = ask("tmux-ide-events");
+  const failures = [split.failure, events.failure].filter((text2) => text2 !== void 0);
+  if (failures.some((text2) => /no server running|error connecting/u.test(text2)))
+    return "no-server";
+  const refused3 = (answer, command3) => answer.failure !== void 0 && UNKNOWN(command3).test(answer.failure);
+  if (refused3(split, "tmux-ide-resize-split") && refused3(events, "tmux-ide-events")) return "stock";
+  if (split.output !== void 0 && events.output !== void 0) {
+    try {
+      return nativeSplitCapability(split.output) ? "full" : "partial";
+    } catch {
+      return "partial";
+    }
+  }
+  return failures.length === 2 ? "unknown" : "partial";
+}
+function tmuxFeaturesRow(probeServer, probeBinary) {
+  let answer = nativeCommands(probeServer);
+  if (answer === "no-server") answer = nativeCommands(probeBinary);
+  const details = {
+    full: "bundled tmux: full features",
+    stock: "stock tmux: reduced features",
+    partial: "this tmux has only some tmux-ide commands: no pane dividers",
+    "no-server": "could not read the tmux server's features",
+    unknown: "could not read the tmux server's features"
+  };
+  return {
+    label: "tmux features",
+    pass: answer === "full" || answer === "stock",
+    detail: details[answer],
+    optional: true
+  };
+}
+function runTmuxFeatureProbes(executable) {
+  const run = (prefix) => (args) => execFileSync22(executable, [...prefix, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 3e3
+  });
+  const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+  const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+  const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+  const cleanups = [];
+  const probeBinary = /* @__PURE__ */ (() => {
+    let scratch = null;
+    return (args) => {
+      scratch ??= (() => {
+        const dir = mkdtempSync(join56(tmpdir(), "tmi-doctor-"));
+        const prefix = ["-S", join56(dir, "s"), "-f", "/dev/null"];
+        cleanups.push(() => {
+          try {
+            run(prefix)(["kill-server"]);
+          } catch {
+          }
+          rmSync7(dir, { recursive: true, force: true });
+        });
+        run(prefix)(["new-session", "-d", "-s", "probe"]);
+        return { dir, prefix };
+      })();
+      return run(scratch.prefix)(args);
+    };
+  })();
+  try {
+    return tmuxFeaturesRow(run(server), probeBinary);
+  } finally {
+    for (const cleanup of cleanups) cleanup();
+  }
+}
 function nodeVersionRow(version) {
   const major = Number(version.split(".")[0]);
   const pass = Number.isInteger(major) && major >= 20;
@@ -99131,6 +99432,10 @@ async function doctor({
       return `${version} (${executable})`;
     })
   );
+  try {
+    checks.push(runTmuxFeatureProbes(resolveTmuxExecutable()));
+  } catch {
+  }
   checks.push(nodeVersionRow(process.versions.node));
   checks.push(
     check(
@@ -99273,11 +99578,14 @@ async function doctor({
   }
   if (!allPass) process.exitCode = 1;
 }
+var UNKNOWN;
 var init_doctor = __esm({
   "packages/daemon/src/doctor.ts"() {
     "use strict";
     init_tmux_version();
     init_tmux_client_execution();
+    init_runtime_namespace();
+    init_native_split_resize();
     init_update_check();
     init_skill_sync();
     init_agent_discovery();
@@ -99286,6 +99594,7 @@ var init_doctor = __esm({
     init_notify();
     init_resolved_config();
     init_daemon_provenance();
+    UNKNOWN = (command3) => new RegExp(`^unknown command: ${command3}$`, "mu");
   }
 });
 
@@ -100431,7 +100740,7 @@ __export(tmux_servers_cli_exports, {
   parseTmuxServersOperation: () => parseTmuxServersOperation,
   runTmuxServersCli: () => runTmuxServersCli
 });
-import { randomUUID as randomUUID49 } from "node:crypto";
+import { randomUUID as randomUUID51 } from "node:crypto";
 function parseTmuxServersOperation(options) {
   const command3 = options.command ?? "list";
   if (options.ssh !== void 0) SavedMachineSchema.shape.sshTarget.parse(options.ssh);
@@ -100472,7 +100781,7 @@ function parseTmuxServersOperation(options) {
   );
 }
 async function connectTmuxServersCli(options) {
-  const hostClientId = randomUUID49();
+  const hostClientId = randomUUID51();
   if (options.ssh !== void 0) {
     const transport = await openSshDaemonTransport({ alias: options.ssh });
     try {
@@ -100541,7 +100850,7 @@ async function runTmuxServersCli(options, connect4) {
       generation: server.generation
     });
     try {
-      return operation.command === "create" ? await client.createSession(randomUUID49(), operation.input) : await client.sessions();
+      return operation.command === "create" ? await client.createSession(randomUUID51(), operation.input) : await client.sessions();
     } finally {
       client.dispose();
     }
@@ -100686,7 +100995,7 @@ __export(machines_exports, {
   machines: () => machines
 });
 import { readFileSync as readFileSync38, statSync as statSync22 } from "node:fs";
-import { randomUUID as randomUUID50 } from "node:crypto";
+import { randomUUID as randomUUID52 } from "node:crypto";
 async function machines(command3, argument, options) {
   const current = loadSavedMachines();
   if ((command3 === "enable" || command3 === "disable" || command3 === "remove" || command3 === "edit") && argument) {
@@ -100770,7 +101079,7 @@ async function machines(command3, argument, options) {
       version: 1,
       machines: [
         existing ?? SavedMachineSchema.parse({
-          id: randomUUID50(),
+          id: randomUUID52(),
           label: options.label ?? argument,
           sshTarget: argument,
           enabled: true
@@ -102010,7 +102319,7 @@ import {
   accessSync as accessSync13,
   constants as constants20
 } from "node:fs";
-import { basename as basename21, delimiter as delimiter5, dirname as dirname45, join as join56 } from "node:path";
+import { basename as basename21, delimiter as delimiter5, dirname as dirname45, join as join57 } from "node:path";
 function isOptOut(value) {
   if (value === false || value === 0) return true;
   return typeof value === "string" && /^\s*(0|false|off|no)\s*$/iu.test(value);
@@ -102058,8 +102367,8 @@ function agentTeamsPaths() {
 function claudeOnPath2(path2 = process.env.PATH ?? "") {
   return path2.split(delimiter5).filter(Boolean).some((dir) => {
     try {
-      accessSync13(join56(dir, "claude"), constants20.X_OK);
-      return statSync23(join56(dir, "claude")).isFile();
+      accessSync13(join57(dir, "claude"), constants20.X_OK);
+      return statSync23(join57(dir, "claude")).isFile();
     } catch {
       return false;
     }
@@ -102084,7 +102393,7 @@ function existingBackup(settingsPath) {
   const prefix = `${basename21(settingsPath)}${BACKUP_INFIX}`;
   try {
     const found = readdirSync11(dir).find((name) => name.startsWith(prefix));
-    return found ? join56(dir, found) : null;
+    return found ? join57(dir, found) : null;
   } catch {
     return null;
   }
@@ -102100,7 +102409,7 @@ function writeSettings(path2, settings, exists) {
       copyFileSync3(path2, backup);
     }
   }
-  const temporary = join56(dirname45(path2), `.${basename21(path2)}.tmux-ide-${process.pid}.tmp`);
+  const temporary = join57(dirname45(path2), `.${basename21(path2)}.tmux-ide-${process.pid}.tmp`);
   try {
     writeFileSync30(temporary, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });
@@ -102241,7 +102550,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync26 } from "node:child_process";
-import { basename as basename22, dirname as dirname46, isAbsolute as isAbsolute32, join as join57, resolve as resolve43 } from "node:path";
+import { basename as basename22, dirname as dirname46, isAbsolute as isAbsolute32, join as join58, resolve as resolve43 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -102250,11 +102559,11 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve43(repoDir);
-  return join57(dirname46(abs), `${basename22(abs)}-worktrees`);
+  return join58(dirname46(abs), `${basename22(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute32(configuredDir) ? configuredDir : resolve43(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join57(base2, branch);
+  return join58(base2, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -102388,9 +102697,9 @@ var init_worktree = __esm({
 });
 
 // packages/daemon/src/lib/managed-installer-update.ts
-import { mkdtempSync, readFileSync as readFileSync40, realpathSync as realpathSync29, rmSync as rmSync7 } from "node:fs";
-import { dirname as dirname47, join as join58 } from "node:path";
-import { tmpdir } from "node:os";
+import { mkdtempSync as mkdtempSync2, readFileSync as readFileSync40, realpathSync as realpathSync29, rmSync as rmSync8 } from "node:fs";
+import { dirname as dirname47, join as join59 } from "node:path";
+import { tmpdir as tmpdir2 } from "node:os";
 import { execFileSync as execFileSync27 } from "node:child_process";
 function managedInstallerPrefix(cliPath) {
   const match = /^(.*)\/share\/tmux-ide\/releases\/(install-[A-Za-z0-9]{6})\/npm\/lib\/node_modules\/tmux-ide\/bin$/.exec(
@@ -102398,16 +102707,16 @@ function managedInstallerPrefix(cliPath) {
   );
   if (!match) return null;
   const prefix = match[1] || "/";
-  const root = join58(prefix, "share/tmux-ide");
-  const release = join58(root, "releases", match[2]);
+  const root = join59(prefix, "share/tmux-ide");
+  const release = join59(root, "releases", match[2]);
   try {
-    if (realpathSync29(join58(root, "current")) !== release) return null;
+    if (realpathSync29(join59(root, "current")) !== release) return null;
     if (realpathSync29(release) !== release) return null;
-    if (readFileSync40(join58(root, "installer-v1"), "utf8") !== "1\n") return null;
-    if (readFileSync40(join58(release, ".installer-release-v1"), "utf8") !== "1\n") return null;
-    if (!readFileSync40(join58(prefix, "bin/tmux-ide"), "utf8").split("\n").includes("# tmux-ide universal installer v1"))
+    if (readFileSync40(join59(root, "installer-v1"), "utf8") !== "1\n") return null;
+    if (readFileSync40(join59(release, ".installer-release-v1"), "utf8") !== "1\n") return null;
+    if (!readFileSync40(join59(prefix, "bin/tmux-ide"), "utf8").split("\n").includes("# tmux-ide universal installer v1"))
       return null;
-    if (JSON.parse(readFileSync40(join58(dirname47(cliPath), "package.json"), "utf8")).name !== "tmux-ide")
+    if (JSON.parse(readFileSync40(join59(dirname47(cliPath), "package.json"), "utf8")).name !== "tmux-ide")
       return null;
     return prefix;
   } catch {
@@ -102415,8 +102724,8 @@ function managedInstallerPrefix(cliPath) {
   }
 }
 function runManagedInstallerUpdate(prefix, channel, json3, execute2 = execFileSync27) {
-  const temporary = mkdtempSync(join58(tmpdir(), "tmux-ide-update-"));
-  const script = join58(temporary, "install.sh");
+  const temporary = mkdtempSync2(join59(tmpdir2(), "tmux-ide-update-"));
+  const script = join59(temporary, "install.sh");
   try {
     execute2(
       "curl",
@@ -102446,7 +102755,7 @@ function runManagedInstallerUpdate(prefix, channel, json3, execute2 = execFileSy
       stdio: json3 ? ["ignore", 2, 2] : "inherit"
     });
   } finally {
-    rmSync7(temporary, { recursive: true, force: true });
+    rmSync8(temporary, { recursive: true, force: true });
   }
 }
 var MANAGED_INSTALLER_URL;
@@ -102459,7 +102768,7 @@ var init_managed_installer_update = __esm({
 
 // packages/daemon/src/lib/install-origin.ts
 import { existsSync as existsSync39, readFileSync as readFileSync41, realpathSync as realpathSync30 } from "node:fs";
-import { dirname as dirname48, join as join59 } from "node:path";
+import { dirname as dirname48, join as join60 } from "node:path";
 import { fileURLToPath as fileURLToPath14 } from "node:url";
 function detectPackageManager(path2) {
   if (/\/share\/tmux-ide\/releases\/install-[^/]+\/npm\/lib\/node_modules\/tmux-ide\/bin$/.test(path2))
@@ -102476,9 +102785,9 @@ function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
     if (dir.endsWith("/node_modules")) return null;
-    if (existsSync39(join59(dir, ".git"))) {
+    if (existsSync39(join60(dir, ".git"))) {
       try {
-        if (JSON.parse(readFileSync41(join59(dir, "package.json"), "utf8")).name === "tmux-ide")
+        if (JSON.parse(readFileSync41(join60(dir, "package.json"), "utf8")).name === "tmux-ide")
           return dir;
       } catch {
       }
@@ -102499,7 +102808,7 @@ function installOrigin(cliDir = dirname48(fileURLToPath14(import.meta.url))) {
   let detected2 = detectPackageManager(path2);
   if (detected2 === "npm" || detected2 === "pnpm" || detected2 === "bun") {
     try {
-      if (JSON.parse(readFileSync41(join59(path2, "../package.json"), "utf8")).name !== "tmux-ide")
+      if (JSON.parse(readFileSync41(join60(path2, "../package.json"), "utf8")).name !== "tmux-ide")
         detected2 = "unknown";
     } catch {
       detected2 = "unknown";
@@ -102525,7 +102834,7 @@ __export(update_exports, {
   runUpdate: () => runUpdate
 });
 import { realpathSync as realpathSync31 } from "node:fs";
-import { dirname as dirname49, join as join60 } from "node:path";
+import { dirname as dirname49, join as join61 } from "node:path";
 import { execFileSync as execFileSync28 } from "node:child_process";
 function planUpdate(input) {
   const current = input.currentVersion ?? getCurrentVersion();
@@ -102615,7 +102924,7 @@ function runUpdate({ cliDir, dryRun, json: json3 = false }, dependencies = {}) {
         plan.executable === "bun" ? ["pm", "bin", "-g"] : ["root", "-g"]
       ).trim();
       if (!root.startsWith("/")) throw new Error("invalid manager path");
-      const target = plan.executable === "bun" ? dirname49(realpathSync31(join60(root, "tmux-ide"))) : realpathSync31(join60(root, "tmux-ide", "bin"));
+      const target = plan.executable === "bun" ? dirname49(realpathSync31(join61(root, "tmux-ide"))) : realpathSync31(join61(root, "tmux-ide", "bin"));
       if (target !== source.path) throw new Error("different installation");
     } catch {
       plan = {
@@ -102820,7 +103129,7 @@ __export(server_exports3, {
   SERVER_BIND_HOST: () => SERVER_BIND_HOST,
   createApp: () => createApp2,
   resolvePort: () => resolvePort,
-  start: () => start
+  start: () => start2
 });
 import { createServer as createServer6 } from "node:http";
 import { parse as parse2 } from "node:url";
@@ -102840,7 +103149,7 @@ function createApp2() {
   app.get("/health", (c) => c.json({ ok: true }));
   return app;
 }
-async function start(port) {
+async function start2(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
   const server = createServer6(getRequestListener2(app.fetch));
@@ -102892,7 +103201,7 @@ var init_server3 = __esm({
 init_src();
 init_tmux_client_execution();
 import { parseArgs as parseArgs2 } from "node:util";
-import { resolve as resolve44, dirname as dirname50, join as join61 } from "node:path";
+import { resolve as resolve44, dirname as dirname50, join as join62 } from "node:path";
 import { execFileSync as execFileSync29 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync40, mkdirSync as mkdirSync33, writeFileSync as writeFileSync31 } from "node:fs";
 import { fileURLToPath as fileURLToPath15 } from "node:url";
@@ -103233,9 +103542,9 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   let automaticDiagnosticLog;
   if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG && !process.env.TMUX_IDE_TUI_LOG) {
     try {
-      const logDirectory = join61(stateHome(), "logs");
+      const logDirectory = join62(stateHome(), "logs");
       mkdirSync33(logDirectory, { recursive: true, mode: 448 });
-      automaticDiagnosticLog = join61(logDirectory, "tui-latest.jsonl");
+      automaticDiagnosticLog = join62(logDirectory, "tui-latest.jsonl");
       writeFileSync31(
         automaticDiagnosticLog,
         `${JSON.stringify({
@@ -104927,8 +105236,8 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync29("node", serverArgs, { stdio: "inherit" });
       } else {
-        const { start: start2 } = await Promise.resolve().then(() => (init_server3(), server_exports3));
-        await start2(values.port ? parseInt(values.port, 10) : void 0);
+        const { start: start3 } = await Promise.resolve().then(() => (init_server3(), server_exports3));
+        await start3(values.port ? parseInt(values.port, 10) : void 0);
       }
       break;
     }

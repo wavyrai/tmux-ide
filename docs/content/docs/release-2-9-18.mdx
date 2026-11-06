@@ -1,0 +1,54 @@
+---
+title: tmux-ide 2.9.18
+metaTitle: "What's new in 2.9.18"
+description: "Pane dividers on Homebrew's tmux and other stock tmux, and a tmux doctor line that says which features your tmux supports."
+---
+
+`2.9.18` is a CLI/daemon release. It works with native macOS alpha `0.1.14`,
+which needs no update.
+
+## Pane dividers on stock tmux
+
+tmux-ide installs its own tmux, with a few extra commands. A tmux server started by
+another tmux, such as Homebrew's 3.7c or 3.8, lacks them, and the Mac app showed
+no pane dividers on it and gave no reason.
+
+The daemon now draws dividers on such a server from the layout it already reads,
+and moves them with tmux's own `resize-pane`:
+
+- Each drag is one tmux command. It checks that the window's layout is still the
+  one the daemon read, and only then resizes. If anything changed the window in
+  between, tmux refuses the drag and nothing moves.
+- Moves land exactly, with pane titles on top, at the bottom or off.
+- A drag moves the two panes next to the divider. On tmux-ide's own tmux it can
+  also make room by shrinking panes further along.
+
+Some windows still show no dividers on stock tmux, and the app doesn't yet say
+why:
+
+- a zoomed window, the same as on tmux-ide's own tmux
+- a window with a floating pane open, on tmux 3.8
+- a rare nested layout, where only the affected divider is missing
+
+A tmux server started by tmux-ide keeps the same path as before.
+
+## tmux doctor names your tmux
+
+`tmux doctor` now reports one of:
+
+- `bundled tmux: full features`
+- `stock tmux: reduced features`
+- `this tmux has only some tmux-ide commands: no pane dividers`
+
+With a server running, it asks that server. Without one, it starts a private
+server to test the tmux binary, then removes it.
+
+## Smaller fixes
+
+- When one command in a list sent to tmux fails, tmux skips the rest of that
+  list. The daemon now expects that, so later replies are not matched to the
+  wrong request.
+
+Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
+preserved. Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
