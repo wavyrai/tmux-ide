@@ -1466,3 +1466,22 @@ describe("owned pause hook on the shared collector", () => {
     expect(f.onNotify).not.toHaveBeenCalled();
   });
 });
+
+describe("command-list group abort", () => {
+  it("keeps later replies aligned when a child after the first fails", () => {
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    const first = vi.fn();
+    const next = vi.fn();
+    core.feed("%begin 1 0 0\n%end 1 0 0\n"); // The greeting.
+    core.pushCommandList(3, 2, first);
+    core.pushCommandList(1, 0, next);
+    core.feed("%begin 2 1 1\n%end 2 1 1\n");
+    core.feed("%begin 3 2 1\nno such pane\n%error 3 2 1\n");
+    // tmux drops the third child; the next block belongs to the next command.
+    core.feed("%begin 4 3 1\nnext\n%end 4 3 1\n");
+    expect(first).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ok: false }));
+    expect(next).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ ok: true, lines: ["next"] }),
+    );
+  });
+});

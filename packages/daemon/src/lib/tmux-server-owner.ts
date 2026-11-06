@@ -5,6 +5,7 @@ import { shellEscape } from "./shell.ts";
 import {
   createNativeSplitCapabilityProbe,
   createNativeSplitReadiness,
+  createStockSplitProbe,
 } from "./native-split-capability.ts";
 import { executeCanonicalSplitMutation } from "./canonical-split-mutation.ts";
 import { createGuardedNativeSplitResize } from "./guarded-native-split-resize.ts";
@@ -394,6 +395,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
         observation: () => observationSelector ?? null,
         runPinnedTmux: generationRun,
       }),
+      splitLayoutStock: createStockSplitProbe({ runPinnedTmux: generationRun }),
       createOwnedViewerAdapter: createOwnedViewerAdapterFactory({
         environmentId: options.environmentId,
         serverScope: { serverId: options.serverId, generation },

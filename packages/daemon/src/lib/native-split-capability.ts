@@ -102,3 +102,24 @@ export function createNativeSplitReadiness(options: {
       pending = null;
     }));
 }
+
+const NATIVE_COMMANDS = ["tmux-ide-resize-split", "tmux-ide-events"] as const;
+/** True only when the selected server refuses every native command by name. A
+ * timeout, a lost server or any other failure says nothing, so it stays false. */
+export function createStockSplitProbe(options: {
+  runPinnedTmux: NativeSplitRunner;
+}): () => Promise<boolean> {
+  return async () => {
+    for (const command of NATIVE_COMMANDS) {
+      try {
+        await options.runPinnedTmux([command, "-V"]);
+        return false;
+      } catch (error) {
+        const failure = error as { stderr?: unknown; cause?: { stderr?: unknown } } | undefined;
+        const text = String(failure?.cause?.stderr ?? failure?.stderr ?? "");
+        if (!new RegExp(`^unknown command: ${command}$`, "mu").test(text)) return false;
+      }
+    }
+    return true;
+  };
+}

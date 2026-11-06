@@ -3,7 +3,12 @@
  * text depends only on a DiscoveredAgent[], so no io is needed here.
  */
 import { describe, expect, it } from "vitest";
-import { agentIntegrationRows, daemonProvenanceRow, hooksTargetRow } from "./doctor.ts";
+import {
+  agentIntegrationRows,
+  daemonProvenanceRow,
+  hooksTargetRow,
+  tmuxFeaturesRow,
+} from "./doctor.ts";
 import type { DiscoveredAgent } from "./lib/agent-discovery.ts";
 import type { DaemonProvenanceReport } from "./lib/daemon-provenance.ts";
 
@@ -244,5 +249,51 @@ describe("daemonProvenanceRow", () => {
         }),
       ).detail,
     ).toBe("not running (reserved for supervisor svc)");
+  });
+});
+
+describe("tmux features row", () => {
+  const CAPABILITY = JSON.stringify({
+    schemaVersion: 1,
+    capability: "split-resize-v1",
+    sessionMembership: "exact-session-link-v1",
+    maxDepth: 64,
+    maxLeaves: 512,
+    maxGrid: 4096,
+  });
+  const fail = (stderr: string) => {
+    throw Object.assign(new Error("Command failed"), { stderr });
+  };
+  const bundled = (args: readonly string[]) =>
+    args[0] === "tmux-ide-resize-split" ? CAPABILITY : "{}";
+  const stock = (args: readonly string[]) => fail(`unknown command: ${args[0]}\n`);
+  const none = () => fail("no server running on /tmp/s\n");
+  it("names stock tmux and bundled tmux from the running server", () => {
+    expect(tmuxFeaturesRow(stock, bundled).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(bundled, stock).detail).toBe("bundled tmux: full features");
+    expect(tmuxFeaturesRow(stock, bundled)).toMatchObject({ pass: true, optional: true });
+  });
+  it("asks the binary only when no server is running", () => {
+    expect(tmuxFeaturesRow(none, stock).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(none, bundled).detail).toBe("bundled tmux: full features");
+    expect(tmuxFeaturesRow(() => fail("error connecting to /tmp/s\n"), stock).detail).toBe(
+      "stock tmux: reduced features",
+    );
+  });
+  it("gives the mirror's verdict for a build with only some commands", () => {
+    const eventsOnly = (args: readonly string[]) =>
+      args[0] === "tmux-ide-events" ? "{}" : fail(`unknown command: ${args[0]}\n`);
+    const oldCapability = (args: readonly string[]) =>
+      args[0] === "tmux-ide-resize-split" ? '{"schemaVersion":1}' : "{}";
+    for (const probe of [eventsOnly, oldCapability]) {
+      const row = tmuxFeaturesRow(probe, bundled);
+      expect(row.pass).toBe(false);
+      expect(row.detail).toBe("this tmux has only some tmux-ide commands: no pane dividers");
+    }
+  });
+  it("never calls another failure stock", () => {
+    const row = tmuxFeaturesRow(() => fail("something else\n"), stock);
+    expect(row.pass).toBe(false);
+    expect(row.detail).not.toContain("stock");
   });
 });

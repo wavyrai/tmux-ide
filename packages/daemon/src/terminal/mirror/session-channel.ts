@@ -1,3 +1,4 @@
+import { STOCK_SPLIT_OPTIONS_FORMAT } from "../protocol/stock-split-resize.ts";
 import { layoutContentRows } from "./layout-content-rows.ts";
 import {
   decodeNativeAtomicSnapshot,
@@ -440,6 +441,8 @@ export interface NativeSplitLayoutSnapshot {
   readonly runtimeWindowId: string;
   readonly semanticWindowId: string;
   readonly rawLayout: string;
+  /** Set on a stock server, where it decides how small tmux lets a pane get. */
+  readonly paneBorderStatus?: string;
   readonly panes: readonly {
     readonly runtimePaneId: string;
     readonly semanticPaneId: string;
@@ -964,7 +967,7 @@ export class SessionChannel {
   }
 
   /** Exact native ancestry, never reconstructed from published pane rectangles. */
-  describeSplitLayout(target: WindowLinkTarget): NativeSplitLayoutSnapshot {
+  describeSplitLayout(target: WindowLinkTarget, stock = false): NativeSplitLayoutSnapshot {
     const authority = this.windowLinkAuthority;
     const identity = this.attachedIdentity;
     const generation = this.attachedServerGeneration;
@@ -999,8 +1002,7 @@ export class SessionChannel {
         pane.descriptor?.runtimeSessionId !== identity.runtimeSessionId ||
         pane.descriptor?.windowId !== resolved.runtimeWindowId ||
         this.panesBySemantic.get(pane.semanticId) !== pane ||
-        !birth ||
-        !/^[1-9]\d*$/u.test(birth) ||
+        (!stock && (!birth || !/^[1-9]\d*$/u.test(birth))) ||
         !layout.leaves.some(
           (visible) =>
             visible.id === leaf.id &&
@@ -1014,7 +1016,7 @@ export class SessionChannel {
       return Object.freeze({
         runtimePaneId: pane.runtimeId,
         semanticPaneId: pane.semanticId,
-        nativePaneBirthId: birth,
+        nativePaneBirthId: stock ? "" : birth!,
       });
     });
     return Object.freeze({
@@ -1024,7 +1026,24 @@ export class SessionChannel {
       runtimeWindowId: resolved.runtimeWindowId,
       semanticWindowId: window.semanticId,
       rawLayout: layout.rawLayout,
+      ...(stock ? { paneBorderStatus: window.paneBorderStatus } : {}),
       panes: Object.freeze(panes),
+    });
+  }
+
+  stockSplitOptions(windowId: string): Promise<string[]> {
+    return this.io.request(`display-message -p -t ${windowId} "${STOCK_SPLIT_OPTIONS_FORMAT}"`);
+  }
+
+  /** One guarded resize on this control connection, for a stock tmux server. */
+  stockSplitCommand(command: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const onReply = (reply: ControlReply) =>
+        reply.ok ? resolve(reply.lines) : reject(new Error("Stock split command failed"));
+      const limits = { maxBytes: 16 * 1024, maxLines: 4 };
+      if (this.io.commandListBoundedInline)
+        this.io.commandListBoundedInline(command, 3, 2, limits, onReply);
+      else this.io.commandListInline(command, 3, 2, onReply);
     });
   }
 

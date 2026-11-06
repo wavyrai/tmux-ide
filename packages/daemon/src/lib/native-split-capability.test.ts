@@ -1,10 +1,12 @@
 import { NATIVE_JOURNAL_COVERAGE } from "@tmux-ide/contracts";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { OwnerInteractionObservation } from "./owner-interaction-observation.ts";
 import {
   createNativeSplitCapabilityProbe,
   createNativeSplitReadiness,
+  createStockSplitProbe,
 } from "./native-split-capability.ts";
+import type { NativeSplitRunner } from "../terminal/protocol/native-split-resize.ts";
 
 const epoch = "11111111-1111-4111-8111-111111111111";
 const journal = {
@@ -159,3 +161,44 @@ it.each(["supported", "unsupported", "replaced", "epoch"])(
     expect(splitProbes).toBe(1);
   },
 );
+
+describe("stock split probe", () => {
+  const refuse = (message: string, stderr?: string) => () => {
+    throw Object.assign(new Error(message), stderr === undefined ? {} : { stderr });
+  };
+  it("is stock only when the server refuses both native commands by name", async () => {
+    const calls: string[] = [];
+    const probe = createStockSplitProbe({
+      runPinnedTmux: (args) => {
+        calls.push(args[0]!);
+        // As the pinned runners throw it: a TmuxError around the raw failure.
+        throw new Error("tmux command failed", {
+          cause: Object.assign(new Error("Command failed"), {
+            stderr: `unknown command: ${args[0]}\n`,
+          }),
+        });
+      },
+    });
+    await expect(probe()).resolves.toBe(true);
+    expect(calls).toEqual(["tmux-ide-resize-split", "tmux-ide-events"]);
+  });
+  it("stays a refusal for any other answer", async () => {
+    const cases: NativeSplitRunner[] = [
+      () => "{}",
+      refuse("spawnSync tmux ETIMEDOUT"),
+      // The text only counts as tmux's own answer on stderr.
+      refuse("unknown command: tmux-ide-resize-split"),
+      refuse("Command failed", "no server running on /tmp/s\n"),
+      refuse("Tmux server generation changed before command execution"),
+      refuse("Command failed", "unknown command: something-else\n"),
+      refuse("Command failed", "tmux: unknown command: tmux-ide-resize-split extra\n"),
+      // A partly patched server: one command exists.
+      (args) => {
+        if (args[0] === "tmux-ide-events") return "{}";
+        throw Object.assign(new Error("x"), { stderr: "unknown command: tmux-ide-resize-split" });
+      },
+    ];
+    for (const runPinnedTmux of cases)
+      await expect(createStockSplitProbe({ runPinnedTmux })()).resolves.toBe(false);
+  });
+});

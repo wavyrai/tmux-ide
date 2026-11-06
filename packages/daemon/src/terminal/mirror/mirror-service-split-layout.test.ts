@@ -14,6 +14,7 @@ function rig(
   heldStart = false,
   capability = async () => true,
   prepare?: () => Promise<boolean>,
+  stock?: () => Promise<boolean>,
 ) {
   const sims: SimulatedChannel[] = [];
   const releases: (() => void)[] = [];
@@ -22,6 +23,7 @@ function rig(
     splitLayoutEpoch: () => epoch,
     splitLayoutCapability: capability,
     splitLayoutPrepare: prepare,
+    splitLayoutStock: stock,
     createIo: (_session, handlers) => {
       const state = fixtureState();
       state.descriptorRows[2] = state.descriptorRows[2]!.replace(
@@ -218,4 +220,70 @@ it("does not issue handles after retirement during lazy preparation", async () =
     prepared.resolve(false);
     await r.service.dispose();
   }
+});
+
+it("keeps the native path untouched when native preparation succeeds", async () => {
+  const stock = vi.fn(async () => true);
+  const capability = vi.fn(async () => true);
+  const r = rig(undefined, false, capability, async () => true, stock);
+  const { target } = await retained(r.service);
+  await expect(r.service.readWindowSplitLayout(FIXTURE.session, target)).resolves.toBeDefined();
+  expect(stock).not.toHaveBeenCalled();
+  expect(capability).toHaveBeenCalledOnce();
+  await r.service.dispose();
+});
+
+it("refuses when native preparation fails and the server is not positively stock", async () => {
+  const answers = [
+    async () => false,
+    async () => {
+      throw new Error("probe failed");
+    },
+  ];
+  const stock = vi.fn(() => answers[stock.mock.calls.length - 1]!());
+  const capability = vi.fn(async () => true);
+  const r = rig(undefined, false, capability, async () => false, stock);
+  const { target } = await retained(r.service);
+  for (let read = 0; read < answers.length; read++)
+    await expect(r.service.readWindowSplitLayout(FIXTURE.session, target)).rejects.toThrow(
+      "unavailable or stale",
+    );
+  expect(stock).toHaveBeenCalledTimes(2);
+  expect(capability).not.toHaveBeenCalled();
+  await r.service.dispose();
+});
+
+it("keeps a channel on the kind of authority it first issued", async () => {
+  let native = true;
+  const stock = vi.fn(async () => true);
+  const nativeFirst = rig(
+    undefined,
+    false,
+    async () => true,
+    async () => native,
+    stock,
+  );
+  const first = await retained(nativeFirst.service);
+  await nativeFirst.service.readWindowSplitLayout(FIXTURE.session, first.target);
+  native = false;
+  await expect(
+    nativeFirst.service.readWindowSplitLayout(FIXTURE.session, first.target),
+  ).rejects.toThrow("unavailable or stale");
+  await nativeFirst.service.dispose();
+
+  native = false;
+  const stockFirst = rig(
+    undefined,
+    false,
+    async () => true,
+    async () => native,
+    stock,
+  );
+  const second = await retained(stockFirst.service);
+  await stockFirst.service.readWindowSplitLayout(FIXTURE.session, second.target);
+  native = true;
+  await expect(
+    stockFirst.service.readWindowSplitLayout(FIXTURE.session, second.target),
+  ).rejects.toThrow("unavailable or stale");
+  await stockFirst.service.dispose();
 });

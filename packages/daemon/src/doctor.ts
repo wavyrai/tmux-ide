@@ -1,8 +1,11 @@
 import { requireSupportedTmuxVersion } from "./lib/tmux-version.ts";
 import { resolveTmuxExecutable } from "./lib/tmux-client-execution.ts";
+import { TMUX_SOCKET_PATH_ENV } from "./lib/runtime-namespace.ts";
 import { execSync, execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { accessSync, constants, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
+import { nativeSplitCapability } from "./terminal/protocol/native-split-resize.ts";
 import { fileURLToPath } from "node:url";
 import { getCurrentVersion, getUpdateStatus } from "./lib/update-check.ts";
 import { installedSkillVersion } from "./lib/skill-sync.ts";
@@ -176,6 +179,99 @@ function check(
   }
 }
 
+type TmuxProbe = (args: readonly string[]) => string;
+const UNKNOWN = (command: string) => new RegExp(`^unknown command: ${command}$`, "mu");
+
+type NativeAnswer = "full" | "stock" | "partial" | "no-server" | "unknown";
+/** The same reading of the server as the mirror's: stock only when it refuses both
+ * native commands by name, and full only with the split capability it requires. */
+function nativeCommands(probe: TmuxProbe): NativeAnswer {
+  const ask = (command: string) => {
+    try {
+      return { output: probe([command, "-V"]) };
+    } catch (error) {
+      const failure = error as { stderr?: unknown; message?: string };
+      return { failure: String(failure.stderr ?? failure.message ?? "") };
+    }
+  };
+  const split = ask("tmux-ide-resize-split");
+  const events = ask("tmux-ide-events");
+  const failures = [split.failure, events.failure].filter((text) => text !== undefined);
+  if (failures.some((text) => /no server running|error connecting/u.test(text!)))
+    return "no-server";
+  const refused = (answer: { failure?: string }, command: string) =>
+    answer.failure !== undefined && UNKNOWN(command).test(answer.failure);
+  if (refused(split, "tmux-ide-resize-split") && refused(events, "tmux-ide-events")) return "stock";
+  if (split.output !== undefined && events.output !== undefined) {
+    try {
+      return nativeSplitCapability(split.output) ? "full" : "partial";
+    } catch {
+      return "partial";
+    }
+  }
+  return failures.length === 2 ? "unknown" : "partial";
+}
+
+/** Reads the server a session would use. With none running, a throwaway private
+ * server shows what the resolved binary would start. */
+export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe): CheckResult {
+  let answer = nativeCommands(probeServer);
+  if (answer === "no-server") answer = nativeCommands(probeBinary);
+  const details: Record<NativeAnswer, string> = {
+    full: "bundled tmux: full features",
+    stock: "stock tmux: reduced features",
+    partial: "this tmux has only some tmux-ide commands: no pane dividers",
+    "no-server": "could not read the tmux server's features",
+    unknown: "could not read the tmux server's features",
+  };
+  return {
+    label: "tmux features",
+    pass: answer === "full" || answer === "stock",
+    detail: details[answer],
+    optional: true,
+  };
+}
+
+function runTmuxFeatureProbes(executable: string): CheckResult {
+  const run =
+    (prefix: readonly string[]): TmuxProbe =>
+    (args) =>
+      execFileSync(executable, [...prefix, ...args], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 3000,
+      });
+  const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+  const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+  const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+  const cleanups: (() => void)[] = [];
+  const probeBinary: TmuxProbe = (() => {
+    let scratch: { dir: string; prefix: readonly string[] } | null = null;
+    return (args) => {
+      scratch ??= (() => {
+        const dir = mkdtempSync(join(tmpdir(), "tmi-doctor-"));
+        const prefix = ["-S", join(dir, "s"), "-f", "/dev/null"];
+        cleanups.push(() => {
+          try {
+            run(prefix)(["kill-server"]);
+          } catch {
+            // The server is already gone.
+          }
+          rmSync(dir, { recursive: true, force: true });
+        });
+        run(prefix)(["new-session", "-d", "-s", "probe"]);
+        return { dir, prefix };
+      })();
+      return run(scratch.prefix)(args);
+    };
+  })();
+  try {
+    return tmuxFeaturesRow(run(server), probeBinary);
+  } finally {
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
 export function nodeVersionRow(version: string): CheckResult {
   const major = Number(version.split(".")[0]);
   const pass = Number.isInteger(major) && major >= 20;
@@ -226,6 +322,12 @@ export async function doctor({
       return `${version} (${executable})`;
     }),
   );
+
+  try {
+    checks.push(runTmuxFeatureProbes(resolveTmuxExecutable()));
+  } catch {
+    // The tmux version row above already reports a missing executable.
+  }
 
   checks.push(nodeVersionRow(process.versions.node));
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as waitForPublication } from "node:timers/promises";
 import {
   WindowSplitResizeTargetSchemaZ,
@@ -10,6 +11,7 @@ import type {
   GuardedNativeSplitResizeResult,
 } from "../../lib/guarded-native-split-resize.ts";
 import { WindowSplitAuthority, WindowSplitLayoutUnavailable } from "./window-split-authority.ts";
+import { resizeStockSplit, type StockSplitResizeResult } from "../protocol/stock-split-resize.ts";
 import { SharedWindowIndex } from "./shared-window-index.ts";
 import { RegisteredWindowGuard, type RegisteredWindowReader } from "./registered-window-guard.ts";
 import type { OwnedViewerAdapter } from "./owned-viewer-adapter.ts";
@@ -66,6 +68,8 @@ export interface MirrorServiceOptions {
   splitLayoutPrepare?: () => Promise<boolean>;
   /** Positively probe this native epoch before issuing handles; absent denies. */
   splitLayoutCapability?: (epoch: string) => boolean | Promise<boolean>;
+  /** True only when the server positively lacks the native commands: a stock tmux. */
+  splitLayoutStock?: () => Promise<boolean>;
   onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
   createOwnedViewerAdapter?: (session: string) => OwnedViewerAdapter | undefined;
   nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
@@ -167,6 +171,8 @@ export interface MirrorSessionRetention {
 
 interface ChannelEntry {
   splitAuthority?: WindowSplitAuthority;
+  /** Set once this channel's split authority serves a stock tmux server. */
+  stockSplitEpoch?: string;
   channel: SessionChannel;
   started: Promise<void>;
   refs: number;
@@ -418,9 +424,17 @@ export class MirrorService {
       } catch {
         /* Unavailable owner. */
       }
-      if (!ready || this.disposed || entry.retired || this.channels.get(session) !== entry)
+      if (!ready) {
+        // Anything but a positive "no such command" stays a refusal.
+        const stock = await this.#stockSplitServer();
+        if (!stock || this.disposed || entry.retired || this.channels.get(session) !== entry)
+          throw new WindowSplitLayoutUnavailable();
+        return this.#readStockSplitLayout(entry, target);
+      }
+      if (this.disposed || entry.retired || this.channels.get(session) !== entry)
         throw new WindowSplitLayoutUnavailable();
     }
+    if (entry.stockSplitEpoch) throw new WindowSplitLayoutUnavailable();
     const epoch = this.opts.splitLayoutEpoch?.();
     let supported = false;
     try {
@@ -443,6 +457,25 @@ export class MirrorService {
     return entry.splitAuthority.read(target);
   }
 
+  async #stockSplitServer(): Promise<boolean> {
+    try {
+      return (await this.opts.splitLayoutStock?.()) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  #readStockSplitLayout(entry: ChannelEntry, target: WindowLinkTarget): WindowSplitLayoutResource {
+    if (entry.splitAuthority && !entry.stockSplitEpoch) throw new WindowSplitLayoutUnavailable();
+    const epoch = (entry.stockSplitEpoch ??= randomUUID());
+    entry.splitAuthority ??= new WindowSplitAuthority({
+      describe: (window) => entry.channel.describeSplitLayout(window, true),
+      serverEpoch: () => epoch,
+      stock: true,
+    });
+    return entry.splitAuthority.read(target);
+  }
+
   /** Resolve only issued handles, then revalidate immediately at native dispatch. */
   async resizeWindowSplit(
     session: string,
@@ -451,7 +484,7 @@ export class MirrorService {
     authorizeBeforeEffect: () => void,
     runNative: ReturnType<typeof createGuardedNativeSplitResize>,
   ): Promise<
-    GuardedNativeSplitResizeResult & {
+    (GuardedNativeSplitResizeResult | StockSplitResizeResult) & {
       successor?: { resource: WindowSplitLayoutResource; splitId: string } | null;
     }
   > {
@@ -467,16 +500,22 @@ export class MirrorService {
     await entry!.started;
     const resolved = current().resolve(captured);
     const successor = current().prepareSuccessor(captured);
-    const result = await runNative(resolved.request, {
-      operationId,
-      serverEpoch: resolved.serverEpoch,
-      session: resolved.session,
-      anchor: resolved.anchor,
-      authorizeBeforeEffect: () => {
-        current().resolve(captured);
-        authorizeBeforeEffect();
-      },
-    });
+    const authorize = () => {
+      current().resolve(captured);
+      authorizeBeforeEffect();
+    };
+    const result = entry!.stockSplitEpoch
+      ? await resizeStockSplit(resolved.request, resolved.session.created, authorize, {
+          readOptions: (windowId) => entry!.channel.stockSplitOptions(windowId),
+          send: (command) => entry!.channel.stockSplitCommand(command),
+        })
+      : await runNative(resolved.request, {
+          operationId,
+          serverEpoch: resolved.serverEpoch,
+          session: resolved.session,
+          anchor: resolved.anchor,
+          authorizeBeforeEffect: authorize,
+        });
     if (result.status !== "applied") return result;
     // Native success is retained even if canonical publication is late or diverges.
     // This grace period observes only; it never retries a native mutation.
