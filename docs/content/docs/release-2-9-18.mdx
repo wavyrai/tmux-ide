@@ -1,7 +1,7 @@
 ---
 title: tmux-ide 2.9.18
 metaTitle: "What's new in 2.9.18"
-description: "Pane dividers on Homebrew's tmux and other stock tmux, and a tmux doctor line that says which features your tmux supports."
+description: "Pane dividers on Homebrew's tmux and other stock tmux, and a tmux-ide doctor line that says which features your tmux supports."
 ---
 
 `2.9.18` is a CLI/daemon release. It works with native macOS alpha `0.1.14`,
@@ -19,9 +19,9 @@ and moves them with tmux's own `resize-pane`:
 - Each drag is one tmux command. It checks that the window's layout is still the
   one the daemon read, and only then resizes. If anything changed the window in
   between, tmux refuses the drag and nothing moves.
-- Moves land exactly, with pane titles on top, at the bottom or off.
-- A drag moves the two panes next to the divider. On tmux-ide's own tmux it can
-  also make room by shrinking panes further along.
+- Moves land where you drop them, up to the panes' minimum size, with pane
+  titles on top, at the bottom or off.
+- A drag resizes only the panes on either side of the divider.
 
 Some windows still show no dividers on stock tmux, and the app doesn't yet say
 why:
@@ -29,19 +29,22 @@ why:
 - a zoomed window, the same as on tmux-ide's own tmux
 - a window with a floating pane open, on tmux 3.8
 - a rare nested layout, where only the affected divider is missing
+- a divider whose panes are already at their minimum size
+
+After a floating pane closes, the dividers can take up to a minute to come back.
 
 A tmux server started by tmux-ide keeps the same path as before.
 
-## tmux doctor names your tmux
+## tmux-ide doctor names your tmux
 
-`tmux doctor` now reports one of:
+`tmux-ide doctor` now reports one of:
 
 - `bundled tmux: full features`
 - `stock tmux: reduced features`
 - `this tmux has only some tmux-ide commands: no pane dividers`
 
 With a server running, it asks that server. Without one, it starts a private
-server to test the tmux binary, then removes it.
+server to test the tmux binary, then normally removes it.
 
 ## Smaller fixes
 
