@@ -289,6 +289,16 @@ describe("tmux features row", () => {
         "older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)",
     });
   });
+  it("does not guess when the split command is missing and the journal probe fails", () => {
+    const journalTimesOut = (args: readonly string[]) =>
+      args[0] === "tmux-ide-events"
+        ? fail("spawnSync tmux ETIMEDOUT")
+        : fail(`unknown command: ${args[0]}\n`);
+    expect(tmuxFeaturesRow(journalTimesOut, bundled)).toMatchObject({
+      pass: false,
+      detail: "could not read the tmux server's features",
+    });
+  });
   it("gives the mirror's verdict for a build with only some commands", () => {
     const splitOnly = (args: readonly string[]) =>
       args[0] === "tmux-ide-resize-split" ? CAPABILITY : fail(`unknown command: ${args[0]}\n`);
