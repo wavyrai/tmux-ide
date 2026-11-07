@@ -182,9 +182,9 @@ function check(
 type TmuxProbe = (args: readonly string[]) => string;
 const UNKNOWN = (command: string) => new RegExp(`^unknown command: ${command}$`, "mu");
 
-type NativeAnswer = "full" | "stock" | "partial" | "no-server" | "unknown";
-/** The same reading of the server as the mirror's: stock only when it refuses both
- * native commands by name, and full only with the split capability it requires. */
+type NativeAnswer = "full" | "stock" | "older" | "partial" | "no-server" | "unknown";
+/** The same reading of the server as the mirror's: the stock resize when it refuses
+ * the split command by name, and full only with the split capability it requires. */
 function nativeCommands(probe: TmuxProbe): NativeAnswer {
   const ask = (command: string) => {
     try {
@@ -201,7 +201,12 @@ function nativeCommands(probe: TmuxProbe): NativeAnswer {
     return "no-server";
   const refused = (answer: { failure?: string }, command: string) =>
     answer.failure !== undefined && UNKNOWN(command).test(answer.failure);
-  if (refused(split, "tmux-ide-resize-split") && refused(events, "tmux-ide-events")) return "stock";
+  if (refused(split, "tmux-ide-resize-split")) {
+    if (refused(events, "tmux-ide-events")) return "stock";
+    // The journal answers: a tmux-ide tmux built before the split command.
+    if (events.output !== undefined) return "older";
+    return "unknown";
+  }
   if (split.output !== undefined && events.output !== undefined) {
     try {
       return nativeSplitCapability(split.output) ? "full" : "partial";
@@ -220,13 +225,15 @@ export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe):
   const details: Record<NativeAnswer, string> = {
     full: "bundled tmux: full features",
     stock: "stock tmux: reduced features",
+    older:
+      "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
     unknown: "could not read the tmux server's features",
   };
   return {
     label: "tmux features",
-    pass: answer === "full" || answer === "stock",
+    pass: answer === "full" || answer === "stock" || answer === "older",
     detail: details[answer],
     optional: true,
   };

@@ -153,3 +153,21 @@ it("allows a missing native birth identity only on a stock server", async () => 
     await r.channel.dispose();
   }
 });
+
+it("keeps a stock server's own birth ids and refuses an invalid one", async () => {
+  const kept = await rig("11");
+  try {
+    const snapshot = kept.channel.describeSplitLayout(kept.target, true);
+    expect(snapshot.panes.every((pane) => pane.nativePaneBirthId === "11")).toBe(true);
+  } finally {
+    await kept.channel.dispose();
+  }
+  const invalid = await rig("0");
+  try {
+    expect(() => invalid.channel.describeSplitLayout(invalid.target, true)).toThrow(
+      "identity incomplete",
+    );
+  } finally {
+    await invalid.channel.dispose();
+  }
+});

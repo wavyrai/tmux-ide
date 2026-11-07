@@ -280,12 +280,31 @@ describe("tmux features row", () => {
       "stock tmux: reduced features",
     );
   });
-  it("gives the mirror's verdict for a build with only some commands", () => {
+  it("names an older tmux-ide tmux that lacks only the split command", () => {
     const eventsOnly = (args: readonly string[]) =>
       args[0] === "tmux-ide-events" ? "{}" : fail(`unknown command: ${args[0]}\n`);
+    expect(tmuxFeaturesRow(eventsOnly, bundled)).toMatchObject({
+      pass: true,
+      detail:
+        "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
+    });
+  });
+  it("does not guess when the split command is missing and the journal probe fails", () => {
+    const journalTimesOut = (args: readonly string[]) =>
+      args[0] === "tmux-ide-events"
+        ? fail("spawnSync tmux ETIMEDOUT")
+        : fail(`unknown command: ${args[0]}\n`);
+    expect(tmuxFeaturesRow(journalTimesOut, bundled)).toMatchObject({
+      pass: false,
+      detail: "could not read the tmux server's features",
+    });
+  });
+  it("gives the mirror's verdict for a build with only some commands", () => {
+    const splitOnly = (args: readonly string[]) =>
+      args[0] === "tmux-ide-resize-split" ? CAPABILITY : fail(`unknown command: ${args[0]}\n`);
     const oldCapability = (args: readonly string[]) =>
       args[0] === "tmux-ide-resize-split" ? '{"schemaVersion":1}' : "{}";
-    for (const probe of [eventsOnly, oldCapability]) {
+    for (const probe of [splitOnly, oldCapability]) {
       const row = tmuxFeaturesRow(probe, bundled);
       expect(row.pass).toBe(false);
       expect(row.detail).toBe("this tmux has only some tmux-ide commands: no pane dividers");

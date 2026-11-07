@@ -1002,7 +1002,8 @@ export class SessionChannel {
         pane.descriptor?.runtimeSessionId !== identity.runtimeSessionId ||
         pane.descriptor?.windowId !== resolved.runtimeWindowId ||
         this.panesBySemantic.get(pane.semanticId) !== pane ||
-        (!stock && (!birth || !/^[1-9]\d*$/u.test(birth))) ||
+        // A stock server has no birth ids; a server that has them must give valid ones.
+        ((!stock || birth) && (!birth || !/^[1-9]\d*$/u.test(birth))) ||
         !layout.leaves.some(
           (visible) =>
             visible.id === leaf.id &&
@@ -1016,7 +1017,7 @@ export class SessionChannel {
       return Object.freeze({
         runtimePaneId: pane.runtimeId,
         semanticPaneId: pane.semanticId,
-        nativePaneBirthId: stock ? "" : birth!,
+        nativePaneBirthId: birth || "",
       });
     });
     return Object.freeze({

@@ -103,23 +103,22 @@ export function createNativeSplitReadiness(options: {
     }));
 }
 
-const NATIVE_COMMANDS = ["tmux-ide-resize-split", "tmux-ide-events"] as const;
-/** True only when the selected server refuses every native command by name. A
- * timeout, a lost server or any other failure says nothing, so it stays false. */
+/** True only when the selected server refuses `tmux-ide-resize-split` by name: a
+ * stock tmux, or a tmux-ide tmux built before that command, which may still have
+ * the journal. A timeout, a lost server or any other failure says nothing, so it
+ * stays false. */
 export function createStockSplitProbe(options: {
   runPinnedTmux: NativeSplitRunner;
 }): () => Promise<boolean> {
+  const command = "tmux-ide-resize-split";
   return async () => {
-    for (const command of NATIVE_COMMANDS) {
-      try {
-        await options.runPinnedTmux([command, "-V"]);
-        return false;
-      } catch (error) {
-        const failure = error as { stderr?: unknown; cause?: { stderr?: unknown } } | undefined;
-        const text = String(failure?.cause?.stderr ?? failure?.stderr ?? "");
-        if (!new RegExp(`^unknown command: ${command}$`, "mu").test(text)) return false;
-      }
+    try {
+      await options.runPinnedTmux([command, "-V"]);
+      return false;
+    } catch (error) {
+      const failure = error as { stderr?: unknown; cause?: { stderr?: unknown } } | undefined;
+      const text = String(failure?.cause?.stderr ?? failure?.stderr ?? "");
+      return new RegExp(`^unknown command: ${command}$`, "mu").test(text);
     }
-    return true;
   };
 }

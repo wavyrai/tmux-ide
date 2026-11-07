@@ -45,7 +45,8 @@ export class WindowSplitAuthority {
     private readonly options: {
       describe(window: WindowLinkTarget): NativeSplitLayoutSnapshot;
       serverEpoch(): string | null;
-      /** A stock server has no pane birth ids, and some splits have no resize target. */
+      /** A server without the native split command: pane birth ids may be missing,
+       * and some splits have no resize target. */
       stock?: boolean;
     },
   ) {}
@@ -72,7 +73,7 @@ export class WindowSplitAuthority {
       if (
         !/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) ||
         Number(pane.runtimePaneId.slice(1)) > 0xffffffff ||
-        (!this.options.stock &&
+        (!(this.options.stock && pane.nativePaneBirthId === "") &&
           !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
             pane.nativePaneBirthId,
           ).success)
