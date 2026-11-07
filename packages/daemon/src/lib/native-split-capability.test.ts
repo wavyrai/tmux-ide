@@ -166,21 +166,30 @@ describe("stock split probe", () => {
   const refuse = (message: string, stderr?: string) => () => {
     throw Object.assign(new Error(message), stderr === undefined ? {} : { stderr });
   };
-  it("is stock only when the server refuses both native commands by name", async () => {
+  // As the pinned runners throw it: a TmuxError around the raw failure.
+  const unknown = (command: string) => {
+    throw new Error("tmux command failed", {
+      cause: Object.assign(new Error("Command failed"), {
+        stderr: `unknown command: ${command}\n`,
+      }),
+    });
+  };
+  it("takes the stock resize when the server refuses tmux-ide-resize-split by name", async () => {
     const calls: string[] = [];
     const probe = createStockSplitProbe({
       runPinnedTmux: (args) => {
         calls.push(args[0]!);
-        // As the pinned runners throw it: a TmuxError around the raw failure.
-        throw new Error("tmux command failed", {
-          cause: Object.assign(new Error("Command failed"), {
-            stderr: `unknown command: ${args[0]}\n`,
-          }),
-        });
+        return unknown(args[0]!);
       },
     });
     await expect(probe()).resolves.toBe(true);
-    expect(calls).toEqual(["tmux-ide-resize-split", "tmux-ide-events"]);
+    expect(calls).toEqual(["tmux-ide-resize-split"]);
+  });
+  it("takes it too on an older tmux-ide tmux that has the journal but not the split command", async () => {
+    const probe = createStockSplitProbe({
+      runPinnedTmux: (args) => (args[0] === "tmux-ide-events" ? "{}" : unknown(args[0]!)),
+    });
+    await expect(probe()).resolves.toBe(true);
   });
   it("stays a refusal for any other answer", async () => {
     const cases: NativeSplitRunner[] = [
@@ -192,11 +201,8 @@ describe("stock split probe", () => {
       refuse("Tmux server generation changed before command execution"),
       refuse("Command failed", "unknown command: something-else\n"),
       refuse("Command failed", "tmux: unknown command: tmux-ide-resize-split extra\n"),
-      // A partly patched server: one command exists.
-      (args) => {
-        if (args[0] === "tmux-ide-events") return "{}";
-        throw Object.assign(new Error("x"), { stderr: "unknown command: tmux-ide-resize-split" });
-      },
+      // The split command answers; only the journal is missing.
+      (args) => (args[0] === "tmux-ide-resize-split" ? "{}" : unknown(args[0]!)),
     ];
     for (const runPinnedTmux of cases)
       await expect(createStockSplitProbe({ runPinnedTmux })()).resolves.toBe(false);

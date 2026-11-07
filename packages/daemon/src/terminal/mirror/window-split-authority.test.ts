@@ -276,6 +276,20 @@ describe("stock mode", () => {
       stock,
     });
   const TWO = "0000,100x10,0,0{50x10,0,0,1,49x10,51,0,2}";
+  it("checks a birth id a stock server does have", () => {
+    const withBirth = (birth: string) =>
+      new WindowSplitAuthority({
+        describe: () => ({
+          ...snapshot(TWO, [1, 2]),
+          panes: panes([1, 2]).map((pane) => ({ ...pane, nativePaneBirthId: birth })),
+        }),
+        serverEpoch: () => "11111111-1111-4111-8111-111111111111",
+        stock: true,
+      });
+    expect(withBirth("7").read(window).splits).toHaveLength(1);
+    for (const bad of ["0", "x", "-1"])
+      expect(() => withBirth(bad).read(window)).toThrow(WindowSplitLayoutUnavailable);
+  });
   it("issues handles without pane birth ids only for a stock server", () => {
     expect(authority(TWO, [1, 2], true).read(window).splits).toHaveLength(1);
     expect(() => authority(TWO, [1, 2], false).read(window)).toThrow(WindowSplitLayoutUnavailable);
