@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## 2.9.19
 
 - Show pane dividers in the Mac app on a tmux server started by tmux-ide's own tmux from before 2.9.6. That tmux has some of tmux-ide's commands but not the one dividers used, so it got no dividers. It now uses the same guarded `resize-pane` as stock tmux.
-- Report this case in `tmux-ide doctor` as "older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)".
+- Report this case in `tmux-ide doctor` as "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)".
 
 ## 2.9.18
 

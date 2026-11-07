@@ -286,7 +286,7 @@ describe("tmux features row", () => {
     expect(tmuxFeaturesRow(eventsOnly, bundled)).toMatchObject({
       pass: true,
       detail:
-        "older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)",
+        "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
     });
   });
   it("does not guess when the split command is missing and the journal probe fails", () => {

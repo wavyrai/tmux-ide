@@ -19,10 +19,12 @@ if the window's layout still matches, and the same limits apply.
 
 `tmux-ide doctor` reports this case as:
 
-- `older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)`
+- `older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)`
 
-Restarting tmux moves it to the current build, with every tmux-ide feature, but
-ends every session on that server.
+Restarting tmux moves it to the current build only if tmux-ide starts the new
+server with its own tmux. A `tmux` on your `PATH` from an older build starts the
+old one again. With no server running, `tmux-ide doctor` reports the tmux that
+would start next. Restarting ends every session on that server.
 
 Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
 preserved. Full list of changes:

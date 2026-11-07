@@ -226,7 +226,7 @@ export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe):
     full: "bundled tmux: full features",
     stock: "stock tmux: reduced features",
     older:
-      "older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)",
+      "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
     unknown: "could not read the tmux server's features",
