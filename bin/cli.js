@@ -13145,7 +13145,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.18",
+      version: "2.9.19",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -27006,27 +27006,23 @@ function createNativeSplitReadiness(options) {
   });
 }
 function createStockSplitProbe(options) {
+  const command3 = "tmux-ide-resize-split";
   return async () => {
-    for (const command3 of NATIVE_COMMANDS) {
-      try {
-        await options.runPinnedTmux([command3, "-V"]);
-        return false;
-      } catch (error) {
-        const failure4 = error;
-        const text2 = String(failure4?.cause?.stderr ?? failure4?.stderr ?? "");
-        if (!new RegExp(`^unknown command: ${command3}$`, "mu").test(text2)) return false;
-      }
+    try {
+      await options.runPinnedTmux([command3, "-V"]);
+      return false;
+    } catch (error) {
+      const failure4 = error;
+      const text2 = String(failure4?.cause?.stderr ?? failure4?.stderr ?? "");
+      return new RegExp(`^unknown command: ${command3}$`, "mu").test(text2);
     }
-    return true;
   };
 }
-var NATIVE_COMMANDS;
 var init_native_split_capability = __esm({
   "packages/daemon/src/lib/native-split-capability.ts"() {
     "use strict";
     init_src2();
     init_native_split_resize();
-    NATIVE_COMMANDS = ["tmux-ide-resize-split", "tmux-ide-events"];
   }
 });
 
@@ -31893,14 +31889,15 @@ var init_session_channel = __esm({
         const panes = native2.leaves.map((leaf) => {
           const pane = this.panesByRuntime.get(leaf.id);
           const birth = pane?.descriptor?.nativePaneBirthId;
-          if (!pane || pane.windowRuntimeId !== resolved2.runtimeWindowId || pane.descriptor?.runtimeSessionId !== identity4.runtimeSessionId || pane.descriptor?.windowId !== resolved2.runtimeWindowId || this.panesBySemantic.get(pane.semanticId) !== pane || !stock && (!birth || !/^[1-9]\d*$/u.test(birth)) || !layout.leaves.some(
+          if (!pane || pane.windowRuntimeId !== resolved2.runtimeWindowId || pane.descriptor?.runtimeSessionId !== identity4.runtimeSessionId || pane.descriptor?.windowId !== resolved2.runtimeWindowId || this.panesBySemantic.get(pane.semanticId) !== pane || // A stock server has no birth ids; a server that has them must give valid ones.
+          (!stock || birth) && (!birth || !/^[1-9]\d*$/u.test(birth)) || !layout.leaves.some(
             (visible) => visible.id === leaf.id && visible.left === leaf.left && visible.top === leaf.top && visible.width === leaf.width && visible.height === leaf.height
           ))
             throw new Error("Split layout pane identity incomplete");
           return Object.freeze({
             runtimePaneId: pane.runtimeId,
             semanticPaneId: pane.semanticId,
-            nativePaneBirthId: stock ? "" : birth
+            nativePaneBirthId: birth || ""
           });
         });
         return Object.freeze({
@@ -34496,7 +34493,7 @@ var init_window_split_authority = __esm({
         if (!tree || tree.width > 4096 || tree.height > 4096 || snapshot3.panes.length > 256)
           throw new WindowSplitLayoutUnavailable();
         snapshot3.panes.forEach((pane) => {
-          if (!/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) || Number(pane.runtimePaneId.slice(1)) > 4294967295 || !this.options.stock && !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
+          if (!/^%(0|[1-9][0-9]{0,9})$/u.test(pane.runtimePaneId) || Number(pane.runtimePaneId.slice(1)) > 4294967295 || !(this.options.stock && pane.nativePaneBirthId === "") && !NativeJournalUint64SchemaZ.refine((birth) => birth !== "0").safeParse(
             pane.nativePaneBirthId
           ).success)
             throw new WindowSplitLayoutUnavailable();
@@ -99330,7 +99327,11 @@ function nativeCommands(probe) {
   if (failures.some((text2) => /no server running|error connecting/u.test(text2)))
     return "no-server";
   const refused3 = (answer, command3) => answer.failure !== void 0 && UNKNOWN(command3).test(answer.failure);
-  if (refused3(split, "tmux-ide-resize-split") && refused3(events, "tmux-ide-events")) return "stock";
+  if (refused3(split, "tmux-ide-resize-split")) {
+    if (refused3(events, "tmux-ide-events")) return "stock";
+    if (events.output !== void 0) return "older";
+    return "unknown";
+  }
   if (split.output !== void 0 && events.output !== void 0) {
     try {
       return nativeSplitCapability(split.output) ? "full" : "partial";
@@ -99346,13 +99347,14 @@ function tmuxFeaturesRow(probeServer, probeBinary) {
   const details = {
     full: "bundled tmux: full features",
     stock: "stock tmux: reduced features",
+    older: "older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)",
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
     unknown: "could not read the tmux server's features"
   };
   return {
     label: "tmux features",
-    pass: answer === "full" || answer === "stock",
+    pass: answer === "full" || answer === "stock" || answer === "older",
     detail: details[answer],
     optional: true
   };

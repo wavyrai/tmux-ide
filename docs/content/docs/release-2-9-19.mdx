@@ -1,0 +1,29 @@
+---
+title: tmux-ide 2.9.19
+metaTitle: "What's new in 2.9.19"
+description: "Pane dividers on tmux servers started by an older tmux-ide."
+---
+
+`2.9.19` is a CLI/daemon release. It works with native macOS alpha `0.1.14`,
+which needs no update.
+
+## Dividers on an older tmux-ide tmux
+
+`tmux-ide update` keeps your tmux server running, so a server started before
+2.9.6 keeps that release's tmux. It has some of tmux-ide's own commands, but not
+the one pane dividers used, and the Mac app showed no dividers on it.
+
+Such a server now gets dividers the same way stock tmux does since
+[2.9.18](/docs/release-2-9-18): each drag is one `resize-pane` that tmux runs only
+if the window's layout still matches, and the same limits apply.
+
+`tmux-ide doctor` reports this case as:
+
+- `older tmux-ide tmux: reduced features (restarting tmux updates it, but ends its sessions)`
+
+Restarting tmux moves it to the current build, with every tmux-ide feature, but
+ends every session on that server.
+
+Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
+preserved. Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
