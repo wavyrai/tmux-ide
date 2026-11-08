@@ -472,3 +472,57 @@ test("private refresh verification refuses a relocated root even if file inode s
     rmSync(relocated, { recursive: true });
   }
 });
+
+test("an effective-configuration refusal names the check, not its value", () => {
+  const root = "/private/var/folders/xx/T/ssh-abc";
+  const spec = {
+    root,
+    node: "/usr/local/bin/node",
+    account: "runner",
+    port: 40001,
+    targetPort: 40002,
+  };
+  const good = [
+    "port 40001",
+    "listenaddress 127.0.0.1:40001",
+    "passwordauthentication no",
+    "kbdinteractiveauthentication no",
+    "pubkeyauthentication yes",
+    "permituserrc no",
+    "permituserenvironment no",
+    "allowagentforwarding no",
+    "x11forwarding no",
+    "permittunnel no",
+    "allowstreamlocalforwarding no",
+    "allowtcpforwarding local",
+    "gatewayports no",
+    "permitlisten none",
+    "permitopen 127.0.0.1:40002",
+    "strictmodes yes",
+    "usepam no",
+    "allowusers runner",
+    `authorizedkeysfile ${root}/authorized_keys`,
+    `hostkey ${root}/host`,
+    `setenv HOME=${root}/home ZDOTDIR=${root}/home PATH=${root}/bin`,
+    `forcecommand "/usr/local/bin/node" "${root}/dispatch.mjs"`,
+  ].join("\n");
+  assert.equal(verifyEffectiveServer(good, spec).publicKeyOnly, true);
+  const check = (text) => {
+    try {
+      verifyEffectiveServer(text, spec);
+    } catch (error) {
+      return error.check;
+    }
+    return "accepted";
+  };
+  assert.equal(check(good.replace("usepam no\n", "")), "usepam:missing");
+  assert.equal(check(good + "\nhostkey /etc/ssh/ssh_host_ed25519_key"), "hostkey:repeated");
+  assert.equal(check(good.replace("permitopen 127.0.0.1:40002", "permitopen any")), "permitopen");
+  assert.equal(check(good.replace("PATH=", "XPATH=")), "setenv:form");
+  assert.equal(check(good.replace(`PATH=${root}/bin`, `PATH=${root}/empty`)), "setenv:PATH");
+  assert.equal(check(good.replace('"/usr/local/bin/node"', "/usr/local/bin/node")), "forcecommand");
+  assert.doesNotMatch(
+    String(check(good.replace("allowusers runner", "allowusers other"))),
+    /other/u,
+  );
+});
