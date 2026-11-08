@@ -72,7 +72,8 @@ export function verifyEffectiveServer(text, expected) {
   for (const line of text.trim().split("\n")) {
     const at = line.indexOf(" ");
     if (at > 0) {
-      const k = line.slice(0, at),
+      // Keywords are case-insensitive; OpenSSH 10.5 prints them in their documented case.
+      const k = line.slice(0, at).toLowerCase(),
         v = line.slice(at + 1);
       fields.set(k, [...(fields.get(k) ?? []), v]);
     }
