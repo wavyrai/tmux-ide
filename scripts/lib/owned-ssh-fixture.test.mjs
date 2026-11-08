@@ -12,6 +12,7 @@ import {
   existsSync,
   rmSync,
   unlinkSync,
+  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -471,4 +472,83 @@ test("private refresh verification refuses a relocated root even if file inode s
     unlinkSync(root);
     rmSync(relocated, { recursive: true });
   }
+});
+
+test("an effective-configuration refusal names the check, not its value", () => {
+  const root = "/private/var/folders/xx/T/ssh-abc";
+  const spec = {
+    root,
+    node: "/usr/local/bin/node",
+    account: "runner",
+    port: 40001,
+    targetPort: 40002,
+  };
+  const good = [
+    "port 40001",
+    "listenaddress 127.0.0.1:40001",
+    "passwordauthentication no",
+    "kbdinteractiveauthentication no",
+    "pubkeyauthentication yes",
+    "permituserrc no",
+    "permituserenvironment no",
+    "allowagentforwarding no",
+    "x11forwarding no",
+    "permittunnel no",
+    "allowstreamlocalforwarding no",
+    "allowtcpforwarding local",
+    "gatewayports no",
+    "permitlisten none",
+    "permitopen 127.0.0.1:40002",
+    "strictmodes yes",
+    "usepam no",
+    "allowusers runner",
+    `authorizedkeysfile ${root}/authorized_keys`,
+    `hostkey ${root}/host`,
+    `setenv HOME=${root}/home ZDOTDIR=${root}/home PATH=${root}/bin`,
+    `forcecommand "/usr/local/bin/node" "${root}/dispatch.mjs"`,
+  ].join("\n");
+  assert.equal(verifyEffectiveServer(good, spec).publicKeyOnly, true);
+  const check = (text) => {
+    try {
+      verifyEffectiveServer(text, spec);
+    } catch (error) {
+      return error.check;
+    }
+    return "accepted";
+  };
+  assert.equal(check(good.replace("usepam no\n", "")), "usepam:missing");
+  assert.equal(check(good + "\nhostkey /etc/ssh/ssh_host_ed25519_key"), "hostkey:repeated");
+  assert.equal(check(good.replace("permitopen 127.0.0.1:40002", "permitopen any")), "permitopen");
+  assert.equal(check(good.replace("PATH=", "XPATH=")), "setenv:form");
+  assert.equal(check(good.replace(`PATH=${root}/bin`, `PATH=${root}/empty`)), "setenv:PATH");
+  assert.equal(check(good.replace('"/usr/local/bin/node"', "/usr/local/bin/node")), "forcecommand");
+  assert.doesNotMatch(
+    String(check(good.replace("allowusers runner", "allowusers other"))),
+    /other/u,
+  );
+});
+
+test("effective policy reads OpenSSH 10.5's documented keyword case, values still exact", () => {
+  // sshd -T from macos-26 image 20261102.0473.1 (macOS 26.7.2, OpenSSH_10.5p1), with
+  // the fixture root and node path replaced by placeholders.
+  const root = "/private/var/folders/xx/T/ssh-abc";
+  const node = "/Users/runner/node";
+  const text = readFileSync(new URL("./owned-ssh-sshd-t-openssh-10.5.txt", import.meta.url), "utf8")
+    .replaceAll("<root>", root)
+    .replaceAll("<node>", node);
+  assert.match(text, /^Port 40001$/mu);
+  const spec = { root, node, account: "runner", port: 40001, targetPort: 40002 };
+  assert.equal(verifyEffectiveServer(text, spec).publicKeyOnly, true);
+  const check = (changed) => {
+    try {
+      verifyEffectiveServer(changed, spec);
+    } catch (error) {
+      return error.check;
+    }
+    return "accepted";
+  };
+  assert.equal(check(text.replace("PermitOpen 127.0.0.1:40002", "PermitOpen any")), "permitopen");
+  assert.equal(check(text.replace("UsePAM no", "UsePAM yes")), "usepam");
+  assert.equal(check(text + "\nhostkey /etc/ssh/ssh_host_ed25519_key"), "hostkey:repeated");
+  assert.equal(check(text.replace("SetEnv PATH=", "SetEnv XPATH=")), "setenv:form");
 });

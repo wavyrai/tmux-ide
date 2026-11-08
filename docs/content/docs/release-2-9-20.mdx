@@ -1,0 +1,21 @@
+---
+title: tmux-ide 2.9.20
+metaTitle: "What's new in 2.9.20"
+description: "The 2.9.19 changes, published: pane dividers on tmux servers started by an older tmux-ide."
+---
+
+`2.9.20` is a CLI/daemon release. It works with native macOS alpha `0.1.14`,
+which needs no update.
+
+It ships everything in [2.9.19](/docs/release-2-9-19), which was tagged but never
+published to npm: pane dividers on a tmux server started by tmux-ide's own tmux
+from before 2.9.6, and the matching `tmux-ide doctor` line.
+
+The only other change is in the release process. A release check failed on
+GitHub's new macOS runner image, whose OpenSSH prints its settings with
+mixed-case names. The check now accepts that, and still compares every value
+exactly.
+
+Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
+preserved. Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

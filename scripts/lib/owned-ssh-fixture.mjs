@@ -28,6 +28,8 @@ import { fileURLToPath } from "node:url";
 const execute = promisify(execFile);
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const fail = () => new Error("Owned SSH fixture refused");
+/** A refusal that names the effective-configuration check it failed, never its value. */
+const refusedAt = (check) => Object.assign(fail(), { check });
 export function fixturePath(path) {
   if (
     typeof path !== "string" ||
@@ -70,7 +72,8 @@ export function verifyEffectiveServer(text, expected) {
   for (const line of text.trim().split("\n")) {
     const at = line.indexOf(" ");
     if (at > 0) {
-      const k = line.slice(0, at),
+      // Keywords are case-insensitive; OpenSSH 10.5 prints them in their documented case.
+      const k = line.slice(0, at).toLowerCase(),
         v = line.slice(at + 1);
       fields.set(k, [...(fields.get(k) ?? []), v]);
     }
@@ -98,13 +101,15 @@ export function verifyEffectiveServer(text, expected) {
     hostkey: join(expected.root, "host"),
   };
   for (const [k, v] of Object.entries(required)) {
-    if (JSON.stringify(fields.get(k)) !== JSON.stringify([v])) throw fail();
+    const seen = fields.get(k);
+    if (JSON.stringify(seen) !== JSON.stringify([v]))
+      throw refusedAt(seen === undefined ? `${k}:missing` : seen.length > 1 ? `${k}:repeated` : k);
   }
   const env = new Map();
   for (const line of fields.get("setenv") ?? []) {
     for (const pair of line.split(/ +/u)) {
       const match = /^(HOME|ZDOTDIR|PATH)=([A-Za-z0-9_./-]+)$/u.exec(pair);
-      if (!match || env.has(match[1])) throw fail();
+      if (!match || env.has(match[1])) throw refusedAt("setenv:form");
       env.set(match[1], match[2]);
     }
   }
@@ -113,7 +118,7 @@ export function verifyEffectiveServer(text, expected) {
     ZDOTDIR: join(expected.root, "home"),
     PATH: join(expected.root, expected.missingPath ? "empty" : "bin"),
   })) {
-    if (env.get(k) !== v) throw fail();
+    if (env.get(k) !== v) throw refusedAt(`setenv:${k}`);
   }
   const command = fields.get("forcecommand")?.join(" ");
   if (
@@ -122,7 +127,7 @@ export function verifyEffectiveServer(text, expected) {
       ? "/usr/bin/false"
       : `${quote(expected.node)} ${quote(join(expected.root, "dispatch.mjs"))}`)
   )
-    throw fail();
+    throw refusedAt("forcecommand");
   return {
     publicKeyOnly: true,
     userRcDisabled: true,
@@ -574,7 +579,8 @@ export async function createOwnedSshFixture({
     closing = false,
     listenPort = null;
   let stage = "allocated",
-    failureStage = null;
+    failureStage = null,
+    failureDetail = null;
   let sshdDiagnostics = null;
   const timers = new Set();
   const metrics = { requests: 0, deliveredBytes: 0, stalls: 0, handshakeFailures: 0 };
@@ -605,6 +611,7 @@ export async function createOwnedSshFixture({
     diagnostics: () => ({
       stage,
       failureStage,
+      ...(failureDetail ? { failureDetail } : {}),
       ...(sshdDiagnostics ? { sshd: sshdDiagnostics() } : {}),
     }),
   });
@@ -821,10 +828,28 @@ export async function createOwnedSshFixture({
       },
       disposeFiles,
     };
-  } catch {
+  } catch (error) {
     failureStage = stage;
+    failureDetail = refusalDetail(error);
     throw fail();
   }
+}
+/** What a refusal can say about itself without fixture paths, keys or output. */
+function refusalDetail(error) {
+  if (typeof error?.check === "string") return { check: error.check };
+  if (error && (error.code !== undefined || error.signal || error.killed)) {
+    const firstLine = String(error.stderr ?? "")
+      .split("\n")[0]
+      .replace(/\/[^\s"']*/gu, "<path>")
+      .slice(0, 160);
+    return {
+      exit: typeof error.code === "number" ? error.code : String(error.code ?? ""),
+      signal: error.signal ?? null,
+      timedOut: error.killed === true,
+      stderr: firstLine,
+    };
+  }
+  return null;
 }
 
 /** Fixed kernel witness decoder: a changed birth time changes authority, command titles do not. */

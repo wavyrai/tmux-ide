@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.20
+
+- Ship the 2.9.19 changes. 2.9.19 was tagged but never published to npm, because a release check failed on GitHub's new macOS runner image.
+- Fix that release check: OpenSSH 10.5 prints `sshd -T` setting names in mixed case, and the check only accepted lower case. It now compares names without case and values exactly, and names the check that failed.
+
 ## 2.9.19
 
 - Show pane dividers in the Mac app on a tmux server started by tmux-ide's own tmux from before 2.9.6. That tmux has some of tmux-ide's commands but not the one dividers used, so it got no dividers. It now uses the same guarded `resize-pane` as stock tmux.
