@@ -22,7 +22,7 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
         let body = cx.debug_bounds("tmux-shell-body").unwrap();
         let inset = cx.debug_bounds("tmux-workspace-inset").unwrap();
         let content = cx.debug_bounds("tmux-workspace-content").unwrap();
-        let windows = cx.debug_bounds("workspace-window-strip").unwrap();
+        let top_row = cx.debug_bounds("sidebar-top-row").unwrap();
         assert!(cx.debug_bounds("pane-header-row").is_none());
         assert_eq!(
             content.left(),
@@ -49,8 +49,8 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
             let canvas = v.input_geometry.unwrap().0;
             assert_eq!(canvas.left(), content.left());
             assert_eq!(canvas.right(), content.right());
-            assert!(canvas.top() >= windows.bottom());
-            assert!(windows.bottom() <= body.top());
+            assert!(canvas.top() >= top_row.bottom());
+            assert!(top_row.bottom() <= body.top());
             assert_eq!(canvas.top(), content.top());
             assert_eq!(canvas.bottom(), content.bottom());
             v.test_fitted_grid()

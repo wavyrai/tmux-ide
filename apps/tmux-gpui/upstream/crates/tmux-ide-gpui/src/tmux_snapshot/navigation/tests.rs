@@ -12,6 +12,7 @@ fn pane(id: &str, window: Option<&str>) -> Choice {
         pane_count: None,
         window_id: window.map(str::to_owned),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some("Same name".into()),
     }
 }

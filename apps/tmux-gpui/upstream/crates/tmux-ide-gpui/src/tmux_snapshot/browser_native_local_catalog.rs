@@ -55,6 +55,7 @@ impl Local {
                     pane_count: Some(u64::from(session.pane_count)),
                     window_id: None,
                     browser_icon: None,
+                    display_name_source: None,
                     window_label: None,
                 });
             }
@@ -342,6 +343,7 @@ impl Local {
             pane_count: Some(1),
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         });
         self.open(self.state.request, key, None)

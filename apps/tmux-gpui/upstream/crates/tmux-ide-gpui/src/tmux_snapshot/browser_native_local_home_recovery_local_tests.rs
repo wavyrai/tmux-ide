@@ -11,6 +11,7 @@ fn home_with_a_session() -> (Local, mpsc::Receiver<Incoming>) {
         pane_count: Some(2),
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }];
     local.targets.insert(

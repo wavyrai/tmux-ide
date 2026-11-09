@@ -78,9 +78,10 @@ impl SnapshotView {
                         (Some(index), false) => (index + 1) % 5,
                         (Some(index), true) => (index + 4) % 5,
                     };
+                    // Slot 1 was Theme, which left the action row (#746).
                     while (next < 4 && self.browser_commands.is_none())
                         || (next == 4 && !self.home_diagnostics_available())
-                        || (next == 1 && self.browser_state.appearance.is_none())
+                        || next == 1
                         || (next == 3 && !self.local_session_available())
                     {
                         next = if event.keystroke.modifiers.shift {

@@ -42,17 +42,20 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
     for width in [640., 1000.] {
         cx.simulate_resize(size(px(width), px(400.)));
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let home = cx.debug_bounds("application-home").unwrap();
-        let sidebar = cx.debug_bounds("sidebar-toggle").unwrap();
-        let add = cx.debug_bounds("workspace-new-window").unwrap();
-        let tabs = cx.debug_bounds("workspace-window-strip").unwrap();
+        // The top row (#746): show/hide, then search and New session at the
+        // sidebar's right edge; Home is the sidebar's first row.
+        let toggle = cx.debug_bounds("sidebar-toggle").unwrap();
+        let search = cx.debug_bounds("application-search").unwrap();
+        let add = cx.debug_bounds("application-new-session").unwrap();
+        let row = cx.debug_bounds("sidebar-top-row").unwrap();
+        let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();
         assert!(cx.debug_bounds("retained-session-tabs").is_none());
-        assert!(sidebar.right() <= home.left());
-        assert!(home.right() <= tabs.left());
-        assert_eq!(home.center().y, tabs.center().y);
-        assert!(cx.debug_bounds("application-new-session").is_none());
-        assert!(tabs.right() <= add.left());
-        assert!(add.right() <= px(width));
+        assert!(cx.debug_bounds("application-home").is_none());
+        assert!(cx.debug_bounds("workspace-new-window").is_none());
+        assert!(toggle.right() <= search.left() && search.right() <= add.left());
+        assert_eq!(toggle.center().y, add.center().y);
+        assert_eq!(row.right(), sidebar.right());
+        assert!(add.right() <= sidebar.right());
         let canvas = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
         receiver.try_iter().for_each(drop);
         cx.update(|window, cx| {
@@ -68,7 +71,7 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
 }
 
 #[gpui::test]
-fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
+fn window_transition_keeps_the_top_row_still(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -78,7 +81,7 @@ fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
     for width in [640., 1000.] {
         cx.simulate_resize(size(px(width), px(400.)));
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let before = cx.debug_bounds("workspace-window-strip").unwrap();
+        let before = cx.debug_bounds("sidebar-top-row").unwrap();
         cx.update(|window, cx| {
             view.update(cx, |v, _| {
                 v.browser_state.retained_preview = true;
@@ -87,7 +90,7 @@ fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
             });
             window.draw(cx).clear(cx);
         });
-        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+        assert_eq!(cx.debug_bounds("sidebar-top-row").unwrap(), before);
         assert!(cx.debug_bounds("tmux-status-viewport").is_none());
         assert!(!view.read_with(cx, |v, _| v.browser_state.input_ready));
         cx.update(|window, cx| {
@@ -98,12 +101,12 @@ fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
             });
             window.draw(cx).clear(cx);
         });
-        assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+        assert_eq!(cx.debug_bounds("sidebar-top-row").unwrap(), before);
     }
 }
 
 #[gpui::test]
-fn actual_window_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestAppContext) {
+fn actual_pane_row_click_keeps_the_top_row_still_before_worker_reply(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -130,15 +133,15 @@ fn actual_window_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestApp
     cx.simulate_resize(size(px(640.), px(400.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
-    let before = cx.debug_bounds("workspace-window-strip").unwrap();
-    let target = cx.debug_bounds("workspace-window-1").unwrap();
+    let before = cx.debug_bounds("sidebar-top-row").unwrap();
+    let target = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
     cx.simulate_click(target.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),
         browser::Command::Pane { request: 8, .. }
     ));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert_eq!(cx.debug_bounds("workspace-window-strip").unwrap(), before);
+    assert_eq!(cx.debug_bounds("sidebar-top-row").unwrap(), before);
     assert!(cx.debug_bounds("tmux-status-viewport").is_none());
     assert!(view.read_with(cx, |v, _| v.browser_state.retained_preview));
     assert!(!view.read_with(cx, |v, _| v.browser_state.input_ready));

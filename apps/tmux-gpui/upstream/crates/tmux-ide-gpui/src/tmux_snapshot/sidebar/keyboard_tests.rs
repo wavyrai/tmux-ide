@@ -22,7 +22,8 @@ fn sidebar_keys_choose_duplicate_label_by_displayed_id_and_escape_keeps_latch(
         })
     });
     assert!(receiver.try_recv().is_err());
-    cx.simulate_keystrokes("ctrl-g down enter");
+    // The open session's pane row sits between the two headings (#746).
+    cx.simulate_keystrokes("ctrl-g down down enter");
     let commands: Vec<_> = receiver.try_iter().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(
@@ -42,7 +43,7 @@ fn sidebar_reorder_retains_id_but_removal_or_request_change_cannot_choose_replac
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g down");
+    cx.simulate_keystrokes("ctrl-g down down");
     cx.update(|window, cx| {
         view.update(cx, |view, _| view.browser_state.sessions.reverse());
         window.draw(cx).clear(cx);

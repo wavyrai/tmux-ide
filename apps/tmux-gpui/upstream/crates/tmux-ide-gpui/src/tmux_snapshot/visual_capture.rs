@@ -18,6 +18,9 @@ use std::{
     sync::{Arc, mpsc},
 };
 
+#[path = "visual_capture_mock.rs"]
+mod mock;
+
 const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
 /// Home's captures (card #684): the owner's window size.
@@ -82,6 +85,7 @@ fn session(id: &str, label: &str) -> browser::Choice {
         pane_count: Some(2),
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -93,6 +97,7 @@ fn pane(id: &str, window: &str, label: &str) -> browser::Choice {
         pane_count: None,
         window_id: Some(window.into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some(label.into()),
     }
 }
@@ -236,7 +241,6 @@ fn capture_view(
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
         terminal_font: Default::default(),
-        window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
         fit_settle: Default::default(),
@@ -521,6 +525,13 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let state = browser_state(appearance)?;
     let state = if fleet { with_fleet(state)? } else { state };
     let owner = extras.contains(&"owner");
+    // `<theme>+mock`: the #746 mockup's session window, refitted below.
+    let mock = extras.contains(&"mock");
+    let state = if mock {
+        mock::with_mock_fleet(state)?
+    } else {
+        state
+    };
     let state = if owner {
         with_owner_split(state, COLS, ROWS)?
     } else {
@@ -558,6 +569,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         state = with_home_fleet(state, fixture)?;
     }
     let spark = extras.contains(&"spark");
+    let with_sidebar = extras.contains(&"sidebar");
+    // The workspace fixture's catalog names sessions the Home fleet doesn't
+    // hold; with the sidebar shown they would read as stray projects.
+    if home_b && with_sidebar {
+        state.sessions.clear();
+    }
     let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
@@ -599,7 +616,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             |window, cx| {
                 let view = cx.new(|cx| {
                     let mut view = capture_view(window, cx, sender, state);
-                    view.sidebar_hidden = home_b;
+                    // `+sidebar` keeps Home's sidebar (#746).
+                    view.sidebar_hidden = home_b && !with_sidebar;
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {
@@ -627,7 +645,13 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, _| window.refresh())?;
     }
-    if owner && let Some(view) = root.borrow().clone() {
+    // The mock's grid is cut both ways, so it fits again once its own cards
+    // set the overhead.
+    let refits = if mock { 2 } else { usize::from(owner) };
+    for _ in 0..refits {
+        let Some(view) = root.borrow().clone() else {
+            break;
+        };
         cx.update(|cx| {
             view.update(cx, |view, _| -> Result<()> {
                 let (Some((canvas, _)), Some(width)) = (view.input_geometry, view.input_cell_width)
@@ -644,11 +668,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     view.terminal_height(),
                 )
                 .ok_or_else(|| anyhow!("owner capture: no fit"))?;
-                let state = with_owner_split(
-                    std::mem::take(&mut view.browser_state),
-                    cols.into(),
-                    rows.into(),
-                )?;
+                let state = std::mem::take(&mut view.browser_state);
+                let state = if mock {
+                    mock::with_mock_panes(state, cols.into(), rows.into())?
+                } else {
+                    with_owner_split(state, cols.into(), rows.into())?
+                };
                 view.frame = state.frame.clone();
                 view.browser_state = state;
                 Ok(())

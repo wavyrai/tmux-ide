@@ -2,6 +2,8 @@
 use gpui::{prelude::*, *};
 
 pub(super) const ZOOM: &str = "⌘⇧↵";
+pub(super) const SPLIT_RIGHT: &str = "⌘D";
+pub(super) const SPLIT_DOWN: &str = "⌘⇧D";
 pub(super) const FOCUS: [(&str, &str); 4] = [
     ("Focus pane left", "⌘⌥←"),
     ("Focus pane right", "⌘⌥→"),

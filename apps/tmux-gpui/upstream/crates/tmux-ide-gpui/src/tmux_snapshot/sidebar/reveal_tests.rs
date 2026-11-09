@@ -52,6 +52,9 @@ fn sidebar_reveals_new_selection_once_and_respects_manual_scroll(cx: &mut TestAp
         view.update(cx, |view, _| {
             view.browser_state.selected_session = Some("s30".into())
         });
+        // The open session's pane rows move with it, so the reveal waits one
+        // frame for rows measured in the new order.
+        window.draw(cx).clear(cx);
         window.draw(cx).clear(cx);
     });
     let changed = cx.debug_bounds("tmux-sidebar-row-30").unwrap();

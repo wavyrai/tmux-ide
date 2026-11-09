@@ -56,18 +56,21 @@ fn list_selection_follows_pointer_and_keys_and_survives_a_vanished_machine(
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-offline".into()));
     assert_eq!(shown_machines(cx), [1]);
 
-    // Keys while the list has focus: arrows, and End stops at the last entry.
-    cx.simulate_keystrokes("down");
+    // Keys while the filter row has focus (#746: a horizontal tab row): ←
+    // and → step the filters, and End stops at the last one.
+    cx.simulate_keystrokes("right");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-connecting".into()));
     assert_eq!(shown_machines(cx), [2]);
-    cx.simulate_keystrokes("end down");
+    cx.simulate_keystrokes("left");
+    assert_eq!(fleet_view(&view, cx), View::Machine("qa-offline".into()));
+    cx.simulate_keystrokes("end right");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-conflict".into()));
     cx.simulate_keystrokes("home");
     assert_eq!(fleet_view(&view, cx), View::All);
 
     // Off the list, the arrows are not the list's; `[` and `]` still are.
     cx.update(|window, cx| view.update(cx, |v, cx| v.terminal_focus.focus(window, cx)));
-    cx.simulate_keystrokes("down");
+    cx.simulate_keystrokes("right");
     assert_eq!(fleet_view(&view, cx), View::All);
     cx.simulate_keystrokes("]");
     assert_eq!(fleet_view(&view, cx), View::Favourites);
@@ -145,7 +148,7 @@ fn the_table_takes_the_keyboard_and_its_keys_act_on_the_cursor_row(cx: &mut Test
     let entry = cx.debug_bounds("home-nav-machine-0").unwrap();
     cx.simulate_click(entry.center(), Modifiers::default());
     assert!(!hint(cx, 0));
-    // Enter, like →, moves into the table, onto its first row, with the ↵
+    // Enter, like ↓, moves into the table, onto its first row, with the ↵
     // hint there.
     cx.simulate_keystrokes("enter");
     assert_eq!(cursor(cx), Some(("qa-local".into(), ids[0].clone())));
@@ -192,7 +195,7 @@ fn the_table_takes_the_keyboard_and_its_keys_act_on_the_cursor_row(cx: &mut Test
 }
 
 #[gpui::test]
-fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
+fn up_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -207,26 +210,51 @@ fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     let entry = cx.debug_bounds("home-nav-all").unwrap();
     cx.simulate_click(entry.center(), Modifiers::default());
-    for back in ["left", "escape"] {
-        cx.simulate_keystrokes("right");
-        cx.simulate_keystrokes(back);
-        // Back on the list, ↓ moves the list again.
+    let focus = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                let f = v.home_filter.as_ref().unwrap();
+                (
+                    f.fleet_nav.is_focused(window),
+                    f.fleet_table.is_focused(window),
+                )
+            })
+        })
+    };
+    for back in ["up", "escape"] {
+        // ↓ goes into the table, onto its first row.
         cx.simulate_keystrokes("down");
+        assert_eq!(focus(cx), (false, true), "↓ into the table");
+        cx.simulate_keystrokes(back);
+        assert_eq!(focus(cx), (true, false), "after {back}");
+        // Back on the filters, → moves them again.
+        cx.simulate_keystrokes("right");
         assert_eq!(fleet_view(&view, cx), View::Favourites, "after {back}");
-        cx.simulate_keystrokes("up");
+        cx.simulate_keystrokes("left");
     }
-    // `[` and `]` still change the list from the table.
-    cx.simulate_keystrokes("right ]");
+    // ↑ below the first row moves the cursor; on the first row it leaves.
+    cx.simulate_keystrokes("down down up");
+    assert_eq!(
+        focus(cx),
+        (false, true),
+        "↑ to the first row stays in the table"
+    );
+    cx.simulate_keystrokes("up");
+    assert_eq!(focus(cx), (true, false), "↑ from the first row");
+    // In the table, ← and → don't change the filter; `[` and `]` still do.
+    cx.simulate_keystrokes("down right left");
+    assert_eq!(fleet_view(&view, cx), View::All);
+    cx.simulate_keystrokes("]");
     assert_eq!(fleet_view(&view, cx), View::Favourites);
     cx.simulate_keystrokes("[");
     assert_eq!(fleet_view(&view, cx), View::All);
-    cx.simulate_keystrokes("left");
-    // An empty table does not take the keyboard: → and Enter on Favourites
-    // stay on the list, and Enter reaches nothing behind it.
-    cx.simulate_keystrokes("down right enter down");
+    cx.simulate_keystrokes("escape");
+    // An empty table does not take the keyboard: ↓ and Enter on Favourites
+    // stay on the filters, and Enter reaches nothing behind it.
+    cx.simulate_keystrokes("right down enter right");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
     assert!(receiver.try_recv().is_err());
-    // Esc on the list hands the keyboard back.
+    // Esc on the filters hands the keyboard back.
     cx.simulate_keystrokes("escape");
     let (list, terminal) = cx.update(|window, cx| {
         view.read_with(cx, |v, _| {
@@ -237,7 +265,7 @@ fn left_and_escape_hand_the_keyboard_back_to_the_list(cx: &mut TestAppContext) {
         })
     });
     assert!(!list && terminal);
-    cx.simulate_keystrokes("down");
+    cx.simulate_keystrokes("right");
     assert_eq!(fleet_view(&view, cx), View::Machine("qa-local".into()));
 }
 

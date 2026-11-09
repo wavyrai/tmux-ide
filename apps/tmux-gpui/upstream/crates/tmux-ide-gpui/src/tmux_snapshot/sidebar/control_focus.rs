@@ -1,12 +1,15 @@
 //! Opt-in chrome traversal belongs to Ctrl+G, never the terminal Tab key.
 use super::*;
-use crate::tmux_snapshot::{SnapshotView, pane_actions};
+use crate::tmux_snapshot::SnapshotView;
+/// The sidebar's Tab stops after its rows: the footer's three buttons, the
+/// show/hide toggle, Home, search and New session (#746).
+pub(in crate::tmux_snapshot) const CONTROLS: usize = 7;
 
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn sidebar_footer_current(&self, request: u64) -> bool {
         // Recovery clicks remain available while terminal presence is pending.
-        self.browser_state.surface == browser::Surface::Workspace
-            && !self.sidebar_hidden
+        // Home shows the sidebar too (#746), so its footer works there.
+        !self.sidebar_hidden
             && self.browser_commands.is_some()
             && self.browser_request == request
             && self.picker.is_none()
@@ -19,10 +22,9 @@ impl SnapshotView {
     fn sidebar_control_available(&self, index: usize) -> bool {
         match index {
             1 => self.browser_state.appearance.is_some(),
-            4 => {
-                pane_actions::Target::capture(&self.browser_state).is_some()
-                    && self.browser_state.selected_session.is_some()
-            }
+            // Home (4) and search (5) always work; New session (6) only
+            // while a local session can start.
+            6 => self.local_session_available(),
             _ => true,
         }
     }
@@ -115,7 +117,7 @@ impl SnapshotView {
                 .get_or_insert_with(|| std::array::from_fn(|_| cx.focus_handle()));
             let mut order = vec![None];
             order.extend(
-                (0..5)
+                (0..CONTROLS)
                     .filter(|i| self.sidebar_control_available(*i))
                     .map(Some),
             );

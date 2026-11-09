@@ -42,9 +42,6 @@ pub(in crate::tmux_snapshot) fn fleet_agents(r: &Roster) -> String {
         count(r.truncated_rows, "agent", "agents")
     )
 }
-pub(in crate::tmux_snapshot) fn workspace_agents(r: &Roster) -> String {
-    format!("{} omitted", count(r.truncated_rows, "agent", "agents"))
-}
 
 #[cfg(test)]
 mod tests;

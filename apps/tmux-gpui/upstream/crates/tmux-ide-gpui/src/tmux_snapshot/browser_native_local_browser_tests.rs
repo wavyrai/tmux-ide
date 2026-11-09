@@ -35,6 +35,7 @@ fn fixture() -> Local {
                 window_id: Some("window-a".into()),
                 window_label: None,
                 browser_icon: None,
+                display_name_source: None,
             }],
             ..State::default()
         },

@@ -3,24 +3,33 @@ fn workspace_roster() -> browser::home_agents::WorkspaceRoster {
     serde_json::from_value(serde_json::json!({"sessionId":"session-a","revision":4,"phase":"live","rows":[{"key":"agent-a","sessionId":"session-a","paneId":"pane-a","name":"Same long agent name repeated across rows","sessionLabel":"Same","status":"WORKING","attention":false,"available":true},{"key":"agent-b","sessionId":"session-a","paneId":"pane-b","name":"Same long agent name repeated across rows","sessionLabel":"Same","status":"IDLE","attention":false,"available":true}],"observedSessions":1,"totalSessions":1,"truncatedSessions":0,"truncatedRows":0,"note":null})).unwrap()
 }
 #[gpui::test]
-fn workspace_agent_rendered_duplicate_labels_open_exact_key(cx: &mut TestAppContext) {
+fn agent_pane_rows_show_the_agent_and_open_the_exact_pane(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
         view.browser_state.request = 7;
-        // The fresh authoritative roster may include a pane absent from initial choices.
-        assert!(!view.browser_state.panes.iter().any(|p| p.id == "pane-b"));
+        view.browser_state.panes = vec![choice("pane-a", "Editor"), choice("pane-b", "Editor")];
         view.browser_state.workspace_agents = Some(workspace_roster());
         view
     });
     cx.simulate_resize(size(px(640.), px(600.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let row = cx.debug_bounds("tmux-workspace-agent-1").unwrap();
+    // Both agent panes are rows, labelled with the agent's name since neither
+    // pane has a title of its own (#746); the Agents section is gone.
+    assert!(cx.debug_bounds("tmux-workspace-agents-section").is_none());
+    let rows: Vec<_> = view.read_with(cx, |v, _| rows(&v.browser_state));
+    let labels: Vec<_> = rows
+        .iter()
+        .filter(|r| r.pane.is_some())
+        .map(|r| r.label.as_str())
+        .collect();
+    assert_eq!(labels, ["Same long agent name repeated across rows"; 2]);
+    let row = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
     assert!(row.size.width <= px(224.));
     receiver.try_iter().for_each(drop);
     cx.simulate_click(row.center(), Modifiers::default());
     assert!(
-        matches!(receiver.try_recv().unwrap(), browser::Command::OpenWorkspaceAgent {request:8,from_request:7,roster_revision:4,key,session_id} if key=="agent-b" && session_id=="session-a")
+        matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-b")
     );
     view.read_with(cx, |view, _| {
         assert!(view.frame.is_none());
@@ -88,31 +97,18 @@ fn workspace_roster_scope_and_wire_are_strict() {
 }
 
 #[gpui::test]
-fn long_workspace_roster_keeps_last_row_in_scrollable_content(cx: &mut TestAppContext) {
+fn a_long_pane_list_keeps_its_last_row_reachable(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
         view.browser_state.request = 7;
-        let mut roster = workspace_roster();
-        let original = roster.roster.rows[0].clone();
-        roster.roster.rows = (0..40)
-            .map(|i| {
-                let mut row = original.clone();
-                row.key = format!("agent-{i}");
-                row
-            })
+        view.browser_state.panes = (0..40)
+            .map(|i| choice(&format!("pane-{i}"), "Shell"))
             .collect();
-        view.browser_state.workspace_agents = Some(roster);
         view
     });
     cx.simulate_resize(size(px(640.), px(400.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let last = cx.debug_bounds("tmux-workspace-agent-39").unwrap();
-    let section = cx.debug_bounds("tmux-workspace-agents-section").unwrap();
-    assert!(
-        last.bottom() <= section.bottom(),
-        "last row {last:?} escapes clipped section {section:?}"
-    );
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     for _ in 0..10 {
@@ -124,10 +120,10 @@ fn long_workspace_roster_keeps_last_row_in_scrollable_content(cx: &mut TestAppCo
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
     }
-    let last = cx.debug_bounds("tmux-workspace-agent-39").unwrap();
+    let last = cx.debug_bounds("tmux-sidebar-pane:pane-39").unwrap();
     assert!(
         last.top() >= px(0.) && last.bottom() <= px(400.),
-        "last agent must be reachable: {last:?}"
+        "last pane must be reachable: {last:?}"
     );
     assert!(
         receiver.try_recv().is_err(),

@@ -248,7 +248,7 @@ fn dropped_drag_prefix_stays_interrupted_after_release_until_ready_click(cx: &mu
         view.browser_state.selected_session = Some("session".into());
         view.browser_state.resize_token = Some("312b2c16-a13d-4411-82e5-1fdb58adab92".into());
         view.browser_state.regions = serde_json::from_str(r#"[{"id":"pane-a","left":0,"top":0,"width":5,"height":9},{"id":"pane-b","left":6,"top":0,"width":5,"height":9}]"#).unwrap();
-        view.browser_state.panes = ["pane-a", "pane-b"].into_iter().map(|id| browser::Choice { id:id.into(), label:id.into(), pane_count:None, window_id:Some("window".into()), browser_icon: None, window_label:None }).collect();
+        view.browser_state.panes = ["pane-a", "pane-b"].into_iter().map(|id| browser::Choice { id:id.into(), label:id.into(), pane_count:None, window_id:Some("window".into()), browser_icon: None, display_name_source: None, window_label:None }).collect();
         for offered in 0..3 {
             click(view, window, cx);
             assert!(!view.input_interrupted);
@@ -349,6 +349,7 @@ fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext)
                     window_id: Some("window-a".into()),
                     window_label: None,
                     browser_icon: None,
+                    display_name_source: None,
                 })
                 .collect();
             view.browser_state

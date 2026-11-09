@@ -153,94 +153,35 @@ fn old_f5_pane_action_cannot_dispatch_through_replacement_picker(cx: &mut TestAp
     assert!(receiver.try_recv().is_err());
 }
 
+/// The pane menu's "Open folder in VS Code" is also an F5 pane command, so
+/// the keyboard reaches it without the pane menu (#746). It sends the same
+/// admission the menu does, on the exact pane and its capability.
 #[gpui::test]
-fn new_window_strip_click_is_bounded_and_consumes_only_captured_capability(
-    cx: &mut TestAppContext,
-) {
+fn f5_opens_the_pane_folder_in_vs_code(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
-        view.update(cx, |view, _| {
-            ready_pane(view, false);
-            for index in 0..12 {
-                let mut pane = view.browser_state.panes[0].clone();
-                pane.id = format!("extra-{index}");
-                pane.window_id = Some(format!("window-{index}"));
-                pane.window_label = Some("A long window name for overflow".into());
-                view.browser_state.panes.push(pane);
-            }
-        });
+        view.update(cx, |view, _| ready_pane(view, false));
         window.draw(cx).clear(cx);
     });
-    cx.simulate_resize(size(px(640.), px(400.)));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
-    // Finish the fixture resize before testing one-use capability dispatch.
-    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
-    let bounds = cx.debug_bounds("workspace-new-window").unwrap();
-    assert!(bounds.left() >= px(0.) && bounds.right() <= px(640.) && bounds.bottom() <= px(400.));
-    let geometry = view.read_with(cx, |view, _| view.input_geometry.unwrap().0);
-    cx.simulate_click(bounds.center(), Modifiers::default());
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("vs code");
+    cx.simulate_keystrokes("enter");
     assert_eq!(
         serde_json::to_value(receiver.try_recv().unwrap()).unwrap(),
-        serde_json::json!({"type":"pane-action","action":"new-window","request":7,"id":"pane-a","token":"312b2c16-a13d-4411-82e5-1fdb58adab92"})
+        serde_json::json!({"type":"open-editor","request":7,"id":"pane-a",
+            "token":"312b2c16-a13d-4411-82e5-1fdb58adab92"})
     );
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.simulate_click(bounds.center(), Modifiers::default());
     assert!(receiver.try_recv().is_err());
     view.read_with(cx, |view, _| {
-        assert_eq!(view.input_geometry.unwrap().0, geometry);
-        assert_eq!(view.browser_request, 7);
-        assert_eq!(view.browser_state.selected_pane.as_deref(), Some("pane-a"));
-        assert!(view.input_interrupted);
+        assert!(view.picker.is_none());
+        // The capability is spent, as the menu's item spends it.
+        assert!(view.browser_state.pane_actions.is_none());
     });
-    cx.update(|window, cx| {
-        view.update(cx, |view, cx| {
-            ready_pane(view, false);
-            let old =
-                crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
-            view.browser_state.pane_actions.as_mut().unwrap().token = "replacement".into();
-            view.create_window_from_strip(&old, window, cx);
-            assert!(view.picker.is_none());
-            assert!(receiver.try_recv().is_err());
-            let current =
-                crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
-            view.open_commands(window, cx);
-            view.create_window_from_strip(&current, window, cx);
-            assert!(receiver.try_recv().is_err());
-        })
-    });
-}
-
-#[gpui::test]
-fn new_window_strip_full_queue_preserves_capability_and_shows_error(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
-    receiver.try_iter().for_each(drop);
-    cx.update(|window, cx| {
-        view.update(cx, |view, cx| {
-            ready_pane(view, false);
-            let target =
-                crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
-            view.browser_commands
-                .as_ref()
-                .unwrap()
-                .try_send(browser::Command::PaneAction {
-                    request: 7,
-                    id: "occupied".into(),
-                    token: "occupied".into(),
-                    action: crate::tmux_snapshot::pane_actions::Action::NewWindow,
-                })
-                .unwrap();
-            view.create_window_from_strip(&target, window, cx);
-            assert!(view.browser_state.pane_actions.is_some());
-            assert!(view.picker.as_ref().unwrap().error.is_some());
-            assert!(view.input_interrupted);
-            assert_eq!(view.browser_request, 7);
-        })
-    });
-    assert!(
-        matches!(receiver.try_recv().unwrap(),browser::Command::PaneAction{id,..} if id=="occupied")
-    );
+    // Without a current capability the row does nothing.
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("vs code");
+    cx.simulate_keystrokes("enter");
     assert!(receiver.try_recv().is_err());
 }

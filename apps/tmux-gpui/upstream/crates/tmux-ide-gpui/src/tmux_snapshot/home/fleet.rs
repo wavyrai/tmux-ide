@@ -17,8 +17,13 @@ pub(super) const ROW_GAP: f32 = SPACE * 1.5;
 pub(super) const FAVICON: f32 = 16.;
 pub(super) const LAYOUT_WIDTH: f32 = 150.;
 pub(super) const ACTIVE_WIDTH: f32 = 96.;
+/// The agents column (#746): the widest it gets; it shares the free width
+/// with the names below that.
+pub(super) const AGENTS_WIDTH: f32 = 230.;
+/// The narrowest a session's name gets before the agents column gives way.
+pub(super) const NAME_MIN: f32 = 96.;
 /// The widest the table gets, so a value sits near its name.
-pub(super) const TABLE_MAX: f32 = 760.;
+pub(super) const TABLE_MAX: f32 = 760. + AGENTS_WIDTH;
 /// The trailing column that holds the keyboard row's ↵ hint.
 pub(super) const HINT_WIDTH: f32 = 28.;
 
@@ -124,7 +129,7 @@ impl SnapshotView {
         }
     }
 
-    fn fleet_nav_row(
+    pub(super) fn fleet_nav_row(
         &self,
         index: usize,
         entry: &View,
@@ -162,10 +167,11 @@ impl SnapshotView {
             .rounded(px(bezel_theme::Theme::control_radius()))
             .cursor_pointer()
             .map(|row| {
-                if selected {
-                    row.bg(bezel.card_selected_bg())
-                } else {
-                    row.hover(move |s| s.bg(hover))
+                // The chosen filter is raised like a selected sidebar row.
+                let selection = bezel_theme::Selection::new(selected, false);
+                match selection.fill(&bezel) {
+                    Some(fill) => row.bg(fill).shadow(selection.shadows()),
+                    None => row.hover(move |s| s.bg(hover)),
                 }
             })
             .child(glyph(
@@ -199,52 +205,38 @@ impl SnapshotView {
             }))
     }
 
-    /// The left list, or in a narrow window a wrapping row of the same
-    /// entries over the table. `None` without a fleet.
-    pub(super) fn fleet_nav(&self, wide: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let fleet = self.browser_state.fleet.as_ref()?;
-        let bezel = self.home_palette();
-        let current = self.home_fleet_view();
-        let request = self.browser_request;
-        let entries = fleet_nav::entries(Some(fleet));
-        let mut list = div()
+    /// The filter row itself: a horizontal tab list, which ←/→ step.
+    pub(super) fn fleet_nav_list(&self) -> Stateful<Div> {
+        div()
             .id("home-fleet-nav")
             .debug_selector(|| "home-fleet-nav".into())
             .role(Role::TabList)
             .aria_label("Fleet")
             .flex_none()
             .flex()
-            .gap(px(2.))
-            .map(|list| {
-                if wide {
-                    list.w(px(NAV_WIDTH)).flex_col()
-                } else {
-                    list.w_full().flex_row().flex_wrap().items_center()
-                }
-            })
+            .gap(px(4.))
+            .w_full()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
             .when_some(self.home_filter.as_ref(), |list, c| {
                 list.track_focus(&c.fleet_nav)
-            });
+            })
+    }
+
+    /// The filter row over the table (#746): All sessions, Favourites, each
+    /// machine with its status dot, and Add machine…, wrapping in a narrow
+    /// window. `None` without a fleet.
+    pub(super) fn fleet_nav(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let fleet = self.browser_state.fleet.as_ref()?;
+        let bezel = self.home_palette();
+        let current = self.home_fleet_view();
+        let request = self.browser_request;
+        let entries = fleet_nav::entries(Some(fleet));
+        let mut list = self.fleet_nav_list();
         for (index, entry) in entries.iter().enumerate() {
-            if index == 2 && wide {
-                list = list.child(
-                    div()
-                        .mt(px(SPACE * 1.5))
-                        .px(px(SPACE))
-                        .pb(px(4.))
-                        .text_style(TextStyle::Subheadline)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(bezel.text_muted)
-                        .children(design::ink_probe(|| "home-nav-machines".into()))
-                        .child("Machines"),
-                );
-            }
             let row = self.fleet_nav_row(index, entry, *entry == current, cx);
-            list = list.child(if wide {
-                row
-            } else {
-                row.w_auto().max_w(px(NAV_WIDTH))
-            });
+            list = list.child(row.w_auto().max_w(px(NAV_WIDTH)));
         }
         if fleet.omitted_groups > 0 {
             list = list.child(
@@ -262,7 +254,6 @@ impl SnapshotView {
                 .debug_selector(|| "home-add-machine".into())
                 .role(Role::Button)
                 .aria_label("Add machine…")
-                .when(wide, |row| row.mt(px(SPACE)))
                 .px(px(SPACE))
                 .py(px(6.))
                 .rounded(px(bezel_theme::Theme::control_radius()))

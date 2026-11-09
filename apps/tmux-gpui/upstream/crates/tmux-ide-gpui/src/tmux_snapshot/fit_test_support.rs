@@ -137,7 +137,6 @@ pub(super) fn fixture_view(
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
         terminal_font: Default::default(),
-        window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
         fit_settle: Default::default(),

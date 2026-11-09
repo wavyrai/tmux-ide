@@ -46,6 +46,7 @@ fn ready(view: &mut SnapshotView, state: BrowserState) {
         window_id: Some("window-a".into()),
         window_label: None,
         browser_icon: None,
+        display_name_source: None,
     }];
     view.browser_state
         .browser_controls

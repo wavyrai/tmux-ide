@@ -10,13 +10,7 @@ fn row(selected: bool) -> Row {
         pane_count: Some("2 panes".into()),
         selected,
         target: Some(Target::Session("tmux-ide".into())),
-        depth: 0,
-        machine: None,
-        agent: None,
-        icon: None,
-        favorite: None,
-        summary: None,
-        attention: 0,
+        ..Row::default()
     }
 }
 

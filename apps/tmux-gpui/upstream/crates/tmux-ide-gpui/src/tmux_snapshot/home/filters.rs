@@ -121,9 +121,14 @@ impl SnapshotView {
         let fleet = self.browser_state.fleet.as_ref();
         let current = fleet_nav::reconcile(&controls.fleet_view, fleet);
         let key = key.key.as_str();
+        // The table's first row: ↑ there goes back up to the filters.
+        let first = fleet_nav::step_row(&current, only, fleet, None, "home");
         if table_focused && !matches!(key, "[" | "]") {
             match key {
-                "left" | "escape" => controls.fleet_nav.clone().focus(window, cx),
+                "escape" => controls.fleet_nav.clone().focus(window, cx),
+                "up" if controls.table_cursor.is_none() || controls.table_cursor == first => {
+                    controls.fleet_nav.clone().focus(window, cx)
+                }
                 "enter" | "f" | "d" => {
                     if event.is_held {
                         return true;
@@ -188,7 +193,7 @@ impl SnapshotView {
                     controls.table_cursor = Some(next);
                 }
             }
-        } else if list_focused && matches!(key, "right" | "enter") {
+        } else if list_focused && matches!(key, "down" | "enter") {
             // An empty table keeps the keyboard on the list; Enter here is
             // never the agent list's Enter.
             if !event.is_held
@@ -197,7 +202,7 @@ impl SnapshotView {
             {
                 controls.table_cursor = Some(cursor);
                 controls.fleet_table.clone().focus(window, cx);
-            } else if key == "right" && !event.is_held {
+            } else if key == "down" && !event.is_held {
                 return false;
             }
         } else if list_focused && key == "escape" {

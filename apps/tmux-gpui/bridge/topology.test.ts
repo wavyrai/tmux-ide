@@ -72,3 +72,19 @@ test("initial preference uses current window active pane rather than inventory o
   );
   assert.equal(preferredPane(["pane-b"], [current, { ...old, panes: current.panes }]), null);
 });
+
+test("each pane's name source travels with its choice when the daemon reports one", () => {
+  const named = layout("window-a", "x", "pane-a", "nvim");
+  named.panes[0].displayNameSource = "process";
+  assert.deepEqual(paneChoices(["pane-a"], [named]), [
+    {
+      id: "pane-a",
+      label: "nvim",
+      windowId: "window-a",
+      windowLabel: "x",
+      displayNameSource: "process",
+    },
+  ]);
+  const [plain] = paneChoices(["pane-a"], [layout("window-a", "x", "pane-a", "nvim")]);
+  assert.equal("displayNameSource" in plain, false);
+});

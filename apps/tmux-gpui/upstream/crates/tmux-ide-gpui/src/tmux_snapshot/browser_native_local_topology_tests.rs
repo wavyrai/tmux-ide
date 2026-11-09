@@ -19,6 +19,7 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         })
         .collect();
@@ -134,4 +135,27 @@ fn labels_are_bounded_cleaned_and_have_fallbacks() {
     assert_eq!(local.state.panes[0].label.len(), 512);
     assert_eq!(local.state.panes[0].window_label.as_deref(), Some("Window"));
     assert_eq!(local.state.panes[1].label, "shell label");
+}
+#[test]
+fn each_panes_name_source_reaches_its_choice() {
+    use crate::tmux_snapshot::browser::NameSource;
+    use herdr_client::tmux_topology::DisplayNameSource;
+    let (mut local, _events) = attached();
+    let mut window = layout();
+    window.panes[0].display_name_source = Some(DisplayNameSource::Process);
+    window.panes[1].display_name_source = Some(DisplayNameSource::Generated);
+    local.command(notice(&local, vec![window])).unwrap();
+    let sources: Vec<_> = local
+        .state
+        .panes
+        .iter()
+        .map(|p| (p.id.as_str(), p.display_name_source))
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            ("right", Some(NameSource::Process)),
+            ("left", Some(NameSource::Generated)),
+        ]
+    );
 }

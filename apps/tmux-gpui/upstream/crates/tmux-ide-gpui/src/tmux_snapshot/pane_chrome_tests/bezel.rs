@@ -13,6 +13,7 @@ fn choice(id: &str) -> Choice {
         pane_count: None,
         window_id: Some("window-a".into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -119,7 +120,8 @@ fn hovering_each_header_control_paints_bezels_wash(cx: &mut TestAppContext) {
     });
     for selector in [
         "pane-mode:pane-a",
-        "pane-overflow:pane-a",
+        "pane-split-right:pane-a",
+        "pane-split-down:pane-a",
         "pane-expand:pane-a",
         "pane-close:pane-a",
         "browser-back",
@@ -183,11 +185,61 @@ fn clicking_header_controls_keeps_the_terminal_focused(cx: &mut TestAppContext) 
     assert!(focused(cx), "pane-mode");
     draw(cx);
 
-    let overflow = cx.debug_bounds("pane-overflow:pane-b").unwrap();
-    click(cx, overflow.center());
+    let split = cx.debug_bounds("pane-split-right:pane-b").unwrap();
+    click(cx, split.center());
     assert!(matches!(
         receiver.try_recv().unwrap(),
         browser::Command::Pane { id, .. } if id == "pane-b"
     ));
-    assert!(focused(cx), "pane-overflow");
+    assert!(focused(cx), "pane-split-right");
+}
+
+/// A pane title is a button named after its pane that points a screen
+/// reader to its actions: right-click, Control-click, or F5. It offers no
+/// "show menu" action, which VoiceOver on macOS cannot send (#746).
+#[gpui::test]
+fn titles_tell_a_screen_reader_where_the_pane_actions_are(cx: &mut TestAppContext) {
+    use gpui::accesskit::{Action, Node, Role as A11y};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    draw(cx);
+    receiver.try_iter().for_each(drop);
+    view.update(cx, |view, _| {
+        let header = Header {
+            id: "pane-b".into(),
+            left: 0,
+            width: 40,
+            row: Some(6),
+        };
+        let title = view.pane_title_a11y(div().id("title"), &header);
+        assert_eq!(title.a11y_role(), Some(A11y::Button));
+        let mut node = Node::new(A11y::Button);
+        title.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some("pane-b"));
+        assert_eq!(node.description(), Some(TITLE_HINT));
+        assert!(TITLE_HINT.contains("F5"));
+        assert!(!node.supports_action(Action::ShowContextMenu));
+    });
+}
+
+/// The split buttons tell a screen reader their shortcuts, as their
+/// tooltips show them.
+#[test]
+fn header_buttons_tell_a_screen_reader_their_shortcuts() {
+    use gpui::accesskit::{Node, Role as A11y};
+    for (intent, keys) in [
+        (HeaderIntent::SplitRight, Some("⌘D")),
+        (HeaderIntent::SplitDown, Some("⌘⇧D")),
+        (HeaderIntent::Expand, Some("⌘⇧↵")),
+        (HeaderIntent::Close, None),
+    ] {
+        let (_, _, hint, face_keys) = face(intent, false).unwrap();
+        let button = button_a11y(div().id("button"), hint, face_keys);
+        assert_eq!(button.a11y_role(), Some(A11y::Button));
+        let mut node = Node::new(A11y::Button);
+        button.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some(hint));
+        assert_eq!(node.keyboard_shortcut(), keys, "{hint}");
+    }
 }

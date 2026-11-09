@@ -13,6 +13,7 @@ fn choice(id: &str, label: &str) -> browser::Choice {
         pane_count: None,
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -143,6 +144,9 @@ fn rendered_after(
 // the paths that change what it draws without a spinner tick.
 #[gpui::test]
 fn a_published_theme_change_repaints_the_cached_view_and_the_spinner(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (snapshot, cx) = open(cx);
     period(&snapshot, cx);
     let before = cx.update(|_, cx| slot_colors(snapshot.read(cx)));
@@ -162,7 +166,7 @@ fn a_published_theme_change_repaints_the_cached_view_and_the_spinner(cx: &mut Te
         let view = snapshot.read(cx);
         (view.theme(), slot_colors(view))
     });
-    let working: Hsla = rgb(theme.ink(theme.palette[4])).into();
+    let working: Hsla = rgb(theme.ink(theme.muted)).into();
     assert_eq!(after, vec![working]);
     assert_ne!(before, after, "the spinner kept the old theme's colour");
 }

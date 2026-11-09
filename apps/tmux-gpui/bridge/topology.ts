@@ -17,7 +17,13 @@ const label = (value: string | null | undefined, fallback: string) => {
 
 export function paneChoices(ids: readonly string[], layouts: readonly Layout[]) {
   const remaining = new Set(ids);
-  const choices: { id: string; label: string; windowId?: string; windowLabel?: string }[] = [];
+  const choices: {
+    id: string;
+    label: string;
+    windowId?: string;
+    windowLabel?: string;
+    displayNameSource?: NonNullable<Layout["panes"][number]["displayNameSource"]>;
+  }[] = [];
   for (const window of layouts) {
     if (!window.semanticWindowId) continue;
     for (const pane of window.panes) {
@@ -27,6 +33,8 @@ export function paneChoices(ids: readonly string[], layouts: readonly Layout[]) 
         label: label(pane.displayName, pane.pane),
         windowId: window.semanticWindowId,
         windowLabel: label(window.windowName, "Window"),
+        // How the daemon named the pane: the sidebar's kind icons (#746).
+        ...(pane.displayNameSource ? { displayNameSource: pane.displayNameSource } : {}),
       });
     }
   }

@@ -37,6 +37,7 @@ fn choices(regions: &[Region]) -> Vec<Choice> {
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         })
         .collect()

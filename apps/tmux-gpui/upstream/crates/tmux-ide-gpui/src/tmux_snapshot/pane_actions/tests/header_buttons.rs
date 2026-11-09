@@ -127,3 +127,205 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
     assert_eq!(title_weight(true), FontWeight::SEMIBOLD);
     assert_eq!(title_weight(false), FontWeight::NORMAL);
 }
+
+#[gpui::test]
+fn header_buttons_split_right_split_down_zoom_close_edge_to_edge(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(
+        cx.debug_bounds("pane-overflow:pane-a").is_none(),
+        "no menu button"
+    );
+    let mut buttons = Vec::new();
+    for selector in [
+        "pane-split-right:pane-a",
+        "pane-split-down:pane-a",
+        "pane-expand:pane-a",
+        "pane-close:pane-a",
+    ] {
+        buttons.push(cx.debug_bounds(selector).unwrap());
+    }
+    for pair in buttons.windows(2) {
+        assert_eq!(pair[0].right(), pair[1].left());
+        assert_eq!(pair[0].size, pair[1].size);
+    }
+    let header = cx.debug_bounds("pane-card-header:pane-a").unwrap();
+    assert_eq!(buttons[3].right(), header.right());
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    assert!(title.right() <= buttons[0].left());
+    for (index, direction) in [(0, SplitDirection::Right), (1, SplitDirection::Down)] {
+        // Each action spends the pane's one-use capability; the daemon
+        // publishes a fresh one.
+        view.update(cx, |v, _| {
+            v.browser_state.pane_actions = Some(browser::PaneActions {
+                id: "pane-a".into(),
+                token: format!("token-{index}"),
+                zoomed: false,
+            });
+        });
+        cx.simulate_click(buttons[index].center(), Modifiers::default());
+        let sent = receiver.try_recv().unwrap();
+        assert!(
+            matches!(&sent, browser::Command::PaneAction { id, action: Action::Split { direction: sent }, .. }
+                if id == "pane-a" && std::mem::discriminant(sent) == std::mem::discriminant(&direction)),
+            "button {index}"
+        );
+        assert!(receiver.try_recv().is_err());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+}
+
+#[gpui::test]
+fn right_click_on_the_selected_panes_title_opens_its_menu(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    // A left click on the title only focuses the terminal.
+    cx.simulate_click(title.center(), Modifiers::default());
+    assert!(view.read_with(cx, |v, _| v.picker.is_none()));
+    cx.simulate_mouse_down(title.center(), MouseButton::Right, Modifiers::default());
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()), "pane menu");
+    assert!(
+        receiver.try_recv().is_err(),
+        "the menu sends nothing by itself"
+    );
+    cx.simulate_keystrokes("enter");
+    view.read_with(cx, |v, _| {
+        let menu = v.pane_actions.as_ref().unwrap();
+        assert_eq!(menu.target.actions.id, "pane-a");
+    });
+}
+
+/// Without pane cards (the preview windows) a title sits in the separator
+/// row above its pane, in the cell grid. A right-click there opens the menu,
+/// selecting the pane first. With cards on, the title is the card header's,
+/// covered above; the cell header row above the frame only renders when the
+/// cards are off in the browsing shell, which happens only when the regions
+/// are invalid and so carry no titles.
+#[gpui::test]
+fn right_click_on_a_lower_cell_header_opens_the_menu(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = header_view(window, cx, sender);
+        view.browsing = false;
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(
+        cx.debug_bounds("pane-card-header:pane-b").is_none(),
+        "no cards"
+    );
+    let lower = cx.debug_bounds("pane-title:pane-b").unwrap();
+    let terminal = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
+    assert!(
+        lower.top() > terminal.top(),
+        "inside the grid, not above it"
+    );
+    cx.simulate_mouse_down(lower.center(), MouseButton::Right, Modifiers::default());
+    assert!(
+        matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-b")
+    );
+    assert!(receiver.try_recv().is_err());
+}
+
+/// F5's Open folder in VS Code sends only for the current request, with
+/// presence ready, on the exact pane capability it captured (#746).
+#[gpui::test]
+fn open_captured_editor_needs_the_request_presence_and_a_current_target(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    view.update(cx, |view, _| {
+        let target = Target::capture(&view.browser_state).unwrap();
+        // A newer request.
+        view.browser_request += 1;
+        assert!(!view.open_captured_editor(&target));
+        view.browser_request -= 1;
+        // Presence not ready.
+        let ready = std::mem::replace(
+            &mut view.presence,
+            crate::tmux_snapshot::presence::Presence::new(true),
+        );
+        assert!(!view.presence.ready());
+        assert!(!view.open_captured_editor(&target));
+        view.presence = ready;
+        // A replaced capability: the captured target is no longer current.
+        let token = view
+            .browser_state
+            .pane_actions
+            .as_ref()
+            .unwrap()
+            .token
+            .clone();
+        view.browser_state.pane_actions.as_mut().unwrap().token = "replacement".into();
+        assert!(!view.open_captured_editor(&target));
+        view.browser_state.pane_actions.as_mut().unwrap().token = token;
+        assert!(
+            receiver.try_recv().is_err(),
+            "no gate let a command through"
+        );
+        // All three hold: the admission goes, and spends the capability.
+        assert!(view.open_captured_editor(&target));
+        assert!(view.browser_state.pane_actions.is_none());
+    });
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::OpenEditor { request: 7, id, .. } if id == "pane-a"
+    ));
+}
+
+/// The cell header row above the frame: with the cards off, the top pane's
+/// title sits there, and a right-click on it opens the pane's menu.
+#[gpui::test]
+fn right_click_on_the_header_row_title_opens_the_menu(cx: &mut TestAppContext) {
+    struct Row(Entity<SnapshotView>);
+    impl Render for Row {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .update(cx, |view, cx| view.pane_header_row(window, cx))
+        }
+    }
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (row, cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = header_view(window, cx, sender);
+            // No cards, so the top pane's title is in the header row.
+            view.browsing = false;
+            view
+        });
+        Row(view)
+    });
+    let view = row.read_with(cx, |row, _| row.0.clone());
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(view.read_with(cx, |v, _| v.card_layout(8.).is_none()));
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    cx.simulate_mouse_down(title.center(), MouseButton::Right, Modifiers::default());
+    assert!(
+        view.read_with(cx, |v, _| v.picker.is_some()),
+        "pane-a's menu"
+    );
+    assert!(receiver.try_recv().is_err());
+}
