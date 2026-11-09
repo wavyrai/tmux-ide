@@ -6,7 +6,9 @@
  * directory, and any change to any file (manifest included) means the plugin
  * asks again. `init.lua` is the user's own file and needs no consent.
  *
- * Consent lives in `<state home>/plugins-consent.json` (mode 0600).
+ * Consent lives in `<state home>/consent/plugins.json` (mode 0600). Programs
+ * a plugin runs cannot write anywhere under the state home but their own data
+ * directory (see exec-sandbox.ts), so a plugin cannot consent to itself.
  */
 import { createHash } from "node:crypto";
 import {
@@ -21,7 +23,8 @@ import {
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
-export const CONSENT_FILE = "plugins-consent.json";
+export const CONSENT_DIR = "consent";
+export const CONSENT_FILE = "plugins.json";
 /** Plugins larger than this are refused rather than hashed. */
 export const MAX_PLUGIN_FILES = 2000;
 export const MAX_PLUGIN_BYTES = 32 * 1024 * 1024;
@@ -38,7 +41,7 @@ const ConsentFileSchemaZ = z
 export type ConsentFile = z.infer<typeof ConsentFileSchemaZ>;
 
 export function consentPath(stateHome: string): string {
-  return join(stateHome, CONSENT_FILE);
+  return join(stateHome, CONSENT_DIR, CONSENT_FILE);
 }
 
 /**

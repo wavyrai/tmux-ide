@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   consentPath,
@@ -85,6 +85,7 @@ describe("consent records", () => {
   });
 
   it("treats a corrupt consent file as no consent", () => {
+    mkdirSync(dirname(consentPath(home)), { recursive: true });
     writeFileSync(consentPath(home), '{"version":1,"plugins":{"tasks":{"hash":"md5:x","at":""}}}');
     expect(readConsent(home)).toEqual({ version: 1, plugins: {} });
     writeFileSync(consentPath(home), "not json");
