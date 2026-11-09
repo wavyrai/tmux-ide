@@ -42,6 +42,7 @@ impl SnapshotView {
                         .hover(move |s| s.bg(hover)),
                 )
                 .on_mouse_down(MouseButton::Left, menu(pane.to_owned(), cx))
+                .on_a11y_action(accesskit::Action::Click, spoken_menu(pane, cx))
         };
         let id = pane.to_owned();
         element
@@ -49,6 +50,20 @@ impl SnapshotView {
             .children(state)
             .child(more)
             .on_mouse_down(MouseButton::Right, menu(pane.to_owned(), cx))
+            // VoiceOver's "show menu" on the row, as on the pane's title.
+            .on_a11y_action(accesskit::Action::ShowContextMenu, spoken_menu(pane, cx))
+    }
+}
+
+/// A screen reader's action that opens pane `pane`'s menu.
+fn spoken_menu(
+    pane: &str,
+    cx: &mut Context<SnapshotView>,
+) -> impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static {
+    let view = cx.entity().downgrade();
+    let pane = pane.to_owned();
+    move |_, window, app| {
+        let _ = view.update(app, |view, cx| view.open_pane_menu(&pane, window, cx));
     }
 }
 

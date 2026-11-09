@@ -202,6 +202,21 @@ impl SnapshotView {
             cx.notify();
             return true;
         }
+        // Shift-F10, the context-menu key, opens the focused pane row's menu:
+        // the same menu as its … button and a right-click (#746).
+        if key.key == "f10"
+            && key.modifiers.shift
+            && let Some(Target::Pane { id, .. }) = self
+                .sidebar_keyboard
+                .selected
+                .clone()
+                .filter(|t| current(&self.browser_state, t))
+        {
+            if !event.is_held {
+                self.open_pane_menu(&id, window, cx);
+            }
+            return true;
+        }
         if key.modifiers.control
             || key.modifiers.platform
             || key.modifiers.alt

@@ -232,3 +232,36 @@ fn keyboard_reaches_and_opens_a_pane_row(cx: &mut TestAppContext) {
     );
     assert!(receiver.try_recv().is_err());
 }
+
+/// Every way to a pane row's menu opens the same menu, with every pane
+/// action in it: the … button, a right-click, Shift-F10 on the focused row,
+/// and a screen reader's actions on the row and its button (#746).
+#[gpui::test]
+fn the_rows_menu_is_reachable_by_keyboard_and_screen_reader_with_every_item(
+    cx: &mut TestAppContext,
+) {
+    use gpui::accesskit::{Action, Node, Role as A11y};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| menu_view(window, cx, sender));
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    // Keyboard: Ctrl-G to the rows, down to the pane, Shift-F10.
+    cx.simulate_keystrokes("ctrl-g home down shift-f10");
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()), "Shift-F10");
+    assert!(receiver.try_recv().is_err());
+    // The menu holds every pane action, VS Code included.
+    cx.simulate_input("vs code");
+    cx.simulate_keystrokes("enter");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::OpenEditor { id, .. } if id == "pane-a"
+    ));
+    // Screen reader: the row offers "show menu", its … button "press".
+    view.update(cx, |view, cx| {
+        let row = view.sidebar_pane_row(div().id("row"), 1, "pane-a", cx);
+        let mut node = Node::new(A11y::Button);
+        row.write_a11y_info(&mut node);
+        assert!(node.supports_action(Action::ShowContextMenu));
+    });
+}
