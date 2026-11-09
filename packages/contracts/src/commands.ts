@@ -17,7 +17,7 @@ export const CommandIdSchemaZ = z
     "command id must be a dot-namespaced identifier",
   );
 
-export const CommandOwnerSchemaZ = z.enum(["daemon", "renderer"]);
+export const CommandOwnerSchemaZ = z.enum(["daemon", "renderer", "plugin"]);
 
 export const CommandSourceKindSchemaZ = z.enum([
   "cli",
