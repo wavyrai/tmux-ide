@@ -169,6 +169,34 @@ describe("ide.exec policy", () => {
     ).rejects.toThrow(/no tmux pane %9/u);
   });
 
+  it("starts nothing if the plugin was stopped while it looked up the pane", async () => {
+    let allowed = true;
+    let spawned = 0;
+    const result = runPluginExec(
+      { cmd: "pwd", context: "%7" },
+      deps(
+        { panes: true },
+        {
+          resolvePane: async (pane) => {
+            // A disable lands during the tmux lookup.
+            allowed = false;
+            return { tmux: "/tmp/sock,1,2", pane, cwd: root };
+          },
+          stillAllowed: () => allowed,
+          plan: (command) => ({ ok: true, argv: command }),
+          spawn: (() => {
+            spawned += 1;
+            throw new Error("must not spawn");
+          }) as never,
+        },
+      ),
+    );
+    await expect(result).rejects.toThrow(
+      "E_UNAVAILABLE: the plugin was stopped before its program started",
+    );
+    expect(spawned).toBe(0);
+  });
+
   it("refuses to run anything without a sandbox", async () => {
     await expect(
       runPluginExec(

@@ -106,6 +106,11 @@ export interface ExecDependencies {
   readonly spawn?: typeof nodeSpawn;
   /** The longest a program may run: the callback's wall clock. */
   readonly maxTimeoutMs?: number;
+  /**
+   * Asked right before the program starts, after every await: false when
+   * the plugin was disabled, unloaded or revoked meanwhile.
+   */
+  readonly stillAllowed?: () => boolean;
   /** Told about each started program; returns the call that forgets it. */
   readonly track?: (child: ChildProcess) => () => void;
 }
@@ -221,6 +226,8 @@ export function killGroup(child: ChildProcess): void {
 
 export async function runPluginExec(raw: unknown, deps: ExecDependencies): Promise<ExecResult> {
   const prepared = await prepareExec(raw, deps);
+  if (deps.stillAllowed && !deps.stillAllowed())
+    throw new ExecError("E_UNAVAILABLE: the plugin was stopped before its program started");
   const spawn = deps.spawn ?? nodeSpawn;
   const [file, ...args] = prepared.argv;
   return new Promise<ExecResult>((resolve, reject) => {

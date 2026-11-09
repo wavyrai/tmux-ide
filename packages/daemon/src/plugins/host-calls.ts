@@ -67,6 +67,8 @@ export interface HostCallCaller {
   readonly plugin: string;
   /** The invoke or param-options request whose callback made this call. */
   readonly origin?: string;
+  /** Whether the plugin may still act (not disabled, unloaded or revoked since). */
+  readonly active?: () => boolean;
   readonly capabilities: {
     readonly exec: readonly string[] | "any";
     readonly shell: boolean;
@@ -194,6 +196,7 @@ export function createHostCallHandler(deps: HostCallDependencies) {
         secrets: deps.secrets,
         ...(deps.execMaxTimeoutMs === undefined ? {} : { maxTimeoutMs: deps.execMaxTimeoutMs }),
         track: (child) => programs.track(caller.plugin, child, caller.origin),
+        ...(caller.active ? { stillAllowed: caller.active } : {}),
       });
     },
     async _panes() {

@@ -340,6 +340,13 @@ describe("exec capabilities", () => {
         policy: { programs: ["echo", "pwd", "env"], shell: false, panes: true },
       }),
     );
+    // The caller's liveness check reaches the runner.
+    let alive = true;
+    await calls.handle({ ...tasks, active: () => alive }, "_exec", [{ cmd: "echo" }]);
+    const stillAllowed = (exec.mock.calls[2] as unknown[])[1] as { stillAllowed: () => boolean };
+    expect(stillAllowed.stillAllowed()).toBe(true);
+    alive = false;
+    expect(stillAllowed.stillAllowed()).toBe(false);
   });
 
   it("gives init.lua and lua run every capability, and plugins none by default", () => {

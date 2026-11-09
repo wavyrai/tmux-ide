@@ -266,7 +266,9 @@ export class PluginSupervisor {
     // Plugins that vanished from disk, became invalid, or changed since
     // consent are unloaded and forgotten.
     for (const [entryName, entry] of [...this.#entries]) {
-      if (entry.spec && !found.has(entryName) && (!name || name === entryName)) {
+      // Whatever was asked to reload: a loaded plugin whose files changed,
+      // lost consent or broke goes now, not at its own next reload.
+      if (entry.spec && !found.has(entryName)) {
         this.#send({ type: "unload", name: entryName });
         this.#entries.delete(entryName);
         this.#actions.drop(entryName);
@@ -274,7 +276,6 @@ export class PluginSupervisor {
       }
     }
     for (const problem of discovery.problems) {
-      if (name && problem.name !== name) continue;
       // A loaded plugin that became a problem was unloaded above, actions
       // and programs included (it is no longer among the specs).
       this.#entries.delete(problem.name);
@@ -689,6 +690,9 @@ export class PluginSupervisor {
           entry.error = event.ok ? undefined : event.error;
           entry.memoryBytes = event.memoryBytes;
         }
+        // A plugin that failed to load keeps nothing running either: not the
+        // programs its top-level code or its timers started.
+        if (!event.ok) this.#stopPrograms(event.plugin);
         this.#settleLoad(event.plugin);
         return;
       }
@@ -783,9 +787,26 @@ export class PluginSupervisor {
       reply({ ok: false, error: "E_INVALID: malformed host call" });
       return;
     }
+    // Whether the plugin that made this call may still act: a disable,
+    // unload, reload or revoke that lands while the call awaits (say, a tmux
+    // lookup before a program starts) stops it from starting anything.
+    const host = this.#host;
+    const active = () =>
+      !this.#stopped &&
+      this.#host === host &&
+      (event.plugin === RUN_STATE_NAME ||
+        (this.#entries.get(event.plugin) === entry &&
+          entry !== undefined &&
+          entry.state !== "disabled" &&
+          entry.state !== "failed"));
     try {
       const value = await this.#options.calls.handle(
-        { plugin: event.plugin, capabilities, ...(event.origin ? { origin: event.origin } : {}) },
+        {
+          plugin: event.plugin,
+          capabilities,
+          active,
+          ...(event.origin ? { origin: event.origin } : {}),
+        },
         event.method,
         args,
       );

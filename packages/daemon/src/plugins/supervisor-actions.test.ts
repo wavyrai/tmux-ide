@@ -357,6 +357,24 @@ describe("plugin actions through the supervisor", () => {
     }
   });
 
+  it("drops a broken plugin's actions on any reload, not only its own", async () => {
+    plugin("tasks", TASKS);
+    plugin("other", `return true`);
+    const s = supervisor();
+    await s.start();
+    expect(ids(s).length).toBe(3);
+    writeFileSync(join(home, "plugins", "tasks", "manifest.json"), "{ not json");
+    await s.reload("other");
+    expect(ids(s)).toEqual([]);
+    // Changed files (consent no longer matches) go the same way.
+    plugin("tasks", TASKS);
+    await s.reload("tasks");
+    expect(ids(s).length).toBe(3);
+    writeFileSync(join(home, "plugins", "tasks", "init.lua"), TASKS + "\n-- edited");
+    await s.reload("other");
+    expect(ids(s)).toEqual([]);
+  });
+
   it("drops the actions of a plugin that fails to load", async () => {
     plugin("half", `ide.action.register{ id = "a", title = "A", run = print } error("boom")`);
     const s = supervisor();

@@ -308,6 +308,72 @@ end }`;
   );
 
   live(
+    "are killed when the plugin fails to load",
+    async () => {
+      // Top-level code starts a program from a timer, waits, then fails.
+      const data = join(home, "plugin-data", "tasks");
+      const pidFile = join(data, "pid");
+      plugin(
+        "tasks",
+        `ide.timer.after(0, function()
+           ide.exec{ cmd = 'echo $$ > "$1"; exec sleep 30', args = { ${JSON.stringify(pidFile)} }, shell = true }
+         end)
+         ide.exec{ cmd = "sleep 1", shell = true }
+         error("load failed on purpose")`,
+        { shell: true },
+      );
+      const s = await start();
+      expect(s.status().plugins.find((p) => p.name === "tasks")?.state).toBe("failed");
+      const pid = await runningPid(pidFile);
+      await gone(pid);
+    },
+    30_000,
+  );
+
+  live(
+    "never start when the plugin is revoked while the pane is looked up",
+    async () => {
+      const data = join(home, "plugin-data", "tasks");
+      const pidFile = join(data, "pid");
+      plugin(
+        "tasks",
+        `ide.action.register{ id = "here", title = "Here", run = function()
+           return ide.exec{ cmd = 'echo $$ > "$1"', args = { ${JSON.stringify(pidFile)} },
+             shell = true, context = "%7" }
+         end }`,
+        { shell: true, "panes.send": true },
+      );
+      let lookup: () => void = () => {};
+      const looked = new Promise<void>((resolve) => (lookup = resolve));
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      const s = await start({
+        calls: createHostCallHandler({
+          stateHome: home,
+          endpoint: () => null,
+          tmux: async () => {
+            lookup();
+            await released;
+            return `/tmp/sock\t1\t$2\t${home}\n`;
+          },
+          baseEnv: () => ({ PATH: "/usr/bin:/bin", HOME: home }),
+          secrets: () => new Set(),
+          notify,
+        }),
+      });
+      const result = s.invokeAction("plugin.tasks.here", {}, { source: "cli" });
+      await looked;
+      revokeConsent(home, "tasks");
+      await s.reload();
+      release();
+      await result;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(existsSync(pidFile)).toBe(false);
+    },
+    30_000,
+  );
+
+  live(
     "are killed when the plugin is reloaded",
     async () => {
       const pidFile = sleeper();
