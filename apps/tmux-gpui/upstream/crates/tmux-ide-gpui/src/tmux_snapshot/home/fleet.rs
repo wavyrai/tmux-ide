@@ -17,8 +17,13 @@ pub(super) const ROW_GAP: f32 = SPACE * 1.5;
 pub(super) const FAVICON: f32 = 16.;
 pub(super) const LAYOUT_WIDTH: f32 = 150.;
 pub(super) const ACTIVE_WIDTH: f32 = 96.;
+/// The agents column (#746): the widest it gets; it shares the free width
+/// with the names below that.
+pub(super) const AGENTS_WIDTH: f32 = 230.;
+/// The narrowest a session's name gets before the agents column gives way.
+pub(super) const NAME_MIN: f32 = 96.;
 /// The widest the table gets, so a value sits near its name.
-pub(super) const TABLE_MAX: f32 = 760.;
+pub(super) const TABLE_MAX: f32 = 760. + AGENTS_WIDTH;
 /// The trailing column that holds the keyboard row's ↵ hint.
 pub(super) const HINT_WIDTH: f32 = 28.;
 

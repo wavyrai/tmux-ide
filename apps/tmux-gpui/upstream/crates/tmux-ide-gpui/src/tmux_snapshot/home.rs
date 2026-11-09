@@ -5,9 +5,9 @@ use bezel_ui::widgets::{Content as _, Scaffolding, Status as _};
 use gpui::{prelude::*, *};
 mod action_focus;
 pub(super) mod filters;
-mod fleet;
+pub(super) mod fleet;
 pub(super) mod fleet_nav;
-mod fleet_rows;
+pub(super) mod fleet_rows;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
@@ -403,9 +403,12 @@ impl SnapshotView {
                     )
                     .child(actions),
             );
-        // Status, guidance and the new-session form span the whole column,
-        // left-aligned under the header.
-        // A live Home shows a status line only while it reconnects or has stopped.
+        // The status slot (#746): under the toolbar, over the filter row,
+        // left-aligned with Home's title and spanning the column. A quiet
+        // status line (Home's reconnecting line and its Retry) or a warning
+        // or error strip for a fault (home_fault); then guidance and the
+        // new-session form. A live Home shows a status line only while it
+        // reconnects or has stopped.
         let reconnect = is_live && self.browser_state.reconnect_attempt.is_some();
         if (connected && setup_phase.is_some())
             || (!is_live && !self.browser_state.status.is_empty())
