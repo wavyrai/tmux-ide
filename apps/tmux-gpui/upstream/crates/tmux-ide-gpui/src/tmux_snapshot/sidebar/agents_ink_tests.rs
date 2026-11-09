@@ -9,6 +9,9 @@ use gpui::Hsla;
 /// variant.
 #[gpui::test]
 fn headings_and_pane_rows_read_on_the_frosted_sidebar(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (sender, _receiver) = mpsc::sync_channel(64);
     cx.update(|cx| cx.set_global(InkProbes::default()));
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
@@ -63,6 +66,9 @@ fn headings_and_pane_rows_sit_on_the_ladder(cx: &mut TestAppContext) {
 /// The same marks in a pane header read on its plates.
 #[gpui::test]
 fn state_glyphs_read_on_the_frosted_sidebar(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     use crate::contrast::Contrast;
     use crate::tmux_snapshot::agent_indicator::{Plate, color};
     use crate::tmux_snapshot::pane_chrome::header_plates;

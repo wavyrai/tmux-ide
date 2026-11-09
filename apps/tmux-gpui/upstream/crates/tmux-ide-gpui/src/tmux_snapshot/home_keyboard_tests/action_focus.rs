@@ -5,6 +5,9 @@ use super::*;
 
 #[gpui::test]
 fn home_actions_tab_enter_space_and_escape_keep_input_owned(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
