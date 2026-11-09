@@ -130,3 +130,23 @@ fn a_fatal_failure_stops_at_once() {
     let message = recovery.failed(HomeFailure::Fatal("why"), now).unwrap_err();
     assert_eq!(message, "why");
 }
+
+#[test]
+fn a_refused_websocket_upgrade_is_a_credentials_failure() {
+    let refused = |status: u16| {
+        let response = tungstenite::http::Response::builder()
+            .status(status)
+            .body(None)
+            .unwrap();
+        watch(CatalogWatchError::Socket(Box::new(
+            tungstenite::Error::Http(Box::new(response)),
+        )))
+    };
+    for status in [401, 403] {
+        match classify(&refused(status)) {
+            HomeFailure::Fatal(message) => assert!(message.contains("credentials"), "{message}"),
+            other => panic!("{status}: {other:?}"),
+        }
+    }
+    assert_eq!(classify(&refused(503)), HomeFailure::Retry);
+}

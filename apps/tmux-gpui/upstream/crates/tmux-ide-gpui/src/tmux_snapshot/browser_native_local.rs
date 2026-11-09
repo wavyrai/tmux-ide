@@ -757,7 +757,7 @@ impl Local {
             if let Some(wait) = self
                 .fleet_recovery_wait()
                 .into_iter()
-                .chain(self.home.wait(Instant::now()))
+                .chain(self.home_recovery_wait())
                 .chain(self.agents.wait())
                 .min()
             {

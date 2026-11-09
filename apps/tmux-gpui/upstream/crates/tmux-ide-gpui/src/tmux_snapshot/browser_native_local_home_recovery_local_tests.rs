@@ -119,3 +119,64 @@ fn refresh_ends_a_reconnect_in_progress() {
     local.home(1).unwrap();
     assert!(!local.home.active());
 }
+
+#[test]
+fn a_due_retry_does_not_wake_the_actor_while_home_is_hidden() {
+    let (mut local, _events) = home_with_a_session();
+    local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
+    local.home.retry_now(Instant::now());
+    assert_eq!(
+        local.home_recovery_wait(),
+        Some(Duration::ZERO),
+        "due now, in front"
+    );
+    local.foreground = false;
+    for _ in 0..3 {
+        local.home_recovery_tick().unwrap();
+        assert!(local.stage.is_none());
+        assert_eq!(
+            local.home_recovery_wait(),
+            None,
+            "no timer in the background"
+        );
+    }
+    local.foreground = true;
+    local.state.surface = Surface::Workspace;
+    assert_eq!(local.home_recovery_wait(), None, "no timer off Home");
+    local.state.surface = Surface::Home;
+    local.home_recovery_tick().unwrap();
+    assert!(
+        matches!(local.stage, Some(Stage::Servers)),
+        "it runs once Home is back"
+    );
+}
+
+#[test]
+fn the_status_counts_attempts_after_the_first() {
+    let (mut local, events) = home_with_a_session();
+    local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
+    assert_eq!(published(&events).status, "Reconnecting…");
+    local.home.retry_now(Instant::now());
+    local.home_recovery_tick().unwrap();
+    local.stage = None;
+    local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
+    assert_eq!(published(&events).status, "Reconnecting… attempt 2");
+}
+
+#[test]
+fn opening_a_session_after_a_fatal_failure_is_refused_with_its_reason() {
+    let (mut local, events) = home_with_a_session();
+    local
+        .home_catalog_failed(DaemonError::RequestStatus(401))
+        .unwrap();
+    local.open(1, "session-a".into(), None).unwrap();
+    assert!(local.stage.is_none());
+    assert_eq!(local.state.surface, Surface::Home);
+    let state = published(&events);
+    assert!(state.home_fault);
+    assert!(
+        state.status.contains("refused this app's credentials"),
+        "{}",
+        state.status
+    );
+}

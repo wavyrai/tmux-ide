@@ -14,6 +14,7 @@ use herdr_client::tmux_daemon::{CatalogEventError, CatalogWatchError, Error as D
 const MAX_DELAY: Duration = Duration::from_secs(5);
 pub(super) const RECONNECTING: &str = "Reconnecting…";
 pub(super) const STILL_RECONNECTING: &str = "Still reconnecting…";
+const CREDENTIALS: &str = "The daemon refused this app's credentials. Restart tmux-ide.";
 const UNREADABLE: &str = "The daemon sent data this app can't read. Refresh to try again.";
 /// Protocol failures in a row before Home stops and says so.
 const PROTOCOL_LIMIT: u8 = 3;
@@ -36,9 +37,7 @@ pub(super) fn classify(error: &DaemonError) -> HomeFailure {
         DaemonError::RecordFormat | DaemonError::RecordSecurity | DaemonError::Endpoint => {
             Fatal("tmux-ide's daemon record is unreadable. Refresh after fixing it.")
         }
-        DaemonError::RequestStatus(401 | 403) => {
-            Fatal("The daemon refused this app's credentials. Restart tmux-ide.")
-        }
+        DaemonError::RequestStatus(401 | 403) => Fatal(CREDENTIALS),
         DaemonError::UnsupportedPlatform => {
             Fatal("This platform can't verify the daemon. Refresh to try again.")
         }
@@ -48,6 +47,8 @@ pub(super) fn classify(error: &DaemonError) -> HomeFailure {
         | DaemonError::Capability(_) => Protocol,
         DaemonError::CatalogWatch(watch) => match watch.as_ref() {
             CatalogWatchError::Owner(owner) => classify(owner),
+            // The events socket's upgrade was refused for its credentials.
+            refused if refused.refused_credentials() => Fatal(CREDENTIALS),
             // A bad frame, identity or retired lane: a fresh read decides.
             CatalogWatchError::Protocol(
                 CatalogEventError::Frame | CatalogEventError::Identity | CatalogEventError::Retired,
@@ -81,6 +82,13 @@ impl Recovery {
     /// Shown as the attempt count beside "Reconnecting…".
     pub(super) fn attempt(&self) -> Option<u32> {
         self.active.as_ref().map(|a| a.attempts.max(1))
+    }
+    /// "Reconnecting…", then "Reconnecting… attempt N" once a retry has failed.
+    fn status(&self) -> String {
+        match self.active.as_ref().map(|a| a.attempts) {
+            Some(tried) if tried > 0 => format!("{RECONNECTING} attempt {}", tried + 1),
+            _ => RECONNECTING.into(),
+        }
     }
     pub(super) fn wait(&self, now: Instant) -> Option<Duration> {
         self.active
@@ -154,7 +162,7 @@ impl Local {
                 self.sources.reset_catalog()?;
                 self.worker.reset();
                 self.home.fault = None;
-                self.state.status = RECONNECTING.into();
+                self.state.status = self.home.status();
             }
             Err(message) => {
                 self.sources.reset_catalog()?;
@@ -167,13 +175,21 @@ impl Local {
         }
         self.publish()
     }
+    /// How long the idle actor may park before Home's next retry.
+    /// None in the background or off Home: nothing runs there, so a due retry
+    /// must not keep the actor awake.
+    pub(super) fn home_recovery_wait(&self) -> Option<Duration> {
+        self.home_visible()
+            .then(|| self.home.wait(Instant::now()))
+            .flatten()
+    }
     pub(super) fn home_recovery_tick(&mut self) -> Result<(), Error> {
         if self.stage.is_some() || !self.home_visible() || !self.home.due(Instant::now()) {
             return Ok(());
         }
         self.stage = Some(Stage::Servers);
         self.submitted = false;
-        self.state.status = RECONNECTING.into();
+        self.state.status = self.home.status();
         self.publish()
     }
     /// A fresh catalog arrived: the next one replaces the kept list whole.
@@ -183,12 +199,15 @@ impl Local {
         }
         self.home.fault = None;
     }
-    /// Opening a session waits for Home to reconnect.
+    /// Opening a session waits for Home to reconnect, and is refused with the
+    /// reason after a failure that won't recover by itself.
     pub(super) fn home_open_blocked(&mut self) -> Result<bool, Error> {
-        if !self.home.active() {
-            return Ok(false);
-        }
-        self.state.status = STILL_RECONNECTING.into();
+        let status = match (self.home.active(), self.home.fault) {
+            (true, _) => STILL_RECONNECTING,
+            (false, Some(reason)) => reason,
+            (false, None) => return Ok(false),
+        };
+        self.state.status = status.into();
         self.publish()?;
         Ok(true)
     }
