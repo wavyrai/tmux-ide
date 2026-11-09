@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.21
+
+- Add Lua plugins. A plugin adds commands to the TUI's F5 palette and to `tmux-ide action`. Plugins in `~/.tmux-ide/plugins/` run only after `tmux-ide plugin consent`, which lists what each asks to do; `~/.tmux-ide/init.lua` is your own file and always runs. Each plugin runs in the daemon's plugin host with its own Lua state, time limits and memory cap.
+- Add the `plugin` (list, reload, logs, consent, revoke, example), `action` (list, run) and `lua` (run, api, describe) commands.
+- Add the `worktree-tasks` example plugin: start, open, list and remove git worktrees as tasks from the palette. It runs no programs.
+- Run programs from a plugin on macOS in a sandbox that keeps them away from tmux-ide's private files (the daemon's record, consent records, plugin stores and app settings), the daemon and, unless the plugin may type into panes, the tmux server. Consent calls any program outside a short list of text tools "full control". On Linux, plugins cannot run programs unless `TMUX_IDE_PLUGIN_EXEC_LINUX=1` is set.
+- Add `tmux-ide worktree create --plain`, which opens a plain session without the branch's layout, and `--no-git-hooks` and `--require-session`, which plugins use.
+- `tmux-ide plugin`, `action` and `lua` print their usage for `--help` or `-h`.
+
 ## 2.9.20
 
 - Ship the 2.9.19 changes. 2.9.19 was tagged but never published to npm, because a release check failed on GitHub's new macOS runner image.
