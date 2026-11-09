@@ -250,6 +250,22 @@ describe("tmux-ide plugin consent", () => {
     expect(Object.keys(readConsent(home).plugins)).toEqual(["tasks"]);
   });
 
+  it("refuses consent when the plugin changes while the prompt is open", async () => {
+    const dir = install();
+    const h = harness(reloaded);
+    const racing = {
+      ...h.io,
+      interactive: () => true,
+      ask: async () => {
+        writeFileSync(join(dir, "init.lua"), "return 'swapped during review'");
+        return "y";
+      },
+    };
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks"], racing)).toBe(1);
+    expect(h.err[0]).toMatch(/changed while you were reviewing it/u);
+    expect(readConsent(home).plugins).toEqual({});
+  });
+
   it("refuses to consent without a terminal unless --yes is given", async () => {
     install();
     const h = harness(reloaded);
