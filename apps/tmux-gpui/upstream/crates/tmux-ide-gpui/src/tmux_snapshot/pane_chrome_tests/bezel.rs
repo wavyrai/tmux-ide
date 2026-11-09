@@ -153,6 +153,10 @@ fn clicking_header_controls_keeps_the_terminal_focused(cx: &mut TestAppContext) 
     cx.simulate_resize(size(px(900.), px(700.)));
     draw(cx);
     receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now. Left pending, a draw sends it once
+    // 150 ms of wall clock have passed, which on a slow runner lands among
+    // the clicks below as an extra message.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let focused = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| view.read(cx).terminal_focus.is_focused(window))
     };
