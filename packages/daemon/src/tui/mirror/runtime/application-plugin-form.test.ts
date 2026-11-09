@@ -195,10 +195,11 @@ describe("plugin command form", () => {
     expect(h.notes.at(-1)).toBe("New task: E_INVALID: 'name' is required");
   });
 
-  it("does nothing for a disabled entry", () => {
+  it("refuses an empty value for a required param, even with an empty default", () => {
     const h = harness();
-    h.form.start(command([param({ name: "name" })]));
-    h.form.choose(h.form.entries()[0]!);
+    h.form.start(command([param({ name: "name", label: "Name", default: "" })]));
+    h.choose("submit");
+    expect(h.notes.at(-1)).toBe("Name is required");
     expect(h.form.active()).toBe(true);
     expect(h.invoke).not.toHaveBeenCalled();
   });

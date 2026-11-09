@@ -189,6 +189,58 @@ describe("plugin actions through the supervisor", () => {
     expect(ids(s)).toEqual(["plugin.other.hi"]);
   }, 30_000);
 
+  it("drops a plugin's actions when trips disable it, and ignores what it publishes afterwards", async () => {
+    plugin("tasks", `return true`);
+    // A stand-in host: publishes one action and loads, then reports three
+    // trips; when told to unload it misbehaves and publishes again.
+    const fake = join(home, "fake-host.mjs");
+    const action = JSON.stringify([
+      { id: "a", title: "A", category: "Plugins", dangerous: false, params: [] },
+    ]);
+    writeFileSync(
+      fake,
+      `import { writeSync } from "node:fs";
+       import { createInterface } from "node:readline";
+       const emit = (e) => writeSync(3, JSON.stringify(e) + "\\n");
+       emit({ type: "hello", protocolVersion: 1, pid: process.pid });
+       setInterval(() => emit({ type: "heartbeat", seq: 1 }), 100);
+       createInterface({ input: process.stdin }).on("line", (line) => {
+         const c = JSON.parse(line);
+         if (c.type === "load") {
+           emit({ type: "actions", plugin: c.plugin.name, actions: ${JSON.stringify(action)} });
+           emit({ type: "loaded", plugin: c.plugin.name, ok: true });
+           setTimeout(() => {
+             for (let i = 0; i < 3; i++) emit({ type: "trip", plugin: c.plugin.name, kind: "timeout" });
+           }, 200);
+         }
+         if (c.type === "unload") {
+           emit({ type: "actions", plugin: c.name, actions: ${JSON.stringify(action)} });
+           emit({ type: "log", plugin: c.name, level: "info", message: "unload seen" });
+         }
+       }).on("close", () => process.exit(0));`,
+    );
+    const s = supervisor({ hostCommand: [process.execPath, fake] });
+    await s.start();
+    expect(ids(s)).toEqual(["plugin.tasks.a"]);
+    await until(() => logs.some((entry) => entry.message === "unload seen"), Boolean);
+    expect(s.status().plugins[0]?.state).toBe("disabled");
+    expect(ids(s)).toEqual([]);
+  });
+
+  it("clears the catalog as soon as the host exits, before any restart", async () => {
+    plugin("tasks", TASKS);
+    const s = supervisor({ restartDelayMs: () => 60_000 });
+    await s.start();
+    expect(ids(s).length).toBe(3);
+    const pid = s.status().host.pid!;
+    process.kill(pid, "SIGKILL");
+    await until(
+      () => s.status().host.running,
+      (running) => !running,
+    );
+    expect(ids(s)).toEqual([]);
+  });
+
   it("drops the actions of a plugin that fails to load", async () => {
     plugin("half", `ide.action.register{ id = "a", title = "A", run = print } error("boom")`);
     const s = supervisor();

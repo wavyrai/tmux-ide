@@ -37,7 +37,8 @@ function setup(commands: ApplicationPluginPaletteCommand[]) {
   const setPaletteOpen = vi.fn(async () => true);
   let owner: ReturnType<typeof createApplicationPaletteCommandOwner> | null = null;
   const form = createApplicationPluginForm({
-    service: { invoke, paramOptions: vi.fn() },
+    // Choices never arrive, so a dynamic-choice step stays "loading".
+    service: { invoke, paramOptions: vi.fn(() => new Promise<never>(() => {})) },
     context: () => ({ source: "palette" }),
     query: () => owner?.query() ?? "",
     setNote,
@@ -107,6 +108,30 @@ describe("plugin commands in the TUI palette", () => {
       expect(h.splitPane).not.toHaveBeenCalled();
       dispose();
     }));
+
+  it("do not act on a disabled form entry, and say why", () => {
+    const loading = plugin({
+      params: [
+        {
+          name: "task",
+          type: "choice",
+          label: "Task",
+          required: true,
+          dynamicDefault: false,
+          dynamicChoices: true,
+        },
+      ],
+    });
+    const h = setup([loading]);
+    h.owner.setOpen(true, "keyboard");
+    h.owner.activate(loading, "keyboard");
+    const [entry] = h.owner.commands();
+    expect(applicationCommandDescription(entry!).label).toBe("Loading choices…");
+    h.owner.activate(entry!, "keyboard");
+    expect(h.setNote).toHaveBeenLastCalledWith("Still loading choices");
+    expect(h.form.active()).toBe(true);
+    expect(h.invoke).not.toHaveBeenCalled();
+  });
 
   it("cancel the form when the palette closes", () => {
     const h = setup([plugin()]);

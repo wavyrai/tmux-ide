@@ -240,7 +240,7 @@ export function createApplicationPluginForm(options: {
     /** The person activated one of the current step's entries. */
     choose(entry: ApplicationPluginFormPaletteCommand): void {
       const current = state();
-      if (!current || entry.disabledReason) return;
+      if (!current) return;
       const param = currentParam(current);
       if (!param) {
         if (entry.key === "run") run(current.command, { ...current.values });

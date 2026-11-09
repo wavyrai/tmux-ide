@@ -89,6 +89,10 @@ export function createApplicationPaletteCommandOwner(options: {
       return;
     }
     if (typeof command === "object" && command.kind === "plugin-form") {
+      if (command.disabledReason) {
+        options.setNote(command.disabledReason);
+        return;
+      }
       options.plugins?.form.choose(command);
       return;
     }
