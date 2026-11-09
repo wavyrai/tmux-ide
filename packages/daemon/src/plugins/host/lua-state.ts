@@ -367,7 +367,6 @@ export class PluginLuaState {
       for (const arg of args) thread.pushValue(arg);
       let argCount = args.length;
       for (;;) {
-        if (performance.now() > wallDeadline) throw new Error(WALL_CLOCK_MESSAGE);
         this.#hooks.busy();
         const started = performance.now();
         this.#deadline = started + Math.max(0, remaining);
@@ -402,8 +401,11 @@ export class PluginLuaState {
           } else if (result.resultCount > 0) {
             throw new Error(FOREIGN_YIELD_MESSAGE);
           } else {
-            // A bare coroutine.yield(): let the event loop breathe, then go on.
+            // A bare coroutine.yield(): let the event loop breathe, then go on,
+            // unless the wall clock ran out meanwhile. (A host call's wait has
+            // its own deadline above; each guard covers exactly one path.)
             await new Promise((resolve) => setImmediate(resolve));
+            if (performance.now() > wallDeadline) throw new Error(WALL_CLOCK_MESSAGE);
           }
           continue;
         }
