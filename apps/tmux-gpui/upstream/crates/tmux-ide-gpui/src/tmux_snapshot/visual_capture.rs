@@ -569,6 +569,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         state = with_home_fleet(state, fixture)?;
     }
     let spark = extras.contains(&"spark");
+    let with_sidebar = extras.contains(&"sidebar");
     let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
@@ -610,7 +611,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             |window, cx| {
                 let view = cx.new(|cx| {
                     let mut view = capture_view(window, cx, sender, state);
-                    view.sidebar_hidden = home_b;
+                    // `+sidebar` keeps Home's sidebar (#746).
+                    view.sidebar_hidden = home_b && !with_sidebar;
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {

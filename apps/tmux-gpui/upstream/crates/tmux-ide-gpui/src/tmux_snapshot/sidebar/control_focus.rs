@@ -8,8 +8,8 @@ pub(in crate::tmux_snapshot) const CONTROLS: usize = 7;
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn sidebar_footer_current(&self, request: u64) -> bool {
         // Recovery clicks remain available while terminal presence is pending.
-        self.browser_state.surface == browser::Surface::Workspace
-            && !self.sidebar_hidden
+        // Home shows the sidebar too (#746), so its footer works there.
+        !self.sidebar_hidden
             && self.browser_commands.is_some()
             && self.browser_request == request
             && self.picker.is_none()

@@ -104,6 +104,7 @@ impl SnapshotView {
             label: "Home".into(),
             icon: Some("icons/tmux-home.svg"),
             attention: waiting,
+            selected: self.browser_state.surface == browser::Surface::Home,
             target: Some(Target::Home),
             ..Row::default()
         };
@@ -137,13 +138,21 @@ impl SnapshotView {
     }
 }
 
-/// Agents across the fleet that wait for the user.
+/// Agents across the fleet that wait for the user: the workspace's fleet
+/// roster, or on Home, Home's own roster.
 pub(in crate::tmux_snapshot) fn waiting_agents(state: &browser::State) -> usize {
-    state
+    let waiting = |rows: &[browser::home_agents::Row]| rows.iter().filter(|r| r.attention).count();
+    match state
         .workspace_fleet_agents
         .as_ref()
         .filter(|p| p.request == state.request && p.valid())
-        .map_or(0, |p| p.roster.rows.iter().filter(|r| r.attention).count())
+    {
+        Some(p) => waiting(&p.roster.rows),
+        None => state
+            .home_agents
+            .as_ref()
+            .map_or(0, |roster| waiting(&roster.rows)),
+    }
 }
 
 /// What a screen reader says for a row: its label, then what the row holds.

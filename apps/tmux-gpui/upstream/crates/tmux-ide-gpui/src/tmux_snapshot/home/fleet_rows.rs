@@ -202,6 +202,23 @@ impl SnapshotView {
                 .items_center()
                 .gap(px(6.))
                 .text_style(TextStyle::Callout)
+                // An outlined chip with the agent's mark (#746).
+                .h(px(24.))
+                .pl(px(6.))
+                .pr(px(2.))
+                .rounded_full()
+                .border_1()
+                .border_color(bezel.border)
+                .child(
+                    bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(
+                        crate::tmux_snapshot::pane_chrome::agent_icon_path(
+                            agent.harness.as_deref(),
+                        ),
+                    ))
+                    .size(px(13.))
+                    .flex_none()
+                    .text_color(bezel.text),
+                )
                 .child(
                     div()
                         .text_color(bezel.text)

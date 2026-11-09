@@ -381,3 +381,23 @@ fn the_home_row_counts_agents_that_need_input(cx: &mut TestAppContext) {
         });
     }
 }
+
+#[test]
+fn home_counts_waiting_agents_from_homes_roster_without_a_fleet_publication() {
+    let mut state = browser::State::default();
+    assert_eq!(pane_row::waiting_agents(&state), 0);
+    state.home_agents = Some(
+        serde_json::from_value(serde_json::json!({
+            "revision":1,"phase":"live","observedSessions":1,"totalSessions":1,
+            "truncatedSessions":0,"truncatedRows":0,"note":null,
+            "rows":[
+                {"key":"a","sessionId":"s","paneId":"p","name":"Codex","sessionLabel":"x",
+                 "status":"BLOCKED","attention":true,"available":true},
+                {"key":"b","sessionId":"s","paneId":"q","name":"Claude","sessionLabel":"x",
+                 "status":"WORKING","attention":false,"available":true}
+            ]
+        }))
+        .unwrap(),
+    );
+    assert_eq!(pane_row::waiting_agents(&state), 1);
+}

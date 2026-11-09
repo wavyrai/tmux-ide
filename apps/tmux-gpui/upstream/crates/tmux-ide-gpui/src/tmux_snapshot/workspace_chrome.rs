@@ -56,7 +56,10 @@ impl SnapshotView {
         let theme = self.theme();
         let request = self.browser_request;
         let workspace = self.browser_state.surface == browser::Surface::Workspace;
-        let sidebar = workspace && !self.sidebar_hidden;
+        // Whether the sidebar shows, as browser_render decides it.
+        let sidebar = !self.sidebar_hidden
+            && (workspace
+                || window.viewport_size().width >= px(super::browser_ui::HOME_SIDEBAR_MIN));
         let fullscreen = window.is_fullscreen();
         // The traffic lights take the band's left end, except in full screen.
         let leading = if fullscreen {

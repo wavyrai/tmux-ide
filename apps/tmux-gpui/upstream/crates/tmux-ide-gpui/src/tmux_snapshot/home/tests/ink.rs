@@ -180,16 +180,14 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
             // The shared quiet buttons, painted from Home's palette, with
             // their words (#705) and their glyphs.
             "home-browse",
+            "home-title",
             "home-browse-key",
             "home-nav-count-0",
-            "home-nav-machines",
             "fleet-columns",
             "fleet-session-attached-0-0",
             "fleet-session-enter-0-0",
             "fleet-server-default-0-0",
-            "control-icon-home-theme",
             "control-icon-tmux-home-refresh",
-            "control-home-theme",
             "control-tmux-home-refresh",
             "control-home-new-local-session",
         ] {

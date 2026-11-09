@@ -13,15 +13,11 @@ mod preferences;
 pub(super) mod recovery;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
-/// The page column's width: wider than Bezel's 768 so the fleet and agents
-/// columns can share a row in a wide window.
-/// The left list, the gap and the table (#705): wide enough for both, no
-/// wider, so the table's values sit near its names.
-const PAGE_MAX: f32 = fleet::NAV_WIDTH + SPACE * 4. + fleet::TABLE_MAX;
+/// The page column's width: the table's (#746), with the filter row over
+/// it, so the table's values sit near its names.
+const PAGE_MAX: f32 = fleet::TABLE_MAX;
 /// The Browse sessions field's width in the header.
 const BROWSE_WIDTH: f32 = 220.;
-/// The window width from which the left list and the table sit side by side.
-const COLUMNS_MIN: f32 = 900.;
 /// The alpha of `popover::key_cap`'s fill.
 const KEY_CAP_FILL: f32 = 0.05;
 /// The alpha of the status strips' tinted fill.
@@ -246,7 +242,6 @@ impl SnapshotView {
             .map(|setup| setup.phase);
         let refresh_label = setup_phase.map_or("Refresh sessions", |phase| phase.label());
         let setup_running = setup_phase == Some(browser::local_setup::Phase::Running);
-        let theme_ready = self.browser_state.appearance.is_some();
         let is_live = live(&self.browser_state, connected)
             || (connected
                 && self.browser_state.fleet.as_ref().is_some_and(|f| {
@@ -255,10 +250,10 @@ impl SnapshotView {
                         .any(|g| g.state == browser::fleet::Phase::Ready)
                 }));
         let canvas = self.canvas();
-        let wide = window.viewport_size().width >= px(COLUMNS_MIN);
-        // One line over the table: Browse as a field, the agents that need
-        // input, then Refresh and Theme with their words, and New session as
-        // the one primary button (#705).
+        // One line over the table: Home's title, Browse as a field, the
+        // agents that need input, then Refresh with its words, and New
+        // session as the one primary button, in the accent (#705, #746).
+        // Theme is in the sidebar's footer, the menu bar and F5.
         let mut actions = div()
             .tab_group()
             .flex_1()
@@ -360,40 +355,6 @@ impl SnapshotView {
                         cx.stop_propagation();
                         this.home_refresh(request, window, cx);
                     })),
-                )
-                .child(
-                    native_controls::action_button_on(
-                        "home-theme",
-                        Some("Theme"),
-                        "Choose a theme",
-                        native_controls::Icon::Theme,
-                        if theme_ready {
-                            native_controls::ButtonStyle::Quiet
-                        } else {
-                            native_controls::ButtonStyle::Unavailable
-                        },
-                        &bezel,
-                    )
-                    .when(!theme_ready, |control| {
-                        control.aria_description("Appearance settings are not available yet")
-                    })
-                    .when(theme_ready, |control| {
-                        control
-                            .when_some(action_focus.as_ref(), |control, focus| {
-                                action_focus::focus_control(
-                                    control,
-                                    &focus[1],
-                                    1,
-                                    theme.ink(theme.primary()),
-                                    canvas,
-                                )
-                            })
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                if view.home_action_current(request) {
-                                    view.open_theme_picker(window, cx);
-                                }
-                            }))
-                    }),
                 );
         }
         if !connected {
@@ -430,12 +391,16 @@ impl SnapshotView {
                     .min_w_0()
                     .flex()
                     .items_center()
-                    .gap(px(SPACE * 4.))
-                    // The window's tab already says Home; the bar sits over
-                    // the table, past the left list.
-                    .when(wide, |header| {
-                        header.child(div().flex_none().w(px(fleet::NAV_WIDTH)))
-                    })
+                    .gap(px(SPACE * 2.))
+                    .child(
+                        div()
+                            .debug_selector(|| "home-title".into())
+                            .flex_none()
+                            .text_style(TextStyle::Title2)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .children(design::ink_probe(|| "home-title".into()))
+                            .child("Home"),
+                    )
                     .child(actions),
             );
         // Status, guidance and the new-session form span the whole column,
@@ -524,7 +489,7 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .gap(px(SPACE * 1.5));
-        let nav = self.fleet_nav(wide, cx);
+        let nav = self.fleet_nav(cx);
         if let Some(cards) = self.fleet_cards(window, cx) {
             // The left list names the view; the table needs no heading.
             detail = detail.child(cards);
@@ -628,14 +593,8 @@ impl SnapshotView {
                 .w_full()
                 .min_w_0()
                 .flex()
-                .gap(px(SPACE * 4.))
-                .map(|columns| {
-                    if wide {
-                        columns.items_start()
-                    } else {
-                        columns.flex_col().gap(px(SPACE * 2.))
-                    }
-                })
+                .flex_col()
+                .gap(px(SPACE * 2.))
                 .children(nav)
                 .child(detail),
         );

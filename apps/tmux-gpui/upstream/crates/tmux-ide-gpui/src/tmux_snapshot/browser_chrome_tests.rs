@@ -215,7 +215,8 @@ fn the_empty_pane_shows_bezels_empty_state_on_the_opaque_fill(cx: &mut TestAppCo
 
 #[test]
 fn the_home_panel_takes_bezels_panel_corner_and_inset() {
-    let mut panel = super::super::shell::content_panel(0x123456, true);
+    let border: Hsla = rgb(0xe1dbcf).into();
+    let mut panel = super::super::shell::content_panel(0x123456, border, true);
     let style = panel.style();
     let radius = Some(AbsoluteLength::Pixels(px(
         bezel_theme::Theme::panel_radius(),
@@ -227,6 +228,12 @@ fn the_home_panel_takes_bezels_panel_corner_and_inset() {
     ))));
     assert_eq!(style.padding.top, inset);
     assert_eq!(style.padding.left, inset);
+    // The same 1 px border as the pane cards (#746).
+    assert_eq!(style.border_color, Some(border));
+    assert_eq!(
+        style.border_widths.top,
+        Some(AbsoluteLength::Pixels(px(1.)))
+    );
 }
 
 #[derive(serde::Deserialize)]

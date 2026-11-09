@@ -294,7 +294,15 @@ impl SnapshotView {
         let available = (self.local_session_target().is_some()
             || (self.can_create_session() && self.browser_state.local_session_create.is_some()))
             && self.new_session.is_none();
-        // On Home's inked palette, like Home's other buttons.
+        // On Home's inked palette, like Home's other buttons, but filled with
+        // the theme's one accent (#746).
+        let mut palette = self.home_palette();
+        if available {
+            let theme = self.theme();
+            let accent = theme.primary();
+            palette.text = rgb(accent).into();
+            palette.on_solid = rgb(on_accent(accent, theme.background)).into();
+        }
         controls::action_button_on(
             "home-new-local-session",
             Some("New session…"),
@@ -305,7 +313,7 @@ impl SnapshotView {
             } else {
                 controls::ButtonStyle::Unavailable
             },
-            &self.home_palette(),
+            &palette,
         )
         .debug_selector(|| "home-new-local-session".into())
         .when(available, |button| {
@@ -472,3 +480,14 @@ impl SnapshotView {
 }
 #[cfg(test)]
 mod tests;
+
+/// Text on the accent: white or the theme's background, whichever reads
+/// better on it.
+pub(super) fn on_accent(accent: u32, background: u32) -> u32 {
+    let white = 0xffffff;
+    if crate::contrast::ratio(white, accent) >= crate::contrast::ratio(background, accent) {
+        white
+    } else {
+        background
+    }
+}

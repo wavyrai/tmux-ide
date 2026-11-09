@@ -632,7 +632,10 @@ impl SnapshotView {
         }
         let theme = self.theme();
         let is_home = self.browser_state.surface == browser::Surface::Home;
-        let show_sidebar = !is_home && !self.sidebar_hidden;
+        // Home shows the sidebar too, with its Home row selected (#746),
+        // while the window leaves Home's table room beside it.
+        let show_sidebar = !self.sidebar_hidden
+            && (!is_home || window.viewport_size().width >= px(HOME_SIDEBAR_MIN));
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
         self.chrome.sync(window, cx);
@@ -853,7 +856,9 @@ impl SnapshotView {
             None
         };
         let application_tabs = self.application_tabs(notice, window, cx);
-        let content = super::shell::content_panel(content_background, is_home)
+        let card_border =
+            super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
+        let content = super::shell::content_panel(content_background, card_border, is_home)
             .relative()
             .children(home)
             .when(!is_home, |panel| {
@@ -930,6 +935,8 @@ impl SnapshotView {
 
 /// The sidebar's width; the top row's sidebar controls end at its edge.
 pub(super) const SIDEBAR_WIDTH: f32 = 224.;
+/// The narrowest window that shows Home's sidebar beside its table.
+pub(super) const HOME_SIDEBAR_MIN: f32 = 900.;
 
 /// The keyboard-selected row's ring, laid over the row so focus never
 /// changes its size.

@@ -39,20 +39,14 @@ fn home_actions_tab_enter_space_and_escape_keep_input_owned(cx: &mut TestAppCont
     cx.update(|window, cx| {
         view.read_with(cx, |v, _| assert!(v.terminal_focus.is_focused(window)));
     });
+    // Browse, then Refresh: Theme left the action row (#746).
     cx.simulate_keystrokes("tab tab");
     cx.update(|window, cx| {
-        view.read_with(cx, |v, _| assert_eq!(v.home_action_index(window), Some(1)));
-    });
-    cx.simulate_keystrokes("space");
-    cx.simulate_event(KeyUpEvent {
-        layout: None,
-        keystroke: Keystroke::parse("space").unwrap(),
-    });
-    view.read_with(cx, |v, _| assert!(v.picker.is_some()));
-    assert!(receiver.try_recv().is_err());
-    cx.simulate_keystrokes("escape shift-tab");
-    cx.update(|window, cx| {
         view.read_with(cx, |v, _| assert_eq!(v.home_action_index(window), Some(2)));
+    });
+    cx.simulate_keystrokes("shift-tab");
+    cx.update(|window, cx| {
+        view.read_with(cx, |v, _| assert_eq!(v.home_action_index(window), Some(0)));
     });
     cx.simulate_keystrokes("escape");
     cx.update(|window, cx| {
