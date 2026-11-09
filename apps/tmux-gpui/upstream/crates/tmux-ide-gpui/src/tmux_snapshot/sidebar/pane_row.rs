@@ -61,3 +61,102 @@ fn menu(
         view.open_pane_menu(&pane, window, cx);
     })
 }
+
+impl SnapshotView {
+    /// The sidebar's first row (#746): Home, with how many agents need input.
+    /// A Tab stop after the rows, like the other sidebar controls.
+    pub(in crate::tmux_snapshot) fn sidebar_home_row(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = self.theme();
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let waiting = waiting_agents(&self.browser_state);
+        let row = Row {
+            label: "Home".into(),
+            icon: Some("icons/tmux-home.svg"),
+            attention: waiting,
+            target: Some(Target::Home),
+            ..Row::default()
+        };
+        let request = self.browser_request;
+        self.sidebar_focus_control(
+            render_row(
+                usize::MAX,
+                &row,
+                &theme,
+                &bezel,
+                bezel_motion::Painter::of(cx),
+                false,
+            )
+            .debug_selector(|| "tmux-sidebar-home".into())
+            // The focus ring's border is always there, so focus never moves
+            // the rows under Home.
+            .border_1()
+            .border_color(transparent_black())
+            .map(|home| spoken(home, &row, None)),
+            4,
+            &theme,
+        )
+        .on_click(cx.listener(move |view, _, window, cx| {
+            view.dispatch_application_tab(
+                request,
+                crate::tmux_snapshot::workspace_chrome::ApplicationTab::Home,
+                window,
+                cx,
+            );
+        }))
+    }
+}
+
+/// Agents across the fleet that wait for the user.
+pub(in crate::tmux_snapshot) fn waiting_agents(state: &browser::State) -> usize {
+    state
+        .workspace_fleet_agents
+        .as_ref()
+        .filter(|p| p.request == state.request && p.valid())
+        .map_or(0, |p| p.roster.rows.iter().filter(|r| r.attention).count())
+}
+
+/// What a screen reader says for a row: its label, then what the row holds.
+/// A heading is a project; a pane row adds the agent's state when there is
+/// one; Home adds how many agents need input.
+pub(in crate::tmux_snapshot) fn label(row: &Row, state: Option<&'static str>) -> String {
+    let mut out = row.label.clone();
+    if let Some(aside) = &row.aside {
+        out.push_str(&format!(", {aside}"));
+    }
+    match row.kind {
+        Kind::Heading => out.push_str(", project"),
+        Kind::Window => out.push_str(", window"),
+        Kind::Item => {}
+    }
+    if let Some(state) = state {
+        out.push_str(&format!(", {state}"));
+    }
+    if row.attention > 0 && row.kind != Kind::Heading {
+        out.push_str(&format!(
+            ", {}",
+            crate::plural::count(row.attention as u64, "needs input", "need input")
+        ));
+    }
+    out
+}
+
+/// A row as a screen reader meets it: a button when it goes somewhere (with
+/// whether it is the selected one), a heading or a label when it doesn't, and
+/// its spoken [`label`].
+pub(in crate::tmux_snapshot) fn spoken(
+    element: Stateful<Div>,
+    row: &Row,
+    state: Option<&'static str>,
+) -> Stateful<Div> {
+    element
+        .role(match row.kind {
+            _ if row.target.is_some() => Role::Button,
+            Kind::Heading => Role::Heading,
+            Kind::Window | Kind::Item => Role::Label,
+        })
+        .aria_label(label(row, state))
+        .aria_selected(row.selected)
+}

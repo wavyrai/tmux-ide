@@ -45,9 +45,11 @@ fn home_and_browse_clicks_do_not_send_terminal_input(cx: &mut TestAppContext) {
     cx.simulate_resize(size(px(640.), px(400.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
-    let home = cx.debug_bounds("application-home").unwrap();
-    assert_eq!(home.size.height, px(26.));
-    assert!(home.size.height < px(APPLICATION_TABS_HEIGHT));
+    // Home is the sidebar's first row now (#746).
+    assert!(cx.debug_bounds("application-home").is_none());
+    let home = cx.debug_bounds("tmux-sidebar-home").unwrap();
+    let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();
+    assert!(home.left() >= sidebar.left() && home.right() <= sidebar.right());
     cx.simulate_click(home.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),
@@ -271,8 +273,9 @@ fn windows_are_sidebar_subheadings_not_titlebar_tabs(cx: &mut TestAppContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
     assert!(cx.debug_bounds("workspace-window-0").is_none());
-    // The titlebar keeps its New window button.
-    assert!(cx.debug_bounds("workspace-window-strip").is_some());
+    // New window is in the menu bar (Cmd-T), not the title bar.
+    assert!(cx.debug_bounds("workspace-window-strip").is_none());
+    assert!(cx.debug_bounds("workspace-new-window").is_none());
     let a = cx.debug_bounds("tmux-sidebar-pane:pane-a").unwrap();
     let b = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
     let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();

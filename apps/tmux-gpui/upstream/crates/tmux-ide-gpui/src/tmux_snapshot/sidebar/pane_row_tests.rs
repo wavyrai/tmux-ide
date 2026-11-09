@@ -101,3 +101,134 @@ fn only_needs_input_wears_the_pill(cx: &mut TestAppContext) {
         assert_eq!(cx.debug_bounds("agent-badge").is_some(), pill, "{status}");
     }
 }
+
+/// What a screen reader is told about each kind of row (#746).
+#[gpui::test]
+fn rows_tell_a_screen_reader_their_role_label_and_selection(cx: &mut TestAppContext) {
+    use gpui::accesskit::{Node, Role as A11y};
+    struct Probe(bezel_motion::Painter);
+    let painter = cx.update(|cx| {
+        let probe = cx.new(|cx: &mut Context<Probe>| Probe(bezel_motion::Painter::of(cx)));
+        probe.read(cx).0
+    });
+    let theme = Theme::default();
+    let bezel = crate::tmux_snapshot::design::palette(&theme);
+    let read = |row: &Row, state| {
+        let element = pane_row::spoken(
+            render_row(0, row, &theme, &bezel, painter, false),
+            row,
+            state,
+        );
+        let role = element.a11y_role();
+        let mut node = Node::new(A11y::GenericContainer);
+        element.write_a11y_info(&mut node);
+        (
+            role.unwrap_or(A11y::GenericContainer),
+            node.label().map(str::to_owned),
+            node.is_selected(),
+        )
+    };
+    let heading = Row {
+        label: "sfora".into(),
+        aside: Some("spark".into()),
+        kind: Kind::Heading,
+        target: Some(Target::Session("s".into())),
+        ..Row::default()
+    };
+    assert_eq!(
+        read(&heading, None),
+        (
+            A11y::Button,
+            Some("sfora, spark, project".into()),
+            Some(false)
+        )
+    );
+    let pane = Row {
+        label: "Fix flaky watch reconnect test".into(),
+        selected: true,
+        target: Some(Target::Pane {
+            session: "s".into(),
+            id: "p".into(),
+        }),
+        pane: Some("p".into()),
+        ..Row::default()
+    };
+    assert_eq!(
+        read(&pane, Some("Needs input")),
+        (
+            A11y::Button,
+            Some("Fix flaky watch reconnect test, Needs input".into()),
+            Some(true)
+        )
+    );
+    let window = Row {
+        label: "release".into(),
+        kind: Kind::Window,
+        ..Row::default()
+    };
+    assert_eq!(
+        read(&window, None),
+        (A11y::Label, Some("release, window".into()), Some(false))
+    );
+    let home = Row {
+        label: "Home".into(),
+        attention: 2,
+        target: Some(Target::Home),
+        ..Row::default()
+    };
+    assert_eq!(read(&home, None).1.as_deref(), Some("Home, 2 need input"));
+}
+
+#[gpui::test]
+fn hiding_the_sidebar_puts_home_in_the_top_row(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("tmux-sidebar-home").is_some());
+    assert!(cx.debug_bounds("application-home").is_none());
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| view.sidebar_hidden = true);
+        window.draw(cx).clear(cx);
+    });
+    assert!(cx.debug_bounds("tmux-sidebar-home").is_none());
+    let home = cx.debug_bounds("application-home").unwrap();
+    receiver.try_iter().for_each(drop);
+    cx.simulate_click(home.center(), Modifiers::default());
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::Home { .. }
+    ));
+}
+
+/// The keyboard walks pane rows like any other row: Ctrl-G, then the open
+/// project's heading, its pane, and Enter selects that exact pane.
+#[gpui::test]
+fn keyboard_reaches_and_opens_a_pane_row(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.request = 7;
+        view.browser_state.panes.push(choice("pane-b", "Shell"));
+        view
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("ctrl-g home down down");
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            view.sidebar_keyboard.selected,
+            Some(Target::Pane {
+                session: "session-a".into(),
+                id: "pane-b".into()
+            })
+        );
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_some());
+    cx.simulate_keystrokes("enter");
+    assert!(
+        matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-b")
+    );
+    assert!(receiver.try_recv().is_err());
+}

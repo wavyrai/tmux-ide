@@ -61,8 +61,10 @@ heading for each window when it has more than one, with an icon for what runs th
 (Claude, Codex and other agents, Neovim, a shell) and the agent's task title or name. A
 working agent shows a spinner and one that needs input a "Needs input" pill. Other
 projects list their agents. Hover a pane row for its … menu, or right-click it. Windows
-moved from the title bar into the sidebar; the title bar keeps New window. Machines,
-servers and their actions are on Home.
+moved from the title bar into the sidebar. The row beside the traffic lights holds the
+sidebar's controls: show or hide the sidebar, browse sessions, and New session. Home is
+the sidebar's first row (F1), and joins that row when the sidebar is hidden. New Window
+is in the menu bar (Cmd-T). Machines, servers and their actions are on Home.
 
 In 0.1.13, the app has a new icon, with light and dark versions on macOS 26, and its UI
 picks up new app state when it arrives instead of on a 16 ms tick. The installer now gives up
@@ -83,8 +85,8 @@ controls remain in the pane header while the app is in the background, disabled
 until input authority returns. The terminal toolbar no longer reappears
 because native control polling pauses.
 
-Windows are listed in the sidebar under the open project; the top bar keeps New
-window, and selection progress does not insert a notice beside it.
+Windows are listed in the sidebar under the open project, and selection progress does
+not insert a notice in the top bar.
 Keyboard controls include Cmd-T for a new window, Cmd-D / Cmd-Shift-D for splits,
 and Cmd-Shift-[ / ] for window switching.
 

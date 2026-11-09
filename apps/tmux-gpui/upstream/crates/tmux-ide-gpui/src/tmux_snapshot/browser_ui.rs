@@ -568,6 +568,7 @@ impl SnapshotView {
         self.select(
             match target {
                 sidebar::Target::FleetAgent { .. } => return,
+                sidebar::Target::Home => Selection::Home,
                 sidebar::Target::FleetSession {
                     selection, session, ..
                 } => Selection::FleetSession {
@@ -651,6 +652,7 @@ impl SnapshotView {
             .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
+        sidebar = sidebar.child(self.sidebar_home_row(cx));
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
             let mut element = sidebar::render_row(
                 index,
@@ -670,6 +672,21 @@ impl SnapshotView {
                     &bezel,
                 )
             });
+            // What a screen reader says: the row and its agent's state.
+            let state = row
+                .pane
+                .as_deref()
+                .and_then(|pane| sidebar::panes::pane_agent(&self.browser_state, pane))
+                .or_else(|| {
+                    let key = row.agent.as_ref()?;
+                    let publication = self.browser_state.workspace_fleet_agents.as_ref()?;
+                    let agent = publication.roster.rows.iter().find(|r| &r.key == key)?;
+                    Some((agent, !publication.roster.available(key)))
+                })
+                .map(|(agent, unavailable)| {
+                    super::agent_indicator::state_label(agent, unavailable)
+                });
+            element = sidebar::pane_row::spoken(element, &row, state);
             if let Some(key) = &row.agent
                 && let Some(publication) = &self.browser_state.workspace_fleet_agents
                 && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
@@ -728,7 +745,7 @@ impl SnapshotView {
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())
             .relative()
-            .w(px(224.))
+            .w(px(SIDEBAR_WIDTH))
             .h_full()
             .min_h_0()
             .flex_shrink_0()
@@ -907,6 +924,9 @@ impl SnapshotView {
         super::shell::themed_frame(body, window, cx, application_tabs)
     }
 }
+
+/// The sidebar's width; the top row's sidebar controls end at its edge.
+pub(super) const SIDEBAR_WIDTH: f32 = 224.;
 
 /// The keyboard-selected row's ring, laid over the row so focus never
 /// changes its size.

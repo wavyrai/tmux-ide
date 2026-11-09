@@ -54,11 +54,11 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    // No window capability exists: reverse traversal reaches Toggle, not Plus.
+    // No local session can start: reverse traversal reaches search, not +.
     cx.simulate_keystrokes("ctrl-g shift-tab");
     cx.update(|window, cx| {
         view.read_with(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[3].is_focused(window));
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[5].is_focused(window));
         });
     });
     cx.simulate_keystrokes("tab");
@@ -74,7 +74,8 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
         });
     });
     let width_before = view.read_with(cx, |view, _| view.input_geometry.unwrap().0.size.width);
-    cx.simulate_keystrokes("shift-tab space");
+    // Search, Home, then the show/hide toggle.
+    cx.simulate_keystrokes("shift-tab shift-tab shift-tab space");
     cx.simulate_event(KeyUpEvent {
         layout: None,
         keystroke: Keystroke::parse("space").unwrap(),
@@ -166,64 +167,42 @@ fn stale_control_keyup_does_not_refresh_or_select_a_session(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn available_plus_activates_once_and_lost_capability_returns_to_rows(cx: &mut TestAppContext) {
+fn home_and_search_are_tab_stops_after_the_toggle(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
-        view.update(cx, |view, _| {
-            view.browser_state.request = 7;
-            view.browser_state.pane_actions = Some(browser::PaneActions {
-                token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-                id: "pane-a".into(),
-                zoomed: false,
-            });
-        });
+        view.update(cx, |view, _| view.browser_state.request = 7);
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Rows, then search: Enter opens the session browser.
     cx.simulate_keystrokes("ctrl-g shift-tab enter");
+    cx.simulate_event(KeyUpEvent {
+        layout: None,
+        keystroke: Keystroke::parse("enter").unwrap(),
+    });
+    assert!(view.read_with(cx, |view, _| view.picker.is_some()));
+    assert!(receiver.try_recv().is_err());
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(view.read_with(cx, |view, _| view.picker.is_none()));
+    // Home is the stop before search: Enter goes home.
+    cx.simulate_keystrokes("ctrl-g shift-tab shift-tab");
+    cx.update(|window, cx| {
+        view.read_with(cx, |view, _| {
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[4].is_focused(window));
+        });
+    });
+    cx.simulate_keystrokes("enter");
     cx.simulate_event(KeyUpEvent {
         layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
     assert!(matches!(
         receiver.try_recv().unwrap(),
-        browser::Command::PaneAction {
-            request: 7,
-            action: crate::tmux_snapshot::pane_actions::Action::NewWindow,
-            ..
-        }
+        browser::Command::Home { request: 8 }
     ));
     assert!(receiver.try_recv().is_err());
-    // Dispatch consumes the one-use capability and returns terminal focus.
-    // Publish a fresh capability before testing loss on a focused Plus.
-    cx.update(|window, cx| {
-        view.update(cx, |view, _| {
-            view.browser_state.pane_actions = Some(browser::PaneActions {
-                token: "412b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-                id: "pane-a".into(),
-                zoomed: false,
-            });
-        });
-        window.draw(cx).clear(cx);
-    });
-    cx.simulate_keystrokes("ctrl-g shift-tab");
-    cx.update(|window, cx| {
-        view.update(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[4].is_focused(window));
-            view.browser_state.pane_actions = None;
-        });
-        window.draw(cx).clear(cx);
-        view.read_with(cx, |view, _| {
-            assert!(
-                view.sidebar_keyboard
-                    .focus
-                    .as_ref()
-                    .unwrap()
-                    .is_focused(window)
-            );
-        });
-    });
 }
 
 #[gpui::test]

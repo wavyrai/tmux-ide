@@ -8,7 +8,7 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     pub(in crate::tmux_snapshot::browser_ui) focus: Option<FocusHandle>,
     pub(in crate::tmux_snapshot::browser_ui) selected: Option<Target>,
     pub(in crate::tmux_snapshot::browser_ui) scroll: ScrollHandle,
-    pub(super) controls: Option<[FocusHandle; 5]>,
+    pub(super) controls: Option<[FocusHandle; control_focus::CONTROLS]>,
     reveal: reveal::Reveal,
     pub(super) request: u64,
     displayed: Vec<Option<Target>>,
@@ -124,7 +124,7 @@ impl SnapshotView {
         if next != old
             && let Some(index) = next
         {
-            state.scroll.scroll_to_item(index);
+            state.scroll.scroll_to_item(index + 1);
         }
     }
     pub(in crate::tmux_snapshot) fn sidebar_keyboard_key(
@@ -164,7 +164,7 @@ impl SnapshotView {
                         id.as_ref()
                             .is_some_and(|id| Some(id) == state.selected.as_ref())
                     }) {
-                        state.scroll.scroll_to_item(index);
+                        state.scroll.scroll_to_item(index + 1);
                     }
                     cx.notify();
                 } else if self.browser_state.surface == browser::Surface::Home
@@ -303,7 +303,7 @@ impl SnapshotView {
             id.as_ref()
                 .is_some_and(|id| Some(id) == state.selected.as_ref())
         }) {
-            state.scroll.scroll_to_item(index);
+            state.scroll.scroll_to_item(index + 1);
         }
         cx.notify();
         true

@@ -31,6 +31,10 @@ fn glyph(row: &Row, unavailable: bool, frame: usize) -> &'static str {
         Status::Idle => "○",
     }
 }
+/// The state's words, as the badge shows them and a screen reader says them.
+pub(super) fn state_label(row: &Row, unavailable: bool) -> &'static str {
+    label(row, unavailable)
+}
 fn label(row: &Row, unavailable: bool) -> &'static str {
     if unavailable {
         return "Unavailable";

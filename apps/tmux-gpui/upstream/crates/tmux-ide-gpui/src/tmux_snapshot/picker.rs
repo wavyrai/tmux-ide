@@ -812,18 +812,6 @@ impl SnapshotView {
             cx,
         );
     }
-    pub(super) fn show_pane_action_queue_error(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_commands(window, cx);
-        if let Some(picker) = &mut self.picker {
-            picker.error = Some("Action queue unavailable — cancel and reselect the pane.");
-        }
-        cx.notify();
-    }
-
     pub(super) fn picker_key(
         &mut self,
         event: &KeyDownEvent,

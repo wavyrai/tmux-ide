@@ -10,7 +10,7 @@ mod hierarchy;
 #[path = "sidebar/keyboard.rs"]
 mod keyboard;
 #[path = "sidebar/pane_row.rs"]
-mod pane_row;
+pub(in crate::tmux_snapshot) mod pane_row;
 #[path = "sidebar/panes.rs"]
 pub(in crate::tmux_snapshot) mod panes;
 #[path = "sidebar/reveal.rs"]
@@ -22,6 +22,8 @@ pub(super) use keyboard::focus_shortcut;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::tmux_snapshot) enum Target {
+    /// The sidebar's Home row (#746).
+    Home,
     FleetAgent {
         scope: u64,
         revision: u64,
@@ -96,6 +98,7 @@ pub(super) fn current(state: &browser::State, target: &Target) -> bool {
         Target::FleetAgent { .. } | Target::FleetSession { .. } => rows(state)
             .iter()
             .any(|r| r.target.as_ref() == Some(target)),
+        Target::Home => true,
         Target::Session(id) => state.sessions.iter().any(|s| &s.id == id),
         Target::Pane { session, id } => {
             state.selected_session.as_ref() == Some(session)

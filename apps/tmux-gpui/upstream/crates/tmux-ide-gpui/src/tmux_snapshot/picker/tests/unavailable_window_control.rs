@@ -1,9 +1,9 @@
 use super::*;
 
+/// New window left the title bar (#746); Cmd-T, the menu bar's New Window
+/// shortcut, still creates one, and only with a current pane capability.
 #[gpui::test]
-fn unavailable_window_control_waits_for_current_capability_without_moving_terminal(
-    cx: &mut TestAppContext,
-) {
+fn cmd_t_makes_a_new_window_only_with_a_current_capability(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
@@ -16,27 +16,19 @@ fn unavailable_window_control_waits_for_current_capability_without_moving_termin
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let bounds = cx.debug_bounds("workspace-new-window").unwrap();
+    assert!(cx.debug_bounds("workspace-new-window").is_none());
     let geometry = view.read_with(cx, |view, _| view.input_geometry.unwrap().0);
-    cx.simulate_click(bounds.center(), Modifiers::default());
+    cx.simulate_keystrokes("cmd-t");
     assert!(receiver.try_recv().is_err());
     view.read_with(cx, |view, _| {
         assert_eq!(view.browser_request, 7);
         assert_eq!(view.input_geometry.unwrap().0, geometry);
-        assert!(view.picker.is_none());
     });
     cx.update(|window, cx| {
-        view.update(cx, |view, _| {
-            view.browser_state.pane_actions = Some(browser::PaneActions {
-                token: "312b2c16-a13d-4411-82e5-1fdb58adab92".into(),
-                id: "pane-a".into(),
-                zoomed: false,
-            });
-        });
+        view.update(cx, |view, _| ready_pane(view, false));
         window.draw(cx).clear(cx);
     });
-    assert_eq!(cx.debug_bounds("workspace-new-window").unwrap(), bounds);
-    cx.simulate_click(bounds.center(), Modifiers::default());
+    cx.simulate_keystrokes("cmd-t");
     assert!(matches!(
         receiver.try_recv().unwrap(),
         browser::Command::PaneAction {

@@ -271,3 +271,9 @@ Machine, server and collapse rows, the Agents section and the titlebar window ta
 with the tabs. `browser::Choice` carries the daemon's `displayNameSource`. `icons.rs`
 registers the tmux-ide-authored `assets/icons/neovim.svg`, a generic editor mark;
 upstream provenance is unchanged.
+
+The top row (`workspace_chrome.rs`) holds the sidebar's controls over the sidebar:
+show/hide, search and New session; Home is the sidebar's first row. The titlebar
+New window button, `create_window_from_strip`, the queue-error helper it used and
+the titlebar tab controls are removed; New Window stays in the menu bar (Cmd-T).
+Sidebar rows carry accessibility roles, labels and selection.
