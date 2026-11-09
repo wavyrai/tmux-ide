@@ -6,6 +6,20 @@ pub(super) const BUTTONS: [HeaderIntent; 4] = [
     HeaderIntent::Expand,
     HeaderIntent::Close,
 ];
+/// What a pane title tells a screen reader about the pane's actions.
+pub(super) const TITLE_HINT: &str =
+    "Pane actions: right-click or Control-click the title, or press F5 for every pane action";
+/// A header button as a screen reader meets it: its hint and its shortcut.
+pub(super) fn button_a11y(
+    button: Stateful<Div>,
+    hint: &'static str,
+    keys: Option<&'static str>,
+) -> Stateful<Div> {
+    button
+        .role(Role::Button)
+        .aria_label(hint)
+        .when_some(keys, |button, keys| button.aria_keyshortcuts(keys))
+}
 /// A header button's name, icon, tooltip and shortcut; the tooltip shows
 /// the shortcut beside the hint.
 pub(super) fn face(
@@ -47,44 +61,14 @@ pub(super) fn face(
     })
 }
 impl SnapshotView {
-    /// Opens pane `id`'s menu from outside its header buttons: a right-click
-    /// (or Control-click, which macOS sends as one) on its title, or a screen
-    /// reader's "show menu" on it. Selects the pane first if it isn't.
-    pub(in crate::tmux_snapshot) fn open_pane_menu(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.browser_state.surface != super::super::browser::Surface::Workspace
-            || !self.browser_state.panes.iter().any(|p| p.id == id)
-            || self.picker.is_some()
-            || self.pane_actions.is_some()
-            || self.new_session.is_some()
-        {
-            return;
-        }
-        self.header_controls.intent = HeaderIntent::Menu;
-        self.activate_header_menu(id, window, cx);
-    }
     /// A pane title as a screen reader meets it (#746): a button named after
-    /// the pane that selects it, with a "show menu" action for the pane's
-    /// actions, since the menu has no button of its own.
-    pub(super) fn pane_title_a11y(
-        &self,
-        element: Stateful<Div>,
-        header: &Header,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let view = cx.entity().downgrade();
-        let id = header.id.clone();
+    /// the pane, which selects it. Its menu is a right-click (or
+    /// Control-click); without a pointer, F5 lists every pane action.
+    pub(super) fn pane_title_a11y(&self, element: Stateful<Div>, header: &Header) -> Stateful<Div> {
         element
             .role(Role::Button)
             .aria_label(label(&self.browser_state, &header.id))
-            .aria_description("Pane actions: right-click, or the screen reader's menu action")
-            .on_a11y_action(accesskit::Action::ShowContextMenu, move |_, window, app| {
-                let _ = view.update(app, |view, cx| view.open_pane_menu(&id, window, cx));
-            })
+            .aria_description(TITLE_HINT)
     }
     /// A right-click on a pane's title opens that pane's menu, selecting the
     /// pane first if it isn't selected (#746: the header has no menu button).
@@ -178,9 +162,7 @@ impl SnapshotView {
         Some(
             div()
                 .id(SharedString::from(format!("pane-{name}:{id}")))
-                .role(Role::Button)
-                .aria_label(hint)
-                .when_some(keys, |button, keys| button.aria_keyshortcuts(keys))
+                .map(|button| button_a11y(button, hint, keys))
                 .debug_selector({
                     let id = id.clone();
                     move || format!("pane-{name}:{id}")

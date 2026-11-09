@@ -243,3 +243,89 @@ fn right_click_on_a_lower_cell_header_opens_the_menu(cx: &mut TestAppContext) {
     );
     assert!(receiver.try_recv().is_err());
 }
+
+/// F5's Open folder in VS Code sends only for the current request, with
+/// presence ready, on the exact pane capability it captured (#746).
+#[gpui::test]
+fn open_captured_editor_needs_the_request_presence_and_a_current_target(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    view.update(cx, |view, _| {
+        let target = Target::capture(&view.browser_state).unwrap();
+        // A newer request.
+        view.browser_request += 1;
+        assert!(!view.open_captured_editor(&target));
+        view.browser_request -= 1;
+        // Presence not ready.
+        let ready = std::mem::replace(
+            &mut view.presence,
+            crate::tmux_snapshot::presence::Presence::new(true),
+        );
+        assert!(!view.presence.ready());
+        assert!(!view.open_captured_editor(&target));
+        view.presence = ready;
+        // A replaced capability: the captured target is no longer current.
+        let token = view
+            .browser_state
+            .pane_actions
+            .as_ref()
+            .unwrap()
+            .token
+            .clone();
+        view.browser_state.pane_actions.as_mut().unwrap().token = "replacement".into();
+        assert!(!view.open_captured_editor(&target));
+        view.browser_state.pane_actions.as_mut().unwrap().token = token;
+        assert!(
+            receiver.try_recv().is_err(),
+            "no gate let a command through"
+        );
+        // All three hold: the admission goes, and spends the capability.
+        assert!(view.open_captured_editor(&target));
+        assert!(view.browser_state.pane_actions.is_none());
+    });
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::OpenEditor { request: 7, id, .. } if id == "pane-a"
+    ));
+}
+
+/// The cell header row above the frame: with the cards off, the top pane's
+/// title sits there, and a right-click on it opens the pane's menu.
+#[gpui::test]
+fn right_click_on_the_header_row_title_opens_the_menu(cx: &mut TestAppContext) {
+    struct Row(Entity<SnapshotView>);
+    impl Render for Row {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0
+                .update(cx, |view, cx| view.pane_header_row(window, cx))
+        }
+    }
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (row, cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = header_view(window, cx, sender);
+            // No cards, so the top pane's title is in the header row.
+            view.browsing = false;
+            view
+        });
+        Row(view)
+    });
+    let view = row.read_with(cx, |row, _| row.0.clone());
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(view.read_with(cx, |v, _| v.card_layout(8.).is_none()));
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    cx.simulate_mouse_down(title.center(), MouseButton::Right, Modifiers::default());
+    assert!(
+        view.read_with(cx, |v, _| v.picker.is_some()),
+        "pane-a's menu"
+    );
+    assert!(receiver.try_recv().is_err());
+}
