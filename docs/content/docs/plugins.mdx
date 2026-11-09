@@ -36,7 +36,7 @@ worktree-tasks 1.0.0
 Tasks as git worktrees: start, open and remove them from the palette, with tmux-ide worktree.
 …
 It asks to:
-  - create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)
+  - create, open and remove git worktrees and their sessions (plain sessions, with git hooks off: no layout or hook from the repository or a branch runs)
 ```
 
 Then open the palette in a session of the repository and pick **New task**,
@@ -54,7 +54,11 @@ session of the pane it runs in, or `--session <name>`. It asks for neither
 Removing a task never forces: a worktree with changes is refused. Tasks
 open as plain sessions: a branch's own tmux-ide layout (its
 `.tmux-ide/workspace.yml` commands, which come from that branch) never runs
-from a plugin. Run `tmux-ide worktree open <branch>` yourself for the layout.
+from a plugin, and git runs with hooks off, so no hook from the repository
+or from the branch (say a post-checkout hook through a relative
+`core.hooksPath`) runs either. Run `tmux-ide worktree open <branch>`
+yourself for the layout; when you run `tmux-ide worktree`, hooks run as
+usual.
 
 ## Consent
 
@@ -71,12 +75,12 @@ from a plugin. Run `tmux-ide worktree open <branch>` yourself for the layout.
 A plugin's `manifest.json` lists what it needs under `capabilities`. Consent
 shows each one in these words:
 
-| Capability           | Lets the plugin                                                                         | Consent says                                                                                                              |
-| -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `worktree: true`     | Create, open, list and remove git worktrees and their sessions (`ide.worktree`)         | "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)" |
-| `exec: ["jq", …]`    | Run the named programs with `ide.exec`                                                  | "run these programs: jq. A program it may run can usually do anything your account can"                                   |
-| `shell: true`        | Run any `/bin/sh` command line                                                          | "run ANY shell command line, with full access to your account"                                                            |
-| `"panes.send": true` | Type into panes, and run a program as if typed in a pane (`ide.exec{ context = "%3" }`) | "type into your terminals and run commands there, which gives full access to your account"                                |
+| Capability           | Lets the plugin                                                                         | Consent says                                                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `worktree: true`     | Create, open, list and remove git worktrees and their sessions (`ide.worktree`)         | "create, open and remove git worktrees and their sessions (plain sessions, with git hooks off: no layout or hook from the repository or a branch runs)" |
+| `exec: ["jq", …]`    | Run the named programs with `ide.exec`                                                  | "run these programs: jq. A program it may run can usually do anything your account can"                                                                 |
+| `shell: true`        | Run any `/bin/sh` command line                                                          | "run ANY shell command line, with full access to your account"                                                                                          |
+| `"panes.send": true` | Type into panes, and run a program as if typed in a pane (`ide.exec{ context = "%3" }`) | "type into your terminals and run commands there, which gives full access to your account"                                                              |
 
 Most programs give full control of your account the moment a plugin may
 run them, because they can run other commands or drive tmux: `tmux`,
