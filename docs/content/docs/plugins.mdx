@@ -103,9 +103,14 @@ around it is a seat belt, not a wall:
 - It cannot write under `~/.tmux-ide`, except the plugin's own
   `~/.tmux-ide/plugin-data/<name>/`, and cannot read the daemon's record,
   claim, consent records, plugin stores or the app settings.
-- Without `panes.send` it cannot connect to your tmux server: the sandbox
-  keeps it from the tmux socket directories, and it does not get
-  `TMUX_TMPDIR`. (A program can still start a tmux server of its own.)
+- Without `panes.send` it cannot connect to your tmux server, however it
+  finds the socket: the sandbox denies connecting to the tmux socket
+  directories (`/private/tmp/tmux-<uid>/`, the one under `TMUX_TMPDIR`, and
+  the daemon server's), and it does not get `TMUX_TMPDIR`. So a granted
+  `tmux` or `tmux-ide send` cannot type into your panes. (A program can
+  still start a tmux server of its own.)
+- No program can connect to the daemon's HTTP port, on any address, or to
+  its control socket.
 - It is looked up on the daemon's `PATH`, never one the plugin sets, and the
   plugin may set only `LANG`, `LC_*`, `TZ`, `TERM`, colour variables,
   `COLUMNS`, `LINES` and `PLUGIN_*` variables for it.
@@ -120,7 +125,9 @@ programs by default**: the bubblewrap sandbox has not been tested on a real
 Linux machine yet. To turn it on anyway, start the daemon with
 `TMUX_IDE_PLUGIN_EXEC_LINUX=1`. Under bubblewrap, the daemon's private files
 are hidden only if they exist when the program starts; a file created
-later under the same name is not.
+later under the same name is not. The tmux socket directories are hidden
+the same way (without `panes.send`), but the daemon's port is not blocked
+there.
 
 ## Write a plugin
 
