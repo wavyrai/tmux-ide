@@ -135,13 +135,19 @@ export function darwinProfile(
       (path) =>
         `(deny network-outbound (remote unix-socket (path-regex ${sbplPrefixRegex(resolve(path))})))`,
     ),
-    // A path rule is only as good as the path: the socket directories, the
-    // control socket and every directory above them cannot be renamed,
-    // removed or relinked, so the sockets cannot be moved out from under
-    // the rules above.
-    ...immovable([...(paths.tmuxSockets ?? []), ...(paths.privateSockets ?? [])].map(resolve)).map(
-      (path) => `(deny file-write* (literal ${sbplString(path)}))`,
-    ),
+    // A path rule is only as good as the path: the state home, the private
+    // files, the socket directories, the control socket and every directory
+    // above them cannot be renamed, removed or relinked, so none of them can
+    // be moved out from under the rules above. (Only the paths themselves:
+    // files inside those directories are governed by the rules above.)
+    ...immovable(
+      [
+        paths.stateHome,
+        ...(paths.unreadable ?? []),
+        ...(paths.tmuxSockets ?? []),
+        ...(paths.privateSockets ?? []),
+      ].map(resolve),
+    ).map((path) => `(deny file-write* (literal ${sbplString(path)}))`),
     ...(paths.daemonPorts ?? [])
       .filter((port) => Number.isInteger(port) && port > 0 && port < 65536)
       .map((port) => `(deny network-outbound (remote ip "*:${port}"))`),

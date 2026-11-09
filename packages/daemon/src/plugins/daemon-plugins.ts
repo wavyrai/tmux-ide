@@ -8,7 +8,12 @@ import { getCanonicalDaemonInfoPath } from "../lib/canonical-daemon.ts";
 import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
-import { createHostCallHandler, type DaemonEndpoint, type NotifyLevel } from "./host-calls.ts";
+import {
+  createHostCallHandler,
+  type DaemonEndpoint,
+  type HostCallDependencies,
+  type NotifyLevel,
+} from "./host-calls.ts";
 import { cliRunner } from "./worktree-calls.ts";
 import { defaultControlSocketPath } from "../control/server.ts";
 import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
@@ -114,6 +119,34 @@ export function daemonPrivateFiles(
   ];
 }
 
+/**
+ * What the daemon's host functions run on: its state home, its own HTTP
+ * endpoint and tmux server, and what programs are kept from (the private
+ * files, the tmux socket directories, the control socket and, through the
+ * endpoint, the daemon's port).
+ */
+export function daemonHostCallDependencies(options: {
+  home: string;
+  endpoint?: (() => DaemonEndpoint | null) | undefined;
+  tmux?: ((args: readonly string[]) => Promise<string>) | undefined;
+  secretSet: () => ReadonlySet<string>;
+}): HostCallDependencies {
+  const tmux = options.tmux ?? (async () => Promise.reject(new Error("tmux is unavailable")));
+  return {
+    stateHome: options.home,
+    endpoint: options.endpoint ?? (() => null),
+    tmux,
+    baseEnv: () => minimalHostEnv(),
+    secrets: options.secretSet,
+    notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
+    unreadable: () => daemonPrivateFiles(options.home),
+    execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
+    runCli: cliRunner(resolveCliCommand()),
+    tmuxSocketDirs: () => tmuxSocketDirs(tmux),
+    privateSockets: () => [defaultControlSocketPath()],
+  };
+}
+
 export function createDaemonPluginSupervisor(options: {
   productVersion: string;
   /** Daemon credentials that must never reach a plugin log or `lua run` output. */
@@ -131,20 +164,9 @@ export function createDaemonPluginSupervisor(options: {
   const logPath = pluginLogPath(home);
   const secretSet = () =>
     new Set([...secrets, ...secretEnvValues()].filter((secret) => secret.length >= 8));
-  const tmux = options.tmux ?? (async () => Promise.reject(new Error("tmux is unavailable")));
-  const calls = createHostCallHandler({
-    stateHome: home,
-    endpoint: options.endpoint ?? (() => null),
-    tmux,
-    baseEnv: () => minimalHostEnv(),
-    secrets: secretSet,
-    notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
-    unreadable: () => daemonPrivateFiles(home),
-    execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
-    runCli: cliRunner(resolveCliCommand()),
-    tmuxSocketDirs: () => tmuxSocketDirs(tmux),
-    privateSockets: () => [defaultControlSocketPath()],
-  });
+  const calls = createHostCallHandler(
+    daemonHostCallDependencies({ home, endpoint: options.endpoint, tmux: options.tmux, secretSet }),
+  );
   return new PluginSupervisor({
     calls,
     stateHome: home,

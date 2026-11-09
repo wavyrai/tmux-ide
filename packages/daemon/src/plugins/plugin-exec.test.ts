@@ -394,6 +394,22 @@ describe("ide.exec running programs", () => {
     },
   );
 
+  live("cannot move a custom state home, or a directory above it, to write into it", async () => {
+    // TMUX_IDE_HOME under a temp directory the user owns: the rename trick.
+    const consent = join(stateHome, "consent", "plugins.json");
+    const moved = `${root}.x`;
+    const script = [
+      `mv "${root}" "${moved}" && echo PWN > "${join(moved, "home", "consent", "plugins.json")}" && echo WROTE-VIA-ROOT; mv "${moved}" "${root}"`,
+      `mv "${stateHome}" "${stateHome}.x" && echo PWN > "${stateHome}.x/consent/plugins.json" && echo WROTE-VIA-HOME; mv "${stateHome}.x" "${stateHome}"`,
+      `mv "${join(stateHome, "consent")}" "${join(root, "c")}" && echo MOVED-CONSENT`,
+      "true",
+    ].join("; ");
+    const result = await runPluginExec({ cmd: script, shell: true }, deps({ shell: true }));
+    expect(result.stdout).not.toMatch(/WROTE|MOVED/u);
+    expect(readFileSync(consent, "utf8")).toBe("original");
+    expect(existsSync(moved)).toBe(false);
+  });
+
   live("cannot connect to the daemon's port or control socket", async () => {
     const http = createHttpServer((_request, response) => response.end("daemon-answer"));
     await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", () => resolve()));
@@ -584,9 +600,12 @@ describe("sandbox plans", () => {
 
   it("denies writes under the state home except the data dir on macOS", () => {
     const same = (path: string) => path;
+    const pins = (...paths: string[]) =>
+      paths.map((path) => `(deny file-write* (literal "${path}"))`).join("");
     expect(darwinProfile(paths, same)).toBe(
       '(version 1)(allow default)(deny file-write* (subpath "/home/u/.tmux-ide"))' +
-        '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))',
+        '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))' +
+        pins("/home/u/.tmux-ide", "/home/u", "/home"),
     );
     expect(
       darwinProfile(
@@ -597,7 +616,15 @@ describe("sandbox plans", () => {
       '(version 1)(allow default)(deny file-write* (subpath "/home/u/.tmux-ide"))' +
         '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))' +
         '(deny file-read* file-write* (regex #"^/home/u/\\.tmux-ide/daemon\\.json"))' +
-        '(deny file-read* file-write* (regex #"^/s/app\\.json"))',
+        '(deny file-read* file-write* (regex #"^/s/app\\.json"))' +
+        pins(
+          "/home/u/.tmux-ide",
+          "/home/u",
+          "/home",
+          "/home/u/.tmux-ide/daemon.json",
+          "/s/app.json",
+          "/s",
+        ),
     );
     expect(darwinProfile({ stateHome: '/a"b\\c', writable: "/w" })).toContain(
       '(subpath "/a\\"b\\\\c")',
@@ -608,6 +635,16 @@ describe("sandbox plans", () => {
       ok: true,
       argv: ["/usr/bin/sandbox-exec", "-p", darwinProfile(paths), "/bin/echo", "x"],
     });
+  });
+
+  it("pins the state home, private files and every directory above them", () => {
+    const profile = darwinProfile(
+      { stateHome: "/r/state", writable: "/r/state/plugin-data/t", unreadable: ["/i/daemon.json"] },
+      (path) => path,
+    );
+    for (const path of ["/r/state", "/r", "/i/daemon.json", "/i"])
+      expect(profile).toContain(`(deny file-write* (literal "${path}"))`);
+    expect(profile).not.toContain('(literal "/r/state/plugin-data/t")');
   });
 
   it("pins the socket paths and every directory above them", () => {

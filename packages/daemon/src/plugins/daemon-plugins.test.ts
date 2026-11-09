@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
 import { appSettingsPath } from "../lib/app-settings.ts";
+import { defaultControlSocketPath } from "../control/server.ts";
+import { createHostCallHandler } from "./host-calls.ts";
 import {
+  daemonHostCallDependencies,
   daemonPrivateFiles,
   pluginsEnabled,
   resolveCliCommand,
@@ -101,5 +104,42 @@ describe("resolveCliCommand", () => {
         execArgv: ["--import", "tsx"],
       }),
     ).toEqual(["/node", "--import", "tsx", "/repo/bin/cli.ts"]);
+  });
+});
+
+describe("daemonHostCallDependencies", () => {
+  it("keeps programs from the control socket and the daemon's port", async () => {
+    const exec = vi.fn(async () => ({
+      code: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timed_out: false,
+      truncated: false,
+    }));
+    const deps = daemonHostCallDependencies({
+      home: "/h",
+      endpoint: () => ({ baseUrl: "http://127.0.0.1:47123", ownerToken: "owner-token" }),
+      tmux: async () => "/tmp/tmux-501/default\n",
+      secretSet: () => new Set(),
+    });
+    expect(deps.privateSockets?.()).toEqual([defaultControlSocketPath()]);
+    const calls = createHostCallHandler({ ...deps, exec });
+    await calls.handle(
+      { plugin: "p", capabilities: { exec: ["echo"], shell: false, panes: false } },
+      "_exec",
+      [{ cmd: "echo" }],
+    );
+    expect(exec).toHaveBeenCalledWith(
+      { cmd: "echo" },
+      expect.objectContaining({
+        sandbox: expect.objectContaining({
+          stateHome: "/h",
+          privateSockets: [defaultControlSocketPath()],
+          daemonPorts: [47123],
+          unreadable: daemonPrivateFiles("/h"),
+        }),
+      }),
+    );
   });
 });
