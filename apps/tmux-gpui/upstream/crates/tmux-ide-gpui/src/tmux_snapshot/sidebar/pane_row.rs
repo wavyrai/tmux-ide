@@ -69,10 +69,10 @@ impl SnapshotView {
 }
 
 /// A screen reader's action that opens pane `pane`'s menu.
-fn spoken_menu(
+pub(super) fn spoken_menu(
     pane: &str,
     cx: &mut Context<SnapshotView>,
-) -> impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static {
+) -> impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static + use<> {
     let view = cx.entity().downgrade();
     let pane = pane.to_owned();
     move |_, window, app| {

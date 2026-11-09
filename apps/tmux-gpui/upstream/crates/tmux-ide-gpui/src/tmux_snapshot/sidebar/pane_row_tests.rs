@@ -273,3 +273,111 @@ fn the_rows_menu_is_reachable_by_keyboard_and_screen_reader_with_every_item(
         assert!(!node.supports_action(Action::ShowContextMenu));
     });
 }
+
+/// VoiceOver's press on the … button (AXPress, a Click action) runs the
+/// button's own handler, which opens the pane's menu. gpui's test window
+/// drops screen-reader requests, so the test calls the handler the button
+/// registers.
+#[gpui::test]
+fn pressing_the_more_button_opens_the_panes_menu(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| menu_view(window, cx, sender));
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    let mut press = view.update(cx, |_, cx| pane_row::spoken_menu("pane-a", cx));
+    cx.update(|window, cx| press(None, window, cx));
+    assert!(
+        view.read_with(cx, |v, _| v.picker.is_some()),
+        "the pane menu"
+    );
+    assert!(
+        receiver.try_recv().is_err(),
+        "opening the menu sends nothing"
+    );
+    cx.simulate_keystrokes("enter");
+    assert!(
+        view.read_with(cx, |v, _| v.pane_actions.is_some()),
+        "the menu acts on the pane"
+    );
+}
+
+/// A pane's menu never opens over a picker that is already open: no second
+/// menu, and no selection of another pane behind it.
+#[gpui::test]
+fn a_pane_menu_waits_for_an_open_picker(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = menu_view(window, cx, sender);
+        view.browser_state.panes.push(choice("pane-b", "Shell"));
+        view
+    });
+    cx.simulate_resize(size(px(640.), px(400.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    view.update_in(cx, |view, window, cx| view.open_picker(window, cx));
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()));
+    let request = view.read_with(cx, |v, _| v.browser_request);
+    view.update_in(cx, |view, window, cx| {
+        view.open_pane_menu("pane-b", window, cx)
+    });
+    assert!(
+        receiver.try_recv().is_err(),
+        "pane-b is not selected behind the picker"
+    );
+    assert_eq!(view.read_with(cx, |v, _| v.browser_request), request);
+    // The same request with the picker closed selects pane-b for its menu.
+    view.update(cx, |view, _| view.picker = None);
+    view.update_in(cx, |view, window, cx| {
+        view.open_pane_menu("pane-b", window, cx)
+    });
+    assert!(
+        matches!(receiver.try_recv().unwrap(), browser::Command::Pane { id, .. } if id == "pane-b")
+    );
+}
+
+/// The Home row counts the agents across the fleet that need input, and says
+/// so to a screen reader; a stale or invalid roster counts none.
+#[gpui::test]
+fn the_home_row_counts_agents_that_need_input(cx: &mut TestAppContext) {
+    use gpui::accesskit::{Node, Role as A11y};
+    let roster = |request: u64, attention: [bool; 3]| {
+        let rows: Vec<_> = attention
+            .iter()
+            .enumerate()
+            .map(|(i, attention)| {
+                serde_json::json!({"key":format!("k{i}"),"sessionId":"s","paneId":format!("p{i}"),
+                    "name":"Agent","sessionLabel":"S","machineLabel":"M","serverLabel":"S",
+                    "status":"WORKING","attention":attention,"available":true})
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({"request":request,"scope":2,"revision":3,
+            "phase":"live","selectedKey":null,"observedSessions":1,"totalSessions":1,
+            "truncatedSessions":0,"truncatedRows":0,"note":null,"rows":rows}))
+        .unwrap()
+    };
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| menu_view(window, cx, sender));
+    for (request, attention, spoken) in [
+        (7, [true, false, false], "Home, 1 needs input"),
+        (7, [true, true, false], "Home, 2 need input"),
+        (7, [false, false, false], "Home"),
+        (6, [true, true, true], "Home"),
+    ] {
+        view.update(cx, |view, cx| {
+            view.browser_state.workspace_fleet_agents = Some(roster(request, attention));
+            let expected = attention.iter().filter(|a| **a).count();
+            assert_eq!(
+                pane_row::waiting_agents(&view.browser_state),
+                if request == 7 { expected } else { 0 }
+            );
+            let mut node = Node::new(A11y::Button);
+            view.sidebar_home_row(cx).write_a11y_info(&mut node);
+            assert_eq!(
+                node.label(),
+                Some(spoken),
+                "{attention:?} at request {request}"
+            );
+        });
+    }
+}
