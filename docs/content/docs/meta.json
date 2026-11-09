@@ -19,6 +19,7 @@
     "notifications-events",
     "restore-resume",
     "worktrees",
+    "plugins",
     "templates",
     "---tmux chrome---",
     "the-dock",
