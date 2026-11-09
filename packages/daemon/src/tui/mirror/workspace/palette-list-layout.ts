@@ -2,6 +2,8 @@ import type { ApplicationPaletteCommand } from "./application-command-descriptio
 
 export function paletteSection(command: ApplicationPaletteCommand): string {
   if (command === "switch-session") return "Sessions";
+  if (typeof command === "object" && command.kind === "plugin-command") return command.category;
+  if (typeof command === "object" && command.kind === "plugin-form") return "Choose";
   if (typeof command === "object")
     return command.kind === "jump-agent"
       ? "Agents"

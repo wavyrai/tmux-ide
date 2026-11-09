@@ -1,5 +1,5 @@
 import { CHROME_ACTIONS } from "./application-action-descriptions.ts";
-import type { TmuxServerScope } from "@tmux-ide/contracts";
+import type { CommandParam, TmuxServerScope } from "@tmux-ide/contracts";
 import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 export { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
@@ -37,6 +37,30 @@ export interface ApplicationMachinePaletteCommand {
   readonly fleet: FleetPaletteTarget;
 }
 
+/** A command a plugin registered, from the daemon's command catalog. */
+export interface ApplicationPluginPaletteCommand {
+  readonly kind: "plugin-command";
+  readonly fleet?: undefined;
+  /** Catalog id, `plugin.<plugin>.<id>`. */
+  readonly id: string;
+  readonly label: string;
+  readonly category: string;
+  readonly plugin: string;
+  readonly dangerous: boolean;
+  readonly params: readonly CommandParam[];
+}
+
+/** One choice in the step-by-step form a plugin command with parameters opens. */
+export interface ApplicationPluginFormPaletteCommand {
+  readonly kind: "plugin-form";
+  readonly fleet?: undefined;
+  /** Unique within the current form step. */
+  readonly key: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly disabledReason?: string;
+}
+
 export type ApplicationPaletteCommand =
   | "hide-sidebar"
   | "show-sidebar"
@@ -55,7 +79,9 @@ export type ApplicationPaletteCommand =
   | "close-pane"
   | ApplicationMachinePaletteCommand
   | ApplicationAgentPaletteCommand
-  | ApplicationSessionPaletteCommand;
+  | ApplicationSessionPaletteCommand
+  | ApplicationPluginPaletteCommand
+  | ApplicationPluginFormPaletteCommand;
 
 export const PALETTE_REFERENCE_COMMANDS = {
   shortcuts: { label: "Keyboard shortcuts", shortcut: "Ctrl+K", key: "k", page: "shortcuts" },
@@ -93,6 +119,18 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
     };
   if (command === "shortcuts" || command === "whats-new")
     return { id: command, ...PALETTE_REFERENCE_COMMANDS[command], detail: "Help and reference" };
+  if (typeof command === "object" && command.kind === "plugin-command")
+    return {
+      id: JSON.stringify([command.kind, command.id]),
+      label: command.params.length > 0 || command.dangerous ? `${command.label}…` : command.label,
+      detail: `${command.category} · ${command.plugin} plugin`,
+    };
+  if (typeof command === "object" && command.kind === "plugin-form")
+    return {
+      id: JSON.stringify([command.kind, command.key]),
+      label: command.label,
+      detail: command.detail,
+    };
   if (typeof command === "object" && command.kind === "open-machine")
     return {
       id: JSON.stringify([

@@ -20,6 +20,8 @@ import type { OpenTuiSessionOwner } from "./open-tui-session-owner.ts";
 import type { ApplicationShellBinding } from "./application-shell-binding.ts";
 import type { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
+import type { ApplicationPluginCommands } from "./application-plugin-commands.ts";
+import { createApplicationPluginForm } from "./application-plugin-form.ts";
 import { createApplicationPaneRenameOwner } from "./application-pane-rename-owner.ts";
 import {
   applicationPaletteCommands,
@@ -212,6 +214,8 @@ export function createApplicationHomeNavigationOwner(options: {
     source: "keyboard" | "mouse",
   ) => Promise<unknown> | void;
   readonly focusedPane: Accessor<string | null>;
+  /** Plugin command source (the local daemon in production); absent means no plugin commands. */
+  readonly pluginCommands?: ApplicationPluginCommands;
   readonly catalog: {
     readonly snapshot: Accessor<ApplicationHomeCatalogSnapshot>;
     readonly sessionNames: Accessor<string[]>;
@@ -288,7 +292,32 @@ export function createApplicationHomeNavigationOwner(options: {
     setNote: options.setNote,
     observer: options.observer,
   });
+  // Plugin commands come from the local daemon's command catalog; a command
+  // with parameters opens a step-by-step form inside the palette.
+  const pluginCommands = options.pluginCommands;
+  let paletteOwner: ReturnType<typeof createApplicationPaletteCommandOwner> | null = null;
+  const pluginForm =
+    pluginCommands &&
+    createApplicationPluginForm({
+      service: pluginCommands,
+      context: () => {
+        const session = options.sessionOwner()?.sessionName() ?? null;
+        const pane = options.focusedPane();
+        return {
+          source: "palette" as const,
+          ...(session ? { session } : {}),
+          ...(pane ? { pane } : {}),
+        };
+      },
+      query: () => paletteOwner?.query() ?? "",
+      setNote: options.setNote,
+      close: () => paletteOwner?.setOpen(false, "keyboard"),
+      stepChanged: () => paletteOwner?.resetForStep(),
+    });
   const paletteCommands = createApplicationPaletteCommandOwner({
+    ...(pluginCommands && pluginForm
+      ? { plugins: { form: pluginForm, refresh: () => void pluginCommands.refresh() } }
+      : {}),
     commands: () => [
       ...(options.fleetCommands
         ? [
@@ -305,12 +334,15 @@ export function createApplicationHomeNavigationOwner(options: {
               : ("hide-sidebar" as const),
           ]
         : []),
+      ...(pluginCommands?.commands() ?? []),
     ],
     isOpen: () =>
       Boolean(options.shell().semantic?.focus.palette.open ?? options.shell().localPaletteOpen),
     targetKey: () =>
       `${applicationGenerationNavigationKey(options.sessionOwner()?.snapshot() ?? null)}:${options.focusedPane()}`,
     disabledReason: (command) => {
+      if (typeof command === "object" && command.kind === "plugin-form")
+        return command.disabledReason ?? null;
       if (typeof command === "object" && command.fleet?.disabled)
         return "Machine or session unavailable";
       if (
@@ -354,6 +386,7 @@ export function createApplicationHomeNavigationOwner(options: {
     openSession: (name, source) => options.startGeneration(name, false, source),
     onNavigationIntent: homeAgents.cancel,
   });
+  paletteOwner = paletteCommands;
   const paletteCommandList = paletteCommands.commands;
   return {
     homeAgents: options.fleetHome ? { ...homeAgents, presentation: options.fleetHome } : homeAgents,

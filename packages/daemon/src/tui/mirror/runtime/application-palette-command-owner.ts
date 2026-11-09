@@ -5,6 +5,7 @@ import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import type { ApplicationShellBinding } from "./application-shell-binding.ts";
 import { applicationPaletteCommands } from "./application-palette-input.ts";
 import { createApplicationPaletteSearchOwner } from "./application-palette-search-owner.ts";
+import type { ApplicationPluginForm } from "./application-plugin-form.ts";
 
 type Source = "keyboard" | "mouse";
 
@@ -39,14 +40,23 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly isOpen?: () => boolean;
   readonly disabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly targetKey?: () => string;
+  /** Plugin commands and their parameter form; absent when plugins are unavailable. */
+  readonly plugins?: {
+    readonly form: ApplicationPluginForm;
+    /** Refresh the plugin command list; called whenever the palette opens. */
+    readonly refresh: () => void;
+  };
 }) {
   const [referencePage, setReferencePage] = createSignal<"shortcuts" | "changes" | "help">();
   const [closeArmed, setCloseArmed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   let armedTarget: string | undefined;
   let openRevision = 0;
+  const baseCommands = options.commands ?? (() => applicationPaletteCommands(null));
   const search = createApplicationPaletteSearchOwner({
-    commands: options.commands ?? (() => applicationPaletteCommands(null)),
+    // While a plugin form is open the list is the current step's entries.
+    commands: () =>
+      options.plugins?.form.active() ? options.plugins.form.entries() : baseCommands(),
     open: options.isOpen ?? (() => false),
     activate: (command, source) => activate(command, source),
     close: () => setOpen(false, "keyboard"),
@@ -56,7 +66,11 @@ export function createApplicationPaletteCommandOwner(options: {
     setReferencePage(undefined);
     openRevision += 1;
     setCloseArmed(false);
-    if (open) search.reset(options.activeSurface() === "home" ? 0 : 1);
+    options.plugins?.form.cancel();
+    if (open) {
+      options.plugins?.refresh();
+      search.reset(options.activeSurface() === "home" ? 0 : 1);
+    }
     void options.binding
       .setPaletteOpen(open, options.commandSource(source, "command-palette"))
       .catch(() => options.setNote("Commands could not be updated. Try again."));
@@ -72,6 +86,18 @@ export function createApplicationPaletteCommandOwner(options: {
       setReferencePage(
         command === "help" ? "help" : command === "shortcuts" ? "shortcuts" : "changes",
       );
+      return;
+    }
+    if (typeof command === "object" && command.kind === "plugin-form") {
+      options.plugins?.form.choose(command);
+      return;
+    }
+    if (typeof command === "object" && command.kind === "plugin-command") {
+      if (!options.plugins) {
+        options.setNote("Plugin commands are unavailable.");
+        return;
+      }
+      options.plugins.form.start(command);
       return;
     }
     if (command === "switch-session") {
@@ -192,6 +218,10 @@ export function createApplicationPaletteCommandOwner(options: {
   };
   return {
     ...search,
+    keyboardHint: () =>
+      options.plugins?.form.active() ? options.plugins.form.hint() : search.keyboardHint(),
+    /** Clear the search line and selection for a new form step. */
+    resetForStep: () => search.reset(0),
     referencePage,
     setReferencePage,
     busy,
