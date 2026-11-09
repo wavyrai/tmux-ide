@@ -276,6 +276,18 @@ describe("ide.timer", () => {
     expect(busy / elapsed).toBeLessThan(0.65);
   });
 
+  it("spaces even an empty after(0) chain out", async () => {
+    const { run } = await make();
+    await run(`TICKS = 0
+      local function tick() TICKS = TICKS + 1 ide.timer.after(0, tick) end
+      ide.timer.after(0, tick)`);
+    await wait(500);
+    const [ticks] = (await run(`return TICKS`)) as [number];
+    // TIMER_GAP_MS (10 ms) apart: about 50 in 500 ms, not hundreds.
+    expect(ticks).toBeGreaterThan(5);
+    expect(ticks).toBeLessThanOrEqual(55);
+  });
+
   it("runs callbacks under the budget, logs their errors, and stops on close", async () => {
     const { run, state, logs, trips } = await make();
     await run(`

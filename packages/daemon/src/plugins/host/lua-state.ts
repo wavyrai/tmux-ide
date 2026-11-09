@@ -103,6 +103,9 @@ export function resolveSource(
   };
 }
 
+/** The least time between two timer callbacks of one plugin. */
+export const TIMER_GAP_MS = 10;
+
 export const WALL_CLOCK_MESSAGE = "E_TIMEOUT: the callback took longer than its wall-clock limit";
 export const FOREIGN_YIELD_MESSAGE =
   "E_INVALID: a callback may only yield to wait for the host; it yielded something else";
@@ -229,8 +232,6 @@ export class PluginLuaState {
   #deadline = Number.POSITIVE_INFINITY;
   #actionsChanged = false;
   readonly #timers = new Map<number, NodeJS.Timeout>();
-  /** Lua time spent in every slice so far, in ms. */
-  #luaMs = 0;
   /** No timer of this plugin fires before this time (performance.now()). */
   #timerReadyAt = 0;
   #callbackLimits: { budgetMs: number; wallClockMs: number } = {
@@ -397,9 +398,7 @@ export class PluginLuaState {
           result = thread.resume(argCount);
         } finally {
           this.#active = null;
-          const spent = performance.now() - started;
-          remaining -= spent;
-          this.#luaMs += spent;
+          remaining -= performance.now() - started;
           this.#deadline = Number.POSITIVE_INFINITY;
           this.#hooks.idle();
         }
@@ -505,9 +504,10 @@ export class PluginLuaState {
   }
 
   #startTimer(id: number, ms: number, repeating: boolean): void {
-    // Timers get at most half the host: after a timer callback that ran Lua
-    // for t ms, no timer of this plugin fires for another t ms. A chain of
-    // ide.timer.after(0) callbacks then cannot keep the host busy.
+    // Timers get at most half the host: after a timer callback that took t ms
+    // of wall time (Lua and the host calls it waited for), no timer of this
+    // plugin fires for another max(t, TIMER_GAP_MS). A chain of
+    // ide.timer.after(0) callbacks, busy or empty, cannot keep the host busy.
     const fire = () => {
       const wait = this.#timerReadyAt - performance.now();
       if (wait > 0) {
@@ -516,13 +516,14 @@ export class PluginLuaState {
         return;
       }
       if (!repeating) this.#timers.delete(id);
-      const before = this.#luaMs;
+      const started = performance.now();
       void this.runThread("run_timer", [id], this.#callbackLimits)
         .catch((error: unknown) => {
           this.#hooks.log("error", `timer failed: ${(error as Error).message}`);
         })
         .finally(() => {
-          this.#timerReadyAt = performance.now() + (this.#luaMs - before);
+          const now = performance.now();
+          this.#timerReadyAt = now + Math.max(now - started, TIMER_GAP_MS);
         });
     };
     const schedule = (handle: NodeJS.Timeout) => {

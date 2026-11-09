@@ -244,7 +244,9 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     kind: "function",
     signature: "ide.timer.after(ms, fn) -> { id, cancel() }",
     summary: "Call `fn` once after `ms` milliseconds, under the callback budget.",
-    details: "At most 64 timers per plugin. Unloading or reloading the plugin cancels them.",
+    details:
+      "At most 64 timers per plugin. Unloading or reloading the plugin cancels them. After a " +
+      "timer callback that took t ms, the plugin's next timer waits at least max(t, 10 ms).",
     ...v1,
   },
   {
