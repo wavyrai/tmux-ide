@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { plainTextSchema } from "./plain-text.ts";
 
 /**
  * Stable, process-neutral command protocol shared by daemon and renderer hosts.
@@ -52,9 +53,9 @@ export const CommandDescriptorSchemaZ = z
     version: z.literal(COMMAND_PROTOCOL_VERSION),
     id: CommandIdSchemaZ,
     owner: CommandOwnerSchemaZ,
-    label: z.string().min(1).max(160),
-    description: z.string().min(1).max(500).optional(),
-    category: z.string().min(1).max(80),
+    label: plainTextSchema(1, 160),
+    description: plainTextSchema(1, 500).optional(),
+    category: plainTextSchema(1, 80),
     schemas: CommandSchemaReferencesSchemaZ,
     dangerous: z.boolean(),
     confirmation: CommandConfirmationSchemaZ,

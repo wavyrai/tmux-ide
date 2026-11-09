@@ -227,6 +227,84 @@ describe("plugin actions through the supervisor", () => {
     expect(ids(s)).toEqual([]);
   });
 
+  it("ignores an action list the catalog refuses, and stays up", async () => {
+    plugin("tasks", `return true`);
+    // A stand-in host that skips the Lua checks and publishes what no real
+    // plugin can: an over-long id and a title with a terminal escape.
+    const fake = join(home, "fake-host.mjs");
+    const bad = JSON.stringify([
+      { id: "a".repeat(200), title: "A", category: "Plugins", dangerous: false, params: [] },
+    ]);
+    const escape = JSON.stringify([
+      { id: "a", title: "A\u001b[2J", category: "Plugins", dangerous: false, params: [] },
+    ]);
+    writeFileSync(
+      fake,
+      `import { writeSync } from "node:fs";
+       import { createInterface } from "node:readline";
+       const emit = (e) => writeSync(3, JSON.stringify(e) + "\\n");
+       emit({ type: "hello", protocolVersion: 1, pid: process.pid });
+       setInterval(() => emit({ type: "heartbeat", seq: 1 }), 100);
+       createInterface({ input: process.stdin }).on("line", (line) => {
+         const c = JSON.parse(line);
+         if (c.type === "load") {
+           emit({ type: "actions", plugin: c.plugin.name, actions: ${JSON.stringify(bad)} });
+           emit({ type: "actions", plugin: c.plugin.name, actions: ${JSON.stringify(escape)} });
+           emit({ type: "loaded", plugin: c.plugin.name, ok: true });
+         }
+       }).on("close", () => process.exit(0));`,
+    );
+    const s = supervisor({ hostCommand: [process.execPath, fake] });
+    await s.start();
+    expect(ids(s)).toEqual([]);
+    const warnings = logs.filter((entry) => entry.message.startsWith("ignored its action list"));
+    expect(warnings.map((entry) => entry.message)).toEqual([
+      expect.stringMatching(/invalid at 0\.id/u),
+      expect.stringMatching(/invalid at 0\.title/u),
+    ]);
+    expect(s.status().host.running).toBe(true);
+    expect(s.status().plugins[0]?.state).toBe("loaded");
+  });
+
+  it("logs and survives a catalog listener that throws", async () => {
+    plugin("tasks", TASKS);
+    const s = supervisor({
+      onCatalogChange: () => {
+        throw new Error("listener broke");
+      },
+    });
+    await s.start();
+    expect(ids(s).length).toBe(3);
+    expect(
+      logs.some((entry) => entry.message === "a catalog listener failed: listener broke"),
+    ).toBe(true);
+    expect(
+      await s.invokeAction("plugin.tasks.new", { name: "x" }, { source: "cli" }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("logs and survives a host event whose handling throws", async () => {
+    plugin("tasks", TASKS + `ide.log.info("trip-the-logger")`);
+    let thrown = 0;
+    const s = supervisor({
+      onLog: (entry) => {
+        if (entry.message.includes("trip-the-logger")) {
+          thrown += 1;
+          throw new Error("log sink broke");
+        }
+        logs.push(entry);
+      },
+    });
+    await s.start();
+    expect(thrown).toBe(1);
+    expect(
+      logs.some((entry) => entry.message === "ignored a host event that failed: log sink broke"),
+    ).toBe(true);
+    expect(
+      await s.invokeAction("plugin.tasks.new", { name: "x" }, { source: "cli" }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("clears the catalog as soon as the host exits, before any restart", async () => {
     plugin("tasks", TASKS);
     const s = supervisor({ restartDelayMs: () => 60_000 });

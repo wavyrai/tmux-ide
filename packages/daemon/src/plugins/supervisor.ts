@@ -229,7 +229,15 @@ export class PluginSupervisor {
       now: options.now ?? Date.now,
       calls: options.calls,
     };
-    this.#actions = new PluginActionCatalog(() => options.onCatalogChange?.());
+    this.#actions = new PluginActionCatalog(() => {
+      // A listener that throws must not break whatever changed the catalog
+      // (a host event, an exit, a stop).
+      try {
+        options.onCatalogChange?.();
+      } catch (error) {
+        this.#log("host", "error", `a catalog listener failed: ${(error as Error).message}`);
+      }
+    });
   }
 
   // ------------------------------------------------------------------ public
@@ -602,7 +610,13 @@ export class PluginSupervisor {
     }
     const parsed = HostEventSchemaZ.safeParse(raw);
     if (!parsed.success) return;
-    this.#onEvent(host, parsed.data);
+    // Host lines carry plugin output: nothing in handling one may throw out
+    // of the stream handler and take the daemon down.
+    try {
+      this.#onEvent(host, parsed.data);
+    } catch (error) {
+      this.#log("host", "error", `ignored a host event that failed: ${(error as Error).message}`);
+    }
   }
 
   #onEvent(host: HostHandle, event: HostEvent): void {

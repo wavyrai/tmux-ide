@@ -34,6 +34,7 @@ export * from "./pane-stream.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
 export * from "./command-catalog.ts";
+export * from "./plain-text.ts";
 // Explicit leaf exports let bundled transport clients avoid desktop resources.
 export {
   DesktopDaemonCapabilityErrorCodeSchemaZ,

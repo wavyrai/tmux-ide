@@ -9,21 +9,24 @@ import {
   COMMAND_PROTOCOL_VERSION,
   CommandCatalogEntrySchemaZ,
   CommandParamSchemaZ,
+  plainTextSchema,
   type CommandCatalogEntry,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
-import { MAX_ACTIONS_PER_PLUGIN } from "./host/actions-prelude.ts";
+import { MAX_ACTIONS_PER_PLUGIN, MAX_LOCAL_ACTION_ID } from "./host/actions-prelude.ts";
 
 /** What the host publishes for one action (plugin-local id). */
 const PublishedActionSchemaZ = z
   .object({
+    // "plugin." + a 63-character plugin name + "." + 80 = 151, under the
+    // catalog's 160-character id limit.
     id: z
       .string()
       .regex(/^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/u)
-      .max(100),
-    title: z.string().min(1).max(160),
-    category: z.string().min(1).max(80),
-    description: z.string().min(1).max(500).optional(),
+      .max(MAX_LOCAL_ACTION_ID),
+    title: plainTextSchema(1, 160),
+    category: plainTextSchema(1, 80),
+    description: plainTextSchema(1, 500).optional(),
     dangerous: z.boolean(),
     params: z.array(CommandParamSchemaZ).max(32),
   })
@@ -72,8 +75,8 @@ export class PluginActionCatalog {
       const issue = parsed.error.issues[0];
       return `published actions are invalid at ${issue?.path.join(".") ?? "?"}: ${issue?.message ?? ""}`;
     }
-    const entries = parsed.data.map((action) =>
-      CommandCatalogEntrySchemaZ.parse({
+    const built = parsed.data.map((action) =>
+      CommandCatalogEntrySchemaZ.safeParse({
         descriptor: {
           version: COMMAND_PROTOCOL_VERSION,
           id: pluginCommandId(plugin, action.id),
@@ -89,6 +92,16 @@ export class PluginActionCatalog {
         params: action.params,
       }),
     );
+    // All or nothing: one bad entry refuses the whole list, and nothing in
+    // plugin output can throw out of here into the daemon.
+    const entries: CommandCatalogEntry[] = [];
+    for (const result of built) {
+      if (!result.success) {
+        const issue = result.error.issues[0];
+        return `published actions are invalid at ${issue?.path.join(".") ?? "?"}: ${issue?.message ?? ""}`;
+      }
+      entries.push(result.data);
+    }
     const previous = this.#byPlugin.get(plugin) ?? [];
     if (entries.length === 0 && previous.length === 0) return null;
     if (JSON.stringify(previous) === JSON.stringify(entries)) return null;

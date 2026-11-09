@@ -10,6 +10,8 @@
  */
 export const MAX_ACTIONS_PER_PLUGIN = 200;
 export const MAX_PARAMS_PER_ACTION = 32;
+/** Local action id length, so `plugin.<name>.<id>` fits the catalog's 160. */
+export const MAX_LOCAL_ACTION_ID = 80;
 
 export const ACTIONS_PRELUDE = String.raw`
 local internal = __ide_internal
@@ -23,6 +25,7 @@ local s_match, s_find = string.match, string.find
 local co_running = coroutine.running
 local MAX_ACTIONS = ${MAX_ACTIONS_PER_PLUGIN}
 local MAX_PARAMS = ${MAX_PARAMS_PER_ACTION}
+local MAX_ID = ${MAX_LOCAL_ACTION_ID}
 
 local actions = {}
 local order = {}
@@ -31,11 +34,22 @@ local PARAM_TYPES = { string = true, text = true, number = true, boolean = true,
 
 local function fail(message) raw_error("E_INVALID: " .. message, 3) end
 
+-- Plain text only: no C0/DEL controls, C1 controls or bidi controls, which
+-- would reach terminals that show this text.
+local function unsafe(text)
+  return s_find(text, "[%c\127]") ~= nil
+    or s_find(text, "\194[\128-\159]") ~= nil
+    or s_find(text, "\216\156") ~= nil
+    or s_find(text, "\226\128[\142\143\170-\174]") ~= nil
+    or s_find(text, "\226\129[\166-\169]") ~= nil
+end
+
 local function check_string(value, what, max, optional)
   if value == nil and optional then return nil end
   if raw_type(value) ~= "string" or #value == 0 or #value > max then
     fail(what .. " must be a string of 1 to " .. max .. " characters")
   end
+  if unsafe(value) then fail(what .. " must be plain text: no control characters or newlines") end
   return value
 end
 
@@ -49,6 +63,9 @@ local function normalize_choices(list, where)
     elseif raw_type(item) == "table" and raw_type(item.value) == "string" then
       out[i] = { value = item.value, label = raw_type(item.label) == "string" and item.label or item.value }
     else
+      out[i] = false
+    end
+    if not out[i] or unsafe(out[i].value) or unsafe(out[i].label) or #out[i].label == 0 then
       fail(where .. " entries must be strings or { value, label } tables")
     end
   end
@@ -83,6 +100,9 @@ local function normalize_param(param, index)
     if t ~= "string" and t ~= "number" and t ~= "boolean" then
       fail("param '" .. name .. "'.default must be a string, number, boolean or function")
     end
+    if t == "string" and unsafe(param.default) then
+      fail("param '" .. name .. "'.default must be plain text: no control characters or newlines")
+    end
     static_default = param.default
   end
   return {
@@ -103,7 +123,7 @@ local function normalize_param(param, index)
 end
 
 local function valid_id(id)
-  if raw_type(id) ~= "string" or #id == 0 or #id > 100 then return false end
+  if raw_type(id) ~= "string" or #id == 0 or #id > MAX_ID then return false end
   if not s_match(id, "^[a-z]") or s_find(id, "..", 1, true) or s_match(id, "%.$") then return false end
   return s_match(id, "^[a-z0-9.-]+$") ~= nil
 end
@@ -242,6 +262,9 @@ internal.param_options = function(id, name, context)
         local t = raw_type(value)
         if value ~= nil and t ~= "string" and t ~= "number" and t ~= "boolean" then
           raw_error("E_INVALID: default for '" .. name .. "' must be a string, number or boolean", 0)
+        end
+        if t == "string" and unsafe(value) then
+          raw_error("E_INVALID: default for '" .. name .. "' must be plain text", 0)
         end
         result.default = value
       end

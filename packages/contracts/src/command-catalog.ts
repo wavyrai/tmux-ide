@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { plainTextSchema } from "./plain-text.ts";
 import {
   CommandDescriptorSchemaZ,
   CommandIdSchemaZ,
@@ -19,8 +20,8 @@ export const CommandParamNameSchemaZ = z.string().regex(/^[a-z_][a-z0-9_]{0,63}$
 
 export const CommandChoiceSchemaZ = z
   .object({
-    value: z.string().max(500),
-    label: z.string().min(1).max(200),
+    value: plainTextSchema(0, 500),
+    label: plainTextSchema(1, 200),
   })
   .strict();
 export type CommandChoice = z.infer<typeof CommandChoiceSchemaZ>;
@@ -29,12 +30,12 @@ export const CommandParamSchemaZ = z
   .object({
     name: CommandParamNameSchemaZ,
     type: CommandParamTypeSchemaZ,
-    label: z.string().min(1).max(120),
-    description: z.string().max(500).optional(),
+    label: plainTextSchema(1, 120),
+    description: plainTextSchema(0, 500).optional(),
     /** False only when the plugin marked it `optional = true`. */
     required: z.boolean(),
     /** A fixed default; `dynamicDefault` means the plugin computes one per invocation. */
-    default: z.union([z.string().max(10_000), z.number(), z.boolean()]).optional(),
+    default: z.union([plainTextSchema(0, 10_000), z.number(), z.boolean()]).optional(),
     dynamicDefault: z.boolean(),
     /** Fixed choices for `choice`; `dynamicChoices` means ask the plugin. */
     choices: z.array(CommandChoiceSchemaZ).max(500).optional(),

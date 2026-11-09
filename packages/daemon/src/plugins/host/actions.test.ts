@@ -155,11 +155,49 @@ describe("ide.action.register", () => {
         `ide.action.register{ id = "ok", title = "x", run = print, params = { { name = "A" } } }`,
         /lowercase letters/u,
       ],
+      [
+        `ide.action.register{ id = string.rep("a", 81), title = "x", run = print }`,
+        /action id must be/u,
+      ],
+      [`ide.action.register{ id = "ok", title = "a\\27[2Jb", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\nb", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\194\\155b", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\226\\128\\174b", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\226\\129\\166b", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\216\\156b", run = print }`, /plain text/u],
+      [
+        `ide.action.register{ id = "ok", title = "x", category = "a\\127b", run = print }`,
+        /plain text/u,
+      ],
+      [
+        `ide.action.register{ id = "ok", title = "x", run = print, params = { { name = "a", label = "a\\rb" } } }`,
+        /plain text/u,
+      ],
+      [
+        `ide.action.register{ id = "ok", title = "x", run = print, params = { { name = "a", default = "a\\27b" } } }`,
+        /plain text/u,
+      ],
+      [
+        `ide.action.register{ id = "ok", title = "x", run = print, params = { { name = "a", type = "choice", choices = { "a\\27b" } } } }`,
+        /entries must be/u,
+      ],
+      [
+        `ide.action.register{ id = "ok", title = "x", run = print, params = { { name = "a", type = "choice", choices = { { value = "v", label = "a\\7b" } } } } }`,
+        /entries must be/u,
+      ],
     ] as const;
     for (const [code, error] of bad) await expect(load(code), code).rejects.toThrow(error);
     await expect(
       load(`for i = 1, 201 do ide.action.register{ id = "a" .. i, title = "x", run = print } end`),
     ).rejects.toThrow(/at most 200 actions/u);
+  });
+
+  it("keeps ordinary Unicode text and an 80-character id", async () => {
+    const { load, published } = await make();
+    await load(
+      `ide.action.register{ id = string.rep("a", 80), title = "Café ✓ 日本 🚀", run = print }`,
+    );
+    expect(published.at(-1)).toMatchObject([{ id: "a".repeat(80), title: "Café ✓ 日本 🚀" }]);
   });
 
   it("re-registering replaces, and unregister removes and republishes", async () => {
@@ -204,6 +242,16 @@ describe("invoking actions", () => {
     for (const [args, error] of cases)
       await expect(invoke("tasks.new", args)).rejects.toThrow(error);
     await expect(invoke("tasks.missing")).rejects.toThrow(/E_NOT_FOUND/u);
+  });
+
+  it("refuses dynamic choices and defaults that are not plain text", async () => {
+    const { load, options } = await make();
+    await load(`ide.action.register{ id = "pick", title = "Pick", run = print, params = {
+      { name = "c", type = "choice", choices = function() return { "ok", "a\\27[2Jb" } end },
+      { name = "d", default = function() return "a\\nb" end },
+    } }`);
+    await expect(options("pick", "c")).rejects.toThrow(/entries must be/u);
+    await expect(options("pick", "d")).rejects.toThrow(/plain text/u);
   });
 
   it("runs under the callback budget", async () => {
