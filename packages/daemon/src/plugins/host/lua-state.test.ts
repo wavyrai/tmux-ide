@@ -45,9 +45,13 @@ async function make(settings: Record<string, unknown> = {}, hostFunctions: HostF
     },
   });
   states.push(state);
-  const run = async (code: string, budget = limits.callbackBudgetMs) =>
+  const run = async (
+    code: string,
+    budget = limits.callbackBudgetMs,
+    wallClockMs = limits.wallClockMs,
+  ) =>
     JSON.parse(
-      await state.runSource(code, "=test", { budgetMs: budget, wallClockMs: limits.wallClockMs }),
+      await state.runSource(code, "=test", { budgetMs: budget, wallClockMs }),
     ) as unknown[];
   return { state, run, logs, trips, marks };
 }
@@ -154,6 +158,55 @@ describe("yields and host calls", () => {
     ).rejects.toThrow(/E_INVALID/u);
     await expect(run(`coroutine.yield(print)`)).rejects.toThrow(/E_INVALID/u);
     expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("stops a loop of bare yields at the wall clock, long before a large budget", async () => {
+    const { run, trips } = await make();
+    const started = performance.now();
+    // Each bare yield costs almost no budget, so only the wall clock ends this.
+    await expect(run(`while true do coroutine.yield() end`, 5000, 200)).rejects.toThrow(
+      /wall-clock limit/u,
+    );
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(195);
+    expect(elapsed).toBeLessThan(1500);
+    expect(trips).toEqual(["timeout"]);
+  });
+
+  it("hands Lua plain JSON copies of host results", async () => {
+    const shared = { tags: ["a", "b"], nested: { n: 1, ok: true, none: null } };
+    const { run } = await make({}, { "test.data": async () => shared });
+    expect(await run(`local d = ide.test.data() d.tags[1] = "changed" return d`)).toEqual([
+      { tags: ["changed", "b"], nested: { n: 1, ok: true } },
+    ]);
+    expect(shared.tags[0]).toBe("a");
+  });
+
+  it("refuses host results that are not plain JSON, as a Lua error", async () => {
+    class Pane {
+      id = "p";
+    }
+    const returns: Record<string, unknown> = {
+      fn: () => "secret",
+      instance: new Pane(),
+      inner: { run: () => 1 },
+      map: new Map([["a", 1]]),
+      getter: Object.defineProperty({}, "x", { get: () => 1, enumerable: true }),
+      nan: Number.NaN,
+      big: 10n,
+    };
+    const hostFunctions = Object.fromEntries(
+      Object.entries(returns).map(([name, value]) => [`test.${name}`, async () => value]),
+    );
+    const { run } = await make({}, hostFunctions);
+    for (const name of Object.keys(returns)) {
+      const [ok, err] = await run(`return pcall(ide.test.${name})`);
+      expect([name, ok, err]).toEqual([
+        name,
+        false,
+        expect.stringContaining("not plain JSON data"),
+      ]);
+    }
   });
 
   it("allows a bare coroutine.yield", async () => {

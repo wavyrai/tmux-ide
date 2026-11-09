@@ -143,6 +143,56 @@ async function settleBefore(promise: Promise<unknown>, deadline: number): Promis
   }
 }
 
+/**
+ * Lua only ever receives plain JSON data from the host: a copy made through
+ * JSON, after checking there is nothing a copy would silently drop or call
+ * (functions, class instances, Maps, getters, cycles, non-finite numbers).
+ */
+export function toPlainJson(
+  value: unknown,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const refuse = (why: string) => ({
+    ok: false as const,
+    error: `E_INVALID: a host function returned ${why}, not plain JSON data`,
+  });
+  const seen = new Set<object>();
+  const check = (v: unknown, depth: number): string | null => {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return null;
+    if (typeof v === "number") return Number.isFinite(v) ? null : "a non-finite number";
+    if (v === undefined) return depth === 0 ? null : "undefined inside a value";
+    if (typeof v !== "object") return `a ${typeof v}`;
+    if (depth > 64) return "a value nested deeper than 64 levels";
+    if (seen.has(v)) return "a value that contains itself";
+    seen.add(v);
+    const proto = Object.getPrototypeOf(v) as unknown;
+    if (Array.isArray(v)) {
+      if (proto !== Array.prototype) return "an array subclass";
+    } else if (proto !== Object.prototype && proto !== null) {
+      return "a class instance";
+    }
+    for (const key of Reflect.ownKeys(v)) {
+      if (typeof key === "symbol") return "an object with symbol keys";
+      const descriptor = Object.getOwnPropertyDescriptor(v, key)!;
+      if (!("value" in descriptor)) return "an object with accessors";
+      const why = check(descriptor.value, depth + 1);
+      if (why) return why;
+    }
+    seen.delete(v);
+    return null;
+  };
+  const why = check(value, 0);
+  if (why) return refuse(why);
+  if (value === undefined || value === null) return { ok: true, value: undefined };
+  // Lua has no null: JSON nulls become nil (absent keys). wasmoon cannot push
+  // a JS null nested inside a table, so they are dropped in the copy.
+  return {
+    ok: true,
+    value: JSON.parse(JSON.stringify(value), (_key, item: unknown) =>
+      item === null ? undefined : item,
+    ),
+  };
+}
+
 function classify(message: string): PluginTripKind | null {
   if (message.includes(TIMEOUT_MESSAGE) || message.includes(WALL_CLOCK_MESSAGE)) return "timeout";
   if (/not enough memory/u.test(message)) return "memory";
@@ -300,8 +350,12 @@ export class PluginLuaState {
           if (pending) {
             const outcome = await settleBefore(pending, wallDeadline);
             if (outcome.status === "late") throw new Error(WALL_CLOCK_MESSAGE);
-            thread.pushValue(outcome.status === "fulfilled");
-            thread.pushValue(outcome.value);
+            const plain =
+              outcome.status === "fulfilled"
+                ? toPlainJson(outcome.value)
+                : { ok: false as const, error: outcome.value };
+            thread.pushValue(plain.ok);
+            thread.pushValue(plain.ok ? plain.value : plain.error);
             argCount = 2;
           } else if (result.resultCount > 0) {
             throw new Error(FOREIGN_YIELD_MESSAGE);
