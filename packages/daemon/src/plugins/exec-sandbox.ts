@@ -70,6 +70,16 @@ export function sbplPrefixRegex(prefix: string): string {
   return `#"^${escaped}"`;
 }
 
+/** `paths` and every directory above them, short of the root, each once. */
+export function immovable(paths: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const path of paths) {
+    for (let current = path; current !== dirname(current); current = dirname(current))
+      out.add(current);
+  }
+  return [...out];
+}
+
 /** Existing paths that start with `prefix` (its directory's matching entries). */
 function existingWithPrefix(prefix: string): string[] {
   const dir = dirname(prefix);
@@ -124,6 +134,13 @@ export function darwinProfile(
     ...(paths.privateSockets ?? []).map(
       (path) =>
         `(deny network-outbound (remote unix-socket (path-regex ${sbplPrefixRegex(resolve(path))})))`,
+    ),
+    // A path rule is only as good as the path: the socket directories, the
+    // control socket and every directory above them cannot be renamed,
+    // removed or relinked, so the sockets cannot be moved out from under
+    // the rules above.
+    ...immovable([...(paths.tmuxSockets ?? []), ...(paths.privateSockets ?? [])].map(resolve)).map(
+      (path) => `(deny file-write* (literal ${sbplString(path)}))`,
     ),
     ...(paths.daemonPorts ?? [])
       .filter((port) => Number.isInteger(port) && port > 0 && port < 65536)

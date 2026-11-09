@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   darwinProfile,
   findOnPath,
+  immovable,
   realPath,
   sandboxedArgv,
   writablePath,
@@ -348,6 +350,50 @@ describe("ide.exec running programs", () => {
     60_000,
   );
 
+  (hasTmux ? live : it.skip)(
+    "cannot move the socket directories or the control socket out from under the rules",
+    async () => {
+      const parent = join(root, "tt");
+      const sockets = join(parent, "tmux-501");
+      mkdirSync(sockets, { recursive: true });
+      const socket = join(sockets, "default");
+      execFileSync(tmuxPath!, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "x"]);
+      const controlDir = join(root, "ctl");
+      mkdirSync(controlDir);
+      const control = join(controlDir, "control.sock");
+      writeFileSync(control, "");
+      try {
+        const script = [
+          `mv "${sockets}" "${join(parent, "moved")}" && tmux -S "${join(parent, "moved", "default")}" ls && echo REACHED-MOVED`,
+          `mv "${parent}" "${join(root, "tt2")}" && tmux -S "${join(root, "tt2", "tmux-501", "default")}" ls && echo REACHED-PARENT`,
+          `mv "${control}" "${join(controlDir, "elsewhere")}" && echo MOVED-CONTROL`,
+          `mv "${controlDir}" "${join(root, "ctl2")}" && echo MOVED-CONTROL-DIR`,
+          "true",
+        ].join("; ");
+        const result = await runPluginExec(
+          { cmd: script, shell: true },
+          deps(
+            { shell: true },
+            {
+              baseEnv: { PATH: `/usr/bin:/bin:${dirname(tmuxPath!)}`, HOME: root },
+              sandbox: {
+                stateHome,
+                writable: dataDir,
+                tmuxSockets: [sockets],
+                privateSockets: [control],
+              },
+            },
+          ),
+        );
+        expect(result.stdout).not.toMatch(/REACHED|MOVED/u);
+        expect(existsSync(socket)).toBe(true);
+        expect(existsSync(control)).toBe(true);
+      } finally {
+        execFileSync(tmuxPath!, ["-S", socket, "kill-server"]);
+      }
+    },
+  );
+
   live("cannot connect to the daemon's port or control socket", async () => {
     const http = createHttpServer((_request, response) => response.end("daemon-answer"));
     await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", () => resolve()));
@@ -562,6 +608,24 @@ describe("sandbox plans", () => {
       ok: true,
       argv: ["/usr/bin/sandbox-exec", "-p", darwinProfile(paths), "/bin/echo", "x"],
     });
+  });
+
+  it("pins the socket paths and every directory above them", () => {
+    expect(immovable(["/private/tmp/tmux-501", "/h/.tmux-ide/control.sock"])).toEqual([
+      "/private/tmp/tmux-501",
+      "/private/tmp",
+      "/private",
+      "/h/.tmux-ide/control.sock",
+      "/h/.tmux-ide",
+      "/h",
+    ]);
+    const profile = darwinProfile(
+      { ...paths, tmuxSockets: ["/private/tmp/tmux-501"] },
+      (path) => path,
+    );
+    for (const path of ["/private/tmp/tmux-501", "/private/tmp", "/private"])
+      expect(profile).toContain(`(deny file-write* (literal "${path}"))`);
+    expect(profile).not.toContain('(literal "/")');
   });
 
   it("keeps programs from the daemon's port and control socket", () => {
