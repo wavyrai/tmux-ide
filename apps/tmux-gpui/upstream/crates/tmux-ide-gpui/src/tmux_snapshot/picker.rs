@@ -11,6 +11,7 @@ mod new_agent;
 pub(super) mod palette;
 mod pane_close;
 mod pane_commands;
+pub(super) mod plugins;
 mod reference;
 mod render;
 mod saved_machines;
@@ -68,6 +69,7 @@ pub(super) enum Target {
     Pane(String),
     Theme(String),
     Command(Action),
+    Plugin(plugins::Target),
 }
 #[derive(Clone)]
 pub(super) struct Row {
@@ -87,6 +89,7 @@ enum Mode {
     Machine,
     SavedMachines,
     ManageMachines,
+    Plugins,
 }
 impl Mode {
     fn is_reference(self) -> bool {
@@ -103,6 +106,7 @@ pub(super) struct Picker {
     machine: Option<machine::Form>,
     closing: Option<pane_close::Confirmation>,
     agent: Option<new_agent::Form>,
+    plugins: Option<plugins::Session>,
     search: Entity<SearchInput>,
     _changed: Subscription,
     rows: Vec<Row>,
@@ -275,6 +279,7 @@ fn current(state: &browser::State, target: &Target) -> bool {
                 .is_some_and(|fleet| fleet.server(token).is_some())
         }),
         Target::Command(action) => action.available(state),
+        Target::Plugin(target) => *target != plugins::Target::Info,
         Target::Session(id) => state.sessions.iter().any(|c| &c.id == id),
         Target::Pane(id) => state.panes.iter().any(|c| &c.id == id),
         Target::Theme(id) => state
@@ -469,6 +474,7 @@ impl SnapshotView {
                     Mode::Theme => "Search themes…",
                     Mode::Commands => "Search commands…",
                     Mode::Navigation => "Search sessions and panes…",
+                    Mode::Plugins => "Search plugin commands, or type a value…",
                 },
                 cx,
             );
@@ -490,6 +496,7 @@ impl SnapshotView {
             machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
             closing: None,
             agent: None,
+            plugins: None,
             search,
             _changed: changed,
             rows: if mode == Mode::Font {
@@ -513,6 +520,8 @@ impl SnapshotView {
                 )
             } else if mode == Mode::Theme {
                 theme_rows(&self.browser_state, "")
+            } else if mode == Mode::Plugins {
+                Vec::new()
             } else {
                 rows(&self.browser_state, "")
             },
@@ -578,6 +587,8 @@ impl SnapshotView {
             )
         } else if picker.mode == Mode::Theme {
             theme_rows(&self.browser_state, picker.search.read(cx).text())
+        } else if let Some(session) = picker.plugins.as_ref() {
+            plugins::rows(session, picker.search.read(cx).text())
         } else {
             rows(&self.browser_state, picker.search.read(cx).text())
         };
@@ -616,6 +627,10 @@ impl SnapshotView {
             return;
         }
         if self.picker.as_ref().is_some_and(|p| p.mode == Mode::Font) {
+            return;
+        }
+        if let Target::Plugin(plugin) = target {
+            self.choose_plugin(plugin, window, cx);
             return;
         }
         if let Some(scope) = self
@@ -731,6 +746,7 @@ impl SnapshotView {
                 Action::Sessions => self.open_picker(window, cx),
                 Action::Appearance => self.open_theme_picker(window, cx),
                 Action::Refresh => self.select(Selection::Refresh, window, cx),
+                Action::PluginCommands => self.open_plugin_commands(window, cx),
             }
             return;
         }
@@ -806,7 +822,8 @@ impl SnapshotView {
                 | Target::MachineRemove { .. }
                 | Target::MachineEdit { .. }
                 | Target::FleetRetry(_)
-                | Target::FleetDisconnect(_) => return,
+                | Target::FleetDisconnect(_)
+                | Target::Plugin(_) => return,
             },
             window,
             cx,
