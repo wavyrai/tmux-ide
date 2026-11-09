@@ -49,7 +49,7 @@ enum HeaderIntent {
 mod buttons;
 use buttons::BUTTONS;
 #[cfg(test)]
-use buttons::face;
+use buttons::{TITLE_HINT, button_a11y, face};
 /// One header button's hit area. The buttons sit edge to edge at the
 /// header's right end: split right, split down, zoom, close (#746).
 const SLOT: f32 = 28.;
@@ -537,7 +537,7 @@ impl SnapshotView {
                             }
                         }))
                         .on_mouse_down(MouseButton::Right, self.header_menu_listener(&header, cx))
-                        .map(|title| self.pane_title_a11y(title, &header, cx)),
+                        .map(|title| self.pane_title_a11y(title, &header)),
                 )
                 .children(mode)
                 .children(
@@ -669,7 +669,7 @@ impl SnapshotView {
                             header.id
                         )))
                         .on_mouse_down(MouseButton::Right, self.header_menu_listener(header, cx));
-                    self.pane_title_a11y(title, header, cx).into_any_element()
+                    self.pane_title_a11y(title, header).into_any_element()
                 })
                 .collect();
         }
@@ -693,7 +693,7 @@ impl SnapshotView {
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, self.header_menu_listener(h, cx))
-                    .map(|title| self.pane_title_a11y(title, h, cx))
+                    .map(|title| self.pane_title_a11y(title, h))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         cx.stop_propagation();
                         if frame.as_ref().is_some_and(|frame| {
