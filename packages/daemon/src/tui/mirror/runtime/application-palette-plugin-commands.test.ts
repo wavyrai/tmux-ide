@@ -276,3 +276,107 @@ describe("plugin command client", () => {
     ]);
   });
 });
+
+describe("live catalog updates", () => {
+  const daemon = { bindHostname: "127.0.0.1", port: 4321, authToken: "owner-token" } as never;
+
+  function fakeSocket() {
+    const listeners = new Map<string, ((event?: { data: unknown }) => void)[]>();
+    const sent: unknown[] = [];
+    const socket = {
+      closed: false,
+      addEventListener(type: string, listener: (event?: { data: unknown }) => void) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      },
+      send: (data: string) => sent.push(JSON.parse(data)),
+      close() {
+        socket.closed = true;
+      },
+      emit(type: string, event?: { data: unknown }) {
+        for (const listener of listeners.get(type) ?? []) listener(event);
+      },
+    };
+    return { socket, sent };
+  }
+
+  it("subscribes to command-catalog and refetches on each change", async () => {
+    const { socket, sent } = fakeSocket();
+    const urls: string[] = [];
+    const fetch = vi.fn(
+      async () => new Response(JSON.stringify({ version: 1, revision: 1, entries: [] })),
+    );
+    const client = createApplicationPluginCommands({
+      daemon: () => daemon,
+      fetch: fetch as never,
+      socket: (url, token) => {
+        urls.push(`${url} ${token}`);
+        return socket;
+      },
+    });
+    const stop = client.watch();
+    expect(urls).toEqual(["ws://127.0.0.1:4321/ws/events?mode=semantic owner-token"]);
+    socket.emit("open");
+    expect(sent).toEqual([
+      {
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "command-catalog", workspaceName: null }],
+        legacyEvents: false,
+      },
+    ]);
+    socket.emit("message", {
+      data: JSON.stringify({ type: "resource.changed", resource: "fleet-catalog" }),
+    });
+    socket.emit("message", { data: "not json" });
+    expect(fetch).not.toHaveBeenCalled();
+    socket.emit("message", {
+      data: JSON.stringify({ type: "resource.changed", resource: "command-catalog", sequence: 2 }),
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    stop();
+    expect(socket.closed).toBe(true);
+    socket.emit("message", {
+      data: JSON.stringify({ type: "resource.changed", resource: "command-catalog" }),
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing without a daemon", () => {
+    const socket = vi.fn();
+    const client = createApplicationPluginCommands({
+      daemon: () => null,
+      fetch: vi.fn() as never,
+      socket,
+    });
+    client.watch()();
+    expect(socket).not.toHaveBeenCalled();
+  });
+
+  it("is started when the palette opens and stopped when it closes", () => {
+    const h = setup([plugin()]);
+    void h;
+    const stop = vi.fn();
+    const watch = vi.fn(() => stop);
+    const owner = createApplicationPaletteCommandOwner({
+      activeSurface: () => "home",
+      binding: {
+        openSurface: vi.fn(async () => true),
+        setPaletteOpen: vi.fn(async () => true),
+        activatePaletteSurface: vi.fn(async () => true),
+      },
+      commandSource: (kind, surface) => ({ kind, surface }),
+      setSurface: vi.fn(),
+      setNote: vi.fn(),
+      newWindow: vi.fn(async () => "created"),
+      splitPane: vi.fn(async () => "split"),
+      closePane: vi.fn(async () => "closed"),
+      openAgent: vi.fn(async () => true),
+      plugins: { form: h.form, refresh: vi.fn(), watch },
+    });
+    owner.setOpen(true, "keyboard");
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+    owner.setOpen(false, "keyboard");
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+});

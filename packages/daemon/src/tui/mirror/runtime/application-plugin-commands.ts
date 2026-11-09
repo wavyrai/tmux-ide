@@ -15,6 +15,7 @@ import {
   type CommandParamOptionsResult,
 } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
+import WebSocket from "ws";
 import {
   canonicalDaemonUrl,
   readCanonicalDaemonInfo,
@@ -22,14 +23,28 @@ import {
 } from "../../../lib/canonical-daemon.ts";
 import type { ApplicationPluginPaletteCommand } from "../workspace/application-command-description.ts";
 
+/** The bits of a WebSocket the catalog watch uses. */
+export interface CatalogEventSocket {
+  addEventListener(type: "open" | "close" | "error", listener: () => void): void;
+  addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
 export interface PluginCommandTransport {
   readonly daemon: () => CanonicalDaemonInfo | null;
   readonly fetch: typeof fetch;
+  /** Opens the daemon's event socket; absent means no live updates. */
+  readonly socket?: (url: string, ownerToken: string) => CatalogEventSocket;
 }
 
 const defaultTransport: PluginCommandTransport = {
   daemon: readCanonicalDaemonInfo,
   fetch: (...args) => fetch(...args),
+  socket: (url, ownerToken) =>
+    new WebSocket(url, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    }) as unknown as CatalogEventSocket,
 };
 
 async function request(
@@ -70,46 +85,98 @@ export function createApplicationPluginCommands(
 ) {
   const [commands, setCommands] = createSignal<readonly ApplicationPluginPaletteCommand[]>([]);
   let inflight: AbortController | null = null;
+  const refresh = async (): Promise<void> => {
+    inflight?.abort();
+    const controller = new AbortController();
+    inflight = controller;
+    try {
+      const parsed = CommandCatalogResourceSchemaZ.safeParse(
+        await request(
+          transport,
+          "GET",
+          "/api/resources/command-catalog",
+          undefined,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]),
+        ),
+      );
+      if (!parsed.success || controller.signal.aborted) return;
+      setCommands(
+        parsed.data.entries.flatMap((entry) =>
+          entry.plugin
+            ? [
+                {
+                  kind: "plugin-command" as const,
+                  id: entry.descriptor.id,
+                  label: entry.descriptor.label,
+                  category: entry.descriptor.category,
+                  plugin: entry.plugin,
+                  dangerous: entry.descriptor.dangerous,
+                  params: entry.params,
+                },
+              ]
+            : [],
+        ),
+      );
+    } catch {
+      // No daemon, or plugins off: the palette simply shows no plugin commands.
+    } finally {
+      if (inflight === controller) inflight = null;
+    }
+  };
   return {
     commands,
     /** Fetch the catalog again; keeps the last list if the daemon is unreachable. */
-    async refresh(): Promise<void> {
-      inflight?.abort();
-      const controller = new AbortController();
-      inflight = controller;
+    refresh,
+    /**
+     * Follow the daemon's command-catalog invalidations while the palette is
+     * open, so a plugin reload shows up without reopening it. Returns a stop
+     * function; does nothing without a daemon or a socket.
+     */
+    watch(): () => void {
+      const daemon = transport.daemon();
+      if (!daemon?.authToken || !transport.socket) return () => {};
+      let socket: CatalogEventSocket;
       try {
-        const parsed = CommandCatalogResourceSchemaZ.safeParse(
-          await request(
-            transport,
-            "GET",
-            "/api/resources/command-catalog",
-            undefined,
-            AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]),
-          ),
-        );
-        if (!parsed.success || controller.signal.aborted) return;
-        setCommands(
-          parsed.data.entries.flatMap((entry) =>
-            entry.plugin
-              ? [
-                  {
-                    kind: "plugin-command" as const,
-                    id: entry.descriptor.id,
-                    label: entry.descriptor.label,
-                    category: entry.descriptor.category,
-                    plugin: entry.plugin,
-                    dangerous: entry.descriptor.dangerous,
-                    params: entry.params,
-                  },
-                ]
-              : [],
-          ),
+        socket = transport.socket(
+          canonicalDaemonUrl("ws", daemon.bindHostname, daemon.port, "/ws/events?mode=semantic"),
+          daemon.authToken,
         );
       } catch {
-        // No daemon, or plugins off: the palette simply shows no plugin commands.
-      } finally {
-        if (inflight === controller) inflight = null;
+        return () => {};
       }
+      let stopped = false;
+      socket.addEventListener("error", () => {});
+      socket.addEventListener("open", () => {
+        socket.send(
+          JSON.stringify({
+            type: "subscribe",
+            sessions: [],
+            interests: [{ resource: "command-catalog", workspaceName: null }],
+            legacyEvents: false,
+          }),
+        );
+      });
+      socket.addEventListener("message", (event) => {
+        if (stopped || (typeof event.data !== "string" && !Buffer.isBuffer(event.data))) return;
+        let frame: unknown;
+        try {
+          frame = JSON.parse(String(event.data));
+        } catch {
+          return;
+        }
+        if (
+          frame &&
+          typeof frame === "object" &&
+          (frame as { type?: unknown }).type === "resource.changed" &&
+          (frame as { resource?: unknown }).resource === "command-catalog"
+        )
+          void refresh();
+      });
+      return () => {
+        if (stopped) return;
+        stopped = true;
+        socket.close(1000, "palette closed");
+      };
     },
     async invoke(
       id: string,

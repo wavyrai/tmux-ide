@@ -316,7 +316,13 @@ export function createApplicationHomeNavigationOwner(options: {
     });
   const paletteCommands = createApplicationPaletteCommandOwner({
     ...(pluginCommands && pluginForm
-      ? { plugins: { form: pluginForm, refresh: () => void pluginCommands.refresh() } }
+      ? {
+          plugins: {
+            form: pluginForm,
+            refresh: () => void pluginCommands.refresh(),
+            watch: () => pluginCommands.watch(),
+          },
+        }
       : {}),
     commands: () => [
       ...(options.fleetCommands

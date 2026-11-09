@@ -45,12 +45,15 @@ export function createApplicationPaletteCommandOwner(options: {
     readonly form: ApplicationPluginForm;
     /** Refresh the plugin command list; called whenever the palette opens. */
     readonly refresh: () => void;
+    /** Follow catalog changes while the palette is open; returns a stop function. */
+    readonly watch?: () => () => void;
   };
 }) {
   const [referencePage, setReferencePage] = createSignal<"shortcuts" | "changes" | "help">();
   const [closeArmed, setCloseArmed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   let armedTarget: string | undefined;
+  let stopWatch: (() => void) | null = null;
   let openRevision = 0;
   const baseCommands = options.commands ?? (() => applicationPaletteCommands(null));
   const search = createApplicationPaletteSearchOwner({
@@ -67,8 +70,11 @@ export function createApplicationPaletteCommandOwner(options: {
     openRevision += 1;
     setCloseArmed(false);
     options.plugins?.form.cancel();
+    stopWatch?.();
+    stopWatch = null;
     if (open) {
       options.plugins?.refresh();
+      stopWatch = options.plugins?.watch?.() ?? null;
       search.reset(options.activeSurface() === "home" ? 0 : 1);
     }
     void options.binding
