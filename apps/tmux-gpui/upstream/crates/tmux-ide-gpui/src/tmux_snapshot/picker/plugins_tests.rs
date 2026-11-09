@@ -393,6 +393,70 @@ mod keyboard {
         });
     }
 
+    /// Review Dctx: the context the palette captured is what the invoke and
+    /// param-options requests carry.
+    #[gpui::test]
+    fn requests_carry_the_context_the_palette_was_opened_with(cx: &mut TestAppContext) {
+        let (sender, _receiver) = mpsc::sync_channel(64);
+        std::mem::forget(_receiver);
+        let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+        let mut pick = param("pick", ParamKind::Choice);
+        pick.dynamic_choices = true;
+        let id = "plugin.ctx.pick";
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let state = &mut view.browser_state;
+                state.sessions = vec![crate::tmux_snapshot::browser::Choice {
+                    pane_count: None,
+                    id: "uuid-1".into(),
+                    label: "demo".into(),
+                    window_id: None,
+                    window_label: None,
+                    browser_icon: None,
+                }];
+                state.selected_session = Some("uuid-1".into());
+                state.selected_pane = Some("%4".into());
+                view.open_plugin_commands(window, cx);
+                let session = view.picker.as_mut().unwrap().plugins.as_mut().unwrap();
+                *session = Session {
+                    context: session.context.clone(),
+                    ..ready(vec![command(id, "Pick", false, vec![pick])])
+                };
+                view.refresh_picker(cx);
+                // The command, then a param whose choices come from the plugin.
+                view.picker_key(&key_down("enter"), window, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                // Without a daemon the choices cannot load; run the form as it is.
+                let session = view.picker.as_mut().unwrap().plugins.as_mut().unwrap();
+                let form = session.form.take().unwrap();
+                view.run_plugin_command(form.command, Vec::new(), false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        let expected = InvokeContext {
+            session: Some("demo".into()),
+            pane: Some("%4".into()),
+        };
+        let sent: Vec<_> = super::super::SENT
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(sent, _, _)| sent == id)
+            .cloned()
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                (id.to_owned(), "pick".to_owned(), expected.clone()),
+                (id.to_owned(), String::new(), expected),
+            ]
+        );
+    }
+
     #[gpui::test]
     fn a_text_parameter_is_typed_into_the_search_line(cx: &mut TestAppContext) {
         let mut name = param("name", ParamKind::String);

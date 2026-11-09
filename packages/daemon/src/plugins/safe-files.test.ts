@@ -36,6 +36,21 @@ describe("writeFileAtomic", () => {
     expect(readFileSync(path, "utf8")).toBe("new");
   });
 
+  it("refuses a temporary name someone else created first, symlink or file", () => {
+    const victim = join(root, "victim");
+    writeFileSync(victim, "keep");
+    const path = join(root, "store.json");
+    const planted = join(root, "store.json.fixed.tmp");
+    symlinkSync(victim, planted);
+    expect(() => writeFileAtomic(path, "new", () => planted)).toThrow(/EEXIST/u);
+    expect(readFileSync(victim, "utf8")).toBe("keep");
+    rmSync(planted);
+    writeFileSync(planted, "theirs");
+    expect(() => writeFileAtomic(path, "new", () => planted)).toThrow(/EEXIST/u);
+    expect(readFileSync(planted, "utf8")).toBe("theirs");
+    expect(() => readFileSync(path)).toThrow();
+  });
+
   it("creates the directory, writes mode 0600 and leaves no temporary file", () => {
     const path = join(root, "a", "b", "store.json");
     writeFileAtomic(path, "x");

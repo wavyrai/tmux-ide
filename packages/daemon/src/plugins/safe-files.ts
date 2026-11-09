@@ -59,14 +59,20 @@ export function readRegularFile(path: string, maxBytes: number): string | null {
  * must not exist yet (O_EXCL, O_NOFOLLOW), then renamed over `path`. A
  * symlink at `path` is replaced, never followed.
  */
-export function writeFileAtomic(path: string, text: string): void {
+export function writeFileAtomic(
+  path: string,
+  text: string,
+  /** Tests pass a fixed name to see that a planted file there is refused. */
+  temporaryName: () => string = () => `${path}.${randomBytes(12).toString("hex")}.tmp`,
+): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomBytes(12).toString("hex")}.tmp`;
+  const temporary = temporaryName();
   const fd = openSync(
     temporary,
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
     0o600,
   );
+  let renamed = false;
   try {
     try {
       const data = Buffer.from(text, "utf8");
@@ -76,9 +82,9 @@ export function writeFileAtomic(path: string, text: string): void {
       closeSync(fd);
     }
     renameSync(temporary, path);
-  } catch (error) {
-    rmSync(temporary, { force: true });
-    throw error;
+    renamed = true;
+  } finally {
+    if (!renamed) rmSync(temporary, { force: true });
   }
 }
 

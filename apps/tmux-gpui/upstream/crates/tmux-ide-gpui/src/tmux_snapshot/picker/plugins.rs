@@ -22,6 +22,19 @@ pub(in crate::tmux_snapshot) fn remember_local_record(record: &std::path::Path) 
     let _ = LOCAL_RECORD.set(record.to_path_buf());
 }
 
+/// What each daemon request would have carried, recorded in unit tests
+/// (which have no daemon): (command id, param or "" for an invoke, context).
+#[cfg(test)]
+pub(super) static SENT: std::sync::Mutex<Vec<(String, String, InvokeContext)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn sent(_id: &str, _param: &str, _context: &InvokeContext) {
+    #[cfg(test)]
+    if let Ok(mut sent) = SENT.lock() {
+        sent.push((_id.to_owned(), _param.to_owned(), _context.clone()));
+    }
+}
+
 fn local_daemon() -> Option<LocalDaemon> {
     // Unit tests never reach a real daemon, whatever is installed on the machine.
     if cfg!(test) {
@@ -324,6 +337,7 @@ impl SnapshotView {
             let generation = session.generation;
             let context = session.context.clone();
             let task = cx.background_executor().spawn(async move {
+                sent(&id, &name, &context);
                 local_daemon()
                     .ok_or_else(|| "No local tmux-ide daemon is running.".to_owned())
                     .and_then(|daemon| {
@@ -402,6 +416,7 @@ impl SnapshotView {
         self.clear_plugin_search(cx);
         self.refresh_picker(cx);
         let task = cx.background_executor().spawn(async move {
+            sent(&command.id, "", &context);
             let daemon = local_daemon().ok_or("No local tmux-ide daemon is running.")?;
             daemon
                 .invoke_plugin_command(&command.id, &values, &context, confirmed)
