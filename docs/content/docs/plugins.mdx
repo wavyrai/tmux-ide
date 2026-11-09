@@ -106,9 +106,12 @@ A program a plugin may run can usually do anything your account can: edit
 your shell profile, start other programs, use the network. The sandbox
 around it is a seat belt, not a wall:
 
-- It cannot write under `~/.tmux-ide`, except the plugin's own
-  `~/.tmux-ide/plugin-data/<name>/`, and cannot read the daemon's record,
-  claim, consent records, plugin stores or the app settings.
+- It cannot write under `~/.tmux-ide` (or your `TMUX_IDE_HOME`), except the
+  plugin's own `~/.tmux-ide/plugin-data/<name>/`, and cannot read the
+  daemon's record, claim, consent records, plugin stores or the app
+  settings. It cannot rename or remove the state home, those files, or any
+  directory above them either, so it cannot move them out from under these
+  rules.
 - Without `panes.send` it cannot connect to your tmux server, however it
   finds the socket: the sandbox denies connecting to the tmux socket
   directories (`/private/tmp/tmux-<uid>/`, the one under `TMUX_TMPDIR`, and
@@ -135,7 +138,9 @@ Linux machine yet. To turn it on anyway, start the daemon with
 are hidden only if they exist when the program starts; a file created
 later under the same name is not. The tmux socket directories are hidden
 the same way (without `panes.send`), but the daemon's port is not blocked
-there.
+there. Renames are kept in check by mounts rather than rules: the
+read-only state home and the hidden paths move with any directory renamed
+above them.
 
 ## Write a plugin
 
