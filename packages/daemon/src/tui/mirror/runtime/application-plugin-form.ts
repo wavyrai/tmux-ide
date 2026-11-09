@@ -6,11 +6,12 @@
  *
  * Arguments are checked again by the plugin; this only collects them.
  */
-import type {
-  CommandInvocationContext,
-  CommandInvokeResult,
-  CommandParam,
-  CommandParamOptionsResult,
+import {
+  terminalSafe,
+  type CommandInvocationContext,
+  type CommandInvokeResult,
+  type CommandParam,
+  type CommandParamOptionsResult,
 } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import type {
@@ -86,14 +87,17 @@ export function createApplicationPluginForm(options: {
 }) {
   const [state, setState] = createSignal<FormState | null>(null);
   let generation = 0;
+  // Notes carry plugin text (labels, results, errors) to the terminal.
+  const setNote = (note: string | null) =>
+    options.setNote(note === null ? null : terminalSafe(note, 500));
 
   const run = (command: ApplicationPluginPaletteCommand, args: Record<string, ArgValue>) => {
     setState(null);
     options.close();
-    options.setNote(`${command.label}…`);
+    setNote(`${command.label}…`);
     void options.service
       .invoke(command.id, args, options.context(), command.dangerous)
-      .then((result) => options.setNote(resultNote(command.label, result)));
+      .then((result) => setNote(resultNote(command.label, result)));
   };
 
   const loadOptions = (current: FormState, param: CommandParam) => {
@@ -264,7 +268,7 @@ export function createApplicationPluginForm(options: {
         else {
           setState(null);
           options.close();
-          options.setNote(`${current.command.label}: cancelled`);
+          setNote(`${current.command.label}: cancelled`);
         }
         return;
       }
@@ -275,13 +279,13 @@ export function createApplicationPluginForm(options: {
       const typed = options.query();
       const raw: ArgValue | undefined = typed || defaultFor(current, param);
       if (raw === undefined || raw === "") {
-        options.setNote(`${param.label} is required`);
+        setNote(`${param.label} is required`);
         return;
       }
       if (param.type === "number") {
         const number = typeof raw === "number" ? raw : Number(raw);
         if (!Number.isFinite(number) || (typeof raw === "string" && raw.trim() === "")) {
-          options.setNote(`${param.label} must be a number`);
+          setNote(`${param.label} must be a number`);
           return;
         }
         return advance(current, param, number);
@@ -295,9 +299,12 @@ export function createApplicationPluginForm(options: {
       if (!current) return "";
       const param = currentParam(current);
       const total = current.command.params.length;
-      return param
-        ? `${current.command.label} · ${param.label} (${current.step + 1}/${total}) · Enter to choose · Esc to cancel`
-        : `${current.command.label} · confirm · Enter to choose · Esc to cancel`;
+      return terminalSafe(
+        param
+          ? `${current.command.label} · ${param.label} (${current.step + 1}/${total}) · Enter to choose · Esc to cancel`
+          : `${current.command.label} · confirm · Enter to choose · Esc to cancel`,
+        500,
+      );
     },
   };
 }

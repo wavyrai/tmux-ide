@@ -1,4 +1,8 @@
-import { COMMAND_PROTOCOL_VERSION, type CommandCatalogResource } from "@tmux-ide/contracts";
+import {
+  COMMAND_PROTOCOL_VERSION,
+  hasUnsafeText,
+  type CommandCatalogResource,
+} from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { runActionCli } from "./action-cli.ts";
 import type { PluginCliIo } from "./cli.ts";
@@ -19,6 +23,7 @@ const catalog: CommandCatalogResource = {
   revision: 3,
   entries: [
     { descriptor: descriptor("project.launch", "Launch project"), params: [] },
+    { descriptor: descriptor("daemon.shutdown", "Shut down daemon", true), params: [] },
     {
       descriptor: descriptor("plugin.tasks.new", "New task"),
       plugin: "tasks",
@@ -181,6 +186,91 @@ describe("tmux-ide action", () => {
     expect(h.out).toEqual(['{"launched":true}']);
     expect(await runActionCli(["run", "project.launch", "--arg", "a=1"], h.io)).toBe(2);
     expect(await runActionCli(["run", "project.launch", "--input", "{"], h.io)).toBe(2);
+  });
+
+  it("asks before a dangerous built-in command too", async () => {
+    const h = harness();
+    expect(await runActionCli(["run", "daemon.shutdown", "--input", "{}"], h.io)).toBe(2);
+    expect(h.err[0]).toMatch(/'Shut down daemon' asks to confirm: pass --yes/u);
+    const questions: string[] = [];
+    const no = harness({
+      interactive: () => true,
+      ask: async (question) => {
+        questions.push(question);
+        return "n";
+      },
+    });
+    expect(await runActionCli(["run", "daemon.shutdown"], no.io)).toBe(1);
+    expect(questions).toEqual(["Shut down daemon: are you sure? [y/N] "]);
+    expect(no.out).toEqual(["Cancelled."]);
+    const yes = harness();
+    expect(await runActionCli(["run", "daemon.shutdown", "--yes"], yes.io)).toBe(0);
+    for (const run of [h, no]) expect(run.io.dispatchBuiltin).not.toHaveBeenCalled();
+    expect(yes.io.dispatchBuiltin).toHaveBeenCalledWith("daemon.shutdown", {});
+  });
+
+  it("never prints control or bidi characters, whatever the daemon sends", async () => {
+    // A catalog and results that skipped every earlier check.
+    const nasty = "a\u001b]52;c;cHduZWQ=\u0007b\u009b2J\u202ec\rd";
+    const hostile: CommandCatalogResource = {
+      ...catalog,
+      entries: [
+        {
+          descriptor: { ...descriptor("plugin.tasks.bad", nasty, true), category: nasty },
+          plugin: "tasks",
+          params: [
+            {
+              name: "x",
+              type: "choice",
+              label: nasty,
+              required: false,
+              default: nasty,
+              dynamicDefault: false,
+              dynamicChoices: false,
+              choices: [{ value: nasty, label: nasty }],
+            },
+          ],
+        },
+      ],
+    };
+    const lines: string[] = [];
+    let reply: unknown = { ok: true, value: { [nasty]: nasty } };
+    const io = () =>
+      harness({
+        interactive: () => true,
+        ask: async (question) => {
+          lines.push(question);
+          return "y";
+        },
+        fetch: vi.fn(async (url: string | URL | Request) =>
+          String(url).endsWith("command-catalog")
+            ? new Response(JSON.stringify(hostile))
+            : new Response(JSON.stringify(reply)),
+        ) as unknown as typeof fetch,
+      });
+    const runs = [];
+    for (const argv of [
+      ["list"],
+      ["list", "--json"],
+      ["run", "plugin.tasks.bad"],
+      ["run", "plugin.tasks.bad", "--json"],
+      ["run", `plugin.tasks.${nasty}`],
+      ["run", "plugin.tasks.bad", "--arg", `${nasty}=1`],
+    ]) {
+      const h = io();
+      await runActionCli(argv, h.io);
+      runs.push(h);
+    }
+    reply = { ok: true, value: nasty };
+    runs.push(io());
+    await runActionCli(["run", "plugin.tasks.bad"], runs.at(-1)!.io);
+    reply = { ok: false, error: nasty };
+    runs.push(io());
+    await runActionCli(["run", "plugin.tasks.bad"], runs.at(-1)!.io);
+    for (const h of runs) lines.push(...h.out, ...h.err);
+    expect(lines.length).toBeGreaterThan(8);
+    for (const line of lines)
+      expect(hasUnsafeText(line.replaceAll("\n", " ")), JSON.stringify(line)).toBe(false);
   });
 
   it("prints usage for --help and -h in the subcommand position", async () => {

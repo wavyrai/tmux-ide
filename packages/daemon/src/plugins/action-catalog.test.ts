@@ -64,11 +64,11 @@ describe("PluginActionCatalog.publish", () => {
       action({ title: "a\nb" }),
       action({ title: "a\u009bb" }),
       action({ title: "a\u007fb" }),
-      action({ category: "a‮b" }),
+      action({ category: "a\u202eb" }),
       action({ description: "a\u0007b" }),
       action({ params: [{ name: "x", type: "text", label: "a\u001bb", optional: false }] }),
       action({ params: [{ name: "x", type: "text", description: "a\rb", optional: false }] }),
-      action({ params: [{ name: "x", type: "text", default: "a⁦b", optional: false }] }),
+      action({ params: [{ name: "x", type: "text", default: "a\u2066b", optional: false }] }),
       action({
         params: [
           {

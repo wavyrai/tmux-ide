@@ -1,4 +1,4 @@
-import type { CommandParam } from "@tmux-ide/contracts";
+import { hasUnsafeText, type CommandParam } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationPluginPaletteCommand } from "../workspace/application-command-description.ts";
@@ -197,6 +197,21 @@ describe("plugin command form", () => {
     h.form.start(command([]));
     await h.settle();
     expect(h.notes.at(-1)).toBe("New task: E_INVALID: 'name' is required");
+  });
+
+  it("never puts control or bidi characters in notes or the hint", async () => {
+    const nasty = "a\u001b[2Jb\u009bc\u202ed\ne";
+    const h = harness({ invoke: async () => ({ ok: false as const, error: nasty }) });
+    h.form.start({ ...command([]), label: nasty });
+    await h.settle();
+    const value = harness({ invoke: async () => ({ ok: true as const, value: nasty }) });
+    value.form.start(command([]));
+    await value.settle();
+    const hinted = harness();
+    hinted.form.start({ ...command([param({ name: "x", label: nasty })]), label: nasty });
+    const shown = [...h.notes, ...value.notes, hinted.form.hint()];
+    expect(shown).toHaveLength(5);
+    for (const text of shown) expect(hasUnsafeText(text ?? ""), JSON.stringify(text)).toBe(false);
   });
 
   it("refuses an empty value for a required param, even with an empty default", () => {

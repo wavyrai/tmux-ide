@@ -2,6 +2,7 @@
  * `manifest.json` in each plugin directory. JSON, so the daemon and the
  * installer can read what a plugin asks for without running any Lua.
  */
+import { plainTextSchema } from "@tmux-ide/contracts";
 import { z } from "zod";
 import { PLUGIN_API_VERSION, PluginNameSchemaZ } from "./protocol.ts";
 
@@ -9,7 +10,7 @@ const SettingSchemaZ = z
   .object({
     type: z.enum(["string", "integer", "number", "boolean"]),
     default: z.union([z.string(), z.number(), z.boolean()]).optional(),
-    description: z.string().max(500).optional(),
+    description: plainTextSchema(0, 500).optional(),
     optional: z.boolean().optional(),
     minimum: z.number().optional(),
     maximum: z.number().optional(),
@@ -20,7 +21,7 @@ export const PluginManifestSchemaZ = z
   .object({
     name: PluginNameSchemaZ,
     version: z.string().regex(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u, "version must be semver"),
-    description: z.string().max(500).optional(),
+    description: plainTextSchema(0, 500).optional(),
     /** The Lua API versions this plugin works with: `^1.0` or `1.0`. */
     api: z.string().regex(/^\^?\d+\.\d+$/u, "api must look like ^1.0"),
     entry: z

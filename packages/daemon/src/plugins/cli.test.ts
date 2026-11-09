@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { hasUnsafeText } from "@tmux-ide/contracts";
 import { runPluginCommandLine, type PluginCliIo } from "./cli.ts";
 import { hashPluginDirectory, readConsent } from "./consent.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
@@ -211,6 +212,39 @@ describe("tmux-ide plugin", () => {
       '10:00:01 init error boom {"n":1}',
       '10:00:01 init error boom {"n":1}',
     ]);
+  });
+});
+
+describe("tmux-ide lua and plugin output", () => {
+  it("never prints control or bidi characters from plugins or the daemon", async () => {
+    const nasty = "a\u001b]52;c;cHduZWQ=\u0007b\u009b2J\u202ec\rd";
+    appendPluginLog(pluginLogPath(home), {
+      ts: "2026-11-09T10:00:00.000Z",
+      plugin: "tasks",
+      level: "info",
+      message: nasty,
+      fields: { [nasty]: nasty },
+    });
+    const h = harness((path) =>
+      path.startsWith("/api/v2/plugins")
+        ? {
+            body: {
+              host: { running: true, pid: 1, restarts: 0 },
+              plugins: [{ name: "tasks", kind: "plugin", state: "failed", error: nasty, trips: 0 }],
+            },
+          }
+        : ok([nasty, { [nasty]: nasty }], [{ level: "warn", message: nasty }]),
+    );
+    await runPluginCommandLine("plugin", ["logs"], h.io);
+    await runPluginCommandLine("plugin", ["list"], h.io);
+    await runPluginCommandLine("plugin", ["list", "--json"], h.io);
+    await runPluginCommandLine("lua", ["run", "-e", "return 1"], h.io);
+    await runPluginCommandLine("lua", ["run", "-e", "return 1", "--json"], h.io);
+    await runPluginCommandLine("plugin", ["consent", nasty], h.io);
+    const lines = [...h.out, ...h.err];
+    expect(lines.length).toBeGreaterThan(5);
+    for (const line of lines)
+      expect(hasUnsafeText(line.replaceAll("\n", " ")), JSON.stringify(line)).toBe(false);
   });
 });
 

@@ -9,7 +9,13 @@ import type {
   CommandInvokeResult,
   CommandParam,
 } from "@tmux-ide/contracts";
-import { callDaemon, formatValue, PluginCliError, type PluginCliIo } from "./cli.ts";
+import {
+  callDaemon,
+  formatValue,
+  PluginCliError,
+  terminalSafeIo,
+  type PluginCliIo,
+} from "./cli.ts";
 
 export const ACTION_USAGE = `Usage:
   tmux-ide action list [--json]                List built-in and plugin commands
@@ -93,7 +99,8 @@ export function parseActionArgs(
   return out;
 }
 
-export async function runActionCli(argv: readonly string[], io: PluginCliIo): Promise<number> {
+export async function runActionCli(argv: readonly string[], rawIo: PluginCliIo): Promise<number> {
+  const io = terminalSafeIo(rawIo);
   try {
     return await actionCli(argv, io);
   } catch (error) {
@@ -115,6 +122,24 @@ export async function runActionCli(argv: readonly string[], io: PluginCliIo): Pr
     }
     throw error;
   }
+}
+
+/**
+ * Whether `entry` may run: commands that are not dangerous always may; a
+ * dangerous one needs --yes or a "y" from the person at the terminal.
+ */
+async function confirmDangerous(
+  entry: CommandCatalogEntry,
+  yes: boolean,
+  io: PluginCliIo,
+): Promise<boolean> {
+  if (!entry.descriptor.dangerous || yes) return true;
+  if (!io.interactive())
+    throw new PluginCliError(`'${entry.descriptor.label}' asks to confirm: pass --yes.`, 2);
+  const answer = (await io.ask(`${entry.descriptor.label}: are you sure? [y/N] `))
+    .trim()
+    .toLowerCase();
+  return answer === "y" || answer === "yes";
 }
 
 async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<number> {
@@ -165,6 +190,16 @@ async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<numb
         throw new PluginCliError("--input must be JSON.", 2);
       }
     }
+    const catalog = await callDaemon<CommandCatalogResource>(
+      io,
+      "GET",
+      "/api/resources/command-catalog",
+    );
+    const entry = catalog.entries.find((candidate) => candidate.descriptor.id === id);
+    if (entry && !(await confirmDangerous(entry, values.yes === true, io))) {
+      io.out("Cancelled.");
+      return 1;
+    }
     const result = await io.dispatchBuiltin(id, input);
     io.out(values.json ? JSON.stringify(result, null, 2) : formatValue(result));
     return 0;
@@ -181,18 +216,10 @@ async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<numb
   if (!entry) throw new PluginCliError(`No command named '${id}'. See \`tmux-ide action list\`.`);
   const args = parseActionArgs(entry, values.arg ?? []);
 
-  let confirmed = values.yes === true;
-  if (entry.descriptor.dangerous && !confirmed) {
-    if (!io.interactive())
-      throw new PluginCliError(`'${entry.descriptor.label}' asks to confirm: pass --yes.`, 2);
-    const answer = (await io.ask(`${entry.descriptor.label}: are you sure? [y/N] `))
-      .trim()
-      .toLowerCase();
-    if (answer !== "y" && answer !== "yes") {
-      io.out("Cancelled.");
-      return 1;
-    }
-    confirmed = true;
+  const confirmed = await confirmDangerous(entry, values.yes === true, io);
+  if (!confirmed) {
+    io.out("Cancelled.");
+    return 1;
   }
 
   const pane = values.pane ?? io.tmuxPane();
@@ -204,7 +231,7 @@ async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<numb
       ...(values.session ? { session: values.session } : {}),
       ...(pane ? { pane } : {}),
     },
-    ...(confirmed ? { confirmed: true } : {}),
+    ...(entry.descriptor.dangerous ? { confirmed: true } : {}),
   });
   if (values.json) {
     io.out(JSON.stringify(result, null, 2));

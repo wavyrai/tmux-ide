@@ -1,5 +1,5 @@
 import { CHROME_ACTIONS } from "./application-action-descriptions.ts";
-import type { CommandParam, TmuxServerScope } from "@tmux-ide/contracts";
+import { terminalSafe, type CommandParam, type TmuxServerScope } from "@tmux-ide/contracts";
 import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 export { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
@@ -122,14 +122,18 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
   if (typeof command === "object" && command.kind === "plugin-command")
     return {
       id: JSON.stringify([command.kind, command.id]),
-      label: command.params.length > 0 || command.dangerous ? `${command.label}…` : command.label,
-      detail: `${command.category} · ${command.plugin} plugin`,
+      // Plugin text: plain text only, even if something upstream let it through.
+      label: terminalSafe(
+        command.params.length > 0 || command.dangerous ? `${command.label}…` : command.label,
+        200,
+      ),
+      detail: terminalSafe(`${command.category} · ${command.plugin} plugin`, 200),
     };
   if (typeof command === "object" && command.kind === "plugin-form")
     return {
       id: JSON.stringify([command.kind, command.key]),
-      label: command.label,
-      detail: command.detail,
+      label: terminalSafe(command.label, 200),
+      detail: terminalSafe(command.detail, 500),
     };
   if (typeof command === "object" && command.kind === "open-machine")
     return {

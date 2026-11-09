@@ -152,6 +152,29 @@ describe("plugin actions through the supervisor", () => {
     expect(JSON.stringify(logs)).not.toContain("ownertoken-0123456789");
   });
 
+  it("makes results and errors plain text on the way out", async () => {
+    plugin(
+      "loud",
+      `ide.action.register{ id = "value", title = "Value",
+        run = function() return { ["k\\27"] = "a\\27[2Jb", list = { "c\\194\\155d" } } end }
+       ide.action.register{ id = "fail", title = "Fail", run = function() error("e\\27]52;c;x\\7f", 0) end }`,
+    );
+    const s = supervisor();
+    await s.start();
+    expect(await s.invokeAction("plugin.loud.value", {}, { source: "cli" })).toEqual({
+      ok: true,
+      value: { "k ": "a [2Jb", list: ["c d"] },
+    });
+    expect(await s.invokeAction("plugin.loud.fail", {}, { source: "cli" })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/^e \]52;c;x f stack traceback: [^\n]*$/u),
+    });
+    expect(await s.invokeAction("plugin.loud.\u001b[2J", {}, { source: "cli" })).toEqual({
+      ok: false,
+      error: "E_NOT_FOUND: no command 'plugin.loud. [2J'",
+    });
+  });
+
   it("asks the plugin for parameter choices", async () => {
     plugin("tasks", TASKS);
     const s = supervisor();

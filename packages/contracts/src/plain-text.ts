@@ -6,10 +6,11 @@ import { z } from "zod";
  * drive the terminal (OSC 52 writes the clipboard, `ESC[2K` rewrites a
  * prompt line), and bidi controls would let it reorder what is shown.
  */
-// eslint-disable-next-line no-control-regex
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/u;
-// eslint-disable-next-line no-control-regex
-const UNSAFE_GLOBAL = /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/gu;
+// Written as escapes so the invisible characters stay visible in source.
+const UNSAFE_CLASS =
+  "[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]";
+const UNSAFE = new RegExp(UNSAFE_CLASS, "u");
+const UNSAFE_GLOBAL = new RegExp(UNSAFE_CLASS, "gu");
 
 export function hasUnsafeText(text: string): boolean {
   return UNSAFE.test(text);
@@ -20,9 +21,20 @@ export function terminalSafe(text: string, max = 2000): string {
   return text.replace(UNSAFE_GLOBAL, " ").slice(0, max);
 }
 
-/** Every string inside a JSON value made terminal-safe (keys included). */
+/**
+ * Several lines of plain text, for whole outputs: newlines and tabs stay,
+ * every other unsafe character becomes a space.
+ */
+export function terminalSafeBlock(text: string): string {
+  return text.replace(UNSAFE_GLOBAL, (char) => (char === "\n" || char === "\t" ? char : " "));
+}
+
+/**
+ * Every string inside a JSON value made terminal-safe. Values keep their
+ * newlines and tabs (program output is several lines); keys become one line.
+ */
 export function terminalSafeDeep(value: unknown, max = 10_000): unknown {
-  if (typeof value === "string") return terminalSafe(value, max);
+  if (typeof value === "string") return terminalSafeBlock(value).slice(0, max);
   if (Array.isArray(value)) return value.map((item) => terminalSafeDeep(item, max));
   if (value && typeof value === "object")
     return Object.fromEntries(

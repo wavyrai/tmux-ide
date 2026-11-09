@@ -23,6 +23,8 @@ import {
   type CommandInvocationContext,
   type CommandInvokeResult,
   type CommandParamOptionsResult,
+  terminalSafe,
+  terminalSafeDeep,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 import { isSecretKey, redactLogValue, redactText } from "../lib/log-sanitize.ts";
@@ -397,7 +399,8 @@ export class PluginSupervisor {
   ): Promise<CommandInvokeResult> {
     const entry = this.#actions.find(id);
     const parsed = parsePluginCommandId(id);
-    if (!entry || !parsed) return { ok: false, error: `E_NOT_FOUND: no command '${id}'` };
+    if (!entry || !parsed)
+      return { ok: false, error: `E_NOT_FOUND: no command '${terminalSafe(id, 200)}'` };
     if (entry.descriptor.dangerous && options.confirmed !== true)
       return { ok: false, error: `E_CONFIRM: '${entry.descriptor.label}' must be confirmed first` };
     const reply = await this.#request((requestId) => ({
@@ -409,7 +412,9 @@ export class PluginSupervisor {
       context,
     }));
     const secrets = this.#secretSet();
-    if (!reply.ok) return { ok: false, error: redactText(reply.error, secrets) };
+    // Results and errors are plugin text on their way to terminals: plain
+    // text only, whatever the plugin returned.
+    if (!reply.ok) return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
     let value: unknown;
     try {
       const list: unknown = JSON.parse(reply.text);
@@ -419,7 +424,7 @@ export class PluginSupervisor {
     }
     return value === undefined
       ? { ok: true }
-      : { ok: true, value: redactLogValue(value, secrets) as never };
+      : { ok: true, value: terminalSafeDeep(redactLogValue(value, secrets)) as never };
   }
 
   /** Choices and default for one parameter of a plugin action. */
@@ -430,9 +435,13 @@ export class PluginSupervisor {
   ): Promise<CommandParamOptionsResult> {
     const entry = this.#actions.find(id);
     const parsed = parsePluginCommandId(id);
-    if (!entry || !parsed) return { ok: false, error: `E_NOT_FOUND: no command '${id}'` };
+    if (!entry || !parsed)
+      return { ok: false, error: `E_NOT_FOUND: no command '${terminalSafe(id, 200)}'` };
     if (!entry.params.some((candidate) => candidate.name === param))
-      return { ok: false, error: `E_NOT_FOUND: '${id}' has no parameter '${param}'` };
+      return {
+        ok: false,
+        error: `E_NOT_FOUND: '${id}' has no parameter '${terminalSafe(param, 200)}'`,
+      };
     const reply = await this.#request((requestId) => ({
       type: "param-options",
       id: requestId,
@@ -442,9 +451,9 @@ export class PluginSupervisor {
       context,
     }));
     const secrets = this.#secretSet();
-    if (!reply.ok) return { ok: false, error: redactText(reply.error, secrets) };
+    if (!reply.ok) return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
     const result = ParamOptionsReplySchemaZ.safeParse(
-      redactLogValue(safeJson(reply.text), secrets),
+      terminalSafeDeep(redactLogValue(safeJson(reply.text), secrets)),
     );
     if (!result.success)
       return { ok: false, error: "E_INVALID: the plugin returned malformed choices" };

@@ -4,6 +4,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { terminalSafe, terminalSafeBlock } from "@tmux-ide/contracts";
 import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
 import { discoverPlugins, type PluginAwaitingConsent } from "./discovery.ts";
 import { API_ENTRIES, findApiEntry, suggestApiEntries, type ApiEntry } from "./api-table.ts";
@@ -33,6 +34,20 @@ export interface PluginCliIo {
   readonly tmuxPane: () => string | undefined;
   /** Run a built-in daemon action through the typed action route. */
   readonly dispatchBuiltin: (name: string, input: unknown) => Promise<unknown>;
+}
+
+/**
+ * The same io, with every line it prints and every question it asks made
+ * terminal-safe: plugin names, titles, logs, values and errors all pass
+ * through here, and none of them may drive the terminal.
+ */
+export function terminalSafeIo(io: PluginCliIo): PluginCliIo {
+  return {
+    ...io,
+    out: (text) => io.out(terminalSafeBlock(text)),
+    err: (text) => io.err(terminalSafeBlock(text)),
+    ask: (question) => io.ask(terminalSafe(question)),
+  };
 }
 
 export class PluginCliError extends Error {
@@ -421,8 +436,9 @@ async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<numb
 export async function runPluginCommandLine(
   command: "lua" | "plugin",
   argv: readonly string[],
-  io: PluginCliIo,
+  rawIo: PluginCliIo,
 ): Promise<number> {
+  const io = terminalSafeIo(rawIo);
   try {
     return command === "lua" ? await luaCli(argv, io) : await pluginCli(argv, io);
   } catch (error) {
