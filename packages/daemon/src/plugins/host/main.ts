@@ -14,6 +14,7 @@ import {
   MAX_PROTOCOL_LINE_BYTES,
   PLUGIN_API_VERSION,
   PLUGIN_HOST_PROTOCOL_VERSION,
+  RUN_STATE_NAME,
   type HostCommand,
   type HostEvent,
   type PluginLimits,
@@ -167,7 +168,7 @@ export class PluginHost {
     let state: PluginLuaState | null = null;
     try {
       state = await this.#createState(
-        { name: "run", includeRoots: [], moduleRoots: [], settings: {} },
+        { name: RUN_STATE_NAME, includeRoots: [], moduleRoots: [], settings: {} },
         (level, message) => {
           if (logs.length < 1000) logs.push({ level, message: message.slice(0, 8192) });
         },

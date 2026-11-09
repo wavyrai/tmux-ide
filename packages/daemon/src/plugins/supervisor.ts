@@ -22,6 +22,7 @@ import { discoverPlugins, type PluginAwaitingConsent, type PluginProblem } from 
 import { appendPluginLog, pluginLogPath, type PluginLogEntry } from "./plugin-log.ts";
 import {
   DEFAULT_PLUGIN_LIMITS,
+  RUN_STATE_NAME,
   HostEventSchemaZ,
   MAX_PROTOCOL_LINE_BYTES,
   PLUGIN_HOST_PROTOCOL_VERSION,
@@ -248,6 +249,7 @@ export class PluginSupervisor {
   }
 
   status(): PluginSupervisorStatus {
+    const secrets = this.#secretSet();
     const plugins: PluginStatus[] = [...this.#entries.values()].map((entry) => ({
       name: entry.name,
       kind: entry.kind,
@@ -286,7 +288,11 @@ export class PluginSupervisor {
         pid: this.#host?.child.pid ?? null,
         restarts: this.#restarts,
       },
-      plugins,
+      // Every error here can quote plugin output (a load error, a manifest
+      // parse error): redact all of them on the way out.
+      plugins: plugins.map((plugin) =>
+        plugin.error ? { ...plugin, error: redactText(plugin.error, secrets) } : plugin,
+      ),
     };
   }
 
@@ -498,7 +504,10 @@ export class PluginSupervisor {
         const entry = this.#entries.get(event.plugin);
         if (entry && entry.state !== "disabled") {
           entry.state = event.ok ? "loaded" : "failed";
-          entry.error = event.ok ? undefined : event.error;
+          entry.error =
+            event.ok || event.error === undefined
+              ? undefined
+              : redactText(event.error, this.#secretSet());
           entry.memoryBytes = event.memoryBytes;
         }
         this.#settleLoad(event.plugin);
@@ -575,7 +584,10 @@ export class PluginSupervisor {
         : "the plugin host stopped responding";
       this.#log("host", "error", `watchdog: ${host.killedBy}; restarting the host`);
       const entry = culprit ? this.#entries.get(culprit) : undefined;
-      if (entry) {
+      if (culprit === RUN_STATE_NAME) {
+        // A one-off `lua run` was busy: its own result already fails; no
+        // plugin is to blame, so none is charged.
+      } else if (entry) {
         this.#disable(
           entry,
           "the watchdog stopped it: it did not return control for more than 5 s",

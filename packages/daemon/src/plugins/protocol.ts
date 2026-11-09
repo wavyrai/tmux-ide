@@ -25,9 +25,12 @@ export const INIT_PLUGIN_NAME = "init" as const;
  * Names the host and daemon use for their own work. No plugin directory may
  * take one: `run` labels `tmux-ide lua run`, `host` the host's own log lines.
  */
+/** The name the host gives the temporary state behind `tmux-ide lua run`. */
+export const RUN_STATE_NAME = "run" as const;
+
 export const RESERVED_PLUGIN_NAMES: ReadonlySet<string> = new Set([
   INIT_PLUGIN_NAME,
-  "run",
+  RUN_STATE_NAME,
   "host",
   "daemon",
   "ide",

@@ -376,6 +376,54 @@ describe("PluginSupervisor", () => {
     expect(logs.some((entry) => /after/u.test(entry.message))).toBe(false);
   }, 20_000);
 
+  it("does not blame a loading plugin when a stuck lua run is what the watchdog killed", async () => {
+    const s = supervisor({
+      heartbeatTimeoutMs: 1500,
+      watchdogIntervalMs: 100,
+      limits: {
+        callbackBudgetMs: 50,
+        memoryBytes: 8 << 20,
+        wallClockMs: 30_000,
+        logLinesPerSecond: 100,
+      },
+    });
+    // The run keeps catching E_TIMEOUT, so only the watchdog stops it.
+    const stuck = s.run(`while true do pcall(function() while true do end end) end`, {
+      budgetMs: 50,
+    });
+    await until(() => s.status().host.running, Boolean);
+    plugin("innocent", `ide.log.info("innocent loaded")`);
+    const firstPid = s.status().host.pid;
+    const reloaded = s.reload("innocent");
+    const result = await stuck;
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/run kept the plugin host busy/u);
+    await reloaded;
+    await until(
+      () => state(s, "innocent"),
+      (value) => value === "loaded",
+    );
+    expect(s.status().plugins).toEqual([
+      expect.objectContaining({ name: "innocent", state: "loaded", trips: 0 }),
+    ]);
+    expect(s.status().host.pid).not.toBe(firstPid);
+    expect(logs.some((entry) => entry.plugin === "innocent" && entry.level === "warn")).toBe(false);
+  }, 30_000);
+
+  it("redacts secrets in load errors shown by status", async () => {
+    const token = "ownertoken-abcdef1234567890";
+    plugin("leaky", `error("${token}")`);
+    mkdirSync(join(home, "plugins", "badjson"), { recursive: true });
+    writeFileSync(join(home, "plugins", "badjson", "manifest.json"), `{"name": "${token}" oops`);
+    const s = supervisor({ secrets: () => [token] });
+    const status = await s.start();
+    expect(JSON.stringify(status)).not.toContain(token);
+    expect(status.plugins.find((p) => p.name === "leaky")).toMatchObject({
+      state: "failed",
+      error: expect.stringContaining("[redacted]"),
+    });
+  });
+
   it("charges a watchdog kill with no busy plugin to the plugin being loaded, then disables it", async () => {
     plugin("hang", `return true`);
     plugin("ok", `return true`);
