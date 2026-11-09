@@ -265,23 +265,30 @@ describe("ide.exec running programs", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
-  live("cannot read the daemon's private files", async () => {
-    writeFileSync(join(stateHome, "daemon.json"), "owner-secret-record");
-    const result = await runPluginExec(
-      { cmd: "cat", args: [join(stateHome, "daemon.json")] },
-      deps(
-        {},
-        {
-          sandbox: {
-            stateHome,
-            writable: dataDir,
-            unreadable: [join(stateHome, "daemon.json")],
-          },
-        },
-      ),
+  live("cannot read the daemon's private files, their temporary siblings included", async () => {
+    const info = join(root, "info-dir");
+    mkdirSync(info);
+    const files = [
+      "daemon.json",
+      "daemon.json.claim-1.0b5e.tmp",
+      "daemon.json.claim-1.0b5e.retired",
+    ];
+    for (const name of files) writeFileSync(join(info, name), `owner-secret-record ${name}`);
+    writeFileSync(join(info, "other.json"), "readable");
+    const sandbox = { stateHome, writable: dataDir, unreadable: [join(info, "daemon.json")] };
+    for (const name of files) {
+      const result = await runPluginExec(
+        { cmd: "cat", args: [join(info, name)] },
+        deps({}, { sandbox }),
+      );
+      expect(result.code, name).not.toBe(0);
+      expect(result.stdout).not.toContain("owner-secret-record");
+    }
+    const other = await runPluginExec(
+      { cmd: "cat", args: [join(info, "other.json")] },
+      deps({}, { sandbox }),
     );
-    expect(result.code).not.toBe(0);
-    expect(result.stdout).not.toContain("owner-secret-record");
+    expect(other.stdout).toBe("readable");
   });
 
   live("caps captured output", async () => {
@@ -343,8 +350,8 @@ describe("sandbox plans", () => {
     ).toBe(
       '(version 1)(allow default)(deny file-write* (subpath "/home/u/.tmux-ide"))' +
         '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))' +
-        '(deny file-read* file-write* (subpath "/home/u/.tmux-ide/daemon.json"))' +
-        '(deny file-read* file-write* (subpath "/s/app.json"))',
+        '(deny file-read* file-write* (regex #"^/home/u/\\.tmux-ide/daemon\\.json"))' +
+        '(deny file-read* file-write* (regex #"^/s/app\\.json"))',
     );
     expect(darwinProfile({ stateHome: '/a"b\\c', writable: "/w" })).toContain(
       '(subpath "/a\\"b\\\\c")',
@@ -375,6 +382,21 @@ describe("sandbox plans", () => {
       reason:
         "running programs from plugins on Linux is untested and off; set TMUX_IDE_PLUGIN_EXEC_LINUX=1 for the daemon to turn it on",
     });
+  });
+
+  it("hides what matches a private prefix now with bubblewrap", () => {
+    const info = join(root, "info");
+    mkdirSync(info);
+    for (const name of ["daemon.json", "daemon.json.c.u.tmp", "daemonXjson", "other"])
+      writeFileSync(join(info, name), "");
+    const plan = sandboxedArgv(
+      ["/bin/echo"],
+      { stateHome, writable: dataDir, unreadable: [join(info, "daemon.json")] },
+      { platform: "linux", linuxOptIn: true, find: () => "/usr/bin/bwrap", resolve: (p) => p },
+    );
+    expect(plan.ok && plan.argv.join(" ")).toContain(
+      `--ro-bind /dev/null ${join(info, "daemon.json")} --ro-bind /dev/null ${join(info, "daemon.json.c.u.tmp")} --unshare-pid`,
+    );
   });
 
   it("binds the state home read-only and the data dir writable with bubblewrap on Linux", () => {

@@ -4,6 +4,7 @@
 import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appSettingsPath } from "../lib/app-settings.ts";
+import { getCanonicalDaemonInfoPath } from "../lib/canonical-daemon.ts";
 import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
@@ -60,10 +61,16 @@ export function resolvePluginHostCommand(
  * owner token), the app settings (the remote-access token), the consent
  * records and every plugin's store.
  */
-export function daemonPrivateFiles(home: string): string[] {
+export function daemonPrivateFiles(
+  home: string,
+  daemonInfoPath: string = getCanonicalDaemonInfoPath(),
+): string[] {
+  // Prefixes: daemon.json also covers its .tmp and .retired siblings, and the
+  // record follows TMUX_IDE_DAEMON_INFO_DIR / the registry dir, wherever it is.
+  const infoDir = dirname(daemonInfoPath);
   return [
-    join(home, "daemon.json"),
-    join(home, "daemon.claim"),
+    daemonInfoPath,
+    join(infoDir, "daemon.claim"),
     join(home, "consent"),
     join(home, "plugin-store"),
     appSettingsPath(),

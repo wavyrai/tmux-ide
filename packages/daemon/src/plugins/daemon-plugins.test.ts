@@ -43,13 +43,24 @@ describe("pluginsEnabled", () => {
 });
 
 describe("daemonPrivateFiles", () => {
-  it("names the daemon record, its claim, consent, plugin stores and the app settings", () => {
-    expect(daemonPrivateFiles("/h")).toEqual([
-      join("/h", "daemon.json"),
-      join("/h", "daemon.claim"),
+  it("names the daemon record and claim where they live, consent, stores and app settings", () => {
+    expect(daemonPrivateFiles("/h", "/registry/daemon.json")).toEqual([
+      "/registry/daemon.json",
+      join("/registry", "daemon.claim"),
       join("/h", "consent"),
       join("/h", "plugin-store"),
       appSettingsPath(),
     ]);
+  });
+
+  it("follows TMUX_IDE_DAEMON_INFO_DIR by default", () => {
+    const before = process.env.TMUX_IDE_DAEMON_INFO_DIR;
+    process.env.TMUX_IDE_DAEMON_INFO_DIR = "/elsewhere/info";
+    try {
+      expect(daemonPrivateFiles("/h")[0]).toBe(join("/elsewhere/info", "daemon.json"));
+    } finally {
+      if (before === undefined) delete process.env.TMUX_IDE_DAEMON_INFO_DIR;
+      else process.env.TMUX_IDE_DAEMON_INFO_DIR = before;
+    }
   });
 });

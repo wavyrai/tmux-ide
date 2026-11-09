@@ -17,7 +17,7 @@
  * Linux is off unless TMUX_IDE_PLUGIN_EXEC_LINUX=1: it has not been tested
  * on a real Linux machine yet. Elsewhere, plugins cannot run programs.
  */
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 
 function isDirectory(path: string): boolean {
@@ -37,7 +37,10 @@ export interface SandboxPaths {
   readonly stateHome: string;
   /** The plugin's own data directory, the one writable place under the state home. */
   readonly writable: string;
-  /** Files and directories programs may not read: the daemon record, credentials. */
+  /**
+   * Paths programs may not read or write, each as a prefix: `…/daemon.json`
+   * also covers `daemon.json.<claim>.<uuid>.tmp`, `….retired` and the like.
+   */
   readonly unreadable?: readonly string[];
 }
 
@@ -49,6 +52,25 @@ export function realPath(path: string): string {
   if (existsSync(path)) return realpathSync(path);
   const parent = dirname(path);
   return parent === path ? path : join(realPath(parent), basename(path));
+}
+
+/** An SBPL regex literal matching every path that starts with `prefix`. */
+export function sbplPrefixRegex(prefix: string): string {
+  const escaped = prefix.replace(/[\\^$.*+?()[\]{}|"]/gu, (char) => `\\${char}`);
+  return `#"^${escaped}"`;
+}
+
+/** Existing paths that start with `prefix` (its directory's matching entries). */
+function existingWithPrefix(prefix: string): string[] {
+  const dir = dirname(prefix);
+  const name = basename(prefix);
+  try {
+    return readdirSync(dir)
+      .filter((entry) => entry.startsWith(name))
+      .map((entry) => join(dir, entry));
+  } catch {
+    return [];
+  }
 }
 
 function sbplString(value: string): string {
@@ -80,7 +102,7 @@ export function darwinProfile(
     `(deny file-write* (subpath ${sbplString(resolve(paths.stateHome))}))`,
     `(allow file-write* (subpath ${sbplString(writablePath(paths, resolve))}))`,
     ...(paths.unreadable ?? []).map(
-      (path) => `(deny file-read* file-write* (subpath ${sbplString(resolve(path))}))`,
+      (path) => `(deny file-read* file-write* (regex ${sbplPrefixRegex(resolve(path))}))`,
     ),
   ].join("");
 }
@@ -144,7 +166,16 @@ export function sandboxedArgv(
       };
     const home = resolve(paths.stateHome);
     const writable = writablePath(paths, resolve);
-    const hidden = (paths.unreadable ?? []).map(resolve).filter((path) => exists(path));
+    // bubblewrap binds paths, not patterns: what matches a prefix now is
+    // hidden; a file created under that prefix later is not (Linux is off
+    // by default and untested).
+    const hidden = (paths.unreadable ?? [])
+      .map(resolve)
+      .flatMap((prefix) =>
+        (exists(prefix) ? [prefix] : []).concat(
+          existingWithPrefix(prefix).filter((path) => path !== prefix),
+        ),
+      );
     return {
       ok: true,
       argv: [
