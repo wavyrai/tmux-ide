@@ -68,6 +68,7 @@ fn skips_malformed_or_spoofed_entries() {
     let bytes = catalog(json!([
         { "descriptor": descriptor("plugin.x.y", "No plugin field", "plugin", false), "params": [] },
         { "descriptor": descriptor("project.launch", "Built-in claiming a plugin", "plugin", false), "plugin": "x", "params": [] },
+        { "descriptor": descriptor("plugin.x.daemon", "Daemon-owned plugin-shaped id", "daemon", false), "plugin": "x", "params": [] },
         { "descriptor": descriptor("plugin.x..y", "Bad id", "plugin", false), "plugin": "x", "params": [] },
         { "descriptor": descriptor("plugin.x.z", "Bad param", "plugin", false), "plugin": "x",
           "params": [{ "name": "Bad Name", "type": "string" }] },
