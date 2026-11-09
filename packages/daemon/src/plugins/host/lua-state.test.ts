@@ -247,7 +247,7 @@ describe("deadlines", () => {
       run(
         `for i = 1, 10 do local t = os.clock() while os.clock() - t < 0.04 do end coroutine.yield() end`,
       ),
-    ).rejects.toThrow(/E_TIMEOUT/u);
+    ).rejects.toThrow(/ran past its time budget/u);
     expect(trips).toEqual(["timeout"]);
     expect(marks.length).toBeGreaterThan(2);
   });
