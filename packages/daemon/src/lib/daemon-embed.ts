@@ -1468,7 +1468,12 @@ async function startEmbeddedDaemonGeneration(
     // Created now so its routes mount with the server; it spawns nothing until
     // start(), which runs once this generation is published.
     const pluginSupervisor =
-      opts.plugins && pluginsEnabled() ? createDaemonPluginSupervisor({ productVersion }) : null;
+      opts.plugins && pluginsEnabled()
+        ? createDaemonPluginSupervisor({
+            productVersion,
+            secrets: [localBypassToken, authToken ?? null],
+          })
+        : null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       const selector = tmuxAuthority.socketSelector;

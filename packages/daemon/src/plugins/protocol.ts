@@ -47,6 +47,11 @@ export const PluginSpecSchemaZ = z
   .object({
     name: z.union([PluginNameSchemaZ, z.literal(INIT_PLUGIN_NAME)]),
     kind: z.enum(["init", "plugin"]),
+    /** Consented content hash; the host re-hashes the directory and refuses a mismatch. */
+    contentHash: z
+      .string()
+      .regex(/^sha256:[0-9a-f]{64}$/u)
+      .optional(),
     /** Absolute path of the entry file. */
     entry: z.string().min(1),
     /** Absolute directories `ide.include` may read from, in search order. */

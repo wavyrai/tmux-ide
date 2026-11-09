@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { runPluginCommandLine, type PluginCliIo } from "./cli.ts";
+import { hashPluginDirectory, readConsent } from "./consent.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 
 let home: string;
@@ -40,6 +42,8 @@ function harness(
     }) as unknown as typeof fetch,
     stateHome: () => home,
     sleep: async () => {},
+    interactive: () => false,
+    ask: async () => "",
   };
   return { io, out, err, calls };
 }
@@ -192,5 +196,86 @@ describe("tmux-ide plugin", () => {
       '10:00:01 init error boom {"n":1}',
       '10:00:01 init error boom {"n":1}',
     ]);
+  });
+});
+
+describe("tmux-ide plugin consent", () => {
+  function install() {
+    const dir = join(home, "plugins", "tasks");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        name: "tasks",
+        version: "1.2.0",
+        api: "^1.0",
+        description: "Worktree tasks",
+        capabilities: { exec: ["git"], sidebar: true },
+      }),
+    );
+    writeFileSync(join(dir, "init.lua"), "return true");
+    return dir;
+  }
+  const reloaded = () => ({
+    body: {
+      host: { running: true, pid: 1, restarts: 0 },
+      plugins: [{ name: "tasks", kind: "plugin", state: "loaded", trips: 0 }],
+    },
+  });
+
+  it("shows what the plugin asks for, records its hash with --yes and reloads it", async () => {
+    const dir = install();
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks", "--yes"], h.io)).toBe(0);
+    expect(h.out[0]).toContain("tasks 1.2.0");
+    expect(h.out[0]).toContain("run these programs: git");
+    expect(h.out[0]).toContain("add rows to the sidebar");
+    expect(h.out.slice(1)).toEqual(["Allowed tasks.", "tasks: loaded"]);
+    expect(readConsent(home).plugins.tasks?.hash).toBe(hashPluginDirectory(dir));
+    expect(h.calls).toEqual([
+      expect.objectContaining({ path: "/api/v2/plugins/reload", body: { name: "tasks" } }),
+    ]);
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks"], h.io)).toBe(0);
+    expect(h.out.at(-1)).toBe("tasks is already allowed to run.");
+  });
+
+  it("asks on a terminal and changes nothing unless the answer is yes", async () => {
+    install();
+    const h = harness(reloaded);
+    const no = { ...h.io, interactive: () => true, ask: async () => "n" };
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks"], no)).toBe(1);
+    expect(readConsent(home).plugins).toEqual({});
+    const yes = { ...h.io, interactive: () => true, ask: async () => "y" };
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks"], yes)).toBe(0);
+    expect(Object.keys(readConsent(home).plugins)).toEqual(["tasks"]);
+  });
+
+  it("refuses to consent without a terminal unless --yes is given", async () => {
+    install();
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks"], h.io)).toBe(2);
+    expect(h.err[0]).toMatch(/--yes/u);
+    expect(readConsent(home).plugins).toEqual({});
+    expect(h.calls).toEqual([]);
+  });
+
+  it("asks again after the plugin changes, and revoke withdraws consent", async () => {
+    const dir = install();
+    const h = harness(reloaded);
+    await runPluginCommandLine("plugin", ["consent", "tasks", "--yes"], h.io);
+    writeFileSync(join(dir, "init.lua"), "return 'new'");
+    expect(await runPluginCommandLine("plugin", ["consent", "tasks", "--yes"], h.io)).toBe(0);
+    expect(h.out.some((line) => line.includes("(changed since you last allowed it)"))).toBe(true);
+    expect(await runPluginCommandLine("plugin", ["revoke", "tasks"], h.io)).toBe(0);
+    expect(readConsent(home).plugins).toEqual({});
+  });
+
+  it("explains unknown and invalid plugins", async () => {
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "nope", "--yes"], h.io)).toBe(1);
+    expect(h.err[0]).toMatch(/No plugin named 'nope'/u);
+    mkdirSync(join(home, "plugins", "broken"), { recursive: true });
+    expect(await runPluginCommandLine("plugin", ["consent", "broken", "--yes"], h.io)).toBe(1);
+    expect(h.err[1]).toBe("broken cannot run: manifest.json is missing");
   });
 });

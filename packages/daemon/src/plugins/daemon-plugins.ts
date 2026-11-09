@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
-import { PluginSupervisor } from "./supervisor.ts";
+import { PluginSupervisor, secretEnvValues } from "./supervisor.ts";
 
 /** `TMUX_IDE_PLUGINS=0` turns plugins off for a daemon. */
 export function pluginsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -30,14 +30,18 @@ export function resolvePluginHostCommand(
 
 export function createDaemonPluginSupervisor(options: {
   productVersion: string;
+  /** Daemon credentials that must never reach a plugin log or `lua run` output. */
+  secrets: readonly (string | null | undefined)[];
   home?: string;
 }): PluginSupervisor {
+  const secrets = options.secrets.filter((secret): secret is string => typeof secret === "string");
   const home = options.home ?? stateHome();
   const logPath = pluginLogPath(home);
   return new PluginSupervisor({
     stateHome: home,
     productVersion: options.productVersion,
     hostCommand: resolvePluginHostCommand(),
+    secrets: () => [...secrets, ...secretEnvValues()],
     onLog: (entry) => {
       appendPluginLog(logPath, entry);
       logger[entry.level](`plugin.${entry.plugin}`, entry.message, entry.fields);

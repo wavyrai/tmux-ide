@@ -17,7 +17,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { discoverPlugins, type PluginProblem } from "./discovery.ts";
+import { isSecretKey, redactLogValue, redactText } from "../lib/log-sanitize.ts";
+import { discoverPlugins, type PluginAwaitingConsent, type PluginProblem } from "./discovery.ts";
 import { appendPluginLog, pluginLogPath, type PluginLogEntry } from "./plugin-log.ts";
 import {
   DEFAULT_PLUGIN_LIMITS,
@@ -31,7 +32,13 @@ import {
   type PluginTripKind,
 } from "./protocol.ts";
 
-export type PluginRunState = "loading" | "loaded" | "failed" | "disabled" | "invalid";
+export type PluginRunState =
+  | "loading"
+  | "loaded"
+  | "failed"
+  | "disabled"
+  | "invalid"
+  | "needs-consent";
 
 export interface PluginStatus {
   readonly name: string;
@@ -63,7 +70,10 @@ export interface PluginSupervisorOptions {
   readonly productVersion: string;
   /** argv of the host process, e.g. [node, cli.js, "__plugin-host"]. */
   readonly hostCommand: readonly string[];
+  /** The host's environment. Defaults to {@link minimalHostEnv}. */
   readonly hostEnv?: NodeJS.ProcessEnv;
+  /** Strings never to write to logs or return from `run`, e.g. daemon tokens. */
+  readonly secrets?: () => Iterable<string>;
   readonly limits?: PluginLimits;
   readonly heartbeatTimeoutMs?: number;
   readonly watchdogIntervalMs?: number;
@@ -95,13 +105,48 @@ interface HostHandle {
   killedBy: string | null;
 }
 
+/**
+ * The only variables the plugin host inherits. The daemon's own environment
+ * (owner tokens, TMUX_IDE_* settings, anything the user exported) stays out.
+ */
+export const HOST_ENV_ALLOWLIST = Object.freeze([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+  "TMPDIR",
+  "TZ",
+]);
+
+export function minimalHostEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const key of HOST_ENV_ALLOWLIST) {
+    const value = env[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+/** Values of credential-named variables in `env`, to redact wherever they appear. */
+export function secretEnvValues(env: NodeJS.ProcessEnv = process.env): string[] {
+  return Object.entries(env)
+    .filter(([key, value]) => isSecretKey(key) && typeof value === "string" && value.length >= 8)
+    .map(([, value]) => value!);
+}
+
 const defaultRestartDelay = (attempt: number) => Math.min(1000 * 2 ** attempt, 60_000);
 
 export class PluginSupervisor {
   readonly #options: Required<
-    Omit<PluginSupervisorOptions, "hostEnv" | "onLog" | "limits" | "now">
+    Omit<PluginSupervisorOptions, "hostEnv" | "onLog" | "limits" | "now" | "secrets">
   > & {
-    hostEnv: NodeJS.ProcessEnv | undefined;
+    hostEnv: NodeJS.ProcessEnv;
+    secrets: () => Iterable<string>;
     onLog: (entry: PluginLogEntry) => void;
     limits: PluginLimits;
     now: () => number;
@@ -110,6 +155,7 @@ export class PluginSupervisor {
   readonly #loadWaiters = new Map<string, (() => void)[]>();
   readonly #runs = new Map<string, (result: LuaRunResult) => void>();
   #problems: readonly PluginProblem[] = [];
+  #awaitingConsent: readonly PluginAwaitingConsent[] = [];
   #host: HostHandle | null = null;
   #restarts = 0;
   #restartTimer: NodeJS.Timeout | null = null;
@@ -122,7 +168,8 @@ export class PluginSupervisor {
       stateHome: options.stateHome,
       productVersion: options.productVersion,
       hostCommand: options.hostCommand,
-      hostEnv: options.hostEnv,
+      hostEnv: options.hostEnv ?? minimalHostEnv(),
+      secrets: options.secrets ?? (() => secretEnvValues()),
       limits: options.limits ?? DEFAULT_PLUGIN_LIMITS,
       heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 5000,
       watchdogIntervalMs: options.watchdogIntervalMs ?? 500,
@@ -150,9 +197,11 @@ export class PluginSupervisor {
     if (this.#stopped) return this.status();
     const discovery = discoverPlugins(this.#options.stateHome);
     this.#problems = discovery.problems;
+    this.#awaitingConsent = discovery.awaitingConsent;
     const found = new Set(discovery.specs.map((spec) => spec.name));
 
-    // Plugins that vanished from disk are unloaded and forgotten.
+    // Plugins that vanished from disk, became invalid, or changed since
+    // consent are unloaded and forgotten.
     for (const [entryName, entry] of [...this.#entries]) {
       if (entry.spec && !found.has(entryName) && (!name || name === entryName)) {
         this.#send({ type: "unload", name: entryName });
@@ -203,6 +252,18 @@ export class PluginSupervisor {
         kind: "plugin",
         state: "invalid",
         error: problem.error,
+        trips: 0,
+      });
+    }
+    for (const pending of this.#awaitingConsent) {
+      plugins.push({
+        name: pending.name,
+        kind: "plugin",
+        state: "needs-consent",
+        error:
+          pending.reason === "new"
+            ? `not consented to yet; run \`tmux-ide plugin consent ${pending.name}\``
+            : `changed since it was consented to; run \`tmux-ide plugin consent ${pending.name}\` again`,
         trips: 0,
       });
     }
@@ -287,13 +348,18 @@ export class PluginSupervisor {
     message: string,
     fields?: Record<string, unknown>,
   ) {
+    const secrets = this.#secretSet();
     this.#options.onLog({
       ts: new Date(this.#options.now()).toISOString(),
       plugin,
       level,
-      message,
-      ...(fields ? { fields } : {}),
+      message: redactText(message, secrets),
+      ...(fields ? { fields: redactLogValue(fields, secrets) as Record<string, unknown> } : {}),
     });
+  }
+
+  #secretSet(): ReadonlySet<string> {
+    return new Set([...this.#options.secrets()].filter((secret) => secret.length >= 8));
   }
 
   #waitLoaded(name: string): Promise<void> {
@@ -329,7 +395,7 @@ export class PluginSupervisor {
     if (!command) throw new Error("plugin host command is empty");
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: this.#options.hostEnv ?? process.env,
+      env: this.#options.hostEnv,
     });
     const host: HostHandle = {
       child,
@@ -434,11 +500,12 @@ export class PluginSupervisor {
             values = [];
           }
         }
+        const secrets = this.#secretSet();
         resolve({
           ok: event.ok,
-          ...(values ? { values } : {}),
-          ...(event.error ? { error: event.error } : {}),
-          logs: event.logs,
+          ...(values ? { values: values.map((value) => redactLogValue(value, secrets)) } : {}),
+          ...(event.error ? { error: redactText(event.error, secrets) } : {}),
+          logs: event.logs.map((log) => ({ ...log, message: redactText(log.message, secrets) })),
         });
         return;
       }

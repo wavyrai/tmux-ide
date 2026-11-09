@@ -3,8 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { grantConsent, hashPluginDirectory } from "./consent.ts";
 import type { PluginLogEntry } from "./plugin-log.ts";
-import { PluginSupervisor, type PluginSupervisorOptions } from "./supervisor.ts";
+import {
+  HOST_ENV_ALLOWLIST,
+  PluginSupervisor,
+  type PluginSupervisorOptions,
+} from "./supervisor.ts";
 
 const hostEntry = join(dirname(fileURLToPath(import.meta.url)), "host", "entry.ts");
 const hostCommand = [process.execPath, "--import", "tsx", hostEntry];
@@ -37,7 +42,12 @@ function supervisor(overrides: Partial<PluginSupervisorOptions> = {}) {
   return created;
 }
 
-function plugin(name: string, source: string, manifest: Record<string, unknown> = {}) {
+function plugin(
+  name: string,
+  source: string,
+  manifest: Record<string, unknown> = {},
+  consent = true,
+) {
   const dir = join(home, "plugins", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -45,6 +55,7 @@ function plugin(name: string, source: string, manifest: Record<string, unknown> 
     JSON.stringify({ name, version: "0.1.0", api: "^1.0", ...manifest }),
   );
   writeFileSync(join(dir, "init.lua"), source);
+  if (consent) grantConsent(home, name, hashPluginDirectory(dir));
 }
 
 async function until<T>(read: () => T, accept: (value: T) => boolean, ms = 15_000): Promise<T> {
@@ -112,6 +123,101 @@ describe("PluginSupervisor", () => {
     ).toBe(true);
   });
 
+  it("does not load a plugin until it is consented to, and init.lua needs no consent", async () => {
+    plugin("unasked", `ide.log.info("should not run")`, {}, false);
+    const s = supervisor();
+    let status = await s.start();
+    expect(status.host.running).toBe(false);
+    expect(status.plugins).toEqual([
+      {
+        name: "unasked",
+        kind: "plugin",
+        state: "needs-consent",
+        error: "not consented to yet; run `tmux-ide plugin consent unasked`",
+        trips: 0,
+      },
+    ]);
+    writeFileSync(join(home, "init.lua"), `ide.log.info("init runs")`);
+    status = await s.reload();
+    expect(status.plugins.map((p) => [p.name, p.state])).toEqual([
+      ["unasked", "needs-consent"],
+      ["init", "loaded"],
+    ]);
+    expect(logs.map((entry) => entry.message)).toEqual(["init runs"]);
+  });
+
+  it("unloads a consented plugin that changed on disk, and asks again", async () => {
+    plugin("tool", `ide.log.info("v1")`);
+    const s = supervisor();
+    await s.start();
+    expect(state(s, "tool")).toBe("loaded");
+    writeFileSync(join(home, "plugins", "tool", "init.lua"), `ide.log.info("v2")`);
+    const status = await s.reload();
+    expect(status.plugins).toEqual([
+      expect.objectContaining({
+        name: "tool",
+        state: "needs-consent",
+        error: expect.stringMatching(/changed since/u),
+      }),
+    ]);
+    expect(logs.map((entry) => entry.message)).toEqual(["v1"]);
+  });
+
+  it("starts the host with a minimal environment, not the daemon's", async () => {
+    plugin("probe", `return true`);
+    const fake = join(home, "env-host.mjs");
+    writeFileSync(
+      fake,
+      `import { writeSync } from "node:fs";
+       const emit = (e) => writeSync(3, JSON.stringify(e) + "\\n");
+       emit({ type: "hello", protocolVersion: 1, pid: process.pid });
+       emit({ type: "log", plugin: "probe", level: "info", message: JSON.stringify(process.env) });
+       process.stdin.on("data", () => {}).on("end", () => process.exit(0));`,
+    );
+    const secret = "daemon-owner-token-0123456789";
+    process.env.TMUX_IDE_TEST_OWNER_TOKEN = secret;
+    process.env.TMUX_IDE_HOME_FOR_TEST = home;
+    try {
+      const s = new PluginSupervisor({
+        stateHome: home,
+        productVersion: "9.9.9",
+        hostCommand: [process.execPath, fake],
+        onLog: (entry) => logs.push(entry),
+      });
+      supervisors.push(s);
+      void s.start();
+      const line = await until(() => logs.find((entry) => entry.plugin === "probe"), Boolean);
+      const env = JSON.parse(line!.message) as Record<string, string>;
+      // macOS adds __CF_USER_TEXT_ENCODING to every process it starts.
+      const keys = Object.keys(env).filter((key) => key !== "__CF_USER_TEXT_ENCODING");
+      expect(keys.filter((key) => !HOST_ENV_ALLOWLIST.includes(key))).toEqual([]);
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(line!.message).not.toContain(secret);
+      expect(line!.message).not.toContain("TMUX_IDE_");
+    } finally {
+      delete process.env.TMUX_IDE_TEST_OWNER_TOKEN;
+      delete process.env.TMUX_IDE_HOME_FOR_TEST;
+    }
+  });
+
+  it("redacts daemon credentials from plugin logs and lua run output", async () => {
+    const token = "owner-capability-abcdef123456";
+    plugin("leaky", `ide.log.warn("token is ${token}", { copy = "${token}" })`);
+    const s = supervisor({ secrets: () => [token] });
+    await s.start();
+    const result = await s.run(`print("${token}") error("failed with ${token}")`);
+    const ran = await s.run(`return "${token}", { nested = "Bearer ${token}" }`);
+    const everything = JSON.stringify({ logs, result, ran });
+    expect(everything).not.toContain(token);
+    expect(logs[0]).toMatchObject({
+      message: "token is [redacted]",
+      fields: { copy: "[redacted]" },
+    });
+    expect(result.logs).toEqual([{ level: "info", message: "[redacted]" }]);
+    expect(result.error).toMatch(/failed with \[redacted\]/u);
+    expect(ran.values).toEqual(["[redacted]", { nested: "Bearer [redacted]" }]);
+  });
+
   it("runs a script once and returns its values and logs", async () => {
     const s = supervisor();
     const result = await s.run(`print("hi") return 1 + 1, ide.plugin.name, { a = 1 }`);
@@ -131,6 +237,8 @@ describe("PluginSupervisor", () => {
     await s.start();
     expect(state(s, "tool")).toBe("failed");
     writeFileSync(join(home, "plugins", "tool", "init.lua"), `ide.log.info("second version")`);
+    // Editing a plugin withdraws consent; the owner allows the new version.
+    grantConsent(home, "tool", hashPluginDirectory(join(home, "plugins", "tool")));
     const status = await s.reload("tool");
     expect(status.plugins.find((p) => p.name === "tool")?.state).toBe("loaded");
     expect(logs.at(-1)?.message).toBe("second version");
@@ -242,7 +350,13 @@ describe("PluginSupervisor", () => {
       () => logs.filter((entry) => entry.message === "loaded").length,
       (n) => n === 2,
     );
-    expect(state(s, "ok")).toBe("loaded");
+    // The plugin's log line arrives before the host reports the load finished.
+    expect(
+      await until(
+        () => state(s, "ok"),
+        (value) => value === "loaded",
+      ),
+    ).toBe("loaded");
   }, 30_000);
 
   it("fails pending runs when it stops, and runs nothing afterwards", async () => {

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { grantConsent, hashPluginDirectory } from "./consent.ts";
 import { discoverPlugins } from "./discovery.ts";
 import { apiSatisfies, PluginManifestSchemaZ } from "./manifest.ts";
 
@@ -17,6 +18,10 @@ function plugin(dirName: string, manifest: unknown, entry = "init.lua") {
   if (manifest !== undefined) writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest));
   writeFileSync(join(dir, entry), "return true");
   return dir;
+}
+
+function consentTo(name: string) {
+  grantConsent(home, name, hashPluginDirectory(join(home, "plugins", name)));
 }
 
 const manifest = (name: string, extra: Record<string, unknown> = {}) => ({
@@ -54,7 +59,7 @@ describe("manifest schema", () => {
 
 describe("discoverPlugins", () => {
   it("finds nothing in an empty home", () => {
-    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [] });
+    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [], awaitingConsent: [] });
   });
 
   it("orders plugins by name, puts init.lua last and fills in roots and defaults", () => {
@@ -69,6 +74,8 @@ describe("discoverPlugins", () => {
     );
     mkdirSync(join(alpha, "src"));
     writeFileSync(join(alpha, "src", "main.lua"), "return true");
+    consentTo("alpha");
+    consentTo("zeta");
     writeFileSync(join(home, "init.lua"), "-- user");
     const { specs, problems } = discoverPlugins(home);
     expect(problems).toEqual([]);
@@ -76,6 +83,7 @@ describe("discoverPlugins", () => {
       {
         name: "alpha",
         kind: "plugin",
+        contentHash: expect.stringMatching(/^sha256:/u),
         entry: join(alpha, "src", "main.lua"),
         includeRoots: [alpha],
         moduleRoots: [alpha, join(home, "lua")],
@@ -84,6 +92,7 @@ describe("discoverPlugins", () => {
       {
         name: "zeta",
         kind: "plugin",
+        contentHash: expect.stringMatching(/^sha256:/u),
         entry: join(zeta, "init.lua"),
         includeRoots: [zeta],
         moduleRoots: [zeta, join(home, "lua")],
@@ -129,9 +138,25 @@ describe("discoverPlugins", () => {
     });
   });
 
+  it("holds back a plugin that was never consented to, or changed since", () => {
+    const fresh = plugin("fresh", manifest("fresh"));
+    const edited = plugin("edited", manifest("edited"));
+    consentTo("edited");
+    writeFileSync(join(edited, "init.lua"), "return 'changed'");
+    writeFileSync(join(home, "init.lua"), "-- the user's own file needs no consent");
+    const { specs, awaitingConsent } = discoverPlugins(home);
+    expect(specs.map((spec) => spec.name)).toEqual(["init"]);
+    expect(awaitingConsent.map(({ name, path, reason }) => ({ name, path, reason }))).toEqual([
+      { name: "edited", path: edited, reason: "changed" },
+      { name: "fresh", path: fresh, reason: "new" },
+    ]);
+    consentTo("edited");
+    expect(discoverPlugins(home).specs.map((spec) => spec.name)).toEqual(["edited", "init"]);
+  });
+
   it("skips dot-directories and plain files in plugins/", () => {
     mkdirSync(join(home, "plugins", ".cache"), { recursive: true });
     writeFileSync(join(home, "plugins", "README"), "");
-    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [] });
+    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [], awaitingConsent: [] });
   });
 });

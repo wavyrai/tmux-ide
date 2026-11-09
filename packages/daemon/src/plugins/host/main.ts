@@ -20,6 +20,7 @@ import {
   type PluginLogLevel,
   type PluginSpec,
 } from "../protocol.ts";
+import { hashPluginDirectory } from "../consent.ts";
 import { MAX_SOURCE_BYTES, PluginLuaState, PluginRunError } from "./lua-state.ts";
 
 export const HEARTBEAT_INTERVAL_MS = 1000;
@@ -129,6 +130,12 @@ export class PluginHost {
     this.#unload(spec.name);
     let state: PluginLuaState | null = null;
     try {
+      if (spec.kind === "plugin") {
+        // Consent covers exact content. Re-hash here so a file changed after
+        // the daemon checked consent does not run.
+        if (!spec.contentHash || hashPluginDirectory(spec.includeRoots[0]!) !== spec.contentHash)
+          throw new Error("E_DENIED: the plugin changed since it was consented to; consent again");
+      }
       const size = statSync(spec.entry).size;
       if (size > MAX_SOURCE_BYTES) throw new Error(`E_INVALID: ${spec.entry} is larger than 1 MiB`);
       const source = readFileSync(spec.entry, "utf8");

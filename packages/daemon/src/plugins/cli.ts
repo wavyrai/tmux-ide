@@ -4,6 +4,8 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
+import { discoverPlugins, type PluginAwaitingConsent } from "./discovery.ts";
 import { API_ENTRIES, findApiEntry, suggestApiEntries, type ApiEntry } from "./api-table.ts";
 import {
   formatPluginLogEntry,
@@ -24,6 +26,9 @@ export interface PluginCliIo {
   readonly fetch: typeof fetch;
   readonly stateHome: () => string;
   readonly sleep: (ms: number) => Promise<void>;
+  /** Whether a person can answer a question on this terminal. */
+  readonly interactive: () => boolean;
+  readonly ask: (question: string) => Promise<string>;
 }
 
 export class PluginCliError extends Error {
@@ -44,7 +49,9 @@ export const LUA_USAGE = `Usage:
 export const PLUGIN_USAGE = `Usage:
   tmux-ide plugin list [--json]             Show the plugin host and every plugin's state
   tmux-ide plugin reload [name] [--json]    Discover plugins again and reload all, or one
-  tmux-ide plugin logs [name] [-n <lines>] [-f]   Show ~/.tmux-ide/logs/plugins.log`;
+  tmux-ide plugin logs [name] [-n <lines>] [-f]   Show ~/.tmux-ide/logs/plugins.log
+  tmux-ide plugin consent <name> [--yes]    Review a plugin's permissions and allow it to run
+  tmux-ide plugin revoke <name>             Stop a plugin and withdraw consent`;
 
 async function callDaemon<T>(
   io: PluginCliIo,
@@ -264,6 +271,41 @@ async function followLog(
   }
 }
 
+export function describeForConsent(plugin: PluginAwaitingConsent): string {
+  const { manifest } = plugin;
+  const exec = manifest.capabilities.exec ?? [];
+  const asks = [
+    exec.length > 0 ? `run these programs: ${exec.join(", ")}` : null,
+    manifest.capabilities.keys ? "add key bindings" : null,
+    manifest.capabilities.sidebar ? "add rows to the sidebar" : null,
+    manifest.capabilities.status ? "add status items" : null,
+  ].filter((line): line is string => line !== null);
+  return [
+    `${manifest.name} ${manifest.version}${plugin.reason === "changed" ? " (changed since you last allowed it)" : ""}`,
+    ...(manifest.description ? [manifest.description] : []),
+    `Directory: ${plugin.path}`,
+    `Content:   ${plugin.hash}`,
+    "",
+    "It asks to:",
+    ...(asks.length > 0 ? asks.map((line) => `  - ${line}`) : ["  - nothing beyond logging"]),
+    "",
+    "Plugins run with your permissions, inside tmux-ide.",
+  ].join("\n");
+}
+
+async function reloadAfterConsentChange(io: PluginCliIo, name: string): Promise<void> {
+  try {
+    const status = await callDaemon<PluginSupervisorStatus>(io, "POST", "/api/v2/plugins/reload", {
+      name,
+    });
+    const plugin = status.plugins.find((candidate) => candidate.name === name);
+    if (plugin)
+      io.out(`${name}: ${plugin.state}${plugin.error ? ` (${plugin.error.split("\n")[0]})` : ""}`);
+  } catch (error) {
+    io.err(`The daemon will pick this up on its next reload (${(error as Error).message}).`);
+  }
+}
+
 async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<number> {
   const [sub, ...rest] = argv;
   const { values, positionals } = parseArgs({
@@ -273,6 +315,7 @@ async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<numb
     options: {
       json: { type: "boolean" },
       follow: { type: "boolean", short: "f" },
+      yes: { type: "boolean", short: "y" },
       lines: { type: "string", short: "n" },
       help: { type: "boolean", short: "h" },
     },
@@ -301,6 +344,54 @@ async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<numb
         (plugin) => (!name || plugin.name === name) && plugin.state !== "loaded",
       );
       return failed ? 1 : 0;
+    }
+    case "consent": {
+      const name = positionals[0];
+      if (!name) throw new PluginCliError(`Name the plugin to consent to.\n${PLUGIN_USAGE}`, 2);
+      const home = io.stateHome();
+      const discovery = discoverPlugins(home);
+      if (discovery.specs.some((spec) => spec.name === name && spec.kind === "plugin")) {
+        io.out(`${name} is already allowed to run.`);
+        return 0;
+      }
+      const pending = discovery.awaitingConsent.find((plugin) => plugin.name === name);
+      if (!pending) {
+        const problem = discovery.problems.find((candidate) => candidate.name === name);
+        throw new PluginCliError(
+          problem
+            ? `${name} cannot run: ${problem.error}`
+            : `No plugin named '${name}' in ${home}/plugins.`,
+        );
+      }
+      io.out(describeForConsent(pending));
+      if (!values.yes) {
+        if (!io.interactive())
+          throw new PluginCliError("Not a terminal: pass --yes to consent without a prompt.", 2);
+        const answer = (await io.ask("Allow this plugin to run? [y/N] ")).trim().toLowerCase();
+        if (answer !== "y" && answer !== "yes") {
+          io.out("Not allowed. Nothing changed.");
+          return 1;
+        }
+      }
+      // Hash again: consent covers what is on disk now, not what was shown a moment ago.
+      const hash = hashPluginDirectory(pending.path);
+      if (hash !== pending.hash)
+        throw new PluginCliError(`${name} changed while you were reviewing it. Run consent again.`);
+      grantConsent(home, name, hash);
+      io.out(`Allowed ${name}.`);
+      await reloadAfterConsentChange(io, name);
+      return 0;
+    }
+    case "revoke": {
+      const name = positionals[0];
+      if (!name) throw new PluginCliError(`Name the plugin to revoke.\n${PLUGIN_USAGE}`, 2);
+      if (!revokeConsent(io.stateHome(), name)) {
+        io.out(`${name} was not allowed to run. Nothing changed.`);
+        return 0;
+      }
+      io.out(`Revoked ${name}.`);
+      await reloadAfterConsentChange(io, name);
+      return 0;
     }
     case "logs": {
       const path = pluginLogPath(io.stateHome());
@@ -357,5 +448,15 @@ export async function defaultPluginCliIo(): Promise<PluginCliIo> {
     fetch: (...args) => cliBridgeFetch()(...args),
     stateHome,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    interactive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    ask: async (question) => {
+      const { createInterface } = await import("node:readline/promises");
+      const prompt = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        return await prompt.question(question);
+      } finally {
+        prompt.close();
+      }
+    },
   };
 }

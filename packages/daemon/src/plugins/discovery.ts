@@ -5,7 +5,13 @@
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { apiSatisfies, manifestDefaults, PluginManifestSchemaZ } from "./manifest.ts";
+import { consentState, hashPluginDirectory, readConsent } from "./consent.ts";
+import {
+  apiSatisfies,
+  manifestDefaults,
+  PluginManifestSchemaZ,
+  type PluginManifest,
+} from "./manifest.ts";
 import { INIT_PLUGIN_NAME, PLUGIN_NAME_PATTERN, type PluginSpec } from "./protocol.ts";
 
 export interface PluginProblem {
@@ -14,9 +20,19 @@ export interface PluginProblem {
   readonly error: string;
 }
 
+/** A valid plugin that may not run yet: never consented, or changed since. */
+export interface PluginAwaitingConsent {
+  readonly name: string;
+  readonly path: string;
+  readonly reason: "new" | "changed";
+  readonly hash: string;
+  readonly manifest: PluginManifest;
+}
+
 export interface PluginDiscovery {
   readonly specs: readonly PluginSpec[];
   readonly problems: readonly PluginProblem[];
+  readonly awaitingConsent: readonly PluginAwaitingConsent[];
 }
 
 export function pluginPaths(stateHome: string) {
@@ -39,6 +55,8 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
   const paths = pluginPaths(stateHome);
   const specs: PluginSpec[] = [];
   const problems: PluginProblem[] = [];
+  const awaitingConsent: PluginAwaitingConsent[] = [];
+  const consent = readConsent(stateHome);
 
   let entries: string[];
   try {
@@ -104,9 +122,22 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       problem(`entry '${manifest.entry}' is missing`);
       continue;
     }
+    let hash: string;
+    try {
+      hash = hashPluginDirectory(dir);
+    } catch (error) {
+      problem(`could not read the plugin: ${(error as Error).message}`);
+      continue;
+    }
+    const consented = consentState(consent, manifest.name, hash);
+    if (consented !== "consented") {
+      awaitingConsent.push({ name: manifest.name, path: dir, reason: consented, hash, manifest });
+      continue;
+    }
     specs.push({
       name: manifest.name,
       kind: "plugin",
+      contentHash: hash,
       entry,
       includeRoots: [dir],
       moduleRoots: [dir, paths.lua],
@@ -124,5 +155,5 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       settings: {},
     });
   }
-  return { specs, problems };
+  return { specs, problems, awaitingConsent };
 }
