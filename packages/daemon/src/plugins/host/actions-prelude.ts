@@ -34,15 +34,18 @@ local PARAM_TYPES = { string = true, text = true, number = true, boolean = true,
 
 local function fail(message) raw_error("E_INVALID: " .. message, 3) end
 
--- Plain text only: no C0/DEL controls, C1 controls, bidi controls or
--- U+2028/U+2029 line separators, which
+-- Plain text only: no C0/DEL controls, C1 controls, bidi or zero-width
+-- format characters, U+FEFF, soft hyphens or U+2028/U+2029; the catalog
+-- schema refuses the rarer format characters at publish. They
 -- would reach terminals that show this text.
 local function unsafe(text)
   return s_find(text, "[%c\127]") ~= nil
     or s_find(text, "\194[\128-\159]") ~= nil
     or s_find(text, "\216\156") ~= nil
-    or s_find(text, "\226\128[\142\143\168-\174]") ~= nil
-    or s_find(text, "\226\129[\166-\169]") ~= nil
+    or s_find(text, "\226\128[\139-\143\168-\174]") ~= nil
+    or s_find(text, "\226\129[\160-\164\166-\175]") ~= nil
+    or s_find(text, "\239\187\191") ~= nil
+    or s_find(text, "\194\173") ~= nil
 end
 
 local function check_string(value, what, max, optional)

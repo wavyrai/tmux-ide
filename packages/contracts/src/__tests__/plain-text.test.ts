@@ -28,12 +28,18 @@ const UNSAFE = [
   "\u2069",
   "\u2028",
   "\u2029",
+  "\u200b",
+  "\u200c",
+  "\u200d",
+  "\u2060",
+  "\ufeff",
+  "\u00ad",
 ];
 
 describe("plain text", () => {
   it("finds every control, DEL, C1 and bidi control character", () => {
     for (const char of UNSAFE) expect(hasUnsafeText(`a${char}b`), JSON.stringify(char)).toBe(true);
-    for (const text of ["", "plain", "Café ✓ 日本 🚀", "\u00a0", "\u200d", "\u2027x"])
+    for (const text of ["", "plain", "Café ✓ 日本 🚀", "\u00a0", "\u2027x", "\u3000"])
       expect(hasUnsafeText(text), JSON.stringify(text)).toBe(false);
   });
 
