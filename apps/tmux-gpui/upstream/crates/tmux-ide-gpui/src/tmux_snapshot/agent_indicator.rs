@@ -68,8 +68,9 @@ fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
         theme.ink(theme.palette[2])
     } else {
         // Working is muted: the spinner's motion says it, and the theme's one
-        // accent is left to "needs input" (#746).
-        theme.muted
+        // accent is left to "needs input" (#746). Inked like every other mark,
+        // so it still reads at the contrast setting's ratio.
+        theme.ink(theme.muted)
     }
 }
 impl SnapshotView {
