@@ -88,7 +88,7 @@ describe("discoverPlugins", () => {
         includeRoots: [alpha],
         moduleRoots: [alpha],
         settings: { base: "main" },
-        capabilities: { exec: [], shell: false },
+        capabilities: { exec: [], shell: false, panes: false },
       },
       {
         name: "zeta",
@@ -98,7 +98,7 @@ describe("discoverPlugins", () => {
         includeRoots: [zeta],
         moduleRoots: [zeta],
         settings: {},
-        capabilities: { exec: [], shell: false },
+        capabilities: { exec: [], shell: false, panes: false },
       },
       {
         name: "init",
@@ -107,7 +107,7 @@ describe("discoverPlugins", () => {
         includeRoots: [home, join(home, "lua")],
         moduleRoots: [join(home, "lua")],
         settings: {},
-        capabilities: { exec: "any", shell: true },
+        capabilities: { exec: "any", shell: true, panes: true },
       },
     ]);
   });
@@ -161,12 +161,18 @@ describe("discoverPlugins", () => {
     expect(discoverPlugins(home).specs.map((spec) => spec.name)).toEqual(["edited", "init"]);
   });
 
-  it("carries the consented exec and shell capabilities into the spec", () => {
-    plugin("runner", manifest("runner", { capabilities: { exec: ["git", "gh"], shell: true } }));
+  it("carries the consented exec, shell and panes.send capabilities into the spec", () => {
+    plugin(
+      "runner",
+      manifest("runner", {
+        capabilities: { exec: ["git", "gh"], shell: true, "panes.send": true },
+      }),
+    );
     consentTo("runner");
     expect(discoverPlugins(home).specs[0]?.capabilities).toEqual({
       exec: ["git", "gh"],
       shell: true,
+      panes: true,
     });
   });
 

@@ -39,6 +39,8 @@ export const PluginManifestSchemaZ = z
         keys: z.boolean().optional(),
         /** Run any shell command line (ide.exec with shell = true). */
         shell: z.boolean().optional(),
+        /** Type into panes (pane:send) and run programs in one (ide.exec context). */
+        "panes.send": z.boolean().optional(),
       })
       .strict()
       .default({}),

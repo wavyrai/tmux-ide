@@ -88,6 +88,8 @@ export const PluginSpecSchemaZ = z
       .object({
         exec: z.union([z.array(z.string()).max(32), z.literal("any")]),
         shell: z.boolean(),
+        /** `panes.send`: type into panes and run programs as if typed there. */
+        panes: z.boolean(),
       })
       .strict(),
   })

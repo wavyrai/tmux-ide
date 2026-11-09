@@ -3,10 +3,12 @@
  */
 import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appSettingsPath } from "../lib/app-settings.ts";
 import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 import { createHostCallHandler, type DaemonEndpoint, type NotifyLevel } from "./host-calls.ts";
+import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
 import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
 
 /**
@@ -53,6 +55,21 @@ export function resolvePluginHostCommand(
   return [runtime.execPath, ...runtime.execArgv, entry];
 }
 
+/**
+ * Files programs from plugins may not read: the daemon record (its port and
+ * owner token), the app settings (the remote-access token), the consent
+ * records and every plugin's store.
+ */
+export function daemonPrivateFiles(home: string): string[] {
+  return [
+    join(home, "daemon.json"),
+    join(home, "daemon.claim"),
+    join(home, "consent"),
+    join(home, "plugin-store"),
+    appSettingsPath(),
+  ];
+}
+
 export function createDaemonPluginSupervisor(options: {
   productVersion: string;
   /** Daemon credentials that must never reach a plugin log or `lua run` output. */
@@ -78,6 +95,8 @@ export function createDaemonPluginSupervisor(options: {
     baseEnv: () => minimalHostEnv(),
     secrets: secretSet,
     notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
+    unreadable: () => daemonPrivateFiles(home),
+    execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
   });
   return new PluginSupervisor({
     calls,

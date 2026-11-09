@@ -1,10 +1,25 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { darwinProfile, realPath, sandboxedArgv } from "./exec-sandbox.ts";
+import {
+  darwinProfile,
+  findOnPath,
+  realPath,
+  sandboxedArgv,
+  writablePath,
+} from "./exec-sandbox.ts";
 import {
   EXEC_OUTPUT_CAP_BYTES,
+  PluginPrograms,
   runPluginExec,
   type ExecDependencies,
   type ExecPolicy,
@@ -30,7 +45,12 @@ function deps(
   overrides: Partial<ExecDependencies> = {},
 ): ExecDependencies {
   return {
-    policy: { programs: ["echo", "env", "sleep", "head", "pwd"], shell: false, ...policy },
+    policy: {
+      programs: ["echo", "env", "sleep", "head", "pwd", "cat", "tool"],
+      shell: false,
+      panes: false,
+      ...policy,
+    },
     sandbox: { stateHome, writable: dataDir },
     baseEnv: { PATH: "/usr/bin:/bin", HOME: root, LANG: "C" },
     resolvePane: async (pane) =>
@@ -59,10 +79,79 @@ describe("ide.exec policy", () => {
     );
   });
 
-  it("refuses to set TMUX_IDE_ variables and validates the request", async () => {
+  it("lets a plugin set only harmless variables", async () => {
+    for (const key of [
+      "TMUX_IDE_HOME",
+      "PATH",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH",
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "NODE_OPTIONS",
+      "PYTHONPATH",
+      "PERL5OPT",
+      "RUBYOPT",
+      "GIT_SSH_COMMAND",
+      "GIT_EXEC_PATH",
+      "BASH_ENV",
+      "ENV",
+      "HOME",
+      "SHELL",
+      "GREETING",
+    ])
+      await expect(
+        runPluginExec({ cmd: "env", env: { [key]: "/x" } }, deps()),
+        key,
+      ).rejects.toThrow(`E_DENIED: ide.exec may not set ${key};`);
     await expect(
-      runPluginExec({ cmd: "env", env: { TMUX_IDE_HOME: "/x" } }, deps()),
-    ).rejects.toThrow(/E_DENIED/u);
+      runPluginExec(
+        {
+          cmd: "nope-not-a-program",
+          env: { LANG: "C", LC_ALL: "C", TERM: "xterm", NO_COLOR: "1", PLUGIN_MODE: "x" },
+        },
+        deps({ programs: "any" }),
+      ),
+    ).rejects.toThrow(/E_NOT_FOUND/u);
+  });
+
+  it("looks programs up on the daemon's PATH only, skipping relative entries", async () => {
+    const evil = join(root, "evil");
+    mkdirSync(evil);
+    writeFileSync(join(evil, "echo"), "#!/bin/sh\necho hijacked\n", { mode: 0o755 });
+    writeFileSync(join(evil, "tool"), "#!/bin/sh\necho hijacked\n", { mode: 0o755 });
+    const plain = join(root, "plain");
+    mkdirSync(plain);
+    writeFileSync(join(plain, "tool"), "not executable");
+    chmodSync(join(plain, "tool"), 0o644);
+    // A relative entry that would find the planted program from this cwd.
+    const rel = relative(process.cwd(), evil);
+    expect(findOnPath("tool", `${evil}:/bin`)).toBe(join(evil, "tool"));
+    expect(findOnPath("tool", `${rel}::.:${plain}`)).toBeNull();
+    expect(findOnPath("echo", `${rel}:/bin`)).toBe("/bin/echo");
+    // The request cannot bring its own PATH, so cannot pick evil/tool.
+    await expect(runPluginExec({ cmd: "tool", env: { PATH: evil } }, deps())).rejects.toThrow(
+      /may not set PATH/u,
+    );
+    await expect(runPluginExec({ cmd: "tool" }, deps())).rejects.toThrow(
+      "E_NOT_FOUND: 'tool' is not on PATH",
+    );
+  });
+
+  it("needs panes.send to run a program in a pane", async () => {
+    await expect(runPluginExec({ cmd: "pwd", context: "%7" }, deps())).rejects.toThrow(
+      "E_DENIED: running a program in a pane (context) needs the manifest capability 'panes.send'",
+    );
+  });
+
+  it("refuses a data directory that was replaced by a symlink", async () => {
+    mkdirSync(join(stateHome, "plugin-data"), { recursive: true });
+    symlinkSync(stateHome, dataDir);
+    await expect(runPluginExec({ cmd: "echo" }, deps())).rejects.toThrow(
+      /E_UNAVAILABLE: the plugin's data directory is unusable: .* is not a real directory/u,
+    );
+  });
+
+  it("validates the request", async () => {
     await expect(runPluginExec({ cmd: "echo", cwd: "relative" }, deps())).rejects.toThrow(
       /absolute path/u,
     );
@@ -75,9 +164,9 @@ describe("ide.exec policy", () => {
       "E_INVALID: ide.exec context: must be a tmux pane id like %3; ctx.pane is set only when the caller knows one",
     );
     await expect(runPluginExec({ cmd: "echo", extra: 1 }, deps())).rejects.toThrow(/E_INVALID/u);
-    await expect(runPluginExec({ cmd: "echo", context: "%9" }, deps())).rejects.toThrow(
-      /no tmux pane %9/u,
-    );
+    await expect(
+      runPluginExec({ cmd: "echo", context: "%9" }, deps({ panes: true })),
+    ).rejects.toThrow(/no tmux pane %9/u);
   });
 
   it("refuses to run anything without a sandbox", async () => {
@@ -117,14 +206,14 @@ describe("ide.exec running programs", () => {
   live("starts from the minimal environment plus what the plugin sets", async () => {
     process.env.TMUX_IDE_EXEC_TEST_SECRET = "daemon-secret-value";
     try {
-      const result = await runPluginExec({ cmd: "env", env: { GREETING: "hi" } }, deps());
+      const result = await runPluginExec({ cmd: "env", env: { PLUGIN_GREETING: "hi" } }, deps());
       const keys = result.stdout
         .trim()
         .split("\n")
         .map((line) => line.split("=")[0]!)
         .filter((key) => key !== "__CF_USER_TEXT_ENCODING")
         .sort();
-      expect(keys).toEqual(["GREETING", "HOME", "LANG", "PATH"]);
+      expect(keys).toEqual(["HOME", "LANG", "PATH", "PLUGIN_GREETING"]);
       expect(result.stdout).not.toContain("daemon-secret-value");
     } finally {
       delete process.env.TMUX_IDE_EXEC_TEST_SECRET;
@@ -132,10 +221,10 @@ describe("ide.exec running programs", () => {
   });
 
   live("runs in a pane's context: its cwd, TMUX and TMUX_PANE", async () => {
-    const env = await runPluginExec({ cmd: "env", context: "%7" }, deps());
+    const env = await runPluginExec({ cmd: "env", context: "%7" }, deps({ panes: true }));
     expect(env.stdout).toContain("TMUX=/tmp/sock,123,4\n");
     expect(env.stdout).toContain("TMUX_PANE=%7\n");
-    const pwd = await runPluginExec({ cmd: "pwd", context: "%7" }, deps());
+    const pwd = await runPluginExec({ cmd: "pwd", context: "%7" }, deps({ panes: true }));
     expect(pwd.stdout.trim()).toBe(realPath(root));
   });
 
@@ -148,6 +237,51 @@ describe("ide.exec running programs", () => {
     expect(result.timed_out).toBe(true);
     expect(result.signal).toBe("SIGKILL");
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  live("caps the timeout at the callback wall clock", async () => {
+    const started = Date.now();
+    const result = await runPluginExec(
+      { cmd: "sleep", args: ["30"], timeout_ms: 60_000 },
+      deps({}, { maxTimeoutMs: 300 }),
+    );
+    expect(result.timed_out).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  live("lets the daemon kill a plugin's running programs", async () => {
+    const programs = new PluginPrograms();
+    const started = Date.now();
+    const running = runPluginExec(
+      { cmd: "sleep 30 & sleep 30; wait", shell: true },
+      deps({ shell: true }, { track: (child) => programs.track("tasks", child) }),
+    );
+    while (programs.running("tasks") === 0) await new Promise((r) => setTimeout(r, 10));
+    expect(programs.kill("other")).toBe(0);
+    expect(programs.kill("tasks")).toBe(1);
+    const result = await running;
+    expect(result.signal).toBe("SIGKILL");
+    expect(programs.running("tasks")).toBe(0);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  live("cannot read the daemon's private files", async () => {
+    writeFileSync(join(stateHome, "daemon.json"), "owner-secret-record");
+    const result = await runPluginExec(
+      { cmd: "cat", args: [join(stateHome, "daemon.json")] },
+      deps(
+        {},
+        {
+          sandbox: {
+            stateHome,
+            writable: dataDir,
+            unreadable: [join(stateHome, "daemon.json")],
+          },
+        },
+      ),
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).not.toContain("owner-secret-record");
   });
 
   live("caps captured output", async () => {
@@ -201,6 +335,17 @@ describe("sandbox plans", () => {
       '(version 1)(allow default)(deny file-write* (subpath "/home/u/.tmux-ide"))' +
         '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))',
     );
+    expect(
+      darwinProfile(
+        { ...paths, unreadable: ["/home/u/.tmux-ide/daemon.json", "/s/app.json"] },
+        same,
+      ),
+    ).toBe(
+      '(version 1)(allow default)(deny file-write* (subpath "/home/u/.tmux-ide"))' +
+        '(allow file-write* (subpath "/home/u/.tmux-ide/plugin-data/tasks"))' +
+        '(deny file-read* file-write* (subpath "/home/u/.tmux-ide/daemon.json"))' +
+        '(deny file-read* file-write* (subpath "/s/app.json"))',
+    );
     expect(darwinProfile({ stateHome: '/a"b\\c', writable: "/w" })).toContain(
       '(subpath "/a\\"b\\\\c")',
     );
@@ -212,13 +357,42 @@ describe("sandbox plans", () => {
     });
   });
 
+  it("never names a symlinked data dir's target as writable", () => {
+    mkdirSync(join(stateHome, "plugin-data"), { recursive: true });
+    symlinkSync(stateHome, dataDir);
+    const sandbox = { stateHome, writable: dataDir };
+    expect(writablePath(sandbox)).toBe(join(realPath(join(stateHome, "plugin-data")), "tasks"));
+    expect(darwinProfile(sandbox)).not.toContain(
+      `(allow file-write* (subpath "${realPath(stateHome)}"))`,
+    );
+  });
+
+  it("is off on Linux unless the owner turns it on", () => {
+    expect(
+      sandboxedArgv(["/bin/echo"], paths, { platform: "linux", find: () => "/usr/bin/bwrap" }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "running programs from plugins on Linux is untested and off; set TMUX_IDE_PLUGIN_EXEC_LINUX=1 for the daemon to turn it on",
+    });
+  });
+
   it("binds the state home read-only and the data dir writable with bubblewrap on Linux", () => {
     expect(
-      sandboxedArgv(["/bin/echo"], paths, {
-        platform: "linux",
-        find: () => "/usr/bin/bwrap",
-        resolve: (path) => path,
-      }),
+      sandboxedArgv(
+        ["/bin/echo"],
+        {
+          ...paths,
+          unreadable: ["/home/u/.tmux-ide/daemon.json", "/home/u/.tmux-ide/consent", "/gone"],
+        },
+        {
+          platform: "linux",
+          linuxOptIn: true,
+          find: () => "/usr/bin/bwrap",
+          resolve: (path) => path,
+          exists: (path) => path !== "/gone",
+        },
+      ),
     ).toEqual({
       ok: true,
       argv: [
@@ -232,6 +406,18 @@ describe("sandbox plans", () => {
         "--bind",
         paths.writable,
         paths.writable,
+        "--ro-bind",
+        "/dev/null",
+        "/home/u/.tmux-ide/daemon.json",
+        // Not a directory on this machine, so bound over like a file.
+        "--ro-bind",
+        "/dev/null",
+        "/home/u/.tmux-ide/consent",
+        "--unshare-pid",
+        "--proc",
+        "/proc",
+        "--unshare-ipc",
+        "--new-session",
         "--die-with-parent",
         "--",
         "/bin/echo",
@@ -240,7 +426,9 @@ describe("sandbox plans", () => {
   });
 
   it("refuses without a sandbox tool", () => {
-    expect(sandboxedArgv(["x"], paths, { platform: "linux", find: () => null })).toEqual({
+    expect(
+      sandboxedArgv(["x"], paths, { platform: "linux", linuxOptIn: true, find: () => null }),
+    ).toEqual({
       ok: false,
       reason: "running programs from plugins needs bubblewrap (bwrap) on Linux",
     });

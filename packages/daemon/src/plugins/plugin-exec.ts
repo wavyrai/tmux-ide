@@ -2,21 +2,29 @@
  * `ide.exec`: a plugin runs a program, on the daemon's side of the wire.
  *
  * - Only programs the plugin's manifest lists under `capabilities.exec`, and
- *   that the owner consented to. A bare program name, looked up on PATH.
+ *   that the owner consented to. A bare program name, looked up on the
+ *   daemon's own PATH (absolute entries only), never on one the plugin sets.
  * - No shell unless the plugin asks for `shell = true`, which needs the
  *   manifest's `capabilities.shell` (shown at consent as "any command").
- * - A minimal environment, never the daemon's. With `context = "%N"` the
- *   program runs as if typed in that tmux pane: its cwd, TMUX and TMUX_PANE.
+ * - A minimal environment, never the daemon's; a plugin may add only
+ *   locale, terminal and colour variables and its own `PLUGIN_*` ones, so it
+ *   cannot change PATH or inject a library (DYLD_*, LD_*) or interpreter
+ *   option (NODE_OPTIONS, PYTHONPATH, GIT_*, …).
+ * - With `context = "%N"` the program runs as if typed in that tmux pane
+ *   (its cwd, TMUX and TMUX_PANE); that needs the `panes.send` capability.
  * - Inside the OS sandbox (exec-sandbox.ts), with a timeout that kills the
- *   whole process group, and a cap on captured output.
+ *   whole process group, capped at the callback's wall clock, and a cap on
+ *   captured output. The daemon also kills a plugin's programs when the
+ *   plugin fails, unloads, is disabled or loses consent.
  * - Output is redacted before it goes back to Lua.
  */
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { redactText } from "../lib/log-sanitize.ts";
 import { findOnPath, sandboxedArgv, type SandboxPlan, type SandboxPaths } from "./exec-sandbox.ts";
+import { ensureRealDirectory } from "./safe-files.ts";
 
 export const EXEC_DEFAULT_TIMEOUT_MS = 30_000;
 export const EXEC_MAX_TIMEOUT_MS = 600_000;
@@ -24,6 +32,14 @@ export const EXEC_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 const PROGRAM_NAME = /^[\w.+-]{1,64}$/u;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
+
+/**
+ * The variables a plugin may set for a program it runs. Everything else
+ * could change what runs (PATH, DYLD_INSERT_LIBRARIES, LD_PRELOAD,
+ * NODE_OPTIONS, PYTHONPATH, GIT_SSH_COMMAND, BASH_ENV, …) and is refused.
+ */
+const ALLOWED_ENV =
+  /^(?:LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|COLORTERM|NO_COLOR|FORCE_COLOR|CLICOLOR|CLICOLOR_FORCE|COLUMNS|LINES|PLUGIN_[A-Z0-9_]+)$/u;
 
 export const ExecRequestSchemaZ = z
   .object({
@@ -68,6 +84,8 @@ export interface ExecPolicy {
   /** Program names the plugin may run, or "any" (init.lua and `lua run`). */
   readonly programs: readonly string[] | "any";
   readonly shell: boolean;
+  /** May run a program as if typed in a pane (`context`): `panes.send`. */
+  readonly panes: boolean;
 }
 
 export interface PaneContext {
@@ -86,6 +104,10 @@ export interface ExecDependencies {
   readonly secrets: () => ReadonlySet<string>;
   readonly plan?: (command: readonly string[], paths: SandboxPaths) => SandboxPlan;
   readonly spawn?: typeof nodeSpawn;
+  /** The longest a program may run: the callback's wall clock. */
+  readonly maxTimeoutMs?: number;
+  /** Told about each started program; returns the call that forgets it. */
+  readonly track?: (child: ChildProcess) => () => void;
 }
 
 export class ExecError extends Error {}
@@ -106,7 +128,10 @@ export async function prepareExec(raw: unknown, deps: ExecDependencies) {
   const request = parsed.data;
   const env: NodeJS.ProcessEnv = { ...deps.baseEnv };
   for (const [key, value] of Object.entries(request.env ?? {})) {
-    if (key.startsWith("TMUX_IDE_")) fail(`E_DENIED: ide.exec may not set ${key}`);
+    if (!ALLOWED_ENV.test(key))
+      fail(
+        `E_DENIED: ide.exec may not set ${key}; plugins may set LANG, LC_*, TZ, TERM, colour variables, COLUMNS, LINES and PLUGIN_*`,
+      );
     env[key] = value;
   }
 
@@ -120,13 +145,18 @@ export async function prepareExec(raw: unknown, deps: ExecDependencies) {
       fail("E_INVALID: ide.exec cmd must be a program name like 'git', not a path or command line");
     if (deps.policy.programs !== "any" && !deps.policy.programs.includes(request.cmd))
       fail(`E_DENIED: this plugin may not run '${request.cmd}' (manifest capability 'exec')`);
-    const resolved = findOnPath(request.cmd, env.PATH ?? "");
+    // The daemon's PATH, never one from the request.
+    const resolved = findOnPath(request.cmd, deps.baseEnv.PATH ?? "");
     if (!resolved) fail(`E_NOT_FOUND: '${request.cmd}' is not on PATH`);
     command = [resolved, ...request.args];
   }
 
   let cwd = env.HOME ?? "/";
   if (request.context) {
+    if (!deps.policy.panes)
+      fail(
+        "E_DENIED: running a program in a pane (context) needs the manifest capability 'panes.send'",
+      );
     const pane = await deps.resolvePane(request.context);
     if (!pane) fail(`E_NOT_FOUND: no tmux pane ${request.context}`);
     env.TMUX = pane.tmux;
@@ -140,7 +170,11 @@ export async function prepareExec(raw: unknown, deps: ExecDependencies) {
   if (!existsSync(cwd) || !statSync(cwd).isDirectory())
     fail(`E_NOT_FOUND: ide.exec cwd ${cwd} is not a directory`);
 
-  mkdirSync(deps.sandbox.writable, { recursive: true, mode: 0o700 });
+  try {
+    ensureRealDirectory(deps.sandbox.writable);
+  } catch (error) {
+    fail(`E_UNAVAILABLE: the plugin's data directory is unusable: ${(error as Error).message}`);
+  }
   const plan = (deps.plan ?? sandboxedArgv)(command, deps.sandbox);
   if (!plan.ok) fail(`E_UNAVAILABLE: ${plan.reason}`);
   return {
@@ -148,7 +182,10 @@ export async function prepareExec(raw: unknown, deps: ExecDependencies) {
     cwd,
     env,
     stdin: request.stdin,
-    timeoutMs: request.timeout_ms ?? EXEC_DEFAULT_TIMEOUT_MS,
+    timeoutMs: Math.min(
+      request.timeout_ms ?? EXEC_DEFAULT_TIMEOUT_MS,
+      deps.maxTimeoutMs ?? EXEC_MAX_TIMEOUT_MS,
+    ),
   };
 }
 
@@ -172,7 +209,8 @@ class Capture {
   }
 }
 
-function killGroup(child: ChildProcess): void {
+/** Kill `child` and everything it started (it leads its own process group). */
+export function killGroup(child: ChildProcess): void {
   if (child.pid === undefined) return;
   try {
     process.kill(-child.pid, "SIGKILL");
@@ -201,6 +239,7 @@ export async function runPluginExec(raw: unknown, deps: ExecDependencies): Promi
       );
       return;
     }
+    const forget = deps.track?.(child) ?? (() => {});
     const stdout = new Capture();
     const stderr = new Capture();
     let timedOut = false;
@@ -213,10 +252,12 @@ export async function runPluginExec(raw: unknown, deps: ExecDependencies): Promi
     child.stdin?.on("error", () => {});
     child.on("error", (error) => {
       clearTimeout(timer);
+      forget();
       reject(new ExecError(`E_UNAVAILABLE: could not start the program: ${error.message}`));
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      forget();
       const secrets = deps.secrets();
       resolve({
         code,
@@ -229,4 +270,37 @@ export async function runPluginExec(raw: unknown, deps: ExecDependencies): Promi
     });
     child.stdin?.end(prepared.stdin ?? "");
   });
+}
+
+/** Programs plugins started and that still run, by plugin. */
+export class PluginPrograms {
+  readonly #byPlugin = new Map<string, Set<ChildProcess>>();
+
+  /** Remember `child` as `plugin`'s; returns the call that forgets it. */
+  track(plugin: string, child: ChildProcess): () => void {
+    let set = this.#byPlugin.get(plugin);
+    if (!set) this.#byPlugin.set(plugin, (set = new Set()));
+    set.add(child);
+    return () => {
+      set.delete(child);
+      if (set.size === 0 && this.#byPlugin.get(plugin) === set) this.#byPlugin.delete(plugin);
+    };
+  }
+
+  /** Kill `plugin`'s programs, or every plugin's. Returns how many. */
+  kill(plugin?: string): number {
+    const sets = plugin === undefined ? [...this.#byPlugin.values()] : [this.#byPlugin.get(plugin)];
+    let killed = 0;
+    for (const set of sets) {
+      for (const child of set ?? []) {
+        killGroup(child);
+        killed += 1;
+      }
+    }
+    return killed;
+  }
+
+  running(plugin: string): number {
+    return this.#byPlugin.get(plugin)?.size ?? 0;
+  }
 }

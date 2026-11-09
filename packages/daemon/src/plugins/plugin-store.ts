@@ -1,15 +1,25 @@
 /**
- * `ide.store`: a small JSON key/value store per plugin, kept in the plugin's
- * data directory. Writes are atomic; the whole store is capped.
+ * `ide.store`: a small JSON key/value store per plugin, kept in
+ * `<state>/plugin-store/<plugin>.json`. That is outside the plugin's data
+ * directory on purpose: programs a plugin runs can write there, and the
+ * daemon must never read or write through anything they planted.
+ *
+ * Reads refuse symlinks, non-regular files and files over the cap; writes
+ * go to a fresh randomly named file and are renamed into place.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { join } from "node:path";
 import { toPlainJson } from "./host/lua-state.ts";
+import { readRegularFile, UnsafeFileError, writeFileAtomic } from "./safe-files.ts";
 
 export const STORE_MAX_BYTES = 1024 * 1024;
 export const STORE_MAX_KEYS = 1000;
 
 export class PluginStoreError extends Error {}
+
+/** Where `plugin`'s store lives. */
+export function pluginStorePath(stateHome: string, plugin: string): string {
+  return join(stateHome, "plugin-store", `${plugin}.json`);
+}
 
 export class PluginStore {
   readonly #path: string;
@@ -19,8 +29,17 @@ export class PluginStore {
   }
 
   #read(): Record<string, unknown> {
+    let text: string | null;
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.#path, "utf8"));
+      text = readRegularFile(this.#path, STORE_MAX_BYTES);
+    } catch (error) {
+      if (error instanceof UnsafeFileError)
+        throw new PluginStoreError(`E_FAILED: the store file is unusable (${error.message})`);
+      throw error;
+    }
+    if (text === null) return {};
+    try {
+      const parsed: unknown = JSON.parse(text);
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>)
         : {};
@@ -56,9 +75,6 @@ export class PluginStore {
     const text = JSON.stringify(data);
     if (Buffer.byteLength(text, "utf8") > STORE_MAX_BYTES)
       throw new PluginStoreError("E_LIMIT: the store may hold at most 1 MiB");
-    mkdirSync(dirname(this.#path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.#path}.${process.pid}.tmp`;
-    writeFileSync(temporary, text, { mode: 0o600 });
-    renameSync(temporary, this.#path);
+    writeFileAtomic(this.#path, text);
   }
 }

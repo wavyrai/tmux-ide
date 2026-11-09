@@ -152,11 +152,15 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     details:
       "`cmd` is a program name looked up on PATH; `args` are passed as they are, with no shell. " +
       "`shell = true` runs `cmd` as a /bin/sh command line and needs capabilities.shell. " +
-      '`context` is a tmux pane id like "%3" (or a pane): the program gets that pane\'s cwd, ' +
-      "TMUX and TMUX_PANE. It starts from a minimal environment plus `env`, runs in an OS " +
-      "sandbox that cannot write tmux-ide's own files (only ~/.tmux-ide/plugin-data/<plugin>), " +
-      "is killed with everything it started after `timeout_ms` (default 30 s, at most 10 min), " +
-      "and keeps at most 1 MiB of each output. Output is redacted.",
+      '`context` is a tmux pane id like "%3": the program gets that pane\'s cwd, TMUX and ' +
+      "TMUX_PANE, and needs capabilities `panes.send`. `cmd` is looked up on the daemon's PATH; " +
+      "`env` may set only LANG, LC_*, TZ, TERM, colour variables, COLUMNS, LINES and PLUGIN_*. " +
+      "A program can usually do anything your account can; the OS sandbox only keeps it from " +
+      "writing tmux-ide's state (but ~/.tmux-ide/plugin-data/<plugin>) and reading the daemon's " +
+      "credentials. On Linux it is off unless the daemon has TMUX_IDE_PLUGIN_EXEC_LINUX=1 (untested). " +
+      "It is killed with everything it started after `timeout_ms` (default and most: the " +
+      "callback's 30 s wall clock), or when the plugin fails or unloads, and keeps at most " +
+      "1 MiB of each output. Output is redacted.",
     errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_UNAVAILABLE"],
     example:
       'local r = ide.exec{ cmd = "git", args = { "status", "--short" }, context = ctx.pane }',
@@ -171,7 +175,8 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
       "A pane has `id`, `workspace`, `session` and `title`, and methods `read()`, " +
       '`send(text, { enter = true })`, `split{ dir = "right"|"down", title? }`, `zoom(on?)`, ' +
       "`focus()`, `rename(name)`, `kill()`, `rename_window(name)` and `kill_window()`. They go " +
-      "through the same daemon actions and automation API as the app and the CLI.",
+      "through the same daemon actions and automation API as the app and the CLI. `send` needs " +
+      "capabilities `panes.send`.",
     example: 'for _, pane in ipairs(ide.panes{ session = "demo" }) do print(pane.title) end',
     ...v1,
   },

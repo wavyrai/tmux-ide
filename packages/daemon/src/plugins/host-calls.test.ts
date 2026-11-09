@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,7 +21,7 @@ import {
   type HostCallCaller,
   type HostCallDependencies,
 } from "./host-calls.ts";
-import { STORE_MAX_BYTES } from "./plugin-store.ts";
+import { STORE_MAX_BYTES, STORE_MAX_KEYS } from "./plugin-store.ts";
 
 const run = promisify(execFile);
 const sandboxAvailable = sandboxedArgv(["true"], { stateHome: "/", writable: "/" }).ok;
@@ -26,7 +34,12 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 const tasks: HostCallCaller = {
   plugin: "tasks",
-  capabilities: { exec: ["echo", "pwd", "env"], shell: false },
+  capabilities: { exec: ["echo", "pwd", "env"], shell: false, panes: false },
+};
+/** A plugin granted `panes.send`. */
+const typist: HostCallCaller = {
+  plugin: "typist",
+  capabilities: { exec: ["echo", "pwd", "env"], shell: false, panes: true },
 };
 const endpoint = {
   kind: "pane" as const,
@@ -102,7 +115,10 @@ describe("host calls to the daemon", () => {
       { endpoint, title: "editor", session: "demo" },
     ]);
     expect(await calls.handle(tasks, "_pane_read", [endpoint])).toBe("text");
-    expect(await calls.handle(tasks, "_pane_send", [endpoint, "ls", true])).toBe(true);
+    await expect(calls.handle(tasks, "_pane_send", [endpoint, "ls", true])).rejects.toThrow(
+      "E_DENIED: typing into a pane needs the manifest capability 'panes.send'",
+    );
+    expect(await calls.handle(typist, "_pane_send", [endpoint, "ls", true])).toBe(true);
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
       "GET /api/v1/automation/panes",
       "POST /api/v1/automation/reserve",
@@ -139,7 +155,7 @@ describe("host calls to the daemon", () => {
 
   it("refuses bad arguments and unknown methods", async () => {
     const { calls } = handler();
-    await expect(calls.handle(tasks, "_pane_send", [endpoint, "", true])).rejects.toThrow(
+    await expect(calls.handle(typist, "_pane_send", [endpoint, "", true])).rejects.toThrow(
       /E_INVALID/u,
     );
     await expect(calls.handle(tasks, "_pane_read", [{ kind: "pane" }])).rejects.toThrow(
@@ -180,9 +196,60 @@ describe("plugin store", () => {
     expect(await calls.handle(tasks, "_store_keys", [])).toEqual(["count"]);
     await calls.handle(tasks, "_store_set", ["count"]);
     expect(await calls.handle(tasks, "_store_get", ["count"])).toBeNull();
-    expect(
-      JSON.parse(readFileSync(join(home, "plugin-data", "other", "store.json"), "utf8")),
-    ).toEqual({ count: 9 });
+    expect(JSON.parse(readFileSync(join(home, "plugin-store", "other.json"), "utf8"))).toEqual({
+      count: 9,
+    });
+  });
+
+  it("never writes or reads through a symlink a plugin's program planted", async () => {
+    // Programs may write plugin-data/<plugin>; the store lives elsewhere, and
+    // even a symlink at the store path itself is replaced, not followed.
+    const consent = join(home, "consent", "plugins.json");
+    mkdirSync(join(home, "consent"), { recursive: true });
+    writeFileSync(consent, '{"plugins":{}}');
+    mkdirSync(join(home, "plugin-store"), { recursive: true });
+    const storePath = join(home, "plugin-store", "tasks.json");
+    symlinkSync(consent, storePath);
+    // The old fixed temp name, planted too.
+    symlinkSync(consent, `${storePath}.${process.pid}.tmp`);
+    const { calls } = handler();
+    await expect(calls.handle(tasks, "_store_get", ["plugins"])).rejects.toThrow(
+      /E_FAILED: the store file is unusable .* symlink/u,
+    );
+    await expect(calls.handle(tasks, "_store_set", ["a", 1])).rejects.toThrow(/symlink/u);
+    expect(readFileSync(consent, "utf8")).toBe('{"plugins":{}}');
+    rmSync(storePath);
+    await calls.handle(tasks, "_store_set", ["a", 1]);
+    expect(readFileSync(consent, "utf8")).toBe('{"plugins":{}}');
+    expect(lstatSync(storePath).isFile()).toBe(true);
+    expect(await calls.handle(tasks, "_store_get", ["a"])).toBe(1);
+    // A store swapped for a symlink after a write is still not followed.
+    rmSync(storePath);
+    symlinkSync(consent, storePath);
+    await expect(calls.handle(tasks, "_store_keys", [])).rejects.toThrow(/symlink/u);
+    expect(readFileSync(consent, "utf8")).toBe('{"plugins":{}}');
+  });
+
+  it("refuses a store file that is not a regular file or is too large", async () => {
+    mkdirSync(join(home, "plugin-store", "tasks.json"), { recursive: true });
+    const { calls } = handler();
+    await expect(calls.handle(tasks, "_store_get", ["a"])).rejects.toThrow(/not a regular file/u);
+    rmSync(join(home, "plugin-store", "tasks.json"), { recursive: true });
+    writeFileSync(join(home, "plugin-store", "tasks.json"), " ".repeat(STORE_MAX_BYTES + 1));
+    await expect(calls.handle(tasks, "_store_get", ["a"])).rejects.toThrow(/larger than/u);
+  });
+
+  it("holds at most STORE_MAX_KEYS keys, but may still change one", async () => {
+    mkdirSync(join(home, "plugin-store"), { recursive: true });
+    const full = Object.fromEntries(Array.from({ length: STORE_MAX_KEYS }, (_, i) => [`k${i}`, i]));
+    writeFileSync(join(home, "plugin-store", "tasks.json"), JSON.stringify(full));
+    const { calls } = handler();
+    await expect(calls.handle(tasks, "_store_set", ["one-more", 1])).rejects.toThrow(
+      `E_LIMIT: the store holds at most ${STORE_MAX_KEYS} keys`,
+    );
+    await calls.handle(tasks, "_store_set", ["k0", "changed"]);
+    expect(await calls.handle(tasks, "_store_get", ["k0"])).toBe("changed");
+    expect((await calls.handle(tasks, "_store_keys", [])) as string[]).toHaveLength(STORE_MAX_KEYS);
   });
 
   it("caps the store and has none for lua run", async () => {
@@ -218,11 +285,11 @@ describe("pane context", () => {
       try {
         const pane = (await tmux(["display-message", "-p", "-t", "ctx", "#{pane_id}"])).trim();
         const { calls } = handler({ tmux });
-        const pwd = (await calls.handle(tasks, "_exec", [{ cmd: "pwd", context: pane }])) as {
+        const pwd = (await calls.handle(typist, "_exec", [{ cmd: "pwd", context: pane }])) as {
           stdout: string;
         };
         expect(pwd.stdout.trim()).toBe((await run("realpath", [cwd])).stdout.trim());
-        const env = (await calls.handle(tasks, "_exec", [{ cmd: "env", context: pane }])) as {
+        const env = (await calls.handle(typist, "_exec", [{ cmd: "env", context: pane }])) as {
           stdout: string;
         };
         expect(env.stdout).toContain(`TMUX_PANE=${pane}\n`);
@@ -246,20 +313,38 @@ describe("exec capabilities", () => {
       timed_out: false,
       truncated: false,
     }));
-    const { calls } = handler({ exec });
+    const { calls } = handler({
+      exec,
+      unreadable: () => [join(home, "daemon.json")],
+      execMaxTimeoutMs: 1234,
+    });
     await calls.handle(tasks, "_exec", [{ cmd: "echo" }]);
-    expect(exec).toHaveBeenCalledWith(
+    await calls.handle(typist, "_exec", [{ cmd: "echo" }]);
+    expect(exec).toHaveBeenNthCalledWith(
+      1,
       { cmd: "echo" },
       expect.objectContaining({
-        policy: { programs: ["echo", "pwd", "env"], shell: false },
-        sandbox: { stateHome: home, writable: join(home, "plugin-data", "tasks") },
+        policy: { programs: ["echo", "pwd", "env"], shell: false, panes: false },
+        sandbox: {
+          stateHome: home,
+          writable: join(home, "plugin-data", "tasks"),
+          unreadable: [join(home, "daemon.json")],
+        },
+        maxTimeoutMs: 1234,
+      }),
+    );
+    expect(exec).toHaveBeenNthCalledWith(
+      2,
+      { cmd: "echo" },
+      expect.objectContaining({
+        policy: { programs: ["echo", "pwd", "env"], shell: false, panes: true },
       }),
     );
   });
 
   it("gives init.lua and lua run every capability, and plugins none by default", () => {
-    expect(ownerCapabilities("init")).toEqual({ exec: "any", shell: true });
-    expect(ownerCapabilities("run")).toEqual({ exec: "any", shell: true });
+    expect(ownerCapabilities("init")).toEqual({ exec: "any", shell: true, panes: true });
+    expect(ownerCapabilities("run")).toEqual({ exec: "any", shell: true, panes: true });
     expect(ownerCapabilities("tasks")).toBeNull();
   });
 });

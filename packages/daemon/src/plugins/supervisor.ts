@@ -267,6 +267,7 @@ export class PluginSupervisor {
         this.#send({ type: "unload", name: entryName });
         this.#entries.delete(entryName);
         this.#actions.drop(entryName);
+        this.#stopPrograms(entryName);
       }
     }
     for (const problem of discovery.problems) {
@@ -281,6 +282,8 @@ export class PluginSupervisor {
 
     const waits: Promise<void>[] = [];
     for (const spec of toLoad) {
+      // Loading again replaces the plugin's code: what the old code started goes.
+      if (this.#entries.has(spec.name)) this.#stopPrograms(spec.name);
       this.#entries.set(spec.name, {
         spec,
         name: spec.name,
@@ -412,9 +415,13 @@ export class PluginSupervisor {
       context,
     }));
     const secrets = this.#secretSet();
-    // Results and errors are plugin text on their way to terminals: plain
-    // text only, whatever the plugin returned.
-    if (!reply.ok) return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
+    if (!reply.ok) {
+      // A failed callback leaves nothing running behind it.
+      this.#stopPrograms(parsed.plugin);
+      // Results and errors are plugin text on their way to terminals: plain
+      // text only, whatever the plugin returned.
+      return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
+    }
     let value: unknown;
     try {
       const list: unknown = JSON.parse(reply.text);
@@ -451,7 +458,10 @@ export class PluginSupervisor {
       context,
     }));
     const secrets = this.#secretSet();
-    if (!reply.ok) return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
+    if (!reply.ok) {
+      this.#stopPrograms(parsed.plugin);
+      return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
+    }
     const result = ParamOptionsReplySchemaZ.safeParse(
       terminalSafeDeep(redactLogValue(safeJson(reply.text), secrets)),
     );
@@ -714,6 +724,7 @@ export class PluginSupervisor {
             values = [];
           }
         }
+        if (!event.ok) this.#stopPrograms(RUN_STATE_NAME);
         const secrets = this.#secretSet();
         resolve({
           ok: event.ok,
@@ -778,6 +789,8 @@ export class PluginSupervisor {
   }
 
   #onTrip(plugin: string, kind: PluginTripKind): void {
+    // The callback that tripped failed; its programs go with it.
+    this.#stopPrograms(plugin);
     const entry = this.#entries.get(plugin);
     if (!entry) return;
     const now = this.#options.now();
@@ -806,7 +819,19 @@ export class PluginSupervisor {
     this.#log(entry.name, "error", entry.error);
     this.#send({ type: "unload", name: entry.name });
     this.#actions.drop(entry.name);
+    this.#stopPrograms(entry.name);
     this.#settleLoad(entry.name);
+  }
+
+  /** Kill the programs `plugin` (or, with no name, every plugin) still runs. */
+  #stopPrograms(plugin?: string): void {
+    const killed = this.#options.calls?.stopPrograms(plugin) ?? 0;
+    if (killed > 0)
+      this.#log(
+        plugin ?? "host",
+        "info",
+        `stopped ${killed} program${killed === 1 ? "" : "s"} it started`,
+      );
   }
 
   #startWatchdog(): void {
@@ -857,6 +882,8 @@ export class PluginSupervisor {
     this.#requests.clear();
     // Plugins publish their actions again when the host loads them.
     this.#actions.clear();
+    // No callback survives the host, so neither do the programs they started.
+    this.#stopPrograms();
   }
 
   #onExit(host: HostHandle, code: number | null, signal: NodeJS.Signals | null): void {

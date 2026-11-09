@@ -288,7 +288,7 @@ describe("tmux-ide plugin consent", () => {
     expect(h.out.at(-1)).toBe("tasks is already allowed to run.");
   });
 
-  it("warns when a plugin asks for a shell, and says what programs cannot touch", async () => {
+  it("warns when a plugin asks for a shell, and makes no promise about what programs cannot touch", async () => {
     const dir = join(home, "plugins", "shelly");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -304,7 +304,31 @@ describe("tmux-ide plugin consent", () => {
     const h = harness(reloaded);
     expect(await runPluginCommandLine("plugin", ["consent", "shelly", "--yes"], h.io)).toBe(0);
     expect(h.out[0]).toContain("run ANY shell command line, with full access to your account");
-    expect(h.out[0]).toContain("cannot change tmux-ide's own files (consent, init.lua, plugins)");
+    expect(h.out[0]).not.toMatch(/cannot (change|touch)/u);
+    expect(h.out[0]).toContain("Allow only plugins you trust.");
+  });
+
+  it("says what programs and typing into panes really allow", async () => {
+    const dir = join(home, "plugins", "typist");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        name: "typist",
+        version: "1.0.0",
+        api: "^1.0",
+        capabilities: { exec: ["git"], "panes.send": true },
+      }),
+    );
+    writeFileSync(join(dir, "init.lua"), "return true");
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "typist", "--yes"], h.io)).toBe(0);
+    expect(h.out[0]).toContain(
+      "run these programs: git. A program it may run can usually do anything your account can",
+    );
+    expect(h.out[0]).toContain(
+      "type into your terminals and run commands there, which gives full access to your account",
+    );
   });
 
   it("asks on a terminal and changes nothing unless the answer is yes", async () => {

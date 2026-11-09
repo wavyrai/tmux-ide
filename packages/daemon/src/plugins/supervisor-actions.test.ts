@@ -342,6 +342,21 @@ describe("plugin actions through the supervisor", () => {
     expect(ids(s)).toEqual([]);
   });
 
+  it("drops a loaded plugin's actions when a reload finds it broken", async () => {
+    plugin("tasks", TASKS);
+    const s = supervisor();
+    await s.start();
+    expect(ids(s).length).toBe(3);
+    writeFileSync(join(home, "plugins", "tasks", "manifest.json"), "{ not json");
+    for (const name of ["tasks", undefined]) {
+      await s.reload(name);
+      expect(ids(s)).toEqual([]);
+      expect(s.status().plugins.find((p) => p.name === "tasks")).toMatchObject({
+        state: "invalid",
+      });
+    }
+  });
+
   it("drops the actions of a plugin that fails to load", async () => {
     plugin("half", `ide.action.register{ id = "a", title = "A", run = print } error("boom")`);
     const s = supervisor();

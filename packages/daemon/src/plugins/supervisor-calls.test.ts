@@ -3,16 +3,17 @@
  * ide.exec / ide.store / ide.notify, the host forwards them, the supervisor
  * checks who is calling and the handler does the work.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { grantConsent, hashPluginDirectory } from "./consent.ts";
+import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
 import { sandboxedArgv } from "./exec-sandbox.ts";
 import { createHostCallHandler } from "./host-calls.ts";
 import type { PluginLogEntry } from "./plugin-log.ts";
-import { PluginSupervisor } from "./supervisor.ts";
+import { PluginSupervisor, type PluginSupervisorOptions } from "./supervisor.ts";
+import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
 
 const hostEntry = join(dirname(fileURLToPath(import.meta.url)), "host", "entry.ts");
 const live = sandboxedArgv(["true"], { stateHome: "/", writable: "/" }).ok ? it : it.skip;
@@ -44,7 +45,7 @@ function plugin(name: string, source: string, capabilities: Record<string, unkno
   grantConsent(home, name, hashPluginDirectory(dir));
 }
 
-async function start() {
+async function start(overrides: Partial<PluginSupervisorOptions> = {}) {
   supervisor = new PluginSupervisor({
     stateHome: home,
     productVersion: "9.9.9",
@@ -60,6 +61,7 @@ async function start() {
       secrets: () => new Set(["owner-token-0123456789"]),
       notify,
     }),
+    ...overrides,
   });
   await supervisor.start();
   return supervisor;
@@ -214,4 +216,92 @@ describe("host functions through the real host", () => {
       ]),
     );
   }, 30_000);
+});
+
+describe("programs a plugin started", () => {
+  // The action starts a program that records its pid and sleeps; the test
+  // then checks that program is gone after the plugin fails or goes away.
+  const SLEEPER = `
+ide.action.register{ id = "sleep", title = "Sleep", run = function()
+  return ide.exec{ cmd = 'echo $$ > "$1"; exec sleep 30', args = { DATA .. "/pid" }, shell = true }
+end }`;
+
+  function sleeper() {
+    const data = join(home, "plugin-data", "tasks");
+    plugin("tasks", `DATA = ${JSON.stringify(data)}` + SLEEPER, { shell: true });
+    return join(data, "pid");
+  }
+
+  async function runningPid(pidFile: string): Promise<number> {
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(pidFile) || !readFileSync(pidFile, "utf8").trim()) {
+      if (Date.now() > deadline) throw new Error("the program did not start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(alive(pid)).toBe(true);
+    return pid;
+  }
+
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function gone(pid: number): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (alive(pid)) {
+      if (Date.now() > deadline) throw new Error(`program ${pid} is still running`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  live(
+    "are killed when the callback fails on its wall clock",
+    async () => {
+      const pidFile = sleeper();
+      const s = await start({ limits: { ...DEFAULT_PLUGIN_LIMITS, wallClockMs: 1500 } });
+      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      const pid = await runningPid(pidFile);
+      expect(await result).toEqual({
+        ok: false,
+        error: expect.stringMatching(/wall-clock limit/u),
+      });
+      await gone(pid);
+    },
+    30_000,
+  );
+
+  live(
+    "are killed when the plugin loses consent and is reloaded",
+    async () => {
+      const pidFile = sleeper();
+      const s = await start();
+      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      const pid = await runningPid(pidFile);
+      revokeConsent(home, "tasks");
+      await s.reload();
+      await gone(pid);
+      await result;
+    },
+    30_000,
+  );
+
+  live(
+    "are killed when the plugin host exits",
+    async () => {
+      const pidFile = sleeper();
+      const s = await start({ restartDelayMs: () => 60_000 });
+      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      const pid = await runningPid(pidFile);
+      process.kill(s.status().host.pid!, "SIGKILL");
+      await gone(pid);
+      expect((await result).ok).toBe(false);
+    },
+    30_000,
+  );
 });

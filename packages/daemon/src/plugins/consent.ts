@@ -6,9 +6,11 @@
  * directory, and any change to any file (manifest included) means the plugin
  * asks again. `init.lua` is the user's own file and needs no consent.
  *
- * Consent lives in `<state home>/consent/plugins.json` (mode 0600). Programs
- * a plugin runs cannot write anywhere under the state home but their own data
- * directory (see exec-sandbox.ts), so a plugin cannot consent to itself.
+ * Consent lives in `<state home>/consent/plugins.json` (mode 0600). Consent
+ * is the boundary: a plugin granted programs, a shell or `panes.send` can
+ * usually do anything its owner's account can, including change this file
+ * by other means. The OS sandbox (exec-sandbox.ts) only keeps programs from
+ * editing it directly and from reading it.
  */
 import { createHash } from "node:crypto";
 import {

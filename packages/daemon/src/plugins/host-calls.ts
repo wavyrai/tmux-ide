@@ -18,8 +18,8 @@ import {
   type AutomationOperationIntent,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
-import { runPluginExec, type ExecPolicy, type PaneContext } from "./plugin-exec.ts";
-import { PluginStore } from "./plugin-store.ts";
+import { PluginPrograms, runPluginExec, type ExecPolicy, type PaneContext } from "./plugin-exec.ts";
+import { PluginStore, pluginStorePath } from "./plugin-store.ts";
 import { INIT_PLUGIN_NAME, RUN_STATE_NAME } from "./protocol.ts";
 
 /** Workspace actions a plugin may dispatch (all multiplexer verbs on panes, windows and sessions). */
@@ -55,13 +55,22 @@ export interface HostCallDependencies {
   readonly notify: (plugin: string, text: string, level: NotifyLevel) => Promise<void>;
   /** Tests replace the program runner. */
   readonly exec?: typeof runPluginExec;
+  /** Files programs may not read: the daemon record and credential files. */
+  readonly unreadable?: () => readonly string[];
+  /** The longest a program may run: the callback wall clock. */
+  readonly execMaxTimeoutMs?: number;
 }
 
 export type NotifyLevel = "info" | "warn" | "error";
 
 export interface HostCallCaller {
   readonly plugin: string;
-  readonly capabilities: { readonly exec: readonly string[] | "any"; readonly shell: boolean };
+  readonly capabilities: {
+    readonly exec: readonly string[] | "any";
+    readonly shell: boolean;
+    /** Type into panes and run programs as if typed there (`panes.send`). */
+    readonly panes: boolean;
+  };
 }
 
 export class HostCallError extends Error {}
@@ -100,6 +109,7 @@ export function paneContextFromTmux(pane: string, line: string): PaneContext | n
 }
 
 export function createHostCallHandler(deps: HostCallDependencies) {
+  const programs = new PluginPrograms();
   const request = async (path: string, init: RequestInit): Promise<unknown> => {
     const endpoint = deps.endpoint();
     if (!endpoint) fail("E_UNAVAILABLE: the daemon is not ready yet");
@@ -160,7 +170,7 @@ export function createHostCallHandler(deps: HostCallDependencies) {
 
   const store = (plugin: string) => {
     if (plugin === RUN_STATE_NAME) fail("E_UNAVAILABLE: `lua run` has no store");
-    return new PluginStore(join(deps.stateHome, "plugin-data", plugin, "store.json"));
+    return new PluginStore(pluginStorePath(deps.stateHome, plugin));
   };
 
   const methods: Record<string, (caller: HostCallCaller, args: unknown[]) => Promise<unknown>> = {
@@ -168,16 +178,20 @@ export function createHostCallHandler(deps: HostCallDependencies) {
       const policy: ExecPolicy = {
         programs: caller.capabilities.exec,
         shell: caller.capabilities.shell,
+        panes: caller.capabilities.panes,
       };
       return (deps.exec ?? runPluginExec)(args[0], {
         policy,
         sandbox: {
           stateHome: deps.stateHome,
           writable: join(deps.stateHome, "plugin-data", caller.plugin),
+          unreadable: deps.unreadable?.() ?? [],
         },
         baseEnv: deps.baseEnv(),
         resolvePane,
         secrets: deps.secrets,
+        ...(deps.execMaxTimeoutMs === undefined ? {} : { maxTimeoutMs: deps.execMaxTimeoutMs }),
+        track: (child) => programs.track(caller.plugin, child),
       });
     },
     async _panes() {
@@ -195,7 +209,9 @@ export function createHostCallHandler(deps: HostCallDependencies) {
       const result = await automation({ kind: "read", target, source: null });
       return result.read?.availability === "available" ? result.read.text : null;
     },
-    async _pane_send(_caller, args) {
+    async _pane_send(caller, args) {
+      if (!caller.capabilities.panes)
+        fail("E_DENIED: typing into a pane needs the manifest capability 'panes.send'");
       const [target, text, enter] = PaneSendArgsZ.parse(args);
       await automation({ kind: "send", target, source: null, text, enter });
       return true;
@@ -236,6 +252,13 @@ export function createHostCallHandler(deps: HostCallDependencies) {
 
   return {
     methods: Object.keys(methods),
+    /** Kill the programs `plugin` started (or every plugin's) that still run. */
+    stopPrograms(plugin?: string): number {
+      return programs.kill(plugin);
+    },
+    runningPrograms(plugin: string): number {
+      return programs.running(plugin);
+    },
     async handle(caller: HostCallCaller, method: string, args: unknown[]): Promise<unknown> {
       const fn = Object.hasOwn(methods, method) ? methods[method] : undefined;
       if (!fn) fail(`E_INVALID: no host function '${method}'`);
@@ -255,6 +278,6 @@ export type HostCallHandler = ReturnType<typeof createHostCallHandler>;
 /** What init.lua and `lua run` may do: everything a plugin could be granted. */
 export function ownerCapabilities(plugin: string): HostCallCaller["capabilities"] | null {
   return plugin === INIT_PLUGIN_NAME || plugin === RUN_STATE_NAME
-    ? { exec: "any", shell: true }
+    ? { exec: "any", shell: true, panes: true }
     : null;
 }
