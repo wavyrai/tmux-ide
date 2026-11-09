@@ -121,33 +121,53 @@ describe("sandbox", () => {
   });
 });
 
+// Busy loops in these tests stop on their own after 3 s, so a broken guard
+// fails a test instead of hanging the suite.
 describe("deadlines", () => {
   it("stops a busy loop at the budget and reports a timeout trip", async () => {
     const { run, trips } = await make();
     const started = performance.now();
-    await expect(run(`while true do end`)).rejects.toThrow(/E_TIMEOUT/u);
+    await expect(run(`local __t = os.clock() while os.clock() - __t < 3 do end`)).rejects.toThrow(
+      /E_TIMEOUT/u,
+    );
     expect(performance.now() - started).toBeLessThan(2000);
     expect(trips).toEqual(["timeout"]);
   });
 
   it("counts a timeout the plugin caught with pcall", async () => {
     const { run, trips } = await make();
-    const [ok, err] = await run(`return pcall(function() while true do end end)`);
+    const [ok, err] = await run(
+      `return pcall(function() local __t = os.clock() while os.clock() - __t < 3 do end end)`,
+    );
     expect([ok, err]).toEqual([false, expect.stringContaining("E_TIMEOUT")]);
     expect(trips).toEqual(["timeout"]);
   });
 
   it("arms coroutines the plugin creates", async () => {
     const { run, trips } = await make();
-    await expect(run(`coroutine.wrap(function() while true do end end)()`)).rejects.toThrow(
-      /E_TIMEOUT/u,
-    );
     await expect(
       run(
-        `local co = coroutine.create(function() while true do end end) local ok, e = coroutine.resume(co) error(e, 0)`,
+        `coroutine.wrap(function() local __t = os.clock() while os.clock() - __t < 3 do end end)()`,
+      ),
+    ).rejects.toThrow(/E_TIMEOUT/u);
+    await expect(
+      run(
+        `local co = coroutine.create(function() local __t = os.clock() while os.clock() - __t < 3 do end end) local ok, e = coroutine.resume(co) error(e, 0)`,
       ),
     ).rejects.toThrow(/E_TIMEOUT/u);
     expect(trips).toEqual(["timeout", "timeout"]);
+  });
+
+  it("charges the budget across every slice of one callback", async () => {
+    const { run, trips, marks } = await make();
+    // Ten 40 ms slices separated by yields: 400 ms of Lua against a 150 ms budget.
+    await expect(
+      run(
+        `for i = 1, 10 do local t = os.clock() while os.clock() - t < 0.04 do end coroutine.yield() end`,
+      ),
+    ).rejects.toThrow(/E_TIMEOUT/u);
+    expect(trips).toEqual(["timeout"]);
+    expect(marks.length).toBeGreaterThan(2);
   });
 
   it("brackets every Lua slice with busy and idle markers", async () => {
@@ -158,7 +178,9 @@ describe("deadlines", () => {
 
   it("leaves the state usable after a timeout", async () => {
     const { run } = await make();
-    await expect(run(`while true do end`)).rejects.toThrow(/E_TIMEOUT/u);
+    await expect(run(`local __t = os.clock() while os.clock() - __t < 3 do end`)).rejects.toThrow(
+      /E_TIMEOUT/u,
+    );
     expect(await run(`return 6 * 7`)).toEqual([42]);
   });
 });
