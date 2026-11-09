@@ -268,17 +268,17 @@ end }`;
   }
 
   live(
-    "are killed when the callback fails on its wall clock",
+    "are killed when the callback running them trips its wall clock",
     async () => {
+      // From a timer, so no failed invoke is there to stop them instead.
       const pidFile = sleeper();
       const s = await start({ limits: { ...DEFAULT_PLUGIN_LIMITS, wallClockMs: 1500 } });
-      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      await s.invokeAction("plugin.tasks.background", {}, { source: "cli" });
       const pid = await runningPid(pidFile);
-      expect(await result).toEqual({
-        ok: false,
-        error: expect.stringMatching(/wall-clock limit/u),
-      });
       await gone(pid);
+      expect(logs.map((entry) => entry.message)).toEqual(
+        expect.arrayContaining([expect.stringMatching(/ran past its time budget/u)]),
+      );
     },
     30_000,
   );
@@ -337,11 +337,10 @@ end }`;
     async () => {
       const pidFile = sleeper();
       const s = await start({ restartDelayMs: () => 60_000 });
-      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      await s.invokeAction("plugin.tasks.background", {}, { source: "cli" });
       const pid = await runningPid(pidFile);
       process.kill(s.status().host.pid!, "SIGKILL");
       await gone(pid);
-      expect((await result).ok).toBe(false);
     },
     30_000,
   );

@@ -272,8 +272,9 @@ export class PluginSupervisor {
     }
     for (const problem of discovery.problems) {
       if (name && problem.name !== name) continue;
+      // A loaded plugin that became a problem was unloaded above, actions
+      // and programs included (it is no longer among the specs).
       this.#entries.delete(problem.name);
-      this.#actions.drop(problem.name);
     }
 
     const toLoad = discovery.specs.filter((spec) => !name || spec.name === name);
@@ -819,7 +820,8 @@ export class PluginSupervisor {
     this.#log(entry.name, "error", entry.error);
     this.#send({ type: "unload", name: entry.name });
     this.#actions.drop(entry.name);
-    this.#stopPrograms(entry.name);
+    // Its programs are already gone: a disable follows a trip (which stops
+    // them) or a watchdog kill of the host (which stops every program).
     this.#settleLoad(entry.name);
   }
 
