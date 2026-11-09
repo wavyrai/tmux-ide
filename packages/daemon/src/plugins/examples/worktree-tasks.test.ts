@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { grantConsent, hashPluginDirectory } from "../consent.ts";
 import { sandboxedArgv } from "../exec-sandbox.ts";
 import { createHostCallHandler } from "../host-calls.ts";
+import { cliRunner } from "../worktree-calls.ts";
 import { PluginLuaState } from "../host/lua-state.ts";
 import { PluginManifestSchemaZ } from "../manifest.ts";
 import type { PluginLogEntry } from "../plugin-log.ts";
@@ -58,25 +59,14 @@ async function stubbed(answers: Record<string, unknown> = {}) {
     productVersion: "9.9.9",
     limits,
     hostFunctions: {
-      _exec: async ([request]) => {
-        calls.push(request);
-        const sub = (request as { args: string[] }).args[1]!;
-        const answer = answers[sub] ?? LIST;
-        return answer instanceof Error
-          ? {
-              code: 1,
-              stdout: "",
-              stderr: `${answer.message}\n`,
-              timed_out: false,
-              truncated: false,
-            }
-          : {
-              code: 0,
-              stdout: JSON.stringify(answer),
-              stderr: "",
-              timed_out: false,
-              truncated: false,
-            };
+      _worktree: async (args) => {
+        calls.push(args);
+        const answer = answers[args[0] as string] ?? LIST;
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+      _exec: async () => {
+        throw new Error("the example must not run programs");
       },
     },
     hooks: { busy() {}, idle() {}, log() {}, trip() {}, actions() {} },
@@ -97,12 +87,12 @@ async function stubbed(answers: Record<string, unknown> = {}) {
 }
 
 describe("worktree-tasks example", () => {
-  it("has a valid manifest that asks only to run tmux-ide", () => {
+  it("has a valid manifest that asks only for the worktree capability", () => {
     const manifest = PluginManifestSchemaZ.parse(WORKTREE_TASKS_MANIFEST);
-    expect(manifest.capabilities).toEqual({ exec: ["tmux-ide"] });
+    expect(manifest.capabilities).toEqual({ worktree: true });
   });
 
-  it("runs tmux-ide worktree for the palette's session", async () => {
+  it("asks the daemon for each worktree operation, for the palette's session", async () => {
     const { calls, invoke } = await stubbed({
       create: { branch: "fix-login", path: "/r-worktrees/fix-login", session: "r@fix-login" },
       open: { branch: "fix-login", path: "/p", session: "r@fix-login", created: true },
@@ -117,16 +107,11 @@ describe("worktree-tasks example", () => {
     expect(await invoke("remove", { task: "old" }, ctx)).toBe("Removed old");
     expect(await invoke("list", {}, ctx)).toBe("fix-login · busy · r@fix-login\nold · no session");
     expect(calls).toEqual([
-      {
-        cmd: "tmux-ide",
-        args: ["worktree", "create", "fix-login", "--from", "main", "--session", "r", "--json"],
-      },
-      { cmd: "tmux-ide", args: ["worktree", "open", "fix-login", "--session", "r", "--json"] },
-      { cmd: "tmux-ide", args: ["worktree", "remove", "old", "--session", "r", "--json"] },
-      { cmd: "tmux-ide", args: ["worktree", "list", "--session", "r", "--json"] },
+      ["create", { session: "r", branch: "fix-login", from: "main" }],
+      ["open", { session: "r", branch: "fix-login" }],
+      ["remove", { session: "r", branch: "old" }],
+      ["list", { session: "r" }],
     ]);
-    // It never asks to run in a pane, so it needs no panes.send.
-    expect(JSON.stringify(calls)).not.toContain("context");
   });
 
   it("offers the task worktrees, not the main checkout, as choices", async () => {
@@ -139,16 +124,16 @@ describe("worktree-tasks example", () => {
     });
   });
 
-  it("says it needs a session, and passes tmux-ide's own errors on", async () => {
+  it("says it needs a session, and passes the daemon's refusals on", async () => {
     const { calls, invoke } = await stubbed({
-      remove: new Error("tmux-ide: worktree has changes; use --force"),
+      remove: new Error("E_FAILED: worktree contains modified files, use --force to delete it"),
     });
     await expect(invoke("list", {}, { pane: "%3" })).rejects.toThrow(
       /Run this from a tmux-ide session/u,
     );
     expect(calls).toEqual([]);
     await expect(invoke("remove", { task: "old" }, { session: "r" })).rejects.toThrow(
-      "tmux-ide: worktree has changes; use --force",
+      "E_FAILED: worktree contains modified files",
     );
     await expect(invoke("new", { branch: "-x" }, { session: "r" })).rejects.toThrow(
       /does not match/u,
@@ -184,8 +169,13 @@ describe("worktree-tasks end to end", () => {
         TMUX_TMPDIR: sockets,
         LANG: "C",
       };
+      mkdirSync(join(root, "daemon-tmux"));
+      const socket = join(root, "daemon-tmux", "main");
       const tmux = (...args: string[]) =>
-        execFileSync("tmux", ["-f", "/dev/null", ...args], { env, encoding: "utf8" });
+        execFileSync(tmuxPath!, ["-S", socket, "-f", "/dev/null", ...args], {
+          env,
+          encoding: "utf8",
+        });
       cleanups.push(() => rmSync(root, { recursive: true, force: true }));
       cleanups.push(() => {
         try {
@@ -208,13 +198,6 @@ describe("worktree-tasks end to end", () => {
         "init",
       );
       tmux("new-session", "-d", "-s", "demo", "-c", repo);
-      // `tmux-ide` on the daemon's PATH: this checkout's CLI.
-      const loader = join(repoRoot, "node_modules", "tsx", "dist", "loader.mjs");
-      writeFileSync(
-        join(bin, "tmux-ide"),
-        `#!/bin/sh\nexec "${process.execPath}" --import "${loader}" "${join(repoRoot, "bin", "cli.ts")}" "$@"\n`,
-        { mode: 0o755 },
-      );
       const dir = join(state, "plugins", "worktree-tasks");
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "manifest.json"), JSON.stringify(WORKTREE_TASKS_MANIFEST));
@@ -222,6 +205,11 @@ describe("worktree-tasks end to end", () => {
       grantConsent(state, "worktree-tasks", hashPluginDirectory(dir));
 
       const logs: PluginLogEntry[] = [];
+      // The daemon's tmux runner: a server on its own -S socket, not the
+      // default one, so the CLI must be pointed at it.
+      const daemonTmux = async (args: readonly string[]) =>
+        execFileSync(tmuxPath!, ["-S", socket, ...args], { env, encoding: "utf8" });
+      const loader = join(repoRoot, "node_modules", "tsx", "dist", "loader.mjs");
       const supervisor = new PluginSupervisor({
         stateHome: state,
         productVersion: "9.9.9",
@@ -231,10 +219,18 @@ describe("worktree-tasks end to end", () => {
         calls: createHostCallHandler({
           stateHome: state,
           endpoint: () => null,
-          tmux: async () => "",
+          tmux: daemonTmux,
           baseEnv: () => env,
           secrets: () => new Set(),
           notify: async () => {},
+          runCli: (args, cliEnv) =>
+            cliRunner([process.execPath, "--import", loader, join(repoRoot, "bin", "cli.ts")])(
+              args,
+              {
+                ...cliEnv,
+                ...env,
+              },
+            ),
         }),
       });
       cleanups.push(() => void supervisor.stop());

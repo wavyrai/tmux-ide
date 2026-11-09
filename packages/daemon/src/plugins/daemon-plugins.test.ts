@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { appSettingsPath } from "../lib/app-settings.ts";
-import { daemonPrivateFiles, pluginsEnabled, resolvePluginHostCommand } from "./daemon-plugins.ts";
+import {
+  daemonPrivateFiles,
+  pluginsEnabled,
+  resolveCliCommand,
+  resolvePluginHostCommand,
+  tmuxSocketDirs,
+} from "./daemon-plugins.ts";
 
 describe("resolvePluginHostCommand", () => {
   it("starts the bundled CLI with the hidden host command", () => {
@@ -62,5 +68,38 @@ describe("daemonPrivateFiles", () => {
       if (before === undefined) delete process.env.TMUX_IDE_DAEMON_INFO_DIR;
       else process.env.TMUX_IDE_DAEMON_INFO_DIR = before;
     }
+  });
+});
+
+describe("tmuxSocketDirs", () => {
+  it("names the default directory and the daemon server's, never a broad one", async () => {
+    expect(
+      await tmuxSocketDirs(async () => "/var/run/tmux-sockets/main\n", { TMUX_TMPDIR: "/t" }, 501),
+    ).toEqual(["/t/tmux-501", "/tmp/tmux-501", "/var/run/tmux-sockets"]);
+    expect(await tmuxSocketDirs(async () => "/tmp/odd.sock\n", {}, 501)).toEqual(["/tmp/tmux-501"]);
+    expect(
+      await tmuxSocketDirs(
+        async () => {
+          throw new Error("no server");
+        },
+        {},
+        501,
+      ),
+    ).toEqual(["/tmp/tmux-501"]);
+  });
+});
+
+describe("resolveCliCommand", () => {
+  it("runs the bundled CLI, or bin/cli.ts under the loader from source", () => {
+    expect(resolveCliCommand("/pkg/bin/cli.js", { execPath: "/node", execArgv: ["--x"] })).toEqual([
+      "/node",
+      "/pkg/bin/cli.js",
+    ]);
+    expect(
+      resolveCliCommand("/repo/packages/daemon/src/plugins/daemon-plugins.ts", {
+        execPath: "/node",
+        execArgv: ["--import", "tsx"],
+      }),
+    ).toEqual(["/node", "--import", "tsx", "/repo/bin/cli.ts"]);
   });
 });

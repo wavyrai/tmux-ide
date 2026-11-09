@@ -156,6 +156,7 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
         exec: [...(manifest.capabilities.exec ?? [])],
         shell: manifest.capabilities.shell === true,
         panes: manifest.capabilities["panes.send"] === true,
+        worktree: manifest.capabilities.worktree === true,
       },
     });
   }
@@ -168,7 +169,7 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       includeRoots: [stateHome, paths.lua],
       moduleRoots: [paths.lua],
       settings: {},
-      capabilities: { exec: "any", shell: true, panes: true },
+      capabilities: { exec: "any", shell: true, panes: true, worktree: true },
     });
   }
   return { specs, problems, awaitingConsent };

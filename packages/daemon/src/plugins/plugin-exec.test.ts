@@ -8,7 +8,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   darwinProfile,
@@ -26,6 +27,14 @@ import {
 } from "./plugin-exec.ts";
 
 const sandboxAvailable = sandboxedArgv(["true"], { stateHome: "/", writable: "/" }).ok;
+const tmuxPath = (() => {
+  try {
+    return execFileSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).trim() || null;
+  } catch {
+    return null;
+  }
+})();
+const hasTmux = tmuxPath !== null;
 const live = sandboxAvailable ? it : it.skip;
 
 let root: string;
@@ -267,6 +276,53 @@ describe("ide.exec running programs", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  live("gets TMUX_TMPDIR only with panes.send", async () => {
+    const base = { PATH: "/usr/bin:/bin", HOME: root, TMUX_TMPDIR: "/tmp/elsewhere" };
+    const without = await runPluginExec({ cmd: "env" }, deps({}, { baseEnv: base }));
+    expect(without.stdout).not.toContain("TMUX_TMPDIR");
+    const granted = await runPluginExec({ cmd: "env" }, deps({ panes: true }, { baseEnv: base }));
+    expect(granted.stdout).toContain("TMUX_TMPDIR=/tmp/elsewhere\n");
+  });
+
+  (hasTmux ? live : it.skip)("cannot reach a tmux server's socket without panes.send", async () => {
+    const sockets = join(root, "tmux-sockets");
+    mkdirSync(sockets);
+    const socket = join(sockets, "default");
+    execFileSync(tmuxPath!, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "x"]);
+    try {
+      const sandbox = { stateHome, writable: dataDir, tmuxSockets: [sockets] };
+      const run = (policy: Partial<ExecPolicy>, tmuxSockets: string[]) =>
+        runPluginExec(
+          { cmd: "tmux", args: ["-S", socket, "list-sessions", "-F", "#{session_name}"] },
+          deps(
+            { programs: ["tmux"], ...policy },
+            {
+              baseEnv: { PATH: `/usr/bin:/bin:${dirname(tmuxPath!)}`, HOME: root },
+              sandbox: { ...sandbox, tmuxSockets },
+            },
+          ),
+        );
+      const refused = await run({}, [sockets]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.stdout).not.toContain("x");
+      // Through a symlink elsewhere: still the socket's real path, still refused.
+      symlinkSync(socket, join(dataDir, "s"));
+      const linked = await runPluginExec(
+        { cmd: "tmux", args: ["-S", join(dataDir, "s"), "list-sessions"] },
+        deps(
+          { programs: ["tmux"] },
+          { baseEnv: { PATH: `/usr/bin:/bin:${dirname(tmuxPath!)}`, HOME: root }, sandbox },
+        ),
+      );
+      expect(linked.code).not.toBe(0);
+      // With panes.send no socket directory is kept from it.
+      const allowed = await run({ panes: true }, []);
+      expect(allowed.stdout).toBe("x\n");
+    } finally {
+      execFileSync(tmuxPath!, ["-S", socket, "kill-server"]);
+    }
+  });
+
   live("caps the timeout at the callback wall clock", async () => {
     const started = Date.now();
     const result = await runPluginExec(
@@ -408,6 +464,20 @@ describe("sandbox plans", () => {
       ok: true,
       argv: ["/usr/bin/sandbox-exec", "-p", darwinProfile(paths), "/bin/echo", "x"],
     });
+  });
+
+  it("keeps programs from tmux socket directories", () => {
+    const same = (path: string) => path;
+    expect(darwinProfile({ ...paths, tmuxSockets: ["/private/tmp/tmux-501"] }, same)).toContain(
+      '(deny network-outbound (remote unix-socket (path-regex #"^/private/tmp/tmux-501/")))' +
+        '(deny file-read* file-write* (regex #"^/private/tmp/tmux-501/"))',
+    );
+    const plan = sandboxedArgv(
+      ["/bin/echo"],
+      { stateHome, writable: dataDir, tmuxSockets: [root, join(root, "gone")] },
+      { platform: "linux", linuxOptIn: true, find: () => "/usr/bin/bwrap", resolve: (p) => p },
+    );
+    expect(plan.ok && plan.argv.join(" ")).toContain(`--tmpfs ${root} --unshare-pid`);
   });
 
   it("never names a symlinked data dir's target as writable", () => {

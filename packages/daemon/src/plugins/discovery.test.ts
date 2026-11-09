@@ -106,7 +106,7 @@ describe("discoverPlugins", () => {
         includeRoots: [alpha],
         moduleRoots: [alpha],
         settings: { base: "main" },
-        capabilities: { exec: [], shell: false, panes: false },
+        capabilities: { exec: [], shell: false, panes: false, worktree: false },
       },
       {
         name: "zeta",
@@ -116,7 +116,7 @@ describe("discoverPlugins", () => {
         includeRoots: [zeta],
         moduleRoots: [zeta],
         settings: {},
-        capabilities: { exec: [], shell: false, panes: false },
+        capabilities: { exec: [], shell: false, panes: false, worktree: false },
       },
       {
         name: "init",
@@ -125,7 +125,7 @@ describe("discoverPlugins", () => {
         includeRoots: [home, join(home, "lua")],
         moduleRoots: [join(home, "lua")],
         settings: {},
-        capabilities: { exec: "any", shell: true, panes: true },
+        capabilities: { exec: "any", shell: true, panes: true, worktree: true },
       },
     ]);
   });
@@ -183,7 +183,7 @@ describe("discoverPlugins", () => {
     plugin(
       "runner",
       manifest("runner", {
-        capabilities: { exec: ["git", "gh"], shell: true, "panes.send": true },
+        capabilities: { exec: ["git", "gh"], shell: true, "panes.send": true, worktree: true },
       }),
     );
     consentTo("runner");
@@ -191,6 +191,7 @@ describe("discoverPlugins", () => {
       exec: ["git", "gh"],
       shell: true,
       panes: true,
+      worktree: true,
     });
   });
 

@@ -156,8 +156,8 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
       "TMUX_PANE, and needs capabilities `panes.send`. `cmd` is looked up on the daemon's PATH; " +
       "`env` may set only LANG, LC_*, TZ, TERM, colour variables, COLUMNS, LINES and PLUGIN_*. " +
       "A program can usually do anything your account can; the OS sandbox only keeps it from " +
-      "writing tmux-ide's state (but ~/.tmux-ide/plugin-data/<plugin>) and reading the daemon's " +
-      "credentials. On Linux it is off unless the daemon has TMUX_IDE_PLUGIN_EXEC_LINUX=1 (untested). " +
+      "writing tmux-ide's state (but ~/.tmux-ide/plugin-data/<plugin>), reading the daemon's " +
+      "credentials and, without `panes.send`, reaching your tmux server. On Linux it is off unless the daemon has TMUX_IDE_PLUGIN_EXEC_LINUX=1 (untested). " +
       "It is killed with everything it started after `timeout_ms` (default and most: the " +
       "callback's 30 s wall clock), or when the plugin fails or unloads, and keeps at most " +
       "1 MiB of each output. Output is redacted.",
@@ -185,6 +185,51 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     kind: "function",
     signature: "ide.session(workspace) -> { rename(name), kill() }",
     summary: "A workspace's tmux session, to rename or kill.",
+    ...v1,
+  },
+  {
+    name: "ide.worktree.list",
+    kind: "function",
+    signature:
+      "ide.worktree.list{ session } -> { repo, worktrees = { { path, branch, primary, session, running, status }… } }",
+    summary: "The git worktrees of a session's repository, with their sessions.",
+    details:
+      "Needs capabilities `worktree`. `session` is a tmux session name (usually `ctx.session`); " +
+      "the daemon runs tmux-ide's own worktree code for that session's repository.",
+    errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
+    example: "local tasks = ide.worktree.list{ session = ctx.session }",
+    ...v1,
+  },
+  {
+    name: "ide.worktree.create",
+    kind: "function",
+    signature: "ide.worktree.create{ session, branch, from? } -> { branch, path, session }",
+    summary: "Add a worktree on a new branch (or an existing one) and open a session in it.",
+    details:
+      "Needs capabilities `worktree`. `branch` and `from` must be plain git names: letters, " +
+      "digits and `. _ / -`, not starting with `-` or `.`.",
+    errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
+    example: 'ide.worktree.create{ session = ctx.session, branch = "fix-login" }',
+    ...v1,
+  },
+  {
+    name: "ide.worktree.open",
+    kind: "function",
+    signature: "ide.worktree.open{ session, branch } -> { branch, path, session, created }",
+    summary: "Open (or start) the session of an existing worktree.",
+    details: "Needs capabilities `worktree`.",
+    errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
+    ...v1,
+  },
+  {
+    name: "ide.worktree.remove",
+    kind: "function",
+    signature: "ide.worktree.remove{ session, branch } -> { branch, path, sessionKilled, removed }",
+    summary: "Close a worktree's session and remove the worktree; refused if it has changes.",
+    details:
+      "Needs capabilities `worktree`. Never forces: a worktree with changes is refused. Mark " +
+      "actions that call it `dangerous = true`, so a person confirms them.",
+    errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
     ...v1,
   },
   {

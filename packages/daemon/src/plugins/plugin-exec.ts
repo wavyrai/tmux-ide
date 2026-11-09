@@ -156,6 +156,10 @@ export async function prepareExec(raw: unknown, deps: ExecDependencies) {
     command = [resolved, ...request.args];
   }
 
+  // Without panes.send a program gets no hint where the tmux server is (and
+  // the sandbox keeps it from the socket directories anyway).
+  if (!deps.policy.panes) delete env.TMUX_TMPDIR;
+
   let cwd = env.HOME ?? "/";
   if (request.context) {
     if (!deps.policy.panes)

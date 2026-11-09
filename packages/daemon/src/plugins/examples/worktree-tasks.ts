@@ -1,14 +1,15 @@
 /**
  * The "worktree tasks" example plugin: tasks as git worktrees, each with its
- * own tmux session, through tmux-ide's own `tmux-ide worktree` command.
+ * own tmux session, through tmux-ide's own worktree code (`ide.worktree`).
  *
  * `tmux-ide plugin example worktree-tasks` copies these files into
  * ~/.tmux-ide/plugins/worktree-tasks; it then runs only after
  * `tmux-ide plugin consent worktree-tasks`.
  *
- * It needs only `exec: ["tmux-ide"]`: it finds the repository from the
- * session the palette was opened in (`ctx.session`, passed as --session), so
- * it never types into a pane and works from the TUI, the CLI and the Mac app.
+ * It asks only for the `worktree` capability and runs no programs: the
+ * daemon does the worktree work, for the session the command was run from
+ * (`ctx.session`). It never types into a pane, and cannot, so it works the
+ * same from the TUI, the CLI and the Mac app.
  */
 export const WORKTREE_TASKS_MANIFEST = {
   name: "worktree-tasks",
@@ -16,12 +17,12 @@ export const WORKTREE_TASKS_MANIFEST = {
   api: "^1.0",
   description:
     "Tasks as git worktrees: start, open and remove them from the palette, with tmux-ide worktree.",
-  capabilities: { exec: ["tmux-ide"] },
+  capabilities: { worktree: true },
 } as const;
 
 export const WORKTREE_TASKS_INIT_LUA = String.raw`-- worktree-tasks: tasks as git worktrees, each with its own tmux session.
--- Every action runs "tmux-ide worktree ... --session <session> --json" on the
--- repository of the session the palette was opened in.
+-- Every action asks the daemon (ide.worktree) to work on the repository of
+-- the session the command was run from.
 
 local function session_of(ctx)
   if not ctx.session then
@@ -31,26 +32,17 @@ local function session_of(ctx)
   return ctx.session
 end
 
--- Run tmux-ide worktree with args, for ctx's session; returns its JSON answer.
-local function worktree(ctx, args)
-  local argv = { "worktree" }
-  for _, arg in ipairs(args) do argv[#argv + 1] = arg end
-  argv[#argv + 1] = "--session"
-  argv[#argv + 1] = session_of(ctx)
-  argv[#argv + 1] = "--json"
-  local result = ide.exec{ cmd = "tmux-ide", args = argv }
-  if result.code ~= 0 then
-    local message = result.stderr ~= "" and result.stderr or result.stdout
-    message = message:gsub("%s+$", "")
-    if message == "" then message = "tmux-ide worktree failed (exit " .. tostring(result.code) .. ")" end
-    error(message, 0)
-  end
-  return ide.json.decode(result.stdout)
+-- One ide.worktree operation for ctx's session. Errors from the daemon
+-- (a refused branch name, a worktree with changes) reach the palette as is.
+local function worktree(ctx, op, spec)
+  spec = spec or {}
+  spec.session = session_of(ctx)
+  return ide.worktree[op](spec)
 end
 
 -- The task worktrees (not the main checkout), as palette choices.
 local function task_choices(ctx)
-  local listed = worktree(ctx, { "list" })
+  local listed = worktree(ctx, "list")
   local choices = {}
   for _, entry in ipairs(listed.worktrees or {}) do
     if not entry.primary and entry.branch then
@@ -73,12 +65,7 @@ ide.action.register{
     { name = "from", label = "Start from (branch or commit)", optional = true },
   },
   run = function(ctx, args)
-    local argv = { "create", args.branch }
-    if args.from then
-      argv[#argv + 1] = "--from"
-      argv[#argv + 1] = args.from
-    end
-    local made = worktree(ctx, argv)
+    local made = worktree(ctx, "create", { branch = args.branch, from = args.from })
     return "Started " .. made.branch .. " in session " .. tostring(made.session)
   end,
 }
@@ -90,7 +77,7 @@ ide.action.register{
   description = "Open (or start) the session of a task's worktree",
   params = { task_param },
   run = function(ctx, args)
-    local opened = worktree(ctx, { "open", args.task })
+    local opened = worktree(ctx, "open", { branch = args.task })
     return (opened.created and "Opened " or "Already open: ") .. opened.session
   end,
 }
@@ -103,7 +90,7 @@ ide.action.register{
   dangerous = true,
   params = { task_param },
   run = function(ctx, args)
-    local removed = worktree(ctx, { "remove", args.task })
+    local removed = worktree(ctx, "remove", { branch = args.task })
     return "Removed " .. removed.branch .. (removed.sessionKilled and " and closed its session" or "")
   end,
 }

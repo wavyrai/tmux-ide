@@ -269,9 +269,8 @@ describe("tmux-ide plugin example", () => {
     expect(
       await runPluginCommandLine("plugin", ["consent", "worktree-tasks", "--yes"], consent.io),
     ).toBe(0);
-    expect(consent.out[0]).toContain(
-      "run these programs: tmux-ide. A program it may run can usually do anything your account can",
-    );
+    expect(consent.out[0]).toContain("create, open and remove git worktrees and their sessions");
+    expect(consent.out[0]).not.toContain("run these programs");
     expect(consent.out[0]).not.toContain("type into your terminals");
     // A second copy does not overwrite the first, and unknown names are refused.
     expect(await runPluginCommandLine("plugin", ["example", "worktree-tasks"], h.io)).toBe(1);
@@ -338,6 +337,27 @@ describe("tmux-ide plugin consent", () => {
     expect(h.out[0]).toContain("run ANY shell command line, with full access to your account");
     expect(h.out[0]).not.toMatch(/cannot (change|touch)/u);
     expect(h.out[0]).toContain("Allow only plugins you trust.");
+  });
+
+  it("names the programs that give full control", async () => {
+    const dir = join(home, "plugins", "runner");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        name: "runner",
+        version: "1.0.0",
+        api: "^1.0",
+        capabilities: { exec: ["jq", "tmux-ide", "git"] },
+      }),
+    );
+    writeFileSync(join(dir, "init.lua"), "return true");
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "runner", "--yes"], h.io)).toBe(0);
+    expect(h.out[0]).toContain(
+      "NOTE: tmux-ide, git give full control of your account: they run any command, or drive tmux or tmux-ide",
+    );
+    expect(h.out[0]).not.toMatch(/NOTE: .*jq/u);
   });
 
   it("says what programs and typing into panes really allow", async () => {

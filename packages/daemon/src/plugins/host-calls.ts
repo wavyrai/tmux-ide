@@ -20,6 +20,11 @@ import {
 import { z } from "zod";
 import { PluginPrograms, runPluginExec, type ExecPolicy, type PaneContext } from "./plugin-exec.ts";
 import { PluginStore, pluginStorePath } from "./plugin-store.ts";
+import {
+  worktreeCall,
+  WorktreeCallError,
+  type WorktreeCallDependencies,
+} from "./worktree-calls.ts";
 import { INIT_PLUGIN_NAME, RUN_STATE_NAME } from "./protocol.ts";
 
 /** Workspace actions a plugin may dispatch (all multiplexer verbs on panes, windows and sessions). */
@@ -59,6 +64,10 @@ export interface HostCallDependencies {
   readonly unreadable?: () => readonly string[];
   /** The longest a program may run: the callback wall clock. */
   readonly execMaxTimeoutMs?: number;
+  /** Directories holding tmux sockets, kept from programs of plugins without panes.send. */
+  readonly tmuxSocketDirs?: () => Promise<readonly string[]>;
+  /** Runs the tmux-ide CLI for ide.worktree; without it, ide.worktree is unavailable. */
+  readonly runCli?: WorktreeCallDependencies["runCli"];
 }
 
 export type NotifyLevel = "info" | "warn" | "error";
@@ -74,6 +83,8 @@ export interface HostCallCaller {
     readonly shell: boolean;
     /** Type into panes and run programs as if typed there (`panes.send`). */
     readonly panes: boolean;
+    /** ide.worktree (`worktree`). */
+    readonly worktree?: boolean;
   };
 }
 
@@ -190,6 +201,7 @@ export function createHostCallHandler(deps: HostCallDependencies) {
           stateHome: deps.stateHome,
           writable: join(deps.stateHome, "plugin-data", caller.plugin),
           unreadable: deps.unreadable?.() ?? [],
+          tmuxSockets: caller.capabilities.panes ? [] : ((await deps.tmuxSocketDirs?.()) ?? []),
         },
         baseEnv: deps.baseEnv(),
         resolvePane,
@@ -235,6 +247,17 @@ export function createHostCallHandler(deps: HostCallDependencies) {
       if (!envelope.success) fail("E_FAILED: the daemon sent an unexpected answer");
       if (!envelope.data.ok) fail(`E_FAILED: ${envelope.data.error.message}`);
       return envelope.data.result ?? null;
+    },
+    async _worktree(caller, args) {
+      if (!caller.capabilities.worktree)
+        fail("E_DENIED: ide.worktree needs the manifest capability 'worktree'");
+      if (!deps.runCli) fail("E_UNAVAILABLE: ide.worktree is not available here");
+      try {
+        return await worktreeCall(args[0], args[1], { tmux: deps.tmux, runCli: deps.runCli });
+      } catch (error) {
+        if (error instanceof WorktreeCallError) fail(error.message);
+        throw error;
+      }
     },
     async _notify(caller, args) {
       const [text, level = "info"] = NotifyArgsZ.parse(args);
@@ -286,6 +309,6 @@ export type HostCallHandler = ReturnType<typeof createHostCallHandler>;
 /** What init.lua and `lua run` may do: everything a plugin could be granted. */
 export function ownerCapabilities(plugin: string): HostCallCaller["capabilities"] | null {
   return plugin === INIT_PLUGIN_NAME || plugin === RUN_STATE_NAME
-    ? { exec: "any", shell: true, panes: true }
+    ? { exec: "any", shell: true, panes: true, worktree: true }
     : null;
 }

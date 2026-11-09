@@ -304,15 +304,91 @@ async function followLog(
   }
 }
 
+/**
+ * Programs that, once granted, give a plugin full control: they run other
+ * commands (shells, interpreters, build tools, git hooks and aliases), reach
+ * other machines, drive tmux or tmux-ide (and through them, your panes), or
+ * manage services. Consent names them when a plugin lists them.
+ */
+export const FULL_CONTROL_PROGRAMS: ReadonlySet<string> = new Set([
+  "tmux",
+  "tmux-ide",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "dash",
+  "ksh",
+  "csh",
+  "tcsh",
+  "env",
+  "xargs",
+  "nohup",
+  "sudo",
+  "su",
+  "doas",
+  "osascript",
+  "open",
+  "launchctl",
+  "systemctl",
+  "crontab",
+  "at",
+  "ssh",
+  "scp",
+  "sftp",
+  "rsync",
+  "git",
+  "gh",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "bunx",
+  "deno",
+  "python",
+  "python3",
+  "pip",
+  "pip3",
+  "uv",
+  "ruby",
+  "gem",
+  "perl",
+  "php",
+  "lua",
+  "make",
+  "cargo",
+  "go",
+  "docker",
+  "kubectl",
+  "find",
+  "awk",
+  "sed",
+  "vim",
+  "nvim",
+  "emacs",
+  "code",
+  "claude",
+  "codex",
+]);
+
 export function describeForConsent(plugin: PluginAwaitingConsent): string {
   const { manifest } = plugin;
   const exec = manifest.capabilities.exec ?? [];
+  const fullControl = exec.filter((program) => FULL_CONTROL_PROGRAMS.has(program));
   const asks = [
     manifest.capabilities.shell
       ? "run ANY shell command line, with full access to your account"
       : null,
     exec.length > 0
       ? `run these programs: ${exec.join(", ")}. A program it may run can usually do anything your account can`
+      : null,
+    fullControl.length > 0
+      ? `NOTE: ${fullControl.join(", ")} ${fullControl.length === 1 ? "gives" : "give"} full control of your account: ${fullControl.length === 1 ? "it runs" : "they run"} any command, or ${fullControl.length === 1 ? "drives" : "drive"} tmux or tmux-ide`
+      : null,
+    manifest.capabilities.worktree
+      ? "create, open and remove git worktrees and their sessions"
       : null,
     manifest.capabilities["panes.send"]
       ? "type into your terminals and run commands there, which gives full access to your account"

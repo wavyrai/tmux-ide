@@ -9,6 +9,7 @@ import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 import { createHostCallHandler, type DaemonEndpoint, type NotifyLevel } from "./host-calls.ts";
+import { cliRunner } from "./worktree-calls.ts";
 import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
 import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
 
@@ -54,6 +55,41 @@ export function resolvePluginHostCommand(
   if (basename(here) === "cli.js") return [runtime.execPath, here, "__plugin-host"];
   const entry = join(dirname(here), "host", `entry${extname(here)}`);
   return [runtime.execPath, ...runtime.execArgv, entry];
+}
+
+/**
+ * Where tmux keeps sockets: the default directory (under TMUX_TMPDIR or
+ * /tmp, per user) and the directory of the daemon's own tmux server.
+ */
+export async function tmuxSocketDirs(
+  tmux: (args: readonly string[]) => Promise<string>,
+  env: NodeJS.ProcessEnv = process.env,
+  uid: number = process.getuid?.() ?? 0,
+): Promise<string[]> {
+  const dirs = new Set<string>([join(env.TMUX_TMPDIR || "/tmp", `tmux-${uid}`)]);
+  if (env.TMUX_TMPDIR) dirs.add(join("/tmp", `tmux-${uid}`));
+  try {
+    const socket = (await tmux(["list-sessions", "-F", "#{socket_path}"])).split("\n")[0]?.trim();
+    // Only a directory of tmux sockets, never a broad one like /tmp itself.
+    if (socket?.startsWith("/") && basename(dirname(socket)).startsWith("tmux"))
+      dirs.add(dirname(socket));
+  } catch {
+    // No server yet: the default directories still apply.
+  }
+  return [...dirs];
+}
+
+/**
+ * The argv prefix that runs this tmux-ide's CLI: the bundled `bin/cli.js`,
+ * or `bin/cli.ts` under the runtime's loader flags when run from source.
+ */
+export function resolveCliCommand(
+  here: string = fileURLToPath(import.meta.url),
+  runtime: { execPath: string; execArgv: readonly string[] } = process,
+): string[] {
+  if (basename(here) === "cli.js") return [runtime.execPath, here];
+  const cli = join(dirname(here), "..", "..", "..", "..", "bin", `cli${extname(here)}`);
+  return [runtime.execPath, ...runtime.execArgv, cli];
 }
 
 /**
@@ -104,6 +140,8 @@ export function createDaemonPluginSupervisor(options: {
     notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
     unreadable: () => daemonPrivateFiles(home),
     execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
+    runCli: cliRunner(resolveCliCommand()),
+    tmuxSocketDirs: () => tmuxSocketDirs(tmux),
   });
   return new PluginSupervisor({
     calls,

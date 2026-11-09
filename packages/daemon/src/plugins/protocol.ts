@@ -90,6 +90,8 @@ export const PluginSpecSchemaZ = z
         shell: z.boolean(),
         /** `panes.send`: type into panes and run programs as if typed there. */
         panes: z.boolean(),
+        /** Create, open and remove git worktrees and their sessions. */
+        worktree: z.boolean(),
       })
       .strict(),
   })
@@ -111,6 +113,7 @@ export const HOST_CALL_METHODS = Object.freeze([
   "_store_get",
   "_store_set",
   "_store_keys",
+  "_worktree",
 ] as const);
 
 // ---------------------------------------------------------------- daemon → host

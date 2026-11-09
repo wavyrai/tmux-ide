@@ -42,6 +42,12 @@ export interface SandboxPaths {
    * also covers `daemon.json.<claim>.<uuid>.tmp`, `….retired` and the like.
    */
   readonly unreadable?: readonly string[];
+  /**
+   * Directories whose tmux sockets programs may not connect to (nor read or
+   * write in): set unless the plugin has `panes.send`, so a granted program
+   * cannot drive your tmux server, and through it your panes.
+   */
+  readonly tmuxSockets?: readonly string[];
 }
 
 /** The environment variable that turns plugin programs on for Linux. */
@@ -104,6 +110,13 @@ export function darwinProfile(
     ...(paths.unreadable ?? []).map(
       (path) => `(deny file-read* file-write* (regex ${sbplPrefixRegex(resolve(path))}))`,
     ),
+    ...(paths.tmuxSockets ?? []).flatMap((dir) => {
+      const inside = sbplPrefixRegex(`${resolve(dir)}/`);
+      return [
+        `(deny network-outbound (remote unix-socket (path-regex ${inside})))`,
+        `(deny file-read* file-write* (regex ${inside}))`,
+      ];
+    }),
   ].join("");
 }
 
@@ -194,6 +207,11 @@ export function sandboxedArgv(
         ...hidden.flatMap((path) =>
           isDirectory(path) ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path],
         ),
+        // tmux socket directories become empty: no tmux server to reach.
+        ...(paths.tmuxSockets ?? [])
+          .map(resolve)
+          .filter((dir) => exists(dir) && isDirectory(dir))
+          .flatMap((dir) => ["--tmpfs", dir]),
         // Its own PIDs and /proc: the daemon's /proc/<pid> (environ, root,
         // fds) is out of sight. Its own IPC and session (no TIOCSTI into
         // the daemon's terminal), and it dies with the daemon.

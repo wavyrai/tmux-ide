@@ -50,6 +50,24 @@ ide.exec = function(spec)
   return call("_exec", request)
 end
 
+------------------------------------------------------------------ worktree
+
+local function worktree_call(op)
+  return function(spec)
+    if raw_type(spec) ~= "table" then
+      fail("ide.worktree." .. op .. " expects a table like { session = ctx.session, branch = 'fix-login' }")
+    end
+    return call("_worktree", op, { session = spec.session, branch = spec.branch, from = spec.from })
+  end
+end
+
+ide.worktree = {
+  list = worktree_call("list"),
+  create = worktree_call("create"),
+  open = worktree_call("open"),
+  remove = worktree_call("remove"),
+}
+
 -------------------------------------------------------------------- notify
 
 ide.notify = function(text, opts)

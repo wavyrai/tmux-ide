@@ -41,6 +41,8 @@ export const PluginManifestSchemaZ = z
         shell: z.boolean().optional(),
         /** Type into panes (pane:send) and run programs in one (ide.exec context). */
         "panes.send": z.boolean().optional(),
+        /** ide.worktree: create, open and remove git worktrees and their sessions. */
+        worktree: z.boolean().optional(),
       })
       .strict()
       .default({}),

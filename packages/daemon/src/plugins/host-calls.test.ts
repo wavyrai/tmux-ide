@@ -303,6 +303,32 @@ describe("pane context", () => {
   );
 });
 
+describe("worktree capability", () => {
+  it("is refused without the capability, and goes to the daemon's worktree code with it", async () => {
+    const runCli = vi.fn(async () => ({ code: 0, stdout: '{"worktrees":[]}', stderr: "" }));
+    const tmux = vi.fn(async () => "/tmp/tmux-501/default,1\n");
+    const { calls } = handler({ runCli, tmux });
+    await expect(calls.handle(tasks, "_worktree", ["list", { session: "demo" }])).rejects.toThrow(
+      "E_DENIED: ide.worktree needs the manifest capability 'worktree'",
+    );
+    expect(runCli).not.toHaveBeenCalled();
+    const granted = { ...tasks, capabilities: { ...tasks.capabilities, worktree: true } };
+    expect(await calls.handle(granted, "_worktree", ["list", { session: "demo" }])).toEqual({
+      worktrees: [],
+    });
+    expect(runCli).toHaveBeenCalledWith(
+      ["worktree", "list", "--session", "demo", "--json"],
+      expect.objectContaining({ TMUX: "/tmp/tmux-501/default,1,0" }),
+    );
+    await expect(
+      calls.handle(granted, "_worktree", ["create", { session: "demo", branch: "-x" }]),
+    ).rejects.toThrow(/E_INVALID/u);
+    await expect(
+      handler().calls.handle(granted, "_worktree", ["list", { session: "demo" }]),
+    ).rejects.toThrow("E_UNAVAILABLE: ide.worktree is not available here");
+  });
+});
+
 describe("exec capabilities", () => {
   it("passes the caller's consented programs to the runner, and its own data dir", async () => {
     const exec = vi.fn(async () => ({
@@ -317,6 +343,7 @@ describe("exec capabilities", () => {
       exec,
       unreadable: () => [join(home, "daemon.json")],
       execMaxTimeoutMs: 1234,
+      tmuxSocketDirs: async () => ["/tmp/tmux-501"],
     });
     await calls.handle(tasks, "_exec", [{ cmd: "echo" }]);
     await calls.handle(typist, "_exec", [{ cmd: "echo" }]);
@@ -329,6 +356,7 @@ describe("exec capabilities", () => {
           stateHome: home,
           writable: join(home, "plugin-data", "tasks"),
           unreadable: [join(home, "daemon.json")],
+          tmuxSockets: ["/tmp/tmux-501"],
         },
         maxTimeoutMs: 1234,
       }),
@@ -338,6 +366,8 @@ describe("exec capabilities", () => {
       { cmd: "echo" },
       expect.objectContaining({
         policy: { programs: ["echo", "pwd", "env"], shell: false, panes: true },
+        // With panes.send, the tmux socket directories stay reachable.
+        sandbox: expect.objectContaining({ tmuxSockets: [] }),
       }),
     );
     // The caller's liveness check reaches the runner.
@@ -350,8 +380,13 @@ describe("exec capabilities", () => {
   });
 
   it("gives init.lua and lua run every capability, and plugins none by default", () => {
-    expect(ownerCapabilities("init")).toEqual({ exec: "any", shell: true, panes: true });
-    expect(ownerCapabilities("run")).toEqual({ exec: "any", shell: true, panes: true });
+    for (const owner of ["init", "run"])
+      expect(ownerCapabilities(owner)).toEqual({
+        exec: "any",
+        shell: true,
+        panes: true,
+        worktree: true,
+      });
     expect(ownerCapabilities("tasks")).toBeNull();
   });
 });
