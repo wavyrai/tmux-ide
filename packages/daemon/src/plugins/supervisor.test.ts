@@ -413,14 +413,22 @@ describe("PluginSupervisor", () => {
   it("redacts secrets in load errors shown by status", async () => {
     const token = "ownertoken-abcdef1234567890";
     plugin("leaky", `error("${token}")`);
-    mkdirSync(join(home, "plugins", "badjson"), { recursive: true });
-    writeFileSync(join(home, "plugins", "badjson", "manifest.json"), `{"name": "${token}" oops`);
+    // A manifest problem quotes the manifest's name: the token, here.
+    mkdirSync(join(home, "plugins", "misnamed"), { recursive: true });
+    writeFileSync(
+      join(home, "plugins", "misnamed", "manifest.json"),
+      JSON.stringify({ name: token, version: "0.1.0", api: "^1.0" }),
+    );
     const s = supervisor({ secrets: () => [token] });
     const status = await s.start();
     expect(JSON.stringify(status)).not.toContain(token);
     expect(status.plugins.find((p) => p.name === "leaky")).toMatchObject({
       state: "failed",
       error: expect.stringContaining("[redacted]"),
+    });
+    expect(status.plugins.find((p) => p.name === "misnamed")).toMatchObject({
+      state: "invalid",
+      error: "manifest name '[redacted]' does not match its directory 'misnamed'",
     });
   });
 

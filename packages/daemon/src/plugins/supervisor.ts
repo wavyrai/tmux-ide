@@ -504,10 +504,9 @@ export class PluginSupervisor {
         const entry = this.#entries.get(event.plugin);
         if (entry && entry.state !== "disabled") {
           entry.state = event.ok ? "loaded" : "failed";
-          entry.error =
-            event.ok || event.error === undefined
-              ? undefined
-              : redactText(event.error, this.#secretSet());
+          // Raw here; status() is the one place entries leave the
+          // supervisor, and it redacts every error on the way out.
+          entry.error = event.ok ? undefined : event.error;
           entry.memoryBytes = event.memoryBytes;
         }
         this.#settleLoad(event.plugin);
