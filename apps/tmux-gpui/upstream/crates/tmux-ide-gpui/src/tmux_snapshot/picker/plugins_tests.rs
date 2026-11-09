@@ -46,6 +46,7 @@ fn targets(rows: &[Row]) -> Vec<Target> {
 
 fn ready(commands: Vec<PluginCommand>) -> Session {
     Session {
+        context: Default::default(),
         phase: Phase::Ready,
         commands,
         form: None,
@@ -93,7 +94,7 @@ fn lists_commands_with_category_and_plugin_and_filters_them() {
 
 #[test]
 fn says_what_is_happening_when_there_is_nothing_to_choose() {
-    let mut session = Session::new();
+    let mut session = Session::new(Default::default());
     assert_eq!(
         labels(&rows(&session, "")),
         vec!["Loading plugin commands…"]
@@ -201,20 +202,21 @@ fn dynamic_choices_show_loading_then_the_plugins_answer() {
 }
 
 #[test]
-fn a_dangerous_command_ends_with_an_explicit_run_or_cancel() {
+fn a_dangerous_command_ends_with_an_explicit_cancel_or_run() {
     let session = in_form(command("plugin.t.rm", "Remove task", true, vec![]), 0, None);
+    // Cancel is first, so it is what Return chooses unless the person moves.
     assert_eq!(
         targets(&rows(&session, "")),
-        vec![Target::Run, Target::Cancel]
+        vec![Target::Cancel, Target::Run]
     );
     assert_eq!(
         labels(&rows(&session, "")),
-        vec!["Run Remove task", "Cancel"]
+        vec!["Cancel", "Run Remove task"]
     );
     // The search text cannot hide or replace the confirmation rows.
     assert_eq!(
         targets(&rows(&session, "anything")),
-        vec![Target::Run, Target::Cancel]
+        vec![Target::Cancel, Target::Run]
     );
 }
 
@@ -225,7 +227,7 @@ mod keyboard {
     use crate::tmux_snapshot::picker::tests::make_view;
     use core::prelude::v1::test;
     use gpui::TestAppContext;
-    use herdr_client::tmux_daemon::ParamKind;
+    use herdr_client::tmux_daemon::{InvokeContext, ParamKind};
     use std::sync::mpsc;
 
     fn labels(view: &crate::tmux_snapshot::SnapshotView) -> Vec<String> {
@@ -285,9 +287,8 @@ mod keyboard {
             view.update(cx, |view, cx| {
                 // Return on the command opens the confirm step; nothing runs yet.
                 view.picker_key(&key_down("enter"), window, cx);
-                assert_eq!(labels(view), vec!["Run Remove task", "Cancel"]);
-                // Down to Cancel, Return: back to the list, nothing ran.
-                view.picker_key(&key_down("down"), window, cx);
+                assert_eq!(labels(view), vec!["Cancel", "Run Remove task"]);
+                // Return on the selected Cancel: back to the list, nothing ran.
                 view.picker_key(&key_down("enter"), window, cx);
                 assert_eq!(labels(view)[0], "Cancelled.");
                 assert!(
@@ -305,7 +306,9 @@ mod keyboard {
                     .position(|l| l.starts_with("Remove task"))
                     .unwrap();
                 view.picker.as_mut().unwrap().selected = index;
+                // Return, Down to Run, Return.
                 view.picker_key(&key_down("enter"), window, cx);
+                view.picker_key(&key_down("down"), window, cx);
                 view.picker_key(&key_down("enter"), window, cx);
                 assert_eq!(labels(view)[0], "Running Remove task…");
             })
@@ -317,6 +320,76 @@ mod keyboard {
                 labels(view)[..1],
                 ["Remove task: No local tmux-ide daemon is running."]
             );
+        });
+    }
+
+    /// Review D1: one held Return opened the confirm step and its key repeat
+    /// chose "Run". Repeats are ignored, and Cancel is selected anyway.
+    #[gpui::test]
+    fn a_held_return_never_runs_a_dangerous_command(cx: &mut TestAppContext) {
+        let (view, cx) = open(
+            cx,
+            ready(vec![command("plugin.t.rm", "Remove task", true, vec![])]),
+        );
+        let held = gpui::KeyDownEvent {
+            is_held: true,
+            ..key_down("enter")
+        };
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.picker_key(&key_down("enter"), window, cx);
+                assert_eq!(labels(view), vec!["Cancel", "Run Remove task"]);
+                for _ in 0..5 {
+                    view.picker_key(&held, window, cx);
+                }
+                // Still at the confirm step: the repeats chose nothing.
+                assert_eq!(labels(view), vec!["Cancel", "Run Remove task"]);
+                // Even a repeat with Run selected does not run it.
+                view.picker_key(&key_down("down"), window, cx);
+                view.picker_key(&held, window, cx);
+                assert_eq!(labels(view), vec!["Cancel", "Run Remove task"]);
+                assert_eq!(view.picker.as_ref().unwrap().mode, Mode::Plugins);
+            })
+        });
+    }
+
+    /// The palette passes where it was opened: the focused session's name,
+    /// and the pane only when the app has its tmux id.
+    #[gpui::test]
+    fn the_context_is_the_focused_session_and_a_tmux_pane(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx, ready(vec![]));
+        let choice = |id: &str, label: &str| crate::tmux_snapshot::browser::Choice {
+            pane_count: None,
+            id: id.into(),
+            label: label.into(),
+            window_id: None,
+            window_label: None,
+            browser_icon: None,
+        };
+        cx.update(|_, cx| {
+            view.update(cx, |view, _| {
+                let state = &mut view.browser_state;
+                state.sessions = vec![choice("uuid-1", "demo"), choice("uuid-2", "other")];
+                state.selected_session = Some("uuid-1".into());
+                state.selected_pane = Some("pane.aaaaaaaaaaaaaaaaaaaa".into());
+                assert_eq!(
+                    view.plugin_context(),
+                    InvokeContext {
+                        session: Some("demo".into()),
+                        pane: None
+                    }
+                );
+                view.browser_state.selected_pane = Some("%7".into());
+                assert_eq!(
+                    view.plugin_context(),
+                    InvokeContext {
+                        session: Some("demo".into()),
+                        pane: Some("%7".into())
+                    }
+                );
+                view.browser_state.selected_session = None;
+                assert_eq!(view.plugin_context().session, None);
+            })
         });
     }
 

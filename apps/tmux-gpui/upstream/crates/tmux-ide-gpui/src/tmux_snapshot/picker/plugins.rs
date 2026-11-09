@@ -10,7 +10,7 @@ use super::{Mode, Row, SnapshotView, Target as PickerTarget};
 use gpui::*;
 use herdr_client::tmux_daemon::{
     ArgValue, Choice, InvokeContext, LocalConfigNamespace, LocalDaemon, ParamKind, ParamOptions,
-    PluginCommand, PluginOutcome, PluginParam,
+    PluginCommand, PluginOutcome, PluginParam, tmux_pane_id,
 };
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -66,6 +66,8 @@ struct Form {
 }
 
 pub(in crate::tmux_snapshot) struct Session {
+    /// Where the palette was opened: the plugin's `ctx.session` and `ctx.pane`.
+    context: InvokeContext,
     phase: Phase,
     commands: Vec<PluginCommand>,
     form: Option<Form>,
@@ -74,8 +76,9 @@ pub(in crate::tmux_snapshot) struct Session {
 }
 
 impl Session {
-    fn new() -> Self {
+    fn new(context: InvokeContext) -> Self {
         Self {
+            context,
             phase: Phase::Loading,
             commands: Vec::new(),
             form: None,
@@ -138,8 +141,9 @@ pub(super) fn rows(session: &Session, query: &str) -> Vec<Row> {
         return out;
     };
     let Some(param) = session.param() else {
-        out.push(row(Target::Run, format!("Run {}", form.command.label)));
+        // Cancel comes first and is selected: a held Return never runs it.
         out.push(row(Target::Cancel, "Cancel"));
+        out.push(row(Target::Run, format!("Run {}", form.command.label)));
         return out;
     };
     let step = format!(
@@ -215,12 +219,31 @@ pub(super) fn rows(session: &Session, query: &str) -> Vec<Row> {
 impl SnapshotView {
     /// F5 → "Plugin commands…".
     pub(super) fn open_plugin_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context = self.plugin_context();
         self.open_picker_mode(Mode::Plugins, window, cx);
         let Some(picker) = self.picker.as_mut().filter(|p| p.mode == Mode::Plugins) else {
             return;
         };
-        picker.plugins = Some(Session::new());
+        picker.plugins = Some(Session::new(context));
         self.load_plugin_commands(cx);
+        self.refresh_picker(cx);
+    }
+
+    /// The focused session (its tmux name) and, when the app knows one, the
+    /// focused pane's tmux id (`%N`). The app's panes carry the daemon's
+    /// semantic ids, so `ctx.pane` is usually absent here.
+    pub(super) fn plugin_context(&self) -> InvokeContext {
+        let state = &self.browser_state;
+        let session = state
+            .selected_session
+            .as_ref()
+            .and_then(|id| state.sessions.iter().find(|choice| &choice.id == id))
+            .map(|choice| choice.label.clone());
+        let pane = state
+            .selected_pane
+            .clone()
+            .filter(|pane| tmux_pane_id(pane));
+        InvokeContext { session, pane }
     }
 
     fn plugin_session(&mut self) -> Option<&mut Session> {
@@ -299,12 +322,13 @@ impl SnapshotView {
             form.options = Some(Options::Loading);
             session.generation += 1;
             let generation = session.generation;
+            let context = session.context.clone();
             let task = cx.background_executor().spawn(async move {
                 local_daemon()
                     .ok_or_else(|| "No local tmux-ide daemon is running.".to_owned())
                     .and_then(|daemon| {
                         daemon
-                            .plugin_param_options(&id, &name, &InvokeContext::default())
+                            .plugin_param_options(&id, &name, &context)
                             .map_err(|_| "Choices are unavailable.".to_owned())
                     })
             });
@@ -369,16 +393,18 @@ impl SnapshotView {
             return;
         }
         let label = command.label.clone();
+        let mut context = InvokeContext::default();
         if let Some(session) = self.plugin_session() {
             session.form = None;
             session.note = Some(format!("Running {label}…"));
+            context = session.context.clone();
         }
         self.clear_plugin_search(cx);
         self.refresh_picker(cx);
         let task = cx.background_executor().spawn(async move {
             let daemon = local_daemon().ok_or("No local tmux-ide daemon is running.")?;
             daemon
-                .invoke_plugin_command(&command.id, &values, &InvokeContext::default(), confirmed)
+                .invoke_plugin_command(&command.id, &values, &context, confirmed)
                 .map_err(|_| "The daemon did not run the command.")
         });
         cx.spawn(async move |view, cx| {
