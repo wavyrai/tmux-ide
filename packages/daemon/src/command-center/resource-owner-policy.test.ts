@@ -22,7 +22,12 @@ type DeclaredPolicy =
   /** Owner-only when a token is held; ownerless serves the resource. */
   | "owner-only-when-held"
   /** Deliberately not owner-gated — see the comment at the route. */
-  | "open";
+  | "open"
+  /**
+   * Owner-only, and refused (403) to any browser request, bearer or not:
+   * plugin commands (`ownerOnlyNonBrowserGuard` in plugin-routes.ts).
+   */
+  | "owner-only-no-browser";
 
 const DECLARED: Readonly<Record<string, DeclaredPolicy>> = {
   "/api/resources/fleet-catalog": "owner-only",
@@ -33,6 +38,7 @@ const DECLARED: Readonly<Record<string, DeclaredPolicy>> = {
   "/api/resources/workspace-admission": "owner-only",
   "/api/resources/startup-readiness": "owner-only-when-held",
   "/api/resources/workspace-catalog": "open",
+  "/api/resources/command-catalog": "owner-only-no-browser",
 };
 
 function resourcePaths(): readonly string[] {
@@ -45,7 +51,11 @@ function resourcePaths(): readonly string[] {
 
 async function get(
   path: string,
-  options: { readonly ownerToken: string | null; readonly bearer?: string },
+  options: {
+    readonly ownerToken: string | null;
+    readonly bearer?: string;
+    readonly origin?: string;
+  },
 ): Promise<Response> {
   const app = createApp({
     // This suite checks authorization against healthy resources. Host tmux
@@ -61,7 +71,10 @@ async function get(
   const query =
     path === "/api/resources/saved-machines/watch" ? `?expectedInstanceId=${INSTANCE}` : "";
   return app.request(`http://localhost${path}${query}`, {
-    headers: options.bearer === undefined ? {} : { Authorization: `Bearer ${options.bearer}` },
+    headers: {
+      ...(options.bearer === undefined ? {} : { Authorization: `Bearer ${options.bearer}` }),
+      ...(options.origin === undefined ? {} : { Origin: options.origin }),
+    },
   });
 }
 
@@ -78,6 +91,16 @@ describe("/api/resources/* owner policy", () => {
       const wrongBearer = await get(path, { ownerToken: OWNER, bearer: "wrong" });
       const noBearer = await get(path, { ownerToken: OWNER });
       const ownerless = await get(path, { ownerToken: null });
+      // A browser page holding the bearer: refused only where declared.
+      const fromBrowser = await get(path, {
+        ownerToken: OWNER,
+        bearer: OWNER,
+        origin: "http://localhost:3000",
+      });
+      expect([path, fromBrowser.status]).toEqual([
+        path,
+        policy === "owner-only-no-browser" ? 403 : 200,
+      ]);
 
       if (policy === "open") {
         expect([path, wrongBearer.status]).toEqual([path, 200]);
