@@ -141,6 +141,9 @@ const { positionals, values } = parseArgs({
     // ide.worktree passes both.
     plain: { type: "boolean" },
     "require-session": { type: "boolean" },
+    // worktree: run git with hooks off (the daemon's ide.worktree passes it,
+    // so no hook from the repository or from a branch runs for a plugin).
+    "no-git-hooks": { type: "boolean" },
   },
 });
 
@@ -2124,7 +2127,13 @@ try {
         createWorktree,
         removeWorktree,
         WorktreeError,
+        gitHooksOff,
       } = await import("../packages/daemon/src/lib/worktree.ts");
+      if (values["no-git-hooks"]) {
+        const env = gitHooksOff(process.env);
+        for (const [key, value] of Object.entries(env))
+          if (value !== undefined) process.env[key] = value;
+      }
       const { getSessionCwd, hasSession, killSession, createDetachedSession } =
         await import("../packages/tmux-bridge/src/index.ts");
 

@@ -219,7 +219,8 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     summary: "Open (or start) the session of an existing worktree.",
     details:
       "Needs capabilities `worktree`. Sessions it starts are plain: the worktree's own tmux-ide " +
-      "layout, whose commands come from that branch, never runs from a plugin.",
+      "layout, whose commands come from that branch, never runs from a plugin, and git runs " +
+      "with hooks off.",
     errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
     ...v1,
   },

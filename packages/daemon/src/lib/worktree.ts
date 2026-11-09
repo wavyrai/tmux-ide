@@ -208,6 +208,22 @@ export function mapWorktreeError(stderr: string, fallbackMessage: string): Workt
 // io — git shell-outs (map stderr → WorktreeError)
 // ---------------------------------------------------------------------------
 
+/**
+ * `env` with git hooks off for every git command run with it: core.hooksPath
+ * points at /dev/null, through GIT_CONFIG_* (which outrank the repository's
+ * own config, a relative hooksPath that a branch carries included).
+ */
+export function gitHooksOff(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10);
+  const index = Number.isInteger(count) && count >= 0 ? count : 0;
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(index + 1),
+    [`GIT_CONFIG_KEY_${index}`]: "core.hooksPath",
+    [`GIT_CONFIG_VALUE_${index}`]: "/dev/null",
+  };
+}
+
 /** Injectable git runner so io wrappers stay unit-testable. */
 export type GitRunner = (repoDir: string, args: string[]) => string;
 

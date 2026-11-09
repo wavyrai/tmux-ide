@@ -373,7 +373,7 @@ export function describeForConsent(plugin: PluginAwaitingConsent): string {
       ? `NOTE: ${fullControl.join(", ")} can run other commands or drive tmux, so ${fullControl.length === 1 ? "it gives" : "they give"} full control of your account`
       : null,
     manifest.capabilities.worktree
-      ? "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)"
+      ? "create, open and remove git worktrees and their sessions (plain sessions, with git hooks off: no layout or hook from the repository or a branch runs)"
       : null,
     manifest.capabilities["panes.send"]
       ? "type into your terminals and run commands there, which gives full access to your account"

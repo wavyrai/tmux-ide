@@ -59,6 +59,7 @@ describe("ide.worktree on the daemon", () => {
       "--session",
       "=demo:",
       "--require-session",
+      "--no-git-hooks",
       "--json",
     ]);
     expect(env.TMUX).toBe("/tmp/tmux-501/default,4242,0");
@@ -70,6 +71,7 @@ describe("ide.worktree on the daemon", () => {
       "--session",
       "=demo:",
       "--require-session",
+      "--no-git-hooks",
       "--json",
     ]);
     await worktreeCall("open", { session: "demo", branch: "x" }, d);
@@ -83,6 +85,7 @@ describe("ide.worktree on the daemon", () => {
       "--session",
       "=demo:",
       "--require-session",
+      "--no-git-hooks",
       "--json",
     ]);
   });

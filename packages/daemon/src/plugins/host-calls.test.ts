@@ -367,7 +367,7 @@ describe("worktree capability", () => {
       worktrees: [],
     });
     expect(runCli).toHaveBeenCalledWith(
-      ["worktree", "list", "--session", "=demo:", "--require-session", "--json"],
+      ["worktree", "list", "--session", "=demo:", "--require-session", "--no-git-hooks", "--json"],
       expect.objectContaining({ TMUX: "/tmp/tmux-501/default,1,0" }),
     );
     await expect(

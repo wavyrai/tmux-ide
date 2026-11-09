@@ -130,7 +130,9 @@ export async function worktreeCall(
   // come from that branch (which `from` may name).
   if (op === "create" || op === "open") args.push("--plain");
   // `=name:`: the exact session (a bare `=name` names no pane for tmux).
-  args.push("--session", `=${session}:`, "--require-session", "--json");
+  // No git hook runs either: `git worktree add` would run post-checkout, and
+  // a relative core.hooksPath takes the hook from the new worktree's branch.
+  args.push("--session", `=${session}:`, "--require-session", "--no-git-hooks", "--json");
   const env: NodeJS.ProcessEnv = { ...process.env, TMUX: `${where},0` };
   delete env.TMUX_PANE;
   const result = await deps.runCli(args, env);

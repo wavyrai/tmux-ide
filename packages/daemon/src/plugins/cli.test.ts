@@ -270,7 +270,7 @@ describe("tmux-ide plugin example", () => {
       await runPluginCommandLine("plugin", ["consent", "worktree-tasks", "--yes"], consent.io),
     ).toBe(0);
     expect(consent.out[0]).toContain(
-      "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)",
+      "create, open and remove git worktrees and their sessions (plain sessions, with git hooks off: no layout or hook from the repository or a branch runs)",
     );
     expect(consent.out[0]).not.toContain("run these programs");
     expect(consent.out[0]).not.toContain("type into your terminals");

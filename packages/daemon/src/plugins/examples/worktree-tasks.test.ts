@@ -266,6 +266,42 @@ describe("worktree-tasks end to end", () => {
         }),
       ).toEqual({ ok: true, value: "Removed fix-login and closed its session" });
       expect(existsSync(join(root, "repo-worktrees", "fix-login"))).toBe(false);
+
+      // post-checkout hooks through a relative core.hooksPath: one in the
+      // main checkout and a different one on the branch the plugin starts
+      // from. (git 2.56 resolves a relative hooksPath in the checkout it
+      // runs from; other versions or setups may take the new worktree's.)
+      // `git worktree add` would run one of them; on the plugin path neither.
+      const hookMain = join(root, "hook-main");
+      const hookBranch = join(root, "hook-branch");
+      const hook = (marker: string) => {
+        mkdirSync(join(repo, ".hooks"), { recursive: true });
+        writeFileSync(join(repo, ".hooks", "post-checkout"), `#!/bin/sh\ntouch "${marker}"\n`, {
+          mode: 0o755,
+        });
+        git("add", ".hooks");
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "hook");
+      };
+      git("checkout", "-q", "-b", "hooked");
+      hook(hookBranch);
+      git("checkout", "-q", "main");
+      hook(hookMain);
+      git("config", "core.hooksPath", ".hooks");
+      expect(
+        await supervisor.invokeAction(
+          "plugin.worktree-tasks.new",
+          { branch: "task", from: "hooked" },
+          ctx,
+        ),
+      ).toEqual({ ok: true, value: "Started task in session repo@task" });
+      expect(existsSync(join(root, "repo-worktrees", "task", ".hooks", "post-checkout"))).toBe(
+        true,
+      );
+      expect(existsSync(hookMain)).toBe(false);
+      expect(existsSync(hookBranch)).toBe(false);
+      // Control: the same add by a person runs a hook, so the setup is live.
+      git("worktree", "add", "-q", "-b", "control", join(root, "control"), "hooked");
+      expect(existsSync(hookMain) || existsSync(hookBranch)).toBe(true);
       await supervisor.stop();
     },
     120_000,
