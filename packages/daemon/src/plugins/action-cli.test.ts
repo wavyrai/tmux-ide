@@ -188,6 +188,23 @@ describe("tmux-ide action", () => {
     expect(await runActionCli(["run", "project.launch", "--input", "{"], h.io)).toBe(2);
   });
 
+  it("takes the session from this pane when --session is not given", async () => {
+    const h = harness({ tmuxSession: (pane) => (pane === "%7" ? "demo" : undefined) });
+    expect(
+      await runActionCli(
+        ["run", "plugin.tasks.new", "--arg", "name=x", "--arg", "agent=claude"],
+        h.io,
+      ),
+    ).toBe(0);
+    expect(h.posts[0]).toMatchObject({ context: { source: "cli", session: "demo", pane: "%7" } });
+    const explicit = harness({ tmuxSession: () => "demo" });
+    await runActionCli(
+      ["run", "plugin.tasks.new", "--arg", "name=x", "--arg", "agent=claude", "--session", "other"],
+      explicit.io,
+    );
+    expect(explicit.posts[0]).toMatchObject({ context: { session: "other" } });
+  });
+
   it("asks before a dangerous built-in command too", async () => {
     const h = harness();
     expect(await runActionCli(["run", "daemon.shutdown", "--input", "{}"], h.io)).toBe(2);

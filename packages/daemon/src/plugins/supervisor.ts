@@ -141,6 +141,9 @@ export const HOST_ENV_ALLOWLIST = Object.freeze([
   "LC_CTYPE",
   "LC_MESSAGES",
   "TMPDIR",
+  // Where tmux keeps its default socket: programs such as tmux-ide reach the
+  // same tmux server as the daemon.
+  "TMUX_TMPDIR",
   "TZ",
   // Windows needs these to start Node at all.
   "SystemRoot",

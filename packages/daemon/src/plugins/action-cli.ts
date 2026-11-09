@@ -223,12 +223,14 @@ async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<numb
   }
 
   const pane = values.pane ?? io.tmuxPane();
+  // Inside tmux, the session defaults to this pane's.
+  const session = values.session ?? (pane ? io.tmuxSession?.(pane) : undefined);
   const result = await callDaemon<CommandInvokeResult>(io, "POST", "/api/v2/commands/invoke", {
     id,
     args,
     context: {
       source: "cli",
-      ...(values.session ? { session: values.session } : {}),
+      ...(session ? { session } : {}),
       ...(pane ? { pane } : {}),
     },
     ...(entry.descriptor.dangerous ? { confirmed: true } : {}),

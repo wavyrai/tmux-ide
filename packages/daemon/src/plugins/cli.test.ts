@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -245,6 +245,38 @@ describe("tmux-ide lua and plugin output", () => {
     expect(lines.length).toBeGreaterThan(5);
     for (const line of lines)
       expect(hasUnsafeText(line.replaceAll("\n", " ")), JSON.stringify(line)).toBe(false);
+  });
+});
+
+describe("tmux-ide plugin example", () => {
+  it("lists the examples, copies one in, and it then waits for consent", async () => {
+    const h = harness(() => ok([]));
+    expect(await runPluginCommandLine("plugin", ["example"], h.io)).toBe(0);
+    expect(h.out[0]).toContain("worktree-tasks  Tasks as git worktrees");
+    expect(await runPluginCommandLine("plugin", ["example", "worktree-tasks"], h.io)).toBe(0);
+    const dir = join(home, "plugins", "worktree-tasks");
+    expect(h.out[1]).toContain(`Copied the worktree-tasks example to ${dir}.`);
+    expect(h.out[1]).toContain("tmux-ide plugin consent worktree-tasks");
+    expect(readFileSync(join(dir, "init.lua"), "utf8")).toContain('id = "new"');
+    // Not allowed yet; consent shows exactly what it asks for.
+    expect(readConsent(home).plugins["worktree-tasks"]).toBeUndefined();
+    const consent = harness(() => ({
+      body: {
+        host: { running: true, pid: 1, restarts: 0 },
+        plugins: [{ name: "worktree-tasks", kind: "plugin", state: "loaded", trips: 0 }],
+      },
+    }));
+    expect(
+      await runPluginCommandLine("plugin", ["consent", "worktree-tasks", "--yes"], consent.io),
+    ).toBe(0);
+    expect(consent.out[0]).toContain(
+      "run these programs: tmux-ide. A program it may run can usually do anything your account can",
+    );
+    expect(consent.out[0]).not.toContain("type into your terminals");
+    // A second copy does not overwrite the first, and unknown names are refused.
+    expect(await runPluginCommandLine("plugin", ["example", "worktree-tasks"], h.io)).toBe(1);
+    expect(h.err.at(-1)).toMatch(/already exists/u);
+    expect(await runPluginCommandLine("plugin", ["example", "nope"], h.io)).toBe(2);
   });
 });
 

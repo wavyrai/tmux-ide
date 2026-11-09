@@ -349,6 +349,8 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide automation")} <command> --json  ${dim("Scoped pane discovery, reads, sends, status and events")}
   ${cyan("tmux-ide lua")} run|api|describe          ${dim("Run Lua against the daemon; list and describe the Lua API")}
   ${cyan("tmux-ide plugin")} list|reload|logs        ${dim("Plugins from ~/.tmux-ide/init.lua and ~/.tmux-ide/plugins/")}
+  ${cyan("tmux-ide plugin")} consent|revoke <name>  ${dim("Review and allow a plugin, or withdraw that")}
+  ${cyan("tmux-ide plugin example")} [name]       ${dim("List the example plugins, or copy one in")}
   ${cyan("tmux-ide action")} list|run <id>          ${dim("The command catalog: built-in and plugin commands")}
   ${cyan("tmux-ide mcp")}                         ${dim("Serve scoped automation tools over MCP stdio")}
 

@@ -1,12 +1,23 @@
 /**
  * `tmux-ide lua …` and `tmux-ide plugin …`.
  */
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import { terminalSafe, terminalSafeBlock } from "@tmux-ide/contracts";
 import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
-import { discoverPlugins, type PluginAwaitingConsent } from "./discovery.ts";
+import { discoverPlugins, pluginPaths, type PluginAwaitingConsent } from "./discovery.ts";
+import { PLUGIN_EXAMPLES } from "./examples/worktree-tasks.ts";
 import { API_ENTRIES, findApiEntry, suggestApiEntries, type ApiEntry } from "./api-table.ts";
 import {
   formatPluginLogEntry,
@@ -32,6 +43,8 @@ export interface PluginCliIo {
   readonly ask: (question: string) => Promise<string>;
   /** `$TMUX_PANE` when the CLI runs inside a tmux pane. */
   readonly tmuxPane: () => string | undefined;
+  /** The tmux session of `pane` (this terminal's tmux server), if tmux answers. */
+  readonly tmuxSession?: (pane: string) => string | undefined;
   /** Run a built-in daemon action through the typed action route. */
   readonly dispatchBuiltin: (name: string, input: unknown) => Promise<unknown>;
 }
@@ -70,7 +83,8 @@ export const PLUGIN_USAGE = `Usage:
   tmux-ide plugin reload [name] [--json]    Discover plugins again and reload all, or one
   tmux-ide plugin logs [name] [-n <lines>] [-f]   Show ~/.tmux-ide/logs/plugins.log
   tmux-ide plugin consent <name> [--yes]    Review a plugin's permissions and allow it to run
-  tmux-ide plugin revoke <name>             Stop a plugin and withdraw consent`;
+  tmux-ide plugin revoke <name>             Stop a plugin and withdraw consent
+  tmux-ide plugin example [name]            List the example plugins, or copy one into ~/.tmux-ide/plugins`;
 
 export async function callDaemon<T>(
   io: PluginCliIo,
@@ -410,6 +424,44 @@ async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<numb
       await reloadAfterConsentChange(io, name);
       return 0;
     }
+    case "example": {
+      const name = positionals[0];
+      if (!name) {
+        io.out(
+          [
+            "Example plugins (install one with `tmux-ide plugin example <name>`):",
+            ...Object.entries(PLUGIN_EXAMPLES).map(
+              ([example, { manifest }]) =>
+                `  ${example}  ${(manifest as { description?: string }).description ?? ""}`,
+            ),
+          ].join("\n"),
+        );
+        return 0;
+      }
+      const example = Object.hasOwn(PLUGIN_EXAMPLES, name) ? PLUGIN_EXAMPLES[name] : undefined;
+      if (!example)
+        throw new PluginCliError(
+          `No example plugin named '${name}'. See \`tmux-ide plugin example\`.`,
+          2,
+        );
+      const dir = join(pluginPaths(io.stateHome()).plugins, name);
+      if (existsSync(dir))
+        throw new PluginCliError(
+          `${dir} already exists. Remove it first to install the example again.`,
+        );
+      mkdirSync(dir, { recursive: true, mode: 0o755 });
+      writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(example.manifest, null, 2)}\n`);
+      for (const [file, text] of Object.entries(example.files))
+        writeFileSync(join(dir, file), text);
+      io.out(
+        [
+          `Copied the ${name} example to ${dir}.`,
+          "It runs only after you review and allow it:",
+          `  tmux-ide plugin consent ${name}`,
+        ].join("\n"),
+      );
+      return 0;
+    }
     case "revoke": {
       const name = positionals[0];
       if (!name) throw new PluginCliError(`Name the plugin to revoke.\n${PLUGIN_USAGE}`, 2);
@@ -479,6 +531,22 @@ export async function defaultPluginCliIo(): Promise<PluginCliIo> {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     interactive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
     tmuxPane: () => process.env.TMUX_PANE || undefined,
+    tmuxSession: (pane) => {
+      try {
+        const name = execFileSync(
+          "tmux",
+          ["display-message", "-p", "-t", pane, "#{session_name}"],
+          {
+            encoding: "utf8",
+            timeout: 2000,
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        ).trim();
+        return name || undefined;
+      } catch {
+        return undefined;
+      }
+    },
     dispatchBuiltin: async (name, input) => {
       const { ACTION_NAMES } = await import("@tmux-ide/contracts");
       if (!(ACTION_NAMES as readonly string[]).includes(name))
