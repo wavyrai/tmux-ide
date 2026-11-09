@@ -44,6 +44,8 @@ function harness(
     sleep: async () => {},
     interactive: () => false,
     ask: async () => "",
+    tmuxPane: () => undefined,
+    dispatchBuiltin: async () => null,
   };
   return { io, out, err, calls };
 }

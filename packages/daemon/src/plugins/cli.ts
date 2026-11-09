@@ -29,6 +29,10 @@ export interface PluginCliIo {
   /** Whether a person can answer a question on this terminal. */
   readonly interactive: () => boolean;
   readonly ask: (question: string) => Promise<string>;
+  /** `$TMUX_PANE` when the CLI runs inside a tmux pane. */
+  readonly tmuxPane: () => string | undefined;
+  /** Run a built-in daemon action through the typed action route. */
+  readonly dispatchBuiltin: (name: string, input: unknown) => Promise<unknown>;
 }
 
 export class PluginCliError extends Error {
@@ -53,7 +57,7 @@ export const PLUGIN_USAGE = `Usage:
   tmux-ide plugin consent <name> [--yes]    Review a plugin's permissions and allow it to run
   tmux-ide plugin revoke <name>             Stop a plugin and withdraw consent`;
 
-async function callDaemon<T>(
+export async function callDaemon<T>(
   io: PluginCliIo,
   method: "GET" | "POST",
   path: string,
@@ -93,7 +97,7 @@ async function callDaemon<T>(
   return payload as T;
 }
 
-function formatValue(value: unknown): string {
+export function formatValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
@@ -449,6 +453,16 @@ export async function defaultPluginCliIo(): Promise<PluginCliIo> {
     stateHome,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     interactive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    tmuxPane: () => process.env.TMUX_PANE || undefined,
+    dispatchBuiltin: async (name, input) => {
+      const { ACTION_NAMES } = await import("@tmux-ide/contracts");
+      if (!(ACTION_NAMES as readonly string[]).includes(name))
+        throw new PluginCliError(`No command named '${name}'.`);
+      const { tryDispatchAction } = await import("../lib/cli-action-bridge.ts");
+      const result = await tryDispatchAction(name as never, input as never);
+      if (result === null) throw new PluginCliError("The daemon did not run the command.");
+      return result;
+    },
     ask: async (question) => {
       const { createInterface } = await import("node:readline/promises");
       const prompt = createInterface({ input: process.stdin, output: process.stdout });

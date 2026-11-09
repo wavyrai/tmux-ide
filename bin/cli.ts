@@ -162,6 +162,7 @@ const knownCommands = new Set([
   "automation",
   "lua",
   "plugin",
+  "action",
   "mcp",
   "settings",
   "team",
@@ -226,7 +227,13 @@ const bold = (s: string) => (noColor ? s : `\x1b[1m${s}\x1b[22m`);
 const cyan = (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[39m`);
 const dim = (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[22m`);
 
-if (values.help && command !== "automation" && command !== "lua" && command !== "plugin") {
+if (
+  values.help &&
+  command !== "automation" &&
+  command !== "lua" &&
+  command !== "plugin" &&
+  command !== "action"
+) {
   if (
     command === "daemon" &&
     ["reserve-supervisor", "release-supervisor"].includes(positionals[1] ?? "")
@@ -342,6 +349,7 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide automation")} <command> --json  ${dim("Scoped pane discovery, reads, sends, status and events")}
   ${cyan("tmux-ide lua")} run|api|describe          ${dim("Run Lua against the daemon; list and describe the Lua API")}
   ${cyan("tmux-ide plugin")} list|reload|logs        ${dim("Plugins from ~/.tmux-ide/init.lua and ~/.tmux-ide/plugins/")}
+  ${cyan("tmux-ide action")} list|run <id>          ${dim("The command catalog: built-in and plugin commands")}
   ${cyan("tmux-ide mcp")}                         ${dim("Serve scoped automation tools over MCP stdio")}
 
 ${bold("Server:")}
@@ -1156,6 +1164,12 @@ try {
         await import("../packages/daemon/src/automation.ts")
       ).runAutomationCli(process.argv.slice(3));
       break;
+    case "action": {
+      const { defaultPluginCliIo } = await import("../packages/daemon/src/plugins/cli.ts");
+      const { runActionCli } = await import("../packages/daemon/src/plugins/action-cli.ts");
+      process.exitCode = await runActionCli(process.argv.slice(3), await defaultPluginCliIo());
+      break;
+    }
     case "lua":
     case "plugin": {
       const { runPluginCommandLine, defaultPluginCliIo } =
