@@ -162,7 +162,7 @@ fn a_published_theme_change_repaints_the_cached_view_and_the_spinner(cx: &mut Te
         let view = snapshot.read(cx);
         (view.theme(), slot_colors(view))
     });
-    let working: Hsla = rgb(theme.muted).into();
+    let working: Hsla = rgb(theme.ink(theme.muted)).into();
     assert_eq!(after, vec![working]);
     assert_ne!(before, after, "the spinner kept the old theme's colour");
 }
