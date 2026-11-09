@@ -6,7 +6,86 @@ pub(super) const BUTTONS: [HeaderIntent; 4] = [
     HeaderIntent::Expand,
     HeaderIntent::Close,
 ];
+/// A header button's name, icon, tooltip and shortcut; the tooltip shows
+/// the shortcut beside the hint.
+pub(super) fn face(
+    intent: HeaderIntent,
+    restore: bool,
+) -> Option<(
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+)> {
+    Some(match intent {
+        HeaderIntent::SplitRight => (
+            "split-right",
+            "icons/split.svg",
+            "Split right",
+            Some(super::super::kbd::SPLIT_RIGHT),
+        ),
+        HeaderIntent::SplitDown => (
+            "split-down",
+            "icons/split-down.svg",
+            "Split down",
+            Some(super::super::kbd::SPLIT_DOWN),
+        ),
+        HeaderIntent::Close => ("close", "icons/close.svg", "Close pane…", None),
+        HeaderIntent::Expand if restore => (
+            "restore",
+            "icons/window-restore.svg",
+            "Restore pane layout",
+            Some(super::super::kbd::ZOOM),
+        ),
+        HeaderIntent::Expand => (
+            "expand",
+            "icons/window-maximize.svg",
+            "Expand pane to fill workspace",
+            Some(super::super::kbd::ZOOM),
+        ),
+        HeaderIntent::Menu => return None,
+    })
+}
 impl SnapshotView {
+    /// Opens pane `id`'s menu from outside its header buttons: a right-click
+    /// (or Control-click, which macOS sends as one) on its title, or a screen
+    /// reader's "show menu" on it. Selects the pane first if it isn't.
+    pub(in crate::tmux_snapshot) fn open_pane_menu(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.browser_state.surface != super::super::browser::Surface::Workspace
+            || !self.browser_state.panes.iter().any(|p| p.id == id)
+            || self.picker.is_some()
+            || self.pane_actions.is_some()
+            || self.new_session.is_some()
+        {
+            return;
+        }
+        self.header_controls.intent = HeaderIntent::Menu;
+        self.activate_header_menu(id, window, cx);
+    }
+    /// A pane title as a screen reader meets it (#746): a button named after
+    /// the pane that selects it, with a "show menu" action for the pane's
+    /// actions, since the menu has no button of its own.
+    pub(super) fn pane_title_a11y(
+        &self,
+        element: Stateful<Div>,
+        header: &Header,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let view = cx.entity().downgrade();
+        let id = header.id.clone();
+        element
+            .role(Role::Button)
+            .aria_label(label(&self.browser_state, &header.id))
+            .aria_description("Pane actions: right-click, or the screen reader's menu action")
+            .on_a11y_action(accesskit::Action::ShowContextMenu, move |_, window, app| {
+                let _ = view.update(app, |view, cx| view.open_pane_menu(&id, window, cx));
+            })
+    }
     /// A right-click on a pane's title opens that pane's menu, selecting the
     /// pane first if it isn't selected (#746: the header has no menu button).
     pub(super) fn header_menu_listener(
@@ -93,34 +172,7 @@ impl SnapshotView {
             .as_ref()
             .is_some_and(|a| a.zoomed);
         let offset = slot(intent) * SLOT;
-        let (name, icon, hint, keys) = match intent {
-            HeaderIntent::SplitRight => (
-                "split-right",
-                "icons/split.svg",
-                "Split right",
-                Some(super::super::kbd::SPLIT_RIGHT),
-            ),
-            HeaderIntent::SplitDown => (
-                "split-down",
-                "icons/split-down.svg",
-                "Split down",
-                Some(super::super::kbd::SPLIT_DOWN),
-            ),
-            HeaderIntent::Close => ("close", "icons/close.svg", "Close pane…", None),
-            HeaderIntent::Expand if restore => (
-                "restore",
-                "icons/window-restore.svg",
-                "Restore pane layout",
-                Some(super::super::kbd::ZOOM),
-            ),
-            HeaderIntent::Expand => (
-                "expand",
-                "icons/window-maximize.svg",
-                "Expand pane to fill workspace",
-                Some(super::super::kbd::ZOOM),
-            ),
-            HeaderIntent::Menu => return None,
-        };
+        let (name, icon, hint, keys) = face(intent, restore)?;
         let bezel = super::super::design::palette(&self.theme());
         let ink = header_ink(&self.theme());
         Some(
@@ -128,6 +180,7 @@ impl SnapshotView {
                 .id(SharedString::from(format!("pane-{name}:{id}")))
                 .role(Role::Button)
                 .aria_label(hint)
+                .when_some(keys, |button, keys| button.aria_keyshortcuts(keys))
                 .debug_selector({
                     let id = id.clone();
                     move || format!("pane-{name}:{id}")

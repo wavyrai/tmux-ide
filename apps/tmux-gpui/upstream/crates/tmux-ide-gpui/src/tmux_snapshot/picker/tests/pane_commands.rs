@@ -244,3 +244,36 @@ fn new_window_strip_full_queue_preserves_capability_and_shows_error(cx: &mut Tes
     );
     assert!(receiver.try_recv().is_err());
 }
+
+/// The pane menu's "Open folder in VS Code" is also an F5 pane command, so
+/// the keyboard reaches it without the pane menu (#746). It sends the same
+/// admission the menu does, on the exact pane and its capability.
+#[gpui::test]
+fn f5_opens_the_pane_folder_in_vs_code(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| ready_pane(view, false));
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("vs code");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        serde_json::to_value(receiver.try_recv().unwrap()).unwrap(),
+        serde_json::json!({"type":"open-editor","request":7,"id":"pane-a",
+            "token":"312b2c16-a13d-4411-82e5-1fdb58adab92"})
+    );
+    assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |view, _| {
+        assert!(view.picker.is_none());
+        // The capability is spent, as the menu's item spends it.
+        assert!(view.browser_state.pane_actions.is_none());
+    });
+    // Without a current capability the row does nothing.
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("vs code");
+    cx.simulate_keystrokes("enter");
+    assert!(receiver.try_recv().is_err());
+}

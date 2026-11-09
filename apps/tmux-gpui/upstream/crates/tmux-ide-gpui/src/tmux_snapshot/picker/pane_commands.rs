@@ -11,11 +11,12 @@ pub(in crate::tmux_snapshot) enum Action {
     Zoom(bool),
     SplitRight,
     SplitDown,
+    OpenEditor,
 }
 impl Action {
     pub(super) fn wire(self) -> Option<pane_actions::Action> {
         Some(match self {
-            Self::Rename | Self::NewAgent | Self::Focus(_) => return None,
+            Self::Rename | Self::NewAgent | Self::Focus(_) | Self::OpenEditor => return None,
             Self::Close => pane_actions::Action::Close,
             Self::NewWindow => pane_actions::Action::NewWindow,
             Self::Zoom(true) => pane_actions::Action::Zoom {
@@ -53,6 +54,7 @@ pub(super) fn rows(state: &browser::State, query: &str) -> Vec<Row> {
         ),
         (Action::SplitRight, "Split right"),
         (Action::SplitDown, "Split down"),
+        (Action::OpenEditor, "Open folder in VS Code"),
         (Action::Focus(0), crate::tmux_snapshot::kbd::FOCUS[0].0),
         (Action::Focus(1), crate::tmux_snapshot::kbd::FOCUS[1].0),
         (Action::Focus(2), crate::tmux_snapshot::kbd::FOCUS[2].0),
@@ -121,6 +123,15 @@ impl SnapshotView {
             }
             if matches!(action, Action::Close) {
                 self.begin_pane_close(captured.clone(), window, cx);
+                return;
+            }
+            if matches!(action, Action::OpenEditor) {
+                if self.open_captured_editor(captured) {
+                    self.close_picker(window, cx);
+                } else if let Some(picker) = &mut self.picker {
+                    picker.error = Some("Action queue unavailable — cancel and reselect the pane.");
+                    cx.notify();
+                }
                 return;
             }
             let Some(action) = action.wire() else {
