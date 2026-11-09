@@ -9,8 +9,8 @@
 use super::{Mode, Row, SnapshotView, Target as PickerTarget};
 use gpui::*;
 use herdr_client::tmux_daemon::{
-    ArgValue, Choice, InvokeContext, LocalConfigNamespace, LocalDaemon, ParamKind, ParamOptions,
-    PluginCommand, PluginOutcome, PluginParam, tmux_pane_id,
+    ArgValue, Choice, InvokeContext, LocalDaemon, ParamKind, ParamOptions, PluginCommand,
+    PluginOutcome, PluginParam, tmux_pane_id,
 };
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -22,28 +22,28 @@ pub(in crate::tmux_snapshot) fn remember_local_record(record: &std::path::Path) 
     let _ = LOCAL_RECORD.set(record.to_path_buf());
 }
 
-/// What each daemon request would have carried, recorded in unit tests
-/// (which have no daemon): (command id, param or "" for an invoke, context).
+/// Unit tests point one command id prefix at a fake daemon's record; every
+/// other command still finds no daemon.
 #[cfg(test)]
-pub(super) static SENT: std::sync::Mutex<Vec<(String, String, InvokeContext)>> =
-    std::sync::Mutex::new(Vec::new());
+pub(super) static TEST_DAEMON: std::sync::Mutex<Option<(String, PathBuf)>> =
+    std::sync::Mutex::new(None);
 
-fn sent(_id: &str, _param: &str, _context: &InvokeContext) {
-    #[cfg(test)]
-    if let Ok(mut sent) = SENT.lock() {
-        sent.push((_id.to_owned(), _param.to_owned(), _context.clone()));
-    }
-}
-
-fn local_daemon() -> Option<LocalDaemon> {
+fn local_daemon(_command: &str) -> Option<LocalDaemon> {
     // Unit tests never reach a real daemon, whatever is installed on the machine.
-    if cfg!(test) {
-        return None;
+    #[cfg(test)]
+    {
+        let fake = TEST_DAEMON.lock().ok()?.clone();
+        fake.filter(|(prefix, _)| _command.starts_with(prefix.as_str()))
+            .and_then(|(_, record)| LocalDaemon::discover(&record).ok())
     }
-    let record = LOCAL_RECORD.get().cloned().or_else(|| {
-        LocalConfigNamespace::capture(None).and_then(|namespace| namespace.daemon_record())
-    })?;
-    LocalDaemon::discover(&record).ok()
+    #[cfg(not(test))]
+    {
+        let record = LOCAL_RECORD.get().cloned().or_else(|| {
+            herdr_client::tmux_daemon::LocalConfigNamespace::capture(None)
+                .and_then(|namespace| namespace.daemon_record())
+        })?;
+        LocalDaemon::discover(&record).ok()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -273,7 +273,7 @@ impl SnapshotView {
         session.generation += 1;
         let generation = session.generation;
         let task = cx.background_executor().spawn(async move {
-            local_daemon()
+            local_daemon("")
                 .ok_or("No local tmux-ide daemon is running.")
                 .and_then(|daemon| {
                     daemon
@@ -337,8 +337,7 @@ impl SnapshotView {
             let generation = session.generation;
             let context = session.context.clone();
             let task = cx.background_executor().spawn(async move {
-                sent(&id, &name, &context);
-                local_daemon()
+                local_daemon(&id)
                     .ok_or_else(|| "No local tmux-ide daemon is running.".to_owned())
                     .and_then(|daemon| {
                         daemon
@@ -416,8 +415,7 @@ impl SnapshotView {
         self.clear_plugin_search(cx);
         self.refresh_picker(cx);
         let task = cx.background_executor().spawn(async move {
-            sent(&command.id, "", &context);
-            let daemon = local_daemon().ok_or("No local tmux-ide daemon is running.")?;
+            let daemon = local_daemon(&command.id).ok_or("No local tmux-ide daemon is running.")?;
             daemon
                 .invoke_plugin_command(&command.id, &values, &context, confirmed)
                 .map_err(|_| "The daemon did not run the command.")

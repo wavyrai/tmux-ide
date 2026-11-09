@@ -393,16 +393,105 @@ mod keyboard {
         });
     }
 
-    /// Review Dctx: the context the palette captured is what the invoke and
-    /// param-options requests carry.
+    /// A daemon on loopback that proves its identity and answers plugin
+    /// requests, recording each request body. Its record lives in a 0700
+    /// directory; its pid is this test process, which is alive.
+    struct FakeDaemon {
+        dir: std::path::PathBuf,
+        bodies: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+    }
+    impl FakeDaemon {
+        fn start() -> Self {
+            use std::io::{BufRead, BufReader, Read, Write};
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let record = serde_json::json!({
+                "pid": std::process::id(), "port": port, "protocolVersion": 4,
+                "productVersion": "2.9.12", "instanceId": "d9c81ebd-5785-45a3-9206-a2aa497d68fc",
+                "startedAt": "2026-11-09T12:00:00Z", "bindHostname": "127.0.0.1",
+                "authToken": "fake-owner-token"
+            });
+            let mut identity = record.clone();
+            identity.as_object_mut().unwrap().remove("authToken");
+            identity["ok"] = true.into();
+            let dir =
+                std::env::temp_dir().join(format!("tmux-ide-fake-daemon-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(dir.join("daemon.json"))
+                .unwrap()
+                .write_all(record.to_string().as_bytes())
+                .unwrap();
+            let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let seen = bodies.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { return };
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let path = line.split_whitespace().nth(1).unwrap_or("").to_owned();
+                    let mut length = 0;
+                    loop {
+                        let mut header = String::new();
+                        reader.read_line(&mut header).unwrap();
+                        if header == "\r\n" || header.is_empty() {
+                            break;
+                        }
+                        if let Some(value) = header.to_lowercase().strip_prefix("content-length:") {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    let mut body = vec![0; length];
+                    reader.read_exact(&mut body).unwrap();
+                    let reply = if path == "/identity" {
+                        identity.clone()
+                    } else {
+                        seen.lock().unwrap().push((
+                            path.clone(),
+                            serde_json::from_slice(&body).unwrap_or_default(),
+                        ));
+                        if path.ends_with("param-options") {
+                            serde_json::json!({ "ok": true, "choices": [{ "value": "a", "label": "A" }] })
+                        } else {
+                            serde_json::json!({ "ok": true, "value": "done" })
+                        }
+                    };
+                    let text = reply.to_string();
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                        text.len()
+                    );
+                }
+            });
+            Self { dir, bodies }
+        }
+    }
+    impl Drop for FakeDaemon {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Review Dctx: the palette's context is what reaches the daemon in the
+    /// param-options and invoke requests, through the real client calls.
     #[gpui::test]
     fn requests_carry_the_context_the_palette_was_opened_with(cx: &mut TestAppContext) {
+        let fake = FakeDaemon::start();
+        let id = "plugin.ctxtest.pick";
+        *super::super::TEST_DAEMON.lock().unwrap() =
+            Some(("plugin.ctxtest.".into(), fake.dir.join("daemon.json")));
         let (sender, _receiver) = mpsc::sync_channel(64);
         std::mem::forget(_receiver);
         let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
         let mut pick = param("pick", ParamKind::Choice);
         pick.dynamic_choices = true;
-        let id = "plugin.ctx.pick";
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
                 let state = &mut view.browser_state;
@@ -423,38 +512,38 @@ mod keyboard {
                     ..ready(vec![command(id, "Pick", false, vec![pick])])
                 };
                 view.refresh_picker(cx);
-                // The command, then a param whose choices come from the plugin.
+                // The command opens its form, whose choices come from the plugin.
                 view.picker_key(&key_down("enter"), window, cx);
             })
         });
-        cx.run_until_parked();
+        // Background requests run on real threads: wait for the daemon to answer.
+        let wait = |cx: &mut gpui::VisualTestContext, count: usize| {
+            for _ in 0..200 {
+                cx.run_until_parked();
+                if fake.bodies.lock().unwrap().len() >= count {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        wait(cx, 1);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
-                // Without a daemon the choices cannot load; run the form as it is.
-                let session = view.picker.as_mut().unwrap().plugins.as_mut().unwrap();
-                let form = session.form.take().unwrap();
-                view.run_plugin_command(form.command, Vec::new(), false, window, cx);
+                // Choose the plugin's choice "a": the form ends and the command runs.
+                view.picker_key(&key_down("enter"), window, cx);
             })
         });
-        cx.run_until_parked();
-        let expected = InvokeContext {
-            session: Some("demo".into()),
-            pane: Some("%4".into()),
-        };
-        let sent: Vec<_> = super::super::SENT
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(sent, _, _)| sent == id)
-            .cloned()
-            .collect();
-        assert_eq!(
-            sent,
-            vec![
-                (id.to_owned(), "pick".to_owned(), expected.clone()),
-                (id.to_owned(), String::new(), expected),
-            ]
-        );
+        wait(cx, 2);
+        *super::super::TEST_DAEMON.lock().unwrap() = None;
+        let bodies = fake.bodies.lock().unwrap().clone();
+        let context = serde_json::json!({ "source": "palette", "session": "demo", "pane": "%4" });
+        assert_eq!(bodies.len(), 2, "{bodies:?}");
+        assert_eq!(bodies[0].0, "/api/v2/commands/param-options");
+        assert_eq!(bodies[0].1["context"], context);
+        assert_eq!(bodies[1].0, "/api/v2/commands/invoke");
+        assert_eq!(bodies[1].1["id"], id);
+        assert_eq!(bodies[1].1["args"], serde_json::json!({ "pick": "a" }));
+        assert_eq!(bodies[1].1["context"], context);
     }
 
     #[gpui::test]
