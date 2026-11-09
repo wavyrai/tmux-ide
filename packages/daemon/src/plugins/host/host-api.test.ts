@@ -288,6 +288,24 @@ describe("ide.timer", () => {
     expect(ticks).toBeLessThanOrEqual(55);
   });
 
+  it("counts the wall time a timer callback waited, not only its Lua time", async () => {
+    const { run } = await make({
+      _notify: async () => {
+        await wait(100);
+        return true;
+      },
+    });
+    // Each link waits 100 ms on a host call, then schedules the next.
+    await run(`TICKS = 0
+      local function tick() TICKS = TICKS + 1 ide.notify("x") ide.timer.after(0, tick) end
+      ide.timer.after(0, tick)`);
+    await wait(1000);
+    const [ticks] = (await run(`return TICKS`)) as [number];
+    // 100 ms waiting plus 100 ms back-off per link: about 5, not about 9.
+    expect(ticks).toBeGreaterThanOrEqual(3);
+    expect(ticks).toBeLessThanOrEqual(6);
+  });
+
   it("runs callbacks under the budget, logs their errors, and stops on close", async () => {
     const { run, state, logs, trips } = await make();
     await run(`

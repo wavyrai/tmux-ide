@@ -108,7 +108,8 @@ describe("worktree-tasks example", () => {
       open: { branch: "fix-login", path: "/p", session: "r@fix-login", created: true },
       remove: { branch: "old", path: "/p", sessionKilled: false, removed: true },
     });
-    const ctx = { session: "r" };
+    // As from the TUI: a pane is known too, but the example does not use it.
+    const ctx = { session: "r", pane: "%3" };
     expect(await invoke("new", { branch: "fix-login", from: "main" }, ctx)).toBe(
       "Started fix-login in session r@fix-login",
     );
