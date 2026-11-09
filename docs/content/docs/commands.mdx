@@ -211,12 +211,12 @@ its default server.
 
 ## Worktrees
 
-| Command                                                                          | What it does                                                  |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a worktree and, by default, open an adopted session in it |
-| `tmux-ide worktree open <branch>`                                                | Open or switch to the worktree's session                      |
-| `tmux-ide worktree list [--json]`                                                | Join git worktrees with their live session status             |
-| `tmux-ide worktree remove <branch> [--force]`                                    | Remove the worktree, then kill only its derived session       |
+| Command                                                                                    | What it does                                                  |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]` | Add a worktree and, by default, open an adopted session in it |
+| `tmux-ide worktree open <branch>`                                                          | Open or switch to the worktree's session                      |
+| `tmux-ide worktree list [--json]`                                                          | Join git worktrees with their live session status             |
+| `tmux-ide worktree remove <branch> [--force]`                                              | Remove the worktree, then kill only its derived session       |
 
 Removal refuses a dirty worktree unless `--force` is explicit.
 

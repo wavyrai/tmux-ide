@@ -36,7 +36,7 @@ worktree-tasks 1.0.0
 Tasks as git worktrees: start, open and remove them from the palette, with tmux-ide worktree.
 …
 It asks to:
-  - create, open and remove git worktrees and their sessions
+  - create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)
 ```
 
 Then open the palette in a session of the repository and pick **New task**,
@@ -51,7 +51,10 @@ The example works on the repository of the session you run it from. The
 palette passes that session in the TUI and the Mac app; the CLI uses the
 session of the pane it runs in, or `--session <name>`. It asks for neither
 `exec` nor `panes.send`, so it cannot run programs or type into a pane.
-Removing a task never forces: a worktree with changes is refused.
+Removing a task never forces: a worktree with changes is refused. Tasks
+open as plain sessions: a branch's own tmux-ide layout (its
+`.tmux-ide/workspace.yml` commands, which come from that branch) never runs
+from a plugin. Run `tmux-ide worktree open <branch>` yourself for the layout.
 
 ## Consent
 
@@ -68,22 +71,25 @@ Removing a task never forces: a worktree with changes is refused.
 A plugin's `manifest.json` lists what it needs under `capabilities`. Consent
 shows each one in these words:
 
-| Capability           | Lets the plugin                                                                         | Consent says                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `worktree: true`     | Create, open, list and remove git worktrees and their sessions (`ide.worktree`)         | "create, open and remove git worktrees and their sessions"                                 |
-| `exec: ["jq", …]`    | Run the named programs with `ide.exec`                                                  | "run these programs: jq. A program it may run can usually do anything your account can"    |
-| `shell: true`        | Run any `/bin/sh` command line                                                          | "run ANY shell command line, with full access to your account"                             |
-| `"panes.send": true` | Type into panes, and run a program as if typed in a pane (`ide.exec{ context = "%3" }`) | "type into your terminals and run commands there, which gives full access to your account" |
+| Capability           | Lets the plugin                                                                         | Consent says                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `worktree: true`     | Create, open, list and remove git worktrees and their sessions (`ide.worktree`)         | "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)" |
+| `exec: ["jq", …]`    | Run the named programs with `ide.exec`                                                  | "run these programs: jq. A program it may run can usually do anything your account can"                                   |
+| `shell: true`        | Run any `/bin/sh` command line                                                          | "run ANY shell command line, with full access to your account"                                                            |
+| `"panes.send": true` | Type into panes, and run a program as if typed in a pane (`ide.exec{ context = "%3" }`) | "type into your terminals and run commands there, which gives full access to your account"                                |
 
-Some programs give full control of your account the moment a plugin may run
-them, because they run other commands or drive tmux: `tmux`, `tmux-ide`,
-shells, `env`, `sudo`, interpreters (`node`, `python3`, `ruby`, `perl`, …),
-package managers and build tools, `git` (hooks and aliases), `ssh`,
-`launchctl`, `open`, `osascript`, editors and agents. When a plugin lists
-any of these under `exec`, consent says so, for example:
+Most programs give full control of your account the moment a plugin may
+run them, because they can run other commands or drive tmux: `tmux`,
+`tmux-ide`, shells, interpreters, `git`, `ssh`, `launchctl`, editors,
+pagers, `script`, `nice`, `time` and many more. So consent calls every
+program full control except a short, reviewed list that only prints or
+transforms text (`cat`, `head`, `tail`, `wc`, `cut`, `tr`, `jq`, `echo`,
+`printf`, `true`, `false`, `pwd`, `basename`, `dirname`, `date`, `uname`,
+`whoami`, `id`, `ls`, `stat`), checked by exact name and by the file the
+name resolves to:
 
 ```text
-  - NOTE: tmux-ide, git give full control of your account: they run any command, or drive tmux or tmux-ide
+  - NOTE: git, python3 can run other commands or drive tmux, so they give full control of your account
 ```
 
 Treat a grant of one of them like `shell: true`.
@@ -107,8 +113,10 @@ around it is a seat belt, not a wall:
   finds the socket: the sandbox denies connecting to the tmux socket
   directories (`/private/tmp/tmux-<uid>/`, the one under `TMUX_TMPDIR`, and
   the daemon server's), and it does not get `TMUX_TMPDIR`. So a granted
-  `tmux` or `tmux-ide send` cannot type into your panes. (A program can
-  still start a tmux server of its own.)
+  `tmux` or `tmux-ide send` cannot type into your panes. Those
+  directories, the daemon's control socket and every directory above them
+  cannot be renamed or removed, so the sockets cannot be moved out from
+  under the rule. (A program can still start a tmux server of its own.)
 - No program can connect to the daemon's HTTP port, on any address, or to
   its control socket.
 - It is looked up on the daemon's `PATH`, never one the plugin sets, and the
