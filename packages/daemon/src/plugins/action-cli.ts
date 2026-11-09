@@ -133,7 +133,7 @@ async function actionCli(argv: readonly string[], io: PluginCliIo): Promise<numb
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help || sub === "help") {
+  if (values.help || sub === "help" || sub === "--help" || sub === "-h") {
     io.out(ACTION_USAGE);
     return 0;
   }

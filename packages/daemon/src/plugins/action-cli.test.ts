@@ -183,6 +183,14 @@ describe("tmux-ide action", () => {
     expect(await runActionCli(["run", "project.launch", "--input", "{"], h.io)).toBe(2);
   });
 
+  it("prints usage for --help and -h in the subcommand position", async () => {
+    for (const flag of ["--help", "-h", "help"]) {
+      const h = harness();
+      expect(await runActionCli([flag], h.io)).toBe(0);
+      expect(h.out[0]).toMatch(/^Usage:/u);
+    }
+  });
+
   it("reports an unknown command and a failing plugin", async () => {
     const h = harness();
     expect(await runActionCli(["run", "plugin.tasks.gone"], h.io)).toBe(1);

@@ -171,7 +171,7 @@ async function luaCli(argv: readonly string[], io: PluginCliIo): Promise<number>
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help || sub === "help") {
+  if (values.help || sub === "help" || sub === "--help" || sub === "-h") {
     io.out(LUA_USAGE);
     return 0;
   }
@@ -324,7 +324,7 @@ async function pluginCli(argv: readonly string[], io: PluginCliIo): Promise<numb
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help || sub === "help") {
+  if (values.help || sub === "help" || sub === "--help" || sub === "-h") {
     io.out(PLUGIN_USAGE);
     return 0;
   }

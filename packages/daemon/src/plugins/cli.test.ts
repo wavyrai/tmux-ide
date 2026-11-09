@@ -126,6 +126,19 @@ describe("tmux-ide lua", () => {
     expect(none.err[0]).toMatch(/daemon is not running/u);
   });
 
+  it("prints usage for --help and -h in the subcommand position", async () => {
+    for (const [command, flag] of [
+      ["lua", "--help"],
+      ["lua", "-h"],
+      ["plugin", "--help"],
+      ["plugin", "-h"],
+    ] as const) {
+      const h = harness(() => ({ body: {} }));
+      expect(await runPluginCommandLine(command, [flag], h.io)).toBe(0);
+      expect(h.out[0]).toMatch(/^Usage:/u);
+    }
+  });
+
   it("lists and describes the API without a daemon", async () => {
     const h = harness(() => {
       throw new Error("no daemon calls expected");
