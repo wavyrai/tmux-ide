@@ -771,11 +771,12 @@
   }
 }
 
-/* Corner mapping: controls are pills (search triggers, theme toggles and
-   the sidebar toolbar that holds them); surfaces stay square through the
+/* Corner mapping: controls are pills (search triggers and their key caps,
+   theme toggles and the sidebar toolbar that holds them); surfaces stay square through the
    zeroed radius tokens. Fumadocs gives some of these controls stepped radii,
    so they are set here explicitly. */
 [data-search-full],
+[data-search-full] kbd,
 [data-theme-toggle],
 [data-theme-toggle] > *,
 :has(> [data-theme-toggle]) {
