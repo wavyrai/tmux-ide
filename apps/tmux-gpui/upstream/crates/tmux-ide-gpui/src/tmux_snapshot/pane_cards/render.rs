@@ -82,10 +82,11 @@ impl SnapshotView {
             layout = layout.reflow(&preview.regions);
         }
         let palette = super::super::design::palette(&self.theme());
+        let theme = self.theme();
         Some(CardSurfaces {
             layout,
             background: palette.terminal_bg,
-            border: palette.border,
+            border: card_border(&theme, &palette),
         })
     }
     /// Records the terminal canvas a paint used. Headers span their cards as
@@ -101,6 +102,16 @@ impl SnapshotView {
         }
         self.input_geometry = Some((bounds, cursor));
     }
+}
+/// A card's 1 px border: the preset's own when it names one (#746: Linen),
+/// else Bezel's `border`.
+pub(in crate::tmux_snapshot) fn card_border(
+    theme: &crate::config::Theme,
+    palette: &bezel_theme::Theme,
+) -> Hsla {
+    theme
+        .card_border
+        .map_or(palette.border, |value| rgb(value).into())
 }
 impl Layout {
     /// Each pane's opaque card under its cells, on Bezel's panel radius and
