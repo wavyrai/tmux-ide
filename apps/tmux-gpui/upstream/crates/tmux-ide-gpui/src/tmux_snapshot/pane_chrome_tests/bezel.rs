@@ -119,7 +119,8 @@ fn hovering_each_header_control_paints_bezels_wash(cx: &mut TestAppContext) {
     });
     for selector in [
         "pane-mode:pane-a",
-        "pane-overflow:pane-a",
+        "pane-split-right:pane-a",
+        "pane-split-down:pane-a",
         "pane-expand:pane-a",
         "pane-close:pane-a",
         "browser-back",
@@ -183,11 +184,11 @@ fn clicking_header_controls_keeps_the_terminal_focused(cx: &mut TestAppContext) 
     assert!(focused(cx), "pane-mode");
     draw(cx);
 
-    let overflow = cx.debug_bounds("pane-overflow:pane-b").unwrap();
-    click(cx, overflow.center());
+    let split = cx.debug_bounds("pane-split-right:pane-b").unwrap();
+    click(cx, split.center());
     assert!(matches!(
         receiver.try_recv().unwrap(),
         browser::Command::Pane { id, .. } if id == "pane-b"
     ));
-    assert!(focused(cx), "pane-overflow");
+    assert!(focused(cx), "pane-split-right");
 }

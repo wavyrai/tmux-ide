@@ -44,14 +44,16 @@ fn lower_header_selects_exact_pane_then_opens_captured_context_without_input(
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let lower = cx.debug_bounds("pane-overflow:pane-b").unwrap();
+    let lower = cx.debug_bounds("pane-card-header:pane-b").unwrap();
     let terminal = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
     assert!(lower.origin.y >= terminal.origin.y);
     assert_eq!(
         lower.size.height,
         px(crate::tmux_snapshot::pane_cards::HEADER)
     );
-    cx.simulate_click(lower.center(), Modifiers::default());
+    // The pane menu is a right-click on the title (#746).
+    let title = cx.debug_bounds("pane-title:pane-b").unwrap();
+    cx.simulate_mouse_down(title.center(), MouseButton::Right, Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(),browser::Command::Pane{request:8,id} if id=="pane-b")
     );
@@ -128,8 +130,8 @@ fn pending_header_menu_is_cancelled_by_competing_modal_or_navigation(cx: &mut Te
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let point = cx.debug_bounds("pane-overflow:pane-b").unwrap().center();
-    cx.simulate_click(point, Modifiers::default());
+    let point = cx.debug_bounds("pane-title:pane-b").unwrap().center();
+    cx.simulate_mouse_down(point, MouseButton::Right, Modifiers::default());
     receiver.try_iter().for_each(drop);
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
