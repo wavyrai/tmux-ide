@@ -193,7 +193,9 @@ describe("PluginSupervisor", () => {
       expect(keys.filter((key) => !HOST_ENV_ALLOWLIST.includes(key))).toEqual([]);
       expect(env.PATH).toBe(process.env.PATH);
       expect(line!.message).not.toContain(secret);
-      expect(line!.message).not.toContain("TMUX_IDE_");
+      expect(env.TMUX_IDE_TEST_OWNER_TOKEN).toBeUndefined();
+      expect(env.TMUX_IDE_HOME_FOR_TEST).toBeUndefined();
+      expect(line!.message).not.toContain("TMUX_IDE_HOME_FOR_TEST");
     } finally {
       delete process.env.TMUX_IDE_TEST_OWNER_TOKEN;
       delete process.env.TMUX_IDE_HOME_FOR_TEST;
@@ -294,7 +296,12 @@ describe("PluginSupervisor", () => {
   it("keeps a plugin loaded below the trip limit", async () => {
     plugin("spinner", `pcall(function() while true do end end) ide.log.info("survived")`);
     const s = supervisor({
-      limits: { callbackBudgetMs: 100, memoryBytes: 8 << 20, logLinesPerSecond: 100 },
+      limits: {
+        callbackBudgetMs: 100,
+        memoryBytes: 8 << 20,
+        wallClockMs: 30_000,
+        logLinesPerSecond: 100,
+      },
     });
     const status = await s.start();
     expect(status.plugins[0]).toMatchObject({ state: "loaded", trips: 1 });
@@ -314,7 +321,12 @@ describe("PluginSupervisor", () => {
     const s = supervisor({
       heartbeatTimeoutMs: 1500,
       watchdogIntervalMs: 100,
-      limits: { callbackBudgetMs: 50, memoryBytes: 8 << 20, logLinesPerSecond: 100 },
+      limits: {
+        callbackBudgetMs: 50,
+        memoryBytes: 8 << 20,
+        wallClockMs: 30_000,
+        logLinesPerSecond: 100,
+      },
     });
     const firstPid = (await s.start(), s.status().host.pid);
     const stuck = await until(
@@ -334,6 +346,80 @@ describe("PluginSupervisor", () => {
     expect(
       logs.some((entry) => entry.plugin === "host" && /watchdog: stuck kept/u.test(entry.message)),
     ).toBe(true);
+  }, 30_000);
+
+  it("charges a watchdog kill with no busy plugin to the plugin being loaded, then disables it", async () => {
+    plugin("hang", `return true`);
+    plugin("ok", `return true`);
+    // A stand-in host whose event loop locks up while loading "hang" without
+    // ever sending a busy marker, as a JS-side hang would.
+    const fake = join(home, "hang-host.mjs");
+    writeFileSync(
+      fake,
+      `import { writeSync } from "node:fs";
+       import { createInterface } from "node:readline";
+       const emit = (e) => writeSync(3, JSON.stringify(e) + "\\n");
+       emit({ type: "hello", protocolVersion: 1, pid: process.pid });
+       setInterval(() => emit({ type: "heartbeat", seq: 1 }), 50);
+       createInterface({ input: process.stdin }).on("line", (line) => {
+         const c = JSON.parse(line);
+         if (c.type !== "load") return;
+         if (c.plugin.name === "hang") for (;;) {}
+         emit({ type: "loaded", plugin: c.plugin.name, ok: true });
+       }).on("close", () => process.exit(0));`,
+    );
+    const s = supervisor({
+      hostCommand: [process.execPath, fake],
+      heartbeatTimeoutMs: 300,
+      watchdogIntervalMs: 50,
+    });
+    void s.start();
+    await until(
+      () => state(s, "hang"),
+      (value) => value === "disabled",
+      20_000,
+    );
+    expect(s.status().plugins.find((p) => p.name === "hang")).toMatchObject({
+      state: "disabled",
+      trips: 3,
+    });
+    await until(
+      () => state(s, "ok"),
+      (value) => value === "loaded",
+      20_000,
+    );
+    expect(s.status().host.restarts).toBeGreaterThanOrEqual(3);
+  }, 40_000);
+
+  it("resets the restart backoff once a host has stayed up", async () => {
+    plugin("ok", `return true`);
+    const attempts: number[] = [];
+    const s = supervisor({
+      healthyAfterMs: 600,
+      restartDelayMs: (attempt) => {
+        attempts.push(attempt);
+        return 20;
+      },
+    });
+    await s.start();
+    const killAndWait = async () => {
+      const pid = s.status().host.pid!;
+      process.kill(pid, "SIGKILL");
+      await until(
+        () => s.status().host,
+        (host) => host.running && host.pid !== pid,
+      );
+      await until(
+        () => state(s, "ok"),
+        (value) => value === "loaded",
+      );
+    };
+    await killAndWait();
+    await killAndWait();
+    expect(attempts).toEqual([0, 1]);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await killAndWait();
+    expect(attempts).toEqual([0, 1, 0]);
   }, 30_000);
 
   it("restarts a host that exits on its own and loads its plugins again", async () => {

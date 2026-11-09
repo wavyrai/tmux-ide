@@ -86,7 +86,7 @@ describe("discoverPlugins", () => {
         contentHash: expect.stringMatching(/^sha256:/u),
         entry: join(alpha, "src", "main.lua"),
         includeRoots: [alpha],
-        moduleRoots: [alpha, join(home, "lua")],
+        moduleRoots: [alpha],
         settings: { base: "main" },
       },
       {
@@ -95,7 +95,7 @@ describe("discoverPlugins", () => {
         contentHash: expect.stringMatching(/^sha256:/u),
         entry: join(zeta, "init.lua"),
         includeRoots: [zeta],
-        moduleRoots: [zeta, join(home, "lua")],
+        moduleRoots: [zeta],
         settings: {},
       },
       {
@@ -117,6 +117,8 @@ describe("discoverPlugins", () => {
     plugin("future", manifest("future", { api: "^2.0" }));
     plugin("Upper", manifest("upper"));
     plugin("init", manifest("init"));
+    plugin("run", manifest("run"));
+    plugin("host", manifest("host"));
     plugin("noentry", manifest("noentry", { entry: "main.lua" }));
     const escape = plugin("escape", manifest("escape"));
     rmSync(join(escape, "init.lua"));
@@ -127,11 +129,13 @@ describe("discoverPlugins", () => {
     rmSync(outside, { recursive: true, force: true });
     expect(specs).toEqual([]);
     expect(Object.fromEntries(problems.map((p) => [p.name, p.error]))).toEqual({
-      Upper: expect.stringMatching(/lowercase/u),
+      Upper: "directory name must be lowercase letters, digits and dashes",
       badjson: expect.stringMatching(/not valid JSON/u),
       escape: "entry 'init.lua' resolves outside the plugin directory",
       future: expect.stringMatching(/needs Lua API \^2\.0/u),
-      init: expect.stringMatching(/not 'init'/u),
+      init: "'init' is reserved for tmux-ide's own use; rename the directory",
+      run: "'run' is reserved for tmux-ide's own use; rename the directory",
+      host: "'host' is reserved for tmux-ide's own use; rename the directory",
       mismatch: "manifest name 'other' does not match its directory 'mismatch'",
       missing: "manifest.json is missing",
       noentry: "entry 'main.lua' is missing",

@@ -121,7 +121,7 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     signature: "require(module) -> value",
     summary: "Load a module once and cache it: `a.b` reads `a/b.lua` or `a/b/init.lua`.",
     details:
-      "A plugin searches its own directory, then `~/.tmux-ide/lua/`; `init.lua` searches `~/.tmux-ide/lua/`.",
+      "A plugin searches only its own directory, which its consent covers; `init.lua` searches `~/.tmux-ide/lua/`.",
     errors: ["E_INVALID", "E_NOT_FOUND", "E_DENIED"],
     ...v1,
   },

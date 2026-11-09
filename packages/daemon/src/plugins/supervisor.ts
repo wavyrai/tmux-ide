@@ -81,6 +81,8 @@ export interface PluginSupervisorOptions {
   readonly tripLimit?: number;
   readonly tripWindowMs?: number;
   readonly restartDelayMs?: (attempt: number) => number;
+  /** A host up this long resets the restart backoff. */
+  readonly healthyAfterMs?: number;
   /** Where plugin log entries go. Defaults to `logs/plugins.log`. */
   readonly onLog?: (entry: PluginLogEntry) => void;
   readonly now?: () => number;
@@ -103,6 +105,7 @@ interface HostHandle {
   busy: string | null;
   outbox: HostCommand[];
   killedBy: string | null;
+  healthyTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -112,6 +115,7 @@ interface HostHandle {
 export const HOST_ENV_ALLOWLIST = Object.freeze([
   "PATH",
   "HOME",
+  "TMUX_IDE_HOME",
   "USER",
   "LOGNAME",
   "SHELL",
@@ -121,6 +125,10 @@ export const HOST_ENV_ALLOWLIST = Object.freeze([
   "LC_MESSAGES",
   "TMPDIR",
   "TZ",
+  // Windows needs these to start Node at all.
+  "SystemRoot",
+  "TEMP",
+  "TMP",
 ]);
 
 export function minimalHostEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -158,6 +166,7 @@ export class PluginSupervisor {
   #awaitingConsent: readonly PluginAwaitingConsent[] = [];
   #host: HostHandle | null = null;
   #restarts = 0;
+  #backoffAttempt = 0;
   #restartTimer: NodeJS.Timeout | null = null;
   #watchdog: NodeJS.Timeout | null = null;
   #stopped = false;
@@ -177,6 +186,7 @@ export class PluginSupervisor {
       tripLimit: options.tripLimit ?? 3,
       tripWindowMs: options.tripWindowMs ?? 60_000,
       restartDelayMs: options.restartDelayMs ?? defaultRestartDelay,
+      healthyAfterMs: options.healthyAfterMs ?? 60_000,
       onLog: options.onLog ?? ((entry) => appendPluginLog(logPath, entry)),
       now: options.now ?? Date.now,
     };
@@ -295,7 +305,9 @@ export class PluginSupervisor {
           this.#runs.delete(id);
           resolve({ ok: false, error: "E_TIMEOUT: the host did not answer", logs: [] });
         },
-        budgetMs + this.#options.heartbeatTimeoutMs + this.#options.helloTimeoutMs,
+        Math.max(this.#options.limits.wallClockMs, budgetMs * 2) +
+          this.#options.heartbeatTimeoutMs +
+          this.#options.helloTimeoutMs,
       );
       timer.unref();
       this.#runs.set(id, (result) => {
@@ -404,6 +416,7 @@ export class PluginSupervisor {
       busy: null,
       outbox: [],
       killedBy: null,
+      healthyTimer: null,
     };
     this.#host = host;
 
@@ -451,6 +464,12 @@ export class PluginSupervisor {
       case "hello": {
         if (event.protocolVersion !== PLUGIN_HOST_PROTOCOL_VERSION) return;
         host.ready = true;
+        // A host that stays up for a while has recovered: the next crash
+        // starts the backoff from the beginning again.
+        host.healthyTimer = setTimeout(() => {
+          if (this.#host === host) this.#backoffAttempt = 0;
+        }, this.#options.healthyAfterMs);
+        host.healthyTimer.unref();
         host.lastHeartbeat = this.#options.now();
         this.#send({
           type: "configure",
@@ -556,11 +575,21 @@ export class PluginSupervisor {
         : "the plugin host stopped responding";
       this.#log("host", "error", `watchdog: ${host.killedBy}; restarting the host`);
       const entry = culprit ? this.#entries.get(culprit) : undefined;
-      if (entry)
+      if (entry) {
         this.#disable(
           entry,
           "the watchdog stopped it: it did not return control for more than 5 s",
         );
+      } else {
+        // No Lua slice was running, so no busy marker names a culprit. Charge
+        // what the host was doing for us: the plugin it was loading (loads run
+        // one at a time, in send order). Repeated kills then end in a disable
+        // instead of a restart loop.
+        const loading = [...this.#entries.values()].find(
+          (candidate) => candidate.state === "loading",
+        );
+        if (loading) this.#onTrip(loading.name, "timeout");
+      }
       host.child.kill("SIGKILL");
     }, this.#options.watchdogIntervalMs);
     this.#watchdog.unref();
@@ -577,6 +606,7 @@ export class PluginSupervisor {
   }
 
   #onExit(host: HostHandle, code: number | null, signal: NodeJS.Signals | null): void {
+    if (host.healthyTimer) clearTimeout(host.healthyTimer);
     if (this.#host !== host) return;
     this.#host = null;
     this.#stopWatchdog();
@@ -593,7 +623,8 @@ export class PluginSupervisor {
     if (!host.killedBy)
       this.#log("host", "error", `plugin host exited (${signal ?? `code ${code}`}); restarting`);
     for (const entry of pending) entry.state = "loading";
-    const delay = this.#options.restartDelayMs(this.#restarts);
+    const delay = this.#options.restartDelayMs(this.#backoffAttempt);
+    this.#backoffAttempt += 1;
     this.#restarts += 1;
     this.#restartTimer = setTimeout(() => {
       this.#restartTimer = null;

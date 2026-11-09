@@ -12,7 +12,12 @@ import {
   PluginManifestSchemaZ,
   type PluginManifest,
 } from "./manifest.ts";
-import { INIT_PLUGIN_NAME, PLUGIN_NAME_PATTERN, type PluginSpec } from "./protocol.ts";
+import {
+  INIT_PLUGIN_NAME,
+  PLUGIN_NAME_PATTERN,
+  RESERVED_PLUGIN_NAMES,
+  type PluginSpec,
+} from "./protocol.ts";
 
 export interface PluginProblem {
   readonly name: string;
@@ -73,8 +78,12 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
     } catch {
       continue;
     }
-    if (!PLUGIN_NAME_PATTERN.test(dirName) || dirName === INIT_PLUGIN_NAME) {
-      problem("directory name must be lowercase letters, digits and dashes, and not 'init'");
+    if (!PLUGIN_NAME_PATTERN.test(dirName)) {
+      problem("directory name must be lowercase letters, digits and dashes");
+      continue;
+    }
+    if (RESERVED_PLUGIN_NAMES.has(dirName)) {
+      problem(`'${dirName}' is reserved for tmux-ide's own use; rename the directory`);
       continue;
     }
     const manifestPath = join(dir, "manifest.json");
@@ -139,8 +148,9 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       kind: "plugin",
       contentHash: hash,
       entry,
+      // Only the plugin's own directory: consent hashes exactly what it can load.
       includeRoots: [dir],
-      moduleRoots: [dir, paths.lua],
+      moduleRoots: [dir],
       settings: manifestDefaults(manifest),
     });
   }
