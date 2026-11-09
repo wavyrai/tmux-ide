@@ -388,6 +388,9 @@ describe("tmux-ide plugin consent", () => {
     expect(givesFullControl("cat", bin)).toBe(true);
     expect(givesFullControl("cat", "/bin")).toBe(false);
     expect(givesFullControl("cat", join(home, "empty"))).toBe(false);
+    // Exact case: "CAT" is not "cat", even where the file system would find it.
+    expect(givesFullControl("CAT", join(home, "empty"))).toBe(true);
+    expect(givesFullControl("Jq", join(home, "empty"))).toBe(true);
     expect(givesFullControl("sh", "/bin")).toBe(true);
   });
 

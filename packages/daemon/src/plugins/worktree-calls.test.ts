@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { worktreeCall, type WorktreeCallDependencies } from "./worktree-calls.ts";
+import { fileURLToPath } from "node:url";
+import { cliRunner, worktreeCall, type WorktreeCallDependencies } from "./worktree-calls.ts";
+
+const here = fileURLToPath(new URL(".", import.meta.url));
 
 function deps(overrides: Partial<WorktreeCallDependencies> = {}) {
   const tmux = vi.fn(async (args: readonly string[]) => {
@@ -203,6 +206,23 @@ describe("ide.worktree against real tmux", () => {
           ).rejects.toThrow(`E_NOT_FOUND: no tmux session '${session}'`);
         expect(runCli).not.toHaveBeenCalled();
         await worktreeCall("list", { session: "proj" }, { tmux, runCli });
+        // The CLI itself, given a session that is not there, fails instead of
+        // falling back to its own directory.
+        const repo = join(here, "..", "..", "..", "..");
+        const cli = cliRunner([
+          process.execPath,
+          "--import",
+          join(repo, "node_modules", "tsx", "dist", "loader.mjs"),
+          join(repo, "bin", "cli.ts"),
+        ]);
+        const pid = (await tmux(["display-message", "-p", "-t", "=proj:", "#{pid}"])).trim();
+        const missing = await cli(
+          ["worktree", "list", "--session", "=nope:", "--require-session", "--json"],
+          { ...process.env, TMUX: `${socket},${pid},0` },
+        );
+        expect(missing.code).not.toBe(0);
+        expect(missing.stderr + missing.stdout).toMatch(/No tmux session/u);
+        expect(missing.stdout).not.toContain('"worktrees"');
         const [args, env] = runCli.mock.calls[0] as unknown as [string[], NodeJS.ProcessEnv];
         expect(args).toContain("=proj:");
         expect(env.TMUX).toMatch(

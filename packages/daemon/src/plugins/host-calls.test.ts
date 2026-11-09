@@ -376,6 +376,12 @@ describe("worktree capability", () => {
     await expect(
       handler().calls.handle(granted, "_worktree", ["list", { session: "demo" }]),
     ).rejects.toThrow("E_UNAVAILABLE: ide.worktree is not available here");
+    // A plugin stopped meanwhile runs nothing.
+    runCli.mockClear();
+    await expect(
+      calls.handle({ ...granted, active: () => false }, "_worktree", ["list", { session: "demo" }]),
+    ).rejects.toThrow("E_UNAVAILABLE: the plugin was stopped before this finished");
+    expect(runCli).not.toHaveBeenCalled();
   });
 });
 
