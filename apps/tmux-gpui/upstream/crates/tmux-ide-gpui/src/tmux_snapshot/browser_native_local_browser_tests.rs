@@ -53,6 +53,7 @@ fn fixture() -> Local {
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
         preferences: Default::default(),

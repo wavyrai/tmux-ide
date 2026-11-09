@@ -217,9 +217,7 @@ impl Local {
             Some(Notice::Changed(snapshot)) if home => self.receive_catalog(snapshot, false),
             Some(Notice::Changed(snapshot)) => self.picker_catalog(&snapshot),
             Some(Notice::Failed(_)) if !home => self.workspace_catalog_failed(),
-            Some(Notice::Failed(_error)) => {
-                self.unavailable("Catalog connection changed — refresh to reconnect")
-            }
+            Some(Notice::Failed(error)) => self.home_catalog_failed(error),
             None => Ok(()),
         }
     }

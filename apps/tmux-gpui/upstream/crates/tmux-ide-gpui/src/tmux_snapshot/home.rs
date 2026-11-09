@@ -130,7 +130,9 @@ fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
     match state.local_setup.as_ref().filter(|_| connected) {
         Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
         Some(_) => StatusTone::Normal,
-        None if state.home_phase == browser::HomePhase::Unavailable => StatusTone::Warning,
+        None if state.home_phase == browser::HomePhase::Unavailable || state.home_fault => {
+            StatusTone::Warning
+        }
         None => StatusTone::Normal,
     }
 }
@@ -438,8 +440,12 @@ impl SnapshotView {
             );
         // Status, guidance and the new-session form span the whole column,
         // left-aligned under the header.
+        // A live Home shows a status line only while it reconnects or has stopped.
+        let reconnect = is_live && self.browser_state.reconnect_attempt.is_some();
         if (connected && setup_phase.is_some())
             || (!is_live && !self.browser_state.status.is_empty())
+            || reconnect
+            || (is_live && self.browser_state.home_fault)
         {
             let status = status_message(&self.browser_state, connected);
             let line = match status_tone(&self.browser_state, connected) {
@@ -455,10 +461,22 @@ impl SnapshotView {
                     .text_color(bezel.danger_muted)
                     .debug_selector(|| "home-status-error".into()),
             };
-            body = body.child(
-                line.w_full()
-                    .children(design::ink_probe(|| "home-status".into())),
-            );
+            let line = line
+                .w_full()
+                .children(design::ink_probe(|| "home-status".into()));
+            body = if reconnect {
+                let retry = self.reconnect_retry(cx);
+                body.child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .child(line)
+                        .children(retry),
+                )
+            } else {
+                body.child(line)
+            };
         }
         if self.home_diagnostics_available() {
             body = body.child(

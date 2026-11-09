@@ -136,6 +136,7 @@ impl Local {
         {
             recovery.due = Some(Instant::now());
         }
+        self.home.retry_now(Instant::now());
         Ok(())
     }
     pub(super) fn reconnect_tick(&mut self) -> Result<(), Error> {

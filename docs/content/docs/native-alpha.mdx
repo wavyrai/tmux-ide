@@ -31,6 +31,16 @@ discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
 
+In the next alpha after 0.1.14, Home reconnects by itself when its connection to the
+daemon drops, as it does when the daemon restarts or updates, stops, or stalls while a Mac
+sleeps. The session list stays on screen with a quiet "Reconnecting…" line, and Home retries
+with backoff up to every 5 s while it is in front. Home shows a warning only for a failure
+that won't recover by itself, and says why: a daemon that needs an update, refused
+credentials, or an unreadable daemon record. Earlier builds showed "Catalog connection
+changed — refresh to reconnect" and "The daemon could not list sessions" until you refreshed.
+This corrects the 2.9.16 notes: their claim that the session catalog reconnects after a single
+error was true only for the terminal stream, not for Home.
+
 In 0.1.14, the app retries a lost pane layout read, so dividers between panes come back without
 resizing the window.
 
