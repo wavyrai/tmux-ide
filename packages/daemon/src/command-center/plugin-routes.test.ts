@@ -45,6 +45,35 @@ describe("plugin routes", () => {
     expect(b.run).not.toHaveBeenCalled();
   });
 
+  it("refuse any browser request, even with the owner credential", async () => {
+    const b = backend();
+    const app = new Hono();
+    mountPluginRoutes(app, { ownerToken: "owner", backend: b });
+    const browserHeaders: Record<string, string>[] = [
+      { Origin: "https://evil.example" },
+      { Origin: "null" },
+      { Origin: "http://127.0.0.1:4000" },
+      { "Sec-Fetch-Site": "same-origin" },
+      { "Sec-Fetch-Mode": "cors" },
+    ];
+    for (const extra of browserHeaders) {
+      for (const [path, init] of [
+        ["/api/v2/plugins", {}],
+        ["/api/v2/plugins/reload", { method: "POST", body: "{}" }],
+        ["/api/v2/lua/run", { method: "POST", body: JSON.stringify({ code: "return 1" }) }],
+      ] as const) {
+        const response = await app.request(path, {
+          ...init,
+          headers: { Authorization: "Bearer owner", "Content-Type": "application/json", ...extra },
+        });
+        expect(response.status, `${path} ${JSON.stringify(extra)}`).toBe(403);
+      }
+    }
+    expect(b.status).not.toHaveBeenCalled();
+    expect(b.reload).not.toHaveBeenCalled();
+    expect(b.run).not.toHaveBeenCalled();
+  });
+
   it("are unavailable when the daemon has no owner token", async () => {
     const { request } = setup(backend(), null);
     expect((await request("/api/v2/plugins")).status).toBe(503);
@@ -104,5 +133,36 @@ describe("plugin routes", () => {
     ).toBe(413);
     expect(b.reload).not.toHaveBeenCalled();
     expect(b.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("plugin routes in the daemon app", () => {
+  it("refuse the shared remote-access token on a network listener and accept only the owner", async () => {
+    const { createApp } = await import("./server.ts");
+    const b = backend();
+    const app = createApp({
+      remoteAccess: {
+        bindHostname: "0.0.0.0",
+        token: "remote-access-token-1234",
+        localBypassToken: "owner-token-123456789",
+        ownerToken: "owner-token-123456789",
+      },
+      pluginBackend: b,
+    });
+    const run = (token: string | null) =>
+      app.request("/api/v2/lua/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ code: "return 1" }),
+      });
+    expect((await run(null)).status).toBe(401);
+    expect((await run("remote-access-token-1234")).status).toBe(401);
+    expect((await run("wrong")).status).toBe(401);
+    expect(b.run).not.toHaveBeenCalled();
+    expect((await run("owner-token-123456789")).status).toBe(200);
+    expect(b.run).toHaveBeenCalledOnce();
   });
 });

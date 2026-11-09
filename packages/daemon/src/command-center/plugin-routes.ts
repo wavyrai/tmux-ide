@@ -5,9 +5,15 @@
  *   POST /api/v2/lua/run          { code, chunkName?, budgetMs? }: run once
  *
  * `lua/run` executes code with the owner's authority, so every route needs
- * the owner capability, never the shared remote-access token.
+ * the owner capability, never the shared remote-access token. The check is
+ * `ownerAuthorityGate`, the same one behind `/api/v2/capabilities` and the
+ * owner-only actions such as `project.launch`, which also run user code.
+ *
+ * None of these routes serve browsers: a request that carries `Origin` or
+ * any `Sec-Fetch-*` header is refused before the credential is looked at,
+ * so the daemon's permissive CORS policy cannot expose them to a web page.
  */
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { ownerAuthorityGate } from "./owner-authority.ts";
@@ -41,9 +47,17 @@ export function mountPluginRoutes(
     mismatchMessage: "Plugins require owner authority",
   });
   const unavailable = { error: "Plugins are not enabled in this daemon" };
+  const refuseBrowser = (c: Context): Response | null => {
+    const headers = c.req.header();
+    const fromBrowser = Object.keys(headers).some(
+      (name) => name === "origin" || name.startsWith("sec-fetch-"),
+    );
+    return fromBrowser ? c.json({ error: "Plugins cannot be used from a browser" }, 403) : null;
+  };
+  const guard = (c: Context): Response | null => refuseBrowser(c) ?? authorize(c);
 
   app.get("/api/v2/plugins", (c) => {
-    const gate = authorize(c);
+    const gate = guard(c);
     if (gate) return gate;
     c.header("Cache-Control", "no-store");
     if (!options.backend) return c.json(unavailable, 503);
@@ -51,7 +65,7 @@ export function mountPluginRoutes(
   });
 
   app.post("/api/v2/plugins/reload", bodyLimit({ maxSize: 4 * 1024 }), async (c) => {
-    const gate = authorize(c);
+    const gate = guard(c);
     if (gate) return gate;
     c.header("Cache-Control", "no-store");
     if (!options.backend) return c.json(unavailable, 503);
@@ -68,7 +82,7 @@ export function mountPluginRoutes(
   });
 
   app.post("/api/v2/lua/run", bodyLimit({ maxSize: 1024 * 1024 + 4096 }), async (c) => {
-    const gate = authorize(c);
+    const gate = guard(c);
     if (gate) return gate;
     c.header("Cache-Control", "no-store");
     if (!options.backend) return c.json(unavailable, 503);
