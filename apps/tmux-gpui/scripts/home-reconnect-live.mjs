@@ -52,6 +52,11 @@ async function startFake(identity) {
       response.end();
     }
   });
+  // The events socket is a WebSocket upgrade: record its credential too, then refuse it.
+  server.on("upgrade", (request, socket) => {
+    if (request.headers.authorization) credentialsSeen.push(`upgrade ${request.url}`);
+    socket.destroy();
+  });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return server;
 }
@@ -141,6 +146,11 @@ try {
   await fleet.dispose();
   rmSync(signals, { recursive: true, force: true });
 }
-const result = { scenario, testExit: code, credentialsSentToFake: credentialsSeen.length };
+const result = {
+  scenario,
+  testExit: code,
+  credentialsSentToFake: credentialsSeen.length,
+  credentialRequests: [...new Set(credentialsSeen)],
+};
 console.log(JSON.stringify(result));
 process.exit(code === 0 && credentialsSeen.length === 0 ? 0 : 1);
