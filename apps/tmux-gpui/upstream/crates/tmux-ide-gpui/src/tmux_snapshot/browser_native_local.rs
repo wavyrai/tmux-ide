@@ -55,6 +55,8 @@ mod topology;
 #[path = "browser_native_local_watch.rs"]
 mod watch;
 pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
+#[path = "browser_native_local_home_recovery.rs"]
+mod home_recovery;
 #[path = "browser_native_local_split.rs"]
 mod split;
 enum Stage {
@@ -252,6 +254,7 @@ struct Local {
     agents: agents::Gate,
     appearance: Option<crate::tmux_snapshot::appearance::native::Owner>,
     recovery: Option<reconnect::Recovery>,
+    home: home_recovery::Recovery,
     background_fleet: background_fleet::Gate,
     registry: registry::Gate,
     preferences: preferences::Gate,
@@ -328,6 +331,7 @@ fn start_source(
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
         preferences: Default::default(),
@@ -385,7 +389,13 @@ impl Local {
         state.machines = Some(self.registry.publication());
         self.publish_tabs(&mut state);
         state.session_history = self.navigation.publication(state.request, self.foreground);
-        state.reconnect_attempt = self.recovery.as_ref().map(reconnect::Recovery::attempt);
+        state.reconnect_attempt = (self.recovery.as_ref().map(reconnect::Recovery::attempt))
+            .or_else(|| {
+                self.home
+                    .attempt()
+                    .filter(|_| state.surface == Surface::Home)
+            });
+        state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
@@ -455,6 +465,7 @@ impl Local {
         self.split.reset();
         self.targets.clear();
         self.catalog_identity = None;
+        self.home = Default::default();
         self.preferences.refresh();
         self.state = State {
             request,
@@ -477,6 +488,9 @@ impl Local {
         let Some(target) = self.targets.get(&key).cloned() else {
             return Ok(());
         };
+        if self.home_open_blocked()? {
+            return Ok(());
+        }
         self.cancel()?;
         self.state.request = request;
         self.state.surface = Surface::Workspace;
@@ -586,6 +600,7 @@ impl Local {
         self.fleet_tick()?;
         self.selected_catalog_tick()?;
         self.reconnect_tick()?;
+        self.home_recovery_tick()?;
         if !self.submitted
             && let Some(stage) = &self.stage
         {
@@ -690,6 +705,9 @@ impl Local {
                             self.creation_failed(operation_id, error)?;
                         }
                     }
+                    Err(error) if self.home.active() && matches!(stage, Stage::Servers) => {
+                        self.home_catalog_failed(error)?
+                    }
                     Err(error) => {
                         let setup = matches!(stage, Stage::Servers);
                         if self.recovery.is_some() {
@@ -739,6 +757,7 @@ impl Local {
             if let Some(wait) = self
                 .fleet_recovery_wait()
                 .into_iter()
+                .chain(self.home.wait(Instant::now()))
                 .chain(self.agents.wait())
                 .min()
             {
@@ -825,6 +844,7 @@ impl Local {
                 }
             }
             (Stage::Servers, CatalogResult::FleetCatalog(snapshot)) => {
+                self.home_recovered();
                 self.receive_catalog(snapshot, true)?
             }
             (
@@ -952,6 +972,9 @@ mod fault_log_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_home_live_tests.rs"]
 mod home_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_home_reconnect_live_tests.rs"]
+mod home_reconnect_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;

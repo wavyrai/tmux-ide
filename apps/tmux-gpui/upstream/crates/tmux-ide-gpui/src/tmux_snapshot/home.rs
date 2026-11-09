@@ -130,7 +130,9 @@ fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
     match state.local_setup.as_ref().filter(|_| connected) {
         Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
         Some(_) => StatusTone::Normal,
-        None if state.home_phase == browser::HomePhase::Unavailable => StatusTone::Warning,
+        None if state.home_phase == browser::HomePhase::Unavailable || state.home_fault => {
+            StatusTone::Warning
+        }
         None => StatusTone::Normal,
     }
 }
