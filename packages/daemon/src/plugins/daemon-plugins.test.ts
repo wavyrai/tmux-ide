@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { pluginsEnabled, resolvePluginHostCommand } from "./daemon-plugins.ts";
+import { join } from "node:path";
+import { appSettingsPath } from "../lib/app-settings.ts";
+import { daemonPrivateFiles, pluginsEnabled, resolvePluginHostCommand } from "./daemon-plugins.ts";
 
 describe("resolvePluginHostCommand", () => {
   it("starts the bundled CLI with the hidden host command", () => {
@@ -37,5 +39,17 @@ describe("pluginsEnabled", () => {
     expect(pluginsEnabled({})).toBe(true);
     expect(pluginsEnabled({ TMUX_IDE_PLUGINS: "1" })).toBe(true);
     expect(pluginsEnabled({ TMUX_IDE_PLUGINS: "0" })).toBe(false);
+  });
+});
+
+describe("daemonPrivateFiles", () => {
+  it("names the daemon record, its claim, consent, plugin stores and the app settings", () => {
+    expect(daemonPrivateFiles("/h")).toEqual([
+      join("/h", "daemon.json"),
+      join("/h", "daemon.claim"),
+      join("/h", "consent"),
+      join("/h", "plugin-store"),
+      appSettingsPath(),
+    ]);
   });
 });

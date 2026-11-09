@@ -55,6 +55,24 @@ describe("manifest schema", () => {
     );
     expect(PluginManifestSchemaZ.safeParse(manifest("Tasks")).success).toBe(false);
   });
+
+  it("wants plain-text descriptions, shown at consent", () => {
+    for (const description of ["a\u001b[2Jb", "a\nb", "a\u202eb", "a\u009bb"]) {
+      expect(
+        PluginManifestSchemaZ.safeParse(manifest("tasks", { description })).success,
+        JSON.stringify(description),
+      ).toBe(false);
+      expect(
+        PluginManifestSchemaZ.safeParse(
+          manifest("tasks", { settings: { mode: { type: "string", description } } }),
+        ).success,
+      ).toBe(false);
+    }
+    expect(
+      PluginManifestSchemaZ.safeParse(manifest("tasks", { description: "Worktree tasks ✓" }))
+        .success,
+    ).toBe(true);
+  });
 });
 
 describe("discoverPlugins", () => {

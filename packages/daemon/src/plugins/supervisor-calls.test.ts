@@ -224,6 +224,13 @@ describe("programs a plugin started", () => {
   const SLEEPER = `
 ide.action.register{ id = "sleep", title = "Sleep", run = function()
   return ide.exec{ cmd = 'echo $$ > "$1"; exec sleep 30', args = { DATA .. "/pid" }, shell = true }
+end }
+ide.action.register{ id = "boom", title = "Boom", run = function() error("boom", 0) end }
+ide.action.register{ id = "background", title = "Background", run = function()
+  ide.timer.after(0, function()
+    ide.exec{ cmd = 'echo $$ > "$1"; exec sleep 30', args = { DATA .. "/pid" }, shell = true }
+  end)
+  return true
 end }`;
 
   function sleeper() {
@@ -272,6 +279,40 @@ end }`;
         error: expect.stringMatching(/wall-clock limit/u),
       });
       await gone(pid);
+    },
+    30_000,
+  );
+
+  live(
+    "are killed when another callback of the plugin fails",
+    async () => {
+      // Invokes of one plugin run one at a time, so the program runs from a timer.
+      const pidFile = sleeper();
+      const s = await start();
+      expect(await s.invokeAction("plugin.tasks.background", {}, { source: "cli" })).toEqual({
+        ok: true,
+        value: true,
+      });
+      const pid = await runningPid(pidFile);
+      expect(await s.invokeAction("plugin.tasks.boom", {}, { source: "cli" })).toEqual({
+        ok: false,
+        error: expect.stringMatching(/^boom /u),
+      });
+      await gone(pid);
+    },
+    30_000,
+  );
+
+  live(
+    "are killed when the plugin is reloaded",
+    async () => {
+      const pidFile = sleeper();
+      const s = await start();
+      const result = s.invokeAction("plugin.tasks.sleep", {}, { source: "cli" });
+      const pid = await runningPid(pidFile);
+      await s.reload("tasks");
+      await gone(pid);
+      await result;
     },
     30_000,
   );
