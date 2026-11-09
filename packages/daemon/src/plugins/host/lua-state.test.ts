@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PluginLimits, PluginLogLevel, PluginTripKind } from "../protocol.ts";
-import { PluginLuaState, resolveSource, type HostFunctions } from "./lua-state.ts";
+import { PluginLuaState, resolveSource, toPlainJson, type HostFunctions } from "./lua-state.ts";
 
 const limits: PluginLimits = {
   callbackBudgetMs: 150,
@@ -228,6 +228,14 @@ describe("yields and host calls", () => {
     expect(await run(`return ide.test.sleep(300)`)).toEqual([{ slept: 300 }]);
   });
 
+  it("does not let pcall turn a late host call into success", async () => {
+    const { run, trips } = await make({}, { "test.slow": () => new Promise(() => {}) });
+    // The reviewer's case: without the stop after a late wait, Lua would see
+    // (false, nil), pcall would swallow it and the callback would "succeed".
+    await expect(run(`pcall(ide.test.slow) return "done"`)).rejects.toThrow(/wall-clock limit/u);
+    expect(trips).toEqual(["timeout"]);
+  });
+
   it("stops a host call that never settles at the wall-clock limit", async () => {
     const { run, trips } = await make({}, { "test.never": () => new Promise(() => {}) });
     const started = performance.now();
@@ -422,5 +430,65 @@ describe("include and require", () => {
       ok: false,
       error: "E_INVALID: 'big.lua' is larger than 1 MiB",
     });
+  });
+});
+
+describe("toPlainJson", () => {
+  it("names a cycle instead of letting JSON.stringify throw", () => {
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    expect(toPlainJson(cyclic)).toEqual({
+      ok: false,
+      error:
+        "E_INVALID: a host function returned a value that contains itself, not plain JSON data",
+    });
+    const list: unknown[] = [];
+    list.push({ back: list });
+    expect(toPlainJson(list)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("contains itself"),
+    });
+  });
+
+  it("allows the same object twice when it is not a cycle", () => {
+    const shared = { n: 1 };
+    expect(toPlainJson({ a: shared, b: [shared, shared] })).toEqual({
+      ok: true,
+      value: { a: { n: 1 }, b: [{ n: 1 }, { n: 1 }] },
+    });
+  });
+
+  it("refuses accessors, symbol keys and array subclasses", () => {
+    let reads = 0;
+    const getter = Object.defineProperty({}, "x", {
+      get: () => {
+        reads += 1;
+        return 1;
+      },
+      enumerable: true,
+    });
+    expect(toPlainJson(getter)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("accessors"),
+    });
+    expect(reads).toBe(0);
+    expect(toPlainJson({ [Symbol("k")]: 1 })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("symbol keys"),
+    });
+    class List extends Array<number> {}
+    expect(toPlainJson(List.from([1, 2]))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("array subclass"),
+    });
+    expect(toPlainJson({ nested: [new List()] })).toMatchObject({ ok: false });
+  });
+
+  it("refuses non-finite numbers, undefined inside values, functions and bigints", () => {
+    for (const value of [Infinity, { a: NaN }, { a: undefined }, [() => 1], 1n]) {
+      expect(toPlainJson(value).ok).toBe(false);
+    }
+    expect(toPlainJson(undefined)).toEqual({ ok: true, value: undefined });
+    expect(toPlainJson(null)).toEqual({ ok: true, value: undefined });
   });
 });
