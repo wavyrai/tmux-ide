@@ -127,3 +127,83 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
     assert_eq!(title_weight(true), FontWeight::SEMIBOLD);
     assert_eq!(title_weight(false), FontWeight::NORMAL);
 }
+
+#[gpui::test]
+fn header_buttons_split_right_split_down_zoom_close_edge_to_edge(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(
+        cx.debug_bounds("pane-overflow:pane-a").is_none(),
+        "no menu button"
+    );
+    let mut buttons = Vec::new();
+    for selector in [
+        "pane-split-right:pane-a",
+        "pane-split-down:pane-a",
+        "pane-expand:pane-a",
+        "pane-close:pane-a",
+    ] {
+        buttons.push(cx.debug_bounds(selector).unwrap());
+    }
+    for pair in buttons.windows(2) {
+        assert_eq!(pair[0].right(), pair[1].left());
+        assert_eq!(pair[0].size, pair[1].size);
+    }
+    let header = cx.debug_bounds("pane-card-header:pane-a").unwrap();
+    assert_eq!(buttons[3].right(), header.right());
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    assert!(title.right() <= buttons[0].left());
+    for (index, direction) in [(0, SplitDirection::Right), (1, SplitDirection::Down)] {
+        // Each action spends the pane's one-use capability; the daemon
+        // publishes a fresh one.
+        view.update(cx, |v, _| {
+            v.browser_state.pane_actions = Some(browser::PaneActions {
+                id: "pane-a".into(),
+                token: format!("token-{index}"),
+                zoomed: false,
+            });
+        });
+        cx.simulate_click(buttons[index].center(), Modifiers::default());
+        let sent = receiver.try_recv().unwrap();
+        assert!(
+            matches!(&sent, browser::Command::PaneAction { id, action: Action::Split { direction: sent }, .. }
+                if id == "pane-a" && std::mem::discriminant(sent) == std::mem::discriminant(&direction)),
+            "button {index}"
+        );
+        assert!(receiver.try_recv().is_err());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+}
+
+#[gpui::test]
+fn right_click_on_the_selected_panes_title_opens_its_menu(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    let title = cx.debug_bounds("pane-title:pane-a").unwrap();
+    // A left click on the title only focuses the terminal.
+    cx.simulate_click(title.center(), Modifiers::default());
+    assert!(view.read_with(cx, |v, _| v.picker.is_none()));
+    cx.simulate_mouse_down(title.center(), MouseButton::Right, Modifiers::default());
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()), "pane menu");
+    assert!(
+        receiver.try_recv().is_err(),
+        "the menu sends nothing by itself"
+    );
+    cx.simulate_keystrokes("enter");
+    view.read_with(cx, |v, _| {
+        let menu = v.pane_actions.as_ref().unwrap();
+        assert_eq!(menu.target.actions.id, "pane-a");
+    });
+}

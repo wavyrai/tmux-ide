@@ -250,3 +250,12 @@ immutable `upstream-provenance.json` hashes are unchanged. For provenance lookup
 map the new crate directory back to `crates/herdr-gpui` in the original manifest.
 Native build receipts, assembly notices, preview scripts, Cargo selectors and
 CI paths now reference the renamed application crate.
+
+## Quiet pane header (#746, 2026-11-09)
+
+`tmux_snapshot/pane_chrome.rs` and `pane_chrome/buttons.rs` replace the header's
+overflow (…) button with split right and split down beside zoom and close. A
+narrow pane drops the splits first. A right-click on a pane's title opens the pane
+menu the overflow button used to open. `icons.rs` registers the tmux-ide-authored
+`assets/icons/split-down.svg` (`split.svg` turned a quarter); upstream provenance is
+unchanged.
