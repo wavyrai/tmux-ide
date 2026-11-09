@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  realpathSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -17,6 +18,7 @@ import { parseArgs } from "node:util";
 import { terminalSafe, terminalSafeBlock } from "@tmux-ide/contracts";
 import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
 import { discoverPlugins, pluginPaths, type PluginAwaitingConsent } from "./discovery.ts";
+import { findOnPath } from "./exec-sandbox.ts";
 import { PLUGIN_EXAMPLES } from "./examples/worktree-tasks.ts";
 import { API_ENTRIES, findApiEntry, suggestApiEntries, type ApiEntry } from "./api-table.ts";
 import {
@@ -305,78 +307,61 @@ async function followLog(
 }
 
 /**
- * Programs that, once granted, give a plugin full control: they run other
- * commands (shells, interpreters, build tools, git hooks and aliases), reach
- * other machines, drive tmux or tmux-ide (and through them, your panes), or
- * manage services. Consent names them when a plugin lists them.
+ * The only programs consent does not call full control: each prints or
+ * transforms text and has no option, expression or config that starts
+ * another program. Matched exactly (case included), on both the listed
+ * name and the real file it resolves to. Anything else may run other
+ * commands, or drive tmux or tmux-ide, and consent says so.
+ *
+ * - cat, head, tail, wc, cut, tr: print or count parts of files; no exec option
+ *   (unlike sort's --compress-program, rg's --pre, find's -exec, tar's --to-command).
+ * - jq: a JSON filter language with no builtin that runs a program.
+ * - echo, printf, true, false, pwd, basename, dirname: print fixed or derived strings.
+ * - date, uname, whoami, id: print system facts (setting the clock needs root).
+ * - ls, stat: list files and their metadata.
  */
-export const FULL_CONTROL_PROGRAMS: ReadonlySet<string> = new Set([
-  "tmux",
-  "tmux-ide",
-  "sh",
-  "bash",
-  "zsh",
-  "fish",
-  "dash",
-  "ksh",
-  "csh",
-  "tcsh",
-  "env",
-  "xargs",
-  "nohup",
-  "sudo",
-  "su",
-  "doas",
-  "osascript",
-  "open",
-  "launchctl",
-  "systemctl",
-  "crontab",
-  "at",
-  "ssh",
-  "scp",
-  "sftp",
-  "rsync",
-  "git",
-  "gh",
-  "node",
-  "npm",
-  "npx",
-  "pnpm",
-  "yarn",
-  "bun",
-  "bunx",
-  "deno",
-  "python",
-  "python3",
-  "pip",
-  "pip3",
-  "uv",
-  "ruby",
-  "gem",
-  "perl",
-  "php",
-  "lua",
-  "make",
-  "cargo",
-  "go",
-  "docker",
-  "kubectl",
-  "find",
-  "awk",
-  "sed",
-  "vim",
-  "nvim",
-  "emacs",
-  "code",
-  "claude",
-  "codex",
+export const NOT_FULL_CONTROL_PROGRAMS: ReadonlySet<string> = new Set([
+  "cat",
+  "head",
+  "tail",
+  "wc",
+  "cut",
+  "tr",
+  "jq",
+  "echo",
+  "printf",
+  "true",
+  "false",
+  "pwd",
+  "basename",
+  "dirname",
+  "date",
+  "uname",
+  "whoami",
+  "id",
+  "ls",
+  "stat",
 ]);
+
+/**
+ * Whether consent must call `program` full control: unless both its name
+ * and the real file it resolves to on PATH are on the short list above.
+ */
+export function givesFullControl(program: string, path = process.env.PATH ?? ""): boolean {
+  if (!NOT_FULL_CONTROL_PROGRAMS.has(program)) return true;
+  const found = findOnPath(program, path);
+  if (!found) return false;
+  try {
+    return !NOT_FULL_CONTROL_PROGRAMS.has(basename(realpathSync(found)));
+  } catch {
+    return true;
+  }
+}
 
 export function describeForConsent(plugin: PluginAwaitingConsent): string {
   const { manifest } = plugin;
   const exec = manifest.capabilities.exec ?? [];
-  const fullControl = exec.filter((program) => FULL_CONTROL_PROGRAMS.has(program));
+  const fullControl = exec.filter((program) => givesFullControl(program));
   const asks = [
     manifest.capabilities.shell
       ? "run ANY shell command line, with full access to your account"
@@ -385,10 +370,10 @@ export function describeForConsent(plugin: PluginAwaitingConsent): string {
       ? `run these programs: ${exec.join(", ")}. A program it may run can usually do anything your account can`
       : null,
     fullControl.length > 0
-      ? `NOTE: ${fullControl.join(", ")} ${fullControl.length === 1 ? "gives" : "give"} full control of your account: ${fullControl.length === 1 ? "it runs" : "they run"} any command, or ${fullControl.length === 1 ? "drives" : "drive"} tmux or tmux-ide`
+      ? `NOTE: ${fullControl.join(", ")} can run other commands or drive tmux, so ${fullControl.length === 1 ? "it gives" : "they give"} full control of your account`
       : null,
     manifest.capabilities.worktree
-      ? "create, open and remove git worktrees and their sessions"
+      ? "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)"
       : null,
     manifest.capabilities["panes.send"]
       ? "type into your terminals and run commands there, which gives full access to your account"

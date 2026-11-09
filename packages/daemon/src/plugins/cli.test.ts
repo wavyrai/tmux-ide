@@ -2,9 +2,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { hasUnsafeText } from "@tmux-ide/contracts";
-import { runPluginCommandLine, type PluginCliIo } from "./cli.ts";
+import { givesFullControl, runPluginCommandLine, type PluginCliIo } from "./cli.ts";
 import { hashPluginDirectory, readConsent } from "./consent.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 
@@ -269,7 +269,9 @@ describe("tmux-ide plugin example", () => {
     expect(
       await runPluginCommandLine("plugin", ["consent", "worktree-tasks", "--yes"], consent.io),
     ).toBe(0);
-    expect(consent.out[0]).toContain("create, open and remove git worktrees and their sessions");
+    expect(consent.out[0]).toContain(
+      "create, open and remove git worktrees and their sessions (as plain sessions: a branch's own tmux-ide layout never runs)",
+    );
     expect(consent.out[0]).not.toContain("run these programs");
     expect(consent.out[0]).not.toContain("type into your terminals");
     // A second copy does not overwrite the first, and unknown names are refused.
@@ -339,25 +341,54 @@ describe("tmux-ide plugin consent", () => {
     expect(h.out[0]).toContain("Allow only plugins you trust.");
   });
 
-  it("names the programs that give full control", async () => {
+  it("calls every program full control except a short reviewed list", async () => {
     const dir = join(home, "plugins", "runner");
     mkdirSync(dir, { recursive: true });
+    const exec = [
+      "jq",
+      "cat",
+      "tmux-ide",
+      "git",
+      "Git",
+      "TMUX",
+      "python3.14",
+      "perl5.34",
+      "script",
+      "xcrun",
+      "arch",
+      "nice",
+      "time",
+      "expect",
+      "tclsh",
+      "swift",
+      "vi",
+      "less",
+      "JQ",
+    ];
     writeFileSync(
       join(dir, "manifest.json"),
-      JSON.stringify({
-        name: "runner",
-        version: "1.0.0",
-        api: "^1.0",
-        capabilities: { exec: ["jq", "tmux-ide", "git"] },
-      }),
+      JSON.stringify({ name: "runner", version: "1.0.0", api: "^1.0", capabilities: { exec } }),
     );
     writeFileSync(join(dir, "init.lua"), "return true");
     const h = harness(reloaded);
     expect(await runPluginCommandLine("plugin", ["consent", "runner", "--yes"], h.io)).toBe(0);
-    expect(h.out[0]).toContain(
-      "NOTE: tmux-ide, git give full control of your account: they run any command, or drive tmux or tmux-ide",
+    const note = h.out[0]!.split("\n").find((line) => line.includes("NOTE:"))!;
+    expect(note).toContain(
+      "can run other commands or drive tmux, so they give full control of your account",
     );
-    expect(h.out[0]).not.toMatch(/NOTE: .*jq/u);
+    const named = note.slice(note.indexOf("NOTE: ") + 6, note.indexOf(" can run")).split(", ");
+    expect(named).toEqual(exec.filter((program) => program !== "jq" && program !== "cat"));
+  });
+
+  it("flags an allow-listed name that resolves to another program", () => {
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    // `cat` on this PATH is really a shell.
+    symlinkSync("/bin/sh", join(bin, "cat"));
+    expect(givesFullControl("cat", bin)).toBe(true);
+    expect(givesFullControl("cat", "/bin")).toBe(false);
+    expect(givesFullControl("cat", join(home, "empty"))).toBe(false);
+    expect(givesFullControl("sh", "/bin")).toBe(true);
   });
 
   it("says what programs and typing into panes really allow", async () => {
