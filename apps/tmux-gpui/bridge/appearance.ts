@@ -24,10 +24,13 @@ export const appearanceOptions = Object.freeze([
 type SystemAppearance = "dark" | "light";
 const packed = (c: RendererNeutralColor) => (c.red << 16) | (c.green << 8) | c.blue;
 
+/** What System (the default) paints in each macOS appearance (#746). */
+export const SYSTEM_PRESETS = Object.freeze({ light: "linen", dark: "linen-dark" } as const);
+
 export function resolveNativeAppearance(selected: string, system: SystemAppearance) {
   if (!appearanceOptions.some((option) => option.id === selected))
     throw new Error("Unknown native theme");
-  const preset = findVisualThemePreset(selected);
+  const preset = findVisualThemePreset(selected === "system" ? SYSTEM_PRESETS[system] : selected);
   const { tokens: t } = resolveVisualTheme({
     appearance: selected === "system" ? system : selected === "light" ? "light" : "dark",
     userTheme: preset,

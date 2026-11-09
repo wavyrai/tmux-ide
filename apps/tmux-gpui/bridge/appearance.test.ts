@@ -11,7 +11,12 @@ import {
   XTERM_PALETTE,
 } from "@tmux-ide/contracts";
 import { parseAppConfig } from "../../../packages/daemon/src/lib/app-config.ts";
-import { appearanceOptions, createAppearanceOwner, resolveNativeAppearance } from "./appearance.ts";
+import {
+  SYSTEM_PRESETS,
+  appearanceOptions,
+  createAppearanceOwner,
+  resolveNativeAppearance,
+} from "./appearance.ts";
 
 test("real shared config preserves unrelated fields and restores selection in a fresh helper process", async () => {
   const root = await mkdtemp(join(tmpdir(), "gpui-theme-restart-"));
@@ -79,10 +84,9 @@ test("system follows native appearance without persisting a host event; explicit
   });
   owner.setSystem("light");
   assert.equal(owner.publication().selected, "system");
-  assert.equal(
-    owner.publication().theme.background,
-    resolveNativeAppearance("light", "light").theme.background,
-  );
+  assert.deepEqual(owner.publication().theme, resolveNativeAppearance("linen", "light").theme);
+  owner.setSystem("dark");
+  assert.deepEqual(owner.publication().theme, resolveNativeAppearance("linen-dark", "dark").theme);
   assert.deepEqual(
     resolveNativeAppearance("nord", "light").theme,
     resolveNativeAppearance("nord", "dark").theme,
@@ -119,12 +123,12 @@ test("theme save uses shared patch, restart restores selection, and failed write
   assert.equal(failing.publication().selected, "light");
 });
 
-test("native default chrome stays neutral without changing canonical terminal colors", () => {
+test("Light and Dark keep neutral chrome without changing canonical terminal colors", () => {
   const pack = (c: { red: number; green: number; blue: number }) =>
     (c.red << 16) | (c.green << 8) | c.blue;
-  for (const selected of ["system", "light", "dark"]) {
+  for (const selected of ["light", "dark"]) {
     for (const system of ["light", "dark"] as const) {
-      const light = selected === "light" || (selected === "system" && system === "light");
+      const light = selected === "light";
       const a = resolveNativeAppearance(selected, system).theme;
       const t = resolveVisualTheme({ appearance: light ? "light" : "dark" }).tokens;
       assert.equal(a.canvas, light ? 0xffffff : 0x181818);
@@ -158,5 +162,29 @@ test("native default chrome stays neutral without changing canonical terminal co
     assert.equal(a.canvas, pack(t.surfaces.canvas));
     assert.equal(a.surface, pack(t.surfaces.panel));
     assert.equal(a.active, pack(t.selection.selection));
+  }
+});
+
+test("System, the default, paints Linen in light and Linen Dark in dark (#746)", () => {
+  assert.equal(parseAppConfig({}).theme.mode, "system");
+  assert.deepEqual(SYSTEM_PRESETS, { light: "linen", dark: "linen-dark" });
+  for (const system of ["light", "dark"] as const) {
+    const preset = VISUAL_THEME_PRESETS.find((p) => p.id === SYSTEM_PRESETS[system]);
+    assert.equal(preset?.appearance, system);
+    assert.deepEqual(
+      resolveNativeAppearance("system", system).theme,
+      resolveNativeAppearance(SYSTEM_PRESETS[system], system).theme,
+    );
+  }
+  assert.notDeepEqual(
+    resolveNativeAppearance("system", "light").theme,
+    resolveNativeAppearance("light", "light").theme,
+  );
+});
+
+test("Linen's one accent is also its needs-input colour (ANSI yellow)", () => {
+  for (const id of ["linen", "linen-dark"]) {
+    const { theme } = resolveNativeAppearance(id, "dark");
+    assert.equal(theme.palette[3], theme.accent, id);
   }
 });

@@ -100,3 +100,31 @@ fn malformed_or_oversized_config_is_not_destroyed_by_a_save() {
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 }
+#[test]
+fn the_default_system_theme_is_linen_in_light_and_linen_dark_in_dark() {
+    let mut owner = Owner::load(None).unwrap();
+    assert_eq!(owner.publication().selected, "system");
+    let presets: Vec<(String, Colors, Colors)> = owner
+        .presets
+        .iter()
+        .map(|p| (p.id.clone(), p.light.clone(), p.dark.clone()))
+        .collect();
+    let preset = |id: &str| {
+        let (_, light, dark) = presets.iter().find(|p| p.0 == id).unwrap();
+        (light.clone(), dark.clone())
+    };
+    let (linen, linen_dark) = (preset("linen").0, preset("linen-dark").1);
+    let accent = linen.accent;
+    assert_eq!(owner.publication().theme.background, linen_dark.background);
+    owner.system(System::Light);
+    let light = owner.publication().theme;
+    assert_eq!(light.background, linen.background);
+    assert_eq!(light.surface, linen.surface);
+    // One accent: needs input (ANSI yellow) wears it.
+    assert_eq!(light.palette[3], accent);
+    owner.system(System::Dark);
+    assert_eq!(owner.publication().theme.surface, linen_dark.surface);
+    // Light and Dark stay the neutral built-ins.
+    assert_ne!(preset("light").0.background, linen.background);
+    assert_ne!(preset("dark").1.background, linen_dark.background);
+}

@@ -295,7 +295,7 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender, 3));
     cx.simulate_resize(size(px(1000.), px(700.)));
     let themes = catalog();
-    assert_eq!(themes.len(), 50);
+    assert_eq!(themes.len(), 54);
     let mut failures = Vec::new();
     for (name, colors) in &themes {
         for developer in [true, false] {

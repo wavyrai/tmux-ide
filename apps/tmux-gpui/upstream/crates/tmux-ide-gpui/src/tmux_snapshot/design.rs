@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn every_catalog_theme_drives_a_complete_readable_palette() {
         let themes = catalog();
-        assert_eq!(themes.len(), 50, "25 presets, two variants each");
+        assert_eq!(themes.len(), 54, "27 presets, two variants each");
         let mut failures = Vec::new();
         for (name, expected, theme) in themes {
             let mut bezel = palette(&theme);
