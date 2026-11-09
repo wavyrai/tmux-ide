@@ -35,7 +35,7 @@ fn canonical_status_precedence_and_frames() {
     assert_ne!(glyph(&working, false, 0), glyph(&working, false, 1));
 }
 #[test]
-fn attention_idle_uses_warning_color_and_unavailability_still_wins() {
+fn attention_uses_warning_working_is_muted_and_unavailability_still_wins() {
     let theme = crate::config::Theme::default();
     let attention = row("IDLE", true);
     assert_eq!(
@@ -44,6 +44,7 @@ fn attention_idle_uses_warning_color_and_unavailability_still_wins() {
     );
     assert_eq!(color(&attention, true, &theme), theme.muted);
     assert_eq!(color(&row("IDLE", false), false, &theme), theme.muted);
+    assert_eq!(color(&row("WORKING", false), false, &theme), theme.muted);
     assert_eq!(
         color(&row("DISCONNECTED", true), false, &theme),
         theme.muted

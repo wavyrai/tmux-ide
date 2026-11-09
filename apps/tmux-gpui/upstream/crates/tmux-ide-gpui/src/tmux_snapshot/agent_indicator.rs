@@ -67,7 +67,9 @@ fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     } else if matches!(row.status, Status::Done) {
         theme.ink(theme.palette[2])
     } else {
-        theme.ink(theme.palette[4])
+        // Working is muted: the spinner's motion says it, and the theme's one
+        // accent is left to "needs input" (#746).
+        theme.muted
     }
 }
 impl SnapshotView {
