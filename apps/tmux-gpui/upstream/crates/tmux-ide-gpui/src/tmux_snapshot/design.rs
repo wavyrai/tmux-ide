@@ -114,15 +114,29 @@ const ROW_TARGET: f32 = 4.75;
 /// of the chrome plates. The current session's row is always selected, so
 /// this is the most-read text in the sidebar.
 pub(crate) fn row_text(theme: &Theme, color: u32) -> u32 {
+    row_inked(theme, color, ROW_TARGET)
+}
+
+/// `color` as a mark on a sidebar row, such as an agent's state glyph: the
+/// contrast setting's mark ratio (3:1, or 4.5:1 at High) on every plate and
+/// wash [`row_text`] reads on (#746).
+pub(crate) fn row_mark(theme: &Theme, color: u32) -> u32 {
+    // A little over the ratio, as `ROW_TARGET` is over 4.5, so rounding in
+    // the frost and wash blends never leaves a mark just under it.
+    row_inked(theme, color, theme.contrast.mark_ratio() + 0.15)
+}
+
+fn row_inked(theme: &Theme, color: u32, target: f32) -> u32 {
     thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<(u32, u32, u32), u32>> =
-            Default::default();
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<(u32, u32, u32, u32), u32>,
+        > = Default::default();
     }
-    let key = (color, theme.surface, theme.background);
+    let key = (color, theme.surface, theme.background, target.to_bits());
     if let Some(inked) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
         return inked;
     }
-    let inked = crate::contrast::ink(color, &row_plates(theme), ROW_TARGET);
+    let inked = crate::contrast::ink(color, &row_plates(theme), target);
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         // A theme inks a handful of colours; a long session of theme switching

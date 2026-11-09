@@ -37,25 +37,17 @@ fn canonical_status_precedence_and_frames() {
 #[test]
 fn attention_uses_warning_working_is_muted_and_unavailability_still_wins() {
     let theme = crate::config::Theme::default();
+    let on = |r: &Row, unavailable: bool| color(r, unavailable, &theme, Plate::Chrome);
     let attention = row("IDLE", true);
+    assert_eq!(on(&attention, false), theme.ink(theme.palette[3]));
+    assert_eq!(on(&attention, true), theme.ink(theme.muted));
+    assert_eq!(on(&row("IDLE", false), false), theme.ink(theme.muted));
+    assert_eq!(on(&row("WORKING", false), false), theme.ink(theme.muted));
     assert_eq!(
-        color(&attention, false, &theme),
-        theme.ink(theme.palette[3])
-    );
-    assert_eq!(color(&attention, true, &theme), theme.muted);
-    assert_eq!(color(&row("IDLE", false), false, &theme), theme.muted);
-    assert_eq!(
-        color(&row("WORKING", false), false, &theme),
+        on(&row("DISCONNECTED", true), false),
         theme.ink(theme.muted)
     );
-    assert_eq!(
-        color(&row("DISCONNECTED", true), false, &theme),
-        theme.muted
-    );
-    assert_eq!(
-        color(&row("FAILED", true), false, &theme),
-        theme.ink(theme.palette[1])
-    );
+    assert_eq!(on(&row("FAILED", true), false), theme.ink(theme.palette[1]));
 }
 
 /// Working's muted mark reads at the contrast setting's ratio on the
@@ -81,7 +73,7 @@ fn working_reads_on_every_catalog_variant_at_both_contrasts() {
                 variants += 1;
                 let mut theme = appearance.native();
                 theme.contrast = contrast;
-                let ink = color(&working, false, &theme);
+                let ink = color(&working, false, &theme, Plate::Chrome);
                 let target = contrast.mark_ratio();
                 for plate in [theme.background, theme.surface, theme.active] {
                     raw_misses += usize::from(ratio(theme.muted, plate) < target);

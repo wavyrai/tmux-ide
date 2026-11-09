@@ -229,15 +229,28 @@ pub(super) fn title_weight(focused: bool) -> FontWeight {
         FontWeight::NORMAL
     }
 }
+/// A pane header's plates: the card, and the card under its hover and
+/// selected washes.
+pub(super) fn header_plates(theme: &crate::config::Theme) -> [u32; 3] {
+    let bezel = super::design::palette(theme);
+    let plate = bezel.terminal_bg;
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    [
+        pack(plate),
+        pack(bezel_theme::flatten(bezel.element_hover, plate)),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+    ]
+}
+/// `color` as a mark in a pane header, such as an agent's state glyph: the
+/// contrast setting's mark ratio on each of the header's plates (#746).
+pub(super) fn header_mark(theme: &crate::config::Theme, color: u32) -> u32 {
+    crate::contrast::ink_on_chrome(color, header_plates(theme), theme.contrast.mark_ratio())
+}
 pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
     let bezel = super::design::palette(theme);
     let plate = bezel.terminal_bg;
     let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-    let plates = [
-        pack(plate),
-        pack(bezel_theme::flatten(bezel.element_hover, plate)),
-        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
-    ];
+    let plates = header_plates(theme);
     let ink = |c: Hsla| -> Hsla {
         rgb(crate::contrast::ink_on_chrome(
             pack(bezel_theme::flatten(c, plate)),
@@ -577,7 +590,9 @@ impl SnapshotView {
             });
         let indicator = agent
             .filter(|_| header.width >= 20)
-            .and_then(|(row, unavailable)| self.agent_state(row, unavailable));
+            .and_then(|(row, unavailable)| {
+                self.agent_state(row, unavailable, super::agent_indicator::Plate::Header)
+            });
         // The same kind icon as the pane's sidebar row (#746).
         let icon = pane_kind(
             agent

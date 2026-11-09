@@ -59,22 +59,41 @@ fn label(row: &Row, unavailable: bool) -> &'static str {
 pub(super) fn attention_ink(theme: &crate::config::Theme) -> u32 {
     theme.ink(theme.palette[3])
 }
-fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
+/// Where a state mark is drawn, which decides the plates it is inked on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Plate {
+    /// The theme's own background, surface and active fill: Home's table.
+    Chrome,
+    /// A sidebar row on the frosted sidebar, bare or under its washes.
+    Sidebar,
+    /// A pane card's header, bare or under its washes.
+    Header,
+}
+/// The state's colour before inking.
+fn hue(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     if unavailable || matches!(row.status, Status::Disconnected) {
         theme.muted
     } else if matches!(row.status, Status::Failed) {
-        theme.ink(theme.palette[1])
+        theme.palette[1]
     } else if row.attention || matches!(row.status, Status::Blocked) {
-        attention_ink(theme)
-    } else if matches!(row.status, Status::Idle) {
-        theme.muted
+        theme.palette[3]
     } else if matches!(row.status, Status::Done) {
-        theme.ink(theme.palette[2])
+        theme.palette[2]
     } else {
-        // Working is muted: the spinner's motion says it, and the theme's one
-        // accent is left to "needs input" (#746). Inked like every other mark,
-        // so it still reads at the contrast setting's ratio.
-        theme.ink(theme.muted)
+        // Idle and Working are muted: the spinner's motion says Working, and
+        // the theme's one accent is left to "needs input" (#746).
+        theme.muted
+    }
+}
+/// The state's mark, inked to the contrast setting's mark ratio on the
+/// plates it is drawn on: with the pill's words gone, the glyph is the only
+/// sign of the state (#746).
+pub(super) fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme, on: Plate) -> u32 {
+    let hue = hue(row, unavailable, theme);
+    match on {
+        Plate::Chrome => theme.ink(hue),
+        Plate::Sidebar => super::design::row_mark(theme, hue),
+        Plate::Header => super::pane_chrome::header_mark(theme, hue),
     }
 }
 impl SnapshotView {
@@ -96,7 +115,7 @@ impl SnapshotView {
             .flex()
             .items_center()
             .gap_1()
-            .text_color(rgb(color(row, unavailable, &theme)))
+            .text_color(rgb(color(row, unavailable, &theme, Plate::Chrome)))
             .child(self.agent_glyph(row, unavailable))
             .child(label(row, unavailable))
             .into_any_element()
@@ -104,7 +123,12 @@ impl SnapshotView {
     /// A sidebar pane row's state (#746): the full pill only when the agent
     /// needs input; otherwise its bare glyph (the spinner, a check, a cross),
     /// and nothing for an idle agent.
-    pub(super) fn agent_state(&self, row: &Row, unavailable: bool) -> Option<AnyElement> {
+    pub(super) fn agent_state(
+        &self,
+        row: &Row,
+        unavailable: bool,
+        on: Plate,
+    ) -> Option<AnyElement> {
         if label(row, unavailable) == "Needs input" {
             return Some(self.agent_indicator(row, unavailable));
         }
@@ -116,7 +140,8 @@ impl SnapshotView {
             div()
                 .debug_selector(|| "agent-glyph".into())
                 .flex_none()
-                .text_color(rgb(color(row, unavailable, &theme)))
+                .text_color(rgb(color(row, unavailable, &theme, on)))
+                .children(super::design::ink_probe(|| "agent-glyph".into()))
                 .child(self.agent_glyph(row, unavailable))
                 .into_any_element(),
         )

@@ -691,8 +691,11 @@ impl SnapshotView {
                 && let Some(publication) = &self.browser_state.workspace_fleet_agents
                 && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
             {
-                element =
-                    element.children(self.agent_state(agent, !publication.roster.available(key)));
+                element = element.children(self.agent_state(
+                    agent,
+                    !publication.roster.available(key),
+                    super::agent_indicator::Plate::Sidebar,
+                ));
             }
             if let Some(pane) = &row.pane {
                 element = self.sidebar_pane_row(element, index, pane, cx);

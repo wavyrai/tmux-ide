@@ -11,8 +11,14 @@ impl SnapshotView {
         pane: &str,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let state = panes::pane_agent(&self.browser_state, pane)
-            .and_then(|(agent, unavailable)| self.agent_state(agent, unavailable));
+        let state =
+            panes::pane_agent(&self.browser_state, pane).and_then(|(agent, unavailable)| {
+                self.agent_state(
+                    agent,
+                    unavailable,
+                    crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+                )
+            });
         let more = self.pane_row_more(index, pane, cx);
         let id = pane.to_owned();
         element
