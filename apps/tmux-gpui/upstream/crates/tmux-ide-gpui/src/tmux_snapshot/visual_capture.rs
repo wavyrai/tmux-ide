@@ -570,6 +570,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     }
     let spark = extras.contains(&"spark");
     let with_sidebar = extras.contains(&"sidebar");
+    // The workspace fixture's catalog names sessions the Home fleet doesn't
+    // hold; with the sidebar shown they would read as stray projects.
+    if home_b && with_sidebar {
+        state.sessions.clear();
+    }
     let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.

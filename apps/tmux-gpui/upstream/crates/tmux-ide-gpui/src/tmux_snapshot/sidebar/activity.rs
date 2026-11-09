@@ -3,7 +3,77 @@ use super::*;
 use crate::tmux_snapshot::workspace_fleet_agents;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The agent a sidebar row stands for, by its roster key, and whether it is
+/// unavailable: the workspace's fleet roster, or on Home, Home's roster.
+pub(in crate::tmux_snapshot) fn row_agent<'a>(
+    state: &'a browser::State,
+    key: &str,
+) -> Option<(&'a browser::home_agents::Row, bool)> {
+    if let Some(p) = state.workspace_fleet_agents.as_ref() {
+        let agent = p.roster.rows.iter().find(|r| r.key == key)?;
+        return Some((agent, !p.roster.available(key)));
+    }
+    let roster = state.home_agents.as_ref()?;
+    let agent = roster.rows.iter().find(|r| r.key == key)?;
+    Some((agent, !roster.available(key)))
+}
+
+/// On Home (#746): each project's agents from Home's roster, under its
+/// heading, matched by the session's live id as Home's table matches them.
+fn integrate_home(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
+    let Some(roster) = state.home_agents.as_ref() else {
+        return rows;
+    };
+    let sessions: Vec<_> = state
+        .fleet
+        .iter()
+        .flat_map(|f| &f.groups)
+        .flat_map(|g| g.sessions.iter().map(move |s| (g.id.clone(), s)))
+        .collect();
+    let mut out = Vec::new();
+    for mut row in rows {
+        let live = match &row.target {
+            Some(Target::FleetSession { machine, id, .. }) => sessions
+                .iter()
+                .find(|(m, s)| m == machine && &s.id == id)
+                .and_then(|(_, s)| s.session_id.clone()),
+            _ => None,
+        };
+        let Some(live) = live else {
+            out.push(row);
+            continue;
+        };
+        let mut agents: Vec<_> = roster
+            .rows
+            .iter()
+            .filter(|a| a.session_id == live)
+            .collect();
+        // Activity changes must not move a project's rows under the pointer.
+        agents.sort_by(|a, b| a.key.cmp(&b.key));
+        row.attention = agents.iter().filter(|a| a.attention).count();
+        let depth = row.depth;
+        out.push(row);
+        out.extend(agents.into_iter().map(|agent| Row {
+            label: agent.name.clone(),
+            target: roster.available(&agent.key).then(|| Target::HomeAgent {
+                revision: roster.revision,
+                key: agent.key.clone(),
+            }),
+            depth,
+            agent: Some(agent.key.clone()),
+            icon: Some(crate::tmux_snapshot::pane_chrome::agent_icon_path(
+                agent.harness.as_deref(),
+            )),
+            ..Row::default()
+        }));
+    }
+    out
+}
+
 pub(super) fn integrate(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
+    if state.surface == browser::Surface::Home {
+        return integrate_home(state, rows);
+    }
     let Some(publication) = state.workspace_fleet_agents.as_ref().filter(|p| {
         p.request == state.request && p.valid() && state.surface == browser::Surface::Workspace
     }) else {

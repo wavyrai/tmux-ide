@@ -20,6 +20,7 @@ fn identity(target: &Target) -> Option<Identity> {
         Target::FleetAgent { key, .. } => Identity::FleetAgent(key.clone()),
         Target::Pane { session, id } => Identity::Pane(session.clone(), id.clone()),
         Target::Home => return None,
+        Target::HomeAgent { key, .. } => Identity::FleetAgent(key.clone()),
     })
 }
 

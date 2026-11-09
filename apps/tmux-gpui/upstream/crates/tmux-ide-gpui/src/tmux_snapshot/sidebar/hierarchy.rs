@@ -40,6 +40,8 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     let mut r = row(s.name.clone(), None, 0, target);
     r.kind = Kind::Heading;
     r.favicon = s.favicon.clone();
+    // A project without a favicon still gets its tile: the terminal glyph.
+    r.icon = Some("icons/terminal.svg");
     r.aside = match (fleet.groups.len() > 1, unavailable) {
         (true, Some(why)) => Some(format!("{} · {why}", g.label)),
         (true, None) => Some(g.label.clone()),
@@ -133,6 +135,26 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
                         && s.session_id.as_ref() == Some(&catalog.id)
                 })
         })
+        .collect();
+    // On Home nothing is open, so the uniqueness test above can't hold and
+    // every catalog session would repeat a project the fleet lists (#746).
+    // For display only, Home drops a catalog session that exactly one ready,
+    // server-scoped fleet session carries by the same live id; an unscoped
+    // or ambiguous id stays, as above. Its route stays the catalog's own.
+    let listed = |id: &str| {
+        fleet
+            .groups
+            .iter()
+            .filter(|g| g.state == Phase::Ready && !g.conflict)
+            .flat_map(|g| &g.sessions)
+            .filter(|s| s.session_id.as_deref() == Some(id))
+            .map(|s| s.server_id.is_some())
+            .collect::<Vec<_>>()
+            == [true]
+    };
+    let orphan: Vec<_> = orphan
+        .into_iter()
+        .filter(|s| state.surface != browser::Surface::Home || !listed(&s.id))
         .collect();
     if !orphan.is_empty() {
         for s in orphan {

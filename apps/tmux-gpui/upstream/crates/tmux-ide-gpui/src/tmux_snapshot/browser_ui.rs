@@ -556,6 +556,10 @@ impl SnapshotView {
         {
             return;
         }
+        if let sidebar::Target::HomeAgent { revision, key } = target {
+            self.home_agent_select(request, *revision, key, window, cx);
+            return;
+        }
         if let sidebar::Target::FleetAgent {
             scope,
             revision,
@@ -567,7 +571,7 @@ impl SnapshotView {
         }
         self.select(
             match target {
-                sidebar::Target::FleetAgent { .. } => return,
+                sidebar::Target::FleetAgent { .. } | sidebar::Target::HomeAgent { .. } => return,
                 sidebar::Target::Home => Selection::Home,
                 sidebar::Target::FleetSession {
                     selection, session, ..
@@ -680,23 +684,19 @@ impl SnapshotView {
                 .pane
                 .as_deref()
                 .and_then(|pane| sidebar::panes::pane_agent(&self.browser_state, pane))
-                .or_else(|| {
-                    let key = row.agent.as_ref()?;
-                    let publication = self.browser_state.workspace_fleet_agents.as_ref()?;
-                    let agent = publication.roster.rows.iter().find(|r| &r.key == key)?;
-                    Some((agent, !publication.roster.available(key)))
-                })
+                .or_else(|| sidebar::activity::row_agent(&self.browser_state, row.agent.as_ref()?))
                 .map(|(agent, unavailable)| {
                     super::agent_indicator::state_label(agent, unavailable)
                 });
             element = sidebar::pane_row::spoken(element, &row, state);
-            if let Some(key) = &row.agent
-                && let Some(publication) = &self.browser_state.workspace_fleet_agents
-                && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
+            if let Some((agent, unavailable)) = row
+                .agent
+                .as_ref()
+                .and_then(|key| sidebar::activity::row_agent(&self.browser_state, key))
             {
                 element = element.children(self.agent_state(
                     agent,
-                    !publication.roster.available(key),
+                    unavailable,
                     super::agent_indicator::Plate::Sidebar,
                 ));
             }

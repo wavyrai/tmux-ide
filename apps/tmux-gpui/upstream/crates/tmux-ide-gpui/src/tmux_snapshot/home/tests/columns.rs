@@ -226,3 +226,115 @@ fn the_status_slot_sits_between_the_toolbar_and_the_filters(cx: &mut TestAppCont
     assert!((strip.left() - title.left()).abs() <= px(1.));
     assert!(receiver.try_recv().is_err());
 }
+
+/// Home's sidebar (#746): every project has a tile, its agents sit under it
+/// with their state, and the catalog does not repeat projects the fleet
+/// lists.
+#[test]
+fn homes_sidebar_lists_each_project_once_with_its_agents_and_a_tile() {
+    use crate::tmux_snapshot::browser_ui::sidebar::{Kind, Target, rows};
+    let mut state = browser::State {
+        surface: browser::Surface::Home,
+        // The current server's catalog: the same sessions the fleet lists.
+        sessions: vec![choice("$0", "same"), choice("$1", "same")],
+        ..Default::default()
+    };
+    let mut view_state = state.clone();
+    {
+        // Reuse the agents fixture's fleet and roster.
+        view_state.fleet = Some(
+            serde_json::from_slice(include_bytes!(
+                "../../../../../../../fixtures/home-fleet.json"
+            ))
+            .unwrap(),
+        );
+        view_state.home_agents = Some(
+            serde_json::from_value(serde_json::json!({
+                "revision":3,"phase":"live","observedSessions":2,"totalSessions":2,
+                "truncatedSessions":0,"truncatedRows":0,"note":null,
+                "rows":[{"key":"a","sessionId":"$0","paneId":"p0","name":"Codex",
+                    "sessionLabel":"x","harness":"codex","status":"BLOCKED",
+                    "attention":true,"available":true}]
+            }))
+            .unwrap(),
+        );
+    }
+    state = view_state;
+    let listed = rows(&state);
+    // No bare catalog rows on Home while a machine lists them.
+    assert!(
+        !listed
+            .iter()
+            .any(|r| matches!(r.target, Some(Target::Session(_)))),
+        "{:?}",
+        listed.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+    // Each project heading has its tile: a favicon or the terminal glyph.
+    for heading in listed
+        .iter()
+        .filter(|r| r.kind == Kind::Heading && r.target.is_some())
+    {
+        assert!(
+            heading.favicon.is_some() || heading.icon.is_some(),
+            "{}",
+            heading.label
+        );
+    }
+    // Codex sits under $0's heading, with its key for the needs-input pill.
+    let first = listed
+        .iter()
+        .position(|r| r.kind == Kind::Heading && r.target.is_some())
+        .unwrap();
+    let agent = &listed[first + 1];
+    assert_eq!(agent.label, "Codex");
+    assert_eq!(agent.agent.as_deref(), Some("a"));
+    assert_eq!(
+        agent.target,
+        Some(Target::HomeAgent {
+            revision: 3,
+            key: "a".into()
+        })
+    );
+    assert_eq!(
+        listed[first].attention, 1,
+        "the project counts its waiting agent"
+    );
+}
+
+#[test]
+fn homes_sidebar_keeps_catalog_projects_no_single_ready_machine_lists() {
+    use crate::tmux_snapshot::browser_ui::sidebar::{Target, rows};
+    let fleet: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../../../../fixtures/home-fleet.json"
+    ))
+    .unwrap();
+    let catalog = |fleet: serde_json::Value| {
+        let state = browser::State {
+            surface: browser::Surface::Home,
+            sessions: vec![choice("$0", "same"), choice("$1", "same")],
+            fleet: Some(serde_json::from_value(fleet).unwrap()),
+            ..Default::default()
+        };
+        rows(&state)
+            .iter()
+            .filter_map(|r| match &r.target {
+                Some(Target::Session(id)) => Some(id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(catalog(fleet.clone()).is_empty(), "one ready match dedupes");
+    // Two sessions on the ready machine carry $0: ambiguous, so it stays.
+    let mut twice = fleet.clone();
+    let mut copy = twice["groups"][0]["sessions"][0].clone();
+    copy["id"] = "session-9".into();
+    twice["groups"][0]["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .push(copy);
+    assert_eq!(catalog(twice), ["$0"]);
+    // A machine that isn't ready doesn't list the catalog's projects.
+    let mut waiting = fleet;
+    waiting["groups"][0]["state"] = "connecting".into();
+    assert_eq!(catalog(waiting), ["$0", "$1"]);
+}

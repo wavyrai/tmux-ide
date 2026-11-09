@@ -1,6 +1,6 @@
 //! Session navigation, matching the TUI shell. Windows belong to the workspace strip.
 #[path = "sidebar/activity.rs"]
-mod activity;
+pub(in crate::tmux_snapshot) mod activity;
 #[path = "sidebar/control_focus.rs"]
 mod control_focus;
 #[path = "sidebar/footer.rs"]
@@ -24,6 +24,11 @@ pub(super) use keyboard::focus_shortcut;
 pub(in crate::tmux_snapshot) enum Target {
     /// The sidebar's Home row (#746).
     Home,
+    /// An agent on Home's roster, under its project (#746).
+    HomeAgent {
+        revision: u64,
+        key: String,
+    },
     FleetAgent {
         scope: u64,
         revision: u64,
@@ -72,7 +77,7 @@ pub(in crate::tmux_snapshot) struct Row {
     /// A pane row's pane: its agent state and its menu.
     pub pane: Option<String>,
 }
-pub(super) fn rows(state: &browser::State) -> Vec<Row> {
+pub(in crate::tmux_snapshot) fn rows(state: &browser::State) -> Vec<Row> {
     if let Some(fleet) = &state.fleet {
         return hierarchy::rows(state, fleet);
     }
@@ -95,9 +100,11 @@ pub(super) fn rows(state: &browser::State) -> Vec<Row> {
 
 pub(super) fn current(state: &browser::State, target: &Target) -> bool {
     match target {
-        Target::FleetAgent { .. } | Target::FleetSession { .. } => rows(state)
-            .iter()
-            .any(|r| r.target.as_ref() == Some(target)),
+        Target::FleetAgent { .. } | Target::FleetSession { .. } | Target::HomeAgent { .. } => {
+            rows(state)
+                .iter()
+                .any(|r| r.target.as_ref() == Some(target))
+        }
         Target::Home => true,
         Target::Session(id) => state.sessions.iter().any(|s| &s.id == id),
         Target::Pane { session, id } => {
@@ -213,6 +220,20 @@ pub(super) fn render_row(
                 .size(px(12.))
                 .rounded(px(3.))
         }))
+        // A heading without a favicon: the terminal glyph at the favicon's
+        // size, so every project has a tile (#746).
+        .children(
+            row.icon
+                .filter(|_| heading && row.favicon.is_none())
+                .map(|path| {
+                    bezel
+                        .icon_at(TextStyle::Caption, bezel_ui::icons::Icon::asset(path))
+                        .debug_selector(move || format!("tmux-sidebar-glyph-{index}"))
+                        .flex_none()
+                        .size(px(12.))
+                        .text_color(rgb(muted))
+                }),
+        )
         .children(
             row.icon
                 .filter(|_| !session && !heading && !window)
