@@ -1472,6 +1472,11 @@ async function startEmbeddedDaemonGeneration(
         ? createDaemonPluginSupervisor({
             productVersion,
             secrets: [localBypassToken, authToken ?? null],
+            onCatalogChange: () =>
+              broadcastResourceChanged(
+                { workspaceName: null, resource: "command-catalog" },
+                instanceId,
+              ),
           })
         : null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;

@@ -284,5 +284,10 @@ __ide_internal = {
     return pack_results(fn())
   end,
   json_encode = json_encode,
+  -- For the preludes that run after this one (see actions-prelude.ts).
+  arm = arm,
+  runners = runners,
+  ide = ide,
+  features = features,
 }
 `;

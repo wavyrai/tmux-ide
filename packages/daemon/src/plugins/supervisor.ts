@@ -17,7 +17,16 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import {
+  CommandChoiceSchemaZ,
+  type CommandCatalogEntry,
+  type CommandInvocationContext,
+  type CommandInvokeResult,
+  type CommandParamOptionsResult,
+} from "@tmux-ide/contracts";
+import { z } from "zod";
 import { isSecretKey, redactLogValue, redactText } from "../lib/log-sanitize.ts";
+import { PluginActionCatalog, parsePluginCommandId } from "./action-catalog.ts";
 import { discoverPlugins, type PluginAwaitingConsent, type PluginProblem } from "./discovery.ts";
 import { appendPluginLog, pluginLogPath, type PluginLogEntry } from "./plugin-log.ts";
 import {
@@ -87,6 +96,8 @@ export interface PluginSupervisorOptions {
   /** Where plugin log entries go. Defaults to `logs/plugins.log`. */
   readonly onLog?: (entry: PluginLogEntry) => void;
   readonly now?: () => number;
+  /** Called after the set of plugin actions changes (the catalog revision moved). */
+  readonly onCatalogChange?: () => void;
 }
 
 interface Entry {
@@ -148,11 +159,31 @@ export function secretEnvValues(env: NodeJS.ProcessEnv = process.env): string[] 
     .map(([, value]) => value!);
 }
 
+type HostReply = { ok: true; text: string } | { ok: false; error: string };
+
+const ParamOptionsReplySchemaZ = z
+  .object({
+    choices: z.array(CommandChoiceSchemaZ).max(500).optional(),
+    default: z.union([z.string().max(10_000), z.number(), z.boolean()]).optional(),
+  })
+  .strip();
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 const defaultRestartDelay = (attempt: number) => Math.min(1000 * 2 ** attempt, 60_000);
 
 export class PluginSupervisor {
   readonly #options: Required<
-    Omit<PluginSupervisorOptions, "hostEnv" | "onLog" | "limits" | "now" | "secrets">
+    Omit<
+      PluginSupervisorOptions,
+      "hostEnv" | "onLog" | "limits" | "now" | "secrets" | "onCatalogChange"
+    >
   > & {
     hostEnv: NodeJS.ProcessEnv;
     secrets: () => Iterable<string>;
@@ -163,6 +194,8 @@ export class PluginSupervisor {
   readonly #entries = new Map<string, Entry>();
   readonly #loadWaiters = new Map<string, (() => void)[]>();
   readonly #runs = new Map<string, (result: LuaRunResult) => void>();
+  readonly #requests = new Map<string, (reply: HostReply) => void>();
+  readonly #actions: PluginActionCatalog;
   #problems: readonly PluginProblem[] = [];
   #awaitingConsent: readonly PluginAwaitingConsent[] = [];
   #host: HostHandle | null = null;
@@ -191,6 +224,7 @@ export class PluginSupervisor {
       onLog: options.onLog ?? ((entry) => appendPluginLog(logPath, entry)),
       now: options.now ?? Date.now,
     };
+    this.#actions = new PluginActionCatalog(() => options.onCatalogChange?.());
   }
 
   // ------------------------------------------------------------------ public
@@ -217,11 +251,13 @@ export class PluginSupervisor {
       if (entry.spec && !found.has(entryName) && (!name || name === entryName)) {
         this.#send({ type: "unload", name: entryName });
         this.#entries.delete(entryName);
+        this.#actions.drop(entryName);
       }
     }
     for (const problem of discovery.problems) {
       if (name && problem.name !== name) continue;
       this.#entries.delete(problem.name);
+      this.#actions.drop(problem.name);
     }
 
     const toLoad = discovery.specs.filter((spec) => !name || spec.name === name);
@@ -328,6 +364,105 @@ export class PluginSupervisor {
         chunkName: options.chunkName ?? "=run",
         budgetMs,
       });
+    });
+  }
+
+  /** Every action plugins registered, as command catalog entries. */
+  actionCatalog(): { revision: number; entries: CommandCatalogEntry[] } {
+    return { revision: this.#actions.revision, entries: this.#actions.entries() };
+  }
+
+  /**
+   * Invoke a plugin action by catalog id. A dangerous action runs only with
+   * `confirmed`, which the caller sets after the person confirmed it.
+   */
+  async invokeAction(
+    id: string,
+    args: Record<string, string | number | boolean>,
+    context: CommandInvocationContext,
+    options: { confirmed?: boolean } = {},
+  ): Promise<CommandInvokeResult> {
+    const entry = this.#actions.find(id);
+    const parsed = parsePluginCommandId(id);
+    if (!entry || !parsed) return { ok: false, error: `E_NOT_FOUND: no command '${id}'` };
+    if (entry.descriptor.dangerous && options.confirmed !== true)
+      return { ok: false, error: `E_CONFIRM: '${entry.descriptor.label}' must be confirmed first` };
+    const reply = await this.#request((requestId) => ({
+      type: "invoke",
+      id: requestId,
+      plugin: parsed.plugin,
+      action: parsed.action,
+      args,
+      context,
+    }));
+    const secrets = this.#secretSet();
+    if (!reply.ok) return { ok: false, error: redactText(reply.error, secrets) };
+    let value: unknown;
+    try {
+      const list: unknown = JSON.parse(reply.text);
+      value = Array.isArray(list) ? list[0] : undefined;
+    } catch {
+      value = undefined;
+    }
+    return value === undefined
+      ? { ok: true }
+      : { ok: true, value: redactLogValue(value, secrets) as never };
+  }
+
+  /** Choices and default for one parameter of a plugin action. */
+  async actionParamOptions(
+    id: string,
+    param: string,
+    context: CommandInvocationContext,
+  ): Promise<CommandParamOptionsResult> {
+    const entry = this.#actions.find(id);
+    const parsed = parsePluginCommandId(id);
+    if (!entry || !parsed) return { ok: false, error: `E_NOT_FOUND: no command '${id}'` };
+    if (!entry.params.some((candidate) => candidate.name === param))
+      return { ok: false, error: `E_NOT_FOUND: '${id}' has no parameter '${param}'` };
+    const reply = await this.#request((requestId) => ({
+      type: "param-options",
+      id: requestId,
+      plugin: parsed.plugin,
+      action: parsed.action,
+      param,
+      context,
+    }));
+    const secrets = this.#secretSet();
+    if (!reply.ok) return { ok: false, error: redactText(reply.error, secrets) };
+    const result = ParamOptionsReplySchemaZ.safeParse(
+      redactLogValue(safeJson(reply.text), secrets),
+    );
+    if (!result.success)
+      return { ok: false, error: "E_INVALID: the plugin returned malformed choices" };
+    return {
+      ok: true,
+      ...(result.data.choices ? { choices: result.data.choices } : {}),
+      ...(result.data.default !== undefined ? { default: result.data.default } : {}),
+    };
+  }
+
+  #request(build: (requestId: string) => HostCommand): Promise<HostReply> {
+    if (this.#stopped)
+      return Promise.resolve({ ok: false, error: "E_UNAVAILABLE: plugins are stopped" });
+    if (!this.#host)
+      return Promise.resolve({ ok: false, error: "E_UNAVAILABLE: the plugin host is not running" });
+    const requestId = randomUUID();
+    return new Promise<HostReply>((resolve) => {
+      const timer = setTimeout(
+        () => {
+          this.#requests.delete(requestId);
+          resolve({ ok: false, error: "E_TIMEOUT: the plugin did not answer" });
+        },
+        this.#options.limits.wallClockMs + this.#options.heartbeatTimeoutMs + 1000,
+      );
+      timer.unref();
+      this.#requests.set(requestId, (reply) => {
+        clearTimeout(timer);
+        this.#requests.delete(requestId);
+        resolve(reply);
+      });
+      this.#send(build(requestId));
     });
   }
 
@@ -515,6 +650,27 @@ export class PluginSupervisor {
       case "trip":
         this.#onTrip(event.plugin, event.kind);
         return;
+      case "actions": {
+        const entry = this.#entries.get(event.plugin);
+        if (!entry?.spec || entry.state === "disabled") return;
+        const problem = this.#actions.publish(event.plugin, event.actions);
+        if (problem) this.#log(event.plugin, "warn", `ignored its action list: ${problem}`);
+        return;
+      }
+      case "invoke-result":
+        this.#requests.get(event.id)?.(
+          event.ok
+            ? { ok: true, text: event.value ?? "[]" }
+            : { ok: false, error: event.error ?? "failed" },
+        );
+        return;
+      case "param-options-result":
+        this.#requests.get(event.id)?.(
+          event.ok
+            ? { ok: true, text: event.options ?? "{}" }
+            : { ok: false, error: event.error ?? "failed" },
+        );
+        return;
       case "run-result": {
         const resolve = this.#runs.get(event.id);
         if (!resolve) return;
@@ -567,6 +723,7 @@ export class PluginSupervisor {
     entry.error = `disabled: ${reason}; run \`tmux-ide plugin reload ${entry.name}\` to try again`;
     this.#log(entry.name, "error", entry.error);
     this.#send({ type: "unload", name: entry.name });
+    this.#actions.drop(entry.name);
     this.#settleLoad(entry.name);
   }
 
@@ -614,6 +771,10 @@ export class PluginSupervisor {
   #failRuns(error: string): void {
     for (const resolve of [...this.#runs.values()]) resolve({ ok: false, error, logs: [] });
     this.#runs.clear();
+    for (const resolve of [...this.#requests.values()]) resolve({ ok: false, error });
+    this.#requests.clear();
+    // Plugins publish their actions again when the host loads them.
+    this.#actions.clear();
   }
 
   #onExit(host: HostHandle, code: number | null, signal: NodeJS.Signals | null): void {

@@ -32,6 +32,8 @@ export function createDaemonPluginSupervisor(options: {
   productVersion: string;
   /** Daemon credentials that must never reach a plugin log or `lua run` output. */
   secrets: readonly (string | null | undefined)[];
+  /** Called when plugin actions change, to invalidate the command catalog. */
+  onCatalogChange?: () => void;
   home?: string;
 }): PluginSupervisor {
   const secrets = options.secrets.filter((secret): secret is string => typeof secret === "string");
@@ -42,6 +44,7 @@ export function createDaemonPluginSupervisor(options: {
     productVersion: options.productVersion,
     hostCommand: resolvePluginHostCommand(),
     secrets: () => [...secrets, ...secretEnvValues()],
+    ...(options.onCatalogChange ? { onCatalogChange: options.onCatalogChange } : {}),
     onLog: (entry) => {
       appendPluginLog(logPath, entry);
       logger[entry.level](`plugin.${entry.plugin}`, entry.message, entry.fields);

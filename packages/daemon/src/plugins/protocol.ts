@@ -109,6 +109,26 @@ export const HostCommandSchemaZ = z.discriminatedUnion("type", [
       budgetMs: z.number().int().min(10).max(600_000),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("invoke"),
+      id: z.string().min(1).max(64),
+      plugin: z.string().min(1).max(64),
+      action: z.string().min(1).max(100),
+      args: z.record(z.string(), z.json()),
+      context: z.record(z.string(), z.json()),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("param-options"),
+      id: z.string().min(1).max(64),
+      plugin: z.string().min(1).max(64),
+      action: z.string().min(1).max(100),
+      param: z.string().min(1).max(64),
+      context: z.record(z.string(), z.json()),
+    })
+    .strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
 ]);
 export type HostCommand = z.infer<typeof HostCommandSchemaZ>;
@@ -152,6 +172,34 @@ export const HostEventSchemaZ = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("trip"), plugin: z.string(), kind: TripKindSchemaZ }).strict(),
+  z
+    .object({
+      type: z.literal("actions"),
+      plugin: z.string(),
+      /** JSON text of the plugin's plain action descriptors. */
+      actions: z.string().max(4 * 1024 * 1024),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("invoke-result"),
+      id: z.string(),
+      ok: z.boolean(),
+      /** JSON text: an array whose first element is the action's result. */
+      value: z.string().optional(),
+      error: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("param-options-result"),
+      id: z.string(),
+      ok: z.boolean(),
+      /** JSON text `{ choices?, default? }`. */
+      options: z.string().optional(),
+      error: z.string().optional(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("run-result"),

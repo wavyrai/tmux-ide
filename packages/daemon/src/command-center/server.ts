@@ -148,6 +148,7 @@ import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
 import { mountPluginRoutes, type PluginRouteBackend } from "./plugin-routes.ts";
+import { mountCommandCatalogRoutes, type CommandCatalogBackend } from "./command-catalog-routes.ts";
 import { MissionRepository, type MissionRepositorySnapshot } from "../lib/mission-repository.ts";
 import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
 import {
@@ -196,7 +197,7 @@ export interface CreateAppOptions {
   workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
   /** The canonical daemon's plugin supervisor; absent in other daemons. */
-  pluginBackend?: PluginRouteBackend | null;
+  pluginBackend?: (PluginRouteBackend & CommandCatalogBackend) | null;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
   /** Catalog + startup-barrier facts for the startup readiness ladder. */
   startupReadinessAttachmentBackend?: StartupReadinessAttachmentAuthority | null;
@@ -612,6 +613,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
   mountPluginRoutes(app, {
     ownerToken: options.remoteAccess?.ownerToken ?? null,
+    backend: options.pluginBackend ?? null,
+  });
+  mountCommandCatalogRoutes(app, {
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    builtins: () => daemonActionCommandRegistry.descriptors(),
     backend: options.pluginBackend ?? null,
   });
 

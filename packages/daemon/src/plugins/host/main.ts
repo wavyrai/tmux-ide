@@ -123,13 +123,13 @@ export class PluginHost {
         log: (level, message, fields) =>
           onLog ? onLog(level, message) : this.#log(spec.name, level, message, fields),
         trip: (kind) => this.#emit({ type: "trip", plugin: spec.name, kind }),
+        actions: (json) => this.#emit({ type: "actions", plugin: spec.name, actions: json }),
       },
     });
   }
 
   async #load(spec: PluginSpec): Promise<void> {
     this.#unload(spec.name);
-    let state: PluginLuaState | null = null;
     try {
       if (spec.kind === "plugin") {
         // Consent covers exact content. Re-hash here so a file changed after
@@ -140,7 +140,7 @@ export class PluginHost {
       const size = statSync(spec.entry).size;
       if (size > MAX_SOURCE_BYTES) throw new Error(`E_INVALID: ${spec.entry} is larger than 1 MiB`);
       const source = readFileSync(spec.entry, "utf8");
-      state = await this.#createState(spec);
+      const state = await this.#createState(spec);
       this.#states.set(spec.name, state);
       const chunkName = spec.kind === "init" ? "@init.lua" : `@${spec.name}/init.lua`;
       await state.runSource(source, chunkName, {
@@ -151,7 +151,8 @@ export class PluginHost {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.#log(spec.name, "error", `load failed: ${message}`);
-      if (state?.broken) this.#unload(spec.name);
+      // A plugin that failed to load keeps nothing: no state, no actions.
+      this.#unload(spec.name);
       this.#emit({ type: "loaded", plugin: spec.name, ok: false, error: message.slice(0, 4096) });
     }
   }
@@ -161,6 +162,57 @@ export class PluginHost {
     if (!state) return;
     this.#states.delete(name);
     state.close();
+    // Its actions went with it.
+    this.#emit({ type: "actions", plugin: name, actions: "[]" });
+  }
+
+  #callbackLimits() {
+    return { budgetMs: this.#limits.callbackBudgetMs, wallClockMs: this.#limits.wallClockMs };
+  }
+
+  async #invoke(command: Extract<HostCommand, { type: "invoke" }>): Promise<void> {
+    const state = this.#states.get(command.plugin);
+    try {
+      if (!state) throw new Error(`E_NOT_FOUND: plugin '${command.plugin}' is not loaded`);
+      const value = await state.invokeAction(
+        command.action,
+        command.args,
+        command.context,
+        this.#callbackLimits(),
+      );
+      this.#emit({ type: "invoke-result", id: command.id, ok: true, value });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#log(command.plugin, "error", `action ${command.action} failed: ${message}`);
+      this.#emit({
+        type: "invoke-result",
+        id: command.id,
+        ok: false,
+        error: message.slice(0, 8192),
+      });
+    }
+  }
+
+  async #paramOptions(command: Extract<HostCommand, { type: "param-options" }>): Promise<void> {
+    const state = this.#states.get(command.plugin);
+    try {
+      if (!state) throw new Error(`E_NOT_FOUND: plugin '${command.plugin}' is not loaded`);
+      const options = await state.paramOptions(
+        command.action,
+        command.param,
+        command.context,
+        this.#callbackLimits(),
+      );
+      this.#emit({ type: "param-options-result", id: command.id, ok: true, options });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#emit({
+        type: "param-options-result",
+        id: command.id,
+        ok: false,
+        error: message.slice(0, 8192),
+      });
+    }
   }
 
   async #run(command: Extract<HostCommand, { type: "run" }>): Promise<void> {
@@ -207,6 +259,11 @@ export class PluginHost {
         return this.#enqueue(LOAD_QUEUE, async () => this.#unload(command.name));
       case "run":
         return this.#enqueue(`run:${command.id}`, () => this.#run(command));
+      // Callbacks of one plugin run in order; different plugins interleave.
+      case "invoke":
+        return this.#enqueue(`plugin:${command.plugin}`, () => this.#invoke(command));
+      case "param-options":
+        return this.#enqueue(`plugin:${command.plugin}`, () => this.#paramOptions(command));
       case "shutdown":
         this.shutdown();
         return;

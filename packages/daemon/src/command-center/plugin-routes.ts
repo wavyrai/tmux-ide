@@ -37,16 +37,18 @@ const RunRequestZ = z.strictObject({
   budgetMs: z.number().int().min(10).max(600_000).optional(),
 });
 
-export function mountPluginRoutes(
-  app: Hono,
-  options: { ownerToken: string | null; backend: PluginRouteBackend | null },
-): void {
-  const authorize = ownerAuthorityGate(options.ownerToken, {
+/**
+ * The gate every plugin and command-catalog route uses: refuse anything a
+ * browser sent, then require the owner capability.
+ */
+export function ownerOnlyNonBrowserGuard(
+  ownerToken: string | null,
+): (c: Context) => Response | null {
+  const authorize = ownerAuthorityGate(ownerToken, {
     whenOwnerless: "unavailable",
     unavailableMessage: "Plugins are unavailable",
     mismatchMessage: "Plugins require owner authority",
   });
-  const unavailable = { error: "Plugins are not enabled in this daemon" };
   const refuseBrowser = (c: Context): Response | null => {
     const headers = c.req.header();
     const fromBrowser = Object.keys(headers).some(
@@ -54,7 +56,15 @@ export function mountPluginRoutes(
     );
     return fromBrowser ? c.json({ error: "Plugins cannot be used from a browser" }, 403) : null;
   };
-  const guard = (c: Context): Response | null => refuseBrowser(c) ?? authorize(c);
+  return (c) => refuseBrowser(c) ?? authorize(c);
+}
+
+export function mountPluginRoutes(
+  app: Hono,
+  options: { ownerToken: string | null; backend: PluginRouteBackend | null },
+): void {
+  const guard = ownerOnlyNonBrowserGuard(options.ownerToken);
+  const unavailable = { error: "Plugins are not enabled in this daemon" };
 
   app.get("/api/v2/plugins", (c) => {
     const gate = guard(c);

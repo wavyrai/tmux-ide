@@ -13,6 +13,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import { LuaFactory, LuaMultiReturn, LuaReturn, LUA_REGISTRYINDEX, type LuaEngine } from "wasmoon";
 import type { PluginLimits, PluginLogLevel, PluginSpec, PluginTripKind } from "../protocol.ts";
+import { ACTIONS_PRELUDE } from "./actions-prelude.ts";
 import { SANDBOX_PRELUDE, TIMEOUT_MESSAGE } from "./sandbox.ts";
 
 /** Largest file `ide.include` or `require` will read. */
@@ -24,6 +25,8 @@ export interface PluginStateHooks {
   idle(): void;
   log(level: PluginLogLevel, message: string, fields?: Record<string, unknown>): void;
   trip(kind: PluginTripKind): void;
+  /** The plugin's action list changed; `json` is its plain descriptor list. */
+  actions?(json: string): void;
 }
 
 export class PluginRunError extends Error {
@@ -193,6 +196,12 @@ export function toPlainJson(
   };
 }
 
+function plainOrThrow(value: unknown): unknown {
+  const plain = toPlainJson(value);
+  if (!plain.ok) throw new PluginRunError(plain.error, null);
+  return plain.value;
+}
+
 function classify(message: string): PluginTripKind | null {
   if (message.includes(TIMEOUT_MESSAGE) || message.includes(WALL_CLOCK_MESSAGE)) return "timeout";
   if (/not enough memory/u.test(message)) return "memory";
@@ -205,6 +214,7 @@ export class PluginLuaState {
   readonly #engine: LuaEngine;
   readonly #hooks: PluginStateHooks;
   #deadline = Number.POSITIVE_INFINITY;
+  #actionsChanged = false;
   /** The runner whose slice is executing right now, if any. */
   #active: Runner | null = null;
   #broken: string | null = null;
@@ -286,7 +296,11 @@ export class PluginLuaState {
       settings: options.spec.settings,
       host_functions: Object.keys(hostFunctions),
     });
+    global.set("__ide_actions_changed", () => {
+      state.#actionsChanged = true;
+    });
     engine.doStringSync(SANDBOX_PRELUDE);
+    engine.doStringSync(ACTIONS_PRELUDE);
     // Cap memory only after the prelude, so the cap measures plugin use.
     global.setMemoryMax(global.getMemoryUsed() + options.limits.memoryBytes);
     return state;
@@ -378,6 +392,19 @@ export class PluginLuaState {
       throw new PluginRunError(message, trip);
     } finally {
       lua.luaL_unref(global.address, LUA_REGISTRYINDEX, ref);
+      this.#publishActions();
+    }
+  }
+
+  /** Hand the host the plugin's action list if a callback changed it. */
+  #publishActions(): void {
+    if (!this.#actionsChanged || this.#broken) return;
+    this.#actionsChanged = false;
+    try {
+      const json: unknown = this.#engine.doStringSync("return __ide_internal.actions_json()");
+      if (typeof json === "string") this.#hooks.actions?.(json);
+    } catch (error) {
+      this.#hooks.log("error", `could not publish actions: ${(error as Error).message}`);
     }
   }
 
@@ -389,6 +416,39 @@ export class PluginLuaState {
   ): Promise<string> {
     const [json] = await this.runThread("run_source", [source, chunkName], limits);
     return typeof json === "string" ? json : "[]";
+  }
+
+  /**
+   * Invoke one of the plugin's actions. `args` and `context` must already be
+   * plain JSON data. Resolves to the JSON text of the action's first result.
+   */
+  async invokeAction(
+    action: string,
+    args: Record<string, unknown>,
+    context: Record<string, unknown>,
+    limits: { budgetMs: number; wallClockMs: number },
+  ): Promise<string> {
+    const [json] = await this.runThread(
+      "invoke_action",
+      [action, plainOrThrow(args), plainOrThrow(context)],
+      limits,
+    );
+    return typeof json === "string" ? json : "[]";
+  }
+
+  /** Choices and default for one parameter, as JSON text `{ choices?, default? }`. */
+  async paramOptions(
+    action: string,
+    param: string,
+    context: Record<string, unknown>,
+    limits: { budgetMs: number; wallClockMs: number },
+  ): Promise<string> {
+    const [json] = await this.runThread(
+      "param_options",
+      [action, param, plainOrThrow(context)],
+      limits,
+    );
+    return typeof json === "string" ? json : "{}";
   }
 
   close(): void {
