@@ -117,6 +117,22 @@ describe("host functions through the real host", () => {
     expect(notify).toHaveBeenLastCalledWith("tasks", "count is 2", "info");
   }, 30_000);
 
+  it("redacts daemon secrets in every host call result Lua sees", async () => {
+    plugin(
+      "leaky",
+      `ide.action.register{ id = "peek", title = "Peek", run = function()
+         ide.store.set("token", "owner-token-0123456789")
+         local seen = ide.store.get("token")
+         -- Report something only Lua saw, so later redaction cannot hide a leak.
+         return { text = seen, length = #seen } end }`,
+    );
+    const s = await start();
+    expect(await s.invokeAction("plugin.leaky.peek", {}, { source: "cli" })).toEqual({
+      ok: true,
+      value: { text: "[redacted]", length: "[redacted]".length },
+    });
+  }, 30_000);
+
   it("reports pane calls as unavailable before the daemon listens", async () => {
     plugin("tasks", ACTIONS);
     const s = await start();
