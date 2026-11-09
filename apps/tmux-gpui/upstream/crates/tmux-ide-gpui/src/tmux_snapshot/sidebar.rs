@@ -169,9 +169,12 @@ pub(super) fn render_row(
             row.target,
             Some(Target::Session(_) | Target::FleetSession { .. })
         ) || row.favorite.is_some());
+    // A pane, or an agent under its project, sits on a kind tile, indented
+    // past the project's heading as in the mockup (#746).
+    let tiled = !heading && !window && !session && (row.pane.is_some() || row.agent.is_some());
     let role = if heading || window {
         TextStyle::Subheadline
-    } else if session || row.pane.is_some() {
+    } else if session || tiled {
         TextStyle::Callout
     } else {
         TextStyle::Subheadline
@@ -186,15 +189,11 @@ pub(super) fn render_row(
         .group("session-sidebar-row")
         .flex()
         .items_center()
-        .gap(px(if row.pane.is_some() { 8. } else { 6. }))
+        .gap(px(if tiled { 8. } else { 6. }))
         // A window subheading lines up with the pane labels under it.
         .pl(px(if window { indent + 28. } else { indent }))
         .pr_2()
-        .py(px(if session || row.pane.is_some() {
-            5.
-        } else {
-            3.
-        }))
+        .py(px(if session || tiled { 5. } else { 3. }))
         .when(heading, |h| h.mt(px(10.)))
         .rounded(px(bezel_theme::Theme::control_radius()))
         .min_w_0()
@@ -240,7 +239,7 @@ pub(super) fn render_row(
                 .map(|path| {
                     let icon = bezel
                         .icon_at(
-                            if row.pane.is_some() {
+                            if tiled {
                                 TextStyle::Callout
                             } else {
                                 TextStyle::Body
@@ -249,9 +248,11 @@ pub(super) fn render_row(
                         )
                         .flex_none()
                         .text_color(rgb(if row.selected { label } else { muted }));
-                    if row.pane.is_some() {
-                        // A pane's kind sits on a small tile, as in the mockup.
+                    if tiled {
+                        // A pane's or agent's kind sits on a small tile, as in
+                        // the mockup.
                         div()
+                            .debug_selector(move || format!("tmux-sidebar-tile-{index}"))
                             .flex_none()
                             .size(px(20.))
                             .rounded(px(bezel_theme::Theme::control_radius()))

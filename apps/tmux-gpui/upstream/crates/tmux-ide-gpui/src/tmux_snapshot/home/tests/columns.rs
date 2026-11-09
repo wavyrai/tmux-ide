@@ -338,3 +338,41 @@ fn homes_sidebar_keeps_catalog_projects_no_single_ready_machine_lists() {
     waiting["groups"][0]["state"] = "connecting".into();
     assert_eq!(catalog(waiting), ["$0", "$1"]);
 }
+
+/// An agent under its project on Home sits on the pane rows' kind tile, its
+/// name past the project's own (#746).
+#[gpui::test]
+fn homes_agent_rows_sit_on_the_pane_rows_tile(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::browser_ui::sidebar::{Kind, rows};
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        fleet_with_agents(&mut view);
+        view.browser_state.sessions.clear();
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_resize(size(px(1200.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let listed = view.update(cx, |view, _| rows(&view.browser_state));
+    let heading = listed
+        .iter()
+        .position(|r| r.kind == Kind::Heading && r.target.is_some())
+        .unwrap();
+    let agent = heading + 1;
+    assert_eq!(listed[agent].label, "Codex");
+    let tile = cx
+        .debug_bounds(format!("tmux-sidebar-tile-{agent}").leak())
+        .unwrap();
+    assert_eq!(tile.size.width, px(20.));
+    let heading_label = cx
+        .debug_bounds(format!("tmux-sidebar-label-{heading}").leak())
+        .unwrap();
+    let agent_label = cx
+        .debug_bounds(format!("tmux-sidebar-label-{agent}").leak())
+        .unwrap();
+    assert!(
+        agent_label.left() > heading_label.left(),
+        "{agent_label:?} {heading_label:?}"
+    );
+}
