@@ -1,0 +1,42 @@
+---
+title: tmux-ide 2.9.21
+metaTitle: "What's new in 2.9.21"
+description: "Lua plugins: add your own commands to the palette and the CLI, with consent before a plugin runs."
+---
+
+`2.9.21` is a CLI/daemon release. It works with native macOS alpha `0.1.14`.
+Plugin commands in the Mac app's palette arrive with the next Mac app update.
+
+## Plugins
+
+A plugin is a small Lua program that adds commands to the TUI's F5 palette
+and to `tmux-ide action`. Try the example, which turns git worktrees into
+tasks you can start, open and remove:
+
+```bash
+tmux-ide plugin example worktree-tasks
+tmux-ide plugin consent worktree-tasks
+```
+
+A plugin in `~/.tmux-ide/plugins/` runs only after you allow it. Consent
+lists what it asks to do, such as running programs, typing into panes or
+creating worktrees. If the plugin's files change, it stops until you allow
+it again. On macOS,
+programs a plugin runs are kept away from your private files, the daemon
+and the tmux server. On Linux, plugins cannot run programs unless you set
+`TMUX_IDE_PLUGIN_EXEC_LINUX=1`.
+
+Read [Plugins](/docs/plugins) for the API, capabilities and limits.
+
+## New commands
+
+- `tmux-ide plugin list`, `reload`, `logs`, `consent`, `revoke` and `example`
+- `tmux-ide action list` and `tmux-ide action run`
+- `tmux-ide lua run`, `lua api` and `lua describe`
+- `tmux-ide worktree create --plain`
+
+See [Commands](/docs/commands#plugins-and-the-command-catalog).
+
+Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
+preserved. Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
