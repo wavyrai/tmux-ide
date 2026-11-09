@@ -56,6 +56,9 @@ importers:
       string-width:
         specifier: ^7.2.0
         version: 7.2.0
+      wasmoon:
+        specifier: 1.16.0
+        version: 1.16.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -273,6 +276,9 @@ importers:
       string-width:
         specifier: ^7.2.0
         version: 7.2.0
+      wasmoon:
+        specifier: 1.16.0
+        version: 1.16.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -2190,6 +2196,9 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
+
+  '@types/emscripten@1.39.10':
+    resolution: {integrity: sha512-TB/6hBkYQJxsZHSqyeuO1Jt0AB/bW6G7rHt9g7lML7SOF6lbgcHvw/Lr+69iqN0qxgXLhWKScAon73JNnptuDw==}
 
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
@@ -4263,6 +4272,10 @@ packages:
       jsdom:
         optional: true
 
+  wasmoon@1.16.0:
+    resolution: {integrity: sha512-FlRLb15WwAOz1A9OQDbf6oOKKSiefi5VK0ZRF2wgH9xk3o5SnU11tNPaOnQuAh1Ucr66cwwvVXaeVRaFdRBt5g==}
+    hasBin: true
+
   web-namespaces@2.0.1:
     resolution: {integrity: sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==}
 
@@ -5878,6 +5891,8 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/deep-eql@4.0.2': {}
+
+  '@types/emscripten@1.39.10': {}
 
   '@types/esrecurse@4.3.1': {}
 
@@ -8276,6 +8291,10 @@ snapshots:
       happy-dom: 20.12.0
     transitivePeerDependencies:
       - msw
+
+  wasmoon@1.16.0:
+    dependencies:
+      '@types/emscripten': 1.39.10
 
   web-namespaces@2.0.1: {}
 
