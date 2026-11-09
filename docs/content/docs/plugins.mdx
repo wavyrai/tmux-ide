@@ -20,9 +20,9 @@ Plugins come from two places:
 ## Try the worktree tasks example
 
 The `worktree-tasks` example turns git worktrees into tasks: start one on a
-new branch with its own session, open it, list it, remove it. It uses
-[`tmux-ide worktree`](/docs/worktrees), so `tmux-ide` must be on the
-daemon's `PATH`.
+new branch with its own session, open it, list it, remove it. The daemon
+does the work with tmux-ide's own [worktree](/docs/worktrees) code; the
+plugin runs no programs.
 
 ```bash
 tmux-ide plugin example worktree-tasks   # copy it into ~/.tmux-ide/plugins/
@@ -36,7 +36,7 @@ worktree-tasks 1.0.0
 Tasks as git worktrees: start, open and remove them from the palette, with tmux-ide worktree.
 …
 It asks to:
-  - run these programs: tmux-ide. A program it may run can usually do anything your account can
+  - create, open and remove git worktrees and their sessions
 ```
 
 Then open the palette in a session of the repository and pick **New task**,
@@ -49,14 +49,15 @@ tmux-ide action run plugin.worktree-tasks.remove --arg task=fix/login   # asks t
 
 The example works on the repository of the session you run it from. The
 palette passes that session in the TUI and the Mac app; the CLI uses the
-session of the pane it runs in, or `--session <name>`. It never types into
-a pane, so it does not ask for `panes.send`.
+session of the pane it runs in, or `--session <name>`. It asks for neither
+`exec` nor `panes.send`, so it cannot run programs or type into a pane.
+Removing a task never forces: a worktree with changes is refused.
 
 ## Consent
 
 - Consent covers the plugin's exact files: tmux-ide records a SHA-256 of the
-  plugin directory. If any file changes, the plugin stops loading until you
-  run `tmux-ide plugin consent <name>` again.
+  plugin directory. If any file changes, the plugin stops at the next reload
+  (of any plugin) until you run `tmux-ide plugin consent <name>` again.
 - `tmux-ide plugin revoke <name>` stops the plugin, kills the programs it
   started, and withdraws consent.
 - Consent is the security boundary. Allow a plugin only if you trust its
@@ -69,9 +70,23 @@ shows each one in these words:
 
 | Capability           | Lets the plugin                                                                         | Consent says                                                                               |
 | -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `exec: ["git", …]`   | Run the named programs with `ide.exec`                                                  | "run these programs: git. A program it may run can usually do anything your account can"   |
+| `worktree: true`     | Create, open, list and remove git worktrees and their sessions (`ide.worktree`)         | "create, open and remove git worktrees and their sessions"                                 |
+| `exec: ["jq", …]`    | Run the named programs with `ide.exec`                                                  | "run these programs: jq. A program it may run can usually do anything your account can"    |
 | `shell: true`        | Run any `/bin/sh` command line                                                          | "run ANY shell command line, with full access to your account"                             |
 | `"panes.send": true` | Type into panes, and run a program as if typed in a pane (`ide.exec{ context = "%3" }`) | "type into your terminals and run commands there, which gives full access to your account" |
+
+Some programs give full control of your account the moment a plugin may run
+them, because they run other commands or drive tmux: `tmux`, `tmux-ide`,
+shells, `env`, `sudo`, interpreters (`node`, `python3`, `ruby`, `perl`, …),
+package managers and build tools, `git` (hooks and aliases), `ssh`,
+`launchctl`, `open`, `osascript`, editors and agents. When a plugin lists
+any of these under `exec`, consent says so, for example:
+
+```text
+  - NOTE: tmux-ide, git give full control of your account: they run any command, or drive tmux or tmux-ide
+```
+
+Treat a grant of one of them like `shell: true`.
 
 Every plugin, with no capability, can read what your panes show, list
 panes, run tmux-ide's pane and window actions (split, zoom, select, resize,
@@ -88,16 +103,24 @@ around it is a seat belt, not a wall:
 - It cannot write under `~/.tmux-ide`, except the plugin's own
   `~/.tmux-ide/plugin-data/<name>/`, and cannot read the daemon's record,
   claim, consent records, plugin stores or the app settings.
+- Without `panes.send` it cannot connect to your tmux server: the sandbox
+  keeps it from the tmux socket directories, and it does not get
+  `TMUX_TMPDIR`. (A program can still start a tmux server of its own.)
 - It is looked up on the daemon's `PATH`, never one the plugin sets, and the
   plugin may set only `LANG`, `LC_*`, `TZ`, `TERM`, colour variables,
   `COLUMNS`, `LINES` and `PLUGIN_*` variables for it.
-- It is stopped after its timeout (at most the callback's 30 seconds), and
-  when the plugin fails, is reloaded, disabled or revoked.
+- It is stopped after its timeout (at most the callback's 30 seconds); when
+  the command that started it fails; when the plugin fails to load, runs
+  past its limits, is reloaded, disabled or revoked; and when the plugin
+  host exits. A plugin stopped while its program was about to start never
+  starts it.
 
 On macOS the sandbox is `sandbox-exec`. **On Linux, plugins cannot run
 programs by default**: the bubblewrap sandbox has not been tested on a real
 Linux machine yet. To turn it on anyway, start the daemon with
-`TMUX_IDE_PLUGIN_EXEC_LINUX=1`.
+`TMUX_IDE_PLUGIN_EXEC_LINUX=1`. Under bubblewrap, the daemon's private files
+are hidden only if they exist when the program starts; a file created
+later under the same name is not.
 
 ## Write a plugin
 
