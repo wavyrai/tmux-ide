@@ -48,6 +48,10 @@ export interface SandboxPaths {
    * cannot drive your tmux server, and through it your panes.
    */
   readonly tmuxSockets?: readonly string[];
+  /** Socket files no program may connect to: the daemon's control socket. */
+  readonly privateSockets?: readonly string[];
+  /** TCP ports no program may connect to, on any address: the daemon's HTTP port. */
+  readonly daemonPorts?: readonly number[];
 }
 
 /** The environment variable that turns plugin programs on for Linux. */
@@ -117,6 +121,13 @@ export function darwinProfile(
         `(deny file-read* file-write* (regex ${inside}))`,
       ];
     }),
+    ...(paths.privateSockets ?? []).map(
+      (path) =>
+        `(deny network-outbound (remote unix-socket (path-regex ${sbplPrefixRegex(resolve(path))})))`,
+    ),
+    ...(paths.daemonPorts ?? [])
+      .filter((port) => Number.isInteger(port) && port > 0 && port < 65536)
+      .map((port) => `(deny network-outbound (remote ip "*:${port}"))`),
   ].join("");
 }
 

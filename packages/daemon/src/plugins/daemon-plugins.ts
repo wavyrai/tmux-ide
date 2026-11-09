@@ -10,6 +10,7 @@ import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 import { createHostCallHandler, type DaemonEndpoint, type NotifyLevel } from "./host-calls.ts";
 import { cliRunner } from "./worktree-calls.ts";
+import { defaultControlSocketPath } from "../control/server.ts";
 import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
 import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
 
@@ -142,6 +143,7 @@ export function createDaemonPluginSupervisor(options: {
     execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
     runCli: cliRunner(resolveCliCommand()),
     tmuxSocketDirs: () => tmuxSocketDirs(tmux),
+    privateSockets: () => [defaultControlSocketPath()],
   });
   return new PluginSupervisor({
     calls,

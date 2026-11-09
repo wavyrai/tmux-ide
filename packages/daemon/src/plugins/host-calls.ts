@@ -64,6 +64,8 @@ export interface HostCallDependencies {
   readonly unreadable?: () => readonly string[];
   /** The longest a program may run: the callback wall clock. */
   readonly execMaxTimeoutMs?: number;
+  /** The daemon's other sockets (its control socket): no program may connect. */
+  readonly privateSockets?: () => readonly string[];
   /** Directories holding tmux sockets, kept from programs of plugins without panes.send. */
   readonly tmuxSocketDirs?: () => Promise<readonly string[]>;
   /** Runs the tmux-ide CLI for ide.worktree; without it, ide.worktree is unavailable. */
@@ -89,6 +91,17 @@ export interface HostCallCaller {
 }
 
 export class HostCallError extends Error {}
+
+/** The daemon's HTTP port, which programs may not connect to on any address. */
+function daemonPort(endpoint: DaemonEndpoint | null): number[] {
+  if (!endpoint) return [];
+  try {
+    const port = Number(new URL(endpoint.baseUrl).port);
+    return Number.isInteger(port) && port > 0 ? [port] : [];
+  } catch {
+    return [];
+  }
+}
 
 function fail(message: string): never {
   throw new HostCallError(message);
@@ -153,13 +166,22 @@ export function createHostCallHandler(deps: HostCallDependencies) {
     return body;
   };
 
-  const automation = async (intent: AutomationOperationIntent) => {
+  /** Refuse to go on for a plugin stopped (disabled, unloaded, revoked) meanwhile. */
+  const stillActive = (caller: HostCallCaller) => {
+    if (caller.active && !caller.active())
+      fail("E_UNAVAILABLE: the plugin was stopped before this finished");
+  };
+
+  const automation = async (caller: HostCallCaller, intent: AutomationOperationIntent) => {
+    stillActive(caller);
     const reserved = AutomationReserveResponseSchemaZ.parse(
       await request("/api/v1/automation/reserve", {
         method: "POST",
         body: JSON.stringify({ version: 1, intent, origin: "sdk" }),
       }),
     );
+    // A send is reserved, then executed; nothing types after a stop.
+    stillActive(caller);
     return AutomationExecuteResponseSchemaZ.parse(
       await request("/api/v1/automation/execute", {
         method: "POST",
@@ -202,6 +224,8 @@ export function createHostCallHandler(deps: HostCallDependencies) {
           writable: join(deps.stateHome, "plugin-data", caller.plugin),
           unreadable: deps.unreadable?.() ?? [],
           tmuxSockets: caller.capabilities.panes ? [] : ((await deps.tmuxSocketDirs?.()) ?? []),
+          privateSockets: deps.privateSockets?.() ?? [],
+          daemonPorts: daemonPort(deps.endpoint()),
         },
         baseEnv: deps.baseEnv(),
         resolvePane,
@@ -221,21 +245,22 @@ export function createHostCallHandler(deps: HostCallDependencies) {
         session: pane.sessionName,
       }));
     },
-    async _pane_read(_caller, args) {
+    async _pane_read(caller, args) {
       const [target] = PaneReadArgsZ.parse(args);
-      const result = await automation({ kind: "read", target, source: null });
+      const result = await automation(caller, { kind: "read", target, source: null });
       return result.read?.availability === "available" ? result.read.text : null;
     },
     async _pane_send(caller, args) {
       if (!caller.capabilities.panes)
         fail("E_DENIED: typing into a pane needs the manifest capability 'panes.send'");
       const [target, text, enter] = PaneSendArgsZ.parse(args);
-      await automation({ kind: "send", target, source: null, text, enter });
+      await automation(caller, { kind: "send", target, source: null, text, enter });
       return true;
     },
-    async _action(_caller, args) {
+    async _action(caller, args) {
       const [name, input] = ActionArgsZ.parse(args);
       if (!PLUGIN_WORKSPACE_ACTIONS.has(name)) fail(`E_DENIED: plugins may not run '${name}'`);
+      stillActive(caller);
       const body = await request(`/api/v2/action/${encodeURIComponent(name)}`, {
         method: "POST",
         headers: { "X-Tmux-Ide-Operation-Id": randomUUID() },

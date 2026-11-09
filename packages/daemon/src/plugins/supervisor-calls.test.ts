@@ -373,6 +373,77 @@ end }`;
     30_000,
   );
 
+  /** A plugin whose callback runs a program in pane %7, with the tmux lookup held. */
+  async function heldLookup(
+    where: "load" | "action",
+    overrides: Partial<PluginSupervisorOptions> = {},
+  ) {
+    const pidFile = join(home, "plugin-data", "tasks", "pid");
+    const exec = `ide.exec{ cmd = 'echo $$ > "$1"', args = { ${JSON.stringify(pidFile)} }, shell = true, context = "%7" }`;
+    plugin(
+      "tasks",
+      where === "load"
+        ? exec
+        : `ide.action.register{ id = "here", title = "Here", run = function() return ${exec} end }`,
+      { shell: true, "panes.send": true },
+    );
+    let lookup: () => void = () => {};
+    const looked = new Promise<void>((resolve) => (lookup = resolve));
+    let release: () => void = () => {};
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const started = start({
+      calls: createHostCallHandler({
+        stateHome: home,
+        endpoint: () => null,
+        tmux: async () => {
+          lookup();
+          await released;
+          return `/tmp/sock\t1\t$2\t${home}\n`;
+        },
+        baseEnv: () => ({ PATH: "/usr/bin:/bin", HOME: home }),
+        secrets: () => new Set(),
+        notify,
+      }),
+      ...overrides,
+    });
+    return { pidFile, looked, release, started };
+  }
+
+  live(
+    "never start when the plugin failed to load meanwhile",
+    async () => {
+      // The load's own wall clock runs out during the lookup: the plugin is
+      // "failed" (one trip, not disabled) when the lookup answers.
+      const held = await heldLookup("load", {
+        limits: { ...DEFAULT_PLUGIN_LIMITS, wallClockMs: 500 },
+      });
+      await held.looked;
+      const s = await held.started;
+      expect(s.status().plugins.find((p) => p.name === "tasks")?.state).toBe("failed");
+      held.release();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(existsSync(held.pidFile)).toBe(false);
+    },
+    30_000,
+  );
+
+  live(
+    "never start when the plugin host was replaced meanwhile",
+    async () => {
+      const held = await heldLookup("action", { restartDelayMs: () => 60_000 });
+      const s = await held.started;
+      const result = s.invokeAction("plugin.tasks.here", {}, { source: "cli" });
+      await held.looked;
+      process.kill(s.status().host.pid!, "SIGKILL");
+      while (s.status().host.running) await new Promise((resolve) => setTimeout(resolve, 20));
+      held.release();
+      await result;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(existsSync(held.pidFile)).toBe(false);
+    },
+    30_000,
+  );
+
   live(
     "are killed when the plugin is reloaded",
     async () => {

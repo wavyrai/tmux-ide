@@ -303,6 +303,54 @@ describe("pane context", () => {
   );
 });
 
+describe("liveness", () => {
+  it("types nothing and runs no action for a plugin stopped mid-call", async () => {
+    let alive = true;
+    const { calls, requests } = handler();
+    const caller = { ...typist, active: () => alive };
+    // The reserve round trip completes, then the plugin is stopped.
+    const original = requests.push.bind(requests);
+    requests.push = (...items) => {
+      if (items.some((item) => item.path === "/api/v1/automation/reserve")) alive = false;
+      return original(...items);
+    };
+    await expect(calls.handle(caller, "_pane_send", [endpoint, "ls", true])).rejects.toThrow(
+      "E_UNAVAILABLE: the plugin was stopped before this finished",
+    );
+    expect(requests.map((r) => r.path)).toEqual(["/api/v1/automation/reserve"]);
+    await expect(
+      calls.handle(caller, "_action", ["workspace.pane.select", { workspaceName: "demo" }]),
+    ).rejects.toThrow("E_UNAVAILABLE");
+    expect(requests.map((r) => r.path)).toEqual(["/api/v1/automation/reserve"]);
+  });
+
+  it("passes the daemon's port to the sandbox", async () => {
+    const exec = vi.fn(async () => ({
+      code: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timed_out: false,
+      truncated: false,
+    }));
+    const { calls } = handler({
+      exec,
+      privateSockets: () => ["/h/control.sock"],
+      endpoint: () => ({ baseUrl: "http://127.0.0.1:4711", ownerToken: "owner-token" }),
+    });
+    await calls.handle(tasks, "_exec", [{ cmd: "echo" }]);
+    expect(exec).toHaveBeenCalledWith(
+      { cmd: "echo" },
+      expect.objectContaining({
+        sandbox: expect.objectContaining({
+          privateSockets: ["/h/control.sock"],
+          daemonPorts: [4711],
+        }),
+      }),
+    );
+  });
+});
+
 describe("worktree capability", () => {
   it("is refused without the capability, and goes to the daemon's worktree code with it", async () => {
     const runCli = vi.fn(async () => ({ code: 0, stdout: '{"worktrees":[]}', stderr: "" }));
@@ -357,6 +405,8 @@ describe("exec capabilities", () => {
           writable: join(home, "plugin-data", "tasks"),
           unreadable: [join(home, "daemon.json")],
           tmuxSockets: ["/tmp/tmux-501"],
+          privateSockets: [],
+          daemonPorts: [],
         },
         maxTimeoutMs: 1234,
       }),

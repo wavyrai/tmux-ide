@@ -9,6 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -284,6 +289,99 @@ describe("ide.exec running programs", () => {
     expect(granted.stdout).toContain("TMUX_TMPDIR=/tmp/elsewhere\n");
   });
 
+  (hasTmux ? live : it.skip)(
+    "cannot type into a pane with a granted tmux-ide without panes.send",
+    async () => {
+      // A private server whose session matches the cwd's name, as `tmux-ide
+      // send` wants; TMUX names its socket, so nothing else is reachable.
+      const sockets = join(root, "tmux-sockets");
+      const project = join(root, "proj");
+      mkdirSync(sockets);
+      mkdirSync(project);
+      const socket = join(sockets, "default");
+      const tmux = (...args: string[]) =>
+        execFileSync(tmuxPath!, ["-S", socket, "-f", "/dev/null", ...args], { encoding: "utf8" });
+      tmux("new-session", "-d", "-s", "proj", "-c", project);
+      try {
+        const pid = tmux("display-message", "-p", "-t", "proj", "#{pid}").trim();
+        const repo = join(here, "..", "..", "..", "..");
+        const send = (panes: boolean, marker: string) =>
+          runPluginExec(
+            {
+              cmd: "node",
+              args: [
+                "--import",
+                join(repo, "node_modules", "tsx", "dist", "loader.mjs"),
+                join(repo, "bin", "cli.ts"),
+                "send",
+                "%0",
+                `echo ${marker}`,
+              ],
+              cwd: project,
+              timeout_ms: 30_000,
+            },
+            deps(
+              { programs: ["node"], panes },
+              {
+                baseEnv: {
+                  PATH: `/usr/bin:/bin:${dirname(process.execPath)}:${dirname(tmuxPath!)}`,
+                  HOME: root,
+                  TMUX_IDE_HOME: stateHome,
+                  TMUX: `${socket},${pid},0`,
+                },
+                sandbox: { stateHome, writable: dataDir, tmuxSockets: panes ? [] : [sockets] },
+              },
+            ),
+          );
+        const refused = await send(false, "REFUSED-MARK");
+        expect(refused.code).not.toBe(0);
+        const allowed = await send(true, "ALLOWED-MARK");
+        expect(allowed.code, allowed.stderr).toBe(0);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const screen = tmux("capture-pane", "-p", "-t", "proj");
+        expect(screen).toContain("ALLOWED-MARK");
+        expect(screen).not.toContain("REFUSED-MARK");
+      } finally {
+        tmux("kill-server");
+      }
+    },
+    60_000,
+  );
+
+  live("cannot connect to the daemon's port or control socket", async () => {
+    const http = createHttpServer((_request, response) => response.end("daemon-answer"));
+    await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", () => resolve()));
+    const port = (http.address() as { port: number }).port;
+    const controlPath = join(root, "control.sock");
+    const control = createNetServer((socket) => socket.end("control-answer"));
+    await new Promise<void>((resolve) => control.listen(controlPath, () => resolve()));
+    try {
+      const sandbox = {
+        stateHome,
+        writable: dataDir,
+        privateSockets: [controlPath],
+        daemonPorts: [port],
+      };
+      const curl = (args: string[], paths: object) =>
+        runPluginExec(
+          { cmd: "curl", args: ["-s", "-m", "3", ...args] },
+          deps({ programs: ["curl"] }, { sandbox: paths as never }),
+        );
+      for (const url of [`http://127.0.0.1:${port}/`, `http://localhost:${port}/`]) {
+        const refused = await curl([url], sandbox);
+        expect(refused.stdout, url).not.toContain("daemon-answer");
+      }
+      const unix = await curl(["--unix-socket", controlPath, "http://x/"], sandbox);
+      expect(unix.stdout).not.toContain("control-answer");
+      // The same calls without those rules get through.
+      const open = await curl([`http://127.0.0.1:${port}/`], { stateHome, writable: dataDir });
+      expect(open.stdout).toBe("daemon-answer");
+    } finally {
+      http.close();
+      control.close();
+    }
+  });
+
   (hasTmux ? live : it.skip)("cannot reach a tmux server's socket without panes.send", async () => {
     const sockets = join(root, "tmux-sockets");
     mkdirSync(sockets);
@@ -464,6 +562,20 @@ describe("sandbox plans", () => {
       ok: true,
       argv: ["/usr/bin/sandbox-exec", "-p", darwinProfile(paths), "/bin/echo", "x"],
     });
+  });
+
+  it("keeps programs from the daemon's port and control socket", () => {
+    const same = (path: string) => path;
+    const profile = darwinProfile(
+      { ...paths, privateSockets: ["/h/.tmux-ide/control.sock"], daemonPorts: [47123, 0, 70000] },
+      same,
+    );
+    expect(profile).toContain(
+      '(deny network-outbound (remote unix-socket (path-regex #"^/h/\\.tmux-ide/control\\.sock")))',
+    );
+    expect(profile).toContain('(deny network-outbound (remote ip "*:47123"))');
+    expect(profile).not.toContain(":0)");
+    expect(profile).not.toContain("70000");
   });
 
   it("keeps programs from tmux socket directories", () => {
