@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultWorktreeBaseDir,
+  gitHooksOff,
   mapWorktreeError,
   parseWorktreeList,
   WorktreeError,
@@ -162,5 +163,24 @@ describe("mapWorktreeError", () => {
     const err = mapWorktreeError("   ", "the fallback");
     expect(err.code).toBe("GIT_FAILED");
     expect(err.message).toBe("the fallback");
+  });
+});
+
+describe("gitHooksOff", () => {
+  it("points core.hooksPath at /dev/null through GIT_CONFIG_*, after any existing entries", () => {
+    expect(gitHooksOff({ PATH: "/bin" })).toEqual({
+      PATH: "/bin",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.hooksPath",
+      GIT_CONFIG_VALUE_0: "/dev/null",
+    });
+    expect(
+      gitHooksOff({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "a.b", GIT_CONFIG_VALUE_0: "c" }),
+    ).toMatchObject({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "a.b",
+      GIT_CONFIG_KEY_1: "core.hooksPath",
+      GIT_CONFIG_VALUE_1: "/dev/null",
+    });
   });
 });

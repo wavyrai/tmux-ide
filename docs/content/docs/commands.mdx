@@ -211,14 +211,32 @@ its default server.
 
 ## Worktrees
 
-| Command                                                                          | What it does                                                  |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a worktree and, by default, open an adopted session in it |
-| `tmux-ide worktree open <branch>`                                                | Open or switch to the worktree's session                      |
-| `tmux-ide worktree list [--json]`                                                | Join git worktrees with their live session status             |
-| `tmux-ide worktree remove <branch> [--force]`                                    | Remove the worktree, then kill only its derived session       |
+| Command                                                                                    | What it does                                                  |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]` | Add a worktree and, by default, open an adopted session in it |
+| `tmux-ide worktree open <branch>`                                                          | Open or switch to the worktree's session                      |
+| `tmux-ide worktree list [--json]`                                                          | Join git worktrees with their live session status             |
+| `tmux-ide worktree remove <branch> [--force]`                                              | Remove the worktree, then kill only its derived session       |
 
 Removal refuses a dirty worktree unless `--force` is explicit.
+
+## Plugins and the command catalog
+
+| Command                                                | What it does                                                     |
+| ------------------------------------------------------ | ---------------------------------------------------------------- |
+| `tmux-ide plugin list [--json]`                        | Show the plugin host and each plugin's state                     |
+| `tmux-ide plugin reload [name]`                        | Discover plugins again and reload all, or one                    |
+| `tmux-ide plugin logs [name] [-n <lines>] [-f]`        | Show or follow the plugin log                                    |
+| `tmux-ide plugin consent <name> [--yes]`               | Review a plugin's capabilities and allow it to run               |
+| `tmux-ide plugin revoke <name>`                        | Stop a plugin and withdraw consent                               |
+| `tmux-ide plugin example [name]`                       | List the example plugins, or copy one into `~/.tmux-ide/plugins` |
+| `tmux-ide action list [--json]`                        | List built-in and plugin commands                                |
+| `tmux-ide action run <id> [--arg name=value]… [--yes]` | Run a plugin command; dangerous ones ask to confirm              |
+| `tmux-ide action run <id> --input '<json>'`            | Run a built-in command with its JSON input                       |
+| `tmux-ide lua run <file>` / `-e <code>`                | Run Lua against the daemon, with init.lua's permissions          |
+| `tmux-ide lua api` / `tmux-ide lua describe <name>`    | List the plugin API, or describe one function                    |
+
+See [Plugins](/docs/plugins) for consent, capabilities and limits.
 
 ## Rich pane content
 

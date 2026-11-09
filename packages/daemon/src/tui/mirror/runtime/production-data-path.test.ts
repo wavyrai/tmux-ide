@@ -495,8 +495,27 @@ describe("production OpenTUI v2 data path", () => {
         /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|openSshDaemonTransport|requestAuthority|sendInput)\s*\(/u,
       );
     }
+    // Plugin commands (#748) add two modules beneath the existing palette: the
+    // catalog client (owner-token HTTP to the local daemon, plus one watch
+    // socket while the palette is open) and the step form, which holds form
+    // state only and reaches the daemon through that client. Neither starts a
+    // workspace client, terminal lane, replica, SSH transport or input path.
+    const pluginPaletteHelpers = [
+      "application-plugin-commands.ts",
+      "application-plugin-form.ts",
+    ].map((name) => `packages/daemon/src/tui/mirror/runtime/${name}`);
+    for (const path of pluginPaletteHelpers) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|openSshDaemonTransport|requestAuthority|sendInput|setInterval)\s*\(/u,
+      );
+    }
+    expect(productionGraph.sourceByFile.get(pluginPaletteHelpers[1]!)).not.toMatch(
+      /node:|\bfetch\s*\(|WebSocket|\bsetTimeout\s*\(/u,
+    );
     expect(authorityDataPathFiles.length).toBeLessThanOrEqual(
       154 +
+        pluginPaletteHelpers.length +
         sharedFleetOwners.length +
         learningModules.length +
         inputHelpers.length +

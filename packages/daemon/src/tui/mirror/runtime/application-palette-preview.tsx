@@ -25,6 +25,12 @@ const rememberWindow = (key: string, window: string) => {
 };
 
 /** F5 browsing is passive and pinned to the highlighted command's exact authority. */
+
+const sessionNameOf = (command: unknown): string | undefined =>
+  command && typeof command === "object" && "sessionName" in command
+    ? String((command as { sessionName: unknown }).sessionName)
+    : undefined;
+
 export function ApplicationPalettePreview(props: {
   command: ApplicationPaletteCommand | undefined;
   width: number;
@@ -148,7 +154,7 @@ export function ApplicationPalettePreview(props: {
   const heading = () => {
     const snapshot = state().snapshot;
     const window = snapshot?.windows.find((w) => w.id === snapshot.selectedWindowId);
-    return `${paneId() ? command()?.label + " · " : ""}${target()?.hostLabel ?? "Session preview"} · ${command()?.sessionName ?? "Select a session"}${window ? ` · ${window.index}: ${window.name}` : ""}`;
+    return `${paneId() ? command()?.label + " · " : ""}${target()?.hostLabel ?? "Session preview"} · ${sessionNameOf(command()) ?? "Select a session"}${window ? ` · ${window.index}: ${window.name}` : ""}`;
   };
   const hostColor = () => {
     revision();

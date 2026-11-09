@@ -119,7 +119,12 @@ fn every_failed_request_drops_the_proof() {
             .is_err()
     };
     let preferences: Call = |d| d.fleet_preferences().is_err();
-    let cases: [(&str, Option<&'static str>, Call); 16] = [
+    let plugin_catalog: Call = |d| d.plugin_commands().is_err();
+    let plugin_invoke: Call = |d| {
+        d.invoke_plugin_command("plugin.x.y", &[], &InvokeContext::default(), false)
+            .is_err()
+    };
+    let cases: [(&str, Option<&'static str>, Call); 22] = [
         ("GET refused", None, get),
         ("GET closed", Some(""), get),
         ("GET status", Some(SERVER_ERROR), get),
@@ -136,6 +141,12 @@ fn every_failed_request_drops_the_proof() {
         ("preferences closed", Some(""), preferences),
         ("preferences status", Some(SERVER_ERROR), preferences),
         ("preferences body", Some(SHORT_BODY), preferences),
+        ("plugin catalog closed", Some(""), plugin_catalog),
+        ("plugin catalog status", Some(SERVER_ERROR), plugin_catalog),
+        ("plugin catalog body", Some(SHORT_BODY), plugin_catalog),
+        ("plugin invoke closed", Some(""), plugin_invoke),
+        ("plugin invoke status", Some(SERVER_ERROR), plugin_invoke),
+        ("plugin invoke body", Some(SHORT_BODY), plugin_invoke),
     ];
     cached(false, || {
         for (label, reply, call) in cases {

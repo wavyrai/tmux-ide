@@ -3,6 +3,7 @@ pub(super) mod attention;
 pub(super) mod commands;
 mod fleet_servers;
 mod fonts;
+mod keys;
 mod machine;
 mod machine_edit;
 mod machine_remove;
@@ -11,6 +12,7 @@ mod new_agent;
 pub(super) mod palette;
 mod pane_close;
 mod pane_commands;
+pub(super) mod plugins;
 mod reference;
 mod render;
 mod saved_machines;
@@ -68,6 +70,7 @@ pub(super) enum Target {
     Pane(String),
     Theme(String),
     Command(Action),
+    Plugin(plugins::Target),
 }
 #[derive(Clone)]
 pub(super) struct Row {
@@ -87,6 +90,7 @@ enum Mode {
     Machine,
     SavedMachines,
     ManageMachines,
+    Plugins,
 }
 impl Mode {
     fn is_reference(self) -> bool {
@@ -103,6 +107,7 @@ pub(super) struct Picker {
     machine: Option<machine::Form>,
     closing: Option<pane_close::Confirmation>,
     agent: Option<new_agent::Form>,
+    plugins: Option<plugins::Session>,
     search: Entity<SearchInput>,
     _changed: Subscription,
     rows: Vec<Row>,
@@ -275,6 +280,7 @@ fn current(state: &browser::State, target: &Target) -> bool {
                 .is_some_and(|fleet| fleet.server(token).is_some())
         }),
         Target::Command(action) => action.available(state),
+        Target::Plugin(target) => *target != plugins::Target::Info,
         Target::Session(id) => state.sessions.iter().any(|c| &c.id == id),
         Target::Pane(id) => state.panes.iter().any(|c| &c.id == id),
         Target::Theme(id) => state
@@ -469,6 +475,7 @@ impl SnapshotView {
                     Mode::Theme => "Search themes…",
                     Mode::Commands => "Search commands…",
                     Mode::Navigation => "Search sessions and panes…",
+                    Mode::Plugins => "Search plugin commands, or type a value…",
                 },
                 cx,
             );
@@ -490,6 +497,7 @@ impl SnapshotView {
             machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
             closing: None,
             agent: None,
+            plugins: None,
             search,
             _changed: changed,
             rows: if mode == Mode::Font {
@@ -578,6 +586,8 @@ impl SnapshotView {
             )
         } else if picker.mode == Mode::Theme {
             theme_rows(&self.browser_state, picker.search.read(cx).text())
+        } else if let Some(session) = picker.plugins.as_ref() {
+            plugins::rows(session, picker.search.read(cx).text())
         } else {
             rows(&self.browser_state, picker.search.read(cx).text())
         };
@@ -616,6 +626,10 @@ impl SnapshotView {
             return;
         }
         if self.picker.as_ref().is_some_and(|p| p.mode == Mode::Font) {
+            return;
+        }
+        if let Target::Plugin(plugin) = target {
+            self.choose_plugin(plugin, window, cx);
             return;
         }
         if let Some(scope) = self
@@ -731,6 +745,7 @@ impl SnapshotView {
                 Action::Sessions => self.open_picker(window, cx),
                 Action::Appearance => self.open_theme_picker(window, cx),
                 Action::Refresh => self.select(Selection::Refresh, window, cx),
+                Action::PluginCommands => self.open_plugin_commands(window, cx),
             }
             return;
         }
@@ -806,7 +821,8 @@ impl SnapshotView {
                 | Target::MachineRemove { .. }
                 | Target::MachineEdit { .. }
                 | Target::FleetRetry(_)
-                | Target::FleetDisconnect(_) => return,
+                | Target::FleetDisconnect(_)
+                | Target::Plugin(_) => return,
             },
             window,
             cx,
@@ -821,148 +837,6 @@ impl SnapshotView {
         if let Some(picker) = &mut self.picker {
             picker.error = Some("Action queue unavailable — cancel and reselect the pane.");
         }
-        cx.notify();
-    }
-
-    pub(super) fn picker_key(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.pane_shortcut_key(event, window, cx) || self.session_tabs_key(event, window, cx) {
-            return;
-        }
-        if self.session_history_key(event, window, cx) {
-            return;
-        }
-        if self.new_session.is_some() {
-            self.new_session_key(event, window, cx);
-            return;
-        }
-        if self.pane_actions.is_some() {
-            self.pane_actions_key(event, window, cx);
-            return;
-        }
-        if self
-            .picker
-            .as_ref()
-            .is_some_and(|p| p.search.read(cx).is_composing())
-        {
-            return;
-        }
-        if self.picker.as_ref().is_some_and(|p| p.closing.is_some()) {
-            self.pane_close_key(event, window, cx);
-            return;
-        }
-        if self.picker.as_ref().is_some_and(|p| p.agent.is_some()) {
-            self.new_agent_key(event, window, cx);
-            return;
-        }
-        if self.machine_edit_composing(cx) {
-            return;
-        }
-        if self.sidebar_keyboard_key(event, window, cx) {
-            return;
-        }
-        if self.home_filter_key(event, window, cx) {
-            return;
-        }
-        let key = &event.keystroke;
-        if key.key == "f10" && commands::shortcut(key) {
-            if !event.is_held && self.picker.is_none() && self.marked.is_empty() {
-                self.toggle_sidebar(cx);
-            }
-            cx.stop_propagation();
-            window.prevent_default();
-            return;
-        }
-        if commands::shortcut(key) {
-            match key.key.as_str() {
-                "f1" => self.dispatch_application_tab(
-                    self.browser_request,
-                    super::workspace_chrome::ApplicationTab::Home,
-                    window,
-                    cx,
-                ),
-                "f2" => {
-                    if self.picker.is_some() {
-                        self.close_picker(window, cx);
-                    }
-                    self.dispatch_application_tab(
-                        self.browser_request,
-                        super::workspace_chrome::ApplicationTab::Terminals,
-                        window,
-                        cx,
-                    );
-                }
-                "f6" => self.open_picker(window, cx),
-                "f7" => self.open_attention(window, cx),
-                _ => self.open_commands(window, cx),
-            }
-            cx.stop_propagation();
-            window.prevent_default();
-            return;
-        }
-        if key.modifiers.platform
-            && !key.modifiers.control
-            && !key.modifiers.alt
-            && matches!(key.key.as_str(), "k" | "p")
-        {
-            self.open_picker(window, cx);
-            cx.stop_propagation();
-            window.prevent_default();
-            return;
-        }
-        if self
-            .picker
-            .as_ref()
-            .is_some_and(|picker| picker.edit.is_some())
-        {
-            self.machine_edit_key(event, window, cx);
-            return;
-        }
-        if self.picker.as_ref().is_some_and(|p| p.removal.is_some()) {
-            self.machine_removal_key(event, window, cx);
-            return;
-        }
-        if self
-            .picker
-            .as_ref()
-            .is_some_and(|p| p.mode == Mode::Machine)
-        {
-            self.machine_key(event, window, cx);
-            return;
-        }
-        let Some(picker) = &mut self.picker else {
-            return;
-        };
-        if picker.search.read(cx).is_composing() {
-            return;
-        }
-        match key.key.as_str() {
-            "escape" if picker.mode.is_reference() => self.open_commands(window, cx),
-            "escape" => self.close_picker(window, cx),
-            "up" => picker.selected = picker.selected.saturating_sub(1),
-            "down" => {
-                picker.selected = (picker.selected + 1).min(picker.rows.len().saturating_sub(1))
-            }
-            "enter" => {
-                let target = picker
-                    .rows
-                    .get(picker.selected)
-                    .map(|row| row.target.clone());
-                if let Some(target) = target {
-                    self.choose_picker(target, window, cx);
-                }
-            }
-            _ => return,
-        }
-        if let Some(picker) = &self.picker {
-            picker.scroll.scroll_to_item(picker.selected);
-        }
-        cx.stop_propagation();
-        window.prevent_default();
         cx.notify();
     }
 }

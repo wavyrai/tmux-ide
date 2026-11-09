@@ -250,3 +250,20 @@ immutable `upstream-provenance.json` hashes are unchanged. For provenance lookup
 map the new crate directory back to `crates/herdr-gpui` in the original manifest.
 Native build receipts, assembly notices, preview scripts, Cargo selectors and
 CI paths now reference the renamed application crate.
+
+- Plugin commands (#748): F5 → "Plugin commands…" opens a new picker mode
+  (`tmux_snapshot/picker/plugins.rs`) listing the plugin half of the local
+  daemon's command catalog. A command with parameters becomes a step-by-step
+  form in the same picker; a dangerous command always ends with an explicit
+  "Cancel" / "Run …" step, Cancel selected. Invokes carry the focused
+  session's name and, when the app has one, the focused pane's tmux id.
+  `herdr-client` gains `tmux_daemon/plugin_commands.rs` (catalog, invoke and
+  param-options requests over the existing owner credential, with the same
+  origin, record and proof checks as the other resource requests; plugin text
+  is bounded and stripped of control, format and line/paragraph separator
+  characters). Hooks in existing files only: `picker.rs` (mode, target, rows,
+  choose), `picker/commands.rs` (the F5 row), `picker/render.rs` (mode and
+  status-row semantics), `tmux_snapshot.rs` (remember an explicit daemon
+  record), `tmux_daemon/mod.rs` (module and exports). The picker's key handler
+  moved unchanged from `picker.rs` to `picker/keys.rs` (for the 1000-line
+  limit), where a held Return is now ignored.

@@ -1,0 +1,182 @@
+/**
+ * How the canonical daemon creates its plugin supervisor.
+ */
+import { basename, dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { appSettingsPath } from "../lib/app-settings.ts";
+import { getCanonicalDaemonInfoPath } from "../lib/canonical-daemon.ts";
+import { logger } from "../lib/log.ts";
+import { stateHome } from "../lib/state-home.ts";
+import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
+import {
+  createHostCallHandler,
+  type DaemonEndpoint,
+  type HostCallDependencies,
+  type NotifyLevel,
+} from "./host-calls.ts";
+import { cliRunner } from "./worktree-calls.ts";
+import { defaultControlSocketPath } from "../control/server.ts";
+import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
+import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
+
+/**
+ * `ide.notify`: a short message in the status line of every attached tmux
+ * client (and so in the TUI, which is one), prefixed with the plugin name.
+ * `#` is doubled so tmux does not expand formats in plugin text.
+ */
+export async function notifyTmuxClients(
+  tmux: (args: readonly string[]) => Promise<string>,
+  plugin: string,
+  text: string,
+  level: NotifyLevel,
+): Promise<void> {
+  const prefix = level === "info" ? "" : `${level}: `;
+  const message = `${plugin}: ${prefix}${text}`.replace(/#/gu, "##");
+  const clients = (await tmux(["list-clients", "-F", "#{client_name}"]))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  await Promise.all(
+    clients.map((client) =>
+      tmux(["display-message", "-c", client, "-d", "4000", message]).catch(() => ""),
+    ),
+  );
+}
+
+/** `TMUX_IDE_PLUGINS=0` turns plugins off for a daemon. */
+export function pluginsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TMUX_IDE_PLUGINS !== "0";
+}
+
+/**
+ * The argv that starts the plugin host. In the published CLI every module is
+ * bundled into `bin/cli.js`, which starts the host with `__plugin-host`.
+ * From source, the host entry sits next to this file and inherits the
+ * runtime's loader flags (tsx under Node; Bun runs TypeScript directly).
+ */
+export function resolvePluginHostCommand(
+  here: string = fileURLToPath(import.meta.url),
+  runtime: { execPath: string; execArgv: readonly string[] } = process,
+): string[] {
+  if (basename(here) === "cli.js") return [runtime.execPath, here, "__plugin-host"];
+  const entry = join(dirname(here), "host", `entry${extname(here)}`);
+  return [runtime.execPath, ...runtime.execArgv, entry];
+}
+
+/**
+ * Where tmux keeps sockets: the default directory (under TMUX_TMPDIR or
+ * /tmp, per user) and the directory of the daemon's own tmux server.
+ */
+export async function tmuxSocketDirs(
+  tmux: (args: readonly string[]) => Promise<string>,
+  env: NodeJS.ProcessEnv = process.env,
+  uid: number = process.getuid?.() ?? 0,
+): Promise<string[]> {
+  const dirs = new Set<string>([join(env.TMUX_TMPDIR || "/tmp", `tmux-${uid}`)]);
+  if (env.TMUX_TMPDIR) dirs.add(join("/tmp", `tmux-${uid}`));
+  try {
+    const socket = (await tmux(["list-sessions", "-F", "#{socket_path}"])).split("\n")[0]?.trim();
+    // Only a directory of tmux sockets, never a broad one like /tmp itself.
+    if (socket?.startsWith("/") && basename(dirname(socket)).startsWith("tmux"))
+      dirs.add(dirname(socket));
+  } catch {
+    // No server yet: the default directories still apply.
+  }
+  return [...dirs];
+}
+
+/**
+ * The argv prefix that runs this tmux-ide's CLI: the bundled `bin/cli.js`,
+ * or `bin/cli.ts` under the runtime's loader flags when run from source.
+ */
+export function resolveCliCommand(
+  here: string = fileURLToPath(import.meta.url),
+  runtime: { execPath: string; execArgv: readonly string[] } = process,
+): string[] {
+  if (basename(here) === "cli.js") return [runtime.execPath, here];
+  const cli = join(dirname(here), "..", "..", "..", "..", "bin", `cli${extname(here)}`);
+  return [runtime.execPath, ...runtime.execArgv, cli];
+}
+
+/**
+ * Files programs from plugins may not read: the daemon record (its port and
+ * owner token), the app settings (the remote-access token), the consent
+ * records and every plugin's store.
+ */
+export function daemonPrivateFiles(
+  home: string,
+  daemonInfoPath: string = getCanonicalDaemonInfoPath(),
+): string[] {
+  // Prefixes: daemon.json also covers its .tmp and .retired siblings, and the
+  // record follows TMUX_IDE_DAEMON_INFO_DIR / the registry dir, wherever it is.
+  const infoDir = dirname(daemonInfoPath);
+  return [
+    daemonInfoPath,
+    join(infoDir, "daemon.claim"),
+    join(home, "consent"),
+    join(home, "plugin-store"),
+    appSettingsPath(),
+  ];
+}
+
+/**
+ * What the daemon's host functions run on: its state home, its own HTTP
+ * endpoint and tmux server, and what programs are kept from (the private
+ * files, the tmux socket directories, the control socket and, through the
+ * endpoint, the daemon's port).
+ */
+export function daemonHostCallDependencies(options: {
+  home: string;
+  endpoint?: (() => DaemonEndpoint | null) | undefined;
+  tmux?: ((args: readonly string[]) => Promise<string>) | undefined;
+  secretSet: () => ReadonlySet<string>;
+}): HostCallDependencies {
+  const tmux = options.tmux ?? (async () => Promise.reject(new Error("tmux is unavailable")));
+  return {
+    stateHome: options.home,
+    endpoint: options.endpoint ?? (() => null),
+    tmux,
+    baseEnv: () => minimalHostEnv(),
+    secrets: options.secretSet,
+    notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
+    unreadable: () => daemonPrivateFiles(options.home),
+    execMaxTimeoutMs: DEFAULT_PLUGIN_LIMITS.wallClockMs,
+    runCli: cliRunner(resolveCliCommand()),
+    tmuxSocketDirs: () => tmuxSocketDirs(tmux),
+    privateSockets: () => [defaultControlSocketPath()],
+  };
+}
+
+export function createDaemonPluginSupervisor(options: {
+  productVersion: string;
+  /** Daemon credentials that must never reach a plugin log or `lua run` output. */
+  secrets: readonly (string | null | undefined)[];
+  /** Called when plugin actions change, to invalidate the command catalog. */
+  onCatalogChange?: () => void;
+  /** The daemon's own HTTP endpoint, once it listens; plugins' pane calls go through it. */
+  endpoint?: () => DaemonEndpoint | null;
+  /** Run tmux against the daemon's server. */
+  tmux?: (args: readonly string[]) => Promise<string>;
+  home?: string;
+}): PluginSupervisor {
+  const secrets = options.secrets.filter((secret): secret is string => typeof secret === "string");
+  const home = options.home ?? stateHome();
+  const logPath = pluginLogPath(home);
+  const secretSet = () =>
+    new Set([...secrets, ...secretEnvValues()].filter((secret) => secret.length >= 8));
+  const calls = createHostCallHandler(
+    daemonHostCallDependencies({ home, endpoint: options.endpoint, tmux: options.tmux, secretSet }),
+  );
+  return new PluginSupervisor({
+    calls,
+    stateHome: home,
+    productVersion: options.productVersion,
+    hostCommand: resolvePluginHostCommand(),
+    secrets: () => [...secrets, ...secretEnvValues()],
+    ...(options.onCatalogChange ? { onCatalogChange: options.onCatalogChange } : {}),
+    onLog: (entry) => {
+      appendPluginLog(logPath, entry);
+      logger[entry.level](`plugin.${entry.plugin}`, entry.message, entry.fields);
+    },
+  });
+}

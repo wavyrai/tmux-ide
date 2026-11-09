@@ -14,6 +14,14 @@ import { resolveOrdinaryTmuxClient } from "../packages/daemon/src/lib/tmux-clien
 // Resolve only when an ordinary bridge command executes; help/version stay inert.
 configureTmuxClientResolver(resolveOrdinaryTmuxClient);
 
+// The plugin host process the daemon supervises (packages/daemon/src/plugins).
+// Handled before anything else so it starts fast and prints nothing.
+if (process.argv[2] === "__plugin-host") {
+  await (await import("../packages/daemon/src/plugins/host/main.ts")).runPluginHost();
+  // The host lives on its stdin; never fall through to the command dispatch.
+  await new Promise<never>(() => {});
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The node-runnable CLI path that spawned TUI surfaces shell back to (the app's
 // async fleet poll + `detect --write`). When we're the published `bin/cli.js`
@@ -127,6 +135,15 @@ const { positionals, values } = parseArgs({
     dir: { type: "string" },
     "no-session": { type: "boolean" },
     force: { type: "boolean" },
+    // worktree: open a plain session, never the worktree's own layout (whose
+    // commands come from that branch), and fail instead of falling back to
+    // the current directory when --session cannot be resolved. The daemon's
+    // ide.worktree passes both.
+    plain: { type: "boolean" },
+    "require-session": { type: "boolean" },
+    // worktree: run git with hooks off (the daemon's ide.worktree passes it,
+    // so no hook from the repository or from a branch runs for a plugin).
+    "no-git-hooks": { type: "boolean" },
   },
 });
 
@@ -152,6 +169,9 @@ const knownCommands = new Set([
   "setup",
   "send",
   "automation",
+  "lua",
+  "plugin",
+  "action",
   "mcp",
   "settings",
   "team",
@@ -216,7 +236,13 @@ const bold = (s: string) => (noColor ? s : `\x1b[1m${s}\x1b[22m`);
 const cyan = (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[39m`);
 const dim = (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[22m`);
 
-if (values.help && command !== "automation") {
+if (
+  values.help &&
+  command !== "automation" &&
+  command !== "lua" &&
+  command !== "plugin" &&
+  command !== "action"
+) {
   if (
     command === "daemon" &&
     ["reserve-supervisor", "release-supervisor"].includes(positionals[1] ?? "")
@@ -292,7 +318,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the tmux chrome sidebar column (prefix b / ⌥b in adopted sessions)")}
-  ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
+  ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
   ${cyan("tmux-ide worktree open")} <branch>    ${dim("Open (or switch to) the session for an existing worktree")}
   ${cyan("tmux-ide worktree list")} [--json]    ${dim("List worktrees joined with their session status")}
@@ -330,6 +356,11 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
   ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
   ${cyan("tmux-ide automation")} <command> --json  ${dim("Scoped pane discovery, reads, sends, status and events")}
+  ${cyan("tmux-ide lua")} run|api|describe          ${dim("Run Lua against the daemon; list and describe the Lua API")}
+  ${cyan("tmux-ide plugin")} list|reload|logs        ${dim("Plugins from ~/.tmux-ide/init.lua and ~/.tmux-ide/plugins/")}
+  ${cyan("tmux-ide plugin")} consent|revoke <name>  ${dim("Review and allow a plugin, or withdraw that")}
+  ${cyan("tmux-ide plugin example")} [name]       ${dim("List the example plugins, or copy one in")}
+  ${cyan("tmux-ide action")} list|run <id>          ${dim("The command catalog: built-in and plugin commands")}
   ${cyan("tmux-ide mcp")}                         ${dim("Serve scoped automation tools over MCP stdio")}
 
 ${bold("Server:")}
@@ -1144,6 +1175,23 @@ try {
         await import("../packages/daemon/src/automation.ts")
       ).runAutomationCli(process.argv.slice(3));
       break;
+    case "action": {
+      const { defaultPluginCliIo } = await import("../packages/daemon/src/plugins/cli.ts");
+      const { runActionCli } = await import("../packages/daemon/src/plugins/action-cli.ts");
+      process.exitCode = await runActionCli(process.argv.slice(3), await defaultPluginCliIo());
+      break;
+    }
+    case "lua":
+    case "plugin": {
+      const { runPluginCommandLine, defaultPluginCliIo } =
+        await import("../packages/daemon/src/plugins/cli.ts");
+      process.exitCode = await runPluginCommandLine(
+        command,
+        process.argv.slice(3),
+        await defaultPluginCliIo(),
+      );
+      break;
+    }
     case "mcp":
       await (await import("../packages/daemon/src/mcp.ts")).runMcp();
       break;
@@ -2064,8 +2112,8 @@ try {
       if (!sub || !KNOWN_SUBS.has(sub)) {
         throw new IdeError(
           "Usage: tmux-ide worktree <create|open|list|remove> <branch> [flags]\n" +
-            "  create <branch> [--from <ref>] [--dir <path>] [--no-session]\n" +
-            "  open <branch>\n" +
+            "  create <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]\n" +
+            "  open <branch> [--plain]\n" +
             "  list [--json]\n" +
             "  remove <branch> [--force]",
           { code: "USAGE", exitCode: 1 },
@@ -2079,7 +2127,13 @@ try {
         createWorktree,
         removeWorktree,
         WorktreeError,
+        gitHooksOff,
       } = await import("../packages/daemon/src/lib/worktree.ts");
+      if (values["no-git-hooks"]) {
+        const env = gitHooksOff(process.env);
+        for (const [key, value] of Object.entries(env))
+          if (value !== undefined) process.env[key] = value;
+      }
       const { getSessionCwd, hasSession, killSession, createDetachedSession } =
         await import("../packages/tmux-bridge/src/index.ts");
 
@@ -2088,13 +2142,20 @@ try {
       // live), else the CLI's cwd.
       let repoDir = process.cwd();
       const sessionArg = typeof values.session === "string" ? values.session.trim() : "";
+      let sessionCwd: string | null = null;
       if (sessionArg && !sessionArg.includes("#{")) {
         try {
-          const cwd = getSessionCwd(sessionArg);
-          if (cwd) repoDir = cwd;
+          sessionCwd = getSessionCwd(sessionArg);
+          if (sessionCwd) repoDir = sessionCwd;
         } catch {
           // fall back to the CLI cwd
         }
+      }
+      if (values["require-session"] && !sessionCwd) {
+        throw new IdeError(`No tmux session ${sessionArg ? `"${sessionArg}"` : "given"}.`, {
+          code: "USAGE",
+          exitCode: 1,
+        });
       }
 
       // The project identity for session names: the MAIN worktree's config name
@@ -2116,7 +2177,7 @@ try {
         const worktreeContext = await (
           await import("../packages/daemon/src/lib/config-context.ts")
         ).resolveProjectConfigContext(wtPath);
-        if (worktreeContext.configKind !== "none") {
+        if (worktreeContext.configKind !== "none" && values.plain !== true) {
           await (
             await import("../packages/daemon/src/launch.ts")
           ).launch(wtPath, { attach: false, sessionName: name });

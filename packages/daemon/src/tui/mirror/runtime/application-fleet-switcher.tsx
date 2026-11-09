@@ -45,7 +45,9 @@ export function ApplicationFleetSwitcher(props: {
       }),
     );
   const fallbackRow = (c: ApplicationPaletteCommand) =>
-    typeof c === "object" ? props.rows.find((r) => r.key === c.sessionName) : undefined;
+    typeof c === "object" && "sessionName" in c
+      ? props.rows.find((r) => r.key === c.sessionName)
+      : undefined;
   const commands = () =>
     source().filter(
       (c) =>

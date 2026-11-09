@@ -1,3 +1,4 @@
+import { createApplicationPluginCommands } from "./application-plugin-commands.ts";
 import { createEffect, type Accessor } from "solid-js";
 import { createApplicationHomeFleetOwner } from "./application-home-fleet.ts";
 import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
@@ -63,6 +64,7 @@ export function createApplicationHomeExperience(
     fleetCommands: machines.paletteCommands,
     openFleet: machines.openPalette,
     openSessions: () => machines.showSwitcher(false),
+    pluginCommands: createApplicationPluginCommands(),
   });
   const tour = createLazyApplicationGuidedTour(
     {

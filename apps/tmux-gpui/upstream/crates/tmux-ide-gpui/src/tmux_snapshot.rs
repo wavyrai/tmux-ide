@@ -158,6 +158,7 @@ pub(crate) fn browse_native(record: PathBuf) -> Result<(), Error> {
             "native daemon record must be an absolute path",
         ));
     }
+    picker::plugins::remember_local_record(&record);
     let graphics = KittyView::default();
     let (bridge, owner) = browser::start_local(record, graphics.store.clone())?;
     let result = show_owned(None, None, Some(bridge), graphics, Some(owner.clone()));

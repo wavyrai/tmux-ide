@@ -18,6 +18,7 @@ pub(in crate::tmux_snapshot) enum Action {
     Sessions,
     Appearance,
     Refresh,
+    PluginCommands,
 }
 impl Action {
     pub(super) fn available(self, state: &browser::State) -> bool {
@@ -77,6 +78,7 @@ pub(super) fn command_rows_with_settings(
         (Action::Sessions, "Switch session · F6"),
         (Action::Appearance, "Appearance…"),
         (Action::Refresh, "Refresh sessions"),
+        (Action::PluginCommands, "Plugin commands…"),
     ]
     .into_iter()
     .filter(|(_, label)| {

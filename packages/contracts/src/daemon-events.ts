@@ -21,7 +21,7 @@ const SessionNamesSchemaZ = z.array(z.string());
 export const DaemonEventResourceInterestSchemaZ = z.discriminatedUnion("resource", [
   z
     .object({
-      resource: z.enum(["workspace-catalog", "fleet-catalog"]),
+      resource: z.enum(["workspace-catalog", "fleet-catalog", "command-catalog"]),
       workspaceName: z.null(),
     })
     .strict(),
@@ -168,6 +168,7 @@ export const DaemonEventResourceKindSchemaZ = z.enum([
   "workspace-files",
   "workspace-changes",
   "workspace-missions",
+  "command-catalog",
 ]);
 export type DaemonEventResourceKind = z.infer<typeof DaemonEventResourceKindSchemaZ>;
 

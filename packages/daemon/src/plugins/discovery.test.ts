@@ -1,0 +1,203 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { grantConsent, hashPluginDirectory } from "./consent.ts";
+import { discoverPlugins } from "./discovery.ts";
+import { apiSatisfies, PluginManifestSchemaZ } from "./manifest.ts";
+
+let home: string;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "tmux-ide-discovery-"));
+});
+afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+function plugin(dirName: string, manifest: unknown, entry = "init.lua") {
+  const dir = join(home, "plugins", dirName);
+  mkdirSync(dir, { recursive: true });
+  if (manifest !== undefined) writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest));
+  writeFileSync(join(dir, entry), "return true");
+  return dir;
+}
+
+function consentTo(name: string) {
+  grantConsent(home, name, hashPluginDirectory(join(home, "plugins", name)));
+}
+
+const manifest = (name: string, extra: Record<string, unknown> = {}) => ({
+  name,
+  version: "1.0.0",
+  api: "^1.0",
+  ...extra,
+});
+
+describe("apiSatisfies", () => {
+  it("matches the same major and an equal or lower minor", () => {
+    expect(apiSatisfies("^1.0", "1.0")).toBe(true);
+    expect(apiSatisfies("1.0", "1.3")).toBe(true);
+    expect(apiSatisfies("^1.2", "1.1")).toBe(false);
+    expect(apiSatisfies("^2.0", "1.9")).toBe(false);
+    expect(apiSatisfies(">=1.0", "1.0")).toBe(false);
+  });
+});
+
+describe("manifest schema", () => {
+  it("defaults entry, capabilities and settings, and rejects unknown keys", () => {
+    expect(PluginManifestSchemaZ.parse(manifest("tasks"))).toEqual({
+      ...manifest("tasks"),
+      entry: "init.lua",
+      capabilities: {},
+      settings: {},
+    });
+    expect(PluginManifestSchemaZ.safeParse({ ...manifest("tasks"), extra: 1 }).success).toBe(false);
+    expect(PluginManifestSchemaZ.safeParse(manifest("tasks", { entry: "../x.lua" })).success).toBe(
+      false,
+    );
+    expect(PluginManifestSchemaZ.safeParse(manifest("Tasks")).success).toBe(false);
+  });
+
+  it("wants plain-text descriptions, shown at consent", () => {
+    for (const description of ["a\u001b[2Jb", "a\nb", "a\u202eb", "a\u009bb"]) {
+      expect(
+        PluginManifestSchemaZ.safeParse(manifest("tasks", { description })).success,
+        JSON.stringify(description),
+      ).toBe(false);
+      expect(
+        PluginManifestSchemaZ.safeParse(
+          manifest("tasks", { settings: { mode: { type: "string", description } } }),
+        ).success,
+      ).toBe(false);
+    }
+    expect(
+      PluginManifestSchemaZ.safeParse(manifest("tasks", { description: "Worktree tasks ✓" }))
+        .success,
+    ).toBe(true);
+  });
+});
+
+describe("discoverPlugins", () => {
+  it("finds nothing in an empty home", () => {
+    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [], awaitingConsent: [] });
+  });
+
+  it("orders plugins by name, puts init.lua last and fills in roots and defaults", () => {
+    const zeta = plugin("zeta", manifest("zeta"));
+    const alpha = plugin(
+      "alpha",
+      manifest("alpha", {
+        entry: "src/main.lua",
+        settings: { base: { type: "string", default: "main" } },
+      }),
+      "x.lua",
+    );
+    mkdirSync(join(alpha, "src"));
+    writeFileSync(join(alpha, "src", "main.lua"), "return true");
+    consentTo("alpha");
+    consentTo("zeta");
+    writeFileSync(join(home, "init.lua"), "-- user");
+    const { specs, problems } = discoverPlugins(home);
+    expect(problems).toEqual([]);
+    expect(specs).toEqual([
+      {
+        name: "alpha",
+        kind: "plugin",
+        contentHash: expect.stringMatching(/^sha256:/u),
+        entry: join(alpha, "src", "main.lua"),
+        includeRoots: [alpha],
+        moduleRoots: [alpha],
+        settings: { base: "main" },
+        capabilities: { exec: [], shell: false, panes: false, worktree: false },
+      },
+      {
+        name: "zeta",
+        kind: "plugin",
+        contentHash: expect.stringMatching(/^sha256:/u),
+        entry: join(zeta, "init.lua"),
+        includeRoots: [zeta],
+        moduleRoots: [zeta],
+        settings: {},
+        capabilities: { exec: [], shell: false, panes: false, worktree: false },
+      },
+      {
+        name: "init",
+        kind: "init",
+        entry: join(home, "init.lua"),
+        includeRoots: [home, join(home, "lua")],
+        moduleRoots: [join(home, "lua")],
+        settings: {},
+        capabilities: { exec: "any", shell: true, panes: true, worktree: true },
+      },
+    ]);
+  });
+
+  it("reports each broken plugin directory instead of loading it", () => {
+    plugin("missing", undefined);
+    const bad = plugin("badjson", undefined);
+    writeFileSync(join(bad, "manifest.json"), "{");
+    plugin("mismatch", manifest("other"));
+    plugin("future", manifest("future", { api: "^2.0" }));
+    plugin("Upper", manifest("upper"));
+    plugin("init", manifest("init"));
+    plugin("run", manifest("run"));
+    plugin("host", manifest("host"));
+    plugin("noentry", manifest("noentry", { entry: "main.lua" }));
+    const escape = plugin("escape", manifest("escape"));
+    rmSync(join(escape, "init.lua"));
+    const outside = mkdtempSync(join(tmpdir(), "tmux-ide-outside-"));
+    writeFileSync(join(outside, "evil.lua"), "return true");
+    symlinkSync(join(outside, "evil.lua"), join(escape, "init.lua"));
+    const { specs, problems } = discoverPlugins(home);
+    rmSync(outside, { recursive: true, force: true });
+    expect(specs).toEqual([]);
+    expect(Object.fromEntries(problems.map((p) => [p.name, p.error]))).toEqual({
+      Upper: "directory name must be lowercase letters, digits and dashes",
+      badjson: expect.stringMatching(/not valid JSON/u),
+      escape: "entry 'init.lua' resolves outside the plugin directory",
+      future: expect.stringMatching(/needs Lua API \^2\.0/u),
+      init: "'init' is reserved for tmux-ide's own use; rename the directory",
+      run: "'run' is reserved for tmux-ide's own use; rename the directory",
+      host: "'host' is reserved for tmux-ide's own use; rename the directory",
+      mismatch: "manifest name 'other' does not match its directory 'mismatch'",
+      missing: "manifest.json is missing",
+      noentry: "entry 'main.lua' is missing",
+    });
+  });
+
+  it("holds back a plugin that was never consented to, or changed since", () => {
+    const fresh = plugin("fresh", manifest("fresh"));
+    const edited = plugin("edited", manifest("edited"));
+    consentTo("edited");
+    writeFileSync(join(edited, "init.lua"), "return 'changed'");
+    writeFileSync(join(home, "init.lua"), "-- the user's own file needs no consent");
+    const { specs, awaitingConsent } = discoverPlugins(home);
+    expect(specs.map((spec) => spec.name)).toEqual(["init"]);
+    expect(awaitingConsent.map(({ name, path, reason }) => ({ name, path, reason }))).toEqual([
+      { name: "edited", path: edited, reason: "changed" },
+      { name: "fresh", path: fresh, reason: "new" },
+    ]);
+    consentTo("edited");
+    expect(discoverPlugins(home).specs.map((spec) => spec.name)).toEqual(["edited", "init"]);
+  });
+
+  it("carries the consented exec, shell and panes.send capabilities into the spec", () => {
+    plugin(
+      "runner",
+      manifest("runner", {
+        capabilities: { exec: ["git", "gh"], shell: true, "panes.send": true, worktree: true },
+      }),
+    );
+    consentTo("runner");
+    expect(discoverPlugins(home).specs[0]?.capabilities).toEqual({
+      exec: ["git", "gh"],
+      shell: true,
+      panes: true,
+      worktree: true,
+    });
+  });
+
+  it("skips dot-directories and plain files in plugins/", () => {
+    mkdirSync(join(home, "plugins", ".cache"), { recursive: true });
+    writeFileSync(join(home, "plugins", "README"), "");
+    expect(discoverPlugins(home)).toEqual({ specs: [], problems: [], awaitingConsent: [] });
+  });
+});

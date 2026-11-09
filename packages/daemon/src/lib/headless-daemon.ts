@@ -366,6 +366,7 @@ async function runHeadlessDaemonGeneration(
       try {
         handle = await deps.startEmbeddedDaemon({
           launcher: "headless",
+          plugins: true,
           ...(options.supervisionId
             ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor }
             : {}),

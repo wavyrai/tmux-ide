@@ -19,6 +19,7 @@ impl SnapshotView {
                     | Mode::WhatsNew
                     | Mode::Font
                     | Mode::Theme
+                    | Mode::Plugins
             )
         })?;
         let theme = self.theme();
@@ -244,7 +245,7 @@ impl SnapshotView {
                 bezel_ui::popover::menu_row(&bezel, index == picker.selected, None)
                     .id(("picker-row", index))
         .role(if enabled && !picker.mode.is_reference() { Role::Button } else { Role::Label })
-                    .when(!enabled && !picker.mode.is_reference(), |row| row.aria_description("Unavailable"))
+                    .when(!enabled && !picker.mode.is_reference() && picker.mode != Mode::Plugins, |row| row.aria_description("Unavailable"))
         .aria_label(row.label.clone())
                     .debug_selector(move || format!("picker-row-{index}"))
                     .when(!picker.mode.is_reference(), |row| row.truncate())

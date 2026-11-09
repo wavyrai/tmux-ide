@@ -168,6 +168,8 @@ import { setActivationBackend, type ProjectActivationOptions } from "./active-pr
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import { captureDaemonProvenance } from "./daemon-provenance.ts";
 import { registerLogSecret, setLogIdentity } from "./log.ts";
+import { createDaemonPluginSupervisor, pluginsEnabled } from "../plugins/daemon-plugins.ts";
+import type { PluginSupervisor } from "../plugins/supervisor.ts";
 import {
   canonicalDaemonUrl,
   getCanonicalDaemonInfoPath,
@@ -249,6 +251,11 @@ export interface EmbeddedDaemonOptions {
   silent?: boolean;
   /** Diagnostic product version advertised by daemon.json. */
   productVersion?: string;
+  /**
+   * @internal Run the plugin host for `~/.tmux-ide/init.lua` and plugins.
+   * Only the canonical headless owner sets this; `TMUX_IDE_PLUGINS=0` overrides it.
+   */
+  plugins?: boolean;
   /** @deprecated Use bindHostname. */
   hostname?: string;
 }
@@ -834,8 +841,10 @@ async function startHttpServer({
   fleetPreviewCapture,
   sessionRuntimeRegistry,
   serverOwners,
+  pluginBackend,
 }: {
   serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>>;
+  pluginBackend: PluginSupervisor | null;
   sessionName: string;
   requestedPort: number;
   bindHostname: string;
@@ -939,6 +948,7 @@ async function startHttpServer({
     catalogLiveSessions,
     catalogFleet,
     fleetPreviewCapture,
+    pluginBackend,
   });
   mountTerminalNativeBackingRoute(app, {
     ownerToken: localBypassToken ?? null,
@@ -1455,6 +1465,29 @@ async function startEmbeddedDaemonGeneration(
       setFleetFactsObserverDiagnostics(null);
       await runtimeTraceWriter?.close(incomplete);
     };
+    // Plugins reach the daemon's own routes over loopback with the owner token.
+    const pluginEndpoint = canonicalDaemonUrl(
+      "http",
+      bindHostname === "0.0.0.0" || bindHostname === "::" ? "127.0.0.1" : bindHostname,
+      port,
+    );
+    // Created now so its routes mount with the server; it spawns nothing until
+    // start(), which runs once this generation is published.
+    const pluginSupervisor =
+      opts.plugins && pluginsEnabled()
+        ? createDaemonPluginSupervisor({
+            productVersion,
+            secrets: [localBypassToken, authToken ?? null],
+            endpoint: () =>
+              pluginEndpoint ? { baseUrl: pluginEndpoint, ownerToken: localBypassToken } : null,
+            tmux: (args) => fleetFactsTmuxRunner(args, AbortSignal.timeout(5000)),
+            onCatalogChange: () =>
+              broadcastResourceChanged(
+                { workspaceName: null, resource: "command-catalog" },
+                instanceId,
+              ),
+          })
+        : null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       const selector = tmuxAuthority.socketSelector;
@@ -2080,6 +2113,7 @@ async function startEmbeddedDaemonGeneration(
       setFleetFactsTmuxRunner(fleetFactsTmuxRunner);
       startedServer = await startHttpServer({
         serverOwners,
+        pluginBackend: pluginSupervisor,
         sessionName,
         requestedPort: port,
         bindHostname,
@@ -2211,6 +2245,7 @@ async function startEmbeddedDaemonGeneration(
       );
     };
     const abortStartedServer = async (): Promise<void> => {
+      await pluginSupervisor?.stop().catch(() => {});
       await serverOwners?.dispose();
       setFleetFactsTmuxRunner(null);
       const terminalFailures = [
@@ -2314,6 +2349,12 @@ async function startEmbeddedDaemonGeneration(
       await abortStartedServer();
       throw error;
     }
+
+    // Plugins load after publication, in the background: a slow or broken
+    // plugin never delays or fails daemon startup.
+    void pluginSupervisor?.start().catch((error: unknown) => {
+      console.warn(`[daemon] plugins failed to start: ${(error as Error).message}`);
+    });
 
     let stopped = false;
     let stopping: Promise<void> | null = null;
@@ -2474,6 +2515,7 @@ async function startEmbeddedDaemonGeneration(
           };
           try {
             stopped = true;
+            await capture(() => pluginSupervisor?.stop());
             await capture(() => setActivationBackend(null));
             await capture(() => sessionMonitor?.stop());
             paneSourceCredentials.dispose();

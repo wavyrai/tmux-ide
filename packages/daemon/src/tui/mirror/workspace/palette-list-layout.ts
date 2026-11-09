@@ -1,7 +1,11 @@
+import { terminalSafe } from "@tmux-ide/contracts";
 import type { ApplicationPaletteCommand } from "./application-command-description.ts";
 
 export function paletteSection(command: ApplicationPaletteCommand): string {
   if (command === "switch-session") return "Sessions";
+  if (typeof command === "object" && command.kind === "plugin-command")
+    return terminalSafe(command.category, 80);
+  if (typeof command === "object" && command.kind === "plugin-form") return "Choose";
   if (typeof command === "object")
     return command.kind === "jump-agent"
       ? "Agents"

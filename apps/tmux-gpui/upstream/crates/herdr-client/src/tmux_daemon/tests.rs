@@ -285,6 +285,40 @@ fn catalog_response_cannot_survive_owner_replacement() {
     worker.join().unwrap();
 }
 
+/// Review D2c: a plugin response read while the owner was replaced is not used.
+#[test]
+fn plugin_responses_cannot_survive_owner_replacement() {
+    type Call = fn(&LocalDaemon) -> Result<(), Error>;
+    let catalog: Call = |d| d.plugin_commands().map(|_| ());
+    let invoke: Call = |d| {
+        d.invoke_plugin_command("plugin.x.y", &[], &InvokeContext::default(), false)
+            .map(|_| ())
+    };
+    let body = [
+        serde_json::json!({"version":1,"revision":1,"entries":[]}),
+        serde_json::json!({"ok":true}),
+    ];
+    for (call, body) in [catalog, invoke].into_iter().zip(body) {
+        let sandbox = Sandbox::new();
+        let path = sandbox.0.join("daemon.json");
+        let changed = path.clone();
+        // Discovery and the plugin request's own check each prove identity.
+        let (port, worker) = peer_many(3, move |index| {
+            if index < 2 {
+                response(&identity())
+            } else {
+                fs::write(&changed, b"{}").unwrap();
+                response(&body)
+            }
+        });
+        sandbox.record(&value(port));
+        let daemon = LocalDaemon::discover(&path).unwrap();
+        let result = call(&daemon);
+        assert!(matches!(result, Err(Error::RecordFormat)), "{result:?}");
+        worker.join().unwrap();
+    }
+}
+
 #[test]
 fn nullable_and_malformed_record_fields_do_not_mint_authority() {
     for (key, field) in [

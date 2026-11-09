@@ -65,6 +65,11 @@ pub use fleet_environments::{
     FleetEnvironmentGroup, FleetEnvironmentRoute, group_fleet_environments,
 };
 mod fleet_preferences;
+mod plugin_commands;
+pub use plugin_commands::{
+    ArgValue, Choice, InvokeContext, ParamKind, ParamOptions, PluginCommand, PluginOutcome,
+    PluginParam, tmux_pane_id,
+};
 mod machine_add;
 mod machines;
 pub use fleet_preferences::{
