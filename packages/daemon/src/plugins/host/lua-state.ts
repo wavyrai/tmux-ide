@@ -217,6 +217,10 @@ export class PluginLuaState {
   #deadline = Number.POSITIVE_INFINITY;
   #actionsChanged = false;
   readonly #timers = new Map<number, NodeJS.Timeout>();
+  /** Lua time spent in every slice so far, in ms. */
+  #luaMs = 0;
+  /** No timer of this plugin fires before this time (performance.now()). */
+  #timerReadyAt = 0;
   #callbackLimits: { budgetMs: number; wallClockMs: number } = {
     budgetMs: 250,
     wallClockMs: 30_000,
@@ -376,7 +380,9 @@ export class PluginLuaState {
           result = thread.resume(argCount);
         } finally {
           this.#active = null;
-          remaining -= performance.now() - started;
+          const spent = performance.now() - started;
+          remaining -= spent;
+          this.#luaMs += spent;
           this.#deadline = Number.POSITIVE_INFINITY;
           this.#hooks.idle();
         }
@@ -482,15 +488,31 @@ export class PluginLuaState {
   }
 
   #startTimer(id: number, ms: number, repeating: boolean): void {
+    // Timers get at most half the host: after a timer callback that ran Lua
+    // for t ms, no timer of this plugin fires for another t ms. A chain of
+    // ide.timer.after(0) callbacks then cannot keep the host busy.
     const fire = () => {
+      const wait = this.#timerReadyAt - performance.now();
+      if (wait > 0) {
+        // An interval just skips this tick; a one-shot timer fires later.
+        if (!repeating) schedule(setTimeout(fire, Math.ceil(wait)));
+        return;
+      }
       if (!repeating) this.#timers.delete(id);
-      void this.runThread("run_timer", [id], this.#callbackLimits).catch((error: unknown) => {
-        this.#hooks.log("error", `timer failed: ${(error as Error).message}`);
-      });
+      const before = this.#luaMs;
+      void this.runThread("run_timer", [id], this.#callbackLimits)
+        .catch((error: unknown) => {
+          this.#hooks.log("error", `timer failed: ${(error as Error).message}`);
+        })
+        .finally(() => {
+          this.#timerReadyAt = performance.now() + (this.#luaMs - before);
+        });
     };
-    const handle = repeating ? setInterval(fire, ms) : setTimeout(fire, ms);
-    handle.unref?.();
-    this.#timers.set(id, handle);
+    const schedule = (handle: NodeJS.Timeout) => {
+      handle.unref?.();
+      this.#timers.set(id, handle);
+    };
+    schedule(repeating ? setInterval(fire, ms) : setTimeout(fire, ms));
   }
 
   #cancelTimer(id: number): void {

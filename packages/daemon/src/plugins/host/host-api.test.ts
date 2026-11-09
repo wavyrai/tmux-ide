@@ -240,6 +240,27 @@ describe("ide.timer", () => {
     );
   });
 
+  it("gives a chain of after(0) timers at most about half the time", async () => {
+    const { run } = await make();
+    // Each link burns 20 ms of Lua, then schedules the next with no delay.
+    await run(`
+      LINKS = 0 BUSY = 0
+      local function link()
+        LINKS = LINKS + 1
+        local t = os.clock() while os.clock() - t < 0.02 do end
+        BUSY = BUSY + (os.clock() - t)
+        ide.timer.after(0, link)
+      end
+      ide.timer.after(0, link)`);
+    const started = performance.now();
+    await wait(1000);
+    const [links, busy] = (await run(`return LINKS, BUSY`)) as [number, number];
+    const elapsed = (performance.now() - started) / 1000;
+    expect(links).toBeGreaterThan(5);
+    // Unthrottled, the chain keeps the host about 100% busy.
+    expect(busy / elapsed).toBeLessThan(0.65);
+  });
+
   it("runs callbacks under the budget, logs their errors, and stops on close", async () => {
     const { run, state, logs, trips } = await make();
     await run(`
