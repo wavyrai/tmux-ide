@@ -14,6 +14,14 @@ import { resolveOrdinaryTmuxClient } from "../packages/daemon/src/lib/tmux-clien
 // Resolve only when an ordinary bridge command executes; help/version stay inert.
 configureTmuxClientResolver(resolveOrdinaryTmuxClient);
 
+// The plugin host process the daemon supervises (packages/daemon/src/plugins).
+// Handled before anything else so it starts fast and prints nothing.
+if (process.argv[2] === "__plugin-host") {
+  await (await import("../packages/daemon/src/plugins/host/main.ts")).runPluginHost();
+  // The host lives on its stdin; never fall through to the command dispatch.
+  await new Promise<never>(() => {});
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The node-runnable CLI path that spawned TUI surfaces shell back to (the app's
 // async fleet poll + `detect --write`). When we're the published `bin/cli.js`
@@ -152,6 +160,8 @@ const knownCommands = new Set([
   "setup",
   "send",
   "automation",
+  "lua",
+  "plugin",
   "mcp",
   "settings",
   "team",
@@ -216,7 +226,7 @@ const bold = (s: string) => (noColor ? s : `\x1b[1m${s}\x1b[22m`);
 const cyan = (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[39m`);
 const dim = (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[22m`);
 
-if (values.help && command !== "automation") {
+if (values.help && command !== "automation" && command !== "lua" && command !== "plugin") {
   if (
     command === "daemon" &&
     ["reserve-supervisor", "release-supervisor"].includes(positionals[1] ?? "")
@@ -330,6 +340,8 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
   ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
   ${cyan("tmux-ide automation")} <command> --json  ${dim("Scoped pane discovery, reads, sends, status and events")}
+  ${cyan("tmux-ide lua")} run|api|describe          ${dim("Run Lua against the daemon; list and describe the Lua API")}
+  ${cyan("tmux-ide plugin")} list|reload|logs        ${dim("Plugins from ~/.tmux-ide/init.lua and ~/.tmux-ide/plugins/")}
   ${cyan("tmux-ide mcp")}                         ${dim("Serve scoped automation tools over MCP stdio")}
 
 ${bold("Server:")}
@@ -1144,6 +1156,17 @@ try {
         await import("../packages/daemon/src/automation.ts")
       ).runAutomationCli(process.argv.slice(3));
       break;
+    case "lua":
+    case "plugin": {
+      const { runPluginCommandLine, defaultPluginCliIo } =
+        await import("../packages/daemon/src/plugins/cli.ts");
+      process.exitCode = await runPluginCommandLine(
+        command,
+        process.argv.slice(3),
+        await defaultPluginCliIo(),
+      );
+      break;
+    }
     case "mcp":
       await (await import("../packages/daemon/src/mcp.ts")).runMcp();
       break;

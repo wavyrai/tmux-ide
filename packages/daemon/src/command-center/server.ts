@@ -147,6 +147,7 @@ import { FilesAuthority } from "./resources/workspace-files-authority.ts";
 import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
 import { daemonActionCommandRegistry } from "./actions/command-definitions.ts";
+import { mountPluginRoutes, type PluginRouteBackend } from "./plugin-routes.ts";
 import { MissionRepository, type MissionRepositorySnapshot } from "../lib/mission-repository.ts";
 import { projectDesktopMissionWorkspace } from "./resources/desktop-missions.ts";
 import {
@@ -194,6 +195,8 @@ export interface CreateAppOptions {
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
   workspaceRegistry?: import("../lib/workspace-registry.ts").WorkspaceRegistry;
+  /** The canonical daemon's plugin supervisor; absent in other daemons. */
+  pluginBackend?: PluginRouteBackend | null;
   terminalAttachmentIssueBackend?: TerminalAttachmentIssueBackend | null;
   /** Catalog + startup-barrier facts for the startup readiness ladder. */
   startupReadinessAttachmentBackend?: StartupReadinessAttachmentAuthority | null;
@@ -441,6 +444,8 @@ function matchLogChannel(channel: string): ((entry: LogEntry) => boolean) | null
       return (entry) => entry.component.startsWith("hq") || entry.component.startsWith("remote");
     case "watchdog":
       return (entry) => entry.component.startsWith("watchdog");
+    case "plugins":
+      return (entry) => entry.component.startsWith("plugin.");
     default:
       return null;
   }
@@ -604,6 +609,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountFleetClientStateRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
+  mountPluginRoutes(app, {
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    backend: options.pluginBackend ?? null,
   });
 
   // --- Auth routes (always available, bypassed by middleware) ---

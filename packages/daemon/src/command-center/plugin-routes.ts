@@ -1,0 +1,86 @@
+/**
+ * Owner-only routes for plugins:
+ *   GET  /api/v2/plugins          status of the host and every plugin
+ *   POST /api/v2/plugins/reload   { name? }: discover again and reload
+ *   POST /api/v2/lua/run          { code, chunkName?, budgetMs? }: run once
+ *
+ * `lua/run` executes code with the owner's authority, so every route needs
+ * the owner capability, never the shared remote-access token.
+ */
+import type { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { z } from "zod";
+import { ownerAuthorityGate } from "./owner-authority.ts";
+import type { LuaRunResult, PluginSupervisorStatus } from "../plugins/supervisor.ts";
+
+export interface PluginRouteBackend {
+  status(): PluginSupervisorStatus;
+  reload(name?: string): Promise<PluginSupervisorStatus>;
+  run(code: string, options: { chunkName?: string; budgetMs?: number }): Promise<LuaRunResult>;
+}
+
+const ReloadRequestZ = z.strictObject({ name: z.string().min(1).max(64).optional() });
+const RunRequestZ = z.strictObject({
+  code: z.string().max(1024 * 1024),
+  chunkName: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[=@][^\0\n]*$/u)
+    .optional(),
+  budgetMs: z.number().int().min(10).max(600_000).optional(),
+});
+
+export function mountPluginRoutes(
+  app: Hono,
+  options: { ownerToken: string | null; backend: PluginRouteBackend | null },
+): void {
+  const authorize = ownerAuthorityGate(options.ownerToken, {
+    whenOwnerless: "unavailable",
+    unavailableMessage: "Plugins are unavailable",
+    mismatchMessage: "Plugins require owner authority",
+  });
+  const unavailable = { error: "Plugins are not enabled in this daemon" };
+
+  app.get("/api/v2/plugins", (c) => {
+    const gate = authorize(c);
+    if (gate) return gate;
+    c.header("Cache-Control", "no-store");
+    if (!options.backend) return c.json(unavailable, 503);
+    return c.json({ ok: true, ...options.backend.status() });
+  });
+
+  app.post("/api/v2/plugins/reload", bodyLimit({ maxSize: 4 * 1024 }), async (c) => {
+    const gate = authorize(c);
+    if (gate) return gate;
+    c.header("Cache-Control", "no-store");
+    if (!options.backend) return c.json(unavailable, 503);
+    let body: unknown;
+    try {
+      const text = await c.req.text();
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "Invalid reload request" }, 400);
+    }
+    const parsed = ReloadRequestZ.safeParse(body);
+    if (!parsed.success) return c.json({ error: "Invalid reload request" }, 400);
+    return c.json({ ok: true, ...(await options.backend.reload(parsed.data.name)) });
+  });
+
+  app.post("/api/v2/lua/run", bodyLimit({ maxSize: 1024 * 1024 + 4096 }), async (c) => {
+    const gate = authorize(c);
+    if (gate) return gate;
+    c.header("Cache-Control", "no-store");
+    if (!options.backend) return c.json(unavailable, 503);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid run request" }, 400);
+    }
+    const parsed = RunRequestZ.safeParse(body);
+    if (!parsed.success) return c.json({ error: "Invalid run request" }, 400);
+    const { code, ...runOptions } = parsed.data;
+    return c.json({ result: await options.backend.run(code, runOptions) });
+  });
+}
