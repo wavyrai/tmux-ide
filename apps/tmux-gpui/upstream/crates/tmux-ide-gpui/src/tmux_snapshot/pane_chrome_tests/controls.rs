@@ -66,3 +66,16 @@ fn the_buttons_run_split_right_split_down_zoom_close_from_left_to_right() {
     assert_eq!(slots, [4., 3., 2., 1.]);
     assert_eq!(slot(HeaderIntent::Menu), 0.);
 }
+#[test]
+fn split_tooltips_show_their_shortcuts() {
+    let shortcut = |intent| face(intent, false).and_then(|(_, _, _, keys)| keys);
+    assert_eq!(shortcut(HeaderIntent::SplitRight), Some("⌘D"));
+    assert_eq!(shortcut(HeaderIntent::SplitDown), Some("⌘⇧D"));
+    assert_eq!(shortcut(HeaderIntent::Expand), Some("⌘⇧↵"));
+    assert_eq!(shortcut(HeaderIntent::Close), None);
+    // The keymap agrees: Cmd-D and Cmd-Shift-D split the pane.
+    use crate::tmux_snapshot::pane_shortcuts::{Shortcut, shortcut as keymap};
+    let key = |text: &str| Keystroke::parse(text).ok().and_then(|k| keymap(&k));
+    assert!(matches!(key("cmd-d"), Some(Shortcut::SplitRight)));
+    assert!(matches!(key("cmd-shift-d"), Some(Shortcut::SplitDown)));
+}

@@ -207,3 +207,39 @@ fn right_click_on_the_selected_panes_title_opens_its_menu(cx: &mut TestAppContex
         assert_eq!(menu.target.actions.id, "pane-a");
     });
 }
+
+/// Without pane cards (the preview windows) a title sits in the separator
+/// row above its pane, in the cell grid. A right-click there opens the menu,
+/// selecting the pane first. With cards on, the title is the card header's,
+/// covered above; the cell header row above the frame only renders when the
+/// cards are off in the browsing shell, which happens only when the regions
+/// are invalid and so carry no titles.
+#[gpui::test]
+fn right_click_on_a_lower_cell_header_opens_the_menu(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = header_view(window, cx, sender);
+        view.browsing = false;
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(
+        cx.debug_bounds("pane-card-header:pane-b").is_none(),
+        "no cards"
+    );
+    let lower = cx.debug_bounds("pane-title:pane-b").unwrap();
+    let terminal = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
+    assert!(
+        lower.top() > terminal.top(),
+        "inside the grid, not above it"
+    );
+    cx.simulate_mouse_down(lower.center(), MouseButton::Right, Modifiers::default());
+    assert!(
+        matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-b")
+    );
+    assert!(receiver.try_recv().is_err());
+}
