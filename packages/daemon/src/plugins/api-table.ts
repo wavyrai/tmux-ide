@@ -204,7 +204,7 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     name: "ide.worktree.create",
     kind: "function",
     signature: "ide.worktree.create{ session, branch, from? } -> { branch, path, session }",
-    summary: "Add a worktree on a new branch (or an existing one) and open a session in it.",
+    summary: "Add a worktree on a new branch (or an existing one) and open a plain session in it.",
     details:
       "Needs capabilities `worktree`. `branch` and `from` must be plain git names: letters, " +
       "digits and `. _ / -`, not starting with `-` or `.`.",
@@ -217,7 +217,9 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     kind: "function",
     signature: "ide.worktree.open{ session, branch } -> { branch, path, session, created }",
     summary: "Open (or start) the session of an existing worktree.",
-    details: "Needs capabilities `worktree`.",
+    details:
+      "Needs capabilities `worktree`. Sessions it starts are plain: the worktree's own tmux-ide " +
+      "layout, whose commands come from that branch, never runs from a plugin.",
     errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_FAILED"],
     ...v1,
   },

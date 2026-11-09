@@ -135,6 +135,12 @@ const { positionals, values } = parseArgs({
     dir: { type: "string" },
     "no-session": { type: "boolean" },
     force: { type: "boolean" },
+    // worktree: open a plain session, never the worktree's own layout (whose
+    // commands come from that branch), and fail instead of falling back to
+    // the current directory when --session cannot be resolved. The daemon's
+    // ide.worktree passes both.
+    plain: { type: "boolean" },
+    "require-session": { type: "boolean" },
   },
 });
 
@@ -309,7 +315,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the tmux chrome sidebar column (prefix b / ⌥b in adopted sessions)")}
-  ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
+  ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
   ${cyan("tmux-ide worktree open")} <branch>    ${dim("Open (or switch to) the session for an existing worktree")}
   ${cyan("tmux-ide worktree list")} [--json]    ${dim("List worktrees joined with their session status")}
@@ -2103,8 +2109,8 @@ try {
       if (!sub || !KNOWN_SUBS.has(sub)) {
         throw new IdeError(
           "Usage: tmux-ide worktree <create|open|list|remove> <branch> [flags]\n" +
-            "  create <branch> [--from <ref>] [--dir <path>] [--no-session]\n" +
-            "  open <branch>\n" +
+            "  create <branch> [--from <ref>] [--dir <path>] [--no-session] [--plain]\n" +
+            "  open <branch> [--plain]\n" +
             "  list [--json]\n" +
             "  remove <branch> [--force]",
           { code: "USAGE", exitCode: 1 },
@@ -2127,13 +2133,20 @@ try {
       // live), else the CLI's cwd.
       let repoDir = process.cwd();
       const sessionArg = typeof values.session === "string" ? values.session.trim() : "";
+      let sessionCwd: string | null = null;
       if (sessionArg && !sessionArg.includes("#{")) {
         try {
-          const cwd = getSessionCwd(sessionArg);
-          if (cwd) repoDir = cwd;
+          sessionCwd = getSessionCwd(sessionArg);
+          if (sessionCwd) repoDir = sessionCwd;
         } catch {
           // fall back to the CLI cwd
         }
+      }
+      if (values["require-session"] && !sessionCwd) {
+        throw new IdeError(`No tmux session ${sessionArg ? `"${sessionArg}"` : "given"}.`, {
+          code: "USAGE",
+          exitCode: 1,
+        });
       }
 
       // The project identity for session names: the MAIN worktree's config name
@@ -2155,7 +2168,7 @@ try {
         const worktreeContext = await (
           await import("../packages/daemon/src/lib/config-context.ts")
         ).resolveProjectConfigContext(wtPath);
-        if (worktreeContext.configKind !== "none") {
+        if (worktreeContext.configKind !== "none" && values.plain !== true) {
           await (
             await import("../packages/daemon/src/launch.ts")
           ).launch(wtPath, { attach: false, sessionName: name });

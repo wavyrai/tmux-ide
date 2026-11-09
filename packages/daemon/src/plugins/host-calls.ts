@@ -278,7 +278,11 @@ export function createHostCallHandler(deps: HostCallDependencies) {
         fail("E_DENIED: ide.worktree needs the manifest capability 'worktree'");
       if (!deps.runCli) fail("E_UNAVAILABLE: ide.worktree is not available here");
       try {
-        return await worktreeCall(args[0], args[1], { tmux: deps.tmux, runCli: deps.runCli });
+        return await worktreeCall(args[0], args[1], {
+          tmux: deps.tmux,
+          runCli: deps.runCli,
+          ...(caller.active ? { stillActive: caller.active } : {}),
+        });
       } catch (error) {
         if (error instanceof WorktreeCallError) fail(error.message);
         throw error;

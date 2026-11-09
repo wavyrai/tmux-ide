@@ -186,17 +186,16 @@ describe("worktree-tasks end to end", () => {
       });
       const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, env });
       git("init", "-q", "-b", "main");
-      git(
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "--allow-empty",
-        "-m",
-        "init",
+      // The branch carries a tmux-ide layout whose `before` command would
+      // leave a marker: a plugin's worktree must never run it.
+      const marker = join(root, "layout-ran");
+      mkdirSync(join(repo, ".tmux-ide"));
+      writeFileSync(
+        join(repo, ".tmux-ide", "workspace.yml"),
+        `name: repo\nversion: 1\nbefore: touch ${marker}\nterminal:\n  rows:\n    - panes:\n        - title: Shell\n`,
       );
+      git("add", ".");
+      git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init");
       tmux("new-session", "-d", "-s", "demo", "-c", repo);
       const dir = join(state, "plugins", "worktree-tasks");
       mkdirSync(dir, { recursive: true });
@@ -242,6 +241,7 @@ describe("worktree-tasks end to end", () => {
         JSON.stringify(logs),
       ).toEqual({ ok: true, value: "Started fix-login in session repo@fix-login" });
       expect(existsSync(join(root, "repo-worktrees", "fix-login"))).toBe(true);
+      expect(existsSync(join(root, "repo-worktrees", "fix-login", ".tmux-ide"))).toBe(true);
       expect(tmux("list-sessions", "-F", "#{session_name}")).toContain("repo@fix-login");
       expect(
         await supervisor.actionParamOptions("plugin.worktree-tasks.open", "task", ctx),
@@ -249,6 +249,12 @@ describe("worktree-tasks end to end", () => {
       expect(
         await supervisor.invokeAction("plugin.worktree-tasks.open", { task: "fix-login" }, ctx),
       ).toEqual({ ok: true, value: "Already open: repo@fix-login" });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(existsSync(marker)).toBe(false);
+      // An unknown or prefix session reaches nothing.
+      expect(
+        await supervisor.invokeAction("plugin.worktree-tasks.list", {}, { ...ctx, session: "dem" }),
+      ).toEqual({ ok: false, error: expect.stringMatching(/E_NOT_FOUND: no tmux session 'dem'/u) });
       // Dangerous: refused unconfirmed, then removed.
       expect(
         (await supervisor.invokeAction("plugin.worktree-tasks.remove", { task: "fix-login" }, ctx))

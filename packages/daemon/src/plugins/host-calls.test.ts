@@ -354,7 +354,9 @@ describe("liveness", () => {
 describe("worktree capability", () => {
   it("is refused without the capability, and goes to the daemon's worktree code with it", async () => {
     const runCli = vi.fn(async () => ({ code: 0, stdout: '{"worktrees":[]}', stderr: "" }));
-    const tmux = vi.fn(async () => "/tmp/tmux-501/default,1\n");
+    const tmux = vi.fn(async (args: readonly string[]) =>
+      args[0] === "has-session" ? "" : "demo|/tmp/tmux-501/default,1\n",
+    );
     const { calls } = handler({ runCli, tmux });
     await expect(calls.handle(tasks, "_worktree", ["list", { session: "demo" }])).rejects.toThrow(
       "E_DENIED: ide.worktree needs the manifest capability 'worktree'",
@@ -365,7 +367,7 @@ describe("worktree capability", () => {
       worktrees: [],
     });
     expect(runCli).toHaveBeenCalledWith(
-      ["worktree", "list", "--session", "demo", "--json"],
+      ["worktree", "list", "--session", "=demo:", "--require-session", "--json"],
       expect.objectContaining({ TMUX: "/tmp/tmux-501/default,1,0" }),
     );
     await expect(

@@ -5,10 +5,12 @@
  * The daemon runs its own `tmux-ide worktree … --json` (the same code and
  * gates as the CLI), outside the plugin sandbox, with arguments it checked:
  * a branch or ref that git would accept and cannot pass for an option, and
- * a session that exists on the daemon's tmux server. The plugin never gets a
- * program it could aim elsewhere. `remove` never passes `--force`, so a
- * worktree with changes is refused; plugins mark actions that remove as
- * dangerous so a person confirms them.
+ * a session that exists, by exact name, on the daemon's tmux server. The
+ * plugin never gets a program it could aim elsewhere. Sessions it opens are
+ * plain: the worktree's own tmux-ide layout (commands from that branch)
+ * never runs. `remove` never passes `--force`, so a worktree with changes
+ * is refused; plugins mark actions that remove as dangerous so a person
+ * confirms them.
  */
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -34,13 +36,16 @@ const REF = z
     "is not a valid git branch name",
   );
 
-/** A tmux session name: no control characters, not an option, no target syntax. */
+/**
+ * A tmux session name tmux reads literally: letters, digits, space and
+ * `_ - @ + ,` only. Nothing tmux takes as a pattern (`* ? [`), a format
+ * (`#{`), target syntax (`: . = ~ $ %`) or an option (a leading `-`).
+ */
 const SESSION = z
   .string()
   .min(1)
   .max(200)
-  .regex(/^[^\p{Cc}\p{Cf}:.]+$/u, "is not a tmux session name")
-  .refine((name) => !name.startsWith("-"), "is not a tmux session name");
+  .regex(/^[\p{L}\p{N}_@+][\p{L}\p{N} _@+,-]*$/u, "is not a plain tmux session name");
 
 const RequestSchemaZ = z
   .object({
@@ -53,6 +58,8 @@ const RequestSchemaZ = z
 export interface WorktreeCallDependencies {
   /** Run tmux against the daemon's server and return stdout. */
   readonly tmux: (args: readonly string[]) => Promise<string>;
+  /** Whether the calling plugin may still act; checked right before the CLI runs. */
+  readonly stillActive?: () => boolean;
   /** Run the tmux-ide CLI with `args` and `env`; resolves with its exit and output. */
   readonly runCli: (
     args: readonly string[],
@@ -86,23 +93,44 @@ export async function worktreeCall(
   if (op !== "list" && !branch) fail(`E_INVALID: ide.worktree.${op} needs a branch`);
   if (from && op !== "create") fail(`E_INVALID: only ide.worktree.create takes from`);
 
-  // The session must exist on the daemon's tmux server; the CLI then talks
-  // to that same server (TMUX names its socket) and finds the repository
-  // from the session's directory.
+  // The session must exist on the daemon's tmux server, by exact name
+  // (`=name`; display-message alone answers even for an unknown session).
+  // The CLI then talks to that same server (TMUX names its socket), finds
+  // the repository from that session's directory, and fails rather than
+  // fall back to its own directory.
   let where: string;
   try {
-    where = (
-      await deps.tmux(["display-message", "-p", "-t", `=${session}:`, "#{socket_path},#{pid}"])
+    await deps.tmux(["has-session", "-t", `=${session}`]);
+    // "|" cannot be in a session name (see SESSION), so the first one splits.
+    // (Not a tab: tmux prints control characters as "_" under LANG=C.)
+    const line = (
+      await deps.tmux([
+        "display-message",
+        "-p",
+        "-t",
+        `=${session}:`,
+        "#{session_name}|#{socket_path},#{pid}",
+      ])
     ).trim();
+    const split = line.indexOf("|");
+    const name = split < 0 ? line : line.slice(0, split);
+    const socket = split < 0 ? "" : line.slice(split + 1);
+    if (name !== session || !socket || !/^\/.+,\d+$/u.test(socket)) throw new Error("mismatch");
+    where = socket;
   } catch {
     fail(`E_NOT_FOUND: no tmux session '${session}'`);
   }
-  if (!/^\/.+,\d+$/u.test(where)) fail(`E_NOT_FOUND: no tmux session '${session}'`);
+  if (deps.stillActive && !deps.stillActive())
+    fail("E_UNAVAILABLE: the plugin was stopped before this finished");
 
   const args = ["worktree", op];
   if (branch) args.push(branch);
   if (from) args.push("--from", from);
-  args.push("--session", session, "--json");
+  // --plain: a plugin never starts the worktree's own layout, whose commands
+  // come from that branch (which `from` may name).
+  if (op === "create" || op === "open") args.push("--plain");
+  // `=name:`: the exact session (a bare `=name` names no pane for tmux).
+  args.push("--session", `=${session}:`, "--require-session", "--json");
   const env: NodeJS.ProcessEnv = { ...process.env, TMUX: `${where},0` };
   delete env.TMUX_PANE;
   const result = await deps.runCli(args, env);
