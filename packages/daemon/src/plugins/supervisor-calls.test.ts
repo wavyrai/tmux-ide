@@ -284,9 +284,10 @@ end }`;
   );
 
   live(
-    "are killed when another callback of the plugin fails",
+    "keep running when another callback of the plugin fails",
     async () => {
-      // Invokes of one plugin run one at a time, so the program runs from a timer.
+      // A failed invoke stops only the programs it started; this one was
+      // started by a timer.
       const pidFile = sleeper();
       const s = await start();
       expect(await s.invokeAction("plugin.tasks.background", {}, { source: "cli" })).toEqual({
@@ -298,6 +299,9 @@ end }`;
         ok: false,
         error: expect.stringMatching(/^boom /u),
       });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(alive(pid)).toBe(true);
+      await s.reload("tasks");
       await gone(pid);
     },
     30_000,

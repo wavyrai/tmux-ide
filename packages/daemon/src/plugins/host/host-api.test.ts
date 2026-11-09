@@ -240,6 +240,21 @@ describe("ide.timer", () => {
     );
   });
 
+  it("tells host functions which request a call came from", async () => {
+    const origins: (string | undefined)[] = [];
+    const { run, state } = await make({
+      _notify: async (_args: unknown[], origin?: string) => {
+        origins.push(origin);
+        return true;
+      },
+    } as never);
+    await run(`ide.action.register{ id = "say", title = "Say", run = function() ide.notify("hi") end }
+      ide.timer.after(0, function() ide.notify("tick") end)`);
+    await wait(50);
+    await state.invokeAction("say", {}, {}, { budgetMs: 150, wallClockMs: 2000, origin: "req-1" });
+    expect(origins).toEqual([undefined, "req-1"]);
+  });
+
   it("gives a chain of after(0) timers at most about half the time", async () => {
     const { run } = await make();
     // Each link burns 20 ms of Lua, then schedules the next with no delay.

@@ -222,6 +222,8 @@ export const HostEventSchemaZ = z.discriminatedUnion("type", [
       method: z.string().min(1).max(64),
       /** JSON text of the argument list. */
       args: z.string().max(4 * 1024 * 1024),
+      /** The invoke or param-options request whose callback made the call. */
+      origin: z.string().min(1).max(64).optional(),
     })
     .strict(),
   z

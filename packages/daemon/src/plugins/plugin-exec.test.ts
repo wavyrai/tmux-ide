@@ -265,6 +265,24 @@ describe("ide.exec running programs", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  live("kills only the programs a request started when asked to", async () => {
+    const programs = new PluginPrograms();
+    const start = (origin?: string) =>
+      runPluginExec(
+        { cmd: "sleep 30 & sleep 30; wait", shell: true },
+        deps({ shell: true }, { track: (child) => programs.track("tasks", child, origin) }),
+      );
+    const fromInvoke = start("request-1");
+    const fromTimer = start();
+    while (programs.running("tasks") < 2) await new Promise((r) => setTimeout(r, 10));
+    expect(programs.kill("tasks", "request-2")).toBe(0);
+    expect(programs.kill("tasks", "request-1")).toBe(1);
+    expect((await fromInvoke).signal).toBe("SIGKILL");
+    expect(programs.running("tasks")).toBe(1);
+    expect(programs.kill("tasks")).toBe(1);
+    expect((await fromTimer).signal).toBe("SIGKILL");
+  });
+
   live("cannot read the daemon's private files, their temporary siblings included", async () => {
     const info = join(root, "info-dir");
     mkdirSync(info);

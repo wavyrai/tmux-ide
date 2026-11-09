@@ -126,7 +126,7 @@ export class PluginHost {
       hostFunctions: Object.fromEntries(
         HOST_CALL_METHODS.map((method) => [
           method,
-          (args: unknown[]) => this.#call(spec.name, method, args),
+          (args: unknown[], origin?: string) => this.#call(spec.name, method, args, origin),
         ]),
       ),
       hooks: {
@@ -141,11 +141,18 @@ export class PluginHost {
   }
 
   /** Ask the daemon to run a host function for `plugin`; resolves with its JSON result. */
-  #call(plugin: string, method: string, args: unknown[]): Promise<unknown> {
+  #call(plugin: string, method: string, args: unknown[], origin?: string): Promise<unknown> {
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       this.#calls.set(id, { resolve, reject });
-      this.#emit({ type: "call", id, plugin, method, args: JSON.stringify(args) });
+      this.#emit({
+        type: "call",
+        id,
+        plugin,
+        method,
+        args: JSON.stringify(args),
+        ...(origin ? { origin } : {}),
+      });
     });
   }
 
@@ -210,12 +217,10 @@ export class PluginHost {
     const state = this.#states.get(command.plugin);
     try {
       if (!state) throw new Error(`E_NOT_FOUND: plugin '${command.plugin}' is not loaded`);
-      const value = await state.invokeAction(
-        command.action,
-        command.args,
-        command.context,
-        this.#callbackLimits(),
-      );
+      const value = await state.invokeAction(command.action, command.args, command.context, {
+        ...this.#callbackLimits(),
+        origin: command.id,
+      });
       this.#emit({ type: "invoke-result", id: command.id, ok: true, value });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -233,12 +238,10 @@ export class PluginHost {
     const state = this.#states.get(command.plugin);
     try {
       if (!state) throw new Error(`E_NOT_FOUND: plugin '${command.plugin}' is not loaded`);
-      const options = await state.paramOptions(
-        command.action,
-        command.param,
-        command.context,
-        this.#callbackLimits(),
-      );
+      const options = await state.paramOptions(command.action, command.param, command.context, {
+        ...this.#callbackLimits(),
+        origin: command.id,
+      });
       this.#emit({ type: "param-options-result", id: command.id, ok: true, options });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -274,25 +274,34 @@ export async function runPluginExec(raw: unknown, deps: ExecDependencies): Promi
 
 /** Programs plugins started and that still run, by plugin. */
 export class PluginPrograms {
-  readonly #byPlugin = new Map<string, Set<ChildProcess>>();
+  readonly #byPlugin = new Map<string, Map<ChildProcess, string | undefined>>();
 
-  /** Remember `child` as `plugin`'s; returns the call that forgets it. */
-  track(plugin: string, child: ChildProcess): () => void {
-    let set = this.#byPlugin.get(plugin);
-    if (!set) this.#byPlugin.set(plugin, (set = new Set()));
-    set.add(child);
+  /**
+   * Remember `child` as `plugin`'s, started for request `origin` (or by a
+   * timer or load when there is none); returns the call that forgets it.
+   */
+  track(plugin: string, child: ChildProcess, origin?: string): () => void {
+    let running = this.#byPlugin.get(plugin);
+    if (!running) this.#byPlugin.set(plugin, (running = new Map()));
+    running.set(child, origin);
     return () => {
-      set.delete(child);
-      if (set.size === 0 && this.#byPlugin.get(plugin) === set) this.#byPlugin.delete(plugin);
+      running.delete(child);
+      if (running.size === 0 && this.#byPlugin.get(plugin) === running)
+        this.#byPlugin.delete(plugin);
     };
   }
 
-  /** Kill `plugin`'s programs, or every plugin's. Returns how many. */
-  kill(plugin?: string): number {
-    const sets = plugin === undefined ? [...this.#byPlugin.values()] : [this.#byPlugin.get(plugin)];
+  /**
+   * Kill `plugin`'s programs, or every plugin's; with `origin`, only the ones
+   * started for that request. Returns how many.
+   */
+  kill(plugin?: string, origin?: string): number {
+    const groups =
+      plugin === undefined ? [...this.#byPlugin.values()] : [this.#byPlugin.get(plugin)];
     let killed = 0;
-    for (const set of sets) {
-      for (const child of set ?? []) {
+    for (const running of groups) {
+      for (const [child, started] of running ?? []) {
+        if (origin !== undefined && started !== origin) continue;
         killGroup(child);
         killed += 1;
       }

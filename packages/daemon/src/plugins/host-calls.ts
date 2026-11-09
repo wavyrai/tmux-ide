@@ -65,6 +65,8 @@ export type NotifyLevel = "info" | "warn" | "error";
 
 export interface HostCallCaller {
   readonly plugin: string;
+  /** The invoke or param-options request whose callback made this call. */
+  readonly origin?: string;
   readonly capabilities: {
     readonly exec: readonly string[] | "any";
     readonly shell: boolean;
@@ -191,7 +193,7 @@ export function createHostCallHandler(deps: HostCallDependencies) {
         resolvePane,
         secrets: deps.secrets,
         ...(deps.execMaxTimeoutMs === undefined ? {} : { maxTimeoutMs: deps.execMaxTimeoutMs }),
-        track: (child) => programs.track(caller.plugin, child),
+        track: (child) => programs.track(caller.plugin, child, caller.origin),
       });
     },
     async _panes() {
@@ -252,9 +254,12 @@ export function createHostCallHandler(deps: HostCallDependencies) {
 
   return {
     methods: Object.keys(methods),
-    /** Kill the programs `plugin` started (or every plugin's) that still run. */
-    stopPrograms(plugin?: string): number {
-      return programs.kill(plugin);
+    /**
+     * Kill the programs `plugin` started (or every plugin's) that still run;
+     * with `origin`, only those started for that request.
+     */
+    stopPrograms(plugin?: string, origin?: string): number {
+      return programs.kill(plugin, origin);
     },
     runningPrograms(plugin: string): number {
       return programs.running(plugin);

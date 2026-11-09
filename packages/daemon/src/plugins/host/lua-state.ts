@@ -108,11 +108,23 @@ export const FOREIGN_YIELD_MESSAGE =
   "E_INVALID: a callback may only yield to wait for the host; it yielded something else";
 
 /** Host functions a state exposes as `ide.<name>`: each returns a promise Lua waits on. */
-export type HostFunctions = Readonly<Record<string, (args: unknown[]) => Promise<unknown>>>;
+/** `origin` names the request whose callback made the call, when there is one. */
+export type HostFunctions = Readonly<
+  Record<string, (args: unknown[], origin?: string) => Promise<unknown>>
+>;
+
+/** Limits for one callback, and the request it answers (an invoke or param-options id). */
+export interface CallbackLimits {
+  readonly budgetMs: number;
+  readonly wallClockMs: number;
+  readonly origin?: string;
+}
 
 interface Runner {
   /** The host call this runner yielded to wait for, if any. */
   pending: Promise<unknown> | null;
+  /** The request this callback answers, passed along with its host calls. */
+  origin?: string;
   /** The budget ran out at least once, even if the plugin caught E_TIMEOUT. */
   overran: boolean;
 }
@@ -277,7 +289,8 @@ export class PluginLuaState {
         parsed = [];
       }
       const list = Array.isArray(parsed) ? parsed : [];
-      runner.pending = Promise.resolve().then(() => fn(list));
+      const origin = runner.origin;
+      runner.pending = Promise.resolve().then(() => fn(list, origin));
     });
     global.set("__ide_log", (level: unknown, message: unknown, fieldsJson: unknown) => {
       const lvl: PluginLogLevel =
@@ -354,7 +367,7 @@ export class PluginLuaState {
   async runThread(
     internalFunction: string,
     args: unknown[],
-    limits: { budgetMs: number; wallClockMs: number },
+    limits: CallbackLimits,
   ): Promise<unknown[]> {
     if (this.#broken) throw new PluginRunError(`E_UNAVAILABLE: ${this.#broken}`, null);
     const global = this.#engine.global;
@@ -363,7 +376,11 @@ export class PluginLuaState {
     // Anchor the thread in the registry instead of by stack index, so runner
     // threads that finish out of order cannot remove each other.
     const ref = lua.luaL_ref(global.address, LUA_REGISTRYINDEX);
-    const runner: Runner = { pending: null, overran: false };
+    const runner: Runner = {
+      pending: null,
+      overran: false,
+      ...(limits.origin ? { origin: limits.origin } : {}),
+    };
     const wallDeadline = performance.now() + limits.wallClockMs;
     let remaining = limits.budgetMs;
     try {
@@ -462,7 +479,7 @@ export class PluginLuaState {
     action: string,
     args: Record<string, unknown>,
     context: Record<string, unknown>,
-    limits: { budgetMs: number; wallClockMs: number },
+    limits: CallbackLimits,
   ): Promise<string> {
     const [json] = await this.runThread(
       "invoke_action",
@@ -477,7 +494,7 @@ export class PluginLuaState {
     action: string,
     param: string,
     context: Record<string, unknown>,
-    limits: { budgetMs: number; wallClockMs: number },
+    limits: CallbackLimits,
   ): Promise<string> {
     const [json] = await this.runThread(
       "param_options",

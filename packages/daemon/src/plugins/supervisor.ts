@@ -407,9 +407,10 @@ export class PluginSupervisor {
       return { ok: false, error: `E_NOT_FOUND: no command '${terminalSafe(id, 200)}'` };
     if (entry.descriptor.dangerous && options.confirmed !== true)
       return { ok: false, error: `E_CONFIRM: '${entry.descriptor.label}' must be confirmed first` };
+    let origin = "";
     const reply = await this.#request((requestId) => ({
       type: "invoke",
-      id: requestId,
+      id: (origin = requestId),
       plugin: parsed.plugin,
       action: parsed.action,
       args,
@@ -417,8 +418,9 @@ export class PluginSupervisor {
     }));
     const secrets = this.#secretSet();
     if (!reply.ok) {
-      // A failed callback leaves nothing running behind it.
-      this.#stopPrograms(parsed.plugin);
+      // A failed callback leaves nothing running behind it; programs other
+      // callbacks (timers, other requests) started keep running.
+      this.#stopPrograms(parsed.plugin, origin);
       // Results and errors are plugin text on their way to terminals: plain
       // text only, whatever the plugin returned.
       return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
@@ -450,9 +452,10 @@ export class PluginSupervisor {
         ok: false,
         error: `E_NOT_FOUND: '${id}' has no parameter '${terminalSafe(param, 200)}'`,
       };
+    let origin = "";
     const reply = await this.#request((requestId) => ({
       type: "param-options",
-      id: requestId,
+      id: (origin = requestId),
       plugin: parsed.plugin,
       action: parsed.action,
       param,
@@ -460,7 +463,7 @@ export class PluginSupervisor {
     }));
     const secrets = this.#secretSet();
     if (!reply.ok) {
-      this.#stopPrograms(parsed.plugin);
+      this.#stopPrograms(parsed.plugin, origin);
       return { ok: false, error: terminalSafe(redactText(reply.error, secrets)) };
     }
     const result = ParamOptionsReplySchemaZ.safeParse(
@@ -779,7 +782,7 @@ export class PluginSupervisor {
     }
     try {
       const value = await this.#options.calls.handle(
-        { plugin: event.plugin, capabilities },
+        { plugin: event.plugin, capabilities, ...(event.origin ? { origin: event.origin } : {}) },
         event.method,
         args,
       );
@@ -825,9 +828,12 @@ export class PluginSupervisor {
     this.#settleLoad(entry.name);
   }
 
-  /** Kill the programs `plugin` (or, with no name, every plugin) still runs. */
-  #stopPrograms(plugin?: string): void {
-    const killed = this.#options.calls?.stopPrograms(plugin) ?? 0;
+  /**
+   * Kill the programs `plugin` (or, with no name, every plugin) still runs;
+   * with `origin`, only those started for that request.
+   */
+  #stopPrograms(plugin?: string, origin?: string): void {
+    const killed = this.#options.calls?.stopPrograms(plugin, origin) ?? 0;
     if (killed > 0)
       this.#log(
         plugin ?? "host",
