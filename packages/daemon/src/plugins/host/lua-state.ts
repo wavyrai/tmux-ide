@@ -99,16 +99,52 @@ export function resolveSource(
   };
 }
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    (typeof value === "object" || typeof value === "function") &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
+export const WALL_CLOCK_MESSAGE = "E_TIMEOUT: the callback took longer than its wall-clock limit";
+export const FOREIGN_YIELD_MESSAGE =
+  "E_INVALID: a callback may only yield to wait for the host; it yielded something else";
+
+/** Host functions a state exposes as `ide.<name>`: each returns a promise Lua waits on. */
+export type HostFunctions = Readonly<Record<string, (args: unknown[]) => Promise<unknown>>>;
+
+interface Runner {
+  /** The host call this runner yielded to wait for, if any. */
+  pending: Promise<unknown> | null;
+  /** The budget ran out at least once, even if the plugin caught E_TIMEOUT. */
+  overran: boolean;
+}
+
+type Settled =
+  | { status: "fulfilled"; value: unknown }
+  | { status: "rejected"; value: string }
+  | { status: "late"; value: undefined };
+
+/** Wait for `promise`, but no later than `deadline` (a performance.now() time). */
+async function settleBefore(promise: Promise<unknown>, deadline: number): Promise<Settled> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<Settled>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ status: "late", value: undefined }),
+      Math.max(0, deadline - performance.now()),
+    );
+  });
+  try {
+    return await Promise.race([
+      promise.then(
+        (value): Settled => ({ status: "fulfilled", value }),
+        (error: unknown): Settled => ({
+          status: "rejected",
+          value: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+      late,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function classify(message: string): PluginTripKind | null {
-  if (message.includes(TIMEOUT_MESSAGE)) return "timeout";
+  if (message.includes(TIMEOUT_MESSAGE) || message.includes(WALL_CLOCK_MESSAGE)) return "timeout";
   if (/not enough memory/u.test(message)) return "memory";
   if (/Aborted\(|RuntimeError/u.test(message)) return "abort";
   return null;
@@ -119,7 +155,8 @@ export class PluginLuaState {
   readonly #engine: LuaEngine;
   readonly #hooks: PluginStateHooks;
   #deadline = Number.POSITIVE_INFINITY;
-  #overran = false;
+  /** The runner whose slice is executing right now, if any. */
+  #active: Runner | null = null;
   #broken: string | null = null;
 
   private constructor(name: string, engine: LuaEngine, hooks: PluginStateHooks) {
@@ -134,6 +171,8 @@ export class PluginLuaState {
     productVersion: string;
     limits: PluginLimits;
     hooks: PluginStateHooks;
+    /** Async host functions exposed as `ide.<name>`. Slice A ships none. */
+    hostFunctions?: HostFunctions;
   }): Promise<PluginLuaState> {
     const engine = await new LuaFactory().createEngine({
       openStandardLibs: true,
@@ -145,8 +184,26 @@ export class PluginLuaState {
     const global = engine.global;
     global.set("__ide_over", () => {
       if (performance.now() <= state.#deadline) return false;
-      state.#overran = true;
+      if (state.#active) state.#active.overran = true;
       return true;
+    });
+    const hostFunctions = options.hostFunctions ?? {};
+    // Starts a host call for the runner whose slice is running; the prelude
+    // then yields, and runThread waits for exactly this promise.
+    global.set("__ide_begin", (name: unknown, args: unknown) => {
+      const runner = state.#active;
+      if (!runner) throw new Error("E_INVALID: host calls are only possible inside a callback");
+      if (runner.pending) throw new Error("E_INVALID: a host call is already in progress");
+      const fn = typeof name === "string" ? hostFunctions[name] : undefined;
+      if (!fn) throw new Error(`E_INVALID: no host function '${String(name)}'`);
+      let parsed: unknown;
+      try {
+        parsed = typeof args === "string" ? JSON.parse(args) : [];
+      } catch {
+        parsed = [];
+      }
+      const list = Array.isArray(parsed) ? parsed : [];
+      runner.pending = Promise.resolve().then(() => fn(list));
     });
     global.set("__ide_log", (level: unknown, message: unknown, fieldsJson: unknown) => {
       const lvl: PluginLogLevel =
@@ -177,6 +234,7 @@ export class PluginLuaState {
       version: options.productVersion,
       plugin: options.spec.name,
       settings: options.spec.settings,
+      host_functions: Object.keys(hostFunctions),
     });
     engine.doStringSync(SANDBOX_PRELUDE);
     // Cap memory only after the prelude, so the cap measures plugin use.
@@ -197,7 +255,11 @@ export class PluginLuaState {
    * Run `internalFunction` from `__ide_internal` on a fresh runner thread with
    * `args`, giving Lua at most `budgetMs` of run time across all its slices.
    */
-  async runThread(internalFunction: string, args: unknown[], budgetMs: number): Promise<unknown[]> {
+  async runThread(
+    internalFunction: string,
+    args: unknown[],
+    limits: { budgetMs: number; wallClockMs: number },
+  ): Promise<unknown[]> {
     if (this.#broken) throw new PluginRunError(`E_UNAVAILABLE: ${this.#broken}`, null);
     const global = this.#engine.global;
     const lua = global.lua;
@@ -205,38 +267,53 @@ export class PluginLuaState {
     // Anchor the thread in the registry instead of by stack index, so runner
     // threads that finish out of order cannot remove each other.
     const ref = lua.luaL_ref(global.address, LUA_REGISTRYINDEX);
-    let remaining = budgetMs;
-    this.#overran = false;
+    const runner: Runner = { pending: null, overran: false };
+    const wallDeadline = performance.now() + limits.wallClockMs;
+    let remaining = limits.budgetMs;
     try {
       thread.loadString(`return __ide_internal.${internalFunction}(...)`, `=${internalFunction}`);
       for (const arg of args) thread.pushValue(arg);
       let argCount = args.length;
       for (;;) {
+        if (performance.now() > wallDeadline) throw new Error(WALL_CLOCK_MESSAGE);
         this.#hooks.busy();
         const started = performance.now();
         this.#deadline = started + Math.max(0, remaining);
+        this.#active = runner;
         let result;
         try {
           result = thread.resume(argCount);
         } finally {
+          this.#active = null;
           remaining -= performance.now() - started;
           this.#deadline = Number.POSITIVE_INFINITY;
           this.#hooks.idle();
         }
         argCount = 0;
         if (result.result === LuaReturn.Yield) {
-          let yielded: unknown;
-          if (result.resultCount > 0) {
-            yielded = thread.getValue(-1);
-            thread.pop(result.resultCount);
+          // Never inspect or convert what Lua yielded: a table can pose as a
+          // promise and its `then` would run as JS outside every limit. The
+          // only yield the host waits on is one it started itself.
+          if (result.resultCount > 0) thread.pop(result.resultCount);
+          const pending = runner.pending;
+          runner.pending = null;
+          if (pending) {
+            const outcome = await settleBefore(pending, wallDeadline);
+            if (outcome.status === "late") throw new Error(WALL_CLOCK_MESSAGE);
+            thread.pushValue(outcome.status === "fulfilled");
+            thread.pushValue(outcome.value);
+            argCount = 2;
+          } else if (result.resultCount > 0) {
+            throw new Error(FOREIGN_YIELD_MESSAGE);
+          } else {
+            // A bare coroutine.yield(): let the event loop breathe, then go on.
+            await new Promise((resolve) => setImmediate(resolve));
           }
-          if (isThenable(yielded)) await yielded;
-          else await new Promise((resolve) => setImmediate(resolve));
           continue;
         }
         thread.assertOk(result.result);
         // The plugin caught E_TIMEOUT and still returned: count the overrun.
-        if (this.#overran) this.#hooks.trip("timeout");
+        if (runner.overran) this.#hooks.trip("timeout");
         return [...thread.getStackValues()];
       }
     } catch (error) {
@@ -251,8 +328,12 @@ export class PluginLuaState {
   }
 
   /** Run plugin source text. Resolves to the JSON text of its return values. */
-  async runSource(source: string, chunkName: string, budgetMs: number): Promise<string> {
-    const [json] = await this.runThread("run_source", [source, chunkName], budgetMs);
+  async runSource(
+    source: string,
+    chunkName: string,
+    limits: { budgetMs: number; wallClockMs: number },
+  ): Promise<string> {
+    const [json] = await this.runThread("run_source", [source, chunkName], limits);
     return typeof json === "string" ? json : "[]";
   }
 

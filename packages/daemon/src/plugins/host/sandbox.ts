@@ -35,11 +35,17 @@ local s_format, s_byte, s_char, s_gsub, s_match, s_rep, s_sub =
 local t_concat, t_insert, t_sort = table.concat, table.insert, table.sort
 local m_floor, m_huge, m_type = math.floor, math.huge, math.type
 
+local co_running, co_yield = coroutine.running, coroutine.yield
 local over = __ide_over
 local host_log = __ide_log
 local host_resolve = __ide_resolve
+local host_begin = __ide_begin
 local info = __ide_info
-__ide_over, __ide_log, __ide_resolve, __ide_info = nil, nil, nil, nil
+__ide_over, __ide_log, __ide_resolve, __ide_begin, __ide_info = nil, nil, nil, nil, nil
+
+-- Runner threads the host started. Host calls yield to the host, so they
+-- are only allowed directly on a runner, never inside a plugin coroutine.
+local runners = raw_setmetatable({}, { __mode = "k" })
 
 local HOOK_COUNT = ${HOOK_INSTRUCTION_COUNT}
 local TIMEOUT = "${TIMEOUT_MESSAGE}"
@@ -52,6 +58,8 @@ local function arm() sethook(hook, "", HOOK_COUNT) end
 -- The string metatable's __index is the real string table. Hide the
 -- metatable itself so plugins cannot reach or change it.
 raw_getmetatable("").__metatable = false
+-- ("").dump reaches the real string table: remove dump there too.
+string.dump = nil
 
 ----------------------------------------------------------------- JSON encode
 
@@ -196,6 +204,29 @@ local ide = {
 }
 ide.has = function(feature) return features[feature] == true end
 
+local function host_function(name)
+  return function(...)
+    if not runners[co_running()] then
+      raw_error("E_INVALID: ide." .. name .. " cannot be called inside a coroutine", 2)
+    end
+    host_begin(name, json_encode({ ... }))
+    local ok, value = co_yield()
+    if not ok then raw_error(value, 2) end
+    return value
+  end
+end
+
+for _, name in raw_ipairs(info.host_functions or {}) do
+  local target = ide
+  local parts = {}
+  for part in string.gmatch(name, "[^.]+") do parts[#parts + 1] = part end
+  for i = 1, #parts - 1 do
+    target[parts[i]] = target[parts[i]] or {}
+    target = target[parts[i]]
+  end
+  target[parts[#parts]] = host_function(name)
+end
+
 env.print = function(...) host_log("info", stringify_args(...), nil) end
 
 local function run_source(kind, name, ...)
@@ -246,6 +277,7 @@ end
 __ide_internal = {
   -- Run source text as plugin code. Returns the results as JSON text.
   run_source = function(source, chunk_name)
+    runners[co_running()] = true
     arm()
     local fn, err = raw_load(source, chunk_name, "t", env)
     if not fn then raw_error(err, 0) end

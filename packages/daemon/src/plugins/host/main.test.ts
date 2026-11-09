@@ -63,3 +63,45 @@ describe("PluginHost consent check", () => {
     expect(events.at(-1)).toMatchObject({ type: "loaded", ok: false });
   });
 });
+
+describe("PluginHost load queue", () => {
+  it("keeps loading after a plugin yields a never-settling thenable, and init.lua still runs", async () => {
+    writeFileSync(
+      join(dir, "tasks", "init.lua"),
+      `coroutine.yield({ ["then"] = function() end }) ide.log.info("unreachable")`,
+    );
+    writeFileSync(join(dir, "init.lua"), `ide.log.info("init ran")`);
+    const events: HostEvent[] = [];
+    const host = new PluginHost((event) => events.push(event));
+    const started = performance.now();
+    await Promise.all([
+      host.handle({ type: "load", plugin: spec(hashPluginDirectory(join(dir, "tasks"))) }),
+      host.handle({
+        type: "load",
+        plugin: {
+          name: "init",
+          kind: "init",
+          entry: join(dir, "init.lua"),
+          includeRoots: [dir],
+          moduleRoots: [],
+          settings: {},
+        },
+      }),
+    ]);
+    host.shutdown();
+    expect(performance.now() - started).toBeLessThan(2000);
+    const loaded = events.filter((event) => event.type === "loaded");
+    expect(loaded).toEqual([
+      expect.objectContaining({
+        plugin: "tasks",
+        ok: false,
+        error: expect.stringMatching(/may only yield to wait for the host/u),
+      }),
+      expect.objectContaining({ plugin: "init", ok: true }),
+    ]);
+    expect(events.some((event) => event.type === "log" && event.message === "init ran")).toBe(true);
+    expect(events.some((event) => event.type === "log" && event.message === "unreachable")).toBe(
+      false,
+    );
+  });
+});

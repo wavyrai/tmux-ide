@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PluginLimits, PluginLogLevel, PluginTripKind } from "../protocol.ts";
-import { PluginLuaState, resolveSource } from "./lua-state.ts";
+import { PluginLuaState, resolveSource, type HostFunctions } from "./lua-state.ts";
 
 const limits: PluginLimits = {
   callbackBudgetMs: 150,
   memoryBytes: 8 * 1024 * 1024,
+  wallClockMs: 400,
   logLinesPerSecond: 100,
 };
 
@@ -26,7 +27,7 @@ afterEach(() => {
   rmSync(outside, { recursive: true, force: true });
 });
 
-async function make(settings: Record<string, unknown> = {}) {
+async function make(settings: Record<string, unknown> = {}, hostFunctions: HostFunctions = {}) {
   const logs: { level: PluginLogLevel; message: string; fields?: unknown }[] = [];
   const trips: PluginTripKind[] = [];
   const marks: string[] = [];
@@ -35,6 +36,7 @@ async function make(settings: Record<string, unknown> = {}) {
     apiVersion: "1.0",
     productVersion: "9.9.9",
     limits,
+    hostFunctions,
     hooks: {
       busy: () => marks.push("busy"),
       idle: () => marks.push("idle"),
@@ -44,7 +46,9 @@ async function make(settings: Record<string, unknown> = {}) {
   });
   states.push(state);
   const run = async (code: string, budget = limits.callbackBudgetMs) =>
-    JSON.parse(await state.runSource(code, "=test", budget)) as unknown[];
+    JSON.parse(
+      await state.runSource(code, "=test", { budgetMs: budget, wallClockMs: limits.wallClockMs }),
+    ) as unknown[];
   return { state, run, logs, trips, marks };
 }
 
@@ -118,6 +122,84 @@ describe("sandbox", () => {
     const { run } = await make();
     await run(`string.rep = function() return "evil" end`);
     expect(await run(`return ("ab"):rep(2)`)).toEqual(["abab"]);
+  });
+});
+
+describe("string.dump", () => {
+  it('is gone from both the plugin\'s string table and the one ("").dump reaches', async () => {
+    const { run } = await make();
+    expect(await run(`return string.dump, ("").dump, ("x").dump`)).toEqual([null, null, null]);
+  });
+});
+
+describe("yields and host calls", () => {
+  it("refuses a table that poses as a promise and never calls its then", async () => {
+    const { run, state } = await make();
+    const started = performance.now();
+    await expect(
+      run(`coroutine.yield({ ["then"] = function() CALLED = true end })`),
+    ).rejects.toThrow(/E_INVALID: a callback may only yield to wait for the host/u);
+    expect(performance.now() - started).toBeLessThan(300);
+    expect(await run(`return CALLED`)).toEqual([null]);
+    expect(state.broken).toBeNull();
+  });
+
+  it("refuses a then that would spin, without running it", async () => {
+    const { run } = await make();
+    const started = performance.now();
+    await expect(
+      run(
+        `coroutine.yield(setmetatable({}, { __index = { ["then"] = function() while true do end end } }))`,
+      ),
+    ).rejects.toThrow(/E_INVALID/u);
+    await expect(run(`coroutine.yield(print)`)).rejects.toThrow(/E_INVALID/u);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("allows a bare coroutine.yield", async () => {
+    const { run } = await make();
+    expect(await run(`coroutine.yield() return "after"`)).toEqual(["after"]);
+  });
+
+  it("waits for a host call without charging the wait to the budget", async () => {
+    const { run } = await make(
+      {},
+      {
+        "test.sleep": async ([ms]) => {
+          await new Promise((resolve) => setTimeout(resolve, Number(ms)));
+          return { slept: ms };
+        },
+      },
+    );
+    // 300 ms of waiting against a 150 ms budget and a 400 ms wall clock.
+    expect(await run(`return ide.test.sleep(300)`)).toEqual([{ slept: 300 }]);
+  });
+
+  it("stops a host call that never settles at the wall-clock limit", async () => {
+    const { run, trips } = await make({}, { "test.never": () => new Promise(() => {}) });
+    const started = performance.now();
+    await expect(run(`return ide.test.never()`)).rejects.toThrow(/wall-clock limit/u);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(390);
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(trips).toEqual(["timeout"]);
+  });
+
+  it("turns a rejected host call into a Lua error the plugin can catch", async () => {
+    const { run } = await make(
+      {},
+      { "test.fail": async () => Promise.reject(new Error("E_NOT_FOUND: no such pane")) },
+    );
+    expect(await run(`return pcall(ide.test.fail)`)).toEqual([
+      false,
+      expect.stringContaining("E_NOT_FOUND"),
+    ]);
+  });
+
+  it("refuses host calls inside a plugin coroutine", async () => {
+    const { run } = await make({}, { "test.sleep": async () => 1 });
+    await expect(
+      run(`local co = coroutine.wrap(function() return ide.test.sleep(1) end) return co()`),
+    ).rejects.toThrow(/cannot be called inside a coroutine/u);
   });
 });
 

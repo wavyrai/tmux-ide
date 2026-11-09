@@ -142,7 +142,10 @@ export class PluginHost {
       state = await this.#createState(spec);
       this.#states.set(spec.name, state);
       const chunkName = spec.kind === "init" ? "@init.lua" : `@${spec.name}/init.lua`;
-      await state.runSource(source, chunkName, this.#limits.callbackBudgetMs);
+      await state.runSource(source, chunkName, {
+        budgetMs: this.#limits.callbackBudgetMs,
+        wallClockMs: this.#limits.wallClockMs,
+      });
       this.#emit({ type: "loaded", plugin: spec.name, ok: true, memoryBytes: state.memoryUsed() });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -169,7 +172,10 @@ export class PluginHost {
           if (logs.length < 1000) logs.push({ level, message: message.slice(0, 8192) });
         },
       );
-      const values = await state.runSource(command.code, command.chunkName, command.budgetMs);
+      const values = await state.runSource(command.code, command.chunkName, {
+        budgetMs: command.budgetMs,
+        wallClockMs: Math.max(this.#limits.wallClockMs, command.budgetMs * 2),
+      });
       this.#emit({ type: "run-result", id: command.id, ok: true, values, logs });
     } catch (error) {
       const message =

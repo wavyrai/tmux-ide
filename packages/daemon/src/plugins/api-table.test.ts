@@ -12,7 +12,9 @@ async function bound(code: string): Promise<unknown[]> {
     hooks: { busy() {}, idle() {}, log() {}, trip() {} },
   });
   try {
-    return JSON.parse(await state.runSource(code, "=probe", 1000)) as unknown[];
+    return JSON.parse(
+      await state.runSource(code, "=probe", { budgetMs: 1000, wallClockMs: 5000 }),
+    ) as unknown[];
   } finally {
     state.close();
   }

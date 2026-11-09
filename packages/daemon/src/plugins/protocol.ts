@@ -21,6 +21,21 @@ export const PluginNameSchemaZ = z.string().regex(PLUGIN_NAME_PATTERN);
 /** The user's `init.lua` runs as this reserved plugin name. */
 export const INIT_PLUGIN_NAME = "init" as const;
 
+/**
+ * Names the host and daemon use for their own work. No plugin directory may
+ * take one: `run` labels `tmux-ide lua run`, `host` the host's own log lines.
+ */
+export const RESERVED_PLUGIN_NAMES: ReadonlySet<string> = new Set([
+  INIT_PLUGIN_NAME,
+  "run",
+  "host",
+  "daemon",
+  "ide",
+  "plugin",
+  "plugins",
+  "tmux-ide",
+]);
+
 export const PluginLimitsSchemaZ = z
   .object({
     /** Lua run time allowed per callback, excluding time spent awaiting the host. */
@@ -31,6 +46,11 @@ export const PluginLimitsSchemaZ = z
       .int()
       .min(1024 * 1024)
       .max(1024 * 1024 * 1024),
+    /**
+     * Wall-clock limit for one load or callback, including time spent waiting
+     * for the host. Stops a host call that never settles.
+     */
+    wallClockMs: z.number().int().min(100).max(3_600_000),
     /** Log lines a plugin may emit per second before lines are dropped. */
     logLinesPerSecond: z.number().int().min(1).max(10_000),
   })
@@ -40,6 +60,7 @@ export type PluginLimits = z.infer<typeof PluginLimitsSchemaZ>;
 export const DEFAULT_PLUGIN_LIMITS: PluginLimits = Object.freeze({
   callbackBudgetMs: 250,
   memoryBytes: 64 * 1024 * 1024,
+  wallClockMs: 30_000,
   logLinesPerSecond: 100,
 });
 
