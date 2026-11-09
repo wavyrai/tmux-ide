@@ -108,6 +108,42 @@ describe("resolveCliCommand", () => {
 });
 
 describe("daemonHostCallDependencies", () => {
+  it("keeps programs without panes.send from the tmux socket directories", async () => {
+    const exec = vi.fn(async () => ({
+      code: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timed_out: false,
+      truncated: false,
+    }));
+    const deps = daemonHostCallDependencies({
+      home: "/h",
+      // The daemon's own tmux server lives in a socket directory of its own.
+      tmux: async (args) => (args[0] === "list-sessions" ? "/var/run/tmux-daemon/main\n" : ""),
+      secretSet: () => new Set(),
+    });
+    const calls = createHostCallHandler({ ...deps, exec });
+    const run = (panes: boolean) =>
+      calls.handle(
+        { plugin: "p", capabilities: { exec: ["echo"], shell: false, panes } },
+        "_exec",
+        [{ cmd: "echo" }],
+      );
+    await run(false);
+    const expected = await tmuxSocketDirs(async () => "/var/run/tmux-daemon/main\n");
+    expect(expected).toContain("/var/run/tmux-daemon");
+    expect(exec).toHaveBeenLastCalledWith(
+      { cmd: "echo" },
+      expect.objectContaining({ sandbox: expect.objectContaining({ tmuxSockets: expected }) }),
+    );
+    await run(true);
+    expect(exec).toHaveBeenLastCalledWith(
+      { cmd: "echo" },
+      expect.objectContaining({ sandbox: expect.objectContaining({ tmuxSockets: [] }) }),
+    );
+  });
+
   it("keeps programs from the control socket and the daemon's port", async () => {
     const exec = vi.fn(async () => ({
       code: 0,
