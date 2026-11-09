@@ -345,6 +345,7 @@ impl NativePresentation {
                     pane_count: None,
                     window_id: Some(paint.window.clone()),
                     browser_icon: None,
+                    display_name_source: None,
                     window_label: None,
                 });
             }

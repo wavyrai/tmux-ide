@@ -13,6 +13,7 @@ fn choice(id: &str) -> Choice {
         pane_count: None,
         window_id: Some("window-a".into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }

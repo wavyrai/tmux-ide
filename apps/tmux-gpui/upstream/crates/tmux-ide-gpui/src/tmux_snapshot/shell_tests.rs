@@ -78,6 +78,7 @@ fn browser_fixture(
         pane_count: None,
         window_id: Some("window-a".into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some("Long window label ".repeat(8)),
     };
     SnapshotView {
@@ -113,7 +114,6 @@ fn browser_fixture(
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
         terminal_font: Default::default(),
-        window_reveal: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
         fit_settle: Default::default(),

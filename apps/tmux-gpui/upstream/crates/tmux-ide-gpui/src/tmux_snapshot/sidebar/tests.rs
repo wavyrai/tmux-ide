@@ -14,6 +14,7 @@ fn choice(id: &str, label: &str) -> browser::Choice {
         pane_count: None,
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -43,7 +44,7 @@ fn make_view(
 }
 
 #[test]
-fn sessions_are_the_only_rows_and_identity_does_not_follow_labels() {
+fn sessions_are_headings_and_identity_does_not_follow_labels() {
     let state = browser::State {
         sessions: vec![choice("s1", "same"), choice("s2", "same")],
         selected_session: Some("s2".into()),
@@ -73,6 +74,30 @@ fn sessions_are_the_only_rows_and_identity_does_not_follow_labels() {
             id: "p1".into()
         }
     ));
+    // In the workspace, the open session lists its panes under its heading.
+    let mut open = browser::State {
+        surface: browser::Surface::Workspace,
+        ..state.clone()
+    };
+    let listed: Vec<_> = super::rows(&open).into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        listed,
+        [
+            Some(Target::Session("s1".into())),
+            Some(Target::Session("s2".into())),
+            Some(Target::Pane {
+                session: "s2".into(),
+                id: "p1".into()
+            }),
+            Some(Target::Pane {
+                session: "s2".into(),
+                id: "p2".into()
+            }),
+        ]
+    );
+    assert!(super::rows(&open)[3].selected, "the selected pane's row");
+    open.selected_session = None;
+    assert_eq!(super::rows(&open).len(), 2, "no open session, no pane rows");
     let mut removed = state;
     removed.sessions.clear();
     assert!(super::rows(&removed).is_empty());
@@ -101,9 +126,11 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
         });
         window.draw(cx).clear(cx);
     });
+    // Heading, the open session's pane, the other heading.
     for (row, label) in [
         ("tmux-sidebar-row-0", "tmux-sidebar-label-0"),
-        ("tmux-sidebar-row-1", "tmux-sidebar-label-1"),
+        ("tmux-sidebar-pane:pane-a", "tmux-sidebar-label-1"),
+        ("tmux-sidebar-row-2", "tmux-sidebar-label-2"),
     ] {
         let row = cx.debug_bounds(row).unwrap();
         let label = cx.debug_bounds(label).unwrap();
@@ -113,15 +140,9 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
         assert!(label.right() <= row.right());
         assert!(label.size.width > px(0.));
     }
-    for (count, row) in [
-        ("tmux-sidebar-count-0", "tmux-sidebar-row-0"),
-        ("tmux-sidebar-count-1", "tmux-sidebar-row-1"),
-    ] {
-        let count = cx.debug_bounds(count).unwrap();
-        let row = cx.debug_bounds(row).unwrap();
-        assert!(count.left() >= row.left() && count.right() <= row.right());
-    }
-    assert!(cx.debug_bounds("tmux-sidebar-row-2").is_none());
+    // Headings carry no pane count line any more (#746).
+    assert!(cx.debug_bounds("tmux-sidebar-count-0").is_none());
+    assert!(cx.debug_bounds("tmux-sidebar-row-3").is_none());
     cx.update(|_, cx| {
         let probes = &cx.global::<crate::sidebar::layout_tests::PaintedProbes>().0;
         let probe = probes.get(&"界😀 session ".repeat(20)).unwrap();
@@ -130,7 +151,7 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
         assert!(probe.width > px(0.));
     });
     receiver.try_iter().for_each(drop);
-    let session = cx.debug_bounds("tmux-sidebar-row-1").unwrap();
+    let session = cx.debug_bounds("tmux-sidebar-row-2").unwrap();
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             let frame = view.frame.clone().unwrap();
@@ -175,6 +196,9 @@ mod session_design_tests;
 
 #[path = "agents_ink_tests.rs"]
 mod agents_ink_tests;
+
+#[path = "pane_row_tests.rs"]
+mod pane_row_tests;
 
 #[path = "footer_tests.rs"]
 mod footer_tests;

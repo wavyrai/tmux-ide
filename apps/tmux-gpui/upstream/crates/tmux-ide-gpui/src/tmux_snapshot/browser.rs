@@ -27,6 +27,19 @@ pub(super) struct Choice {
     pub window_label: Option<String>,
     #[serde(default)]
     pub browser_icon: Option<String>,
+    /// Where the daemon's pane name came from. A pane named after its process
+    /// is the program running there (#746: the sidebar's pane icons).
+    #[serde(default)]
+    pub display_name_source: Option<NameSource>,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum NameSource {
+    Manual,
+    Agent,
+    Process,
+    Title,
+    Generated,
 }
 impl Choice {
     pub(super) fn pane_count_label(&self) -> Option<String> {

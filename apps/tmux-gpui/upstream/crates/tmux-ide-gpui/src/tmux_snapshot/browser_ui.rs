@@ -565,28 +565,15 @@ impl SnapshotView {
             self.select_workspace_fleet_agent(request, *scope, *revision, key, cx);
             return;
         }
-        if let sidebar::Target::Collapse {
-            revision,
-            action,
-            enabled,
-            ..
-        } = target
-        {
-            self.change_fleet_preference(request, *revision, action, *enabled, cx);
-            return;
-        }
         self.select(
             match target {
-                sidebar::Target::Collapse { .. } | sidebar::Target::FleetAgent { .. } => return,
+                sidebar::Target::FleetAgent { .. } => return,
                 sidebar::Target::FleetSession {
                     selection, session, ..
                 } => Selection::FleetSession {
                     selection: selection.clone(),
                     session_id: session.clone(),
                 },
-                sidebar::Target::FleetServer { selection, .. } => {
-                    Selection::FleetServer(selection.clone())
-                }
                 sidebar::Target::Session(id) => Selection::Session(id.clone()),
                 sidebar::Target::Pane { id, .. } => Selection::Pane(id.clone()),
             },
@@ -661,17 +648,7 @@ impl SnapshotView {
             .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .child(
-                div()
-                    .px_2()
-                    .pt_1()
-                    .pb_1()
-                    .text_style(TextStyle::Subheadline)
-                    .text_color(bezel.text_muted)
-                    .children(super::design::ink_probe(|| "sidebar-heading".into()))
-                    .child("Sessions"),
-            );
+            .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
@@ -687,11 +664,9 @@ impl SnapshotView {
                 focus_ring(
                     element,
                     self.sidebar_keyboard.active
-                        && (row.target.as_ref().is_some_and(|target| {
+                        && row.target.as_ref().is_some_and(|target| {
                             Some(target) == self.sidebar_keyboard.selected.as_ref()
-                        }) || row.machine.as_ref().is_some_and(|machine| {
-                            Some(machine) == self.sidebar_keyboard.machine_focus.as_ref()
-                        })),
+                        }),
                     &bezel,
                 )
             });
@@ -700,7 +675,10 @@ impl SnapshotView {
                 && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
             {
                 element =
-                    element.child(self.agent_indicator(agent, !publication.roster.available(key)));
+                    element.children(self.agent_state(agent, !publication.roster.available(key)));
+            }
+            if let Some(pane) = &row.pane {
+                element = self.sidebar_pane_row(element, index, pane, cx);
             }
             if let Some((action, favorite)) = &row.favorite {
                 element = element.child(
@@ -746,7 +724,6 @@ impl SnapshotView {
                     .child(status.message().to_owned()),
             );
         }
-        sidebar = sidebar.children(self.workspace_agent_rows(cx));
         let sidebar = div()
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())

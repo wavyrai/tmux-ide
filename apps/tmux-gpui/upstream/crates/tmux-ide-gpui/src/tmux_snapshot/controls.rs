@@ -188,30 +188,6 @@ pub(super) fn tab(
     .h(px(CONTROL_HEIGHT))
 }
 
-/// Bezel's tab styling with a decoded leading image instead of an SVG mark.
-pub(super) fn image_tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: AnyElement,
-    selected: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    bezel_ui::tabs::tab(
-        &super::design::palette(theme),
-        format!("{:?}", id.into()),
-        bezel_ui::tabs::Label::new(label),
-        if selected {
-            bezel_ui::tabs::State::Focused
-        } else {
-            bezel_ui::tabs::State::Resting
-        },
-    )
-    .h(px(CONTROL_HEIGHT))
-    .child(icon)
-    .flex_row_reverse()
-    .justify_end()
-}
-
 /// The same Bezel tab component in the compact native titlebar.
 pub(super) fn titlebar_tab(
     id: impl Into<ElementId>,

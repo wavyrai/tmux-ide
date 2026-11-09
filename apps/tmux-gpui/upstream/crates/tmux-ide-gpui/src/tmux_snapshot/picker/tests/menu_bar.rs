@@ -31,6 +31,7 @@ fn layout(view: &mut SnapshotView, surface: browser::Surface) {
         pane_count: None,
         window_id: Some(window.into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some(window.into()),
     };
     view.browser_state.panes = vec![

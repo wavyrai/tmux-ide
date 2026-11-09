@@ -87,20 +87,15 @@ fn row(session: bool, count: bool, summary: Option<&str>) -> Row {
         target: Some(if session {
             Target::Session("tmux-ide".into())
         } else {
-            Target::Collapse {
-                machine: "m".into(),
-                revision: 1,
-                action: "a".into(),
-                enabled: true,
+            Target::Pane {
+                session: "s".into(),
+                id: "p".into(),
             }
         }),
         depth: u8::from(!session),
-        machine: None,
-        agent: None,
         icon: (!session).then_some("icons/terminal.svg"),
-        favorite: None,
         summary: summary.map(Into::into),
-        attention: 0,
+        ..Row::default()
     }
 }
 

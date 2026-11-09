@@ -9,6 +9,7 @@ fn pane(id: &str, window: Option<&str>) -> browser::Choice {
         pane_count: None,
         window_id: window.map(str::to_owned),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some("Same window label".into()),
     }
 }
@@ -93,7 +94,7 @@ fn stale_application_listener_and_disconnected_controls_are_inert(cx: &mut TestA
 }
 
 #[gpui::test]
-fn separate_window_tab_click_uses_exact_identity_not_duplicate_label(cx: &mut TestAppContext) {
+fn separate_window_pane_row_click_uses_exact_identity_not_duplicate_label(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.simulate_resize(size(px(640.), px(400.)));
@@ -101,7 +102,9 @@ fn separate_window_tab_click_uses_exact_identity_not_duplicate_label(cx: &mut Te
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let second = cx.debug_bounds("workspace-window-1").unwrap();
+    // Windows are listed in the sidebar now (#746); both carry the same label.
+    assert!(cx.debug_bounds("workspace-window-1").is_none());
+    let second = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
     cx.simulate_click(second.center(), Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request:8,id } if id == "pane-b")
@@ -205,7 +208,7 @@ fn retained_home_catalog_cannot_reopen_session_before_live_ack(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn metadata_only_window_tab_actual_click_selects_pane_despite_interrupted_input(
+fn metadata_only_pane_row_actual_click_selects_pane_despite_interrupted_input(
     cx: &mut TestAppContext,
 ) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -236,16 +239,9 @@ fn metadata_only_window_tab_actual_click_selects_pane_despite_interrupted_input(
             && view.frame.is_none()
             && view.input_interrupted
     }));
-    let tab = cx.debug_bounds("workspace-window-0").unwrap();
-    let header = cx.debug_bounds("titlebar").unwrap();
-    let application_tab = cx.debug_bounds("application-home").unwrap();
-    let status = cx.debug_bounds("tmux-status-viewport").unwrap();
-    assert!(tab.size.width > px(0.) && tab.size.height > px(0.));
-    assert_eq!(tab.center().y, application_tab.center().y);
-    assert!(tab.left() >= application_tab.right());
-    assert!(tab.top() >= header.top() && tab.bottom() <= header.bottom());
-    assert!(status.right() <= tab.left());
-    cx.simulate_click(tab.center(), Modifiers::default());
+    let row = cx.debug_bounds("tmux-sidebar-pane:pane-a").unwrap();
+    assert!(row.size.width > px(0.) && row.size.height > px(0.));
+    cx.simulate_click(row.center(), Modifiers::default());
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::Pane { request: 8, id } if id == "pane-a")
     );
@@ -264,179 +260,23 @@ fn metadata_only_window_tab_actual_click_selects_pane_despite_interrupted_input(
     );
 }
 
-#[gpui::test]
-fn authoritative_far_window_selection_is_revealed_in_narrow_strip(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|window, cx| {
-        let mut view = make_view(window, cx, sender);
-        view.browser_state.request = view.browser_request;
-        view.browser_state.panes = (0..12)
-            .map(|index| browser::Choice {
-                id: format!("pane-{index}"),
-                label: format!("Pane {index}"),
-                pane_count: None,
-                window_id: Some(format!("window-{index}")),
-                browser_icon: None,
-                window_label: Some(format!("Window {index} with a deliberately long title")),
-            })
-            .collect();
-        view.browser_state.selected_pane = Some("pane-0".into());
-        // Catalog-only geometry: this check does not need or invent terminal pixels.
-        view.browser_state.regions.clear();
-        view.browser_state.frame = None;
-        view.browser_state.input_ready = false;
-        view.frame = None;
-        view.painted_frame = None;
-        view
-    });
-    cx.simulate_resize(size(px(640.), px(400.)));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    receiver.try_iter().for_each(drop);
-    cx.update(|window, cx| {
-        view.update(cx, |view, cx| {
-            // Authoritative selection can arrive from picker/navigation; rendering
-            // must reveal it without dispatching another selection or terminal input.
-            view.browser_state.selected_pane = Some("pane-11".into());
-            cx.notify();
-        });
-        window.draw(cx).clear(cx);
-    });
-    // Allow layout-dependent reveal to settle on the next normal draw.
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    let strip = cx.debug_bounds("workspace-window-strip").unwrap();
-    let selected = cx.debug_bounds("workspace-window-11").unwrap();
-    assert!(strip.size.width > px(0.));
-    assert!(selected.size.width > px(0.));
-    assert!(
-        selected.left() >= strip.left() && selected.right() <= strip.right(),
-        "selected window must be fully visible: selected={selected:?}, strip={strip:?}"
-    );
-    assert!(
-        receiver.try_recv().is_err(),
-        "reveal must not dispatch navigation/input"
-    );
-    // A user deliberately scrolling away wins over unchanged output redraws.
-    view.update(cx, |view, _| {
-        view.window_reveal.scroll.set_offset(point(px(0.), px(0.)))
-    });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    view.read_with(cx, |view, _| {
-        assert_eq!(view.window_reveal.scroll.offset().x, px(0.))
-    });
-    // Same labels, same selected semantic window, new catalog order: resolve the
-    // current index instead of retaining the old twelfth-item reveal.
-    view.update(cx, |view, cx| {
-        view.browser_state.panes.rotate_right(1);
-        cx.notify();
-    });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    let strip = cx.debug_bounds("workspace-window-strip").unwrap();
-    let selected = cx.debug_bounds("workspace-window-0").unwrap();
-    assert!(selected.left() >= strip.left() && selected.right() <= strip.right());
-    // Select a different semantic window, then narrow the window. Both must
-    // reveal it without changing canonical selection or emitting input.
-    view.update(cx, |view, cx| {
-        view.browser_state.selected_pane = Some("pane-10".into());
-        cx.notify();
-    });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.simulate_resize(size(px(520.), px(400.)));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    let strip = cx.debug_bounds("workspace-window-strip").unwrap();
-    let selected = cx.debug_bounds("workspace-window-11").unwrap();
-    assert!(selected.left() >= strip.left() && selected.right() <= strip.right());
-    assert!(receiver.try_recv().is_err());
-}
-
-#[test]
-fn unmeasurable_reveal_schedules_once_then_recovers_on_measured_layout() {
-    let key = RevealKey {
-        session: "session".into(),
-        selected: "window".into(),
-        windows: vec![("window".into(), "Window".into())],
-        viewport_width: px(640.),
-        measured_width: px(0.),
-    };
-    let mut reveal = WindowReveal::default();
-    assert_eq!(
-        reveal.observe(key.clone(), false),
-        RevealEffect::MeasureOnce
-    );
-    for _ in 0..100 {
-        assert_eq!(reveal.observe(key.clone(), false), RevealEffect::None);
-    }
-    assert!(reveal.revealed.is_none());
-    let measured = RevealKey {
-        measured_width: px(416.),
-        ..key.clone()
-    };
-    assert_eq!(reveal.observe(measured.clone(), true), RevealEffect::Reveal);
-    assert_eq!(reveal.observe(measured, true), RevealEffect::None);
-    let changed = RevealKey {
-        selected: "other".into(),
-        ..key
-    };
-    assert_eq!(
-        reveal.observe(changed.clone(), false),
-        RevealEffect::MeasureOnce
-    );
-    assert_eq!(reveal.observe(changed, false), RevealEffect::None);
-}
-
 #[path = "titlebar_tabs.rs"]
 mod titlebar_tabs;
 
 #[gpui::test]
-fn vertical_wheel_over_the_window_strip_scrolls_it_sideways(cx: &mut TestAppContext) {
+fn windows_are_sidebar_subheadings_not_titlebar_tabs(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|window, cx| {
-        let mut view = make_view(window, cx, sender);
-        view.browser_state.request = view.browser_request;
-        view.browser_state.panes = (0..12)
-            .map(|index| browser::Choice {
-                id: format!("pane-{index}"),
-                label: format!("Pane {index}"),
-                pane_count: None,
-                window_id: Some(format!("window-{index}")),
-                browser_icon: None,
-                window_label: Some(format!("Window {index} with a deliberately long title")),
-            })
-            .collect();
-        view.browser_state.selected_pane = Some("pane-0".into());
-        view.browser_state.regions.clear();
-        view.browser_state.frame = None;
-        view.browser_state.input_ready = false;
-        view.frame = None;
-        view.painted_frame = None;
-        view
-    });
+    let (_view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.simulate_resize(size(px(640.), px(400.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
-    let offset = |cx: &mut VisualTestContext| {
-        view.read_with(cx, |view, _| view.window_reveal.scroll.offset())
-    };
-    assert_eq!(offset(cx), point(px(0.), px(0.)));
-    let strip = cx.debug_bounds("workspace-window-strip").unwrap();
-    // Bezel's tab bar is the strip now; a mouse wheel (vertical only) still
-    // moves it along its row.
-    let wheel = |dy: f32| ScrollWheelEvent {
-        position: strip.center(),
-        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
-        touch_phase: TouchPhase::Moved,
-        ..Default::default()
-    };
-    cx.simulate_event(wheel(-40.));
-    assert_eq!(offset(cx), point(px(-40.), px(0.)));
-    cx.simulate_event(wheel(25.));
-    assert_eq!(offset(cx), point(px(-15.), px(0.)));
-    // It stops at the start rather than overshooting.
-    cx.simulate_event(wheel(100.));
-    assert_eq!(offset(cx), point(px(0.), px(0.)));
-    assert!(receiver.try_recv().is_err(), "the wheel sends no input");
+    assert!(cx.debug_bounds("workspace-window-0").is_none());
+    // The titlebar keeps its New window button.
+    assert!(cx.debug_bounds("workspace-window-strip").is_some());
+    let a = cx.debug_bounds("tmux-sidebar-pane:pane-a").unwrap();
+    let b = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
+    let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();
+    assert!(a.left() >= sidebar.left() && a.right() <= sidebar.right());
+    assert!(a.bottom() <= b.top(), "panes follow the window order");
+    assert!(receiver.try_recv().is_err(), "drawing never navigates");
 }

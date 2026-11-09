@@ -4,7 +4,7 @@ use super::browser::State;
 mod agent_icon;
 #[path = "browser_icon.rs"]
 pub(super) mod browser_icon;
-pub(super) use agent_icon::path as agent_icon_path;
+pub(super) use agent_icon::{kind as pane_kind, path as agent_icon_path};
 pub(super) fn selected_title(state: &State) -> Option<String> {
     let selected = state.selected_pane.as_deref()?;
     let pane = state.panes.iter().find(|pane| pane.id == selected)?;
@@ -577,12 +577,15 @@ impl SnapshotView {
             });
         let indicator = agent
             .filter(|_| header.width >= 20)
-            .map(|(row, unavailable)| self.agent_indicator(row, unavailable));
-        let icon = agent_icon_path(
+            .and_then(|(row, unavailable)| self.agent_state(row, unavailable));
+        // The same kind icon as the pane's sidebar row (#746).
+        let icon = pane_kind(
             agent
                 .filter(|(_, unavailable)| !unavailable)
                 .and_then(|(row, _)| row.harness.as_deref()),
-        );
+            self.browser_state.panes.iter().find(|p| p.id == header.id),
+        )
+        .icon();
         let browser_icon = self
             .browser_state
             .panes

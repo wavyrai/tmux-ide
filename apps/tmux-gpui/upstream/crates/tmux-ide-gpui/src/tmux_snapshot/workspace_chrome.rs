@@ -1,48 +1,8 @@
 //! Primary application navigation is distinct from daemon-owned tmux windows.
-use super::{SnapshotView, browser, browser_ui::Selection, controls, navigation};
+use super::{SnapshotView, browser, browser_ui::Selection, controls};
 use gpui::{prelude::*, *};
 
 pub(super) const APPLICATION_TABS_HEIGHT: f32 = crate::titlebar::HEIGHT;
-
-#[derive(Default)]
-pub(super) struct WindowReveal {
-    pub(super) scroll: ScrollHandle,
-    revealed: Option<RevealKey>,
-    measurement_attempted: Option<RevealKey>,
-}
-#[derive(Clone, PartialEq)]
-struct RevealKey {
-    session: String,
-    selected: String,
-    windows: Vec<(String, String)>,
-    viewport_width: Pixels,
-    measured_width: Pixels,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum RevealEffect {
-    None,
-    MeasureOnce,
-    Reveal,
-}
-impl WindowReveal {
-    fn observe(&mut self, key: RevealKey, measurable: bool) -> RevealEffect {
-        if self.revealed.as_ref() == Some(&key) {
-            return RevealEffect::None;
-        }
-        if measurable {
-            self.revealed = Some(key);
-            return RevealEffect::Reveal;
-        }
-        // One follow-up per stable key. Do not mark an unseen item revealed,
-        // and do not spin while hidden/zero-width; later normal layout recovers.
-        if self.measurement_attempted.as_ref() == Some(&key) {
-            return RevealEffect::None;
-        }
-        self.measurement_attempted = Some(key);
-        RevealEffect::MeasureOnce
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(super) enum ApplicationTab {
@@ -212,96 +172,14 @@ impl SnapshotView {
         }
     }
 
+    /// The titlebar's New window button. The windows themselves are listed in
+    /// the sidebar under the open session (#746).
     pub(super) fn workspace_window_strip(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme();
-        let request = self.browser_request;
-        let choices = navigation::windows(
-            &self.browser_state.panes,
-            self.browser_state.selected_pane.as_deref(),
-        );
-        if self.browser_state.surface != browser::Surface::Workspace
-            || self.browser_state.request != self.browser_request
-            || self.browser_state.selected_session.is_none()
-            || !choices.iter().any(|choice| choice.selected)
-        {
-            // A fresh handle also cancels any prepaint reveal from retired state.
-            self.window_reveal = Default::default();
-        } else if let Some((index, selected)) = choices.iter().enumerate().find(|(_, c)| c.selected)
-        {
-            let key = RevealKey {
-                session: self
-                    .browser_state
-                    .selected_session
-                    .clone()
-                    .unwrap_or_default(),
-                selected: selected.id.clone(),
-                windows: choices
-                    .iter()
-                    .map(|c| (c.id.clone(), c.label.clone()))
-                    .collect(),
-                viewport_width: window.viewport_size().width,
-                measured_width: self.window_reveal.scroll.bounds().size.width,
-            };
-            // Adapt Herdr sidebar/render.rs's measured ScrollHandle/revealed ledger.
-            // Semantic identity + order/layout changes reveal once; ordinary output
-            // and same-window pane changes never overwrite manual scrolling.
-            let measurable = key.measured_width > px(0.)
-                && self.window_reveal.scroll.bounds_for_item(index).is_some();
-            match self.window_reveal.observe(key, measurable) {
-                RevealEffect::Reveal => {
-                    self.window_reveal.scroll.scroll_to_item(index);
-                    window.request_animation_frame();
-                }
-                RevealEffect::MeasureOnce => window.request_animation_frame(),
-                RevealEffect::None => {}
-            }
-        }
-        let mut strip = bezel_ui::tabs::bar("window-strip")
-            .track_scroll(&self.window_reveal.scroll)
-            .debug_selector(|| "workspace-window-strip".into())
-            .flex_shrink_0()
-            .on_scroll_wheel({
-                let scroll = self.window_reveal.scroll.clone();
-                move |event, window, cx| crate::tab_scroll::wheel(&scroll, event, window, cx)
-            });
-        if self.browser_state.surface != browser::Surface::Workspace {
-            return strip.into_any_element();
-        }
-        let Some(session) = self.browser_state.selected_session.as_ref() else {
-            return strip.into_any_element();
-        };
-        let icon_tint = super::design::palette(&theme).text_muted;
-        for (index, choice) in choices.into_iter().enumerate() {
-            let session = session.clone();
-            strip = strip.child(
-                controls::image_tab(
-                    ("window-choice", index),
-                    choice.label.clone(),
-                    super::pane_chrome::browser_icon::element(
-                        self.browser_state
-                            .panes
-                            .iter()
-                            .find(|pane| pane.id == choice.pane)
-                            .and_then(|pane| pane.browser_icon.as_deref()),
-                        "icons/terminal.svg",
-                        14.,
-                        icon_tint,
-                    ),
-                    choice.selected,
-                    &theme,
-                )
-                .debug_selector(move || format!("workspace-window-{index}"))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .overflow_hidden()
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.select_window(request, &session, &choice, window, cx);
-                })),
-            );
-        }
         let captured = super::pane_actions::Target::capture(&self.browser_state);
         let enabled = captured.is_some()
             && self.presence.ready()
@@ -331,12 +209,13 @@ impl SnapshotView {
             .sidebar_focus_control(add, 4, &theme)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         div()
+            .debug_selector(|| "workspace-window-strip".into())
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
             .items_center()
-            .child(strip)
+            .justify_end()
             .child(add)
             .into_any_element()
     }

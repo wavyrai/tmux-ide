@@ -19,7 +19,6 @@ fn identity(target: &Target) -> Option<Identity> {
         } => Identity::FleetSession(machine.clone(), id.clone(), server.clone()),
         Target::FleetAgent { key, .. } => Identity::FleetAgent(key.clone()),
         Target::Pane { session, id } => Identity::Pane(session.clone(), id.clone()),
-        Target::FleetServer { .. } | Target::Collapse { .. } => return None,
     })
 }
 
@@ -86,7 +85,7 @@ impl Reveal {
         // using another row's old rectangle after a topology change.
         if layout_changed
             || scroll.bounds().size.height <= px(0.)
-            || scroll.bounds_for_item(index + 1).is_none()
+            || scroll.bounds_for_item(index).is_none()
         {
             if !self.retry_scheduled {
                 self.retry_scheduled = true;
@@ -94,7 +93,7 @@ impl Reveal {
             }
             return;
         }
-        let Some(bounds) = scroll.bounds_for_item(index + 1) else {
+        let Some(bounds) = scroll.bounds_for_item(index) else {
             return;
         };
         let offset = scroll.offset().y;
@@ -103,7 +102,7 @@ impl Reveal {
         // Like Herdr, leave even a partially visible selection where the user
         // placed it; only a newly selected off-screen row needs uncovering.
         if !visible {
-            scroll.scroll_to_item(index + 1);
+            scroll.scroll_to_item(index);
         }
         self.selected = Some(selected);
         self.pending = None;

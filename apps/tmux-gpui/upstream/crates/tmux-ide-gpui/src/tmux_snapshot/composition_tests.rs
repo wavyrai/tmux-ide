@@ -53,7 +53,6 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             sidebar_keyboard: Default::default(),
             developer_mode: Default::default(),
             terminal_font: Default::default(),
-            window_reveal: Default::default(),
             resize_gesture: Default::default(),
             last_resize: None,
             fit_settle: Default::default(),

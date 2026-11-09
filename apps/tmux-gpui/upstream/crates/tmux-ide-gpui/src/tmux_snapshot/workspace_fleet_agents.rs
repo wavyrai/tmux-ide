@@ -94,15 +94,7 @@ fn row(label: String, detail: Option<String>) -> Row {
     Row {
         label,
         pane_count: detail,
-        selected: false,
-        target: None,
-        depth: 0,
-        machine: None,
-        agent: None,
-        icon: None,
-        favorite: None,
-        summary: None,
-        attention: 0,
+        ..Row::default()
     }
 }
 pub(super) fn rows(state: &browser::State) -> Vec<Row> {

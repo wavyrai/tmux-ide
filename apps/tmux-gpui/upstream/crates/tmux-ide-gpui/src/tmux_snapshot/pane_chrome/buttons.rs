@@ -61,6 +61,27 @@ pub(super) fn face(
     })
 }
 impl SnapshotView {
+    /// Opens pane `id`'s menu from outside its header buttons: a right-click
+    /// (or Control-click, which macOS sends as one) on its title or its
+    /// sidebar row, the row's … button, or Shift-F10 on the focused row.
+    /// Selects the pane first if it isn't.
+    pub(in crate::tmux_snapshot) fn open_pane_menu(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.browser_state.surface != super::super::browser::Surface::Workspace
+            || !self.browser_state.panes.iter().any(|p| p.id == id)
+            || self.picker.is_some()
+            || self.pane_actions.is_some()
+            || self.new_session.is_some()
+        {
+            return;
+        }
+        self.header_controls.intent = HeaderIntent::Menu;
+        self.activate_header_menu(id, window, cx);
+    }
     /// A pane title as a screen reader meets it (#746): a button named after
     /// the pane, which selects it. Its menu is a right-click (or
     /// Control-click); without a pointer, F5 lists every pane action.

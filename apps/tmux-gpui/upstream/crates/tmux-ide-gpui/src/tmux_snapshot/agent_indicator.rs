@@ -85,9 +85,6 @@ impl SnapshotView {
         self.agent_animation.sync(self.agent_motion(), cx);
     }
     pub(super) fn agent_indicator(&self, row: &Row, unavailable: bool) -> AnyElement {
-        let slots = self.agent_animation.clone();
-        // A running row only reserves its slot: the overlay paints the frames.
-        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
         let theme = self.theme();
         super::design::palette(&theme)
             .badge("")
@@ -96,33 +93,57 @@ impl SnapshotView {
             .items_center()
             .gap_1()
             .text_color(rgb(color(row, unavailable, &theme)))
-            .child(
-                div()
-                    .relative()
-                    .w(px(16.))
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .when(running, |glyph| glyph.text_color(transparent_black()))
-                            .child(glyph(row, unavailable, slots.frame())),
-                    )
-                    .when(running, |slot| {
-                        slot.child(
-                            canvas(
-                                |_, _, _| (),
-                                move |bounds, _, window, _| slots.reserve(bounds, window),
-                            )
-                            // Pinned to the slot: without an inset, an absolute
-                            // child sits at its static position, one line below.
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full(),
-                        )
-                    }),
-            )
+            .child(self.agent_glyph(row, unavailable))
             .child(label(row, unavailable))
             .into_any_element()
+    }
+    /// A sidebar pane row's state (#746): the full pill only when the agent
+    /// needs input; otherwise its bare glyph (the spinner, a check, a cross),
+    /// and nothing for an idle agent.
+    pub(super) fn agent_state(&self, row: &Row, unavailable: bool) -> Option<AnyElement> {
+        if label(row, unavailable) == "Needs input" {
+            return Some(self.agent_indicator(row, unavailable));
+        }
+        if !unavailable && matches!(row.status, Status::Idle) {
+            return None;
+        }
+        let theme = self.theme();
+        Some(
+            div()
+                .debug_selector(|| "agent-glyph".into())
+                .flex_none()
+                .text_color(rgb(color(row, unavailable, &theme)))
+                .child(self.agent_glyph(row, unavailable))
+                .into_any_element(),
+        )
+    }
+    fn agent_glyph(&self, row: &Row, unavailable: bool) -> Div {
+        let slots = self.agent_animation.clone();
+        // A running row only reserves its slot: the overlay paints the frames.
+        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
+        div()
+            .relative()
+            .w(px(16.))
+            .flex_shrink_0()
+            .child(
+                div()
+                    .when(running, |glyph| glyph.text_color(transparent_black()))
+                    .child(glyph(row, unavailable, slots.frame())),
+            )
+            .when(running, |slot| {
+                slot.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| slots.reserve(bounds, window),
+                    )
+                    // Pinned to the slot: without an inset, an absolute
+                    // child sits at its static position, one line below.
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+            })
     }
 }
 #[cfg(test)]

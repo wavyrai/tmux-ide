@@ -4,18 +4,15 @@ fn row(label: String, detail: Option<String>, depth: u8, target: Option<Target>)
     Row {
         label,
         pane_count: detail,
-        selected: false,
         target,
         depth,
-        machine: None,
-        agent: None,
-        icon: None,
-        favorite: None,
-        summary: None,
-        attention: 0,
+        ..Row::default()
     }
 }
-fn session_row(_state: &browser::State, g: &Group, s: &Session) -> Row {
+/// A session's heading (#746): the project's name and favicon, with its
+/// machine beside it when the fleet has more than one. An unavailable
+/// session keeps its heading and says so.
+fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     let server = s
         .server_id
         .as_ref()
@@ -39,143 +36,70 @@ fn session_row(_state: &browser::State, g: &Group, s: &Session) -> Row {
     } else {
         None
     };
-    let mut r = row(
-        s.name.clone(),
-        Some(format!(
-            "{} {}{}",
-            s.pane_count,
-            if s.pane_count == 1 { "pane" } else { "panes" },
-            if target.is_none() {
-                " · Unavailable"
-            } else {
-                ""
-            }
-        )),
-        u8::from(g.servers.len() > 1),
-        target,
-    );
-    r.icon = Some("icons/terminal.svg");
+    let unavailable = target.is_none().then(|| "Unavailable".to_owned());
+    let mut r = row(s.name.clone(), None, 0, target);
+    r.kind = Kind::Heading;
+    r.favicon = s.favicon.clone();
+    r.aside = match (fleet.groups.len() > 1, unavailable) {
+        (true, Some(why)) => Some(format!("{} · {why}", g.label)),
+        (true, None) => Some(g.label.clone()),
+        (false, why) => why,
+    };
     r.selected = s.active;
     r.favorite = Some((s.favorite_action.clone(), s.favorite));
     r
 }
+/// Whether fleet session `s` is the session open in the workspace.
+fn open(state: &browser::State, s: &Session) -> bool {
+    s.active
+        && state.surface == browser::Surface::Workspace
+        && s.session_id.is_some()
+        && s.session_id == state.selected_session
+}
+/// Sessions grouped by project (#746): each session is a heading, and the open
+/// one lists its panes. Machines, servers and their actions stay on Home.
 pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
     let mut out = Vec::new();
     for g in &fleet.groups {
-        let target = fleet.preferences.as_ref().and_then(|p| {
-            g.collapse_action
-                .as_ref()
-                .filter(|a| fleet.preference_action(p.revision, a, !g.collapsed))
-                .map(|action| Target::Collapse {
-                    machine: g.id.clone(),
-                    revision: p.revision,
-                    action: action.clone(),
-                    enabled: !g.collapsed,
-                })
-        });
-        let mut machine = row(
-            g.label.clone(),
-            if g.conflict {
-                Some("Identity conflict".into())
-            } else if g.state != Phase::Ready {
-                Some(g.state.label().into())
+        if g.conflict || g.state != Phase::Ready {
+            let mut machine = row(g.label.clone(), None, 0, None);
+            machine.kind = Kind::Heading;
+            machine.aside = Some(if g.conflict {
+                "Identity conflict".into()
             } else {
-                None
-            },
-            0,
-            target,
-        );
-        machine.machine = Some(g.id.clone());
-        machine.icon = Some(if g.collapsed {
-            "icons/chevron-right.svg"
-        } else {
-            "icons/chevron-down.svg"
-        });
-        out.push(machine);
-        let visible = |s: &&Session| !g.collapsed || s.favorite || s.active;
-        for server in &g.servers {
-            let mut children: Vec<_> = g
-                .sessions
-                .iter()
-                .filter(|s| s.server_id.as_ref() == Some(&server.id))
-                .filter(visible)
-                .collect();
-            children.sort_by(|a, b| {
-                b.favorite
-                    .cmp(&a.favorite)
-                    .then_with(|| a.name.cmp(&b.name))
-                    .then_with(|| a.id.cmp(&b.id))
+                g.state.label().into()
             });
-            if g.collapsed && children.is_empty() {
-                continue;
-            }
-            let target =
-                if g.state == Phase::Ready && !g.conflict && server.state == ServerPhase::Online {
-                    server
-                        .selection
-                        .as_ref()
-                        .zip(server.generation.as_ref())
-                        .map(|(selection, generation)| Target::FleetServer {
-                            machine: g.id.clone(),
-                            id: server.id.clone(),
-                            generation: generation.clone(),
-                            selection: selection.clone(),
-                        })
-                } else {
-                    None
-                };
-            let label = if g.servers.iter().filter(|s| s.label == server.label).count() > 1 {
-                format!(
-                    "{} · {}",
-                    server.label,
-                    server
-                        .id
-                        .chars()
-                        .rev()
-                        .take(6)
-                        .collect::<String>()
-                        .chars()
-                        .rev()
-                        .collect::<String>()
-                )
-            } else {
-                server.label.clone()
-            };
-            let mut r = row(
-                label,
-                Some(
-                    if server.state == ServerPhase::Offline {
-                        "Offline"
-                    } else if children.is_empty() {
-                        "No sessions"
-                    } else {
-                        "Server"
-                    }
-                    .into(),
-                ),
-                1,
-                target,
-            );
-            r.icon = Some("icons/sessions.svg");
-            // A populated single default server adds no useful navigation hierarchy.
-            if g.servers.len() != 1 || children.is_empty() || server.state == ServerPhase::Offline {
-                out.push(r);
-            }
-            out.extend(children.into_iter().map(|s| session_row(state, g, s)));
+            machine.machine = Some(g.id.clone());
+            out.push(machine);
         }
-        let other: Vec<_> = g
-            .sessions
+        let mut sessions: Vec<_> = g.sessions.iter().collect();
+        sessions.sort_by(|a, b| {
+            b.favorite
+                .cmp(&a.favorite)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        for s in sessions {
+            out.push(session_row(fleet, g, s));
+            if open(state, s) {
+                out.extend(panes::rows(state, 0));
+            }
+        }
+        let offline = g
+            .servers
             .iter()
-            .filter(|s| {
-                s.server_id
-                    .as_ref()
-                    .is_none_or(|id| !g.servers.iter().any(|server| &server.id == id))
-            })
-            .filter(visible)
-            .collect();
-        if !other.is_empty() {
-            out.push(row("Other sessions".into(), None, 1, None));
-            out.extend(other.into_iter().map(|s| session_row(state, g, s)));
+            .filter(|server| server.state == ServerPhase::Offline)
+            .count();
+        if offline > 0 {
+            out.push(row(
+                format!(
+                    "{} offline",
+                    crate::plural::count(offline as u64, "server", "servers")
+                ),
+                None,
+                0,
+                None,
+            ));
         }
         if g.omitted_sessions > 0 || g.omitted_servers > 0 {
             out.push(row(
@@ -185,7 +109,7 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
                     crate::plural::count(g.omitted_servers, "server", "servers")
                 ),
                 None,
-                1,
+                0,
                 None,
             ));
         }
@@ -211,20 +135,19 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
         })
         .collect();
     if !orphan.is_empty() {
-        out.push(row("Current session catalog".into(), None, 0, None));
-        out.extend(orphan.into_iter().map(|s| Row {
-            label: s.label.clone(),
-            pane_count: s.pane_count_label(),
-            selected: active.is_empty() && state.selected_session.as_ref() == Some(&s.id),
-            target: Some(Target::Session(s.id.clone())),
-            depth: 1,
-            icon: Some("icons/terminal.svg"),
-            favorite: None,
-            summary: None,
-            attention: 0,
-            machine: None,
-            agent: None,
-        }));
+        for s in orphan {
+            let open = active.is_empty() && state.selected_session.as_ref() == Some(&s.id);
+            out.push(Row {
+                label: s.label.clone(),
+                selected: open,
+                target: Some(Target::Session(s.id.clone())),
+                kind: Kind::Heading,
+                ..Row::default()
+            });
+            if open && state.surface == browser::Surface::Workspace {
+                out.extend(panes::rows(state, 0));
+            }
+        }
     }
     if fleet.omitted_groups > 0 {
         out.push(row(

@@ -57,6 +57,11 @@ pub(super) fn integrate(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
             out.push(row);
             continue;
         };
+        // The open session lists every pane, agents included (#746).
+        if row.selected && state.surface == browser::Surface::Workspace && !state.panes.is_empty() {
+            out.push(row);
+            continue;
+        }
         // Activity changes must not move a session or its pane targets under the pointer.
         agents.sort_by(|a, b| a.key.cmp(&b.key));
         row.attention = agents.iter().filter(|a| a.attention).count();
@@ -68,14 +73,11 @@ pub(super) fn integrate(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
         if !projects.is_empty() {
             row.summary = Some(projects.into_iter().collect::<Vec<_>>().join(" · "));
         }
-        let depth = row.depth + 1;
+        let depth = row.depth;
         out.push(row);
         for agent in agents {
             out.push(Row {
                 label: agent.name.clone(),
-                pane_count: Some(agent.status.label().to_lowercase()),
-                summary: None,
-                attention: 0,
                 selected: publication.selected_key.as_ref() == Some(&agent.key),
                 target: publication
                     .roster
@@ -86,10 +88,11 @@ pub(super) fn integrate(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
                         key: agent.key.clone(),
                     }),
                 depth,
-                machine: None,
                 agent: Some(agent.key.clone()),
-                icon: None,
-                favorite: None,
+                icon: Some(crate::tmux_snapshot::pane_chrome::agent_icon_path(
+                    agent.harness.as_deref(),
+                )),
+                ..Row::default()
             });
         }
     }

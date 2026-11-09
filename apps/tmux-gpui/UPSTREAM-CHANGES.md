@@ -259,3 +259,15 @@ narrow pane drops the splits first. A right-click on a pane's title opens the pa
 menu the overflow button used to open. `icons.rs` registers the tmux-ide-authored
 `assets/icons/split-down.svg` (`split.svg` turned a quarter); upstream provenance is
 unchanged.
+
+## Sidebar by project (#746, 2026-11-09)
+
+`tmux_snapshot/sidebar.rs`, `sidebar/hierarchy.rs` and the new `sidebar/panes.rs` and
+`sidebar/pane_row.rs` turn the session list into project headings. The open session
+lists its panes (window subheadings when there is more than one window), each with a
+kind icon (`pane_chrome/agent_icon.rs` `kind`), its agent's state and a pane menu.
+Machine, server and collapse rows, the Agents section and the titlebar window tabs
+(`workspace_chrome.rs`) are removed; `tab_scroll.rs` and `controls::image_tab` went
+with the tabs. `browser::Choice` carries the daemon's `displayNameSource`. `icons.rs`
+registers the tmux-ide-authored `assets/icons/neovim.svg`, a generic editor mark;
+upstream provenance is unchanged.

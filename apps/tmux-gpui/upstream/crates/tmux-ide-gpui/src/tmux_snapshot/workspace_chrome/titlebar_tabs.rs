@@ -51,7 +51,8 @@ fn compact_titlebar_keeps_controls_and_context_without_session_tabs(cx: &mut Tes
         assert!(home.right() <= tabs.left());
         assert_eq!(home.center().y, tabs.center().y);
         assert!(cx.debug_bounds("application-new-session").is_none());
-        assert!(tabs.right() <= add.left());
+        // The strip holds only New window now; the windows are in the sidebar.
+        assert!(add.left() >= tabs.left() && add.right() <= tabs.right());
         assert!(add.right() <= px(width));
         let canvas = view.read_with(cx, |v, _| v.input_geometry.unwrap().0);
         receiver.try_iter().for_each(drop);
@@ -103,7 +104,7 @@ fn window_transition_keeps_tab_strip_geometry(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn actual_window_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestAppContext) {
+fn actual_pane_row_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);
@@ -131,7 +132,7 @@ fn actual_window_click_keeps_strip_geometry_before_worker_reply(cx: &mut TestApp
     cx.update(|window, cx| window.draw(cx).clear(cx));
     receiver.try_iter().for_each(drop);
     let before = cx.debug_bounds("workspace-window-strip").unwrap();
-    let target = cx.debug_bounds("workspace-window-1").unwrap();
+    let target = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
     cx.simulate_click(target.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),

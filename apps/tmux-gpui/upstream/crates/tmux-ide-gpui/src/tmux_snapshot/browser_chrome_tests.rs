@@ -12,6 +12,7 @@ fn choice(id: &str) -> browser::Choice {
         pane_count: None,
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -50,7 +51,8 @@ fn row_bounds(cx: &mut VisualTestContext) -> Vec<Bounds<Pixels>> {
     [
         "tmux-sidebar-row-0",
         "tmux-sidebar-row-1",
-        "tmux-sidebar-row-2",
+        // The open session's pane row (#746).
+        "tmux-sidebar-pane:pane-a",
         "tmux-sidebar-row-3",
         "tmux-sidebar-row-4",
     ]
@@ -71,8 +73,11 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let resting = row_bounds(cx);
-    assert!(
-        resting.iter().all(|row| row.size.height == px(29.5)),
+    // Project headings, and the open project's pane row on its 20pt tile.
+    let heights: Vec<_> = resting.iter().map(|row| row.size.height).collect();
+    assert_eq!(
+        heights,
+        [px(24.), px(24.), px(30.), px(24.), px(24.)],
         "{resting:?}"
     );
     assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_none());
@@ -323,7 +328,6 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
             let probes = cx.update(|_, cx| std::mem::take(cx.global_mut::<InkProbes>()));
             check(&mut failures, name, &probes, "shell-root", &chrome);
             check(&mut failures, name, &probes, "workspace-body", &everywhere);
-            check(&mut failures, name, &probes, "sidebar-heading", &chrome);
             check(&mut failures, name, &probes, "sidebar-status", &chrome);
             if developer {
                 // The developer lane is opaque, on the terminal's background.

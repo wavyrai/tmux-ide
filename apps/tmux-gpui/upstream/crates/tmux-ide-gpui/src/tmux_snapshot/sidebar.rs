@@ -9,6 +9,10 @@ mod footer;
 mod hierarchy;
 #[path = "sidebar/keyboard.rs"]
 mod keyboard;
+#[path = "sidebar/pane_row.rs"]
+mod pane_row;
+#[path = "sidebar/panes.rs"]
+pub(in crate::tmux_snapshot) mod panes;
 #[path = "sidebar/reveal.rs"]
 mod reveal;
 use crate::{config::Theme, tmux_snapshot::browser};
@@ -31,24 +35,21 @@ pub(in crate::tmux_snapshot) enum Target {
         server: Option<(String, String)>,
         selection: String,
     },
-    FleetServer {
-        machine: String,
-        id: String,
-        generation: String,
-        selection: String,
-    },
-    Collapse {
-        machine: String,
-        revision: u64,
-        action: String,
-        enabled: bool,
-    },
     Pane {
         session: String,
         id: String,
     },
 }
-#[derive(Debug)]
+/// How a row reads in the sidebar (#746): a project's heading, a window's
+/// subheading inside the open project, or an item (a pane, an agent).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tmux_snapshot) enum Kind {
+    Heading,
+    Window,
+    #[default]
+    Item,
+}
+#[derive(Debug, Default)]
 pub(in crate::tmux_snapshot) struct Row {
     pub label: String,
     pub pane_count: Option<String>,
@@ -61,36 +62,38 @@ pub(in crate::tmux_snapshot) struct Row {
     pub favorite: Option<(Option<String>, bool)>,
     pub summary: Option<String>,
     pub attention: usize,
+    pub kind: Kind,
+    /// A heading's project favicon.
+    pub favicon: Option<std::sync::Arc<Image>>,
+    /// A heading's muted aside, the machine of a remote session.
+    pub aside: Option<String>,
+    /// A pane row's pane: its agent state and its menu.
+    pub pane: Option<String>,
 }
 pub(super) fn rows(state: &browser::State) -> Vec<Row> {
     if let Some(fleet) = &state.fleet {
         return hierarchy::rows(state, fleet);
     }
-    state
-        .sessions
-        .iter()
-        .map(|session| Row {
+    let mut out = Vec::new();
+    for session in &state.sessions {
+        let open = state.selected_session.as_ref() == Some(&session.id);
+        out.push(Row {
             label: session.label.clone(),
-            pane_count: session.pane_count_label(),
-            selected: state.selected_session.as_ref() == Some(&session.id),
+            selected: open,
             target: Some(Target::Session(session.id.clone())),
-            depth: 0,
-            machine: None,
-            agent: None,
-            icon: Some("icons/terminal.svg"),
-            favorite: None,
-            summary: None,
-            attention: 0,
-        })
-        .collect()
+            kind: Kind::Heading,
+            ..Row::default()
+        });
+        if open && state.surface == browser::Surface::Workspace {
+            out.extend(panes::rows(state, 0));
+        }
+    }
+    out
 }
 
 pub(super) fn current(state: &browser::State, target: &Target) -> bool {
     match target {
-        Target::FleetAgent { .. }
-        | Target::FleetSession { .. }
-        | Target::FleetServer { .. }
-        | Target::Collapse { .. } => rows(state)
+        Target::FleetAgent { .. } | Target::FleetSession { .. } => rows(state)
             .iter()
             .any(|r| r.target.as_ref() == Some(target)),
         Target::Session(id) => state.sessions.iter().any(|s| &s.id == id),
@@ -148,17 +151,24 @@ pub(super) fn render_row(
     // Ink that reads on the row's own fill (selected or hovered) as well as
     // on the frosted chrome, whatever the desktop behind it.
     let (label, muted) = crate::tmux_snapshot::design::row_ink(theme);
-    let session = matches!(
-        row.target,
-        Some(Target::Session(_) | Target::FleetSession { .. })
-    ) || row.favorite.is_some();
-    let role = if session {
+    let heading = row.kind == Kind::Heading;
+    let window = row.kind == Kind::Window;
+    let session = !heading
+        && !window
+        && (matches!(
+            row.target,
+            Some(Target::Session(_) | Target::FleetSession { .. })
+        ) || row.favorite.is_some());
+    let role = if heading || window {
+        TextStyle::Subheadline
+    } else if session || row.pane.is_some() {
         TextStyle::Callout
     } else {
         TextStyle::Subheadline
     };
-    let selection = bezel_theme::Selection::new(row.selected, emphasized);
+    let selection = bezel_theme::Selection::new(row.selected && !heading, emphasized);
     let fade = bezel_motion::Fade::new(painter, format!("sidebar-row-{index}"));
+    let indent = bezel_theme::Theme::SPACE + f32::from(row.depth) * 6.;
     let mut element = div()
         .id(("sidebar-row", index))
         .debug_selector(move || format!("tmux-sidebar-row-{index}"))
@@ -166,30 +176,73 @@ pub(super) fn render_row(
         .group("session-sidebar-row")
         .flex()
         .items_center()
-        .gap(px(6.))
-        .pl(px(bezel_theme::Theme::SPACE + f32::from(row.depth) * 6.))
+        .gap(px(if row.pane.is_some() { 8. } else { 6. }))
+        // A window subheading lines up with the pane labels under it.
+        .pl(px(if window { indent + 28. } else { indent }))
         .pr_2()
-        .py(px(if session { 5. } else { 3. }))
+        .py(px(if session || row.pane.is_some() {
+            5.
+        } else {
+            3.
+        }))
+        .when(heading, |h| h.mt(px(10.)))
         .rounded(px(bezel_theme::Theme::control_radius()))
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
-        .text_color(rgb(label))
+        .text_color(rgb(if heading || window { muted } else { label }))
         // The ladder's sizes at gpui's own leading, which the rows' heights
         // are laid out on.
         .text_style(role)
+        .when(window, |w| w.text_style(TextStyle::Caption))
         .line_height(phi())
-        .font_weight(if row.selected || row.machine.is_some() {
+        .font_weight(if heading {
+            FontWeight::MEDIUM
+        } else if row.selected || row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
         })
-        .children(row.icon.filter(|_| !session).map(|path| {
-            bezel
-                .icon_at(TextStyle::Body, bezel_ui::icons::Icon::asset(path))
+        .children(row.favicon.clone().map(|image| {
+            img(image)
+                .debug_selector(move || format!("tmux-sidebar-favicon-{index}"))
                 .flex_none()
-                .text_color(rgb(if row.selected { label } else { muted }))
+                .size(px(12.))
+                .rounded(px(3.))
         }))
+        .children(
+            row.icon
+                .filter(|_| !session && !heading && !window)
+                .map(|path| {
+                    let icon = bezel
+                        .icon_at(
+                            if row.pane.is_some() {
+                                TextStyle::Callout
+                            } else {
+                                TextStyle::Body
+                            },
+                            bezel_ui::icons::Icon::asset(path),
+                        )
+                        .flex_none()
+                        .text_color(rgb(if row.selected { label } else { muted }));
+                    if row.pane.is_some() {
+                        // A pane's kind sits on a small tile, as in the mockup.
+                        div()
+                            .flex_none()
+                            .size(px(20.))
+                            .rounded(px(bezel_theme::Theme::control_radius()))
+                            .border_1()
+                            .border_color(bezel.border)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon)
+                            .into_any_element()
+                    } else {
+                        icon.into_any_element()
+                    }
+                }),
+        )
         .child(
             div()
                 .debug_selector(move || format!("tmux-sidebar-label-{index}"))
@@ -203,11 +256,18 @@ pub(super) fn render_row(
                         .min_w_0()
                         .truncate()
                         .child(crate::sidebar::label_text(&row.label))
+                        .children(row.aside.as_ref().map(|aside| {
+                            div()
+                                .flex_none()
+                                .font_weight(FontWeight::NORMAL)
+                                .child(format!(" · {aside}"))
+                        }))
+                        .when(row.aside.is_some(), |l| l.flex().flex_row())
                         .children(crate::tmux_snapshot::design::ink_probe(move || {
                             format!("sidebar-label-{index}")
                         })),
                 )
-                .children(row.summary.as_ref().map(|summary| {
+                .children(row.summary.as_ref().filter(|_| !heading).map(|summary| {
                     div()
                         .mt(px(3.))
                         .min_w_0()
@@ -236,7 +296,7 @@ pub(super) fn render_row(
                         }))
                 })),
         );
-    if row.attention > 0 {
+    if row.attention > 0 && !heading {
         element = element.child(
             attention_badge(theme, bezel, row.attention, index)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),

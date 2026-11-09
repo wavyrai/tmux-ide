@@ -1,5 +1,6 @@
 //! Metadata from the authenticated native terminal controller, never cell transport.
 use super::*;
+use crate::tmux_snapshot::browser::NameSource;
 use std::collections::BTreeSet;
 
 impl Local {
@@ -73,6 +74,7 @@ impl Local {
                     pane_count: None,
                     window_id: Some(window_id.clone()),
                     browser_icon: row.browser_icon.clone(),
+                    display_name_source: row.display_name_source.map(name_source),
                     window_label: Some(label(window.window_name.as_deref(), "Window")),
                 });
             }
@@ -86,6 +88,7 @@ impl Local {
                     pane_count: None,
                     window_id: None,
                     browser_icon: None,
+                    display_name_source: None,
                     window_label: None,
                 });
             }
@@ -96,6 +99,17 @@ impl Local {
         self.state.panes = choices;
         self.state.session_catalog_complete = true;
         self.publish()
+    }
+}
+
+fn name_source(source: herdr_client::tmux_topology::DisplayNameSource) -> NameSource {
+    use herdr_client::tmux_topology::DisplayNameSource as Wire;
+    match source {
+        Wire::Manual => NameSource::Manual,
+        Wire::Agent => NameSource::Agent,
+        Wire::Process => NameSource::Process,
+        Wire::Title => NameSource::Title,
+        Wire::Generated => NameSource::Generated,
     }
 }
 
