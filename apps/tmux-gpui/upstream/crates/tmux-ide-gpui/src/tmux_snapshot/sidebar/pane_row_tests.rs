@@ -234,8 +234,9 @@ fn keyboard_reaches_and_opens_a_pane_row(cx: &mut TestAppContext) {
 }
 
 /// Every way to a pane row's menu opens the same menu, with every pane
-/// action in it: the … button, a right-click, Shift-F10 on the focused row,
-/// and a screen reader's actions on the row and its button (#746).
+/// action in it: the … button (VoiceOver presses it), a right-click, and
+/// Shift-F10 on the focused row (#746). VoiceOver on macOS sends no "show
+/// menu", so the row offers none; F5 lists every pane action too.
 #[gpui::test]
 fn the_rows_menu_is_reachable_by_keyboard_and_screen_reader_with_every_item(
     cx: &mut TestAppContext,
@@ -257,11 +258,18 @@ fn the_rows_menu_is_reachable_by_keyboard_and_screen_reader_with_every_item(
         receiver.try_recv().unwrap(),
         browser::Command::OpenEditor { id, .. } if id == "pane-a"
     ));
-    // Screen reader: the row offers "show menu", its … button "press".
+    // Screen reader: the … button is a button VoiceOver can press; the
+    // row claims no menu action VoiceOver cannot send.
     view.update(cx, |view, cx| {
+        let more = view.pane_row_more(1, "pane-a", cx);
+        assert_eq!(more.a11y_role(), Some(A11y::Button));
+        let mut node = Node::new(A11y::Button);
+        more.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some("Pane actions"));
+        assert!(node.supports_action(Action::Click));
         let row = view.sidebar_pane_row(div().id("row"), 1, "pane-a", cx);
         let mut node = Node::new(A11y::Button);
         row.write_a11y_info(&mut node);
-        assert!(node.supports_action(Action::ShowContextMenu));
+        assert!(!node.supports_action(Action::ShowContextMenu));
     });
 }
