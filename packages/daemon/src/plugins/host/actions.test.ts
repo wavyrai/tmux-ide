@@ -165,6 +165,7 @@ describe("ide.action.register", () => {
       [`ide.action.register{ id = "ok", title = "a\\226\\128\\174b", run = print }`, /plain text/u],
       [`ide.action.register{ id = "ok", title = "a\\226\\129\\166b", run = print }`, /plain text/u],
       [`ide.action.register{ id = "ok", title = "a\\216\\156b", run = print }`, /plain text/u],
+      [`ide.action.register{ id = "ok", title = "a\\226\\128\\168b", run = print }`, /plain text/u],
       [
         `ide.action.register{ id = "ok", title = "x", category = "a\\127b", run = print }`,
         /plain text/u,

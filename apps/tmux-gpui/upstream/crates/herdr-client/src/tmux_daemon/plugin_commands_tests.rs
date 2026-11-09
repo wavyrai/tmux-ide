@@ -60,6 +60,7 @@ fn strips_control_and_format_characters_from_untrusted_text() {
     let commands = parse_catalog(&bytes).unwrap();
     assert_eq!(commands[0].label, "Safe evil  label");
     assert_eq!(clean("\u{200b}\u{feff}", 10), None);
+    assert_eq!(clean("a\u{2028}b\u{2029}c", 10).as_deref(), Some("a b c"));
     assert_eq!(clean(&"x".repeat(500), 160).unwrap().chars().count(), 160);
 }
 

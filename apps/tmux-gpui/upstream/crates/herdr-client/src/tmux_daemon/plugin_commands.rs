@@ -107,10 +107,11 @@ pub struct ParamOptions {
     pub default: Option<ArgValue>,
 }
 
-/// Bounded, single-line, plain text: control and format characters removed.
+/// Bounded, single-line, plain text: control, format and line/paragraph
+/// separator characters removed.
 pub fn clean(text: &str, limit: usize) -> Option<String> {
     static FORBIDDEN: LazyLock<Result<regex::Regex, regex::Error>> =
-        LazyLock::new(|| regex::Regex::new(r"[\p{Cc}\p{Cf}]"));
+        LazyLock::new(|| regex::Regex::new(r"[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]"));
     let regex = FORBIDDEN.as_ref().ok()?;
     let cleaned: String = regex.replace_all(text, " ").chars().take(limit).collect();
     let trimmed = cleaned.trim();
@@ -333,8 +334,13 @@ impl LocalDaemon {
         body: Option<Vec<u8>>,
         timeout: Duration,
     ) -> Result<Vec<u8>, Error> {
+        // The same checks as get_resource and write_resource_with_options,
+        // with the timeout each plugin call needs.
         self.verify_current()?;
         let endpoint = self.base_url.join(path).map_err(|_| Error::Endpoint)?;
+        if endpoint.origin() != self.base_url.origin() {
+            return Err(Error::Endpoint);
+        }
         self.check_record()?;
         let mut response = if let Some(body) = body {
             self.agent
@@ -367,8 +373,9 @@ impl LocalDaemon {
             .read_to_vec()
             .map_err(|error| self.failed(Error::Network(error)))?;
         if status != 200 {
-            return Err(Error::RequestStatus(status));
+            return Err(self.failed(Error::RequestStatus(status)));
         }
+        self.check_record()?;
         Ok(bytes)
     }
 

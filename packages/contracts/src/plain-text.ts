@@ -4,11 +4,12 @@ import { z } from "zod";
  * Text that comes from plugins (titles, labels, choices, results, errors)
  * ends up in terminals. C0 controls, DEL and C1 controls would let it
  * drive the terminal (OSC 52 writes the clipboard, `ESC[2K` rewrites a
- * prompt line), and bidi controls would let it reorder what is shown.
+ * prompt line), bidi controls would let it reorder what is shown, and
+ * U+2028/U+2029 break lines in some terminals and viewers.
  */
 // Written as escapes so the invisible characters stay visible in source.
 const UNSAFE_CLASS =
-  "[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]";
+  "[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029]";
 const UNSAFE = new RegExp(UNSAFE_CLASS, "u");
 const UNSAFE_GLOBAL = new RegExp(UNSAFE_CLASS, "gu");
 

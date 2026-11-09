@@ -34,13 +34,14 @@ local PARAM_TYPES = { string = true, text = true, number = true, boolean = true,
 
 local function fail(message) raw_error("E_INVALID: " .. message, 3) end
 
--- Plain text only: no C0/DEL controls, C1 controls or bidi controls, which
+-- Plain text only: no C0/DEL controls, C1 controls, bidi controls or
+-- U+2028/U+2029 line separators, which
 -- would reach terminals that show this text.
 local function unsafe(text)
   return s_find(text, "[%c\127]") ~= nil
     or s_find(text, "\194[\128-\159]") ~= nil
     or s_find(text, "\216\156") ~= nil
-    or s_find(text, "\226\128[\142\143\170-\174]") ~= nil
+    or s_find(text, "\226\128[\142\143\168-\174]") ~= nil
     or s_find(text, "\226\129[\166-\169]") ~= nil
 end
 
