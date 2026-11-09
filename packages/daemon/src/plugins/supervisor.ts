@@ -1,0 +1,543 @@
+/**
+ * The daemon side of plugins: starts the plugin host process, keeps it alive,
+ * and decides when a plugin is switched off.
+ *
+ * Three guards, from gentle to hard:
+ *  1. The host's own per-callback budget and memory cap, which raise Lua
+ *     errors. Each one is reported here as a trip; `tripLimit` trips within
+ *     `tripWindowMs` disable the plugin.
+ *  2. The heartbeat watchdog. The host sends a heartbeat every second from its
+ *     event loop. A Lua slice that never returns (for example one that keeps
+ *     catching E_TIMEOUT) stops the heartbeats; after `heartbeatTimeoutMs`
+ *     this kills the host with SIGKILL and disables the plugin that the
+ *     host's last "busy" marker named.
+ *  3. Restarts with exponential backoff when the host exits on its own.
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { discoverPlugins, type PluginProblem } from "./discovery.ts";
+import { appendPluginLog, pluginLogPath, type PluginLogEntry } from "./plugin-log.ts";
+import {
+  DEFAULT_PLUGIN_LIMITS,
+  HostEventSchemaZ,
+  MAX_PROTOCOL_LINE_BYTES,
+  PLUGIN_HOST_PROTOCOL_VERSION,
+  type HostCommand,
+  type HostEvent,
+  type PluginLimits,
+  type PluginSpec,
+  type PluginTripKind,
+} from "./protocol.ts";
+
+export type PluginRunState = "loading" | "loaded" | "failed" | "disabled" | "invalid";
+
+export interface PluginStatus {
+  readonly name: string;
+  readonly kind: "init" | "plugin";
+  readonly state: PluginRunState;
+  readonly error?: string;
+  readonly memoryBytes?: number;
+  readonly trips: number;
+}
+
+export interface PluginSupervisorStatus {
+  readonly host: {
+    readonly running: boolean;
+    readonly pid: number | null;
+    readonly restarts: number;
+  };
+  readonly plugins: readonly PluginStatus[];
+}
+
+export interface LuaRunResult {
+  readonly ok: boolean;
+  readonly values?: unknown[];
+  readonly error?: string;
+  readonly logs: readonly { level: string; message: string }[];
+}
+
+export interface PluginSupervisorOptions {
+  readonly stateHome: string;
+  readonly productVersion: string;
+  /** argv of the host process, e.g. [node, cli.js, "__plugin-host"]. */
+  readonly hostCommand: readonly string[];
+  readonly hostEnv?: NodeJS.ProcessEnv;
+  readonly limits?: PluginLimits;
+  readonly heartbeatTimeoutMs?: number;
+  readonly watchdogIntervalMs?: number;
+  readonly helloTimeoutMs?: number;
+  readonly tripLimit?: number;
+  readonly tripWindowMs?: number;
+  readonly restartDelayMs?: (attempt: number) => number;
+  /** Where plugin log entries go. Defaults to `logs/plugins.log`. */
+  readonly onLog?: (entry: PluginLogEntry) => void;
+  readonly now?: () => number;
+}
+
+interface Entry {
+  spec: PluginSpec | null;
+  name: string;
+  kind: "init" | "plugin";
+  state: PluginRunState;
+  error?: string;
+  memoryBytes?: number;
+  trips: number[];
+}
+
+interface HostHandle {
+  child: ChildProcess;
+  ready: boolean;
+  lastHeartbeat: number;
+  busy: string | null;
+  outbox: HostCommand[];
+  killedBy: string | null;
+}
+
+const defaultRestartDelay = (attempt: number) => Math.min(1000 * 2 ** attempt, 60_000);
+
+export class PluginSupervisor {
+  readonly #options: Required<
+    Omit<PluginSupervisorOptions, "hostEnv" | "onLog" | "limits" | "now">
+  > & {
+    hostEnv: NodeJS.ProcessEnv | undefined;
+    onLog: (entry: PluginLogEntry) => void;
+    limits: PluginLimits;
+    now: () => number;
+  };
+  readonly #entries = new Map<string, Entry>();
+  readonly #loadWaiters = new Map<string, (() => void)[]>();
+  readonly #runs = new Map<string, (result: LuaRunResult) => void>();
+  #problems: readonly PluginProblem[] = [];
+  #host: HostHandle | null = null;
+  #restarts = 0;
+  #restartTimer: NodeJS.Timeout | null = null;
+  #watchdog: NodeJS.Timeout | null = null;
+  #stopped = false;
+
+  constructor(options: PluginSupervisorOptions) {
+    const logPath = pluginLogPath(options.stateHome);
+    this.#options = {
+      stateHome: options.stateHome,
+      productVersion: options.productVersion,
+      hostCommand: options.hostCommand,
+      hostEnv: options.hostEnv,
+      limits: options.limits ?? DEFAULT_PLUGIN_LIMITS,
+      heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 5000,
+      watchdogIntervalMs: options.watchdogIntervalMs ?? 500,
+      helloTimeoutMs: options.helloTimeoutMs ?? 15_000,
+      tripLimit: options.tripLimit ?? 3,
+      tripWindowMs: options.tripWindowMs ?? 60_000,
+      restartDelayMs: options.restartDelayMs ?? defaultRestartDelay,
+      onLog: options.onLog ?? ((entry) => appendPluginLog(logPath, entry)),
+      now: options.now ?? Date.now,
+    };
+  }
+
+  // ------------------------------------------------------------------ public
+
+  /** Discover plugins and load them. Starts the host only if there is something to load. */
+  async start(): Promise<PluginSupervisorStatus> {
+    return this.reload();
+  }
+
+  /**
+   * Discover again and (re)load every plugin, or only `name`. Reloading
+   * clears a plugin's disabled state and trip count.
+   */
+  async reload(name?: string): Promise<PluginSupervisorStatus> {
+    if (this.#stopped) return this.status();
+    const discovery = discoverPlugins(this.#options.stateHome);
+    this.#problems = discovery.problems;
+    const found = new Set(discovery.specs.map((spec) => spec.name));
+
+    // Plugins that vanished from disk are unloaded and forgotten.
+    for (const [entryName, entry] of [...this.#entries]) {
+      if (entry.spec && !found.has(entryName) && (!name || name === entryName)) {
+        this.#send({ type: "unload", name: entryName });
+        this.#entries.delete(entryName);
+      }
+    }
+    for (const problem of discovery.problems) {
+      if (name && problem.name !== name) continue;
+      this.#entries.delete(problem.name);
+    }
+
+    const toLoad = discovery.specs.filter((spec) => !name || spec.name === name);
+    if (toLoad.length === 0) return this.status();
+    if (!this.#host) this.#spawn();
+
+    const waits: Promise<void>[] = [];
+    for (const spec of toLoad) {
+      this.#entries.set(spec.name, {
+        spec,
+        name: spec.name,
+        kind: spec.kind,
+        state: "loading",
+        trips: [],
+      });
+      waits.push(this.#waitLoaded(spec.name));
+      this.#send({ type: "load", plugin: spec });
+    }
+    const budget = this.#options.limits.callbackBudgetMs + this.#options.helloTimeoutMs;
+    await Promise.race([
+      Promise.all(waits),
+      new Promise((resolve) => setTimeout(resolve, budget).unref()),
+    ]);
+    return this.status();
+  }
+
+  status(): PluginSupervisorStatus {
+    const plugins: PluginStatus[] = [...this.#entries.values()].map((entry) => ({
+      name: entry.name,
+      kind: entry.kind,
+      state: entry.state,
+      ...(entry.error ? { error: entry.error } : {}),
+      ...(entry.memoryBytes !== undefined ? { memoryBytes: entry.memoryBytes } : {}),
+      trips: entry.trips.length,
+    }));
+    for (const problem of this.#problems) {
+      plugins.push({
+        name: problem.name,
+        kind: "plugin",
+        state: "invalid",
+        error: problem.error,
+        trips: 0,
+      });
+    }
+    plugins.sort((a, b) =>
+      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "init" ? 1 : -1,
+    );
+    return {
+      host: {
+        running: this.#host !== null,
+        pid: this.#host?.child.pid ?? null,
+        restarts: this.#restarts,
+      },
+      plugins,
+    };
+  }
+
+  /** Run Lua source once in a fresh, temporary state. */
+  async run(
+    code: string,
+    options: { chunkName?: string; budgetMs?: number } = {},
+  ): Promise<LuaRunResult> {
+    if (this.#stopped) return { ok: false, error: "E_UNAVAILABLE: plugins are stopped", logs: [] };
+    if (!this.#host) this.#spawn();
+    const id = randomUUID();
+    const budgetMs = options.budgetMs ?? 5000;
+    return new Promise<LuaRunResult>((resolve) => {
+      const timer = setTimeout(
+        () => {
+          this.#runs.delete(id);
+          resolve({ ok: false, error: "E_TIMEOUT: the host did not answer", logs: [] });
+        },
+        budgetMs + this.#options.heartbeatTimeoutMs + this.#options.helloTimeoutMs,
+      );
+      timer.unref();
+      this.#runs.set(id, (result) => {
+        clearTimeout(timer);
+        this.#runs.delete(id);
+        resolve(result);
+      });
+      this.#send({
+        type: "run",
+        id,
+        code,
+        chunkName: options.chunkName ?? "=run",
+        budgetMs,
+      });
+    });
+  }
+
+  async stop(): Promise<void> {
+    this.#stopped = true;
+    if (this.#restartTimer) clearTimeout(this.#restartTimer);
+    this.#restartTimer = null;
+    this.#stopWatchdog();
+    const host = this.#host;
+    this.#host = null;
+    this.#failRuns("E_UNAVAILABLE: plugins stopped");
+    if (!host) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        host.child.kill("SIGKILL");
+        resolve();
+      }, 2000);
+      timer.unref();
+      host.child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      try {
+        (host.child.stdin as Writable).end(`${JSON.stringify({ type: "shutdown" })}\n`);
+      } catch {
+        host.child.kill("SIGKILL");
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- internals
+
+  #log(
+    plugin: string,
+    level: PluginLogEntry["level"],
+    message: string,
+    fields?: Record<string, unknown>,
+  ) {
+    this.#options.onLog({
+      ts: new Date(this.#options.now()).toISOString(),
+      plugin,
+      level,
+      message,
+      ...(fields ? { fields } : {}),
+    });
+  }
+
+  #waitLoaded(name: string): Promise<void> {
+    return new Promise((resolve) => {
+      const list = this.#loadWaiters.get(name) ?? [];
+      list.push(resolve);
+      this.#loadWaiters.set(name, list);
+    });
+  }
+
+  #settleLoad(name: string): void {
+    const list = this.#loadWaiters.get(name);
+    this.#loadWaiters.delete(name);
+    for (const resolve of list ?? []) resolve();
+  }
+
+  #send(command: HostCommand): void {
+    const host = this.#host;
+    if (!host) return;
+    if (!host.ready && command.type !== "configure") {
+      host.outbox.push(command);
+      return;
+    }
+    try {
+      (host.child.stdin as Writable).write(`${JSON.stringify(command)}\n`);
+    } catch {
+      // The exit handler restarts the host and resends loads.
+    }
+  }
+
+  #spawn(): void {
+    const [command, ...args] = this.#options.hostCommand;
+    if (!command) throw new Error("plugin host command is empty");
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+      env: this.#options.hostEnv ?? process.env,
+    });
+    const host: HostHandle = {
+      child,
+      ready: false,
+      lastHeartbeat: this.#options.now(),
+      busy: null,
+      outbox: [],
+      killedBy: null,
+    };
+    this.#host = host;
+
+    const events = child.stdio[3] as Readable;
+    const lines = createInterface({ input: events, crlfDelay: Infinity });
+    lines.on("line", (line) => this.#onEventLine(host, line));
+    for (const stream of [child.stdout, child.stderr]) {
+      if (!stream) continue;
+      const out = createInterface({ input: stream, crlfDelay: Infinity });
+      out.on("line", (line) => {
+        if (line.trim()) this.#log("host", "warn", line.slice(0, 2000));
+      });
+    }
+    child.on("error", (error) =>
+      this.#log("host", "error", `plugin host failed: ${error.message}`),
+    );
+    child.on("exit", (code, signal) => this.#onExit(host, code, signal));
+
+    const helloTimer = setTimeout(() => {
+      if (this.#host === host && !host.ready) {
+        host.killedBy = "the plugin host did not start in time";
+        child.kill("SIGKILL");
+      }
+    }, this.#options.helloTimeoutMs);
+    helloTimer.unref();
+    child.once("exit", () => clearTimeout(helloTimer));
+    this.#startWatchdog();
+  }
+
+  #onEventLine(host: HostHandle, line: string): void {
+    if (this.#host !== host || line.length > MAX_PROTOCOL_LINE_BYTES) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const parsed = HostEventSchemaZ.safeParse(raw);
+    if (!parsed.success) return;
+    this.#onEvent(host, parsed.data);
+  }
+
+  #onEvent(host: HostHandle, event: HostEvent): void {
+    switch (event.type) {
+      case "hello": {
+        if (event.protocolVersion !== PLUGIN_HOST_PROTOCOL_VERSION) return;
+        host.ready = true;
+        host.lastHeartbeat = this.#options.now();
+        this.#send({
+          type: "configure",
+          protocolVersion: PLUGIN_HOST_PROTOCOL_VERSION,
+          productVersion: this.#options.productVersion,
+          limits: this.#options.limits,
+        });
+        const queued = host.outbox.splice(0);
+        for (const command of queued) this.#send(command);
+        return;
+      }
+      case "heartbeat":
+        host.lastHeartbeat = this.#options.now();
+        return;
+      case "busy":
+        host.busy = event.plugin;
+        return;
+      case "idle":
+        if (host.busy === event.plugin) host.busy = null;
+        host.lastHeartbeat = this.#options.now();
+        return;
+      case "log":
+        this.#log(event.plugin, event.level, event.message, event.fields);
+        return;
+      case "loaded": {
+        const entry = this.#entries.get(event.plugin);
+        if (entry && entry.state !== "disabled") {
+          entry.state = event.ok ? "loaded" : "failed";
+          entry.error = event.ok ? undefined : event.error;
+          entry.memoryBytes = event.memoryBytes;
+        }
+        this.#settleLoad(event.plugin);
+        return;
+      }
+      case "trip":
+        this.#onTrip(event.plugin, event.kind);
+        return;
+      case "run-result": {
+        const resolve = this.#runs.get(event.id);
+        if (!resolve) return;
+        let values: unknown[] | undefined;
+        if (event.values !== undefined) {
+          try {
+            const parsed: unknown = JSON.parse(event.values);
+            values = Array.isArray(parsed) ? parsed : [parsed];
+          } catch {
+            values = [];
+          }
+        }
+        resolve({
+          ok: event.ok,
+          ...(values ? { values } : {}),
+          ...(event.error ? { error: event.error } : {}),
+          logs: event.logs,
+        });
+        return;
+      }
+    }
+  }
+
+  #onTrip(plugin: string, kind: PluginTripKind): void {
+    const entry = this.#entries.get(plugin);
+    if (!entry) return;
+    const now = this.#options.now();
+    entry.trips = entry.trips.filter((at) => now - at < this.#options.tripWindowMs);
+    entry.trips.push(now);
+    const label =
+      kind === "timeout"
+        ? "ran past its time budget"
+        : kind === "memory"
+          ? "ran out of memory"
+          : "crashed the Lua runtime";
+    this.#log(plugin, "warn", `${label} (${entry.trips.length}/${this.#options.tripLimit})`);
+    if (kind === "abort" || entry.trips.length >= this.#options.tripLimit) {
+      this.#disable(
+        entry,
+        kind === "abort"
+          ? "the Lua runtime crashed"
+          : `${label} ${entry.trips.length} times within ${Math.round(this.#options.tripWindowMs / 1000)} s`,
+      );
+    }
+  }
+
+  #disable(entry: Entry, reason: string): void {
+    entry.state = "disabled";
+    entry.error = `disabled: ${reason}; run \`tmux-ide plugin reload ${entry.name}\` to try again`;
+    this.#log(entry.name, "error", entry.error);
+    this.#send({ type: "unload", name: entry.name });
+    this.#settleLoad(entry.name);
+  }
+
+  #startWatchdog(): void {
+    if (this.#watchdog) return;
+    this.#watchdog = setInterval(() => {
+      const host = this.#host;
+      if (!host || !host.ready || host.killedBy) return;
+      const silentFor = this.#options.now() - host.lastHeartbeat;
+      if (silentFor <= this.#options.heartbeatTimeoutMs) return;
+      const culprit = host.busy;
+      host.killedBy = culprit
+        ? `${culprit} kept the plugin host busy for more than ${Math.round(this.#options.heartbeatTimeoutMs / 1000)} s`
+        : "the plugin host stopped responding";
+      this.#log("host", "error", `watchdog: ${host.killedBy}; restarting the host`);
+      const entry = culprit ? this.#entries.get(culprit) : undefined;
+      if (entry)
+        this.#disable(
+          entry,
+          "the watchdog stopped it: it did not return control for more than 5 s",
+        );
+      host.child.kill("SIGKILL");
+    }, this.#options.watchdogIntervalMs);
+    this.#watchdog.unref();
+  }
+
+  #stopWatchdog(): void {
+    if (this.#watchdog) clearInterval(this.#watchdog);
+    this.#watchdog = null;
+  }
+
+  #failRuns(error: string): void {
+    for (const resolve of [...this.#runs.values()]) resolve({ ok: false, error, logs: [] });
+    this.#runs.clear();
+  }
+
+  #onExit(host: HostHandle, code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.#host !== host) return;
+    this.#host = null;
+    this.#stopWatchdog();
+    this.#failRuns(
+      `E_UNAVAILABLE: the plugin host exited (${host.killedBy ?? signal ?? `code ${code}`})`,
+    );
+    for (const name of [...this.#loadWaiters.keys()]) this.#settleLoad(name);
+    if (this.#stopped) return;
+
+    const pending = [...this.#entries.values()].filter(
+      (entry) => entry.spec && entry.state !== "disabled",
+    );
+    if (pending.length === 0) return;
+    if (!host.killedBy)
+      this.#log("host", "error", `plugin host exited (${signal ?? `code ${code}`}); restarting`);
+    for (const entry of pending) entry.state = "loading";
+    const delay = this.#options.restartDelayMs(this.#restarts);
+    this.#restarts += 1;
+    this.#restartTimer = setTimeout(() => {
+      this.#restartTimer = null;
+      if (this.#stopped || this.#host) return;
+      const again = [...this.#entries.values()].filter(
+        (entry) => entry.spec && entry.state === "loading",
+      );
+      if (again.length === 0) return;
+      this.#spawn();
+      for (const entry of again) this.#send({ type: "load", plugin: entry.spec! });
+    }, delay);
+    this.#restartTimer.unref();
+  }
+}

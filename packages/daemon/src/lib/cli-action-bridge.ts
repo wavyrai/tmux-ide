@@ -254,3 +254,22 @@ export async function tryDispatchAction<Name extends ActionName>(
   }
   return null;
 }
+
+/**
+ * The running canonical daemon's base URL and owner token, for CLI commands
+ * that call daemon routes other than the action dispatcher.
+ */
+export async function resolveCanonicalDaemonEndpoint(
+  options: { cwd?: string; autostart?: boolean } = {},
+): Promise<{ baseUrl: string; ownerToken: string | null } | null> {
+  const bridgeDeps = deps;
+  return resolveCanonicalDaemon(bridgeDeps, {
+    autostart: options.autostart ?? true,
+    cwd: options.cwd ?? bridgeDeps.cwd(),
+  });
+}
+
+/** `fetch`, replaceable in tests through {@link __setCliActionBridgeDepsForTests}. */
+export function cliBridgeFetch(): typeof fetch {
+  return deps.fetch;
+}
