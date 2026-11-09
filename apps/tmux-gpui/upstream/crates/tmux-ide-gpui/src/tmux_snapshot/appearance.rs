@@ -27,6 +27,9 @@ pub(super) struct Colors {
     pub muted: u32,
     pub accent: u32,
     pub palette: Vec<u32>,
+    /// A preset's own pane card border, when it names one (#746).
+    #[serde(default, rename = "cardBorder")]
+    pub card_border: Option<u32>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +61,7 @@ impl Appearance {
                 .is_none_or(|e| e.len() <= 256 && !e.chars().any(char::is_control))
             && c.palette.len() == 256
             && c.palette.iter().all(|v| *v <= 0xffffff)
+            && c.card_border.is_none_or(|v| v <= 0xffffff)
             && [
                 c.canvas,
                 c.background,
@@ -80,6 +84,7 @@ impl Appearance {
             surface: c.surface,
             active: c.active,
             muted: c.muted,
+            card_border: c.card_border,
             ..Theme::default()
         };
         // valid() is required before publication; no theme mutates canonical cells.

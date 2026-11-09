@@ -188,3 +188,13 @@ test("Linen's one accent is also its needs-input colour (ANSI yellow)", () => {
     assert.equal(theme.palette[3], theme.accent, id);
   }
 });
+
+test("only Linen names its own pane card border; every other preset keeps the app's", () => {
+  assert.equal(resolveNativeAppearance("linen", "dark").theme.cardBorder, 0xe1dbcf);
+  assert.equal(resolveNativeAppearance("linen-dark", "light").theme.cardBorder, 0x3a362f);
+  assert.equal(resolveNativeAppearance("system", "light").theme.cardBorder, 0xe1dbcf);
+  assert.equal(resolveNativeAppearance("system", "dark").theme.cardBorder, 0x3a362f);
+  for (const { id } of appearanceOptions)
+    if (!id.startsWith("linen") && id !== "system")
+      assert.equal("cardBorder" in resolveNativeAppearance(id, "dark").theme, false, id);
+});

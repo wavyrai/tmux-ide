@@ -214,6 +214,7 @@ const palettes = {
     warning: "#984822",
     link: "#3b6587",
     info: "#36706d",
+    cardBorder: "#e1dbcf",
     header: "#e7e1d6",
     selected: "#e3d9c8",
     selectedText: "#2b2722",
@@ -234,6 +235,7 @@ const palettes = {
     warning: "#e0874f",
     link: "#85a9c8",
     info: "#8cbfb8",
+    cardBorder: "#3a362f",
     header: "#2c2925",
     selected: "#45403a",
     selectedText: "#e9e3d8",
@@ -538,6 +540,15 @@ export const VISUAL_THEME_PRESETS: readonly VisualThemeDocumentV1[] = Object.ent
       },
     };
   },
+);
+/**
+ * The Mac app's pane card border, for the presets that name their own (#746).
+ * Every other preset keeps the app's default card border.
+ */
+export const VISUAL_THEME_CARD_BORDERS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(palettes).flatMap(([id, p]) => ("cardBorder" in p ? [[id, p.cardBorder]] : [])),
+  ),
 );
 export function findVisualThemePreset(id: unknown): VisualThemeDocumentV1 | undefined {
   return typeof id === "string" ? VISUAL_THEME_PRESETS.find((p) => p.id === id) : undefined;
