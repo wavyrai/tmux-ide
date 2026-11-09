@@ -98,10 +98,17 @@ fn state_glyphs_read_on_the_frosted_sidebar(cx: &mut TestAppContext) {
             });
             cx.update(|_, cx| cx.global_mut::<InkProbes>().0.clear());
             cx.update(|window, cx| window.draw(cx).clear(cx));
-            let painted = cx.update(|_, cx| cx.global::<InkProbes>().0.get("agent-glyph").copied());
             let row: browser::home_agents::Row =
                 serde_json::from_value(json(status, available)).unwrap();
             let theme = appearance.native();
+            // The sidebar row paints the sidebar's ink (the header's call
+            // site is checked in pane_chrome_tests/ink.rs).
+            let painted = cx.update(|_, cx| {
+                cx.global::<InkProbes>()
+                    .0
+                    .get("agent-glyph-Sidebar")
+                    .copied()
+            });
             let expected: Hsla = rgb(color(&row, !available, &theme, Plate::Sidebar)).into();
             if painted != Some(expected) {
                 failures.push(format!("{name} {status}: painted {painted:?}"));

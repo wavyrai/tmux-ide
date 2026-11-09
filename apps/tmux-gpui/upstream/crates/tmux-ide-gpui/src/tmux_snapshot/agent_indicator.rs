@@ -141,7 +141,10 @@ impl SnapshotView {
                 .debug_selector(|| "agent-glyph".into())
                 .flex_none()
                 .text_color(rgb(color(row, unavailable, &theme, on)))
-                .children(super::design::ink_probe(|| "agent-glyph".into()))
+                // Keyed by where it's drawn, so a test reads each call site's ink.
+                .children(super::design::ink_probe(move || {
+                    format!("agent-glyph-{on:?}")
+                }))
                 .child(self.agent_glyph(row, unavailable))
                 .into_any_element(),
         )

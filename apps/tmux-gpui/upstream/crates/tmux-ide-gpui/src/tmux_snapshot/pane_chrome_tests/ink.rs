@@ -149,3 +149,56 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// A pane header's agent state glyph is painted in the header's own mark
+/// ink, inked on the header's plates, in every catalog variant (#746).
+#[gpui::test]
+fn the_headers_state_glyph_wears_the_headers_ink(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::agent_indicator::{Plate, color};
+    let (sender, _receiver) = mpsc::sync_channel(256);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    let json = |status: &str, available: bool| {
+        serde_json::json!({"key":"agent","sessionId":"session-a","paneId":"pane-a",
+            "name":"Claude","sessionLabel":"x","harness":"claude-code","status":status,
+            "attention":false,"available":available})
+    };
+    let mut failures = Vec::new();
+    for (name, colors) in catalog() {
+        for (status, available) in [
+            ("WORKING", true),
+            ("DONE", true),
+            ("FAILED", true),
+            ("IDLE", false),
+        ] {
+            cx.update(|window, cx| {
+                view.update(cx, |v, _| {
+                    v.browser_state.appearance = Some(appearance(colors.clone()));
+                    v.browser_state.workspace_agents = Some(
+                        serde_json::from_value(serde_json::json!({"sessionId":"session-a",
+                            "revision":1,"phase":"live","rows":[json(status, available)],
+                            "observedSessions":1,"totalSessions":1,"truncatedSessions":0,
+                            "truncatedRows":0,"note":null}))
+                        .unwrap(),
+                    );
+                });
+                cx.global_mut::<InkProbes>().0.clear();
+                window.draw(cx).clear(cx);
+            });
+            let theme = view.read_with(cx, |v, _| v.theme());
+            let row = serde_json::from_value(json(status, available)).unwrap();
+            let expected: Hsla = rgb(color(&row, !available, &theme, Plate::Header)).into();
+            let painted = cx.update(|_, cx| {
+                cx.global::<InkProbes>()
+                    .0
+                    .get("agent-glyph-Header")
+                    .copied()
+            });
+            if painted != Some(expected) {
+                failures.push(format!("{name} {status}: painted {painted:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
