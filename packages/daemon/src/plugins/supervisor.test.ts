@@ -348,6 +348,34 @@ describe("PluginSupervisor", () => {
     ).toBe(true);
   }, 30_000);
 
+  it("survives the review's thenable scenarios on the real host: never-settling and spinning then", async () => {
+    plugin("never", `coroutine.yield({ ["then"] = function() end }) ide.log.info("never: after")`);
+    plugin(
+      "spinner",
+      `coroutine.yield({ ["then"] = function() while true do end end }) ide.log.info("spinner: after")`,
+    );
+    writeFileSync(join(home, "init.lua"), `ide.log.info("init ran")`);
+    const s = supervisor({ heartbeatTimeoutMs: 1500, watchdogIntervalMs: 100 });
+    const started = Date.now();
+    const status = await s.start();
+    expect(Date.now() - started).toBeLessThan(5000);
+    const byName = Object.fromEntries(status.plugins.map((p) => [p.name, p]));
+    expect(byName.never).toMatchObject({
+      state: "failed",
+      error: expect.stringMatching(/E_INVALID/u),
+    });
+    expect(byName.spinner).toMatchObject({
+      state: "failed",
+      error: expect.stringMatching(/E_INVALID/u),
+    });
+    expect(byName.init?.state).toBe("loaded");
+    // Nothing spun outside the budget: the host stays up, with no restarts.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(s.status().host).toMatchObject({ running: true, restarts: 0 });
+    expect(logs.map((entry) => entry.message)).toContain("init ran");
+    expect(logs.some((entry) => /after/u.test(entry.message))).toBe(false);
+  }, 20_000);
+
   it("charges a watchdog kill with no busy plugin to the plugin being loaded, then disables it", async () => {
     plugin("hang", `return true`);
     plugin("ok", `return true`);
