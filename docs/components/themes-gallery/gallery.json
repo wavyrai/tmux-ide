@@ -120,6 +120,32 @@
       }
     },
     {
+      "id": "linen",
+      "name": "Linen",
+      "appearance": "light",
+      "swatches": {
+        "background": "#f7f4ee",
+        "text": "#2b2722",
+        "accent": "#984822",
+        "success": "#4f7034",
+        "warning": "#984822",
+        "danger": "#a33a30"
+      }
+    },
+    {
+      "id": "linen-dark",
+      "name": "Linen Dark",
+      "appearance": "dark",
+      "swatches": {
+        "background": "#211f1b",
+        "text": "#e9e3d8",
+        "accent": "#e0874f",
+        "success": "#a3b77a",
+        "warning": "#e0874f",
+        "danger": "#e0705f"
+      }
+    },
+    {
       "id": "github-light",
       "name": "GitHub Light",
       "appearance": "light",
@@ -303,7 +329,7 @@
     "packages/contracts/src/semantic-icons.ts": "5ec0390d0d4b5d56",
     "packages/contracts/src/visual-recipes.ts": "c5fb3be5dc7c6c40",
     "packages/contracts/src/visual-terminal-palette.ts": "7919e563b0855147",
-    "packages/contracts/src/visual-theme-presets.ts": "17f3c66d26d15ab2",
+    "packages/contracts/src/visual-theme-presets.ts": "079f45bb1e8a6340",
     "packages/contracts/src/visual-tokens.ts": "8d6bb05e00ca1c70",
     "packages/daemon/src/tui/mirror/ansi-palette.ts": "2454ed810dd15b57",
     "packages/daemon/src/tui/mirror/blit.ts": "1b5751f0eae70aea",

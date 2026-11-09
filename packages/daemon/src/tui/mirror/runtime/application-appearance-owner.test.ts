@@ -398,7 +398,7 @@ it("starts at last filtered result on Up and cycles every preset", () => {
     owner.handlePickerKey({ name: "down" });
     visited.add(owner.pickerSelection());
   }
-  expect(visited.size).toBe(25);
+  expect(visited.size).toBe(27);
   owner.dispose();
 });
 

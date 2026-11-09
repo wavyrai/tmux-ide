@@ -44,7 +44,7 @@ pub(super) fn catalog() -> Vec<(String, Appearance)> {
             (name, appearance)
         })
         .collect();
-    assert_eq!(variants.len(), 50, "25 presets, two variants each");
+    assert_eq!(variants.len(), 54, "27 presets, two variants each");
     variants
 }
 

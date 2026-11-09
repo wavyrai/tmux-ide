@@ -91,7 +91,7 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
     cx.simulate_click(address.center(), Modifiers::default());
     assert!(view.read_with(cx, |v, _| v.browser_address.is_some()));
     let themes = catalog();
-    assert_eq!(themes.len(), 50);
+    assert_eq!(themes.len(), 54);
     let mut failures = Vec::new();
     for (name, colors) in themes {
         cx.update(|window, cx| {
