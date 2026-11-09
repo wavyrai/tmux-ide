@@ -45,7 +45,10 @@ export const ExecRequestSchemaZ = z
     /** A tmux pane id like `%12`: run as if typed there. */
     context: z
       .string()
-      .regex(/^%\d{1,9}$/u)
+      .regex(
+        /^%\d{1,9}$/u,
+        "must be a tmux pane id like %3; ctx.pane is set only when the caller knows one",
+      )
       .optional(),
     shell: z.boolean().optional(),
   })

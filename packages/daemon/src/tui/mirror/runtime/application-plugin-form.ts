@@ -57,6 +57,23 @@ function resultNote(label: string, result: CommandInvokeResult): string {
   return `${label}: done`;
 }
 
+/**
+ * The context a palette invocation sends. The TUI's focused pane id is its
+ * own mirror id, not the tmux `%N` id plugins pass to ide.exec{context}, so
+ * only a real tmux pane id is sent as `pane`.
+ */
+export function pluginPaletteContext(
+  session: string | null,
+  focusedPane: string | null,
+): CommandInvocationContext {
+  const pane = focusedPane && /^%\d{1,9}$/u.test(focusedPane) ? focusedPane : null;
+  return {
+    source: "palette",
+    ...(session ? { session } : {}),
+    ...(pane ? { pane } : {}),
+  };
+}
+
 export function createApplicationPluginForm(options: {
   readonly service: PluginFormService;
   readonly context: () => CommandInvocationContext;

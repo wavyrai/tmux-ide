@@ -2,7 +2,11 @@ import type { CommandParam } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationPluginPaletteCommand } from "../workspace/application-command-description.ts";
-import { createApplicationPluginForm, type PluginFormService } from "./application-plugin-form.ts";
+import {
+  createApplicationPluginForm,
+  pluginPaletteContext,
+  type PluginFormService,
+} from "./application-plugin-form.ts";
 
 const param = (overrides: Partial<CommandParam> & Pick<CommandParam, "name">): CommandParam => ({
   type: "string",
@@ -202,5 +206,20 @@ describe("plugin command form", () => {
     expect(h.notes.at(-1)).toBe("Name is required");
     expect(h.form.active()).toBe(true);
     expect(h.invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("palette invocation context", () => {
+  it("passes a tmux pane id as ctx.pane and drops anything else", () => {
+    expect(pluginPaletteContext("demo", "%12")).toEqual({
+      source: "palette",
+      session: "demo",
+      pane: "%12",
+    });
+    expect(pluginPaletteContext("demo", "pane.mirror.0a1b2c3d4e5f6a7b")).toEqual({
+      source: "palette",
+      session: "demo",
+    });
+    expect(pluginPaletteContext(null, null)).toEqual({ source: "palette" });
   });
 });

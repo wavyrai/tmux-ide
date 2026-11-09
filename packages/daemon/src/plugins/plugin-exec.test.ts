@@ -69,8 +69,10 @@ describe("ide.exec policy", () => {
     await expect(runPluginExec({ cmd: "echo", timeout_ms: 10_000_000 }, deps())).rejects.toThrow(
       /E_INVALID/u,
     );
-    await expect(runPluginExec({ cmd: "echo", context: "pane-1" }, deps())).rejects.toThrow(
-      /E_INVALID/u,
+    await expect(
+      runPluginExec({ cmd: "echo", context: "pane.mirror.0a1b2c3d4e5f6a7b" }, deps()),
+    ).rejects.toThrow(
+      "E_INVALID: ide.exec context: must be a tmux pane id like %3; ctx.pane is set only when the caller knows one",
     );
     await expect(runPluginExec({ cmd: "echo", extra: 1 }, deps())).rejects.toThrow(/E_INVALID/u);
     await expect(runPluginExec({ cmd: "echo", context: "%9" }, deps())).rejects.toThrow(

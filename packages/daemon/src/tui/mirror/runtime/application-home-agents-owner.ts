@@ -21,7 +21,7 @@ import type { ApplicationShellBinding } from "./application-shell-binding.ts";
 import type { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
 import type { ApplicationPluginCommands } from "./application-plugin-commands.ts";
-import { createApplicationPluginForm } from "./application-plugin-form.ts";
+import { createApplicationPluginForm, pluginPaletteContext } from "./application-plugin-form.ts";
 import { createApplicationPaneRenameOwner } from "./application-pane-rename-owner.ts";
 import {
   applicationPaletteCommands,
@@ -300,15 +300,8 @@ export function createApplicationHomeNavigationOwner(options: {
     pluginCommands &&
     createApplicationPluginForm({
       service: pluginCommands,
-      context: () => {
-        const session = options.sessionOwner()?.sessionName() ?? null;
-        const pane = options.focusedPane();
-        return {
-          source: "palette" as const,
-          ...(session ? { session } : {}),
-          ...(pane ? { pane } : {}),
-        };
-      },
+      context: () =>
+        pluginPaletteContext(options.sessionOwner()?.sessionName() ?? null, options.focusedPane()),
       query: () => paletteOwner?.query() ?? "",
       setNote: options.setNote,
       close: () => paletteOwner?.setOpen(false, "keyboard"),
