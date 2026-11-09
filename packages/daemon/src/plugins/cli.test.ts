@@ -254,6 +254,25 @@ describe("tmux-ide plugin consent", () => {
     expect(h.out.at(-1)).toBe("tasks is already allowed to run.");
   });
 
+  it("warns when a plugin asks for a shell, and says what programs cannot touch", async () => {
+    const dir = join(home, "plugins", "shelly");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        name: "shelly",
+        version: "1.0.0",
+        api: "^1.0",
+        capabilities: { shell: true },
+      }),
+    );
+    writeFileSync(join(dir, "init.lua"), "return true");
+    const h = harness(reloaded);
+    expect(await runPluginCommandLine("plugin", ["consent", "shelly", "--yes"], h.io)).toBe(0);
+    expect(h.out[0]).toContain("run ANY shell command line, with full access to your account");
+    expect(h.out[0]).toContain("cannot change tmux-ide's own files (consent, init.lua, plugins)");
+  });
+
   it("asks on a terminal and changes nothing unless the answer is yes", async () => {
     install();
     const h = harness(reloaded);

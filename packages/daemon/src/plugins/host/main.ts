@@ -7,9 +7,11 @@
  * each have their own queue.
  */
 import { readFileSync, statSync, writeSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import {
   DEFAULT_PLUGIN_LIMITS,
+  HOST_CALL_METHODS,
   HostCommandSchemaZ,
   MAX_PROTOCOL_LINE_BYTES,
   PLUGIN_API_VERSION,
@@ -62,6 +64,10 @@ export class PluginHost {
   readonly #states = new Map<string, PluginLuaState>();
   readonly #queues = new Map<string, Promise<void>>();
   readonly #logBudgets = new Map<string, LogBudget>();
+  readonly #calls = new Map<
+    string,
+    { resolve(value: unknown): void; reject(error: Error): void }
+  >();
   #productVersion = "0.0.0";
   #limits: PluginLimits = DEFAULT_PLUGIN_LIMITS;
 
@@ -117,6 +123,12 @@ export class PluginHost {
       apiVersion: PLUGIN_API_VERSION,
       productVersion: this.#productVersion,
       limits: this.#limits,
+      hostFunctions: Object.fromEntries(
+        HOST_CALL_METHODS.map((method) => [
+          method,
+          (args: unknown[]) => this.#call(spec.name, method, args),
+        ]),
+      ),
       hooks: {
         busy: () => this.#emit({ type: "busy", plugin: spec.name }),
         idle: () => this.#emit({ type: "idle", plugin: spec.name }),
@@ -126,6 +138,30 @@ export class PluginHost {
         actions: (json) => this.#emit({ type: "actions", plugin: spec.name, actions: json }),
       },
     });
+  }
+
+  /** Ask the daemon to run a host function for `plugin`; resolves with its JSON result. */
+  #call(plugin: string, method: string, args: unknown[]): Promise<unknown> {
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      this.#calls.set(id, { resolve, reject });
+      this.#emit({ type: "call", id, plugin, method, args: JSON.stringify(args) });
+    });
+  }
+
+  #callResult(command: Extract<HostCommand, { type: "call-result" }>): void {
+    const pending = this.#calls.get(command.id);
+    if (!pending) return;
+    this.#calls.delete(command.id);
+    if (!command.ok) {
+      pending.reject(new Error(command.error ?? "E_FAILED: the host call failed"));
+      return;
+    }
+    try {
+      pending.resolve(command.value === undefined ? undefined : JSON.parse(command.value));
+    } catch {
+      pending.reject(new Error("E_FAILED: the daemon sent a malformed result"));
+    }
   }
 
   async #load(spec: PluginSpec): Promise<void> {
@@ -264,6 +300,9 @@ export class PluginHost {
         return this.#enqueue(`plugin:${command.plugin}`, () => this.#invoke(command));
       case "param-options":
         return this.#enqueue(`plugin:${command.plugin}`, () => this.#paramOptions(command));
+      case "call-result":
+        this.#callResult(command);
+        return;
       case "shutdown":
         this.shutdown();
         return;

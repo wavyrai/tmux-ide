@@ -216,15 +216,21 @@ local function host_function(name)
   end
 end
 
+local host = {}
 for _, name in raw_ipairs(info.host_functions or {}) do
-  local target = ide
-  local parts = {}
-  for part in string.gmatch(name, "[^.]+") do parts[#parts + 1] = part end
-  for i = 1, #parts - 1 do
-    target[parts[i]] = target[parts[i]] or {}
-    target = target[parts[i]]
+  if s_sub(name, 1, 1) == "_" then
+    -- Names starting with "_" are for the preludes only (__ide_internal.host).
+    host[name] = host_function(name)
+  else
+    local target = ide
+    local parts = {}
+    for part in string.gmatch(name, "[^.]+") do parts[#parts + 1] = part end
+    for i = 1, #parts - 1 do
+      target[parts[i]] = target[parts[i]] or {}
+      target = target[parts[i]]
+    end
+    target[parts[#parts]] = host_function(name)
   end
-  target[parts[#parts]] = host_function(name)
 end
 
 env.print = function(...) host_log("info", stringify_args(...), nil) end
@@ -289,5 +295,7 @@ __ide_internal = {
   runners = runners,
   ide = ide,
   features = features,
+  host = host,
+  env = env,
 }
 `;

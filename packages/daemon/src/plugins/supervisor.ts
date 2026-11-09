@@ -27,6 +27,7 @@ import {
 import { z } from "zod";
 import { isSecretKey, redactLogValue, redactText } from "../lib/log-sanitize.ts";
 import { PluginActionCatalog, parsePluginCommandId } from "./action-catalog.ts";
+import { ownerCapabilities, type HostCallHandler } from "./host-calls.ts";
 import { discoverPlugins, type PluginAwaitingConsent, type PluginProblem } from "./discovery.ts";
 import { appendPluginLog, pluginLogPath, type PluginLogEntry } from "./plugin-log.ts";
 import {
@@ -96,6 +97,8 @@ export interface PluginSupervisorOptions {
   /** Where plugin log entries go. Defaults to `logs/plugins.log`. */
   readonly onLog?: (entry: PluginLogEntry) => void;
   readonly now?: () => number;
+  /** Serves the host functions plugins call (exec, panes, store…). */
+  readonly calls?: HostCallHandler;
   /** Called after the set of plugin actions changes (the catalog revision moved). */
   readonly onCatalogChange?: () => void;
 }
@@ -182,11 +185,12 @@ export class PluginSupervisor {
   readonly #options: Required<
     Omit<
       PluginSupervisorOptions,
-      "hostEnv" | "onLog" | "limits" | "now" | "secrets" | "onCatalogChange"
+      "hostEnv" | "onLog" | "limits" | "now" | "secrets" | "onCatalogChange" | "calls"
     >
   > & {
     hostEnv: NodeJS.ProcessEnv;
     secrets: () => Iterable<string>;
+    calls: HostCallHandler | undefined;
     onLog: (entry: PluginLogEntry) => void;
     limits: PluginLimits;
     now: () => number;
@@ -223,6 +227,7 @@ export class PluginSupervisor {
       healthyAfterMs: options.healthyAfterMs ?? 60_000,
       onLog: options.onLog ?? ((entry) => appendPluginLog(logPath, entry)),
       now: options.now ?? Date.now,
+      calls: options.calls,
     };
     this.#actions = new PluginActionCatalog(() => options.onCatalogChange?.());
   }
@@ -657,6 +662,9 @@ export class PluginSupervisor {
         if (problem) this.#log(event.plugin, "warn", `ignored its action list: ${problem}`);
         return;
       }
+      case "call":
+        void this.#onCall(event);
+        return;
       case "invoke-result":
         this.#requests.get(event.id)?.(
           event.ok
@@ -692,6 +700,57 @@ export class PluginSupervisor {
         });
         return;
       }
+    }
+  }
+
+  async #onCall(event: Extract<HostEvent, { type: "call" }>): Promise<void> {
+    const reply = (result: { ok: true; value: unknown } | { ok: false; error: string }) => {
+      const secrets = this.#secretSet();
+      this.#send(
+        result.ok
+          ? {
+              type: "call-result",
+              id: event.id,
+              ok: true,
+              ...(result.value === undefined
+                ? {}
+                : { value: JSON.stringify(redactLogValue(result.value, secrets)) }),
+            }
+          : {
+              type: "call-result",
+              id: event.id,
+              ok: false,
+              error: redactText(result.error, secrets),
+            },
+      );
+    };
+    const entry = this.#entries.get(event.plugin);
+    const capabilities =
+      ownerCapabilities(event.plugin) ??
+      (entry?.spec && entry.state !== "disabled" ? entry.spec.capabilities : null);
+    if (!capabilities || !this.#options.calls) {
+      reply({ ok: false, error: `E_UNAVAILABLE: ${event.method.slice(1)} is not available` });
+      return;
+    }
+    let args: unknown;
+    try {
+      args = JSON.parse(event.args);
+    } catch {
+      args = null;
+    }
+    if (!Array.isArray(args)) {
+      reply({ ok: false, error: "E_INVALID: malformed host call" });
+      return;
+    }
+    try {
+      const value = await this.#options.calls.handle(
+        { plugin: event.plugin, capabilities },
+        event.method,
+        args,
+      );
+      reply({ ok: true, value });
+    } catch (error) {
+      reply({ ok: false, error: (error as Error).message });
     }
   }
 

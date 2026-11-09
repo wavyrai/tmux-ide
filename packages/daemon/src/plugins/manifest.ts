@@ -36,6 +36,8 @@ export const PluginManifestSchemaZ = z
         sidebar: z.boolean().optional(),
         status: z.boolean().optional(),
         keys: z.boolean().optional(),
+        /** Run any shell command line (ide.exec with shell = true). */
+        shell: z.boolean().optional(),
       })
       .strict()
       .default({}),

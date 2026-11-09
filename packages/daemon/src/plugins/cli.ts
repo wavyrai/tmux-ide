@@ -279,6 +279,9 @@ export function describeForConsent(plugin: PluginAwaitingConsent): string {
   const { manifest } = plugin;
   const exec = manifest.capabilities.exec ?? [];
   const asks = [
+    manifest.capabilities.shell
+      ? "run ANY shell command line, with full access to your account"
+      : null,
     exec.length > 0 ? `run these programs: ${exec.join(", ")}` : null,
     manifest.capabilities.keys ? "add key bindings" : null,
     manifest.capabilities.sidebar ? "add rows to the sidebar" : null,
@@ -293,7 +296,8 @@ export function describeForConsent(plugin: PluginAwaitingConsent): string {
     "It asks to:",
     ...(asks.length > 0 ? asks.map((line) => `  - ${line}`) : ["  - nothing beyond logging"]),
     "",
-    "Plugins run with your permissions, inside tmux-ide.",
+    "Every plugin can read and type into your tmux panes. Programs it runs act with",
+    "your permissions, but cannot change tmux-ide's own files (consent, init.lua, plugins).",
   ].join("\n");
 }
 

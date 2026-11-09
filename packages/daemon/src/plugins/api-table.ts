@@ -66,7 +66,8 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     signature: "ide.has(feature) -> boolean",
     summary:
       "Whether this tmux-ide provides an API feature, so a plugin can degrade without raising its `api` range.",
-    details: "Features in 1.0: log, include, require, actions.",
+    details:
+      "Features in 1.0: log, include, require, actions, exec, panes, timers, json, store, notify.",
     example: 'if ide.has("include") then ide.include("keys.lua") end',
     ...v1,
   },
@@ -140,6 +141,112 @@ export const API_ENTRIES: readonly ApiEntry[] = Object.freeze([
     kind: "function",
     signature: "ide.action.unregister(id) -> boolean",
     summary: "Remove an action this plugin registered; false if there was none.",
+    ...v1,
+  },
+  {
+    name: "ide.exec",
+    kind: "function",
+    signature:
+      "ide.exec{ cmd, args?, cwd?, env?, stdin?, timeout_ms?, context?, shell? } -> { code, signal, stdout, stderr, timed_out, truncated }",
+    summary: "Run a program the manifest lists under capabilities.exec, and wait for it.",
+    details:
+      "`cmd` is a program name looked up on PATH; `args` are passed as they are, with no shell. " +
+      "`shell = true` runs `cmd` as a /bin/sh command line and needs capabilities.shell. " +
+      '`context` is a tmux pane id like "%3" (or a pane): the program gets that pane\'s cwd, ' +
+      "TMUX and TMUX_PANE. It starts from a minimal environment plus `env`, runs in an OS " +
+      "sandbox that cannot write tmux-ide's own files (only ~/.tmux-ide/plugin-data/<plugin>), " +
+      "is killed with everything it started after `timeout_ms` (default 30 s, at most 10 min), " +
+      "and keeps at most 1 MiB of each output. Output is redacted.",
+    errors: ["E_DENIED", "E_INVALID", "E_NOT_FOUND", "E_UNAVAILABLE"],
+    example:
+      'local r = ide.exec{ cmd = "git", args = { "status", "--short" }, context = ctx.pane }',
+    ...v1,
+  },
+  {
+    name: "ide.panes",
+    kind: "function",
+    signature: "ide.panes{ session?, workspace? } -> { pane… }",
+    summary: "The panes tmux-ide manages, as pane objects.",
+    details:
+      "A pane has `id`, `workspace`, `session` and `title`, and methods `read()`, " +
+      '`send(text, { enter = true })`, `split{ dir = "right"|"down", title? }`, `zoom(on?)`, ' +
+      "`focus()`, `rename(name)`, `kill()`, `rename_window(name)` and `kill_window()`. They go " +
+      "through the same daemon actions and automation API as the app and the CLI.",
+    example: 'for _, pane in ipairs(ide.panes{ session = "demo" }) do print(pane.title) end',
+    ...v1,
+  },
+  {
+    name: "ide.session",
+    kind: "function",
+    signature: "ide.session(workspace) -> { rename(name), kill() }",
+    summary: "A workspace's tmux session, to rename or kill.",
+    ...v1,
+  },
+  {
+    name: "ide.notify",
+    kind: "function",
+    signature: "ide.notify(text, { level? })",
+    summary: "Show a short message (200 characters) in every attached client's status line.",
+    ...v1,
+  },
+  {
+    name: "ide.json.encode",
+    kind: "function",
+    signature: "ide.json.encode(value) -> string",
+    summary: "Encode a Lua value as JSON. Tables that contain themselves are refused.",
+    ...v1,
+  },
+  {
+    name: "ide.json.decode",
+    kind: "function",
+    signature: "ide.json.decode(text) -> value",
+    summary: "Decode JSON text. null becomes nil.",
+    errors: ["E_INVALID"],
+    ...v1,
+  },
+  {
+    name: "ide.store.get",
+    kind: "function",
+    signature: "ide.store.get(key) -> value | nil",
+    summary: "Read a value this plugin stored.",
+    details: "Each plugin has its own store, kept across restarts: at most 1000 keys and 1 MiB.",
+    ...v1,
+  },
+  {
+    name: "ide.store.set",
+    kind: "function",
+    signature: "ide.store.set(key, value)",
+    summary: "Store a JSON-able value under `key`; nil deletes it.",
+    errors: ["E_INVALID", "E_LIMIT"],
+    ...v1,
+  },
+  {
+    name: "ide.store.delete",
+    kind: "function",
+    signature: "ide.store.delete(key)",
+    summary: "Delete a stored value.",
+    ...v1,
+  },
+  {
+    name: "ide.store.keys",
+    kind: "function",
+    signature: "ide.store.keys() -> { key… }",
+    summary: "The stored keys, sorted.",
+    ...v1,
+  },
+  {
+    name: "ide.timer.after",
+    kind: "function",
+    signature: "ide.timer.after(ms, fn) -> { id, cancel() }",
+    summary: "Call `fn` once after `ms` milliseconds, under the callback budget.",
+    details: "At most 64 timers per plugin. Unloading or reloading the plugin cancels them.",
+    ...v1,
+  },
+  {
+    name: "ide.timer.every",
+    kind: "function",
+    signature: "ide.timer.every(ms, fn) -> { id, cancel() }",
+    summary: "Call `fn` every `ms` milliseconds (at least 250).",
     ...v1,
   },
   {

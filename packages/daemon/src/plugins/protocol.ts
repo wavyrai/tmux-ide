@@ -83,9 +83,33 @@ export const PluginSpecSchemaZ = z
     /** Absolute directories `require` may read from, in search order. */
     moduleRoots: z.array(z.string().min(1)).max(8),
     settings: z.record(z.string(), z.json()),
+    /** What the owner consented to; init.lua gets everything. */
+    capabilities: z
+      .object({
+        exec: z.union([z.array(z.string()).max(32), z.literal("any")]),
+        shell: z.boolean(),
+      })
+      .strict(),
   })
   .strict();
 export type PluginSpec = z.infer<typeof PluginSpecSchemaZ>;
+
+/**
+ * Host functions the daemon serves for plugins (host-calls.ts). Each is
+ * exposed to the preludes as `__ide_internal.host[name]`, never directly to
+ * plugin code.
+ */
+export const HOST_CALL_METHODS = Object.freeze([
+  "_exec",
+  "_panes",
+  "_pane_read",
+  "_pane_send",
+  "_action",
+  "_notify",
+  "_store_get",
+  "_store_set",
+  "_store_keys",
+] as const);
 
 // ---------------------------------------------------------------- daemon → host
 
@@ -127,6 +151,22 @@ export const HostCommandSchemaZ = z.discriminatedUnion("type", [
       action: z.string().min(1).max(100),
       param: z.string().min(1).max(64),
       context: z.record(z.string(), z.json()),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("call-result"),
+      id: z.string().min(1).max(64),
+      ok: z.boolean(),
+      /** JSON text of the result. */
+      value: z
+        .string()
+        .max(8 * 1024 * 1024)
+        .optional(),
+      error: z
+        .string()
+        .max(16 * 1024)
+        .optional(),
     })
     .strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
@@ -172,6 +212,16 @@ export const HostEventSchemaZ = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("trip"), plugin: z.string(), kind: TripKindSchemaZ }).strict(),
+  z
+    .object({
+      type: z.literal("call"),
+      id: z.string().min(1).max(64),
+      plugin: z.string().min(1).max(64),
+      method: z.string().min(1).max(64),
+      /** JSON text of the argument list. */
+      args: z.string().max(4 * 1024 * 1024),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("actions"),

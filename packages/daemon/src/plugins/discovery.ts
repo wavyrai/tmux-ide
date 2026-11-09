@@ -152,6 +152,10 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       includeRoots: [dir],
       moduleRoots: [dir],
       settings: manifestDefaults(manifest),
+      capabilities: {
+        exec: [...(manifest.capabilities.exec ?? [])],
+        shell: manifest.capabilities.shell === true,
+      },
     });
   }
 
@@ -163,6 +167,7 @@ export function discoverPlugins(stateHome: string): PluginDiscovery {
       includeRoots: [stateHome, paths.lua],
       moduleRoots: [paths.lua],
       settings: {},
+      capabilities: { exec: "any", shell: true },
     });
   }
   return { specs, problems, awaitingConsent };

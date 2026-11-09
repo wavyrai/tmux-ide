@@ -14,6 +14,7 @@ import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import { LuaFactory, LuaMultiReturn, LuaReturn, LUA_REGISTRYINDEX, type LuaEngine } from "wasmoon";
 import type { PluginLimits, PluginLogLevel, PluginSpec, PluginTripKind } from "../protocol.ts";
 import { ACTIONS_PRELUDE } from "./actions-prelude.ts";
+import { HOST_API_PRELUDE } from "./host-api-prelude.ts";
 import { SANDBOX_PRELUDE, TIMEOUT_MESSAGE } from "./sandbox.ts";
 
 /** Largest file `ide.include` or `require` will read. */
@@ -215,6 +216,11 @@ export class PluginLuaState {
   readonly #hooks: PluginStateHooks;
   #deadline = Number.POSITIVE_INFINITY;
   #actionsChanged = false;
+  readonly #timers = new Map<number, NodeJS.Timeout>();
+  #callbackLimits: { budgetMs: number; wallClockMs: number } = {
+    budgetMs: 250,
+    wallClockMs: 30_000,
+  };
   /** The runner whose slice is executing right now, if any. */
   #active: Runner | null = null;
   #broken: string | null = null;
@@ -241,6 +247,10 @@ export class PluginLuaState {
       traceAllocations: true,
     });
     const state = new PluginLuaState(options.spec.name, engine, options.hooks);
+    state.#callbackLimits = {
+      budgetMs: options.limits.callbackBudgetMs,
+      wallClockMs: options.limits.wallClockMs,
+    };
     const global = engine.global;
     global.set("__ide_over", () => {
       if (performance.now() <= state.#deadline) return false;
@@ -301,6 +311,24 @@ export class PluginLuaState {
     });
     engine.doStringSync(SANDBOX_PRELUDE);
     engine.doStringSync(ACTIONS_PRELUDE);
+    global.set("__ide_timer_start", (id: unknown, ms: unknown, repeating: unknown) =>
+      state.#startTimer(Number(id), Number(ms), repeating === true),
+    );
+    global.set("__ide_timer_cancel", (id: unknown) => state.#cancelTimer(Number(id)));
+    global.set("__ide_json_decode", (text: unknown) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(text));
+      } catch (error) {
+        throw new Error(`E_INVALID: ide.json.decode: ${(error as Error).message}`, {
+          cause: error,
+        });
+      }
+      const plain = toPlainJson(parsed);
+      if (!plain.ok) throw new Error(plain.error);
+      return plain.value;
+    });
+    engine.doStringSync(HOST_API_PRELUDE);
     // Cap memory only after the prelude, so the cap measures plugin use.
     global.setMemoryMax(global.getMemoryUsed() + options.limits.memoryBytes);
     return state;
@@ -451,7 +479,33 @@ export class PluginLuaState {
     return typeof json === "string" ? json : "{}";
   }
 
+  #startTimer(id: number, ms: number, repeating: boolean): void {
+    const fire = () => {
+      if (!repeating) this.#timers.delete(id);
+      void this.runThread("run_timer", [id], this.#callbackLimits).catch((error: unknown) => {
+        this.#hooks.log("error", `timer failed: ${(error as Error).message}`);
+      });
+    };
+    const handle = repeating ? setInterval(fire, ms) : setTimeout(fire, ms);
+    handle.unref?.();
+    this.#timers.set(id, handle);
+  }
+
+  #cancelTimer(id: number): void {
+    const handle = this.#timers.get(id);
+    if (!handle) return;
+    clearTimeout(handle);
+    clearInterval(handle);
+    this.#timers.delete(id);
+  }
+
+  /** Timers currently scheduled; for tests and status. */
+  activeTimers(): number {
+    return this.#timers.size;
+  }
+
   close(): void {
+    for (const id of [...this.#timers.keys()]) this.#cancelTimer(id);
     try {
       this.#engine.global.close();
     } catch {

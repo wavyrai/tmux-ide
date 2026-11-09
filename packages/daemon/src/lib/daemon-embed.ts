@@ -1465,6 +1465,12 @@ async function startEmbeddedDaemonGeneration(
       setFleetFactsObserverDiagnostics(null);
       await runtimeTraceWriter?.close(incomplete);
     };
+    // Plugins reach the daemon's own routes over loopback with the owner token.
+    const pluginEndpoint = canonicalDaemonUrl(
+      "http",
+      bindHostname === "0.0.0.0" || bindHostname === "::" ? "127.0.0.1" : bindHostname,
+      port,
+    );
     // Created now so its routes mount with the server; it spawns nothing until
     // start(), which runs once this generation is published.
     const pluginSupervisor =
@@ -1472,6 +1478,9 @@ async function startEmbeddedDaemonGeneration(
         ? createDaemonPluginSupervisor({
             productVersion,
             secrets: [localBypassToken, authToken ?? null],
+            endpoint: () =>
+              pluginEndpoint ? { baseUrl: pluginEndpoint, ownerToken: localBypassToken } : null,
+            tmux: (args) => fleetFactsTmuxRunner(args, AbortSignal.timeout(5000)),
             onCatalogChange: () =>
               broadcastResourceChanged(
                 { workspaceName: null, resource: "command-catalog" },

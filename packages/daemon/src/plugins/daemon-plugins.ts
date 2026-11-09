@@ -6,7 +6,32 @@ import { fileURLToPath } from "node:url";
 import { logger } from "../lib/log.ts";
 import { stateHome } from "../lib/state-home.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
-import { PluginSupervisor, secretEnvValues } from "./supervisor.ts";
+import { createHostCallHandler, type DaemonEndpoint, type NotifyLevel } from "./host-calls.ts";
+import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
+
+/**
+ * `ide.notify`: a short message in the status line of every attached tmux
+ * client (and so in the TUI, which is one), prefixed with the plugin name.
+ * `#` is doubled so tmux does not expand formats in plugin text.
+ */
+export async function notifyTmuxClients(
+  tmux: (args: readonly string[]) => Promise<string>,
+  plugin: string,
+  text: string,
+  level: NotifyLevel,
+): Promise<void> {
+  const prefix = level === "info" ? "" : `${level}: `;
+  const message = `${plugin}: ${prefix}${text}`.replace(/#/gu, "##");
+  const clients = (await tmux(["list-clients", "-F", "#{client_name}"]))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  await Promise.all(
+    clients.map((client) =>
+      tmux(["display-message", "-c", client, "-d", "4000", message]).catch(() => ""),
+    ),
+  );
+}
 
 /** `TMUX_IDE_PLUGINS=0` turns plugins off for a daemon. */
 export function pluginsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -34,12 +59,28 @@ export function createDaemonPluginSupervisor(options: {
   secrets: readonly (string | null | undefined)[];
   /** Called when plugin actions change, to invalidate the command catalog. */
   onCatalogChange?: () => void;
+  /** The daemon's own HTTP endpoint, once it listens; plugins' pane calls go through it. */
+  endpoint?: () => DaemonEndpoint | null;
+  /** Run tmux against the daemon's server. */
+  tmux?: (args: readonly string[]) => Promise<string>;
   home?: string;
 }): PluginSupervisor {
   const secrets = options.secrets.filter((secret): secret is string => typeof secret === "string");
   const home = options.home ?? stateHome();
   const logPath = pluginLogPath(home);
+  const secretSet = () =>
+    new Set([...secrets, ...secretEnvValues()].filter((secret) => secret.length >= 8));
+  const tmux = options.tmux ?? (async () => Promise.reject(new Error("tmux is unavailable")));
+  const calls = createHostCallHandler({
+    stateHome: home,
+    endpoint: options.endpoint ?? (() => null),
+    tmux,
+    baseEnv: () => minimalHostEnv(),
+    secrets: secretSet,
+    notify: (plugin, text, level) => notifyTmuxClients(tmux, plugin, text, level),
+  });
   return new PluginSupervisor({
+    calls,
     stateHome: home,
     productVersion: options.productVersion,
     hostCommand: resolvePluginHostCommand(),

@@ -88,6 +88,7 @@ describe("discoverPlugins", () => {
         includeRoots: [alpha],
         moduleRoots: [alpha],
         settings: { base: "main" },
+        capabilities: { exec: [], shell: false },
       },
       {
         name: "zeta",
@@ -97,6 +98,7 @@ describe("discoverPlugins", () => {
         includeRoots: [zeta],
         moduleRoots: [zeta],
         settings: {},
+        capabilities: { exec: [], shell: false },
       },
       {
         name: "init",
@@ -105,6 +107,7 @@ describe("discoverPlugins", () => {
         includeRoots: [home, join(home, "lua")],
         moduleRoots: [join(home, "lua")],
         settings: {},
+        capabilities: { exec: "any", shell: true },
       },
     ]);
   });
@@ -156,6 +159,15 @@ describe("discoverPlugins", () => {
     ]);
     consentTo("edited");
     expect(discoverPlugins(home).specs.map((spec) => spec.name)).toEqual(["edited", "init"]);
+  });
+
+  it("carries the consented exec and shell capabilities into the spec", () => {
+    plugin("runner", manifest("runner", { capabilities: { exec: ["git", "gh"], shell: true } }));
+    consentTo("runner");
+    expect(discoverPlugins(home).specs[0]?.capabilities).toEqual({
+      exec: ["git", "gh"],
+      shell: true,
+    });
   });
 
   it("skips dot-directories and plain files in plugins/", () => {
