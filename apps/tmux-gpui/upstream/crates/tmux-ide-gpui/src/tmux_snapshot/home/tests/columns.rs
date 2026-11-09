@@ -376,3 +376,55 @@ fn homes_agent_rows_sit_on_the_pane_rows_tile(cx: &mut TestAppContext) {
         "{agent_label:?} {heading_label:?}"
     );
 }
+
+/// A live Home's reconnect line and its Retry, and its fault strip, take the
+/// same slot: under the toolbar, over the filter row, from Home's title
+/// (#746, as the reconnect fix draws them).
+#[gpui::test]
+fn reconnecting_and_a_fault_use_the_status_slot(cx: &mut TestAppContext) {
+    for fault in [false, true] {
+        let (sender, receiver) = mpsc::sync_channel(64);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let mut view = make_view(window, cx, sender);
+            fleet_with_agents(&mut view);
+            view.browser_state.home_phase = browser::HomePhase::Live;
+            if fault {
+                view.browser_state.home_fault = true;
+                view.browser_state.status = "Home stopped. Reopen tmux-ide.".into();
+            } else {
+                view.browser_state.reconnect_attempt = Some(2);
+                view.browser_state.status = "Reconnecting… attempt 2".into();
+            }
+            view
+        });
+        receiver.try_iter().for_each(drop);
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let header = cx.debug_bounds("home-header").unwrap();
+        let title = cx.debug_bounds("home-title").unwrap();
+        let nav = cx.debug_bounds("home-fleet-nav").unwrap();
+        let line = cx
+            .debug_bounds(if fault {
+                "home-status-warning"
+            } else {
+                "home-status-subtitle"
+            })
+            .unwrap_or_else(|| panic!("the status line (fault: {fault})"));
+        assert!(header.bottom() <= line.top(), "fault: {fault}");
+        assert!(line.bottom() <= nav.top(), "fault: {fault}");
+        assert!(
+            (line.left() - title.left()).abs() <= px(1.),
+            "fault: {fault}"
+        );
+        let retry = cx.debug_bounds("tmux-reconnect-retry");
+        if fault {
+            assert!(retry.is_none(), "a fault has no Retry");
+        } else {
+            let Some(retry) = retry else {
+                panic!("Retry beside the reconnecting line");
+            };
+            assert!(retry.left() >= line.left() && retry.bottom() <= nav.top());
+            assert!(retry.top() < line.bottom() && line.top() < retry.bottom());
+        }
+    }
+}
