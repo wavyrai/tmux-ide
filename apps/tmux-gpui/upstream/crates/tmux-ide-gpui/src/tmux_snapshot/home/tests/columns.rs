@@ -428,3 +428,105 @@ fn reconnecting_and_a_fault_use_the_status_slot(cx: &mut TestAppContext) {
         }
     }
 }
+
+/// Home's sidebar agent rows take their state from Home's roster: with no
+/// workspace fleet publication, Claude's row still draws its glyph (#746).
+#[gpui::test]
+fn homes_sidebar_agent_rows_draw_their_state_from_homes_roster(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::design::InkProbes;
+    let (sender, receiver) = mpsc::sync_channel(64);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        fleet_with_agents(&mut view);
+        view.browser_state.sessions.clear();
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    assert!(view.read_with(cx, |v, _| v.browser_state.workspace_fleet_agents.is_none()));
+    cx.simulate_resize(size(px(1200.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let painted = cx.update(|_, cx| {
+        cx.global::<InkProbes>()
+            .0
+            .contains_key("agent-glyph-Sidebar")
+    });
+    assert!(painted, "Claude's working glyph in the sidebar");
+}
+
+/// An agent Home's roster lists as unavailable keeps its row, with no target
+/// to click (#746).
+#[test]
+fn an_unavailable_home_agent_row_has_no_target() {
+    use crate::tmux_snapshot::browser_ui::sidebar::rows;
+    let mut view_state = browser::State {
+        surface: browser::Surface::Home,
+        fleet: Some(
+            serde_json::from_slice(include_bytes!(
+                "../../../../../../../fixtures/home-fleet.json"
+            ))
+            .unwrap(),
+        ),
+        ..Default::default()
+    };
+    for available in [true, false] {
+        view_state.home_agents = Some(
+            serde_json::from_value(serde_json::json!({
+                "revision":3,"phase":"live","observedSessions":1,"totalSessions":1,
+                "truncatedSessions":0,"truncatedRows":0,"note":null,
+                "rows":[{"key":"a","sessionId":"$0","paneId":"p0","name":"Codex",
+                    "sessionLabel":"x","harness":"codex","status":"WORKING",
+                    "attention":false,"available":available}]
+            }))
+            .unwrap(),
+        );
+        let listed = rows(&view_state);
+        let agent = listed.iter().find(|r| r.label == "Codex").unwrap();
+        assert_eq!(agent.agent.as_deref(), Some("a"));
+        assert_eq!(agent.target.is_some(), available, "available: {available}");
+    }
+}
+
+/// Below 900pt Home hides its sidebar, and the top row agrees: its controls
+/// stop spanning the sidebar's width (#746).
+#[gpui::test]
+fn the_top_row_and_the_sidebar_agree_on_homes_width_rule(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (_, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    for (width, shown) in [(1200., true), (800., false)] {
+        cx.simulate_resize(size(px(width), px(800.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let sidebar = cx.debug_bounds("tmux-sidebar-viewport");
+        let cluster = cx.debug_bounds("sidebar-top-row").unwrap();
+        let spans =
+            (cluster.right() - px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)).abs() <= px(1.);
+        assert_eq!(sidebar.is_some(), shown, "sidebar at {width}");
+        assert_eq!(spans, shown, "top row at {width}: {cluster:?}");
+    }
+}
+
+/// The filters are a tab list of tabs, the chosen one selected (#746).
+#[gpui::test]
+fn the_filters_are_a_tab_list_with_the_chosen_tab_selected(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::home::fleet_nav::View;
+    use gpui::accesskit::{Node, Role as A11y};
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        fleet_with_agents(&mut view);
+        view
+    });
+    view.update(cx, |view, cx| {
+        let list = view.fleet_nav_list();
+        assert_eq!(list.a11y_role(), Some(A11y::TabList));
+        for selected in [true, false] {
+            let tab = view.fleet_nav_row(0, &View::All, selected, cx);
+            assert_eq!(tab.a11y_role(), Some(A11y::Tab));
+            let mut node = Node::new(A11y::Tab);
+            tab.write_a11y_info(&mut node);
+            assert_eq!(node.is_selected(), Some(selected));
+            assert_eq!(node.label(), Some("All sessions"));
+        }
+    });
+}

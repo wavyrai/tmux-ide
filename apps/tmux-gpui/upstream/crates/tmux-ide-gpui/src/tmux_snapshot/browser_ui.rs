@@ -638,8 +638,7 @@ impl SnapshotView {
         let is_home = self.browser_state.surface == browser::Surface::Home;
         // Home shows the sidebar too, with its Home row selected (#746),
         // while the window leaves Home's table room beside it.
-        let show_sidebar = !self.sidebar_hidden
-            && (!is_home || window.viewport_size().width >= px(HOME_SIDEBAR_MIN));
+        let show_sidebar = self.sidebar_shown(window);
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
         self.chrome.sync(window, cx);
@@ -937,6 +936,17 @@ impl SnapshotView {
 pub(super) const SIDEBAR_WIDTH: f32 = 224.;
 /// The narrowest window that shows Home's sidebar beside its table.
 pub(super) const HOME_SIDEBAR_MIN: f32 = 900.;
+
+impl SnapshotView {
+    /// Whether the sidebar shows: unless hidden, and on Home only while the
+    /// window leaves Home's table room beside it (#746). The sidebar and the
+    /// top row both ask this, so they always agree.
+    pub(super) fn sidebar_shown(&self, window: &Window) -> bool {
+        !self.sidebar_hidden
+            && (self.browser_state.surface != browser::Surface::Home
+                || window.viewport_size().width >= px(HOME_SIDEBAR_MIN))
+    }
+}
 
 /// The keyboard-selected row's ring, laid over the row so focus never
 /// changes its size.

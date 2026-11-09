@@ -129,7 +129,7 @@ impl SnapshotView {
         }
     }
 
-    fn fleet_nav_row(
+    pub(super) fn fleet_nav_row(
         &self,
         index: usize,
         entry: &View,
@@ -205,16 +205,9 @@ impl SnapshotView {
             }))
     }
 
-    /// The filter row over the table (#746): All sessions, Favourites, each
-    /// machine with its status dot, and Add machine…, wrapping in a narrow
-    /// window. `None` without a fleet.
-    pub(super) fn fleet_nav(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let fleet = self.browser_state.fleet.as_ref()?;
-        let bezel = self.home_palette();
-        let current = self.home_fleet_view();
-        let request = self.browser_request;
-        let entries = fleet_nav::entries(Some(fleet));
-        let mut list = div()
+    /// The filter row itself: a horizontal tab list, which ←/→ step.
+    pub(super) fn fleet_nav_list(&self) -> Stateful<Div> {
+        div()
             .id("home-fleet-nav")
             .debug_selector(|| "home-fleet-nav".into())
             .role(Role::TabList)
@@ -228,7 +221,19 @@ impl SnapshotView {
             .items_center()
             .when_some(self.home_filter.as_ref(), |list, c| {
                 list.track_focus(&c.fleet_nav)
-            });
+            })
+    }
+
+    /// The filter row over the table (#746): All sessions, Favourites, each
+    /// machine with its status dot, and Add machine…, wrapping in a narrow
+    /// window. `None` without a fleet.
+    pub(super) fn fleet_nav(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let fleet = self.browser_state.fleet.as_ref()?;
+        let bezel = self.home_palette();
+        let current = self.home_fleet_view();
+        let request = self.browser_request;
+        let entries = fleet_nav::entries(Some(fleet));
+        let mut list = self.fleet_nav_list();
         for (index, entry) in entries.iter().enumerate() {
             let row = self.fleet_nav_row(index, entry, *entry == current, cx);
             list = list.child(row.w_auto().max_w(px(NAV_WIDTH)));
