@@ -31,10 +31,8 @@ fn the_unfocused_card_is_three_l_star_toward_the_ink() {
         let t = theme(bg, fg);
         let fill = unfocused_fill(&t).unwrap();
         let step = lstar(fill) - lstar(bg);
-        assert!(
-            step.abs() >= FOCUS_STEP && step.abs() < FOCUS_STEP + 0.6,
-            "{step}"
-        );
+        // At least 3 L*, and no more than the search's own resolution past.
+        assert!(step.abs() >= 3.0 && step.abs() < 3.6, "{step}");
         assert_eq!(step < 0., lstar(bg) > 50.);
     }
 }
@@ -81,4 +79,20 @@ fn the_selected_capsule_is_opaque_in_both_appearances() {
     let (fill, _) = selected_capsule(&dark);
     assert_eq!(fill.a, 1.);
     assert!(lstar(u32::from(gpui::Rgba::from(fill)) >> 8) > lstar(dark.surface) + 5.);
+}
+
+/// #746 v3: in every catalog theme that takes the step, the unfocused card
+/// stands at least 3 L* from the focused one (a literal, not FOCUS_STEP, so
+/// a weaker constant can't pass).
+#[test]
+fn every_catalog_theme_that_steps_moves_at_least_three_l_star() {
+    let mut stepped = 0;
+    for (name, theme) in crate::tmux_snapshot::ink::tests::catalog_themes() {
+        if let Some(fill) = unfocused_fill(&theme) {
+            let step = (lstar(fill) - lstar(theme.background)).abs();
+            assert!(step >= 3.0, "{name}: {step:.2} L*");
+            stepped += 1;
+        }
+    }
+    assert!(stepped > 20, "only {stepped} themes took the step");
 }
