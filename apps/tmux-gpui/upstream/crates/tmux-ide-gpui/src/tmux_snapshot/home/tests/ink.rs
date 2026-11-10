@@ -113,7 +113,7 @@ pub(super) fn faint_muted() -> serde_json::Value {
 }
 
 #[gpui::test]
-fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
+fn home_text_reads_where_bezels_muted_does_not(cx: &mut TestAppContext) {
     // The appearance bezel paints in is process-wide: hold it, so no test
     // running alongside changes it under this one.
     let _appearance = bezel_theme::lock_appearance();
@@ -150,16 +150,18 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
     let (theme, canvas) = view.read_with(cx, |v, _| (v.theme(), v.canvas()));
     let plates = plates_under_text(&theme, canvas);
     // The chrome's tiers read on the chrome's own surfaces, Home's plate
-    // among them (#746 v3); Home's washes over it (the field, a hovered or
-    // selected row, a key cap) are what the Home ink must still answer for.
+    // among them (#746 v3), so Bezel's text now reads here too. Its muted
+    // does not on Home's washes over the plate (the field, a hovered or
+    // selected row, a key cap): that is what the Home ink must answer for.
     let stock = design::palette(&theme);
+    let fails = |color: Hsla| {
+        plates.iter().any(|(plate, _)| {
+            bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
+        })
+    };
     assert!(
-        [stock.text, stock.text_muted].iter().any(|&color| {
-            plates.iter().any(|(plate, _)| {
-                bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
-            })
-        }),
-        "Bezel's text or muted must fail on Home's plates here, or the test proves nothing"
+        fails(stock.text_muted),
+        "Bezel's muted must fail on one of Home's plates here, or the test proves nothing"
     );
     cx.update(|_, cx| cx.set_global(InkProbes::default()));
     cx.simulate_resize(size(px(1400.), px(1800.)));
