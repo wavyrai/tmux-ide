@@ -49,34 +49,27 @@ impl Local {
             self.publish()
         }))
     }
+    /// Home's own trouble outranks the notice: once Home reconnects, stops
+    /// on a fault, or recovers an open session, the notice is dropped for
+    /// good so the strip says what is happening now.
+    pub(super) fn pane_limit_superseded(&mut self) {
+        if self.home.active() || self.home.fault().is_some() || self.recovery.is_some() {
+            self.state.home_notice = None;
+        }
+    }
     fn too_many_panes(&self, label: &str, count: u64) -> String {
+        // No single command attaches reliably: a managed install's tmux is
+        // bundled off PATH, and the session's server may not be on tmux's
+        // default socket. So the notice names the machine, not a command.
         let place = if self.machine_id == "local" {
             "in Terminal".to_string()
         } else {
             format!("in a terminal on {}", self.machine_label)
         };
-        notice(label, count, &place)
-    }
-}
-
-fn notice(label: &str, count: u64, place: &str) -> String {
-    format!(
-        "“{label}” has {count} panes. This app opens sessions with up to \
-         {NATIVE_STREAM_MAX_PANES}. Close panes until it has {NATIVE_STREAM_MAX_PANES} \
-         or fewer, or open it {place} with: tmux attach -t {}",
-        shell_word(label)
-    )
-}
-
-/// `name` as one shell word, quoted only when it needs to be.
-fn shell_word(name: &str) -> String {
-    let plain = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '@' | '+'));
-    if plain {
-        name.into()
-    } else {
-        format!("'{}'", name.replace('\'', r"'\''"))
+        format!(
+            "“{label}” has {count} panes. This app opens sessions with up to \
+             {NATIVE_STREAM_MAX_PANES}. Close panes until it has {NATIVE_STREAM_MAX_PANES} \
+             or fewer, or attach to it with tmux {place}."
+        )
     }
 }

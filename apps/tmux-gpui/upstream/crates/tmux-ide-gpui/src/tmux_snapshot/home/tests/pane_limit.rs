@@ -43,6 +43,18 @@ fn a_notice_keeps_the_live_list_and_takes_the_warning_strip(cx: &mut TestAppCont
         let state = &view.browser_state;
         assert_eq!(status_tone(state, true), StatusTone::Warning);
         assert_eq!(status_message(state, true), NOTICE);
+    });
+    // Reconnecting and fault status outrank the notice.
+    view.update(cx, |view, _| {
+        let mut state = view.browser_state.clone();
+        state.status = "Reconnecting…".into();
+        state.reconnect_attempt = Some(1);
+        assert_eq!(status_message(&state, true), "Reconnecting…");
+        state.reconnect_attempt = None;
+        state.home_fault = true;
+        state.status = "The daemon needs an update.".into();
+        assert_eq!(status_message(&state, true), "The daemon needs an update.");
+        let state = &view.browser_state;
         assert_eq!(
             state.sessions[1].pane_count_label().as_deref(),
             Some("38 panes · too many")

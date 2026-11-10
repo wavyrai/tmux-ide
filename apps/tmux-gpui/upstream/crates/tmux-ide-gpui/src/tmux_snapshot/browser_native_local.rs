@@ -196,6 +196,7 @@ impl Local {
         self.events.emit(event)
     }
     fn publish(&mut self) -> Result<(), Error> {
+        self.pane_limit_superseded();
         let mut state = self.state.clone();
         // Home has no terminal stream to acknowledge focus. Once a route is
         // open, its controller remains the authority for presence admission.

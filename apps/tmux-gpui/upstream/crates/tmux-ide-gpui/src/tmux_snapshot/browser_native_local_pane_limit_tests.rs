@@ -1,6 +1,7 @@
 //! A session over the native pane limit leaves Home live: the rest of the
 //! catalog stays, and a notice names the session and what to do instead.
 use super::*;
+use herdr_client::tmux_daemon::Error as DaemonError;
 use herdr_client::tmux_daemon::{
     AgentActivity, AgentSelection, CatalogIdentity, FleetCatalog, FleetCatalogSessions,
     ObservedAgent, ObservedHarness, OpenedAgent,
@@ -47,6 +48,25 @@ fn catalog(small_panes: u32) -> FleetCatalog {
         }],
     }
 }
+fn selection(local: &Local, target: &Target) -> AgentSelection {
+    AgentSelection {
+        catalog_identity: local.catalog_identity.clone().unwrap(),
+        live_session_id: target.live.clone(),
+        workspace_name: "fixture".into(),
+        agent: ObservedAgent {
+            id: "agent.one".into(),
+            name: "Build".into(),
+            harness: ObservedHarness::Codex,
+            activity: AgentActivity::Running,
+            attention: false,
+            pane_id: Some("pane.p0".into()),
+            window_id: None,
+            native_identity: None,
+            interaction_endpoint: None,
+            team: None,
+        },
+    }
+}
 fn drain(events: &mpsc::Receiver<Incoming>) {
     while events.try_recv().is_ok() {}
 }
@@ -81,7 +101,10 @@ fn assert_live_home_with_notice(local: &Local, label: &str, count: u64) {
         notice.contains("Close panes until it has 24 or fewer"),
         "{notice}"
     );
-    assert!(notice.contains("in Terminal"), "{notice}");
+    assert!(
+        notice.ends_with("or attach to it with tmux in Terminal."),
+        "{notice}"
+    );
 }
 
 #[test]
@@ -96,8 +119,6 @@ fn an_oversized_session_in_the_catalog_is_refused_and_home_keeps_every_session()
         assert_eq!(local.state.request, 7);
         assert_live_home_with_notice(&local, label, count);
     }
-    let notice = local.state.home_notice.clone().unwrap();
-    assert!(notice.ends_with("tmux attach -t '38 windows'"), "{notice}");
     // Every other session still opens, and opening one clears the notice.
     local.open(8, key(&local, SMALL), None).unwrap();
     assert!(matches!(local.stage, Some(Stage::Open { .. })));
@@ -171,23 +192,7 @@ fn an_agent_open_over_the_limit_is_handled_the_same_way() {
     let Some(Stage::Open { target, .. }) = local.stage.take() else {
         panic!("open missing");
     };
-    let selection = AgentSelection {
-        catalog_identity: local.catalog_identity.clone().unwrap(),
-        live_session_id: target.live.clone(),
-        workspace_name: "fixture".into(),
-        agent: ObservedAgent {
-            id: "agent.one".into(),
-            name: "Build".into(),
-            harness: ObservedHarness::Codex,
-            activity: AgentActivity::Running,
-            attention: false,
-            pane_id: Some("pane.p0".into()),
-            window_id: None,
-            native_identity: None,
-            interaction_endpoint: None,
-            team: None,
-        },
-    };
+    let selection = selection(&local, &target);
     local
         .completed(
             Stage::AgentOpen {
@@ -214,7 +219,7 @@ fn a_remote_notice_says_which_machine_to_attach_on() {
     local.open(2, key(&local, BIG), None).unwrap();
     let notice = local.state.home_notice.unwrap();
     assert!(
-        notice.contains("in a terminal on build-mac with: tmux attach -t big"),
+        notice.ends_with("or attach to it with tmux in a terminal on build-mac."),
         "{notice}"
     );
 }
@@ -229,4 +234,90 @@ fn rows_over_the_limit_say_they_are_too_many_to_open() {
     assert_eq!(label(SMALL), "24 panes");
     assert_eq!(label(BIG), "25 panes · too many");
     assert_eq!(label(HUGE), "38 panes · too many");
+}
+
+/// Reconnecting and fault status replace the notice for good (review of #351).
+#[test]
+fn a_catalog_failure_after_the_notice_says_reconnecting() {
+    let (mut local, events) = loaded(3);
+    local.open(3, key(&local, BIG), None).unwrap();
+    assert!(local.state.home_notice.is_some());
+    local
+        .home_catalog_failed(DaemonError::ServerChanged)
+        .unwrap();
+    drain(&events);
+    assert!(local.state.home_notice.is_none());
+    assert_eq!(local.state.status, "Reconnecting…");
+    // A click while Home reconnects says so, not the old notice.
+    local.open(4, key(&local, SMALL), None).unwrap();
+    drain(&events);
+    assert!(local.stage.is_none());
+    assert!(local.state.home_notice.is_none());
+    assert_eq!(local.state.status, "Still reconnecting…");
+}
+
+#[test]
+fn a_fault_after_the_notice_shows_the_fault() {
+    let (mut local, events) = loaded(3);
+    local.open(3, key(&local, BIG), None).unwrap();
+    local
+        .home_catalog_failed(DaemonError::Incompatible(3))
+        .unwrap();
+    drain(&events);
+    assert!(local.state.home_notice.is_none());
+    assert!(
+        local.state.status.contains("needs an update"),
+        "{}",
+        local.state.status
+    );
+    local.open(4, key(&local, BIG), None).unwrap();
+    drain(&events);
+    assert!(
+        local.state.home_notice.is_none(),
+        "a blocked click must not bring the notice back"
+    );
+}
+
+/// An agent open with no panes keeps the old unavailable path.
+#[test]
+fn an_agent_open_with_no_panes_is_unavailable() {
+    let (mut local, events) = loaded(3);
+    local.open(5, key(&local, SMALL), None).unwrap();
+    let Some(Stage::Open { target, .. }) = local.stage.take() else {
+        panic!("open missing");
+    };
+    local
+        .completed(
+            Stage::AgentOpen {
+                target: target.clone(),
+                selection: Box::new(selection(&local, &target)),
+            },
+            CatalogResult::AgentOpened(OpenedAgent {
+                workspace_name: "fixture".into(),
+                panes: Vec::new(),
+                selected: "pane.p0".into(),
+            }),
+        )
+        .unwrap();
+    drain(&events);
+    assert_eq!(local.state.home_phase, HomePhase::Unavailable);
+    assert_eq!(
+        local.state.status,
+        "Session exceeds the native stream pane limit"
+    );
+    assert!(local.stage.is_none());
+}
+
+/// The app's limit must equal the one the daemon enforces at issue.
+#[test]
+fn the_native_limit_matches_the_contract() {
+    let contract = include_str!("../../../../../../../packages/contracts/src/pane-stream.ts");
+    let line = contract
+        .lines()
+        .find(|l| l.starts_with("export const PANE_STREAM_MAX_PANES = "))
+        .unwrap();
+    let value = line
+        .trim_start_matches("export const PANE_STREAM_MAX_PANES = ")
+        .trim_end_matches(';');
+    assert_eq!(value.parse::<u64>().unwrap(), NATIVE_STREAM_MAX_PANES);
 }

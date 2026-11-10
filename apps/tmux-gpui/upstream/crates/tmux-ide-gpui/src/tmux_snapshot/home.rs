@@ -152,9 +152,12 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     if connected && let Some(setup) = &state.local_setup {
         return setup.phase.guidance().into();
     }
+    // Reconnecting and fault status outrank a pane-limit notice.
     match &state.home_notice {
-        Some(notice) => crate::notifications::safe_text(notice, 480),
-        None => crate::notifications::safe_text(&state.status, 240),
+        Some(notice) if state.reconnect_attempt.is_none() && !state.home_fault => {
+            crate::notifications::safe_text(notice, 480)
+        }
+        _ => crate::notifications::safe_text(&state.status, 240),
     }
 }
 fn current(state: &browser::State, connected: bool, request: u64, captured: u64, id: &str) -> bool {
