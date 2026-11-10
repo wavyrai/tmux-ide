@@ -71,3 +71,35 @@ fn every_tier_reads_on_every_surface_in_every_theme() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// G3: a theme gets the lightest frost at which its tiers hold (three if any
+/// alpha allows, else two); a theme whose muted ink can't read over the
+/// worst desktop at any frost runs opaque.
+#[test]
+fn every_theme_frosts_only_where_its_tiers_hold() {
+    use crate::tmux_snapshot::design::{frost, palette};
+    for (name, theme) in catalog_themes() {
+        match frost(&theme) {
+            Some(alpha) => {
+                assert!((0.6..=0.94).contains(&alpha), "{name}: {alpha}");
+                assert!(tiers_at(&theme, Some(alpha)).levels >= 2, "{name}");
+                assert!(palette(&theme).vibrancy, "{name}");
+            }
+            None => {
+                let bezel = palette(&theme);
+                assert!(!bezel.vibrancy && !bezel.glass, "{name} runs opaque");
+            }
+        }
+    }
+    // An ink that doesn't reach 4.6:1 even on its own plate can't read over
+    // any desktop at any frost.
+    let washed = Theme {
+        background: 0xf4f4f4,
+        surface: 0xeeeeee,
+        foreground: 0x808080,
+        muted: 0x999999,
+        ..Theme::default()
+    };
+    assert_eq!(frost(&washed), None);
+    assert!(!palette(&washed).vibrancy);
+}

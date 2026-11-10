@@ -89,7 +89,9 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     if foreground_reads && !reads(result.text_muted) {
         result.text_muted = color(chrome_text(theme, theme.muted));
     }
-    if high {
+    // A theme whose inks can't read over the frost at any density runs
+    // opaque (#746 glass plan, G3).
+    if high || frost(theme).is_none() {
         result.glass = false;
         result.vibrancy = false;
     }
@@ -151,7 +153,9 @@ const FROST_TO: u32 = 94;
 /// The frost's coverage, per theme and the same rule in light and dark: the
 /// lowest alpha at which the three ink tiers hold (muted at 4.6:1, text at
 /// least 0.25 above it) on the frosted plate and a hovered row over every
-/// one of [`DESKTOPS`]. Bezel's 0.80 where no alpha up to 0.94 gets there.
+/// one of [`DESKTOPS`]. Where no alpha up to 0.94 gives three, the tiers
+/// collapse to two and the search runs again; where muted still can't read
+/// over the worst desktop, `None`: that theme runs opaque, glass off.
 pub(crate) fn frost(theme: &Theme) -> Option<f32> {
     thread_local! {
         static CACHE: std::cell::RefCell<Vec<(Theme, Option<f32>)>> = Default::default();
@@ -161,10 +165,12 @@ pub(crate) fn frost(theme: &Theme) -> Option<f32> {
     {
         return found;
     }
-    let found = (FROST_FROM..=FROST_TO)
-        .map(|step| step as f32 / 100.)
-        .find(|&alpha| super::ink::tiers_at(theme, Some(alpha)).levels == 3)
-        .or(Some(bezel_theme::Theme::VIBRANCY_ALPHA));
+    let lowest = |levels: u8| {
+        (FROST_FROM..=FROST_TO)
+            .map(|step| step as f32 / 100.)
+            .find(|&alpha| super::ink::tiers_at(theme, Some(alpha)).levels >= levels)
+    };
+    let found = lowest(3).or_else(|| lowest(2));
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         if c.len() >= 8 {
