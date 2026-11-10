@@ -1,9 +1,11 @@
 //! Recovery after a lost terminal stream. While the daemon is the same one, the
 //! app re-issues a lease for the same session and keeps retrying with backoff; the
 //! terminal loop keeps the last frame on screen meanwhile. Only a changed daemon
-//! sends recovery through rediscovery. A new daemon authorizes an old server
-//! generation only for a local restart with the identical live session, and
-//! recovery never repeats owner mutations.
+//! sends recovery through rediscovery, which also keeps the window as it was
+//! until it ends. A new daemon authorizes an old server generation only for a
+//! local restart with the identical live session (`reconnect_catalog`), so
+//! retrying through a daemon update can never bind the window to another
+//! session, and recovery never repeats owner mutations.
 use super::*;
 
 /// What a rebind needs to re-issue a lease without reading the catalog again.
@@ -51,16 +53,26 @@ impl Recovery {
 }
 /// Backoff doubles from 250 ms to this cap and never gives up on the same daemon.
 const MAX_DELAY: Duration = Duration::from_secs(30);
+/// Other failures in a row, with no catalog listing the session in between,
+/// before rediscovery stops: about nine minutes at the backoff cap.
+const MAX_OTHERS: u8 = 20;
 const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+/// The daemon now speaks a protocol this app does not: only an app update helps.
+pub(super) const UPDATE_APP: &str =
+    "tmux-ide was updated and this app can no longer talk to it. Update the app to reconnect.";
 pub(super) const RECONNECTING: &str = "Connection lost. Reconnecting…";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
     /// Retried with backoff, forever.
     Unreachable,
-    /// A different daemon answered. A rebind turns into rediscovery; rediscovery
-    /// stops.
+    /// A different daemon answered, or a stale record named the old one while
+    /// the new one already answered. A rebind turns into rediscovery; rediscovery
+    /// reads the record again and backs off, as for an unreachable daemon.
     Identity,
-    /// A rebind turns into rediscovery; rediscovery retries at most three times.
+    /// The daemon speaks another protocol: recovery ends with [`UPDATE_APP`].
+    Incompatible,
+    /// A rebind turns into rediscovery; rediscovery backs off, and stops after
+    /// [`MAX_OTHERS`] in a row without a catalog listing the session.
     Other,
 }
 impl Failure {
@@ -69,7 +81,8 @@ impl Failure {
         match error {
             E::Network(_) | E::RecordChanged | E::OwnerExited => Self::Unreachable,
             E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
-            E::IdentityFormat | E::IdentityChanged | E::Incompatible(_) => Self::Identity,
+            E::IdentityFormat | E::IdentityChanged => Self::Identity,
+            E::Incompatible(_) => Self::Incompatible,
             _ => Self::Other,
         }
     }
@@ -115,6 +128,9 @@ impl Local {
         let Some(recovery) = self.recovery.as_mut() else {
             return Ok(());
         };
+        if failure == Failure::Incompatible {
+            return self.unavailable(UPDATE_APP);
+        }
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
             // Not the daemon or session the stream came from: look it up again.
             recovery.rebind = None;
@@ -123,7 +139,7 @@ impl Local {
             if failure == Failure::Other {
                 recovery.others += 1;
             }
-            if failure == Failure::Identity || recovery.others > 3 {
+            if recovery.others > MAX_OTHERS {
                 return self.unavailable(GIVE_UP);
             }
         }
@@ -183,8 +199,9 @@ impl Local {
             self.state.status = RECONNECTING.into();
             return self.publish();
         }
-        let request = self.state.request;
-        self.home(request)?;
+        // Rediscovery keeps the window as it was: no Home, no loading state.
+        self.background_fleet.refresh();
+        self.restart_discovery(false)?;
         self.state.status = RECONNECTING.into();
         self.recovery = Some(recovery);
         self.publish()
@@ -226,6 +243,9 @@ impl Local {
             return Ok(true);
         };
         self.open(self.state.request, key, recovery.pane.clone())?;
+        // Listed again: failures after this are counted afresh.
+        let mut recovery = recovery;
+        recovery.others = 0;
         // A session now over the pane limit is refused with a notice and no
         // stage; nothing would retry it, so its recovery ends here.
         if self.state.home_notice.is_none() {
