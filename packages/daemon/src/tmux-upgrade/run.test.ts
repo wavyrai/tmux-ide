@@ -497,6 +497,31 @@ describe("before and after the kill", () => {
   });
 });
 
+describe("guards the reviewer's mutants found unprotected", () => {
+  it("upgrades a server whose features can't be read, rather than calling it full", async () => {
+    const f = fake();
+    f.set({ features: ["unknown", "full"] });
+    expect((await upgradeServer(f.io, YES)).status).toBe("upgraded");
+  });
+
+  it("fails when the restored server's shape differs from the snapshot", async () => {
+    const f = fake();
+    f.set({ listings: [LISTING, LISTING, LISTING, ["api\t0\t0"]] });
+    const result = await upgradeServer(f.io, YES);
+    expect(result.status).toBe("failed");
+    expect(result.message).toMatch(/session api came back with 1 panes, the snapshot has 2/);
+  });
+
+  it("gives up after three snapshots when the server keeps changing", async () => {
+    const f = fake();
+    const changed = [...LISTING, "api\t0\t2"];
+    f.set({ listings: Array.from({ length: 10 }, () => [LISTING, changed]).flat() });
+    await expect(upgradeServer(f.io, ASK)).rejects.toThrow(/keeps changing/);
+    expect(f.calls.filter((call) => call === "save")).toHaveLength(3);
+    expect(killed(f.calls)).toBe(false);
+  });
+});
+
 describe("run from an agent's own pane", () => {
   it("does not count the calling pane as an agent mid-turn", async () => {
     const working = snapshot(`working:${NOW}`);

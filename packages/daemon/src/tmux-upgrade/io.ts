@@ -113,12 +113,21 @@ export function executableFromLsof(output: string): string {
 }
 
 /**
+ * PURE: a `/proc/<pid>/exe` link as a path to run. After a package upgrade
+ * replaced the file, Linux appends " (deleted)"; the path then names the new
+ * binary, which is what a fallback restore should run.
+ */
+export function procExePath(link: string): string {
+  return link.replace(/ \(deleted\)$/u, "");
+}
+
+/**
  * The binary a process runs, or "" when it can't be read. `ps -o comm=` gives
  * only "tmux" for a server started by its PATH name, so macOS asks lsof.
  */
 export function processExecutable(pid: number): string {
   try {
-    if (process.platform === "linux") return readlinkSync(`/proc/${pid}/exe`);
+    if (process.platform === "linux") return procExePath(readlinkSync(`/proc/${pid}/exe`));
     const lsof = executableFromLsof(
       execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
         encoding: "utf8",
@@ -194,6 +203,22 @@ export function ownPaneFrom(ancestors: readonly number[], lines: readonly string
   );
   const mine = ancestors.find((pid) => panes.has(pid));
   return mine === undefined ? null : (panes.get(mine) ?? null);
+}
+
+/** Ask at a terminal. No terminal, a failed read or anything but y/yes is No. */
+export async function confirmAt(
+  question: string,
+  terminal: { isTTY: boolean; ask(text: string): Promise<string>; print(text: string): void },
+): Promise<boolean> {
+  if (!terminal.isTTY) {
+    terminal.print("No terminal to ask in. Pass --yes to go ahead. Nothing was stopped.");
+    return false;
+  }
+  try {
+    return answerIsYes(await terminal.ask(question));
+  } catch {
+    return false;
+  }
 }
 
 /** PURE: the prompt's answer. Anything but y or yes, including nothing, is No. */
@@ -453,20 +478,19 @@ export function createUpgradeIo(options: UpgradeIoOptions): UpgradeIo {
       // $TMUX can be unset or wrong; the process tree can't.
       return this.ownPane(client, at) !== null;
     },
-    async confirm(question) {
-      if (!process.stdin.isTTY) {
-        print("No terminal to ask in. Pass --yes to go ahead. Nothing was stopped.");
-        return answerIsYes(null);
-      }
-      const prompt = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        return answerIsYes(await prompt.question(question));
-      } catch {
-        return answerIsYes(null);
-      } finally {
-        prompt.close();
-      }
-    },
+    confirm: (question) =>
+      confirmAt(question, {
+        isTTY: Boolean(process.stdin.isTTY),
+        print,
+        ask: async (text) => {
+          const prompt = createInterface({ input: process.stdin, output: process.stdout });
+          try {
+            return await prompt.question(text);
+          } finally {
+            prompt.close();
+          }
+        },
+      }),
     startWorker(work) {
       const folder = runDirectory();
       const statePath = join(folder, "worker.json");

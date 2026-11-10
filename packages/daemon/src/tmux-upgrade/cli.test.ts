@@ -7,8 +7,10 @@ import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
 import { forwardedUpgradeArgs } from "./cli.ts";
 import {
   answerIsYes,
+  confirmAt,
   executableFromLsof,
   ownPaneFrom,
+  procExePath,
   killGuardArgs,
   killOutcome,
   parseWorkerState,
@@ -148,6 +150,10 @@ describe("process facts", () => {
     ).toBe("/opt/homebrew/Cellar/tmux/3.5a/bin/tmux");
     expect(executableFromLsof("p123\n")).toBe("");
   });
+  it("drops Linux's ' (deleted)' suffix from a replaced binary", () => {
+    expect(procExePath("/usr/bin/tmux (deleted)")).toBe("/usr/bin/tmux");
+    expect(procExePath("/usr/bin/tmux")).toBe("/usr/bin/tmux");
+  });
   it("finds the pane this process runs in from its ancestry", () => {
     const lines = ["700\tapi:0.1", "555\tweb:1.0"];
     expect(ownPaneFrom([900, 800, 700, 1], lines)).toBe("api:0.1");
@@ -164,6 +170,32 @@ describe("the prompt's answer", () => {
     expect(answerIsYes("yep")).toBe(false);
     expect(answerIsYes("y")).toBe(true);
     expect(answerIsYes(" YES ")).toBe(true);
+  });
+});
+
+describe("confirmAt", () => {
+  const terminal = (isTTY: boolean, answer: string | Error) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      isTTY,
+      print: () => {},
+      ask: async (text: string) => {
+        asked.push(text);
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    };
+  };
+  it("says No without a terminal and never reads input", async () => {
+    const t = terminal(false, "y");
+    expect(await confirmAt("Go? ", t)).toBe(false);
+    expect(t.asked).toEqual([]);
+  });
+  it("says No to an empty answer or a closed input, Yes only to y/yes", async () => {
+    expect(await confirmAt("Go? ", terminal(true, ""))).toBe(false);
+    expect(await confirmAt("Go? ", terminal(true, new Error("closed")))).toBe(false);
+    expect(await confirmAt("Go? ", terminal(true, "y"))).toBe(true);
   });
 });
 
