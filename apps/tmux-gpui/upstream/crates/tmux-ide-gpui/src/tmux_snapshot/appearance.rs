@@ -30,6 +30,17 @@ pub(super) struct Colors {
     /// A preset's own pane card border, when it names one (#746).
     #[serde(default, rename = "cardBorder")]
     pub card_border: Option<u32>,
+    /// A preset's own chrome inks, when it names them (#746).
+    #[serde(default)]
+    pub chrome: Option<ChromeColors>,
+}
+/// The chrome inks a preset names: hairline, outline and faint.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ChromeColors {
+    pub hairline: u32,
+    pub outline: u32,
+    pub faint: u32,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +73,11 @@ impl Appearance {
             && c.palette.len() == 256
             && c.palette.iter().all(|v| *v <= 0xffffff)
             && c.card_border.is_none_or(|v| v <= 0xffffff)
+            && c.chrome.is_none_or(|c| {
+                [c.hairline, c.outline, c.faint]
+                    .iter()
+                    .all(|v| *v <= 0xffffff)
+            })
             && [
                 c.canvas,
                 c.background,
@@ -85,6 +101,11 @@ impl Appearance {
             active: c.active,
             muted: c.muted,
             card_border: c.card_border,
+            chrome: c.chrome.map(|c| crate::config::Chrome {
+                hairline: c.hairline,
+                outline: c.outline,
+                faint: c.faint,
+            }),
             ..Theme::default()
         };
         // valid() is required before publication; no theme mutates canonical cells.

@@ -49,6 +49,17 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.text = color(theme.foreground);
         brand.ink.for_appearance(appearance).paint(&mut result);
     }
+    // A preset that names its chrome inks (#746: Linen) gets them as they are:
+    // its hairlines, outlines and resting icons in its own warm greys, and its
+    // body text opaque rather than Bezel's 85% ink.
+    if let Some(chrome) = theme.chrome {
+        result.border_faint = color(chrome.hairline);
+        result.border = color(chrome.outline);
+        result.text_faint = color(chrome.faint);
+        if foreground_reads {
+            result.text = color(theme.foreground);
+        }
+    }
     // Body text is drawn on the background and on the surface. Where Bezel's
     // translucent ink drops it under 4.5:1 on either (the saturated presets,
     // Solarized), it becomes the opaque foreground with its lightness moved

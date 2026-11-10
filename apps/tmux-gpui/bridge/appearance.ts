@@ -1,6 +1,7 @@
 // Resolve the shared tmux-ide catalog in the helper, never on the GPUI thread.
 import {
   VISUAL_THEME_CARD_BORDERS,
+  VISUAL_THEME_NATIVE_CHROME,
   VISUAL_THEME_PRESETS,
   findVisualThemePreset,
   resolveVisualTheme,
@@ -34,6 +35,8 @@ export function resolveNativeAppearance(selected: string, system: SystemAppearan
   const presetId = selected === "system" ? SYSTEM_PRESETS[system] : selected;
   const preset = findVisualThemePreset(presetId);
   const cardBorder = VISUAL_THEME_CARD_BORDERS[presetId];
+  const nativeChrome = VISUAL_THEME_NATIVE_CHROME[presetId];
+  const hex = (value: string) => parseInt(value.slice(1), 16);
   const { tokens: t } = resolveVisualTheme({
     appearance: selected === "system" ? system : selected === "light" ? "light" : "dark",
     userTheme: preset,
@@ -77,7 +80,17 @@ export function resolveNativeAppearance(selected: string, system: SystemAppearan
       accent: colors.accent,
       palette: createVisualTerminalPalette(colors),
       // Only a preset that names its card border sends one (#746).
-      ...(cardBorder ? { cardBorder: parseInt(cardBorder.slice(1), 16) } : {}),
+      ...(cardBorder ? { cardBorder: hex(cardBorder) } : {}),
+      // Only a preset that names its chrome inks sends them (#746).
+      ...(nativeChrome
+        ? {
+            chrome: {
+              hairline: hex(nativeChrome.hairline),
+              outline: hex(nativeChrome.outline),
+              faint: hex(nativeChrome.faint),
+            },
+          }
+        : {}),
     },
     options: appearanceOptions,
   };

@@ -17,9 +17,23 @@ pub struct Theme {
     /// A preset's own pane card border (#746: Linen). Unset, cards keep
     /// Bezel's `border`.
     pub card_border: Option<u32>,
+    /// A preset's own chrome inks (#746: Linen). Unset, the chrome keeps
+    /// Bezel's translucent greys and ink.
+    pub chrome: Option<Chrome>,
     pub palette: [u32; 256],
     /// Applied by [`Theme::with_contrast`]; every theme loads as `Standard`.
     pub contrast: Contrast,
+}
+
+/// The chrome inks a preset names for itself, packed 24-bit RGB (#746).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chrome {
+    /// Dividers and rules: Bezel's `border_faint`.
+    pub hairline: u32,
+    /// Tile, chip and field outlines: Bezel's `border`.
+    pub outline: u32,
+    /// Icons at rest: Bezel's `text_faint`.
+    pub faint: u32,
 }
 
 impl Default for Theme {
@@ -49,6 +63,7 @@ impl Default for Theme {
             muted: 0x827e91,
             sidebar: None,
             card_border: None,
+            chrome: None,
             palette,
             contrast: Contrast::Standard,
         }

@@ -158,3 +158,33 @@ fn only_linen_names_its_own_card_border() {
         }
     }
 }
+#[test]
+fn linen_paints_its_own_chrome_inks_and_others_keep_bezels() {
+    let mut owner = Owner::load(None).unwrap();
+    let hsla = |value: u32| -> gpui::Hsla { gpui::rgb(value).into() };
+    // System is Linen Dark in dark mode and Linen in light mode (#746 mockup
+    // values: hairline, outline, faint, opaque text).
+    for (system, hairline, outline, faint, text) in [
+        (System::Dark, 0x36322c, 0x423d36, 0x7d7569, 0xe9e3d8),
+        (System::Light, 0xe3ddd2, 0xd6cfc2, 0x8f8679, 0x2b2722),
+    ] {
+        owner.system(system);
+        let palette = crate::tmux_snapshot::design::palette(&owner.publication().native());
+        assert_eq!(palette.border_faint, hsla(hairline));
+        assert_eq!(palette.border, hsla(outline));
+        assert_eq!(palette.text_faint, hsla(faint));
+        assert_eq!(palette.text, hsla(text));
+    }
+    for preset in &owner.presets {
+        let linen = preset.id.starts_with("linen") || preset.id == "system";
+        for colors in [&preset.dark, &preset.light] {
+            assert_eq!(colors.chrome.is_some(), linen, "{}", preset.id);
+        }
+    }
+    // Without chrome inks a theme keeps Bezel's translucent ones.
+    let mut theme = owner.publication().native();
+    theme.chrome = None;
+    let palette = crate::tmux_snapshot::design::palette(&theme);
+    assert!(palette.border.a < 1.);
+    assert!(palette.text_faint.a < 1.);
+}
