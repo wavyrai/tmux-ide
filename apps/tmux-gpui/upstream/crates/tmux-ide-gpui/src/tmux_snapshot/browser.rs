@@ -160,6 +160,8 @@ pub(super) struct State {
     pub reconnect_attempt: Option<u32>,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
+    /// What only the user can fix, shown at once (r3).
+    pub act: Option<super::connection::Act>,
     /// Home is live, but the session the user chose has too many panes to
     /// open; this names it and says what to do instead.
     pub home_notice: Option<String>,
@@ -604,6 +606,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             home_fault: false,
+            act: None,
             home_notice: None,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,

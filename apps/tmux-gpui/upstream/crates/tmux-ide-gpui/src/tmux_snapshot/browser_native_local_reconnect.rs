@@ -13,6 +13,8 @@ struct Rebind {
     panes: Vec<String>,
     selected: String,
 }
+/// The stop a session recovery ends in, for the act-needed card (r3).
+pub(super) const GAVE_UP: &str = GIVE_UP;
 pub(super) struct Recovery {
     target: Target,
     pane: Option<String>,

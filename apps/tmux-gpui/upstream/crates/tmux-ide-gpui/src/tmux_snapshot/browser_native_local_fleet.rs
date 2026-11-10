@@ -240,7 +240,10 @@ impl Gate {
                 self.catalogs.get(id),
                 self.failed.contains(id) || self.disconnected.contains(id),
             )?;
-            group.away = self.recovery.away(id).filter(|_| !self.disconnected.contains(id));
+            group.away = self
+                .recovery
+                .away(id)
+                .filter(|_| !self.disconnected.contains(id));
             groups.insert(id.clone(), group);
         }
         let mut identities = Vec::new();

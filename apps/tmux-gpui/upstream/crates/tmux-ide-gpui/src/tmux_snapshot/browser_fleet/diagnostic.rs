@@ -31,6 +31,33 @@ enum Failure {
     DaemonMissing,
 }
 impl Group {
+    /// Whether only the user can bring this machine back (r3): SSH credentials,
+    /// host keys, a missing CLI or daemon, a daemon to update, another machine
+    /// behind the route. Never retried by itself.
+    pub(in crate::tmux_snapshot) fn needs_user(&self) -> bool {
+        self.conflict
+            || (self.state != Phase::Ready
+                && self.diagnostic.as_ref().is_some_and(|d| {
+                    matches!(
+                        d.failure,
+                        Some(
+                            Failure::IdentityMismatch
+                                | Failure::InvalidTarget
+                                | Failure::Incompatible
+                                | Failure::SshAuthentication
+                                | Failure::SshHostKey
+                                | Failure::RemoteCliMissing
+                                | Failure::DaemonMissing
+                        )
+                    )
+                }))
+    }
+    /// The remote daemon speaks a protocol this app does not.
+    pub(in crate::tmux_snapshot) fn needs_update(&self) -> bool {
+        self.diagnostic
+            .as_ref()
+            .is_some_and(|d| matches!(d.failure, Some(Failure::Incompatible)))
+    }
     pub(in crate::tmux_snapshot) fn connection_hint(&self) -> Option<&'static str> {
         if self.conflict {
             return Some(

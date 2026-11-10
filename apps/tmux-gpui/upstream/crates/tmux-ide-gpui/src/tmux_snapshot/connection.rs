@@ -75,6 +75,123 @@ pub(super) fn animates(overlay: bool, reduce_motion: bool) -> bool {
     overlay && !reduce_motion
 }
 
+/// A state only the user can fix (r3), as the worker publishes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Act {
+    DaemonUpdate,
+    Record,
+    Credentials,
+    Platform,
+    Unreadable,
+    /// A session window's recovery stopped.
+    GaveUp,
+}
+/// The one card Home shows for it, and the slot's short label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Card {
+    pub slot: &'static str,
+    pub title: String,
+    pub detail: String,
+    pub action: &'static str,
+    /// A remote machine's retry token, when the action is to retry it.
+    pub retry: Option<String>,
+}
+pub(super) const KEEP_RUNNING: &str = "Your sessions keep running.";
+pub(super) const UPDATE_NEEDED: &str = "Update needed";
+pub(super) const SETUP_NEEDED: &str = "Set up needed";
+
+/// The card for `state`, if anything needs the user: this Mac's daemon or
+/// recovery first, then local setup, then the first remote machine.
+pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
+    use browser::local_setup::Phase as P;
+    let card = |slot, title: &str, detail: &str, action| Card {
+        slot,
+        title: title.into(),
+        detail: detail.into(),
+        action,
+        retry: None,
+    };
+    if let Some(act) = state.act {
+        let detail = crate::notifications::safe_text(&state.status, 240);
+        return Some(match act {
+            Act::DaemonUpdate => card(
+                UPDATE_NEEDED,
+                "tmux-ide needs an update",
+                &detail,
+                "Refresh",
+            ),
+            Act::Record => card(
+                SETUP_NEEDED,
+                "The daemon record can't be read",
+                &detail,
+                "Refresh",
+            ),
+            Act::Credentials => card(
+                SETUP_NEEDED,
+                "The daemon refused this app",
+                &detail,
+                "Refresh",
+            ),
+            Act::Platform => card(
+                SETUP_NEEDED,
+                "This Mac can't verify the daemon",
+                &detail,
+                "Refresh",
+            ),
+            Act::Unreadable => card(
+                SETUP_NEEDED,
+                "The daemon's answer can't be read",
+                &detail,
+                "Refresh",
+            ),
+            Act::GaveUp => card(
+                SETUP_NEEDED,
+                "Couldn't reconnect",
+                &detail,
+                "Refresh sessions",
+            ),
+        });
+    }
+    if connected && let Some(setup) = &state.local_setup {
+        let slot = if setup.phase == P::Unsupported {
+            UPDATE_NEEDED
+        } else {
+            SETUP_NEEDED
+        };
+        let title = match setup.phase {
+            P::Running => return None,
+            P::Available => "Set up local sessions",
+            P::Missing => "The tmux-ide CLI is missing",
+            P::Unsupported => "This CLI version can't be set up",
+            P::Unrecognized => "The CLI installation wasn't recognized",
+            P::Failed | P::StoppedWaiting => "Local setup didn't finish",
+        };
+        return Some(card(
+            slot,
+            title,
+            setup.phase.guidance(),
+            setup.phase.label(),
+        ));
+    }
+    let group = state
+        .fleet
+        .as_ref()?
+        .groups
+        .iter()
+        .find(|g| g.needs_user())?;
+    Some(Card {
+        slot: if group.needs_update() {
+            UPDATE_NEEDED
+        } else {
+            SETUP_NEEDED
+        },
+        title: format!("{} needs you", group.label),
+        detail: group.connection_hint().unwrap_or_default().into(),
+        action: "Retry connection",
+        retry: group.retry.clone(),
+    })
+}
+
 /// How an unreachable remote machine reads (r4): unchanged for 8 s, then
 /// reconnecting, then unreachable since a time, retried every minute.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +372,7 @@ impl SnapshotView {
         let stage = self.connection_stage();
         let palette = super::design::palette(&self.theme());
         let muted = palette.text_muted;
+        let act = card(&self.browser_state, self.browser_commands.is_some());
         let slot = div()
             .id("connection-slot")
             .debug_selector(|| "tmux-connection-slot".into())
@@ -271,6 +389,16 @@ impl SnapshotView {
         // What fills the slot fades in over Bezel's quick fade (#761); the
         // slot's own box never changes.
         let fill = div().flex().items_center().gap(px(4.)).min_w_0();
+        if let Some(act) = act {
+            // What only the user can fix shows at once, whatever the clock says.
+            return slot
+                .child(
+                    fill.debug_selector(|| "tmux-connection-act".into())
+                        .child(div().size(px(6.)).rounded_full().bg(palette.warning))
+                        .child(div().truncate().child(act.slot)),
+                )
+                .into_any_element();
+        }
         let content = match stage {
             Stage::Quiet => return slot.into_any_element(),
             Stage::Spinner => fill.child(self.connection_spinner(cx)),
@@ -312,6 +440,82 @@ impl SnapshotView {
         .into_any_element()
     }
 
+    /// Home's one card for what only the user can fix (r3): a title, that the
+    /// sessions keep running, the action, and Copy details.
+    pub(super) fn act_card(&self, card: Card, cx: &mut Context<Self>) -> AnyElement {
+        use super::controls::{ButtonStyle, Icon, action_button_on};
+        let bezel = self.home_palette();
+        let request = self.browser_request;
+        let retry = card.retry.clone();
+        let details = format!("{}\n{}", card.title, card.detail);
+        let action = action_button_on(
+            "home-act-action",
+            Some(card.action),
+            card.action,
+            Icon::Refresh,
+            ButtonStyle::Secondary,
+            &bezel,
+        )
+        .debug_selector(|| "home-act-action".into())
+        .on_click(cx.listener(move |view, _, window, cx| {
+            cx.stop_propagation();
+            match &retry {
+                Some(token) => {
+                    view.retry_fleet_machine(request, token, window, cx);
+                }
+                None => view.home_refresh(request, window, cx),
+            }
+        }));
+        let copy = action_button_on(
+            "home-act-copy",
+            Some("Copy details"),
+            "Copy details",
+            Icon::Copy,
+            ButtonStyle::Quiet,
+            &bezel,
+        )
+        .debug_selector(|| "home-act-copy".into())
+        .on_click(cx.listener(move |_, _, _, cx| {
+            cx.stop_propagation();
+            cx.write_to_clipboard(ClipboardItem::new_string(details.clone()));
+        }));
+        div()
+            .debug_selector(|| "home-act-card".into())
+            .w_full()
+            .p(px(bezel_theme::Theme::SPACE * 2.))
+            .flex()
+            .flex_col()
+            .gap(px(bezel_theme::Theme::SPACE))
+            .rounded(px(bezel_theme::Theme::control_radius() * 2.))
+            // The warning strip's wash, so its inked text reads 4.5:1 on it.
+            .bg(rgb(super::home::strip_plate(bezel.warning, self.canvas())))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(bezel.warning_muted)
+                    .child(div().size(px(6.)).rounded_full().bg(bezel.warning))
+                    .children(super::design::ink_probe(|| "home-act-title".into()))
+                    .child(card.title),
+            )
+            .child(
+                div()
+                    .text_color(bezel.warning_muted)
+                    .children(super::design::ink_probe(|| "home-act-detail".into()))
+                    .child(format!("{} {KEEP_RUNNING}", card.detail)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(bezel_theme::Theme::SPACE))
+                    .child(action)
+                    .child(copy),
+            )
+            .into_any_element()
+    }
+
     /// The spinner's glyph box: the shared overlay paints its frames, or, under
     /// Reduce Motion, one still frame.
     fn connection_spinner(&self, cx: &App) -> AnyElement {
@@ -348,7 +552,10 @@ impl SnapshotView {
         sidebar_shown: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if sidebar_shown || self.connection_stage() == Stage::Quiet {
+        if sidebar_shown
+            || (self.connection_stage() == Stage::Quiet
+                && card(&self.browser_state, self.browser_commands.is_some()).is_none())
+        {
             return None;
         }
         use bezel_ui::surface::Surfaced as _;

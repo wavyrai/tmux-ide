@@ -15,6 +15,9 @@ const MAX_DELAY: Duration = Duration::from_secs(5);
 pub(super) const RECONNECTING: &str = "Reconnecting…";
 pub(super) const STILL_RECONNECTING: &str = "Still reconnecting…";
 const CREDENTIALS: &str = "The daemon refused this app's credentials. Restart tmux-ide.";
+const DAEMON_UPDATE: &str = "This daemon needs an update. Update tmux-ide, then refresh.";
+const RECORD: &str = "tmux-ide's daemon record is unreadable. Refresh after fixing it.";
+const PLATFORM: &str = "This platform can't verify the daemon. Refresh to try again.";
 const UNREADABLE: &str = "The daemon sent data this app can't read. Refresh to try again.";
 /// Protocol failures in a row before Home stops and says so.
 const PROTOCOL_LIMIT: u8 = 3;
@@ -28,19 +31,38 @@ pub(super) enum HomeFailure {
     /// Will not recover by itself: Home keeps its list and says why.
     Fatal(&'static str),
 }
+/// The act-needed state a publication carries (r3): a stopped Home's reason,
+/// or a session window's recovery that gave up. Read from this module's own
+/// constants, never from text a daemon sent.
+pub(super) fn act(
+    fault: Option<&'static str>,
+    state: &State,
+) -> Option<crate::tmux_snapshot::connection::Act> {
+    use crate::tmux_snapshot::connection::Act;
+    Some(match fault {
+        Some(DAEMON_UPDATE) => Act::DaemonUpdate,
+        Some(RECORD) => Act::Record,
+        Some(CREDENTIALS) => Act::Credentials,
+        Some(PLATFORM) => Act::Platform,
+        Some(UNREADABLE) => Act::Unreadable,
+        Some(_) => Act::Unreadable,
+        None if state.home_phase == HomePhase::Unavailable
+            && state.status == reconnect::GAVE_UP =>
+        {
+            Act::GaveUp
+        }
+        None => return None,
+    })
+}
 pub(super) fn classify(error: &DaemonError) -> HomeFailure {
     use HomeFailure::{Fatal, Protocol, Retry};
     match error {
-        DaemonError::Incompatible(_) => {
-            Fatal("This daemon needs an update. Update tmux-ide, then refresh.")
-        }
+        DaemonError::Incompatible(_) => Fatal(DAEMON_UPDATE),
         DaemonError::RecordFormat | DaemonError::RecordSecurity | DaemonError::Endpoint => {
-            Fatal("tmux-ide's daemon record is unreadable. Refresh after fixing it.")
+            Fatal(RECORD)
         }
         DaemonError::RequestStatus(401 | 403) => Fatal(CREDENTIALS),
-        DaemonError::UnsupportedPlatform => {
-            Fatal("This platform can't verify the daemon. Refresh to try again.")
-        }
+        DaemonError::UnsupportedPlatform => Fatal(PLATFORM),
         DaemonError::IdentityFormat
         | DaemonError::ResourceFormat
         | DaemonError::Control(_)

@@ -229,6 +229,7 @@ impl Local {
                     .filter(|_| state.surface == Surface::Home)
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
+        state.act = home_recovery::act(self.home.fault(), &state);
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {

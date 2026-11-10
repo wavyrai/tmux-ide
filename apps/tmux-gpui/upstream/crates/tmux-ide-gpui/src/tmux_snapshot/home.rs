@@ -49,7 +49,7 @@ fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 6] {
 
 /// What a status strip of `tone` paints its message on: the tone's wash over
 /// the canvas.
-fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
+pub(super) fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
     pack(bezel_theme::flatten(
         tone.opacity(STRIP_FILL),
         rgb(canvas).into(),
@@ -194,7 +194,12 @@ impl SnapshotView {
             && self.new_session.is_none()
             && self.pane_actions.is_none()
     }
-    fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn home_refresh(
+        &mut self,
+        request: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.home_action_current(request) {
             return;
         }
@@ -423,7 +428,11 @@ impl SnapshotView {
         // reconnects or has stopped.
         // A reconnect or the first load is the footer slot's (r1, r5): no line here.
         let waiting = super::connection::waiting(&self.browser_state, connected).is_some();
-        if (connected && setup_phase.is_some())
+        // r3: what only the user can fix is one card, in place of the line.
+        let act = super::connection::card(&self.browser_state, connected);
+        if let Some(card) = act.clone() {
+            body = body.child(self.act_card(card, cx));
+        } else if (connected && setup_phase.is_some())
             || (!is_live && !waiting && !self.browser_state.status.is_empty())
             || (is_live && self.browser_state.home_fault)
             || (is_live && self.browser_state.home_notice.is_some())
@@ -548,7 +557,7 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if (!connected || setup_phase.is_none()) && !waiting {
+        } else if (!connected || setup_phase.is_none()) && !waiting && act.is_none() {
             let guidance = if !connected {
                 bezel
                     .error_strip("Connection lost. Reopen tmux-ide to reconnect.")

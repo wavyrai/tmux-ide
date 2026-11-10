@@ -37,9 +37,14 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
         None
     };
     // r4: a machine being retried is away, not gone; its rows stay listed.
-    let unavailable = target
-        .is_none()
-        .then(|| if g.away.is_some() { "away" } else { "Unavailable" }.to_owned());
+    let unavailable = target.is_none().then(|| {
+        if g.away.is_some() {
+            "away"
+        } else {
+            "Unavailable"
+        }
+        .to_owned()
+    });
     let mut r = row(s.name.clone(), None, 0, target);
     r.kind = Kind::Heading;
     r.favicon = s.favicon.clone();
