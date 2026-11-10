@@ -80,7 +80,7 @@ struct Active {
     owner: Owner,
     stream_interrupted: bool,
     owner_notice: Option<Command>,
-    action_status: Option<&'static str>,
+    action_status: active::Outcome,
     catalog_only: bool,
     daemon_version: Option<String>,
     generation: String,
@@ -502,7 +502,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             owner,
                             stream_interrupted: false,
                             owner_notice: None,
-                            action_status: None,
+                            action_status: Default::default(),
                             catalog_only,
                             daemon_version,
                             generation,
@@ -738,14 +738,10 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 });
             let mut admitted = false;
             if can_admit
-                && let Some(command) = split_command
-                    .and_then(|index| pending.remove(index))
-                    .or_else(|| pending.pop_front())
+                && let Some(command) =
+                    active::admit_next(&mut pending, split_command, active.as_mut())
             {
                 admitted = true;
-                if let Some(current) = active.as_mut() {
-                    current.admit(&command);
-                }
                 if matches!(
                     &command,
                     Command::PaneAction {
@@ -783,7 +779,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             if output(Command::NativeEditorOpen { value }).is_err() {
                                 break 'worker;
                             }
-                            current.action_status = Some("Opening selected pane folder in VS Code");
+                            current
+                                .action_status
+                                .set(Some("Opening selected pane folder in VS Code"));
                         }
                         Ok(())
                     }

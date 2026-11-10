@@ -1,27 +1,91 @@
 //! Per-connection native state and ordered publication.
 use super::*;
-impl Active {
-    /// The next command ends the last action's outcome in the status line
-    /// (#763). A fit is the app's own resize, not the user's next command.
-    pub(super) fn admit(&mut self, command: &Command) {
-        if !matches!(
-            command,
-            Command::Input {
-                input: crate::tmux_snapshot::keys::Input::Resize { .. },
-                ..
-            }
-        ) {
-            self.action_status = None;
+
+/// An action's outcome in the status line (#763): the editor's answer, a
+/// pane action that wasn't applied, an unconfirmed pane creation. It stays
+/// until the user's next command, so a reader that keeps only the latest
+/// state still sees it.
+#[derive(Default)]
+pub(super) struct Outcome {
+    current: Option<&'static str>,
+    /// The outcome last written to the status line. A newer outcome replaces
+    /// it there, just as it replaces "Connected".
+    shown: Option<&'static str>,
+}
+impl Outcome {
+    pub(super) fn set(&mut self, outcome: Option<&'static str>) {
+        self.current = outcome;
+    }
+
+    /// Writes the outcome over the idle line or an earlier outcome. A
+    /// connection state (connecting, an inactive window, restoring history)
+    /// comes first, and the outcome returns once it clears.
+    fn publish(&mut self, status: &mut String) {
+        if let Some(outcome) = self.current
+            && (status == "Connected"
+                || status == outcome
+                || self.shown.is_some_and(|shown| status == shown))
+        {
+            *status = outcome.into();
+            self.shown = Some(outcome);
         }
     }
+}
+
+/// Whether `command` is the user's next command, which ends an outcome. The
+/// app's own traffic is not: a fit, a missing image, the system's appearance,
+/// window focus, observation, and the transport's own notices.
+fn ends_outcome(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Input {
+            input: crate::tmux_snapshot::keys::Input::Resize { .. },
+            ..
+        } | Command::KittyMissing { .. }
+            | Command::Appearance { .. }
+            | Command::Presence { .. }
+            | Command::PaletteObserve { .. }
+            | Command::AttentionObserve { .. }
+            | Command::NativeEditorOpen { .. }
+            | Command::NativeEditorCancel { .. }
+            | Command::NativeSplitLayout { .. }
+            | Command::NativeOwnerAction { .. }
+            | Command::NativeTerminalInterrupted { .. }
+            | Command::NativeTerminalReady { .. }
+            | Command::NativeTerminalCatalog { .. }
+            | Command::NativeTerminalRefresh { .. }
+            | Command::NativeHistory { .. }
+            | Command::NativePaneSelected { .. }
+    )
+}
+
+/// The transport's admission: takes the next command (the split gesture's
+/// continuation at `split` first) and lets it end the last outcome.
+pub(super) fn admit_next(
+    pending: &mut std::collections::VecDeque<Command>,
+    split: Option<usize>,
+    active: Option<&mut Active>,
+) -> Option<Command> {
+    let command = split
+        .and_then(|index| pending.remove(index))
+        .or_else(|| pending.pop_front())?;
+    if let Some(active) = active
+        && ends_outcome(&command)
+    {
+        active.action_status.set(None);
+    }
+    Some(command)
+}
+
+impl Active {
     pub(super) fn owner_completed(&mut self, completion: browser_native_owner::Completion) {
-        self.action_status = match completion.outcome {
+        self.action_status.set(match completion.outcome {
             herdr_client::tmux_controller::OwnerOutcome::Applied => None,
             herdr_client::tmux_controller::OwnerOutcome::TimedOut => {
                 Some("Pane creation outcome unknown — refreshing")
             }
             _ => Some("Pane creation was not confirmed"),
-        };
+        });
         self.reissue |= completion.reissue;
         self.preferred_pane = completion.target_pane;
     }
@@ -138,7 +202,7 @@ impl Active {
         if let Some(completion) = self.actions.poll(&mut self.controller, &update, now)? {
             self.reissue |= completion.reissue;
             if completion.outcome != herdr_client::tmux_controller::ActionOutcome::Applied {
-                self.action_status = Some("Pane action was not applied");
+                self.action_status.set(Some("Pane action was not applied"));
             }
         }
         let mut selection_rejected = false;
@@ -282,7 +346,7 @@ impl Active {
         ) {
             self.editor_notice = Some(Command::NativeEditorCancel { value });
         } else if let Some(status) = self.editor.finish_response() {
-            self.action_status = Some(status);
+            self.action_status.set(Some(status));
         }
         if selection_rejected {
             state.input_target_rejected = true;
@@ -322,17 +386,7 @@ impl Active {
         if state.input_ready {
             self.divider.publish(state);
         }
-        // An action's outcome (the editor's answer, a pane action that wasn't
-        // applied) stays in the status line until the next command (#763). A
-        // frame published right after it must not replace it before the UI,
-        // which reads only the latest state, gets to show it. A connection
-        // state (connecting, an inactive window, restoring history) still
-        // comes first, and the outcome returns once it clears.
-        if let Some(status) = self.action_status
-            && (state.status == "Connected" || state.status == status)
-        {
-            state.status = status.into();
-        }
+        self.action_status.publish(&mut state.status);
         if self.presentation.needs_materialization() {
             let pane = self.controller.selected().to_owned();
             self.controller.materialize_history(&pane)?;

@@ -133,7 +133,7 @@ fn fixture_with_batch_ack(
         preferred_pane: None,
         owner: Owner::new(ID.into(), 3, "workspace".into(), session.into(), GEN.into()).unwrap(),
         owner_notice: None,
-        action_status: None,
+        action_status: Default::default(),
         catalog_only: false,
         daemon_version: None,
         generation: GEN.into(),
@@ -412,28 +412,126 @@ fn the_editor_answer_outlives_later_frames_until_the_next_command() {
     active.presentation.invalidate_overlay();
     active.poll(&mut state, true, 7).unwrap();
     assert_eq!(state.status, ANSWER);
-    let input = |input| Command::Input {
-        input_target: None,
-        request: 3,
-        id: "left".into(),
-        input,
-    };
-    active.admit(&input(crate::tmux_snapshot::keys::Input::Resize {
-        cols: 4,
-        rows: 2,
-        cell_width: None,
-        cell_height: None,
-        cell_width_milli: None,
-        cell_height_milli: None,
-    }));
-    active.presentation.invalidate_overlay();
-    active.poll(&mut state, true, 8).unwrap();
-    assert_eq!(state.status, ANSWER, "a fit is not the next command");
-    // The user's next command ends it.
-    active.admit(&input(crate::tmux_snapshot::keys::Input::Key("a".into())));
+    // The app's own traffic is not the next command.
+    for command in app_commands() {
+        let mut pending = std::collections::VecDeque::from([command]);
+        assert!(active::admit_next(&mut pending, None, Some(&mut active)).is_some());
+        active.presentation.invalidate_overlay();
+        active.poll(&mut state, true, 8).unwrap();
+        assert_eq!(
+            state.status, ANSWER,
+            "the app's own command ended the answer"
+        );
+    }
+    // The user's next command, admitted by the transport, ends it.
+    let mut pending = std::collections::VecDeque::from([key_input("a")]);
+    assert!(active::admit_next(&mut pending, None, Some(&mut active)).is_some());
     active.presentation.invalidate_overlay();
     active.poll(&mut state, true, 9).unwrap();
     assert_eq!(state.status, "Connected");
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
+fn key_input(key: &str) -> Command {
+    Command::Input {
+        input_target: None,
+        request: 3,
+        id: "left".into(),
+        input: crate::tmux_snapshot::keys::Input::Key(key.into()),
+    }
+}
+
+/// Commands the app sends on its own: a fit, a missing image, the system's
+/// appearance, window focus.
+fn app_commands() -> Vec<Command> {
+    vec![
+        Command::Input {
+            input_target: None,
+            request: 3,
+            id: "left".into(),
+            input: crate::tmux_snapshot::keys::Input::Resize {
+                cols: 4,
+                rows: 2,
+                cell_width: None,
+                cell_height: None,
+                cell_width_milli: None,
+                cell_height_milli: None,
+            },
+        },
+        Command::KittyMissing {
+            digests: vec!["abc".into()],
+        },
+        Command::Appearance {
+            system: crate::tmux_snapshot::appearance::System::Light,
+        },
+        Command::Presence {
+            active: true,
+            revision: 1,
+        },
+    ]
+}
+
+/// The editor's answer replaces the "Opening…" line the transport wrote when
+/// it admitted Open in VS Code, with no repaint in between (#763 review).
+#[test]
+fn the_editor_answer_replaces_the_opening_line_without_a_repaint() {
+    const OPENING: &str = "Opening selected pane folder in VS Code";
+    const ANSWER: &str = "Open folder requires verified local daemon discovery";
+    let (mut active, mut state, _observed, peer) = fixture(true);
+    let token = state.pane_actions.as_ref().unwrap().token.clone();
+    let request = active
+        .editor
+        .submit(
+            &active.controller,
+            &active.presentation,
+            ReadContext {
+                id: ID,
+                request: 3,
+                pane: "left",
+                token: &token,
+                presence: 1,
+            },
+            1,
+        )
+        .unwrap();
+    // As the transport does on admitting OpenEditor.
+    active.action_status.set(Some(OPENING));
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 2).unwrap();
+    assert_eq!(state.status, OPENING);
+    assert!(active.editor.receive(EditorResponse::native(
+        &request,
+        crate::tmux_snapshot::browser_native_editor::Status::Unavailable
+    )));
+    active.poll(&mut state, true, 3).unwrap();
+    assert_eq!(
+        state.status, ANSWER,
+        "the answer must replace the Opening line"
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
+/// The transport's admission step takes the split continuation first and
+/// still lets it end the outcome.
+#[test]
+fn the_transports_admission_ends_the_outcome() {
+    const OUTCOME: &str = "Pane action was not applied";
+    let (mut active, mut state, _observed, peer) = fixture(true);
+    active.action_status.set(Some(OUTCOME));
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 2).unwrap();
+    assert_eq!(state.status, OUTCOME);
+    let mut pending = std::collections::VecDeque::from(app_commands());
+    pending.push_back(key_input("a"));
+    let split = Some(pending.len() - 1);
+    let admitted = active::admit_next(&mut pending, split, Some(&mut active));
+    assert!(matches!(admitted, Some(Command::Input { .. })));
+    assert_eq!(pending.len(), 4, "the app's commands stay queued in order");
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 3).unwrap();
+    assert_eq!(state.status, "Connected", "the admitted command ended it");
     active.controller.retire();
     peer.join().unwrap();
 }
