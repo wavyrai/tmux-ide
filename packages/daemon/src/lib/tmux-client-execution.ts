@@ -63,15 +63,67 @@ export function tmuxClientEnvironment(
   return { ...environment, ...bundledTmuxResourceEnvironment(executable) };
 }
 
-/** Ordinary CLI commands retain PATH selection; bundled tmux fills a missing system client. */
+/**
+ * The socket an ordinary tmux client reaches, or null inside tmux (where the
+ * server exists by definition). Ordinary clients pass no -S or -L in
+ * production, so this is tmux's own rule: $TMUX, else the default socket.
+ */
+export function ordinaryTargetSocket(environment: NodeJS.ProcessEnv): string | null {
+  if (environment.TMUX) return null;
+  const uid = process.getuid?.() ?? 0;
+  return join(environment.TMUX_TMPDIR || "/tmp", `tmux-${uid}`, "default");
+}
+
+function socketExists(path: string): boolean {
+  try {
+    return statSync(path).isSocket();
+  } catch {
+    return false;
+  }
+}
+
+export interface OrdinaryTmuxClientOptions {
+  /** Whether a server listens on this socket. Defaults to a stat of the socket file. */
+  readonly serverRunning?: (socket: string) => boolean;
+  /** The validated bundled executable, or null. */
+  readonly bundled?: () => string | null;
+}
+
+/**
+ * Ordinary CLI commands retain PATH selection for a running server. When no
+ * server runs, the next command starts one, so bundled tmux goes first: a
+ * Homebrew client must not start a reduced-feature server (#766).
+ * TMUX_IDE_TMUX_BIN always wins.
+ */
 export function resolveOrdinaryTmuxClient(
   environment: NodeJS.ProcessEnv,
   cwd?: string | URL,
+  options: OrdinaryTmuxClientOptions = {},
 ): {
   executable: string;
   environment: NodeJS.ProcessEnv;
 } {
+  const bundled =
+    options.bundled ??
+    (() =>
+      resolveBundledTmux([
+        ...(environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : []),
+        fileURLToPath(import.meta.url),
+      ]));
   const configured = environment.TMUX_IDE_TMUX_BIN;
+  if (!configured) {
+    const socket = ordinaryTargetSocket(environment);
+    if (socket !== null && !(options.serverRunning ?? socketExists)(socket)) {
+      let starter: string | null = null;
+      try {
+        starter = bundled();
+      } catch {
+        // An invalid bundle falls back to the PATH client below.
+      }
+      if (starter)
+        return { executable: starter, environment: withBundledTmuxResources(starter, environment) };
+    }
+  }
   const candidates = configured
     ? [configured]
     : (environment.PATH ?? "/usr/bin:/bin")
@@ -93,12 +145,7 @@ export function resolveOrdinaryTmuxClient(
       /* Try the next ordinary PATH candidate. */
     }
   }
-  if (!executable && !configured)
-    executable =
-      resolveBundledTmux([
-        ...(environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : []),
-        fileURLToPath(import.meta.url),
-      ]) ?? undefined;
+  if (!executable && !configured) executable = bundled() ?? undefined;
   if (!executable) throw new Error("tmux_executable_unavailable");
   return { executable, environment: withBundledTmuxResources(executable, environment) };
 }
