@@ -31,6 +31,26 @@ fn pack(c: Hsla) -> u32 {
     u32::from(Rgba::from(c)) >> 8
 }
 
+/// What the chrome's frost and inks depend on, and nothing else: the
+/// background, ink and surface, the sidebar override, the contrast setting
+/// and the 16 ANSI colours (the unfocused card's check). Twenty-one words,
+/// copied and compared instead of a whole Theme with its 256-colour palette
+/// on every palette() call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChromeKey([u32; 21]);
+impl ChromeKey {
+    pub(crate) fn of(theme: &Theme) -> Self {
+        let mut key = [0; 21];
+        key[0] = theme.background;
+        key[1] = theme.foreground;
+        key[2] = theme.surface;
+        key[3] = theme.sidebar.unwrap_or(u32::MAX);
+        key[4] = u32::from(theme.contrast == crate::contrast::Contrast::High);
+        key[5..].copy_from_slice(&theme.palette[..16]);
+        Self(key)
+    }
+}
+
 /// The theme's ink at `alpha` over its plate tone, opaque.
 fn ink_at(theme: &Theme, alpha: f32) -> u32 {
     pack(bezel_theme::flatten(
@@ -75,13 +95,13 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
 /// [`tiers`] at a given frost (`None`: opaque), which the frost's search
 /// asks about each alpha it tries.
 pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
-    /// The theme and the frost's bits.
-    type Key = (Theme, Option<u32>);
+    /// The theme's chrome inputs and the frost's bits.
+    type Key = (ChromeKey, Option<u32>);
     // The sidebar asks for every row, every frame: a few themes are cached.
     thread_local! {
         static CACHE: std::cell::RefCell<Vec<(Key, Tiers)>> = Default::default();
     }
-    let key = (theme.clone(), frost.map(f32::to_bits));
+    let key = (ChromeKey::of(theme), frost.map(f32::to_bits));
     if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, t)| *t)) {
         return t;
     }

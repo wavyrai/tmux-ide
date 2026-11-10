@@ -328,3 +328,31 @@ fn lost_theme_readiness_returns_chrome_focus_to_rows(cx: &mut TestAppContext) {
     });
     assert!(receiver.try_recv().is_err());
 }
+
+/// Enter on a footer control acts once (#355 review): Switch machine sends
+/// exactly one machine-list read, and its keyup sends nothing more.
+#[gpui::test]
+fn enter_on_switch_machine_sends_exactly_one_command(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| view.browser_state.request = 7);
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    // Sessions, then machines.
+    cx.simulate_keystrokes("ctrl-g tab tab");
+    cx.update(|window, cx| {
+        view.read_with(cx, |view, _| {
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[1].is_focused(window));
+        });
+    });
+    cx.simulate_keystrokes("enter");
+    cx.simulate_event(KeyUpEvent {
+        layout: None,
+        keystroke: Keystroke::parse("enter").unwrap(),
+    });
+    let commands: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(commands.len(), 1, "{:?}", commands.len());
+    assert!(matches!(commands[0], browser::Command::Machines { .. }));
+}
