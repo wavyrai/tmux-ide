@@ -151,7 +151,7 @@ function isBareShell(cmd: string): boolean {
  * BOTH the agent and the restore command; a bare shell records neither; any
  * other foreground process records its `pane_current_command` as the command.
  */
-function resolvePaneCommand(
+export function resolvePaneCommand(
   cmd: string,
   pid: number,
   hint: string,

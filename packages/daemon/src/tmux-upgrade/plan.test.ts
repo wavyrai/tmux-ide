@@ -6,6 +6,10 @@ import {
   coverage,
   renderPlan,
   sameShape,
+  agentTurnState,
+  atRisk,
+  IDLE_STALE_SECONDS,
+  type EndingPane,
   type ServerIdentity,
 } from "./plan.ts";
 
@@ -139,6 +143,15 @@ describe("coverage", () => {
 });
 
 describe("sameShape", () => {
+  it("passes an identical server and ignores sessions the snapshot never had", () => {
+    expect(sameShape(fleet(), [...LISTING, "web\t0\t0"])).toEqual([]);
+  });
+  it("names an extra window and a missing pane", () => {
+    expect(sameShape(fleet(), [...LISTING, "api\t9\t0"])).toEqual([
+      "session api came back with 2+1+1 panes, the snapshot has 2+1",
+    ]);
+  });
+
   it("compares window and pane counts in order, not window indexes", () => {
     const shifted = ["api\t0\t0", "api\t0\t1", "api\t1\t0", "notes\t1\t0"];
     expect(sameShape(fleet(), shifted)).toEqual([]);
@@ -215,10 +228,102 @@ describe("buildUpgradePlan and renderPlan", () => {
   });
 });
 
+const risk = (midTurn: number, programs = 0, ending = 0) => ({ midTurn, programs, ending });
+
+describe("agentTurnState", () => {
+  it("counts working and blocked as reported, and stale reports as unknown", () => {
+    expect(agentTurnState(`working:${NOW - 5}`, NOW)).toBe("working");
+    expect(agentTurnState(`blocked:${NOW - 5}`, NOW)).toBe("blocked");
+    expect(agentTurnState(`working:${NOW - 601}`, NOW)).toBe("unknown");
+    expect(agentTurnState(null, NOW)).toBe("unknown");
+    expect(agentTurnState("garbage", NOW)).toBe("unknown");
+  });
+  it("lets an idle or done report go stale after IDLE_STALE_SECONDS", () => {
+    expect(agentTurnState(`idle:${NOW - IDLE_STALE_SECONDS}`, NOW)).toBe("idle");
+    expect(agentTurnState(`done:${NOW - IDLE_STALE_SECONDS}`, NOW)).toBe("done");
+    expect(agentTurnState(`idle:${NOW - IDLE_STALE_SECONDS - 1}`, NOW)).toBe("unknown");
+    expect(agentTurnState(`done:${NOW - IDLE_STALE_SECONDS - 1}`, NOW)).toBe("unknown");
+  });
+});
+
+describe("what --yes alone may not end", () => {
+  const plan = (mutate: (snapshot: FleetSnapshot) => void, ending: EndingPane[] = []) => {
+    const snapshot = fleet();
+    mutate(snapshot);
+    return buildUpgradePlan({
+      server: SERVER,
+      bundled: { executable: "/opt/tmux-ide/tmux", version: "3.7c" },
+      snapshot,
+      snapshotPath: "/s.json",
+      notRestored: ["zz-scratch"],
+      ending,
+      resumeAgents: true,
+      nowSec: NOW,
+    });
+  };
+  it("counts a blocked agent as mid-turn", () => {
+    const blocked = plan((s) => {
+      s.sessions[0]!.windows[0]!.panes[0]!.agentState = `blocked:${NOW}`;
+    });
+    expect(blocked.agents[0]!.state).toBe("blocked");
+    expect(blocked.midTurn).toBe(1);
+  });
+  it("counts programs tmux-ide can't recognise, and lists them", () => {
+    const p = plan(() => {});
+    expect(atRisk(p)).toEqual({ midTurn: 1, programs: 1, ending: 0 });
+    expect(renderPlan(p)).toMatch(/can't tell whether one is an agent[^]*api:1\.1 {2}npm run dev/);
+    const refused = confirmation({
+      yes: true,
+      endRunningAgents: false,
+      json: false,
+      dryRun: false,
+      risk: risk(0, 1),
+    });
+    expect(refused).toMatchObject({
+      kind: "refuse",
+      reason: expect.stringMatching(/^1 program may be an agent\./),
+    });
+  });
+  it("counts agents and programs in sessions that are not restored", () => {
+    const p = plan(() => {}, [
+      { target: "zz-scratch:0.0", cwd: "/w", agent: "claude", command: "claude" },
+      { target: "zz-scratch:0.1", cwd: "/w", agent: null, command: null },
+    ]);
+    expect(p.ending).toHaveLength(1);
+    expect(renderPlan(p)).toMatch(
+      /zz-scratch:0\.0 {2}claude {2}\/w {2}ends and does not come back/,
+    );
+    expect(
+      confirmation({
+        yes: true,
+        endRunningAgents: false,
+        json: false,
+        dryRun: false,
+        risk: atRisk(p),
+      }).kind,
+    ).toBe("refuse");
+    expect(
+      confirmation({
+        yes: true,
+        endRunningAgents: true,
+        json: false,
+        dryRun: false,
+        risk: atRisk(p),
+      }).kind,
+    ).toBe("proceed");
+  });
+});
+
 describe("confirmation", () => {
   it("asks with a default of No when nothing was passed", () => {
     expect(
-      confirmation({ yes: false, endRunningAgents: false, json: false, dryRun: false, midTurn: 0 }),
+      confirmation({
+        yes: false,
+        endRunningAgents: false,
+        json: false,
+        dryRun: false,
+        risk: risk(0),
+      }),
     ).toEqual({
       kind: "ask",
     });
@@ -226,30 +331,46 @@ describe("confirmation", () => {
 
   it("previews under --dry-run, and under --json without --yes", () => {
     expect(
-      confirmation({ yes: true, endRunningAgents: true, json: false, dryRun: true, midTurn: 0 })
+      confirmation({ yes: true, endRunningAgents: true, json: false, dryRun: true, risk: risk(0) })
         .kind,
     ).toBe("preview");
     expect(
-      confirmation({ yes: false, endRunningAgents: false, json: true, dryRun: false, midTurn: 0 })
-        .kind,
+      confirmation({
+        yes: false,
+        endRunningAgents: false,
+        json: true,
+        dryRun: false,
+        risk: risk(0),
+      }).kind,
     ).toBe("preview");
   });
 
   it("refuses --yes alone while an agent is mid-turn", () => {
     expect(
-      confirmation({ yes: true, endRunningAgents: false, json: false, dryRun: false, midTurn: 2 }),
+      confirmation({
+        yes: true,
+        endRunningAgents: false,
+        json: false,
+        dryRun: false,
+        risk: risk(2),
+      }),
     ).toEqual({
       kind: "refuse",
       reason:
-        "2 agents may be mid-turn. Pass --yes --end-running-agents to end them, or wait until they are idle.",
+        "2 agents may be mid-turn. Pass --yes --end-running-agents to end them, or wait until they are idle. Nothing was stopped.",
     });
     expect(
-      confirmation({ yes: true, endRunningAgents: true, json: false, dryRun: false, midTurn: 2 })
+      confirmation({ yes: true, endRunningAgents: true, json: false, dryRun: false, risk: risk(2) })
         .kind,
     ).toBe("proceed");
     expect(
-      confirmation({ yes: true, endRunningAgents: false, json: false, dryRun: false, midTurn: 0 })
-        .kind,
+      confirmation({
+        yes: true,
+        endRunningAgents: false,
+        json: false,
+        dryRun: false,
+        risk: risk(0),
+      }).kind,
     ).toBe("proceed");
   });
 });

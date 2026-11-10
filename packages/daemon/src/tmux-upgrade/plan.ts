@@ -131,6 +131,32 @@ export function sameShape(snapshot: FleetSnapshot, listing: readonly string[]): 
 
 export type AgentTurnState = "working" | "blocked" | "idle" | "done" | "unknown";
 
+/**
+ * An `idle` or `done` report older than this reads as `unknown`: the agent may
+ * have started a turn its hooks never reported. (`working` and `blocked` go
+ * stale after 10 minutes, in classify.ts.)
+ */
+export const IDLE_STALE_SECONDS = 60 * 60;
+
+/** PURE: the agent's turn state from its `@agent_state` report, conservatively. */
+export function agentTurnState(raw: string | null, nowSec: number): AgentTurnState {
+  const state = parseAuthority(raw ?? undefined, nowSec);
+  if (!state) return "unknown";
+  if (state === "idle" || state === "done") {
+    const epoch = Number(raw!.slice(raw!.lastIndexOf(":") + 1));
+    if (nowSec - epoch > IDLE_STALE_SECONDS) return "unknown";
+  }
+  return state;
+}
+
+/** A pane of a session that ends and is not restored (`_…`, `zz-…`). */
+export interface EndingPane {
+  target: string;
+  cwd: string;
+  agent: string | null;
+  command: string | null;
+}
+
 export interface PlannedAgent {
   target: string;
   agent: string;
@@ -150,8 +176,13 @@ export interface UpgradePlan {
   agents: PlannedAgent[];
   /** Agents working, blocked on a question, or with no fresh state report. */
   midTurn: number;
-  /** Non-agent programs that stop. */
+  /**
+   * Programs that are neither a shell nor a known agent. They stop, and
+   * tmux-ide can't tell whether one is an agent, so `--yes` alone refuses.
+   */
   programs: { target: string; command: string }[];
+  /** Agents and programs in sessions that end and are not restored. */
+  ending: EndingPane[];
   notRestored: string[];
   resumeAgents: boolean;
 }
@@ -162,6 +193,10 @@ export function buildUpgradePlan(input: {
   snapshot: FleetSnapshot;
   snapshotPath: string;
   notRestored: string[];
+  /** Panes of not-restored sessions that run an agent or a program. */
+  ending?: EndingPane[];
+  /** The pane this command runs in, if any: the caller's own consent covers it. */
+  selfPane?: string | null;
   resumeAgents: boolean;
   nowSec: number;
 }): UpgradePlan {
@@ -179,10 +214,11 @@ export function buildUpgradePlan(input: {
             target,
             agent: pane.agent,
             cwd: pane.cwd,
-            state: parseAuthority(pane.agentState ?? undefined, input.nowSec) ?? "unknown",
+            state: agentTurnState(pane.agentState, input.nowSec),
             resumes: paneResumeCommand(pane, { resumeAgents: input.resumeAgents }) !== null,
           });
-        } else if (pane.command) programs.push({ target, command: pane.command });
+        } else if (pane.command && target !== input.selfPane)
+          programs.push({ target, command: pane.command });
       }
     paneCount += panes;
     return { name: session.name, windows: session.windows.length, panes };
@@ -195,8 +231,11 @@ export function buildUpgradePlan(input: {
     sessions,
     paneCount,
     agents,
-    midTurn: agents.filter((agent) => !["idle", "done"].includes(agent.state)).length,
+    midTurn: agents.filter(
+      (agent) => agent.target !== input.selfPane && !["idle", "done"].includes(agent.state),
+    ).length,
     programs,
+    ending: (input.ending ?? []).filter((pane) => pane.agent || pane.command),
     notRestored: input.notRestored,
     resumeAgents: input.resumeAgents,
   };
@@ -231,7 +270,7 @@ export function renderPlan(plan: UpgradePlan): string {
     "aliases you set by hand, background jobs. Save open files first.",
   ];
   if (plan.programs.length) {
-    lines.push("", "These programs stop:");
+    lines.push("", "These programs stop (tmux-ide can't tell whether one is an agent):");
     for (const program of plan.programs) lines.push(`  ${program.target}  ${program.command}`);
   }
   if (plan.agents.length) {
@@ -253,6 +292,10 @@ export function renderPlan(plan: UpgradePlan): string {
   }
   if (plan.notRestored.length)
     lines.push("", `Also ends, not restored: ${plan.notRestored.join(", ")}`);
+  for (const pane of plan.ending)
+    lines.push(
+      `  ${pane.target}  ${pane.agent ?? pane.command}  ${pane.cwd}  ends and does not come back`,
+    );
   lines.push("", `Snapshot saved: ${plan.snapshotPath}`);
   return lines.join("\n");
 }
@@ -263,20 +306,48 @@ export type Confirmation =
   | { kind: "proceed" }
   | { kind: "refuse"; reason: string };
 
-/** The default answer is always No. `--yes` alone never ends an agent mid-turn. */
+/** What `--yes` alone may not end. */
+export interface AtRisk {
+  /** Agents mid-turn, or with no fresh state report. */
+  midTurn: number;
+  /** Programs that may be agents tmux-ide can't recognise. */
+  programs: number;
+  /** Agents or programs in sessions that are not restored. */
+  ending: number;
+}
+
+export function atRisk(plan: UpgradePlan): AtRisk {
+  return { midTurn: plan.midTurn, programs: plan.programs.length, ending: plan.ending.length };
+}
+
+/**
+ * The default answer is always No. `--yes` alone never ends an agent that may
+ * be mid-turn, a program that may be an agent, or anything that won't come back.
+ */
 export function confirmation(input: {
   yes: boolean;
   endRunningAgents: boolean;
   json: boolean;
   dryRun: boolean;
-  midTurn: number;
+  risk: AtRisk;
 }): Confirmation {
   if (input.dryRun || (input.json && !input.yes)) return { kind: "preview" };
   if (!input.yes) return { kind: "ask" };
-  if (input.midTurn > 0 && !input.endRunningAgents)
+  const { midTurn, programs, ending } = input.risk;
+  if ((midTurn > 0 || programs > 0 || ending > 0) && !input.endRunningAgents) {
+    const parts = [
+      ...(midTurn ? [`${plural(midTurn, "agent")} may be mid-turn`] : []),
+      ...(programs
+        ? [`${plural(programs, "program")} may be ${programs === 1 ? "an agent" : "agents"}`]
+        : []),
+      ...(ending
+        ? [`${plural(ending, "pane")} in sessions that are not restored run something`]
+        : []),
+    ];
     return {
       kind: "refuse",
-      reason: `${plural(input.midTurn, "agent")} may be mid-turn. Pass --yes --end-running-agents to end them, or wait until they are idle.`,
+      reason: `${parts.join("; ")}. Pass --yes --end-running-agents to end them, or wait until they are idle. Nothing was stopped.`,
     };
+  }
   return { kind: "proceed" };
 }
