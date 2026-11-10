@@ -113,6 +113,21 @@ impl Transition {
         state.clone()
     }
 }
+/// The worker adopts the catalog's state. A split's outcome stays when the
+/// state is for the same request: the view may not have read the publication
+/// that carried it yet (the mailbox keeps only the latest), and it must see
+/// it once (#361). For any other request it is dropped, so it never reaches
+/// an unrelated request.
+pub(super) fn adopt(state: &mut State, next: State) {
+    let split = state
+        .pane_split
+        .take()
+        .filter(|_| next.request == state.request);
+    *state = next;
+    if state.pane_split.is_none() {
+        state.pane_split = split;
+    }
+}
 impl super::SnapshotView {
     pub(super) fn retain_window_transition(
         &mut self,

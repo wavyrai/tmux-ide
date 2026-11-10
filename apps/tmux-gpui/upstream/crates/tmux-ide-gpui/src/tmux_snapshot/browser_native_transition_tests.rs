@@ -99,3 +99,34 @@ fn the_preview_carries_the_split_outcome() {
     assert!(shown.retained_preview, "the preview is what the view sees");
     assert!(shown.pane_split == pending.pane_split);
 }
+/// The second loss path (review of #361, round 3): after the preview that
+/// carries the outcome, Local's open() publishes its own state and the worker
+/// adopts it. For the same request the outcome survives, so the next
+/// publication carries it again; for another request it is gone.
+#[test]
+fn the_split_outcome_survives_the_catalog_state_for_the_same_request() {
+    let split = Some(crate::tmux_snapshot::browser::PaneSplit {
+        nonce: uuid::Uuid::new_v4(),
+        created: Some("pane.new".into()),
+    });
+    // The worker: the split completed, the stream was revoked, the preview
+    // published the outcome.
+    let mut t = Transition::default();
+    let mut state = live();
+    t.begin(&state, 4, 0);
+    state.frame = None;
+    state.status = "Opening terminal".into();
+    state.pane_split = split.clone();
+    assert!(t.publication(&state, true, 10).pane_split == split);
+    // Local's open() for the same request: "Opening terminal", no outcome.
+    adopt(&mut state, opening(4));
+    let shown = t.publication(&state, true, 20);
+    assert!(shown.retained_preview);
+    assert!(
+        shown.pane_split == split,
+        "the latest publication still carries it"
+    );
+    // A later, unrelated request never inherits it.
+    adopt(&mut state, opening(5));
+    assert!(state.pane_split.is_none());
+}
