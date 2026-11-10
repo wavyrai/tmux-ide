@@ -305,6 +305,7 @@ pub(super) fn with_mock_panes(
     mut state: browser::State,
     cols: usize,
     rows: usize,
+    glyphs: bool,
 ) -> Result<browser::State> {
     let blank = serde_json::json!({"grapheme": " ", "width": 1, "attributes": 0,
         "foreground": {"kind": "default"}, "background": {"kind": "default"}});
@@ -316,6 +317,9 @@ pub(super) fn with_mock_panes(
     write(&mut grid, 0, 0, left, NVIM);
     write(&mut grid, 0, top + 1, left, SHELL);
     write(&mut grid, left + 1, 0, cols - left - 1, CLAUDE);
+    if glyphs {
+        write_glyphs(&mut grid, 0, top + 9, left);
+    }
     let mut snapshot: serde_json::Value =
         serde_json::from_slice(include_bytes!("../../../../../fixtures/snapshot.json"))?;
     snapshot["grid"] = grid.into();
@@ -430,4 +434,53 @@ pub(super) fn with_mock_home(mut state: browser::State) -> Result<browser::State
     state.sessions.clear();
     state.surface = browser::Surface::Home;
     Ok(state)
+}
+
+/// `+glyphs`: box drawing, block elements and a powerline prompt under the
+/// shell's output, to see that cells still join at the line height.
+fn write_glyphs(grid: &mut [serde_json::Value], left: usize, top: usize, width: usize) {
+    let cell = |ch: char, fg: Option<u8>, bg: Option<u8>| {
+        let color = |c: Option<u8>| {
+            c.map_or(
+                serde_json::json!({"kind": "default"}),
+                |index| serde_json::json!({"kind": "indexed", "index": index}),
+            )
+        };
+        serde_json::json!({"grapheme": ch.to_string(), "width": 1, "attributes": 0,
+            "foreground": color(fg), "background": color(bg)})
+    };
+    let mut put = |y: usize, cells: Vec<serde_json::Value>| {
+        if let Some(row) = grid
+            .get_mut(top + y)
+            .and_then(|r| r["cells"].as_array_mut())
+        {
+            for (x, c) in cells.into_iter().enumerate().take(width) {
+                if let Some(slot) = row.get_mut(left + x) {
+                    *slot = c;
+                }
+            }
+        }
+    };
+    for (y, line) in [
+        "┌──┬──┐ ╔══╗ ▛▀▜",
+        "│ab│cd│ ║  ║ ▌█▐",
+        "├──┼──┤ ╠══╣ ▙▄▟",
+        "└──┴──┘ ╚══╝ ░▒▓",
+    ]
+    .iter()
+    .enumerate()
+    {
+        put(y, line.chars().map(|ch| cell(ch, None, None)).collect());
+    }
+    // A powerline prompt: coloured segments joined by separators.
+    let mut prompt = Vec::new();
+    for (text, bg, next) in [
+        (" main ", 4u8, Some(2u8)),
+        (" ✓ ok ", 2, Some(5)),
+        (" 12:00 ", 5, None),
+    ] {
+        prompt.extend(text.chars().map(|ch| cell(ch, Some(0), Some(bg))));
+        prompt.push(cell('\u{e0b0}', Some(bg), next));
+    }
+    put(5, prompt);
 }

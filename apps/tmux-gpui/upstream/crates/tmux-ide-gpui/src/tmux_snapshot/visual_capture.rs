@@ -529,6 +529,9 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let owner = extras.contains(&"owner");
     // `<theme>+mock`: the #746 mockup's session window, refitted below.
     let mock = extras.contains(&"mock");
+    // `+glyphs`: the mock's shell also shows box drawing and a powerline
+    // prompt, to check cells join at the terminal's line height.
+    let glyphs = extras.contains(&"glyphs");
     let state = if mock {
         mock::with_mock_fleet(state)?
     } else {
@@ -687,7 +690,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 .ok_or_else(|| anyhow!("owner capture: no fit"))?;
                 let state = std::mem::take(&mut view.browser_state);
                 let state = if mock {
-                    mock::with_mock_panes(state, cols.into(), rows.into())?
+                    mock::with_mock_panes(state, cols.into(), rows.into(), glyphs)?
                 } else {
                     with_owner_split(state, cols.into(), rows.into())?
                 };

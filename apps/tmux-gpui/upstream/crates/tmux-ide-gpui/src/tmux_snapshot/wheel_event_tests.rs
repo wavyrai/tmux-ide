@@ -51,7 +51,13 @@ fn prepare(view: &mut SnapshotView) {
 fn event(position: Point<Pixels>, fraction: f32) -> ScrollWheelEvent {
     ScrollWheelEvent {
         position,
-        delta: ScrollDelta::Pixels(point(px(0.), px(fraction * crate::terminal::CELL_HEIGHT))),
+        // A fraction of the default terminal line (#746 v3: 15 pt).
+        delta: ScrollDelta::Pixels(point(
+            px(0.),
+            px(fraction
+                * crate::tmux_snapshot::terminal_font::DEFAULT_SIZE
+                * crate::tmux_snapshot::terminal_font::LINE_HEIGHT_MULTIPLE),
+        )),
         touch_phase: TouchPhase::Moved,
         ..Default::default()
     }
