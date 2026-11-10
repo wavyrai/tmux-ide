@@ -225,6 +225,26 @@ pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
     )
 }
 
+/// The sidebar's middle ink (#746 v3): an unselected row's label, between
+/// the selected row's full text and the muted headings. Bezel has no token
+/// for it, so it is the even mix of Bezel's `text` and `text_muted`, each
+/// laid on the sidebar's `surface`, then inked like any row text
+/// ([`row_text`]) so it reads at 4.75:1 on every row plate.
+pub(crate) fn row_label(theme: &Theme) -> u32 {
+    let bezel = palette(theme);
+    let plate = bezel.surface;
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let text = Rgba::from(bezel_theme::flatten(bezel.text, plate));
+    let muted = Rgba::from(bezel_theme::flatten(bezel.text_muted, plate));
+    let mid = Rgba {
+        r: (text.r + muted.r) / 2.,
+        g: (text.g + muted.g) / 2.,
+        b: (text.b + muted.b) / 2.,
+        a: 1.,
+    };
+    row_text(theme, pack(mid.into()))
+}
+
 /// A dialog's secondary text (`popover::dialog_body`'s role), inked on the
 /// dialog card's opaque `surface_dialog`.
 pub(crate) fn dialog_muted(theme: &Theme) -> Hsla {

@@ -213,7 +213,15 @@ pub(super) fn render_row(
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
-        .text_color(rgb(if heading || window { muted } else { label }))
+        // Three inks (#746 v3): the full text only on the selection, the
+        // middle label ink on other rows, muted on headings.
+        .text_color(rgb(if heading || window {
+            muted
+        } else if row.selected {
+            label
+        } else {
+            crate::tmux_snapshot::design::row_label(theme)
+        }))
         // The ladder's sizes at gpui's own leading, which the rows' heights
         // are laid out on.
         .text_style(role)

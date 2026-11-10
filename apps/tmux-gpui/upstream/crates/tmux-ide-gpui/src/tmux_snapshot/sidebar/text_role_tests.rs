@@ -175,10 +175,13 @@ fn every_row_text_role_reads_on_the_frosted_sidebar(cx: &mut TestAppContext) {
         view.update(cx, |view, _| view.0 = theme.clone());
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let (label, muted) = row_ink(&theme);
+        // #746 v3: an unselected row (0) takes the middle label ink, the
+        // selected one (6) the full text.
+        let middle = crate::tmux_snapshot::design::row_label(&theme);
         let plates = plates(&theme, true);
         let probes = cx.update(|_, cx| cx.global::<InkProbes>().0.clone());
         for (key, ink) in [
-            ("sidebar-label-0", label),
+            ("sidebar-label-0", middle),
             ("sidebar-label-6", label),
             ("sidebar-count-0", muted),
             ("sidebar-count-6", muted),
