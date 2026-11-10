@@ -275,11 +275,6 @@ pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
     )
 }
 
-/// The attention badge's count, on its filled `theme.active` pill.
-pub(crate) fn badge_text(theme: &Theme) -> u32 {
-    crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
-}
-
 /// A dialog's secondary text (`popover::dialog_body`'s role), inked on the
 /// dialog card's opaque `surface_dialog`.
 pub(crate) fn dialog_muted(theme: &Theme) -> Hsla {
@@ -457,7 +452,7 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge_text, chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
+    use super::{chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, TestAppContext, black, rgb, white};
 
@@ -704,9 +699,16 @@ mod tests {
                     }
                 }
             }
-            let badge = bezel_theme::contrast_ratio(color(badge_text(&theme)), color(theme.active));
-            if badge < 4.5 {
-                failures.push(format!("{name}: badge count on its pill is {badge:.2}:1"));
+            // The "needs input" pill's words on its opaque wash, wherever
+            // the sidebar is drawn (#746).
+            let (wash, ink) = crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+                &theme,
+                crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+            );
+            assert_eq!(wash.a, 1.0, "{name}: the pill's wash is opaque");
+            let ratio = bezel_theme::contrast_ratio(color(ink), wash);
+            if ratio < 4.5 {
+                failures.push(format!("{name}: attention pill is {ratio:.2}:1"));
             }
             for (role, value) in [("foreground", theme.foreground), ("muted", theme.muted)] {
                 let text = color(chrome_text(&theme, value));

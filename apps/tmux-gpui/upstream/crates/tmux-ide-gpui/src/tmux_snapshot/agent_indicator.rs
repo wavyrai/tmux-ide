@@ -69,6 +69,51 @@ pub(super) enum Plate {
     /// A pane card's header, bare or under its washes.
     Header,
 }
+/// The "needs input" pill (#746 mockup): the attention colour as a wash (12%
+/// in a light theme, 14% in a dark one), a 5 pt dot and words at Caption,
+/// weight 600, 18 pt high, with no outline. The wash is laid opaque over the
+/// plate's own colour, so the pill reads the same over the frost whatever
+/// the desktop; the dot and words are the attention colour, moved only as
+/// far as they must to read at 4.6:1 on it.
+pub(super) fn attention_pill(
+    theme: &crate::config::Theme,
+    on: Plate,
+    words: impl Into<SharedString>,
+) -> Div {
+    let (wash, ink) = attention_pill_colors(theme, on);
+    div()
+        .debug_selector(|| "attention-pill".into())
+        .flex_none()
+        .h(px(18.))
+        .px(px(7.))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded_full()
+        .bg(wash)
+        .text_color(rgb(ink))
+        .text_size(px(bezel_theme::TextStyle::Caption.size()))
+        .font_weight(FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
+        .child(div().flex_none().size(px(5.)).rounded_full().bg(rgb(ink)))
+        .child(words.into())
+}
+/// The pill's opaque wash and the ink of its dot and words.
+pub(super) fn attention_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
+    let accent = attention_ink(theme);
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    let plate = match on {
+        // The sidebar's plate is the frost's own tone.
+        Plate::Sidebar => theme.sidebar.unwrap_or(theme.surface),
+        Plate::Chrome | Plate::Header => theme.background,
+    };
+    let wash = bezel_theme::flatten(
+        Hsla::from(rgb(accent)).opacity(if dark { 0.14 } else { 0.12 }),
+        rgb(plate).into(),
+    );
+    let packed = u32::from(Rgba::from(wash)) >> 8;
+    (wash, crate::contrast::ink(accent, &[packed], 4.6))
+}
 /// The state's colour before inking.
 fn hue(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     if unavailable || matches!(row.status, Status::Disconnected) {
@@ -130,7 +175,11 @@ impl SnapshotView {
         on: Plate,
     ) -> Option<AnyElement> {
         if label(row, unavailable) == "Needs input" {
-            return Some(self.agent_indicator(row, unavailable));
+            return Some(
+                attention_pill(&self.theme(), on, "Needs input")
+                    .debug_selector(|| "agent-badge".into())
+                    .into_any_element(),
+            );
         }
         if !unavailable && matches!(row.status, Status::Idle) {
             return None;

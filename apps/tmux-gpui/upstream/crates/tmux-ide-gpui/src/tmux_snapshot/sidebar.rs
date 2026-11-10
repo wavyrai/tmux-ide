@@ -127,16 +127,16 @@ mod text_role_tests;
 /// The attention count: Bezel's badge, filled as it was before Bezel, since
 /// the count is what asks for the user and should stand out of the row
 /// rather than outline. Its count is inked on the pill.
-fn attention_badge(theme: &Theme, bezel: &bezel_theme::Theme, count: usize, index: usize) -> Div {
-    use bezel_ui::widgets::Content as _;
-    bezel
-        .badge(count.to_string())
-        .bg(rgb(theme.active))
-        .border_color(rgb(theme.active))
-        .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
-        .children(crate::tmux_snapshot::design::ink_probe(move || {
-            format!("sidebar-badge-{index}")
-        }))
+/// How many agents wait on the user, as the "needs input" pill (#746).
+fn attention_badge(theme: &Theme, count: usize, index: usize) -> Div {
+    crate::tmux_snapshot::agent_indicator::attention_pill(
+        theme,
+        crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+        count.to_string(),
+    )
+    .children(crate::tmux_snapshot::design::ink_probe(move || {
+        format!("sidebar-badge-{index}")
+    }))
 }
 
 /// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
@@ -341,7 +341,7 @@ pub(super) fn render_row(
         );
     if row.attention > 0 && !heading {
         element = element.child(
-            attention_badge(theme, bezel, row.attention, index)
+            attention_badge(theme, row.attention, index)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }

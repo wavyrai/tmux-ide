@@ -148,12 +148,17 @@ fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
         let mut element = render_row(0, &row(true), &theme, &bezel, painter, true);
         let painted = element.style().text.color;
         assert_eq!(painted, Some(rgb(label).into()));
-        let mut badge = attention_badge(&theme, &bezel, 2, 0);
+        let mut badge = attention_badge(&theme, 2, 0);
         let fill = match badge.style().background.clone() {
             Some(Fill::Color(background)) => background.as_solid(),
             None => None,
         };
-        assert_eq!(fill, Some(rgb(theme.active).into()));
+        // The "needs input" pill's wash (#746).
+        let (wash, _) = crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+            &theme,
+            crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+        );
+        assert_eq!(fill, Some(wash));
     });
 }
 
@@ -178,7 +183,7 @@ impl Render for BlueRows {
 
 #[gpui::test]
 fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
-    use crate::tmux_snapshot::design::{InkProbes, badge_text, palette, row_ink};
+    use crate::tmux_snapshot::design::{InkProbes, palette, row_ink};
     let theme = blue();
     let (label, caption) = row_ink(&theme);
     let raw = palette(&theme);
@@ -196,7 +201,16 @@ fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
         assert_eq!(probes.get("sidebar-count-0"), Some(&rgb(caption).into()));
         assert_eq!(
             probes.get("sidebar-badge-1"),
-            Some(&rgb(badge_text(&theme)).into())
+            Some(
+                &rgb(
+                    crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+                        &theme,
+                        crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+                    )
+                    .1
+                )
+                .into()
+            )
         );
     });
 }
