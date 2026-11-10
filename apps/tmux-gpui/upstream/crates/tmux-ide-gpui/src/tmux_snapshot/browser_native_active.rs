@@ -1,6 +1,19 @@
 //! Per-connection native state and ordered publication.
 use super::*;
 impl Active {
+    /// The next command ends the last action's outcome in the status line
+    /// (#763). A fit is the app's own resize, not the user's next command.
+    pub(super) fn admit(&mut self, command: &Command) {
+        if !matches!(
+            command,
+            Command::Input {
+                input: crate::tmux_snapshot::keys::Input::Resize { .. },
+                ..
+            }
+        ) {
+            self.action_status = None;
+        }
+    }
     pub(super) fn owner_completed(&mut self, completion: browser_native_owner::Completion) {
         self.action_status = match completion.outcome {
             herdr_client::tmux_controller::OwnerOutcome::Applied => None,
@@ -309,7 +322,15 @@ impl Active {
         if state.input_ready {
             self.divider.publish(state);
         }
-        if let Some(status) = self.action_status.take() {
+        // An action's outcome (the editor's answer, a pane action that wasn't
+        // applied) stays in the status line until the next command (#763). A
+        // frame published right after it must not replace it before the UI,
+        // which reads only the latest state, gets to show it. A connection
+        // state (connecting, an inactive window, restoring history) still
+        // comes first, and the outcome returns once it clears.
+        if let Some(status) = self.action_status
+            && (state.status == "Connected" || state.status == status)
+        {
             state.status = status.into();
         }
         if self.presentation.needs_materialization() {

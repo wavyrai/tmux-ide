@@ -743,6 +743,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     .or_else(|| pending.pop_front())
             {
                 admitted = true;
+                if let Some(current) = active.as_mut() {
+                    current.admit(&command);
+                }
                 if matches!(
                     &command,
                     Command::PaneAction {

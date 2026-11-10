@@ -367,3 +367,73 @@ fn editor_result_waits_for_repaint_and_still_rejects_focus_loss() {
         peer.join().unwrap();
     }
 }
+
+/// The editor's answer stays in the status line across later frames until the
+/// next command (#763). A reader that keeps only the latest state (the app's
+/// UI mailbox, the journey probe) must still see it when a frame is published
+/// right after it. The app's own fit is not the next command.
+#[test]
+fn the_editor_answer_outlives_later_frames_until_the_next_command() {
+    const ANSWER: &str = "Open folder requires verified local daemon discovery";
+    let (mut active, mut state, _observed, peer) = fixture(true);
+    let token = state.pane_actions.as_ref().unwrap().token.clone();
+    let request = active
+        .editor
+        .submit(
+            &active.controller,
+            &active.presentation,
+            ReadContext {
+                id: ID,
+                request: 3,
+                pane: "left",
+                token: &token,
+                presence: 1,
+            },
+            1,
+        )
+        .unwrap();
+    assert!(active.editor.receive(EditorResponse::native(
+        &request,
+        crate::tmux_snapshot::browser_native_editor::Status::Unavailable
+    )));
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 3).unwrap();
+    assert_eq!(state.status, ANSWER);
+    // The next frames, published before anyone reads the state.
+    for now in [4, 5] {
+        active.presentation.invalidate_overlay();
+        active.poll(&mut state, true, now).unwrap();
+        assert_eq!(state.status, ANSWER, "a frame at {now} replaced the answer");
+    }
+    // A connection state comes first; the answer returns once it clears.
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, false, 6).unwrap();
+    assert_ne!(state.status, ANSWER, "an inactive window says so first");
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 7).unwrap();
+    assert_eq!(state.status, ANSWER);
+    let input = |input| Command::Input {
+        input_target: None,
+        request: 3,
+        id: "left".into(),
+        input,
+    };
+    active.admit(&input(crate::tmux_snapshot::keys::Input::Resize {
+        cols: 4,
+        rows: 2,
+        cell_width: None,
+        cell_height: None,
+        cell_width_milli: None,
+        cell_height_milli: None,
+    }));
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 8).unwrap();
+    assert_eq!(state.status, ANSWER, "a fit is not the next command");
+    // The user's next command ends it.
+    active.admit(&input(crate::tmux_snapshot::keys::Input::Key("a".into())));
+    active.presentation.invalidate_overlay();
+    active.poll(&mut state, true, 9).unwrap();
+    assert_eq!(state.status, "Connected");
+    active.controller.retire();
+    peer.join().unwrap();
+}
