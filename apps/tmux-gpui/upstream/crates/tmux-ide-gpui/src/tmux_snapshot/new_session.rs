@@ -475,7 +475,12 @@ impl SnapshotView {
                 _ => div().child(message),
             });
         }
-        body.into_any_element()
+        if self.new_session.is_some() {
+            // The form enters as a dialog does (#761).
+            bezel_motion::dialog_in("new-session-in", body).into_any_element()
+        } else {
+            body.into_any_element()
+        }
     }
 }
 #[cfg(test)]
