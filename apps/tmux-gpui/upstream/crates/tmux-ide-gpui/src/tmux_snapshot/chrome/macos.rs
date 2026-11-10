@@ -3,6 +3,12 @@
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::NSWorkspace;
 
+/// macOS "Reduce motion" (#761). Tests stand in for it.
+#[cfg_attr(test, allow(dead_code))]
+pub(super) fn motion_reduced() -> bool {
+    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
 pub(super) fn translucency_allowed() -> bool {
     let workspace = NSWorkspace::sharedWorkspace();
     !workspace.accessibilityDisplayShouldReduceTransparency()
