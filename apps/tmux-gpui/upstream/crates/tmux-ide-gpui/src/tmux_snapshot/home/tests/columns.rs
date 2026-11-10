@@ -364,7 +364,8 @@ fn homes_agent_rows_sit_on_the_pane_rows_tile(cx: &mut TestAppContext) {
     let tile = cx
         .debug_bounds(format!("tmux-sidebar-tile-{agent}").leak())
         .unwrap();
-    assert_eq!(tile.size.width, px(20.));
+    // #746 v3: an 18 pt tile.
+    assert_eq!(tile.size.width, px(18.));
     let heading_label = cx
         .debug_bounds(format!("tmux-sidebar-label-{heading}").leak())
         .unwrap();

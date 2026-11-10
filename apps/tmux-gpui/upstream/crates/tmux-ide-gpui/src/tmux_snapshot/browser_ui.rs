@@ -655,8 +655,8 @@ impl SnapshotView {
             .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
-            // Rows sit 1 pt apart, as in the mockup (#746).
-            .gap(px(1.));
+            // Rows sit 2 pt apart, as in the mockup (#746 v3).
+            .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
         sidebar = sidebar.child(self.sidebar_home_row(cx));

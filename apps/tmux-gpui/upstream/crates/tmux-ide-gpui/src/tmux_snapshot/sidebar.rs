@@ -127,6 +127,12 @@ mod text_role_tests;
 /// The attention count: Bezel's badge, filled as it was before Bezel, since
 /// the count is what asks for the user and should stand out of the row
 /// rather than outline. Its count is inked on the pill.
+/// A pane row's kind tile (#746 v3): 18 pt, radius 5, its icon 11 pt.
+pub(super) const TILE: f32 = 18.;
+const TILE_RADIUS: f32 = 5.;
+const TILE_ICON: f32 = 11.;
+/// A project heading's slot (#746 v3).
+pub(super) const HEADING_SLOT: f32 = 26.;
 /// How many agents wait on the user, as the "needs input" pill (#746).
 fn attention_badge(theme: &Theme, count: usize, index: usize) -> Div {
     crate::tmux_snapshot::agent_indicator::attention_pill(
@@ -197,9 +203,9 @@ pub(super) fn render_row(
         .pl(px(if window { indent + 28. } else { indent }))
         .pr_2()
         .py(px(if session || tiled { 5. } else { 3. }))
-        // A project's heading (#746): a 22 pt line, 14 pt below the group
-        // above (the list's 1 pt gap included).
-        .when(heading, |h| h.py_0().min_h(px(22.)).mt(px(13.)))
+        // A project's heading (#746 v3): a 26 pt slot, 12 pt below the
+        // group above (the list's 2 pt gap included).
+        .when(heading, |h| h.py_0().min_h(px(HEADING_SLOT)).mt(px(10.)))
         // A pane row is the mockup's 30 pt whatever Body's leading.
         .when(tiled, |r| r.py_0().h(px(30.)))
         .rounded(px(bezel_theme::Theme::button_radius()))
@@ -257,6 +263,7 @@ pub(super) fn render_row(
                             bezel_ui::icons::Icon::asset(path),
                         )
                         .flex_none()
+                        .when(tiled, |icon| icon.size(px(TILE_ICON)))
                         .text_color(rgb(if row.selected { label } else { muted }));
                     if tiled {
                         // A pane's or agent's kind sits on a small tile, as in
@@ -264,18 +271,13 @@ pub(super) fn render_row(
                         div()
                             .debug_selector(move || format!("tmux-sidebar-tile-{index}"))
                             .flex_none()
-                            .size(px(20.))
-                            .rounded(px(bezel_theme::Theme::control_radius()))
+                            .size(px(TILE))
+                            .rounded(px(TILE_RADIUS))
                             .border_1()
                             .border_color(bezel.border)
-                            // Filled, so the tile reads as a tile on the
-                            // plate: the card colour, or the plate's own
-                            // colour on the raised selected row (#746).
-                            .bg(if row.selected {
-                                rgb(theme.sidebar.unwrap_or(theme.surface))
-                            } else {
-                                rgb(theme.background)
-                            })
+                            // Filled with Bezel's card surface, so the tile
+                            // reads as a small card on the plate (#746 v3).
+                            .bg(bezel.surface_card)
                             .flex()
                             .items_center()
                             .justify_center()
