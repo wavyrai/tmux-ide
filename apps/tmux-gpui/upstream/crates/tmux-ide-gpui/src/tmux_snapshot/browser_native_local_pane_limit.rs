@@ -49,11 +49,12 @@ impl Local {
             self.publish()
         }))
     }
-    /// Home's own trouble outranks the notice: once Home reconnects, stops
-    /// on a fault, or recovers an open session, the notice is dropped for
-    /// good so the strip says what is happening now.
+    /// Home's own trouble outranks the notice: once Home reconnects or stops
+    /// on a fault, the notice is dropped for good so the strip says what is
+    /// happening now. Session recovery needs no arm here: every open clears
+    /// the notice, and a refused recovery ends (`reconnect_catalog`).
     pub(super) fn pane_limit_superseded(&mut self) {
-        if self.home.active() || self.home.fault().is_some() || self.recovery.is_some() {
+        if self.home.active() || self.home.fault().is_some() {
             self.state.home_notice = None;
         }
     }

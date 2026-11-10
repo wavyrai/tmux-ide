@@ -321,3 +321,39 @@ fn the_native_limit_matches_the_contract() {
         .trim_end_matches(';');
     assert_eq!(value.parse::<u64>().unwrap(), NATIVE_STREAM_MAX_PANES);
 }
+
+/// A recovered session that is now over the limit ends its recovery and keeps
+/// the notice; later clicks still explain themselves (review round 2).
+#[test]
+fn a_recovery_refused_for_the_pane_limit_ends_and_keeps_the_notice() {
+    let (mut local, events) = loaded(3);
+    let big = local.targets[&key(&local, BIG)].clone();
+    local.recovery = Some(reconnect::Recovery::of(big));
+    assert!(local.reconnect_catalog().unwrap());
+    drain(&events);
+    assert!(local.stage.is_none());
+    assert!(
+        local.recovery.is_none(),
+        "nothing retries a refused recovery"
+    );
+    assert_live_home_with_notice(&local, BIG, 25);
+    local.publish().unwrap();
+    drain(&events);
+    assert_live_home_with_notice(&local, BIG, 25);
+    local.open(9, key(&local, BIG), None).unwrap();
+    drain(&events);
+    assert_live_home_with_notice(&local, BIG, 25);
+}
+
+/// A recovery that can still open keeps going.
+#[test]
+fn a_recovery_under_the_limit_keeps_recovering() {
+    let (mut local, events) = loaded(3);
+    let small = local.targets[&key(&local, SMALL)].clone();
+    local.recovery = Some(reconnect::Recovery::of(small));
+    assert!(local.reconnect_catalog().unwrap());
+    drain(&events);
+    assert!(matches!(local.stage, Some(Stage::Open { .. })));
+    assert!(local.recovery.is_some());
+    assert!(local.state.home_notice.is_none());
+}
