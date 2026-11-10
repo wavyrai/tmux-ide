@@ -214,3 +214,20 @@ fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+fn a_selected_row_is_a_full_capsule(cx: &mut TestAppContext) {
+    let theme = blue();
+    cx.update(|cx| {
+        crate::tmux_snapshot::design::prepare(&theme, false, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::from(cx.new(|_| ()).entity_id());
+        // #746 v3: the selection is a capsule, not a rounded rectangle.
+        let mut capsule = div().rounded_full();
+        let mut element = render_row(0, &row(true), &theme, &bezel, painter, false);
+        assert_eq!(
+            element.style().corner_radii.top_left,
+            capsule.style().corner_radii.top_left
+        );
+    });
+}

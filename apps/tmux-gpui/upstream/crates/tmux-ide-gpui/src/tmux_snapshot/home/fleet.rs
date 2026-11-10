@@ -172,7 +172,8 @@ impl SnapshotView {
             .gap(px(SPACE))
             .px(px(SPACE))
             .py(px(6.))
-            .rounded(px(bezel_theme::Theme::control_radius()))
+            // A filter is a capsule, like a sidebar row (#746 v3).
+            .rounded_full()
             .cursor_pointer()
             .map(|row| {
                 // The chosen filter is raised like a selected sidebar row.
@@ -265,7 +266,7 @@ impl SnapshotView {
                 .aria_label("Add machine…")
                 .px(px(SPACE))
                 .py(px(6.))
-                .rounded(px(bezel_theme::Theme::control_radius()))
+                .rounded_full()
                 .flex()
                 .items_center()
                 .gap(px(SPACE))

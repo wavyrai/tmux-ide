@@ -208,7 +208,8 @@ pub(super) fn render_row(
         .when(heading, |h| h.py_0().min_h(px(HEADING_SLOT)).mt(px(10.)))
         // A pane row is the mockup's 30 pt whatever Body's leading.
         .when(tiled, |r| r.py_0().h(px(30.)))
-        .rounded(px(bezel_theme::Theme::button_radius()))
+        // A row, selected or hovered, is a full capsule (#746 v3).
+        .rounded_full()
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
