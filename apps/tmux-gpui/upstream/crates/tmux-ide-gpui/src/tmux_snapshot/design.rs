@@ -8,7 +8,7 @@ use gpui::*;
 /// other grey in Bezel's palette for that appearance is tinted to the surface's
 /// hue, so overlays and controls sit in the same family as the shell.
 pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
-    use bezel_theme::{Appearance, Brand, Ink, Tint};
+    use bezel_theme::{Appearance, Brand, Ink, Tint, Vibrancy};
     let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
         Appearance::Dark
     } else {
@@ -19,6 +19,10 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     let brand = Brand {
         tint: Tint::new(hue, chroma),
         ink: if high { Ink::ACCESSIBLE } else { Ink::APPKIT },
+        // Frost in light as well as dark (#746 glass plan); Reduce
+        // Transparency and Increase Contrast still turn it off (`prepare`,
+        // and `high` below).
+        vibrancy: Vibrancy::On,
         ..Default::default()
     };
     let mut result = bezel_theme::Theme::for_appearance(appearance);
@@ -731,6 +735,35 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[gpui::test]
+    fn light_is_frosted_too_unless_accessibility_turns_glass_off(cx: &mut TestAppContext) {
+        // #746 glass plan: a light window frosts as a dark one does.
+        let frosted = palette(&light());
+        assert!(frosted.vibrancy);
+        assert_eq!(
+            frosted.window_background_appearance(),
+            gpui::WindowBackgroundAppearance::Blurred
+        );
+        // Increase Contrast turns it off in the palette itself.
+        let high = palette(&Theme {
+            contrast: Contrast::High,
+            ..light()
+        });
+        assert!(!high.vibrancy && !high.glass);
+        // Reduce Transparency (native glass not allowed) makes it opaque.
+        cx.update(|cx| {
+            prepare(&light(), true, cx);
+            assert!(bezel_theme::Theme::of(cx).vibrancy);
+            prepare(&light(), false, cx);
+            let installed = bezel_theme::Theme::of(cx);
+            assert!(!installed.vibrancy && !installed.glass);
+            assert_eq!(
+                installed.window_background_appearance(),
+                gpui::WindowBackgroundAppearance::Opaque
+            );
+        });
     }
 
     #[gpui::test]
