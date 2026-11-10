@@ -174,7 +174,10 @@ pub(super) fn render_row(
     let tiled = !heading && !window && !session && (row.pane.is_some() || row.agent.is_some());
     let role = if heading || window {
         TextStyle::Subheadline
-    } else if session || tiled {
+    } else if tiled {
+        // A pane's label reads at Body, as in the mockup (#746).
+        TextStyle::Body
+    } else if session {
         TextStyle::Callout
     } else {
         TextStyle::Subheadline
@@ -194,8 +197,12 @@ pub(super) fn render_row(
         .pl(px(if window { indent + 28. } else { indent }))
         .pr_2()
         .py(px(if session || tiled { 5. } else { 3. }))
-        .when(heading, |h| h.mt(px(10.)))
-        .rounded(px(bezel_theme::Theme::control_radius()))
+        // A project's heading (#746): a 22 pt line, 14 pt below the group
+        // above (the list's 1 pt gap included).
+        .when(heading, |h| h.py_0().min_h(px(22.)).mt(px(13.)))
+        // A pane row is the mockup's 30 pt whatever Body's leading.
+        .when(tiled, |r| r.py_0().h(px(30.)))
+        .rounded(px(bezel_theme::Theme::button_radius()))
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
@@ -261,6 +268,14 @@ pub(super) fn render_row(
                             .rounded(px(bezel_theme::Theme::control_radius()))
                             .border_1()
                             .border_color(bezel.border)
+                            // Filled, so the tile reads as a tile on the
+                            // plate: the card colour, or the plate's own
+                            // colour on the raised selected row (#746).
+                            .bg(if row.selected {
+                                rgb(theme.sidebar.unwrap_or(theme.surface))
+                            } else {
+                                rgb(theme.background)
+                            })
                             .flex()
                             .items_center()
                             .justify_center()

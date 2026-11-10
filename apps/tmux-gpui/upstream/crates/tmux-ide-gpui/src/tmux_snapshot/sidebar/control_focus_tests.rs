@@ -86,7 +86,8 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
             assert!(view.sidebar_hidden);
             assert_eq!(
                 view.input_geometry.unwrap().0.size.width,
-                width_before + px(224.)
+                width_before + px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+                    - px(crate::tmux_snapshot::shell::CONTENT_INSET)
             );
             assert!(!view.sidebar_keyboard.active);
             assert!(view.terminal_focus.is_focused(window));

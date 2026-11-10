@@ -77,7 +77,7 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     let heights: Vec<_> = resting.iter().map(|row| row.size.height).collect();
     assert_eq!(
         heights,
-        [px(24.), px(24.), px(30.), px(24.), px(24.)],
+        [px(22.), px(22.), px(30.), px(22.), px(22.)],
         "{resting:?}"
     );
     assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_none());

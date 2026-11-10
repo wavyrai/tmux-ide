@@ -25,7 +25,7 @@ fn agent_pane_rows_show_the_agent_and_open_the_exact_pane(cx: &mut TestAppContex
         .collect();
     assert_eq!(labels, ["Same long agent name repeated across rows"; 2]);
     let row = cx.debug_bounds("tmux-sidebar-pane:pane-b").unwrap();
-    assert!(row.size.width <= px(224.));
+    assert!(row.size.width <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH));
     receiver.try_iter().for_each(drop);
     cx.simulate_click(row.center(), Modifiers::default());
     assert!(
