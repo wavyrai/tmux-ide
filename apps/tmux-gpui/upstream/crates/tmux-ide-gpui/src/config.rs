@@ -8,7 +8,7 @@ mod theme;
 #[cfg(test)]
 use fonts::symbol_fallbacks;
 pub use fonts::{FONT_SIZE_RANGE, FONT_SIZE_STEP, FontConfig};
-pub use theme::{Chrome, Theme};
+pub use theme::Theme;
 
 #[derive(Clone, Debug)]
 pub struct Config {

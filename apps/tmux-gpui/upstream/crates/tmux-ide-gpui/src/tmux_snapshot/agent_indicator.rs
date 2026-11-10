@@ -101,14 +101,16 @@ pub(super) fn attention_pill(
 pub(super) fn attention_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
     let accent = attention_ink(theme);
     let dark = crate::contrast::luminance(theme.background) < 0.5;
+    // The plate is Bezel's: the sidebar's surface (the frost's own tone), or
+    // the background a card or Home's table sits on.
+    let bezel = super::design::palette(theme);
     let plate = match on {
-        // The sidebar's plate is the frost's own tone.
-        Plate::Sidebar => theme.sidebar.unwrap_or(theme.surface),
-        Plate::Chrome | Plate::Header => theme.background,
+        Plate::Sidebar => bezel.surface,
+        Plate::Chrome | Plate::Header => bezel.bg,
     };
     let wash = bezel_theme::flatten(
         Hsla::from(rgb(accent)).opacity(if dark { 0.14 } else { 0.12 }),
-        rgb(plate).into(),
+        plate,
     );
     let packed = u32::from(Rgba::from(wash)) >> 8;
     (wash, crate::contrast::ink(accent, &[packed], 4.6))

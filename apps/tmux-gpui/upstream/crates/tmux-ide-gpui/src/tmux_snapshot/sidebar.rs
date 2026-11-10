@@ -348,8 +348,8 @@ pub(super) fn render_row(
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
-    match crate::tmux_snapshot::design::selection(theme, bezel, selection) {
-        Some((fill, shadows)) => element.bg(fill).shadow(shadows),
+    match selection.fill(bezel) {
+        Some(fill) => element.bg(fill).shadow(selection.shadows()),
         None if row.target.is_some() => {
             element = element.cursor_pointer().bg(bezel_motion::hover_blend(
                 &fade,

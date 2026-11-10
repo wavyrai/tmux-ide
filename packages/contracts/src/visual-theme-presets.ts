@@ -215,9 +215,6 @@ const palettes = {
     link: "#3b6587",
     info: "#36706d",
     cardBorder: "#e1dbcf",
-    // The Mac app's chrome inks (#746): hairline dividers, tile and chip
-    // outlines, icons at rest, and the raised plate a selected row sits on.
-    nativeChrome: { hairline: "#e3ddd2", outline: "#d6cfc2", faint: "#8f8679", raised: "#fdfbf7" },
     header: "#e7e1d6",
     selected: "#e3d9c8",
     selectedText: "#2b2722",
@@ -239,7 +236,6 @@ const palettes = {
     link: "#85a9c8",
     info: "#8cbfb8",
     cardBorder: "#3a362f",
-    nativeChrome: { hairline: "#36322c", outline: "#423d36", faint: "#7d7569", raised: "#2c2925" },
     header: "#2c2925",
     selected: "#45403a",
     selectedText: "#e9e3d8",
@@ -554,25 +550,6 @@ export const VISUAL_THEME_CARD_BORDERS: Readonly<Record<string, string>> = Objec
     Object.entries(palettes).flatMap(([id, p]) => ("cardBorder" in p ? [[id, p.cardBorder]] : [])),
   ),
 );
-/** The Mac app's own chrome inks, for the presets that name them (#746). */
-export interface VisualThemeNativeChrome {
-  readonly hairline: string;
-  readonly outline: string;
-  readonly faint: string;
-  readonly raised: string;
-}
-/**
- * The presets that name their Mac chrome inks. Every other preset keeps the
- * app's defaults (Bezel's translucent greys).
- */
-export const VISUAL_THEME_NATIVE_CHROME: Readonly<Record<string, VisualThemeNativeChrome>> =
-  Object.freeze(
-    Object.fromEntries(
-      Object.entries(palettes).flatMap(([id, p]) =>
-        "nativeChrome" in p ? [[id, Object.freeze({ ...p.nativeChrome })]] : [],
-      ),
-    ),
-  );
 export function findVisualThemePreset(id: unknown): VisualThemeDocumentV1 | undefined {
   return typeof id === "string" ? VISUAL_THEME_PRESETS.find((p) => p.id === id) : undefined;
 }
