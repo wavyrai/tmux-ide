@@ -14,6 +14,7 @@ fn local_setup_is_optional_strict_and_serializes_non_navigation_request() -> any
         "running",
         "missing",
         "unsupported",
+        "unrecognized",
         "failed",
         "stopped-waiting",
     ] {
