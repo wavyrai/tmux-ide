@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
@@ -74,16 +75,39 @@ export function ordinaryTargetSocket(environment: NodeJS.ProcessEnv): string | n
   return join(environment.TMUX_TMPDIR || "/tmp", `tmux-${uid}`, "default");
 }
 
-function socketExists(path: string): boolean {
+const answering = new Set<string>();
+
+/**
+ * Does a server answer on this socket? A socket file alone is not enough: a
+ * server that crashed leaves one behind. `probe` asks with `list-sessions`,
+ * which never starts a server. A running server is remembered for the process.
+ */
+export function serverAnswers(socket: string, probe: string): boolean {
+  if (answering.has(socket)) return true;
   try {
-    return statSync(path).isSocket();
+    if (!statSync(socket).isSocket()) return false;
   } catch {
     return false;
   }
+  try {
+    execFileSync(probe, ["-S", socket, "list-sessions", "-F", "#{pid}"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 3000,
+      env: withBundledTmuxResources(probe, process.env),
+    });
+  } catch (error) {
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    // A refused connection is a stale socket. Anything else (a protocol
+    // mismatch, a timeout) means something is there: keep the PATH client.
+    if (/no server running|error connecting|connection refused|no such file/iu.test(stderr))
+      return false;
+  }
+  answering.add(socket);
+  return true;
 }
 
 export interface OrdinaryTmuxClientOptions {
-  /** Whether a server listens on this socket. Defaults to a stat of the socket file. */
+  /** Whether a server answers on this socket. Defaults to {@link serverAnswers}. */
   readonly serverRunning?: (socket: string) => boolean;
   /** The validated bundled executable, or null. */
   readonly bundled?: () => string | null;
@@ -113,14 +137,15 @@ export function resolveOrdinaryTmuxClient(
   const configured = environment.TMUX_IDE_TMUX_BIN;
   if (!configured) {
     const socket = ordinaryTargetSocket(environment);
-    if (socket !== null && !(options.serverRunning ?? socketExists)(socket)) {
+    if (socket !== null) {
       let starter: string | null = null;
       try {
         starter = bundled();
       } catch {
         // An invalid bundle falls back to the PATH client below.
       }
-      if (starter)
+      const running = options.serverRunning ?? ((at: string) => serverAnswers(at, starter!));
+      if (starter && !running(socket))
         return { executable: starter, environment: withBundledTmuxResources(starter, environment) };
     }
   }

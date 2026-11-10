@@ -45,16 +45,20 @@ Restart the server and restore? [y/N]
 
 The answer defaults to No. Nothing has stopped at this point.
 
-| Flag                   | What it does                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------------- |
-| `--dry-run`            | Print the plan and stop. Nothing is stopped.                                                       |
-| `--json`               | Print one JSON result. Without `--yes` it is a dry run.                                            |
-| `--yes`                | Skip the question. Refused while an agent may be mid-turn (see below).                             |
-| `--end-running-agents` | With `--yes`, end agents that are mid-turn.                                                        |
-| `--no-resume-agents`   | Do not reopen agent conversations after the restart.                                               |
-| `--socket-path PATH`   | Upgrade the server on this socket. The default is the server you are in, or tmux's default socket. |
-| `--socket-name NAME`   | Upgrade the server started with `tmux -L NAME`.                                                    |
-| `--ssh HOST`           | Run the same command on `HOST`, against that machine's server and tmux.                            |
+| Flag                   | What it does                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `--dry-run`            | Print the plan and stop. Nothing is stopped.                                       |
+| `--json`               | Print one JSON result. Without `--yes` it is a dry run.                            |
+| `--yes`                | Skip the question. Refused while something may be an agent at work (see below).    |
+| `--end-running-agents` | With `--yes`, end those agents and programs too.                                   |
+| `--no-resume-agents`   | Do not reopen agent conversations after the restart.                               |
+| `--socket-path PATH`   | Upgrade the server on this socket.                                                 |
+| `--socket-name NAME`   | Upgrade the server started with `tmux -L NAME`. Not together with `--socket-path`. |
+| `--ssh HOST`           | Run the same command on `HOST`, against that machine's server and tmux.            |
+
+Without either flag, the command upgrades the server named by
+`TMUX_IDE_TMUX_SOCKET_PATH` or `TMUX_IDE_TMUX_SOCKET_NAME` (as `tmux-ide doctor`
+reads them), else the server your shell runs in, else tmux's default socket.
 
 ## What happens, step by step
 
@@ -69,52 +73,81 @@ The answer defaults to No. Nothing has stopped at this point.
 4. It prints the plan and asks.
 5. It lists the server once more. If a session, window or pane changed while
    you read the plan, it takes a new snapshot and asks again.
-6. It ends that exact server. tmux checks the process id and start time
-   itself, so a newer server on the same socket is never ended.
-7. It starts the new server with tmux-ide's own tmux and your usual tmux
+6. It prints the snapshot's path and the exact `tmux-ide restore --from …`
+   line that rebuilds from it. This happens in every mode, `--yes` and `--json`
+   included, before anything is ended.
+7. It starts a background process that does the rest, and prints its log
+   path. The background process has no terminal, so closing the terminal,
+   Ctrl-C, a hangup or a dropped `--ssh` connection does not stop it. The
+   command waits for its result and prints it; if you stop the wait, the
+   restart carries on and logs to `~/.tmux-ide/upgrades/<time>/log`.
+8. The background process checks that the server is still the same one and
+   that the snapshot still covers it. Then it ends that exact server. tmux
+   checks the process id and start time itself, so a newer server on the same
+   socket is never ended.
+9. It starts the new server with tmux-ide's own tmux and your usual tmux
    config, then rebuilds every session from the snapshot.
-8. It checks the new server has full features and the same sessions, windows
-   and panes.
+10. It checks the new server reports full features and has the same sessions,
+    windows and panes. A server whose features can't be read counts as a
+    failure.
 
 Sessions that come from a workspace config are rebuilt from the snapshot too,
 so their configured commands do not run again.
 
-## When an agent is mid-turn
+## When `--yes` alone is refused
 
-An agent pane counts as mid-turn when it reports `working` or `blocked`, or
-when it sent no fresh state report. Agents without a state report count as
-mid-turn because the command can't tell.
+The command can't tell what every pane is doing, so `--yes` alone refuses to
+end anything that may be an agent at work. It refuses, and stops nothing, when
+any of these is true:
 
-- At the prompt, the plan says how many agents may be mid-turn, and the answer
-  still defaults to No.
-- `--yes` alone is refused, and nothing is stopped. Wait until the agents are
-  idle, or pass `--yes --end-running-agents`.
+- An agent pane reports `working` or `blocked`. A `working` or `blocked`
+  report older than 10 minutes counts as no report.
+- An agent pane sent no state report, or its last `idle` or `done` report is
+  more than an hour old. The agent may have started a turn its hooks never
+  reported.
+- A pane runs a program that is neither a shell nor an agent tmux-ide
+  recognises: a dev server, an editor, or an agent it can't name. The plan
+  lists these under "These programs stop".
+- A pane in a session that is not restored (a name starting with `_` or
+  `zz-`) runs an agent or a program. tmux-ide's own hidden sessions, whose
+  names start with `_tmux-ide`, don't count.
+
+The pane the command runs in never counts: running the command is your
+consent for it.
+
+At the prompt, the plan shows the same lists and the answer still defaults to
+No. Wait until the agents are idle, or pass `--yes --end-running-agents`.
 
 ## When something fails
 
-| What fails                                     | What happens                                                                                                          |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| No server, or no tmux-ide tmux on this machine | Exits 1. Nothing is stopped.                                                                                          |
-| The snapshot can't be written, read or checked | Exits 1 and names the problem. Nothing is stopped.                                                                    |
-| You answer No                                  | Exits 0. Nothing is stopped.                                                                                          |
-| The server won't end                           | Exits 1. The old server keeps running.                                                                                |
-| tmux-ide's tmux can't start the new server     | Restores your sessions on the old tmux when it can, says so and exits 1.                                              |
-| One session fails to rebuild                   | Rebuilds the rest, names the failed one and exits 1. The snapshot stays; retry with `tmux-ide restore --from <file>`. |
-| The new server lacks features                  | Keeps the sessions, reports it and exits 1.                                                                           |
+| What fails                                           | What happens                                                                                                          |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| No server, or no tmux-ide tmux on this machine       | Exits 1. Nothing is stopped.                                                                                          |
+| The snapshot can't be written, read or checked       | Exits 1 and names the problem. Nothing is stopped.                                                                    |
+| You answer No                                        | Exits 0. Nothing is stopped.                                                                                          |
+| The server won't end                                 | Exits 1 with the snapshot path and the restore line. The old server keeps running.                                    |
+| Another server answers on the socket after the end   | Rebuilds the sessions into that server, skipping names it already has.                                                |
+| The background process does not report back          | Exits 1 with its log path and the restore line.                                                                       |
+| tmux-ide's tmux can't start the new server           | Restores your sessions on the old tmux when it can, says so and exits 1.                                              |
+| One session fails to rebuild                         | Rebuilds the rest, names the failed one and exits 1. The snapshot stays; retry with `tmux-ide restore --from <file>`. |
+| The new server lacks features, or they can't be read | Keeps the sessions, reports it and exits 1.                                                                           |
 
 ## Running it from inside the server
 
 If your terminal runs inside the server you upgrade, ending the server closes
-your terminal too. The command then hands the restart to a background process
-and tells you where it logs:
+your terminal too. The command finds this out from `$TMUX` or, when `$TMUX` is
+unset or points elsewhere, from its own process tree. It then does not wait
+for the background process and tells you where it logs:
 
 ```
 This terminal runs inside that server and closes in a moment. Reopen tmux-ide
 or run `tmux attach` in a few seconds. Log: ~/.tmux-ide/upgrades/<time>/log
 ```
 
-The background process checks that the server is still the same one, and that
-the snapshot still covers it, before it ends anything.
+The background process does the same checks as always before it ends
+anything. Keep the pane open until the server restarts: if the pane that ran
+the command closes first, the snapshot no longer covers the server, and the
+background process stops without ending anything.
 
 ## What comes back and what doesn't
 
@@ -141,6 +174,15 @@ tmux-ide's own commands start a new server with tmux-ide's tmux. A plain `tmux`
 typed in a shell runs whatever `tmux` is first on your PATH, often Homebrew's
 or the system's. If that starts the server, you are back on reduced features.
 
+Since this release, when no tmux server is running, every tmux-ide command
+starts it with tmux-ide's own tmux, even when another `tmux` is first on your
+PATH. A server that already runs keeps the `tmux` on your PATH as its client.
+To keep using another tmux for everything, name it:
+
+```bash
+export TMUX_IDE_TMUX_BIN=/opt/homebrew/bin/tmux
+```
+
 `tmux-ide doctor` shows what a plain `tmux` runs on the "plain `tmux` in your
 shell" row. tmux-ide installs no shim and never shadows your `tmux`. If you
 want a plain `tmux` to start tmux-ide's tmux, start the server from tmux-ide
@@ -157,7 +199,10 @@ tmux-ide restore --from ~/.tmux-ide/upgrades/<time>/snapshot.json --resume-agent
 ```
 
 Sessions that are already running are skipped, so you can run it more than
-once. Preview first with `--dry-run`.
+once. Preview first with `--dry-run`. Unlike the upgrade, a plain
+`tmux-ide restore --from` relaunches sessions that belong to a project with a
+workspace config from that config, which runs its configured commands again.
+Other sessions are rebuilt from the snapshot.
 
 ## Recover after an accidental kill-server
 
@@ -191,13 +236,17 @@ bring back the layout and the agent conversations.
    ```
 
    `claude --resume` with no id lists that folder's recent conversations. To
-   find the newest conversation ids for a folder by hand:
+   find them by hand, look in the folder's own directory under
+   `~/.claude/projects/`. Its name is the folder's path with every character
+   that is not a letter or digit replaced by `-`:
 
    ```bash
-   ls -t ~/.claude/projects/*/*.jsonl | head
+   cd /path/to/the/agent/folder
+   ls -t ~/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/*.jsonl | head
    ```
 
-   The file name is the conversation id, for `claude --resume <id>`. Codex
+   Each file name, without `.jsonl`, is a conversation id for
+   `claude --resume <id>`. The newest file is the most recent conversation. Codex
    keeps its sessions in `~/.codex/sessions/`, and `codex resume` lists them.
 
 4. Adopt the sessions so the snapshot stays current:
