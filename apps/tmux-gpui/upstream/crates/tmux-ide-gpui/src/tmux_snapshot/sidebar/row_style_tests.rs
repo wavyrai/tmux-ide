@@ -21,7 +21,7 @@ fn fill(element: &mut Stateful<Div>) -> Option<Hsla> {
 }
 
 #[gpui::test]
-fn selection_takes_bezel_fills_and_emphasis_follows_sidebar_focus(cx: &mut TestAppContext) {
+fn a_selected_row_is_the_opaque_capsule_with_bezels_ring(cx: &mut TestAppContext) {
     let theme = Theme::default();
     cx.update(|cx| {
         crate::tmux_snapshot::design::prepare(&theme, false, cx);
@@ -30,24 +30,13 @@ fn selection_takes_bezel_fills_and_emphasis_follows_sidebar_focus(cx: &mut TestA
         let mut focused = render_row(0, &row(true), &theme, &bezel, painter, true);
         let mut unfocused = render_row(1, &row(true), &theme, &bezel, painter, false);
         let mut resting = render_row(2, &row(false), &theme, &bezel, painter, true);
-        assert_eq!(fill(&mut focused), Some(bezel.card_selected_bg()));
-        assert!(
-            !focused
-                .style()
-                .box_shadow
-                .clone()
-                .unwrap_or_default()
-                .is_empty()
-        );
-        assert_eq!(fill(&mut unfocused), Some(bezel.element_hover));
-        assert!(
-            unfocused
-                .style()
-                .box_shadow
-                .clone()
-                .unwrap_or_default()
-                .is_empty()
-        );
+        // #746 v3: the selected row is the opaque capsule with Bezel's ring,
+        // whether or not the sidebar holds the keyboard.
+        let (capsule, ring) = crate::tmux_snapshot::design::selected_capsule(&theme);
+        for row in [&mut focused, &mut unfocused] {
+            assert_eq!(fill(row), Some(capsule));
+            assert_eq!(row.style().box_shadow.clone().unwrap_or_default(), ring);
+        }
         // At rest the hover fade has not started: the row shows the chrome.
         assert_eq!(fill(&mut resting), Some(bezel.ink(0.0)));
     });
@@ -148,12 +137,17 @@ fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
         let mut element = render_row(0, &row(true), &theme, &bezel, painter, true);
         let painted = element.style().text.color;
         assert_eq!(painted, Some(rgb(label).into()));
-        let mut badge = attention_badge(&theme, &bezel, 2, 0);
+        let mut badge = attention_badge(&theme, 2, 0);
         let fill = match badge.style().background.clone() {
             Some(Fill::Color(background)) => background.as_solid(),
             None => None,
         };
-        assert_eq!(fill, Some(rgb(theme.active).into()));
+        // The "needs input" pill's wash (#746).
+        let (wash, _) = crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+            &theme,
+            crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+        );
+        assert_eq!(fill, Some(wash));
     });
 }
 
@@ -178,7 +172,7 @@ impl Render for BlueRows {
 
 #[gpui::test]
 fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
-    use crate::tmux_snapshot::design::{InkProbes, badge_text, palette, row_ink};
+    use crate::tmux_snapshot::design::{InkProbes, palette, row_ink};
     let theme = blue();
     let (label, caption) = row_ink(&theme);
     let raw = palette(&theme);
@@ -196,7 +190,33 @@ fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
         assert_eq!(probes.get("sidebar-count-0"), Some(&rgb(caption).into()));
         assert_eq!(
             probes.get("sidebar-badge-1"),
-            Some(&rgb(badge_text(&theme)).into())
+            Some(
+                &rgb(
+                    crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+                        &theme,
+                        crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+                    )
+                    .1
+                )
+                .into()
+            )
+        );
+    });
+}
+
+#[gpui::test]
+fn a_selected_row_is_a_full_capsule(cx: &mut TestAppContext) {
+    let theme = blue();
+    cx.update(|cx| {
+        crate::tmux_snapshot::design::prepare(&theme, false, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::from(cx.new(|_| ()).entity_id());
+        // #746 v3: the selection is a capsule, not a rounded rectangle.
+        let mut capsule = div().rounded_full();
+        let mut element = render_row(0, &row(true), &theme, &bezel, painter, false);
+        assert_eq!(
+            element.style().corner_radii.top_left,
+            capsule.style().corner_radii.top_left
         );
     });
 }

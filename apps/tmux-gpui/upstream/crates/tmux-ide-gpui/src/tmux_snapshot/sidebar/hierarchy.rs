@@ -10,8 +10,8 @@ fn row(label: String, detail: Option<String>, depth: u8, target: Option<Target>)
     }
 }
 /// A session's heading (#746): the project's name and favicon, with its
-/// machine beside it when the fleet has more than one. An unavailable
-/// session keeps its heading and says so.
+/// machine beside it when the fleet has more than one and the machine is not
+/// this Mac. An unavailable session keeps its heading and says so.
 fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     let server = s
         .server_id
@@ -42,7 +42,9 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     r.favicon = s.favicon.clone();
     // A project without a favicon still gets its tile: the terminal glyph.
     r.icon = Some("icons/terminal.svg");
-    r.aside = match (fleet.groups.len() > 1, unavailable) {
+    // This Mac's projects carry no machine name; a remote one says where.
+    let remote = fleet.groups.len() > 1 && g.id != LOCAL;
+    r.aside = match (remote, unavailable) {
         (true, Some(why)) => Some(format!("{} · {why}", g.label)),
         (true, None) => Some(g.label.clone()),
         (false, why) => why,
@@ -51,6 +53,8 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     r.favorite = Some((s.favorite_action.clone(), s.favorite));
     r
 }
+/// The fleet's id for this Mac.
+const LOCAL: &str = "local";
 /// Whether fleet session `s` is the session open in the workspace.
 fn open(state: &browser::State, s: &Session) -> bool {
     s.active
@@ -62,6 +66,17 @@ fn open(state: &browser::State, s: &Session) -> bool {
 /// one lists its panes. Machines, servers and their actions stay on Home.
 pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
     let mut out = Vec::new();
+    // The open project leads, with its panes (#746, owner decision on card
+    // 12: open project, then favourites, then by name).
+    let lead = fleet
+        .groups
+        .iter()
+        .filter(|g| !g.conflict && g.state == Phase::Ready)
+        .find_map(|g| g.sessions.iter().find(|s| open(state, s)).map(|s| (g, s)));
+    if let Some((g, s)) = lead {
+        out.push(session_row(fleet, g, s));
+        out.extend(panes::rows(state, 0));
+    }
     for g in &fleet.groups {
         if g.conflict || g.state != Phase::Ready {
             let mut machine = row(g.label.clone(), None, 0, None);
@@ -82,6 +97,9 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
                 .then_with(|| a.id.cmp(&b.id))
         });
         for s in sessions {
+            if lead.is_some_and(|(_, led)| std::ptr::eq(led, s)) {
+                continue;
+            }
             out.push(session_row(fleet, g, s));
             if open(state, s) {
                 out.extend(panes::rows(state, 0));

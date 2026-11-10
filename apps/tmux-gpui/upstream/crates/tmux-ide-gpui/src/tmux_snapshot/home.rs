@@ -14,8 +14,11 @@ pub(super) mod recovery;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
-/// it, so the table's values sit near its names.
-const PAGE_MAX: f32 = fleet::TABLE_MAX;
+/// it, so the table's values sit near its names, plus the page column's own
+/// 24 pt sides, so the table itself gets the whole width.
+const PAGE_MAX: f32 = fleet::TABLE_MAX + 2. * PAGE_SIDE;
+/// Bezel's `page_column` side padding.
+const PAGE_SIDE: f32 = 24.;
 /// The Browse sessions field's width in the header.
 const BROWSE_WIDTH: f32 = 220.;
 /// The alpha of `popover::key_cap`'s fill.

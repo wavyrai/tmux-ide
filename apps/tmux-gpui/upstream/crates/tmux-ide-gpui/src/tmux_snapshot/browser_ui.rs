@@ -655,6 +655,7 @@ impl SnapshotView {
             .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
+            // Rows sit 2 pt apart, as in the mockup (#746 v3).
             .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
@@ -907,6 +908,9 @@ impl SnapshotView {
                     .min_w_0()
                     .h_full()
                     .p(px(super::shell::CONTENT_INSET))
+                    // Beside the sidebar the cards start where it ends: its
+                    // own 8 pt edge is the gutter (#746).
+                    .when(show_sidebar, |inset| inset.pl_0())
                     .child(content),
             );
         let body = div()
@@ -933,7 +937,8 @@ impl SnapshotView {
 }
 
 /// The sidebar's width; the top row's sidebar controls end at its edge.
-pub(super) const SIDEBAR_WIDTH: f32 = 224.;
+/// The sidebar's width: the #746 mockup's 252 pt.
+pub(super) const SIDEBAR_WIDTH: f32 = 252.;
 /// The narrowest window that shows Home's sidebar beside its table.
 pub(super) const HOME_SIDEBAR_MIN: f32 = 900.;
 

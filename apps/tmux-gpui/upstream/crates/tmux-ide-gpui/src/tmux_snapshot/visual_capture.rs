@@ -25,6 +25,8 @@ const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
 /// Home's captures (card #684): the owner's window size.
 const HOME_SIZE: (f32, f32) = (1560., 1010.);
+/// `+narrow`: a window too small for the mockup's layout.
+const NARROW: (f32, f32) = (860., 640.);
 
 /// Saves `<dir>/<theme>.png` for each catalog theme id, in order.
 #[doc(hidden)]
@@ -527,6 +529,9 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let owner = extras.contains(&"owner");
     // `<theme>+mock`: the #746 mockup's session window, refitted below.
     let mock = extras.contains(&"mock");
+    // `+glyphs`: the mock's shell also shows box drawing and a powerline
+    // prompt, to check cells join at the terminal's line height.
+    let glyphs = extras.contains(&"glyphs");
     let state = if mock {
         mock::with_mock_fleet(state)?
     } else {
@@ -557,6 +562,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     }
     // `+home-b` is Home (#684, #705): `+one` the owner's one machine, `+empty`
     // no sessions, otherwise the two-machine fleet; `+spark` picks spark.
+    // `+mockhome` is Home as the #746 mockup draws it, at the mockup's size.
+    let mockhome = extras.contains(&"mockhome");
+    if mockhome {
+        state = mock::with_mock_home(state)?;
+    }
     let home_b = extras.contains(&"home-b");
     if home_b {
         let fixture = if extras.contains(&"one") {
@@ -572,10 +582,20 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let with_sidebar = extras.contains(&"sidebar");
     // The workspace fixture's catalog names sessions the Home fleet doesn't
     // hold; with the sidebar shown they would read as stray projects.
-    if home_b && with_sidebar {
+    if home_b && with_sidebar && !mockhome {
         state.sessions.clear();
     }
-    let (width, height) = if home_b { HOME_SIZE } else { (WIDTH, HEIGHT) };
+    let (width, height) = if home_b && !mockhome {
+        HOME_SIZE
+    } else {
+        (WIDTH, HEIGHT)
+    };
+    // `+narrow` is a small window, for the layouts the mockup does not draw.
+    let (width, height) = if extras.contains(&"narrow") {
+        NARROW
+    } else {
+        (width, height)
+    };
     // `+home-empty` is Home with a live catalog and no sessions, `+home-error`
     // with local setup failed, and `+home-warning` with the catalog unavailable.
     for extra in &extras {
@@ -670,7 +690,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 .ok_or_else(|| anyhow!("owner capture: no fit"))?;
                 let state = std::mem::take(&mut view.browser_state);
                 let state = if mock {
-                    mock::with_mock_panes(state, cols.into(), rows.into())?
+                    mock::with_mock_panes(state, cols.into(), rows.into(), glyphs)?
                 } else {
                     with_owner_split(state, cols.into(), rows.into())?
                 };
