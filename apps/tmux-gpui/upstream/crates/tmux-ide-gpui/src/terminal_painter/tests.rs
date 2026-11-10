@@ -42,3 +42,13 @@ fn overlay_colours_come_from_the_bezel_palette() {
     painter.set_appearance(FONT_SIZE, CELL_HEIGHT, light.clone());
     assert_eq!(painter.overlay, Overlay::new(&light));
 }
+
+#[test]
+fn a_card_backed_grid_leaves_the_default_background_to_the_card() {
+    let theme = Theme::default();
+    // #746 v3: on a card, the default background shows the card's fill.
+    assert!(!paints_background(true, &theme, theme.background));
+    // Any other background, and every background off a card, still paints.
+    assert!(paints_background(true, &theme, theme.palette[1]));
+    assert!(paints_background(false, &theme, theme.background));
+}

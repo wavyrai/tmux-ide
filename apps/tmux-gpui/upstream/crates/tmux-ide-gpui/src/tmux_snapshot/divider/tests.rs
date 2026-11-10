@@ -698,3 +698,26 @@ fn painted_cards_fill_the_canvas_edges_and_follow_a_divider_preview(cx: &mut Tes
     assert_eq!(b2.right(), canvas.right());
     cx.simulate_mouse_up(moved, MouseButton::Left, Modifiers::default());
 }
+
+#[gpui::test]
+fn the_focused_card_takes_bezels_card_surface_and_the_others_recede(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::pane_cards::render::painted;
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state = state(Axis::Cols);
+        view.browser_state.selected_pane = Some("b".into());
+        view.frame = view.browser_state.frame.clone();
+        view.painted_frame = view.frame.clone();
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let palette = view.read_with(cx, |v, _| crate::tmux_snapshot::design::palette(&v.theme()));
+    let fills: std::collections::BTreeMap<_, _> = painted::fills().into_iter().collect();
+    // #746 v3, focus by fill: both from Bezel's surfaces.
+    assert_eq!(fills["b"], palette.surface_card);
+    assert_eq!(fills["a"], palette.surface_raised);
+    assert_ne!(fills["a"], fills["b"]);
+}

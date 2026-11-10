@@ -18,6 +18,8 @@ impl Layout {
         cx: &mut App,
     ) -> bool {
         let mut ok = true;
+        // The cards' fills show under the cells' default background.
+        painter.set_card_backed(true);
         for source in sources {
             let Some(target) = self.regions.iter().find(|r| r.id == source.id) else {
                 continue;
@@ -59,20 +61,42 @@ impl Layout {
                 },
             );
         }
+        painter.set_card_backed(false);
         ok
     }
 }
 /// The cards one terminal canvas paints: the layout, reflowed to a divider
-/// preview while one is active, with the theme's card plate and border.
+/// preview while one is active, with Bezel's card fills and the border.
 pub(in crate::tmux_snapshot) struct CardSurfaces {
     layout: Layout,
-    background: Hsla,
+    fills: CardFills,
+    focused: Option<String>,
     border: Hsla,
+}
+/// A card's fill (#746 v3, focus by fill): the focused pane's card on
+/// Bezel's `surface_card`, the others a step back on `surface_raised`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::tmux_snapshot) struct CardFills {
+    pub rest: Hsla,
+    pub focused: Hsla,
+}
+impl CardFills {
+    pub fn of(palette: &bezel_theme::Theme) -> Self {
+        Self {
+            rest: palette.surface_raised,
+            focused: palette.surface_card,
+        }
+    }
 }
 impl CardSurfaces {
     pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
-        self.layout
-            .paint_cards(bounds, self.background, self.border, window);
+        self.layout.paint_cards(
+            bounds,
+            self.fills,
+            self.focused.as_deref(),
+            self.border,
+            window,
+        );
     }
 }
 impl SnapshotView {
@@ -85,7 +109,8 @@ impl SnapshotView {
         let theme = self.theme();
         Some(CardSurfaces {
             layout,
-            background: palette.terminal_bg,
+            fills: CardFills::of(&palette),
+            focused: self.browser_state.selected_pane.clone(),
             border: card_border(&theme, &palette),
         })
     }
@@ -119,7 +144,8 @@ impl Layout {
     pub fn paint_cards(
         &self,
         bounds: Bounds<Pixels>,
-        background: Hsla,
+        fills: CardFills,
+        focused: Option<&str>,
         border: Hsla,
         window: &mut Window,
     ) {
@@ -128,12 +154,17 @@ impl Layout {
         for r in &self.regions {
             let mut card = self.card_in(r, bounds.size);
             card.origin += bounds.origin;
+            let fill = if focused == Some(r.id.as_str()) {
+                fills.focused
+            } else {
+                fills.rest
+            };
             #[cfg(test)]
-            painted::record(&r.id, card);
+            painted::record(&r.id, card, fill);
             window.paint_quad(quad(
                 card,
                 px(bezel_theme::Theme::panel_radius()),
-                background,
+                fill,
                 px(1.),
                 border,
                 BorderStyle::Solid,
@@ -147,24 +178,40 @@ impl Layout {
 pub(in crate::tmux_snapshot) mod painted {
     use super::*;
     use std::cell::RefCell;
-    /// Whether the next card starts a new paint, then each card by pane id.
-    type Cards = (bool, Vec<(String, Bounds<Pixels>)>);
+    /// Whether the next card starts a new paint, then each card by pane id,
+    /// with its fill.
+    type Cards = (bool, Vec<(String, Bounds<Pixels>, Hsla)>);
     thread_local! {
         static CARDS: RefCell<Cards> = Default::default();
     }
     pub(super) fn begin() {
         CARDS.with(|c| c.borrow_mut().0 = true);
     }
-    pub(super) fn record(id: &str, card: Bounds<Pixels>) {
+    pub(super) fn record(id: &str, card: Bounds<Pixels>, fill: Hsla) {
         CARDS.with(|c| {
             let mut c = c.borrow_mut();
             if std::mem::take(&mut c.0) {
                 c.1.clear();
             }
-            c.1.push((id.to_owned(), card));
+            c.1.push((id.to_owned(), card, fill));
         });
     }
     pub fn cards() -> Vec<(String, Bounds<Pixels>)> {
-        CARDS.with(|c| c.borrow().1.clone())
+        CARDS.with(|c| {
+            c.borrow()
+                .1
+                .iter()
+                .map(|(id, b, _)| (id.clone(), *b))
+                .collect()
+        })
+    }
+    pub fn fills() -> Vec<(String, Hsla)> {
+        CARDS.with(|c| {
+            c.borrow()
+                .1
+                .iter()
+                .map(|(id, _, f)| (id.clone(), *f))
+                .collect()
+        })
     }
 }
