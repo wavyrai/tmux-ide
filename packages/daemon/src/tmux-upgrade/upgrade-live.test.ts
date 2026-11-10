@@ -20,10 +20,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { resolveBundledTmux } from "../bundled-tmux.ts";
-import { nativeCommands } from "../tmux-server-features.ts";
+import { resolveBundledTmux } from "../lib/bundled-tmux.ts";
+import { nativeCommands } from "../lib/tmux-server-features.ts";
 
-const root = fileURLToPath(new URL("../../../../../", import.meta.url));
+const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const cliPath = join(root, "bin/cli.js");
 
 function findBundle(): string | null {

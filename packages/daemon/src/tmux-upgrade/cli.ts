@@ -5,8 +5,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { SavedMachineSchema } from "@tmux-ide/contracts";
-import { IdeError } from "../errors.ts";
-import { remoteTmuxIdeArgsCommand } from "../remote-tmux-command.ts";
+import { IdeError } from "../lib/errors.ts";
+import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
 import { createUpgradeIo, parseWorkerState, type UpgradeTarget } from "./io.ts";
 import { finishUpgrade, upgradeServer, type UpgradeOptions, type UpgradeResult } from "./run.ts";
 

@@ -1062,7 +1062,7 @@ try {
             { code: "USAGE", exitCode: 2 },
           );
         await (
-          await import("../packages/daemon/src/lib/tmux-upgrade/cli.ts")
+          await import("../packages/daemon/src/tmux-upgrade/cli.ts")
         ).runUpgradeCli({
           yes: values.yes === true,
           endRunningAgents: values["end-running-agents"] === true,

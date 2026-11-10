@@ -19,19 +19,23 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { configureTmuxClientResolver } from "@tmux-ide/tmux-bridge";
-import { restoreFleet } from "../../restore.ts";
+import { restoreFleet } from "../restore.ts";
 import {
   collectFleetSnapshot,
   readSnapshot,
   SNAPSHOT_PANE_FORMAT,
   SNAPSHOT_SESSION_FORMAT,
   type FleetSnapshot,
-} from "../../tui/chrome/snapshot.ts";
-import { readProcessTable } from "../../tui/detect/process-tree.ts";
-import { resolveBundledTmux, withBundledTmuxResources } from "../bundled-tmux.ts";
-import { IdeError } from "../errors.ts";
-import { resolveRuntimeNamespace } from "../runtime-namespace.ts";
-import { nativeCommands, type ServerFeatures, type TmuxProbe } from "../tmux-server-features.ts";
+} from "../tui/chrome/snapshot.ts";
+import { readProcessTable } from "../tui/detect/process-tree.ts";
+import { resolveBundledTmux, withBundledTmuxResources } from "../lib/bundled-tmux.ts";
+import { IdeError } from "../lib/errors.ts";
+import { resolveRuntimeNamespace } from "../lib/runtime-namespace.ts";
+import {
+  nativeCommands,
+  type ServerFeatures,
+  type TmuxProbe,
+} from "../lib/tmux-server-features.ts";
 import { COVERAGE_PANE_FORMAT } from "./plan.ts";
 import type { ServerFacts, UpgradeIo, WorkerState } from "./run.ts";
 

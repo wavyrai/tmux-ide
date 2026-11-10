@@ -5,9 +5,9 @@
  * server, and the user (or `--yes`, with `--end-running-agents` when an agent
  * is mid-turn) agreed. Real io: ./io.ts.
  */
-import { IdeError } from "../errors.ts";
-import type { FleetSnapshot } from "../../tui/chrome/snapshot.ts";
-import type { ServerFeatures } from "../tmux-server-features.ts";
+import { IdeError } from "../lib/errors.ts";
+import type { FleetSnapshot } from "../tui/chrome/snapshot.ts";
+import type { ServerFeatures } from "../lib/tmux-server-features.ts";
 import {
   buildUpgradePlan,
   confirmation,

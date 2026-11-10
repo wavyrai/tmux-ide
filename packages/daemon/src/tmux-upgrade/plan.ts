@@ -3,12 +3,12 @@
  * snapshot coverage, the agent and program lists, the text shown before the
  * question, and the confirmation rule. The io lives in ./run.ts.
  */
-import { paneResumeCommand } from "../../restore.ts";
-import type { FleetSnapshot } from "../../tui/chrome/snapshot.ts";
-import { parseAuthority } from "../../tui/detect/classify.ts";
-import { isListableSession } from "../../tui/team/sessions.ts";
-import { UPDATER_SESSION } from "../chrome-front-door.ts";
-import type { ServerFeatures } from "../tmux-server-features.ts";
+import { paneResumeCommand } from "../restore.ts";
+import type { FleetSnapshot } from "../tui/chrome/snapshot.ts";
+import { parseAuthority } from "../tui/detect/classify.ts";
+import { isListableSession } from "../tui/team/sessions.ts";
+import { UPDATER_SESSION } from "../lib/chrome-front-door.ts";
+import type { ServerFeatures } from "../lib/tmux-server-features.ts";
 
 /** The server to move, pinned by socket path and by pid plus start time. */
 export interface ServerIdentity {

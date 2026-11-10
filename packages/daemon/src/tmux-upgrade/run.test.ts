@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { FleetSnapshot } from "../../tui/chrome/snapshot.ts";
-import type { ServerFeatures } from "../tmux-server-features.ts";
-import {
-  finishUpgrade,
-  upgradeServer,
-  type UpgradeIo,
-  type UpgradeOptions,
-} from "../tmux-upgrade/run.ts";
+import type { FleetSnapshot } from "../tui/chrome/snapshot.ts";
+import type { ServerFeatures } from "../lib/tmux-server-features.ts";
+import { finishUpgrade, upgradeServer, type UpgradeIo, type UpgradeOptions } from "./run.ts";
 
 const NOW = 1_800_000_000;
 const SOCKET = "/tmp/tmux-1000/default";

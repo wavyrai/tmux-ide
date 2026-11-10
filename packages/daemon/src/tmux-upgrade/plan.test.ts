@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FleetSnapshot, PaneSnapshot } from "../../tui/chrome/snapshot.ts";
+import type { FleetSnapshot, PaneSnapshot } from "../tui/chrome/snapshot.ts";
 import {
   buildUpgradePlan,
   confirmation,
@@ -7,7 +7,7 @@ import {
   renderPlan,
   sameShape,
   type ServerIdentity,
-} from "../tmux-upgrade/plan.ts";
+} from "./plan.ts";
 
 const NOW = 1_800_000_000;
 

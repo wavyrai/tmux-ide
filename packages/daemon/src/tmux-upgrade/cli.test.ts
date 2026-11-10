@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { remoteTmuxIdeArgsCommand } from "../remote-tmux-command.ts";
-import { forwardedUpgradeArgs } from "../tmux-upgrade/cli.ts";
-import { parseWorkerState, targetSocket } from "../tmux-upgrade/io.ts";
+import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
+import { forwardedUpgradeArgs } from "./cli.ts";
+import { parseWorkerState, targetSocket } from "./io.ts";
 
 const uid = process.getuid?.() ?? 0;
 
