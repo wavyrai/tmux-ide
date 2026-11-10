@@ -73,19 +73,18 @@ pub(in crate::tmux_snapshot) struct CardSurfaces {
     focused: Option<String>,
     border: Hsla,
 }
-/// A card's fill (#746 v3, focus by fill): the focused pane's card on
-/// Bezel's `surface_card`, the others a step back on `surface_raised`.
+/// A card's fill (#746 v3, focus by fill): the focused pane's card on the
+/// terminal's own background, the others a step toward the ink
+/// (`surfaces::card_fills`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::tmux_snapshot) struct CardFills {
     pub rest: Hsla,
     pub focused: Hsla,
 }
 impl CardFills {
-    pub fn of(palette: &bezel_theme::Theme) -> Self {
-        Self {
-            rest: palette.surface_raised,
-            focused: palette.surface_card,
-        }
+    pub fn of(theme: &crate::config::Theme) -> Self {
+        let (focused, rest) = crate::tmux_snapshot::surfaces::card_fills(theme);
+        Self { rest, focused }
     }
 }
 impl CardSurfaces {
@@ -109,7 +108,7 @@ impl SnapshotView {
         let theme = self.theme();
         Some(CardSurfaces {
             layout,
-            fills: CardFills::of(&palette),
+            fills: CardFills::of(&theme),
             focused: self.browser_state.selected_pane.clone(),
             border: card_border(&theme, &palette),
         })

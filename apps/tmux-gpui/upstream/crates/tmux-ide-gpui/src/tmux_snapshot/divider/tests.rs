@@ -700,7 +700,9 @@ fn painted_cards_fill_the_canvas_edges_and_follow_a_divider_preview(cx: &mut Tes
 }
 
 #[gpui::test]
-fn the_focused_card_takes_bezels_card_surface_and_the_others_recede(cx: &mut TestAppContext) {
+fn the_focused_card_keeps_the_terminal_background_and_the_others_step_back(
+    cx: &mut TestAppContext,
+) {
     use crate::tmux_snapshot::pane_cards::render::painted;
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
@@ -714,10 +716,12 @@ fn the_focused_card_takes_bezels_card_surface_and_the_others_recede(cx: &mut Tes
     cx.simulate_resize(size(px(900.), px(600.)));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let palette = view.read_with(cx, |v, _| crate::tmux_snapshot::design::palette(&v.theme()));
+    let theme = view.read_with(cx, |v, _| v.theme());
     let fills: std::collections::BTreeMap<_, _> = painted::fills().into_iter().collect();
-    // #746 v3, focus by fill: both from Bezel's surfaces.
-    assert_eq!(fills["b"], palette.surface_card);
-    assert_eq!(fills["a"], palette.surface_raised);
+    // #746 v3, focus by fill: the focused card on the terminal's background,
+    // the other a step toward the ink.
+    assert_eq!(fills["b"], rgb(theme.background).into());
+    let rest = crate::tmux_snapshot::surfaces::unfocused_fill(&theme).unwrap();
+    assert_eq!(fills["a"], rgb(rest).into());
     assert_ne!(fills["a"], fills["b"]);
 }

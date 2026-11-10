@@ -2,6 +2,7 @@ use super::*;
 use core::prelude::v1::test;
 use herdr_client::protocol::FrameData;
 
+mod card_backed;
 mod cells;
 mod composition;
 mod diagnostics;

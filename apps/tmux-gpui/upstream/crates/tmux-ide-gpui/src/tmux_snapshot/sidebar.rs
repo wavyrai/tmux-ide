@@ -284,9 +284,9 @@ pub(super) fn render_row(
                             .rounded(px(TILE_RADIUS))
                             .border_1()
                             .border_color(bezel.border)
-                            // Filled with Bezel's card surface, so the tile
-                            // reads as a small card on the plate (#746 v3).
-                            .bg(bezel.surface_card)
+                            // Filled with the terminal's background, so the
+                            // tile reads as a small card on the plate (#746 v3).
+                            .bg(bezel.terminal_bg)
                             .flex()
                             .items_center()
                             .justify_center()
