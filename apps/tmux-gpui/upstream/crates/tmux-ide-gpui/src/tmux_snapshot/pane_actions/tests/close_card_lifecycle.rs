@@ -197,3 +197,42 @@ fn a_stale_capability_keeps_the_card_and_confirm_refuses(cx: &mut TestAppContext
     });
     assert!(receiver.try_recv().is_err());
 }
+
+/// A held Cmd-W (key repeat) never confirms: one press opens, repeats do
+/// nothing, and only a fresh press closes.
+#[gpui::test]
+fn a_held_cmd_w_opens_the_card_and_never_confirms(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    cx.simulate_keystrokes("cmd-w");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            for _ in 0..4 {
+                v.pane_close_key(
+                    &KeyDownEvent {
+                        keystroke: Keystroke::parse("cmd-w").unwrap(),
+                        is_held: true,
+                        prefer_character_input: false,
+                        layout: None,
+                    },
+                    window,
+                    cx,
+                );
+            }
+        })
+    });
+    assert!(receiver.try_recv().is_err(), "a repeat closed the pane");
+    assert!(view.read_with(cx, |v, _| v.pane_close_open_for("pane-a")));
+    cx.simulate_keystrokes("cmd-w");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::PaneAction {
+            action: Action::Close,
+            ..
+        }
+    ));
+}
