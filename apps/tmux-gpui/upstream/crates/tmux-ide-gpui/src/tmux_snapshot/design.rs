@@ -8,7 +8,7 @@ use gpui::*;
 /// other grey in Bezel's palette for that appearance is tinted to the surface's
 /// hue, so overlays and controls sit in the same family as the shell.
 pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
-    use bezel_theme::{Appearance, Brand, Ink, Tint};
+    use bezel_theme::{Appearance, Brand, Ink, Tint, Vibrancy};
     let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
         Appearance::Dark
     } else {
@@ -19,6 +19,10 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     let brand = Brand {
         tint: Tint::new(hue, chroma),
         ink: if high { Ink::ACCESSIBLE } else { Ink::APPKIT },
+        // Frost in light as well as dark (#746 glass plan); Reduce
+        // Transparency and Increase Contrast still turn it off (`prepare`,
+        // and `high` below).
+        vibrancy: Vibrancy::On,
         ..Default::default()
     };
     let mut result = bezel_theme::Theme::for_appearance(appearance);
@@ -33,9 +37,10 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // Terminal panes stay opaque under frosted chrome (owner, #666).
     result.content_opacity = 1.0;
     // The frost is the theme's own surface at Bezel's coverage; text drawn on
-    // it goes through `chrome_text`.
+    // it is inked by the tiers (`ink::tiers`).
     result.vibrancy_tone = color(theme.surface);
-    result.vibrancy_alpha = frost_alpha(theme);
+    let frost = frost(theme);
+    result.vibrancy_alpha = frost.unwrap_or(bezel_theme::Theme::VIBRANCY_ALPHA);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
     result.selection = color(theme.active);
@@ -49,65 +54,24 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.text = color(theme.foreground);
         brand.ink.for_appearance(appearance).paint(&mut result);
     }
-    // Body text is drawn on the background and on the surface. Where Bezel's
-    // translucent ink drops it under 4.5:1 on either (the saturated presets,
-    // Solarized), it becomes the opaque foreground with its lightness moved
-    // just far enough to read; muted and faint keep their alphas.
-    let chrome = [theme.background, theme.surface];
-    let reads = |text: Hsla| {
-        chrome.iter().all(|&plate| {
-            let plate = color(plate);
-            bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate) >= 4.5
-        })
-    };
-    if !reads(result.text) {
-        let opaque = Hsla {
-            a: 1.0,
-            ..result.text
-        };
-        let packed = u32::from(Rgba::from(opaque)) >> 8;
-        result.text = color(crate::contrast::ink(packed, &chrome, 4.5));
+    // The chrome's inks are the theme's three tiers (#746 v3): text, muted
+    // and the icon ink, each opaque and reading on every surface it can be
+    // drawn on, frosted or not. The frost's density carries the contrast
+    // (`frost`), so muted is no longer brightened to fight a thin frost.
+    if foreground_reads {
+        let tiers = super::ink::tiers(theme);
+        result.text = color(tiers.text);
+        result.text_muted = color(tiers.muted);
+        result.text_faint = color(tiers.icon);
     }
-    // Bezel's translucent text roles paint the titlebar's tab labels on the
-    // frost; where they miss 4.5:1 on it, they take the inked chrome colour.
-    let plates = chrome_plates(theme);
-    let reads = |text: Hsla| {
-        plates.iter().all(|&plate| {
-            let plate = color(plate);
-            bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate) >= 4.5
-        })
-    };
-    // Only for a theme whose own ink is in use; a half-edited one keeps
-    // Bezel's, as above.
-    if foreground_reads && !reads(result.text) {
-        result.text = color(chrome_text(theme, theme.foreground));
-    }
-    if foreground_reads && !reads(result.text_muted) {
-        result.text_muted = color(chrome_text(theme, theme.muted));
-    }
-    if high {
+    // A theme whose inks can't read over the frost at any density runs
+    // opaque (#746 glass plan, G3).
+    if high || frost.is_none() {
         result.glass = false;
         result.vibrancy = false;
     }
     result
 }
-
-/// `color` as text on the window chrome: moved only as far as it needs, hue
-/// kept, to read at 4.5:1 on the opaque surface and, in a dark theme (the one
-/// Bezel frosts), on the frost over a white and over a black desktop, since the
-/// desktop behind a translucent window can be either.
-pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
-    // Cached per colour and plates: the sidebar asks for every row, every frame.
-    // 4.6 rather than 4.5: the plates are rounded to 8-bit channels here, and
-    // the frost Bezel paints is not, which costs up to a few hundredths.
-    crate::contrast::ink_on_chrome(color, chrome_plates(theme), 4.6)
-}
-
-/// What row text is inked to. Further over 4.5 than `chrome_text`'s 4.6: a
-/// row's plates are two flattenings deep (wash over frost over desktop), and
-/// rounding each to 8-bit channels moves a dark plate by enough to cost 0.1:1
-/// against a saturated label (Amber's selected row measured 4.49 at 4.6).
-const ROW_TARGET: f32 = 4.75;
 
 /// `color` as a mark on a sidebar row, such as an agent's state glyph: the
 /// contrast setting's mark ratio (3:1, or 4.5:1 at High) on every plate and
@@ -141,54 +105,59 @@ fn row_inked(theme: &Theme, color: u32, target: f32) -> u32 {
     inked
 }
 
-/// The frost's coverage: Bezel's 0.80, raised just far enough that the
-/// theme's foreground and muted text, inked, can still reach 4.6:1 on a
-/// selected or hovered row over a white desktop. A light frost under a 12% light wash otherwise leaves no colour
-/// that reads there (Nord's selected row topped out at 4.31:1).
-fn frost_alpha(theme: &Theme) -> f32 {
+/// The desktops the frost is checked over: white and black. No other
+/// desktop can be worse. Each channel of the frosted plate (the surface at
+/// alpha over the desktop) lies between its value over black and over white,
+/// so its luminance does too, and so do a hover wash's over it. An ink that
+/// reads at 4.6:1 on both ends cannot fall below it in between: the ink would
+/// have to sit between the two plates and 4.6:1 from each, which needs the
+/// plates 4.6² ≈ 21.2:1 apart, more than black and white allow (21:1). The
+/// glass plan's vivid desktops (#0a84ff, #ff3b30, #34c759, #af52de, #ff9f0a,
+/// #ffd60a, #1c2333) are kept in a test that checks exactly this.
+pub(crate) const DESKTOPS: [u32; 2] = [0xffffff, 0x000000];
+/// The lightest frost the search starts from, and the densest it allows.
+const FROST_FROM: u32 = 60;
+const FROST_TO: u32 = 94;
+
+/// The frost's coverage, per theme and the same rule in light and dark: the
+/// lowest alpha at which the three ink tiers hold (muted at 4.6:1, text at
+/// least 0.25 above it) on the frosted plate and a hovered row over every
+/// one of [`DESKTOPS`]. Where no alpha up to 0.94 gives three, the tiers
+/// collapse to two and the search runs again; where muted still can't read
+/// over the worst desktop, `None`: that theme runs opaque, glass off.
+pub(crate) fn frost(theme: &Theme) -> Option<f32> {
     thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<(u32, u32), f32>> =
+        static CACHE: std::cell::RefCell<Vec<(super::ink::ChromeKey, Option<f32>)>> =
             Default::default();
     }
-    let key = (theme.surface, theme.background);
-    if let Some(alpha) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
-        return alpha;
+    let key = super::ink::ChromeKey::of(theme);
+    if let Some(found) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, f)| *f))
+    {
+        return found;
     }
-    let start = (bezel_theme::Theme::VIBRANCY_ALPHA * 100.).round() as u32;
-    let dark = crate::contrast::luminance(theme.background) < 0.5;
-    let alpha = (start..=100)
-        .filter(|_| dark)
-        .map(|step| step as f32 / 100.)
-        .find(|&alpha| {
-            let plates = row_plates_at(theme, alpha);
-            [theme.foreground, theme.muted].iter().all(|&text| {
-                let inked = crate::contrast::ink(text, &plates, ROW_TARGET);
-                plates
-                    .iter()
-                    .all(|&plate| crate::contrast::ratio(inked, plate) >= ROW_TARGET)
-            })
-        })
-        .unwrap_or(if dark {
-            1.0
-        } else {
-            bezel_theme::Theme::VIBRANCY_ALPHA
-        });
-    CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if cache.len() > 256 {
-            cache.clear();
+    let lowest = |levels: u8| {
+        (FROST_FROM..=FROST_TO)
+            .map(|step| step as f32 / 100.)
+            .find(|&alpha| super::ink::tiers_at(theme, Some(alpha)).levels >= levels)
+    };
+    let found = lowest(3).or_else(|| lowest(2));
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= 8 {
+            c.remove(0);
         }
-        cache.insert(key, alpha);
+        c.push((key, found));
     });
-    alpha
+    found
 }
 
-/// The chrome plates, bare and under a row's selected and hover washes.
+/// The chrome plates, bare and under a hovered row, and the selected capsule.
 fn row_plates(theme: &Theme) -> Vec<u32> {
-    row_plates_at(theme, frost_alpha(theme))
+    row_plates_at(theme, frost(theme))
 }
 
-fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
+/// [`row_plates`] at a given frost (`None`: opaque).
+pub(crate) fn row_plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
     let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
         bezel_theme::Appearance::Dark
     } else {
@@ -215,6 +184,10 @@ fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
 /// terminal's own background (the focused card's colour); in a dark one
 /// Bezel's selected wash laid over the plate. Bezel's inset selection ring
 /// edges it; there is no drop shadow (Bezel has no shadow token for it).
+///
+/// Not `surface_raised` in dark (glass plan G5): in most catalog themes it
+/// sits within 2.5 L* of the plate, or below it (Nord, Solarized), so the
+/// selection would vanish; the flattened wash stands 9 to 13 L* above it.
 pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
     let dark = crate::contrast::luminance(theme.background) < 0.5;
     let fill = if dark {
@@ -224,12 +197,6 @@ pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
         rgb(theme.background).into()
     };
     (fill, bezel_theme::glass_selected_shadows())
-}
-
-/// The plates a sidebar row's text is read on: the chrome (frosted over each
-/// desktop it is checked on), a hovered row, and the selected capsule.
-pub(crate) fn sidebar_plates(theme: &Theme) -> Vec<u32> {
-    row_plates(theme)
 }
 
 /// A sidebar row's label and caption colours, as `render_row` paints them:
@@ -343,22 +310,19 @@ pub(crate) fn popover_ink(theme: &Theme) -> PopoverInk {
     }
 }
 
-/// What chrome text is drawn on: the opaque surface and, in a dark theme (the
-/// one Bezel frosts), the frost over a white and over a black desktop.
-fn chrome_plates(theme: &Theme) -> [u32; 3] {
-    plates_at(theme, frost_alpha(theme))
-}
-
-fn plates_at(theme: &Theme, alpha: f32) -> [u32; 3] {
-    let mut plates = [theme.surface; 3];
-    if crate::contrast::luminance(theme.background) < 0.5 {
+fn plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
+    let mut plates = vec![theme.surface];
+    if let Some(alpha) = alpha {
         let frost = Hsla {
             a: alpha,
             ..rgb(theme.surface).into()
         };
         let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-        plates[1] = pack(bezel_theme::flatten(frost, white()));
-        plates[2] = pack(bezel_theme::flatten(frost, black()));
+        plates.extend(
+            DESKTOPS
+                .iter()
+                .map(|&desktop| pack(bezel_theme::flatten(frost, rgb(desktop).into()))),
+        );
     }
     plates
 }
@@ -422,9 +386,9 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
+    use super::{dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
-    use gpui::{Hsla, TestAppContext, black, rgb, white};
+    use gpui::{Hsla, TestAppContext, rgb};
 
     fn color(value: u32) -> Hsla {
         rgb(value).into()
@@ -514,7 +478,11 @@ mod tests {
             ..Theme::default()
         });
         assert!(!high.glass && !high.vibrancy);
-        assert!(high.text_faint.a > standard.text_faint.a);
+        // Faint (icons at rest) reads at text contrast under High.
+        let ratio = |p: &bezel_theme::Theme| {
+            bezel_theme::contrast_ratio(bezel_theme::flatten(p.text_faint, p.surface), p.surface)
+        };
+        assert!(ratio(&high) >= 4.5 && ratio(&high) > ratio(&standard));
     }
 
     #[derive(serde::Deserialize)]
@@ -623,14 +591,14 @@ mod tests {
             let bezel = palette(&theme);
             assert_eq!(bezel.content_opacity, 1.0, "{name}: panes must stay opaque");
             assert_eq!(bezel.vibrancy_tone, color(theme.surface), "{name}");
-            let mut plates = vec![(color(theme.surface), "surface")];
-            if bezel.appearance == bezel_theme::Appearance::Dark {
-                for (desktop, desktop_name) in
-                    [(white(), "white desktop"), (black(), "black desktop")]
-                {
+            let mut plates = vec![(color(theme.surface), "surface".to_string())];
+            // Light frosts as well as dark (#746 glass plan), over every
+            // desktop the frost is checked on.
+            if bezel.vibrancy {
+                for desktop in super::DESKTOPS {
                     plates.push((
-                        bezel_theme::flatten(bezel.vibrancy_tint(), desktop),
-                        desktop_name,
+                        bezel_theme::flatten(bezel.vibrancy_tint(), color(desktop)),
+                        format!("desktop #{desktop:06x}"),
                     ));
                 }
             }
@@ -681,15 +649,6 @@ mod tests {
             if ratio < 4.5 {
                 failures.push(format!("{name}: attention pill is {ratio:.2}:1"));
             }
-            for (role, value) in [("foreground", theme.foreground), ("muted", theme.muted)] {
-                let text = color(chrome_text(&theme, value));
-                for (plate, plate_name) in &plates {
-                    let ratio = bezel_theme::contrast_ratio(text, *plate);
-                    if ratio < 4.5 {
-                        failures.push(format!("{name}: {role} on {plate_name} is {ratio:.2}:1"));
-                    }
-                }
-            }
         }
         assert!(failures.is_empty(), "{failures:#?}");
     }
@@ -731,6 +690,35 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[gpui::test]
+    fn light_is_frosted_too_unless_accessibility_turns_glass_off(cx: &mut TestAppContext) {
+        // #746 glass plan: a light window frosts as a dark one does.
+        let frosted = palette(&light());
+        assert!(frosted.vibrancy);
+        assert_eq!(
+            frosted.window_background_appearance(),
+            gpui::WindowBackgroundAppearance::Blurred
+        );
+        // Increase Contrast turns it off in the palette itself.
+        let high = palette(&Theme {
+            contrast: Contrast::High,
+            ..light()
+        });
+        assert!(!high.vibrancy && !high.glass);
+        // Reduce Transparency (native glass not allowed) makes it opaque.
+        cx.update(|cx| {
+            prepare(&light(), true, cx);
+            assert!(bezel_theme::Theme::of(cx).vibrancy);
+            prepare(&light(), false, cx);
+            let installed = bezel_theme::Theme::of(cx);
+            assert!(!installed.vibrancy && !installed.glass);
+            assert_eq!(
+                installed.window_background_appearance(),
+                gpui::WindowBackgroundAppearance::Opaque
+            );
+        });
     }
 
     #[gpui::test]

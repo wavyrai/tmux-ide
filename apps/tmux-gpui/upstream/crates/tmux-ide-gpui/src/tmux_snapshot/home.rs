@@ -63,7 +63,7 @@ fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// `danger_muted` and `warning_muted`, the strips' text, are inked opaque on
 /// their strip's wash; `danger_muted` also on the bare canvas, where error
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
-/// as `design::chrome_text` does.
+/// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);

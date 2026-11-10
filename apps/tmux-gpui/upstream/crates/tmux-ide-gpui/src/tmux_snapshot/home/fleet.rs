@@ -557,8 +557,8 @@ impl SnapshotView {
                 .flex_shrink_0()
                 .child(button)
                 .when(enabled, |tip_el| {
-                    tip_el.tooltip(move |window, cx| {
-                        bezel_ui::tooltip::Tooltip::text(tip.clone(), window, cx)
+                    tip_el.tooltip(move |_, cx| {
+                        crate::tmux_snapshot::glass_ink::tooltip(tip.clone(), None, cx)
                     })
                 })
                 .into_any_element(),

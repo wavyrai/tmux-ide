@@ -124,7 +124,7 @@ impl SnapshotView {
             .border_1()
             .border_color(transparent_black())
             .map(|home| spoken(home, &row, None)),
-            4,
+            5,
             &theme,
         )
         .on_click(cx.listener(move |view, _, window, cx| {

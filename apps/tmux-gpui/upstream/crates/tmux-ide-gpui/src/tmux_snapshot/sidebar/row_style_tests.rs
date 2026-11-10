@@ -125,11 +125,6 @@ fn blue() -> Theme {
 fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
     let theme = blue();
     let (label, _) = crate::tmux_snapshot::design::row_ink(&theme);
-    assert_ne!(
-        label,
-        crate::tmux_snapshot::design::chrome_text(&theme, theme.foreground),
-        "this theme must tell the two inks apart"
-    );
     cx.update(|cx| {
         crate::tmux_snapshot::design::prepare(&theme, false, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
@@ -175,12 +170,8 @@ fn rows_paint_their_text_in_the_row_ink(cx: &mut TestAppContext) {
     use crate::tmux_snapshot::design::{InkProbes, palette, row_ink};
     let theme = blue();
     let (label, caption) = row_ink(&theme);
-    let raw = palette(&theme);
-    assert_ne!(
-        Hsla::from(rgb(label)),
-        raw.text,
-        "blue must tell the inks apart"
-    );
+    // The row ink is the palette's text tier (#746 v3).
+    assert_eq!(Hsla::from(rgb(label)), palette(&theme).text);
     cx.update(|cx| cx.set_global(InkProbes::default()));
     let (_, cx) = cx.add_window_view(|_, _| BlueRows);
     cx.update(|window, cx| window.draw(cx).clear(cx));

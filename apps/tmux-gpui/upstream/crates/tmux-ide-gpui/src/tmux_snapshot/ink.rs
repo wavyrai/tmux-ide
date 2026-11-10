@@ -8,8 +8,11 @@ use gpui::{Hsla, Rgba, rgb};
 
 /// The contrast every tier keeps (a little over 4.5:1, for rounding).
 pub(crate) const TARGET: f32 = 4.6;
-/// Marks and icons at rest.
-pub(crate) const ICON_TARGET: f32 = 3.1;
+/// Marks and icons at rest: the contrast setting's mark ratio (3:1, or
+/// 4.5:1 under Increase Contrast), a little over for rounding.
+fn icon_target(theme: &Theme) -> f32 {
+    theme.contrast.mark_ratio() + 0.1
+}
 /// The least alpha step between muted and text that reads as a step.
 const SPREAD: f32 = 0.25;
 
@@ -26,6 +29,26 @@ pub(crate) struct Tiers {
 
 fn pack(c: Hsla) -> u32 {
     u32::from(Rgba::from(c)) >> 8
+}
+
+/// What the chrome's frost and inks depend on, and nothing else: the
+/// background, ink and surface, the sidebar override, the contrast setting
+/// and the 16 ANSI colours (the unfocused card's check). Twenty-one words,
+/// copied and compared instead of a whole Theme with its 256-colour palette
+/// on every palette() call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChromeKey([u32; 21]);
+impl ChromeKey {
+    pub(crate) fn of(theme: &Theme) -> Self {
+        let mut key = [0; 21];
+        key[0] = theme.background;
+        key[1] = theme.foreground;
+        key[2] = theme.surface;
+        key[3] = theme.sidebar.unwrap_or(u32::MAX);
+        key[4] = u32::from(theme.contrast == crate::contrast::Contrast::High);
+        key[5..].copy_from_slice(&theme.palette[..16]);
+        Self(key)
+    }
 }
 
 /// The theme's ink at `alpha` over its plate tone, opaque.
@@ -48,9 +71,15 @@ fn least_alpha(theme: &Theme, surfaces: &[u32], target: f32) -> Option<f32> {
 }
 
 /// Every surface chrome text is drawn on.
+#[cfg(test)]
 pub(crate) fn surfaces(theme: &Theme) -> Vec<u32> {
+    surfaces_at(theme, super::design::frost(theme))
+}
+
+/// [`surfaces`] at a given frost (`None`: opaque).
+fn surfaces_at(theme: &Theme, frost: Option<f32>) -> Vec<u32> {
     let (focused, rest) = super::surfaces::card_fills(theme);
-    let mut all = super::design::sidebar_plates(theme);
+    let mut all = super::design::row_plates_at(theme, frost);
     all.extend([pack(focused), pack(rest)]);
     all
 }
@@ -60,21 +89,30 @@ pub(crate) fn surfaces(theme: &Theme) -> Vec<u32> {
 /// closer, at most 1; label is half way. When text can't stand 0.25 above
 /// muted, label folds into text (two tiers).
 pub(crate) fn tiers(theme: &Theme) -> Tiers {
+    tiers_at(theme, super::design::frost(theme))
+}
+
+/// [`tiers`] at a given frost (`None`: opaque), which the frost's search
+/// asks about each alpha it tries.
+pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
+    /// The theme's chrome inputs and the frost's bits.
+    type Key = (ChromeKey, Option<u32>);
     // The sidebar asks for every row, every frame: a few themes are cached.
     thread_local! {
-        static CACHE: std::cell::RefCell<Vec<(Theme, Tiers)>> = Default::default();
+        static CACHE: std::cell::RefCell<Vec<(Key, Tiers)>> = Default::default();
     }
-    if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(t, _)| t == theme).map(|(_, t)| *t)) {
+    let key = (ChromeKey::of(theme), frost.map(f32::to_bits));
+    if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, t)| *t)) {
         return t;
     }
-    let all = surfaces(theme);
+    let all = surfaces_at(theme, frost);
     let tiers = match least_alpha(theme, &all, TARGET) {
         None => {
             // The theme's own ink can't reach it: one tier, the ink moved
             // only as far as it must (to 4.75:1, so 8-bit rounding of the
             // frosted plates can't leave it just under 4.5).
             let ink = crate::contrast::ink(theme.foreground, &all, 4.75);
-            let icon = crate::contrast::ink(theme.foreground, &all, ICON_TARGET);
+            let icon = crate::contrast::ink(theme.foreground, &all, icon_target(theme));
             Tiers {
                 text: ink,
                 label: ink,
@@ -87,7 +125,7 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
             let text = (muted + 0.30).clamp(0.85, 1.);
             let three = text - muted >= SPREAD - 0.001;
             let label = if three { (text + muted) / 2. } else { text };
-            let icon = least_alpha(theme, &all, ICON_TARGET).unwrap_or(muted);
+            let icon = least_alpha(theme, &all, icon_target(theme)).unwrap_or(muted);
             Tiers {
                 text: ink_at(theme, text),
                 label: ink_at(theme, label),
@@ -99,10 +137,10 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
     };
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() >= 8 {
+        if c.len() >= 64 {
             c.remove(0);
         }
-        c.push((theme.clone(), tiers));
+        c.push((key, tiers));
     });
     tiers
 }
