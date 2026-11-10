@@ -122,7 +122,11 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         let mut view = make_view(window, cx, sender);
         view.frame = None;
         view.browser_state.frame = None;
-        view.browser_state.appearance = Some(serde_json::from_value(faint_muted()).unwrap());
+        // Home's plate is the theme's background (#746 v3), so the hostile
+        // grey goes there.
+        let mut appearance = faint_muted();
+        appearance["theme"]["background"] = 0x404040.into();
+        view.browser_state.appearance = Some(serde_json::from_value(appearance).unwrap());
         view.browser_state.fleet = Some(
             serde_json::from_slice(include_bytes!(
                 "../../../../../../../fixtures/home-fleet.json"
@@ -145,15 +149,18 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     let (theme, canvas) = view.read_with(cx, |v, _| (v.theme(), v.canvas()));
     let plates = plates_under_text(&theme, canvas);
+    // The chrome's tiers read on the chrome's own surfaces, Home's plate
+    // among them (#746 v3); Home's washes over it (the field, a hovered or
+    // selected row, a key cap) are what the Home ink must still answer for.
     let stock = design::palette(&theme);
-    for (role, color) in [("text", stock.text), ("muted", stock.text_muted)] {
-        assert!(
+    assert!(
+        [stock.text, stock.text_muted].iter().any(|&color| {
             plates.iter().any(|(plate, _)| {
                 bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
-            }),
-            "Bezel's {role} must fail on Home's plates here, or the test proves nothing"
-        );
-    }
+            })
+        }),
+        "Bezel's text or muted must fail on Home's plates here, or the test proves nothing"
+    );
     cx.update(|_, cx| cx.set_global(InkProbes::default()));
     cx.simulate_resize(size(px(1400.), px(1800.)));
     // The table's keyboard row, for the ↵ hint's ink on the selected plate.

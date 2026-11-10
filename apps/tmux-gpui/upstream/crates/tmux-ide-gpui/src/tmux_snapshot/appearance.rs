@@ -101,11 +101,11 @@ impl SnapshotView {
             .as_ref()
             .map_or_else(Theme::default, Appearance::native)
     }
+    /// Home's plate (#746 v3): the same fill as the focused pane's card,
+    /// Bezel's `terminal_bg` (the theme's own terminal background).
     pub(super) fn canvas(&self) -> u32 {
-        self.browser_state
-            .appearance
-            .as_ref()
-            .map_or_else(|| Theme::default().background, |a| a.theme.canvas)
+        let card = super::design::palette(&self.theme()).terminal_bg;
+        u32::from(Rgba::from(card)) >> 8
     }
     pub(super) fn publish_system(&mut self, mode: System) {
         if self.last_system == Some(mode) {
