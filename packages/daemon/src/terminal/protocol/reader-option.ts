@@ -6,6 +6,8 @@ export interface ReaderOption {
   name: string;
   /** Absolute real path; daemon-only, never sent to clients. */
   path: string;
+  /** The reader process: the pane's own process. */
+  pid: number;
 }
 
 const MARKDOWN = /\.(?:md|markdown)$/iu;
@@ -17,9 +19,18 @@ export function isMarkdownPath(path: string): boolean {
 
 /**
  * Parse `@tmux_ide_reader`: `{"version":1,"pid":N,"path":"/abs/notes.md"}`.
- * A reader exists only while the process that set the option is alive.
+ * A reader exists only while the process that set the option is alive, and
+ * only on the pane whose own process it is: `panePid` is that pane's
+ * `#{pane_pid}`. The CLI starts `tmux-ide show` with tmux's direct exec (no
+ * shell), so the pane's process is the reader itself and records exactly that
+ * pid. Equality rather than "a descendant of": no process-tree walk, and a
+ * process inside the pane cannot point the pane's reader at another file.
  */
-export function readerOption(value: string, alive = processAlive): ReaderOption | null {
+export function readerOption(
+  value: string,
+  panePid: string,
+  alive = processAlive,
+): ReaderOption | null {
   if (!value || value.length > 8192) return null;
   let parsed: unknown;
   try {
@@ -33,6 +44,7 @@ export function readerOption(value: string, alive = processAlive): ReaderOption 
   const { version, pid, path } = record;
   if (version !== 1 || typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0)
     return null;
+  if (!/^[1-9][0-9]*$/u.test(panePid) || String(pid) !== panePid) return null;
   if (
     typeof path !== "string" ||
     path.length > 4096 ||
@@ -44,7 +56,7 @@ export function readerOption(value: string, alive = processAlive): ReaderOption 
   const name = basename(path);
   if (name.length > 255) return null;
   if (!alive(pid)) return null;
-  return { name, path };
+  return { name, path, pid };
 }
 
 function processAlive(pid: number): boolean {

@@ -7,6 +7,7 @@ import {
   openSync,
   readSync,
   realpathSync,
+  statSync,
   type BigIntStats,
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -101,8 +102,14 @@ export function gitRoot(directory: string): string | null {
 
 type Opened = { fd: number; stat: BigIntStats };
 
-/** Opens `real` (already resolved) without following a swapped-in final symlink. */
-function openRegular(real: string): Opened | null {
+/**
+ * Opens `real` (already resolved) without following a swapped-in final
+ * symlink, and only as a regular file. Then proves the descriptor is still the
+ * file at that real path: the path still resolves to itself, and a fresh stat
+ * of it names the same device and inode as the open descriptor. A path or a
+ * folder on it swapped between resolving and opening is refused ("swapped").
+ */
+function openRegular(real: string): Opened | "swapped" | null {
   let fd: number;
   try {
     fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -115,7 +122,35 @@ function openRegular(real: string): Opened | null {
     closeSync(fd);
     return null;
   }
+  readerFileTestHooks.afterOpen?.();
+  let now: BigIntStats | null = null;
+  try {
+    now = realpathSync(real) === real ? statSync(real, { bigint: true }) : null;
+  } catch (error) {
+    if (!missingError(error)) {
+      closeSync(fd);
+      throw error;
+    }
+  }
+  if (!now || now.dev !== stat.dev || now.ino !== stat.ino) {
+    closeSync(fd);
+    return "swapped";
+  }
   return { fd, stat };
+}
+
+/**
+ * Seams for tests that need a file to change between the steps of one read;
+ * production never sets them.
+ */
+export const readerFileTestHooks: {
+  afterOpen: null | (() => void);
+  read: null | ((fd: number, offset: number, size: number) => Buffer);
+} = { afterOpen: null, read: null };
+
+/** The real page read, for a test hook that wraps it. */
+export function readChunkForTest(fd: number, offset: number, size: number): Buffer {
+  return readChunk(fd, offset, size);
 }
 
 function readChunk(fd: number, offset: number, size: number): Buffer {
@@ -150,7 +185,7 @@ function page(
     if (request.revision !== revision || request.offset > size) return { state: "changed" };
   } else if (have === revision) return { state: "unchanged", revision };
   const offset = request?.offset ?? 0;
-  const bytes = readChunk(opened.fd, offset, size);
+  const bytes = (readerFileTestHooks.read ?? readChunk)(opened.fd, offset, size);
   const after = fstatSync(opened.fd, { bigint: true });
   if (
     revisionOf(after) !== revision ||
@@ -171,7 +206,11 @@ export function readReaderPage(
     const real = realpathOrNull(path);
     if (!real || !isMarkdownPath(real)) return { state: "missing" };
     const opened = openRegular(real);
-    if (!opened) return { state: "missing" };
+    if (!opened || opened === "swapped") {
+      // A document swapped mid-open reads again once, then reports changed.
+      if (opened === "swapped" && !request && attempt === 0) continue;
+      return opened === "swapped" ? { state: "changed" } : { state: "missing" };
+    }
     try {
       const result = page(opened, PANE_READER_MAX_BYTES, have, request);
       if (result.state !== "changed" || request || attempt > 0) return result;
@@ -235,9 +274,10 @@ export function readReaderAssetPage(
   const mime = imageMime(real);
   if (!isInside(root, real) || !mime) return { state: "refused" };
   const opened = openRegular(real);
+  if (opened === "swapped") return { state: "refused" };
   if (!opened) return { state: "missing" };
   try {
-    // A path swapped between realpath and open is refused rather than served.
+    // The name as written must still lead to the file that was opened.
     if (realpathOrNull(candidate) !== real) return { state: "refused" };
     const result = page(opened, PANE_READER_ASSET_MAX_BYTES, null, request);
     if (result.state === "unchanged") return { state: "changed" };

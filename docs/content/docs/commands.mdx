@@ -54,7 +54,8 @@ pane runs `tmux-ide show <file>`, so a plain terminal shows the terminal
 rendering, and the Mac app paints its native [Markdown reader](/docs/markdown-reader)
 over the pane. A missing Markdown file fails with `FILE_NOT_FOUND` and creates no
 pane. `--split`, `--size`, `--pane`, `--session` and `--window` work as they do
-for the browser.
+for the browser. The reader shows files up to 4 MiB and takes the pane's keys
+while it is shown; see [Markdown reader](/docs/markdown-reader#keys).
 
 `--json` returns `{ "pane": "%3", "session": "$0", "window": "@1", "status": "created", "kind": "reader" }`.
 

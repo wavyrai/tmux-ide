@@ -60,6 +60,8 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{qa:@tmux_ide_name_source}",
   "#{qa:@tmux_ide_browser_icon}",
   "#{qa:@tmux_ide_reader}",
+  // The reader option belongs to the pane only when its own process set it.
+  "#{pane_pid}",
 ].join("\t");
 
 /** Decode the escapes emitted by tmux's `qa` format modifier. */
@@ -139,7 +141,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length < 21 || encoded.length > 24) continue;
+    if (encoded.length < 21 || encoded.length > 25) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -165,6 +167,7 @@ export function parseSessionPaneDescriptorReply(
       nameSource = "",
       browserIconRaw = "",
       readerRaw = "",
+      panePidRaw = "",
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -205,7 +208,7 @@ export function parseSessionPaneDescriptorReply(
     }
     descriptors.push({
       browserIcon: browserIcon(browserIconRaw),
-      reader: readerOption(readerRaw),
+      reader: readerOption(readerRaw, panePidRaw),
       sessionName,
       runtimePaneId,
       runtimeSessionId,

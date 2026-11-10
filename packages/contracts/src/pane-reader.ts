@@ -11,11 +11,16 @@ export const PANE_READER_PAGE_BYTES = 512 * 1024;
 export const PANE_READER_MAX_BYTES = 4 * 1024 * 1024;
 export const PANE_READER_ASSET_MAX_BYTES = 10 * 1024 * 1024;
 
-/** C0 controls and DEL; checked by code point so the rule needs no control-character regex. */
+/**
+ * C0 controls, DEL and C1 controls (U+0080 to U+009F): Unicode's control
+ * characters, the same rule the app applies to a reader's name and folder, so
+ * nothing the daemon sends is refused there. Checked by code point so the
+ * rule needs no control-character regex.
+ */
 export function hasControlCharacter(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0)!;
-    if (code < 32 || code === 127) return true;
+    if (code < 32 || (code >= 127 && code <= 159)) return true;
   }
   return false;
 }

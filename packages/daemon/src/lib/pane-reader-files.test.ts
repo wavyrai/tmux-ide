@@ -6,8 +6,10 @@ import {
   symlinkSync,
   truncateSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +18,13 @@ import {
   PANE_READER_MAX_BYTES,
   PANE_READER_PAGE_BYTES,
 } from "@tmux-ide/contracts";
-import { readReaderAssetPage, readReaderPage } from "./pane-reader-files.ts";
+import {
+  isInside,
+  readChunkForTest,
+  readReaderAssetPage,
+  readReaderPage,
+  readerFileTestHooks,
+} from "./pane-reader-files.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -208,5 +216,79 @@ describe("reader image assets", () => {
     expect(
       readReaderAssetPage(md, "large.webp", { revision: result.revision, offset: 1 }).state,
     ).toBe("changed");
+  });
+});
+
+describe("reader file guards (#353 round 2)", () => {
+  afterEach(() => {
+    readerFileTestHooks.afterOpen = null;
+    readerFileTestHooks.read = null;
+  });
+
+  it("D02: the parent of the root is not inside it", () => {
+    expect(isInside("/repo/docs", "/repo")).toBe(false);
+    expect(isInside("/repo", "/repo")).toBe(true);
+    expect(isInside("/repo", "/repo/a/b")).toBe(true);
+    expect(isInside("/repo", "/repo2/a")).toBe(false);
+  });
+
+  it("D07: a directory or a FIFO named like Markdown is missing, never read", () => {
+    const root = temp();
+    mkdirSync(join(root, "dir.md"));
+    expect(readReaderPage(join(root, "dir.md"), null, null)).toEqual({ state: "missing" });
+    const fifo = join(root, "pipe.md");
+    execFileSync("mkfifo", [fifo]);
+    expect(readReaderPage(fifo, null, null)).toEqual({ state: "missing" });
+    mkdirSync(join(root, "img.png"));
+    writeFileSync(join(root, "notes.md"), "# x\n");
+    expect(readReaderAssetPage(join(root, "notes.md"), "img.png", null)).toEqual({
+      state: "missing",
+    });
+  });
+
+  it("D09: a file changed during the read is reported changed, not served", () => {
+    const { md } = repo();
+    const first = readReaderPage(md, null, null);
+    if (first.state !== "ok") throw new Error(first.state);
+    readerFileTestHooks.read = (fd, offset, size) => {
+      const bytes = readChunkForTest(fd, offset, size);
+      // Same length, new metadata: only the revision after the read shows it.
+      utimesSync(md, new Date(1_000), new Date(2_000));
+      return bytes;
+    };
+    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 })).toEqual({
+      state: "changed",
+    });
+  });
+
+  it("D10: a short read is reported changed, not served as a short page", () => {
+    const { md } = repo();
+    const first = readReaderPage(md, null, null);
+    if (first.state !== "ok") throw new Error(first.state);
+    readerFileTestHooks.read = (fd, offset, size) =>
+      readChunkForTest(fd, offset, size).subarray(0, 3);
+    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 })).toEqual({
+      state: "changed",
+    });
+  });
+
+  it("D19: a path outside the root is refused before the file system is asked", () => {
+    const { md } = repo();
+    // Neither exists: the answer must not say so.
+    for (const src of ["../../outside/nope.png", "../../repo2/nope.png", "../../../x/y.png"])
+      expect(readReaderAssetPage(md, src, null), src).toEqual({ state: "refused" });
+    // Inside the root, a missing image is just missing.
+    expect(readReaderAssetPage(md, "../images/nope.png", null)).toEqual({ state: "missing" });
+  });
+
+  it("D22: a file swapped for another after it was opened is refused", () => {
+    const { md, repoDir } = repo();
+    const image = join(repoDir, "docs", "b.png");
+    readerFileTestHooks.afterOpen = () => {
+      // Replace the opened file by a different inode at the same path.
+      unlinkSync(image);
+      writeFileSync(image, PNG);
+    };
+    expect(readReaderAssetPage(md, "b.png", null)).toEqual({ state: "refused" });
   });
 });

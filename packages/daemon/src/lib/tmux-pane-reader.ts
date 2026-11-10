@@ -93,23 +93,27 @@ export function createPaneReaderResolver(options: {
             "-p",
             "-t",
             pane.runtimePaneId,
-            "#{qa:@tmux_ide_pane_id}\t#{qa:pane_birth_id}\t#{qa:@tmux_ide_reader}",
+            "#{qa:@tmux_ide_pane_id}\t#{qa:pane_birth_id}\t#{pane_pid}\t#{qa:@tmux_ide_reader}",
           ],
           signal,
         );
         assertCurrent();
         if (raw.length > 16_384) throw new PaneReaderUnavailable();
-        const [semantic, birth, option] = raw.trimEnd().split("\t").map(decodeTmuxArgument);
+        const [semantic, birth, panePid, option] = raw
+          .trimEnd()
+          .split("\t")
+          .map(decodeTmuxArgument);
         if (semantic !== target.semanticPaneId || birth !== pane.nativePaneBirthId)
           throw new PaneReaderUnavailable();
-        const reader = readerOption(option ?? "", options.alive);
+        const reader = readerOption(option ?? "", panePid ?? "", options.alive);
         if (!reader) throw new PaneReaderUnavailable();
         return reader;
       };
       const reader = await observe();
       const result = work(reader);
       const current = await observe();
-      if (current.path !== reader.path) throw new PaneReaderUnavailable();
+      if (current.path !== reader.path || current.pid !== reader.pid)
+        throw new PaneReaderUnavailable();
       return result;
     } finally {
       readers--;
