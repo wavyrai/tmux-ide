@@ -1,9 +1,11 @@
 //! Recovery after a lost terminal stream. While the daemon is the same one, the
 //! app re-issues a lease for the same session and keeps retrying with backoff; the
 //! terminal loop keeps the last frame on screen meanwhile. Only a changed daemon
-//! sends recovery through rediscovery. A new daemon authorizes an old server
-//! generation only for a local restart with the identical live session, and
-//! recovery never repeats owner mutations.
+//! sends recovery through rediscovery, which also keeps the window as it was
+//! until it ends. A new daemon authorizes an old server generation only for a
+//! local restart with the identical live session (`reconnect_catalog`), so
+//! retrying through a daemon update can never bind the window to another
+//! session, and recovery never repeats owner mutations.
 use super::*;
 
 /// What a rebind needs to re-issue a lease without reading the catalog again.
@@ -51,16 +53,31 @@ impl Recovery {
 }
 /// Backoff doubles from 250 ms to this cap and never gives up on the same daemon.
 const MAX_DELAY: Duration = Duration::from_secs(30);
+/// Other and identity failures rediscovery takes before it stops: a budget for
+/// the whole recovery, never refilled by a catalog listing (only a stream that
+/// is ready again ends a recovery), so at most about ten minutes at the cap.
+const MAX_OTHERS: u8 = 20;
 const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+/// Over SSH a different identity may be a different machine: stop at once.
+pub(super) const SSH_IDENTITY: &str =
+    "A different daemon answered for this machine. Check the machine, then refresh sessions.";
+/// The daemon now speaks a protocol this app does not: only an app update helps.
+pub(super) const UPDATE_APP: &str =
+    "tmux-ide was updated and this app can no longer talk to it. Update the app to reconnect.";
 pub(super) const RECONNECTING: &str = "Connection lost. Reconnecting…";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
     /// Retried with backoff, forever.
     Unreachable,
-    /// A different daemon answered. A rebind turns into rediscovery; rediscovery
-    /// stops.
+    /// A different daemon answered, or a stale record named the old one while
+    /// the new one already answered. A rebind turns into rediscovery. Locally,
+    /// rediscovery reads the record again and backs off, from the same budget
+    /// as [`Failure::Other`]; over SSH it stops at once ([`SSH_IDENTITY`]).
     Identity,
-    /// A rebind turns into rediscovery; rediscovery retries at most three times.
+    /// The daemon speaks another protocol: recovery ends with [`UPDATE_APP`].
+    Incompatible,
+    /// A rebind turns into rediscovery; rediscovery backs off, and stops after
+    /// [`MAX_OTHERS`] in a row without a catalog listing the session.
     Other,
 }
 impl Failure {
@@ -69,7 +86,8 @@ impl Failure {
         match error {
             E::Network(_) | E::RecordChanged | E::OwnerExited => Self::Unreachable,
             E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
-            E::IdentityFormat | E::IdentityChanged | E::Incompatible(_) => Self::Identity,
+            E::IdentityFormat | E::IdentityChanged => Self::Identity,
+            E::Incompatible(_) => Self::Incompatible,
             _ => Self::Other,
         }
     }
@@ -115,15 +133,21 @@ impl Local {
         let Some(recovery) = self.recovery.as_mut() else {
             return Ok(());
         };
+        if failure == Failure::Incompatible {
+            return self.unavailable(UPDATE_APP);
+        }
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
             // Not the daemon or session the stream came from: look it up again.
             recovery.rebind = None;
             recovery.others = 0;
         } else if recovery.rebind.is_none() {
-            if failure == Failure::Other {
-                recovery.others += 1;
+            if failure == Failure::Identity && recovery.local_record.is_none() {
+                return self.unavailable(SSH_IDENTITY);
             }
-            if failure == Failure::Identity || recovery.others > 3 {
+            if matches!(failure, Failure::Other | Failure::Identity) {
+                recovery.others = recovery.others.saturating_add(1);
+            }
+            if recovery.others > MAX_OTHERS {
                 return self.unavailable(GIVE_UP);
             }
         }
@@ -183,8 +207,9 @@ impl Local {
             self.state.status = RECONNECTING.into();
             return self.publish();
         }
-        let request = self.state.request;
-        self.home(request)?;
+        // Rediscovery keeps the window as it was: no Home, no loading state.
+        self.background_fleet.refresh();
+        self.restart_discovery(false)?;
         self.state.status = RECONNECTING.into();
         self.recovery = Some(recovery);
         self.publish()
