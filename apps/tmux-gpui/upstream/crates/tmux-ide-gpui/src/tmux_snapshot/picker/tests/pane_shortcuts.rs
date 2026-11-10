@@ -174,14 +174,14 @@ fn close_shortcut_requires_confirmation_and_escape_keeps_pane(cx: &mut TestAppCo
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Cmd-W opens the anchored card, not the palette (c1).
     cx.simulate_keystrokes("cmd-w");
     view.read_with(cx, |view, _| {
-        assert!(view.picker.as_ref().unwrap().closing.is_some())
+        assert!(view.pane_close.is_some());
+        assert!(view.picker.is_none());
     });
     assert!(receiver.try_recv().is_err());
     cx.simulate_keystrokes("escape");
     assert!(receiver.try_recv().is_err());
-    view.read_with(cx, |view, _| {
-        assert!(view.picker.as_ref().is_none_or(|p| p.closing.is_none()))
-    });
+    view.read_with(cx, |view, _| assert!(view.pane_close.is_none()));
 }

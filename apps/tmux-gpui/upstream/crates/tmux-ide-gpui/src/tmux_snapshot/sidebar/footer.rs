@@ -5,6 +5,11 @@ use crate::tmux_snapshot::{SnapshotView, controls};
 /// A capsule's inset around its buttons: Bezel's control group pad.
 const CAPSULE_PAD: f32 = 2.;
 
+/// The footer's height: its two capsules and its 8 pt margins.
+pub(in crate::tmux_snapshot) fn height() -> f32 {
+    bezel_theme::ControlSize::Regular.height() + 2. * CAPSULE_PAD + 2. * bezel_theme::Theme::SPACE
+}
+
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn sidebar_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme();

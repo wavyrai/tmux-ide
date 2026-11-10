@@ -61,7 +61,6 @@ impl SnapshotView {
             .filter(|p| {
                 p.mode == Mode::Commands
                     && p.pane_scope.is_none()
-                    && p.closing.is_none()
                     && p.agent.is_none()
                     && p.edit.is_none()
                     && p.removal.is_none()

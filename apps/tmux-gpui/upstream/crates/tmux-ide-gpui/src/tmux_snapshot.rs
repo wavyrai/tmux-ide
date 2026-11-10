@@ -1,6 +1,7 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
 mod agent_indicator;
+mod agent_resume;
 mod agent_spinner;
 mod appearance;
 mod browser;
@@ -48,6 +49,7 @@ mod new_session;
 mod pane_actions;
 mod pane_cards;
 mod pane_chrome;
+mod pane_close;
 mod pane_move;
 mod pane_shortcuts;
 mod pending_input;
@@ -384,6 +386,7 @@ fn show_owned(
                         workspace_fleet_agents: Default::default(),
                         home_filter: None,
                         pane_actions: None,
+                        pane_close: None,
                         browser_address: None,
                         new_session: None,
                         new_session_queued: None,
@@ -468,6 +471,8 @@ struct SnapshotView {
     workspace_fleet_agents: workspace_fleet_agents::Owner,
     home_filter: Option<home::filters::Controls>,
     pane_actions: Option<pane_actions::Menu>,
+    /// The close-pane card, while it asks (c1).
+    pane_close: Option<pane_close::Card>,
     browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
@@ -514,6 +519,7 @@ impl SnapshotView {
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }
         // The preview windows have no browsing shell to install Bezel's theme,
@@ -918,6 +924,7 @@ impl SnapshotView {
                 .size_full(),
             )
             .children(self.pane_header_labels(width, cx))
+            .children(self.pane_close_card(window, cx))
             .children(self.divider_handles(width))
             .children(self.lower_pane_header_controls(width, cx))
             .children(self.pane_move_layers(window, cx))

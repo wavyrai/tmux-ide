@@ -96,14 +96,24 @@ See [Remote machines over SSH](/docs/remote-machines).
 ## `restore` finds no snapshot
 
 Snapshots are written by the background updater about every 30 seconds while
-any session is adopted or was created from the app. Without one, there is
-nothing to restore. Preview what a restore would do before running it:
+any session is adopted or was created from the app. A server started by a
+script or a plain `tmux` runs no updater, so its snapshot can be days old.
+`tmux-ide doctor` shows the snapshot's age and any running session it misses.
+Without a snapshot, there is nothing to restore. Preview what a restore would
+do before running it:
 
 ```bash
 tmux-ide restore --dry-run
 ```
 
-See [Restore and resume](/docs/restore-resume).
+See [Restore and resume](/docs/restore-resume), and
+[Recover after an accidental kill-server](/docs/tmux-upgrade#recover-after-an-accidental-kill-server).
+
+## doctor reports "stock tmux: reduced features"
+
+The running tmux server was started by another tmux, such as Homebrew's.
+`tmux-ide servers upgrade` restarts it on tmux-ide's own tmux and restores its
+sessions. See [Move to tmux-ide's own tmux](/docs/tmux-upgrade).
 
 ## `events` prints nothing
 

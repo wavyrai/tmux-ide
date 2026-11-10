@@ -95,3 +95,49 @@ fn swap_encodes_as_the_daemon_vector() {
 
 #[path = "tmux_controller_actions_tests/interruption.rs"]
 mod interruption;
+/// A split's completion names the pane it created only from its own current,
+/// applied receipt.
+#[test]
+fn only_an_applied_current_receipt_names_the_created_pane() {
+    let receipt = |current, outcome| tmux_control::IntentCompletion {
+        operation_id: "op".into(),
+        outcome,
+        current,
+    };
+    let applied = || IntentOutcome::Applied {
+        result: Some(serde_json::json!({"semanticPaneId": "pane.0123"})),
+    };
+    assert_eq!(
+        created_pane(Some(&receipt(true, applied()))).as_deref(),
+        Some("pane.0123")
+    );
+    assert_eq!(created_pane(Some(&receipt(false, applied()))), None);
+    let rejected = IntentOutcome::Rejected {
+        code: "x".into(),
+        message: "y".into(),
+    };
+    assert_eq!(created_pane(Some(&receipt(true, rejected))), None);
+    assert_eq!(created_pane(None), None);
+    let mut state = ActionState {
+        pending: Some(Pending {
+            pane: "pane".into(),
+            lifetime: Lifetime {
+                generation: "gen".into(),
+                incarnation: "pane:1".into(),
+            },
+            operation: "op".into(),
+            action: PaneAction::Zoom(Zoom::Toggle),
+            deadline: 10,
+            sent: true,
+            geometry_requested: false,
+        }),
+    };
+    assert!(matches!(
+        state.finish(ActionOutcome::Applied),
+        Some(ActionCompletion {
+            split: false,
+            created: None,
+            ..
+        })
+    ));
+}

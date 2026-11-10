@@ -69,6 +69,11 @@ pub struct ActionCompletion {
     pub pane: String,
     pub outcome: ActionOutcome,
     pub reissue: bool,
+    /// This was a split.
+    pub split: bool,
+    /// The pane an applied split created, from its validated receipt
+    /// (`pane.<operationId>`); never another client's pane.
+    pub created: Option<String>,
 }
 struct Pending {
     pane: String,
@@ -220,9 +225,13 @@ impl ActionState {
                 && receipt.is_some_and(|receipt| {
                     matches!(receipt.outcome, IntentOutcome::Applied { .. })
                 });
+            let created = created_pane(receipt);
             let mut completion = self.finish(outcome);
             if let Some(completion) = completion.as_mut() {
                 completion.reissue |= reissue;
+                if completion.split && outcome == ActionOutcome::Applied {
+                    completion.created = created;
+                }
             }
             return Ok(completion);
         }
@@ -253,8 +262,22 @@ impl ActionState {
             operation_id: pending.operation,
             pane: pending.pane,
             reissue: pending.action.structural() && outcome == ActionOutcome::Applied,
+            split: matches!(pending.action, PaneAction::Split(_)),
+            created: None,
             outcome,
         })
+    }
+}
+/// The pane a split created, from its own current, applied receipt. The
+/// receipt was validated against this operation and its split (the created
+/// pane differs from the source), so this is never another client's pane.
+fn created_pane(receipt: Option<&tmux_control::IntentCompletion>) -> Option<String> {
+    let receipt = receipt.filter(|receipt| receipt.current)?;
+    match &receipt.outcome {
+        IntentOutcome::Applied {
+            result: Some(result),
+        } => result["semanticPaneId"].as_str().map(str::to_owned),
+        _ => None,
     }
 }
 fn current(c: &Controller, pane: &str, lifetime: &Lifetime) -> bool {

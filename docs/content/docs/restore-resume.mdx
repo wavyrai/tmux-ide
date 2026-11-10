@@ -12,7 +12,10 @@ and opencode panes can reopen their previous conversation.
 It works from a snapshot at `~/.tmux-ide/snapshot.json`, which the
 [background updater](/docs/the-dock#the-background-updater) writes about every
 30 seconds. The updater runs once any session is adopted or created from the
-app, so a snapshot exists only if it was running before the crash.
+app, so a snapshot exists only if it was running before the crash. A server
+started by a script or a plain `tmux` has no updater; `tmux-ide doctor` shows
+how old the snapshot is. `--from FILE` restores from another snapshot file,
+such as the one [`tmux-ide servers upgrade`](/docs/tmux-upgrade) keeps.
 
 ## What restore rebuilds
 

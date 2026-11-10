@@ -137,7 +137,8 @@ impl SnapshotView {
         }
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
-        if self.browser_state.retained_preview
+        // A split's hold takes keys while its stream is re-issued.
+        if (self.browser_state.retained_preview && !self.split_hold_waiting())
             || (self.resize_gesture.busy() && self.divider.is_none())
         {
             self.interrupt_input(cx);
@@ -311,7 +312,11 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
-        if self.browser_state.retained_preview || self.resize_gesture.busy() {
+        // Only terminal keys may wait in a split's hold; a wheel or scroll
+        // during its preview is refused, as before, never sent to the old pane.
+        if (self.browser_state.retained_preview && !(terminal && self.split_hold_waiting()))
+            || self.resize_gesture.busy()
+        {
             super::renderer_probe::runtime::rejected();
             if terminal {
                 self.interrupt_input(cx);
@@ -626,7 +631,7 @@ impl SnapshotView {
         } else {
             None
         };
-        let application_tabs = self.application_tabs(notice, window, cx);
+        let (application_tabs, sidebar) = self.top_chrome(sidebar, notice, window, cx);
         let card_border =
             super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
         let content = super::shell::content_panel(content_background, card_border, is_home)
@@ -682,10 +687,7 @@ impl SnapshotView {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .p(px(super::shell::CONTENT_INSET))
-                    // Beside the sidebar the cards start where it ends: its
-                    // own 8 pt edge is the gutter (#746).
-                    .when(show_sidebar, |inset| inset.pl_0())
+                    .map(|inset| self.inset_edges(inset, show_sidebar, window))
                     .child(content),
             );
         let body = div()

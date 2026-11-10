@@ -1,6 +1,7 @@
 //! Bounded never-dispatched input for explicit pane selection or focus reclamation.
 mod focus_reclaim;
 mod history;
+mod split;
 mod viewport;
 use super::{SnapshotView, browser, keys::Input};
 pub(super) use focus_reclaim::PaintedFocus;
@@ -36,8 +37,16 @@ pub(super) fn validate_targets(targets: &[Target]) -> Result<(), super::Error> {
 enum Kind {
     Selection,
     Focus,
-    Viewport { cols: u16, rows: u16 },
-    History { offset: u32 },
+    Viewport {
+        cols: u16,
+        rows: u16,
+    },
+    History {
+        offset: u32,
+    },
+    /// Typed after a split: the target is the pane the split creates, known
+    /// only once the re-issued stream arrives (`split.rs`).
+    Split(split::Hold),
 }
 pub(super) struct Pending {
     kind: Kind,
@@ -80,12 +89,16 @@ impl Pending {
         })
     }
     fn compatible(&self, view: &SnapshotView) -> bool {
-        self.started.elapsed() < Duration::from_secs(1)
+        // A split hold waits for the pane it created; one that was not
+        // applied has nowhere to deliver.
+        let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting());
+        !matches!(&self.kind, Kind::Split(hold) if hold.failed())
+            && self.started.elapsed() < self.limit()
             && self.request == view.browser_request
-            && view.browser_state.selected_pane.as_ref() == Some(&self.id)
+            && (waiting || view.browser_state.selected_pane.as_ref() == Some(&self.id))
             && view.browser_state.selected_session.as_ref() == Some(&self.session)
             && match self.kind {
-                Kind::Selection | Kind::Viewport { .. } | Kind::History { .. } => {
+                Kind::Selection | Kind::Viewport { .. } | Kind::History { .. } | Kind::Split(_) => {
                     view.browser_state.presence_revision == self.presence && view.presence.ready()
                 }
                 Kind::Focus => {
@@ -96,7 +109,7 @@ impl Pending {
             && !view.input_interrupted
             && view.browser_state.surface == browser::Surface::Workspace
             && !view.browser_state.input_target_rejected
-            && !view.browser_state.retained_preview
+            && (waiting || !view.browser_state.retained_preview)
             && match self.kind {
                 Kind::History { offset } => {
                     view.browser_state.history_offset == offset
@@ -111,7 +124,8 @@ impl Pending {
             && view.divider.is_none()
             && view.browser_commands.is_some()
             && match self.kind {
-                Kind::Selection => view
+                Kind::Split(_) if waiting => true,
+                Kind::Selection | Kind::Split(_) => view
                     .browser_state
                     .input_targets
                     .iter()
@@ -148,7 +162,7 @@ impl SnapshotView {
     #[cfg(test)]
     pub(super) fn age_pending_input(&mut self) {
         if let Some(pending) = &mut self.pending_input {
-            pending.started = Instant::now() - Duration::from_secs(2);
+            pending.started = Instant::now() - Duration::from_secs(5);
         }
     }
     pub(super) fn pending_input_ready(&self) -> bool {
@@ -164,6 +178,7 @@ impl SnapshotView {
         }
     }
     pub(super) fn expire_pending_input(&mut self, cx: &mut Context<Self>) {
+        self.observe_split_hold();
         if self.pending_input.is_some() && !self.pending_input_ready() {
             self.cancel_pending_input(cx);
         }
@@ -183,6 +198,7 @@ impl SnapshotView {
         if self.pending_input.is_none()
             || !self.terminal_input_ready()
             || self.browser_state.request != self.browser_request
+            || self.split_hold_waiting()
         {
             return;
         }
