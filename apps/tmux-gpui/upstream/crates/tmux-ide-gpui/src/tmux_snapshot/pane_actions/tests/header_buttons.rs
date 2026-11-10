@@ -2,12 +2,15 @@ use super::*;
 #[gpui::test]
 fn direct_expand_uses_current_target_and_close_requires_confirmation(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
-    let (_view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
     cx.simulate_resize(size(px(900.), px(700.)));
     cx.update(|window, cx| {
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now: left pending, a draw sends it
+    // after 150 ms of wall clock, among the messages this test counts.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let expand = cx.debug_bounds("pane-expand:pane-a").unwrap();
     let close = cx.debug_bounds("pane-close:pane-a").unwrap();
     assert!(expand.right() <= close.left());
@@ -47,6 +50,9 @@ fn closing_an_unselected_header_waits_for_that_panes_authority(cx: &mut TestAppC
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now: left pending, a draw sends it
+    // after 150 ms of wall clock, among the messages this test counts.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let close = cx.debug_bounds("pane-close:pane-b").unwrap();
     cx.simulate_click(close.center(), Modifiers::default());
     assert!(
@@ -81,6 +87,11 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
     cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now: left pending, a draw sends it
+    // after 150 ms of wall clock, among the messages this test counts.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let mut seen = Vec::new();
     for focused in ["pane-a", "pane-b"] {
         view.update(cx, |v, _| {
@@ -137,6 +148,9 @@ fn header_buttons_split_right_split_down_zoom_close_edge_to_edge(cx: &mut TestAp
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now: left pending, a draw sends it
+    // after 150 ms of wall clock, among the messages this test counts.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     assert!(
         cx.debug_bounds("pane-overflow:pane-a").is_none(),
         "no menu button"
@@ -191,6 +205,9 @@ fn right_click_on_the_selected_panes_title_opens_its_menu(cx: &mut TestAppContex
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
+    // Send the resized viewport's fit now: left pending, a draw sends it
+    // after 150 ms of wall clock, among the messages this test counts.
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let title = cx.debug_bounds("pane-title:pane-a").unwrap();
     // A left click on the title only focuses the terminal.
     cx.simulate_click(title.center(), Modifiers::default());
