@@ -30,6 +30,8 @@ pub(super) struct Reveal {
     measured_rows: Vec<Option<Identity>>,
     retry_scheduled: bool,
     pending: Option<Identity>,
+    /// The reveal gliding over SCROLL_GLIDE (#761).
+    glide: Option<crate::tmux_snapshot::motion::Glide>,
 }
 impl Reveal {
     fn prepare(
@@ -62,7 +64,9 @@ impl Reveal {
         scroll: &ScrollHandle,
         keyboard_active: bool,
         window: &mut Window,
+        cx: &App,
     ) {
+        self.glide(scroll, keyboard_active, window, cx);
         let identities: Vec<_> = rows
             .iter()
             .map(|row| row.target.as_ref().and_then(identity))
@@ -104,11 +108,54 @@ impl Reveal {
         // Like Herdr, leave even a partially visible selection where the user
         // placed it; only a newly selected off-screen row needs uncovering.
         if !visible {
-            scroll.scroll_to_item(index + 1);
+            let target = crate::tmux_snapshot::motion::reveal_offset(
+                (scroll.bounds().top(), scroll.bounds().bottom()),
+                (bounds.top(), bounds.bottom()),
+                offset,
+                scroll.max_offset().y,
+            );
+            if cx.reduce_motion() {
+                scroll.scroll_to_item(index + 1);
+            } else if self.glide.is_none_or(|g| g.target() != target) {
+                let now = cx.background_executor().now();
+                self.glide = Some(crate::tmux_snapshot::motion::Glide::new(
+                    offset, target, now,
+                ));
+                window.request_animation_frame();
+            }
         }
         self.selected = Some(selected);
         self.pending = None;
         self.retry_scheduled = false;
+    }
+}
+
+impl Reveal {
+    /// Moves a running glide on one frame. The user's own scrolling, or
+    /// the keyboard taking over, ends it where it is.
+    fn glide(
+        &mut self,
+        scroll: &ScrollHandle,
+        keyboard_active: bool,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        let Some(glide) = self.glide.as_mut().filter(|_| !keyboard_active) else {
+            self.glide = None;
+            return;
+        };
+        let offset = scroll.offset();
+        match glide.step(offset.y, cx.background_executor().now(), cx.reduce_motion()) {
+            Some((y, more)) => {
+                scroll.set_offset(point(offset.x, y));
+                if more {
+                    window.request_animation_frame();
+                } else {
+                    self.glide = None;
+                }
+            }
+            None => self.glide = None,
+        }
     }
 }
 

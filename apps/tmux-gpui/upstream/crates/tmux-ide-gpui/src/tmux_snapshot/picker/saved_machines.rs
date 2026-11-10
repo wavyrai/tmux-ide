@@ -92,7 +92,11 @@ impl SnapshotView {
     pub(super) fn open_machine_management(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_machine_list(Mode::ManageMachines, window, cx);
     }
-    pub(super) fn open_saved_machines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::tmux_snapshot) fn open_saved_machines(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_machine_list(Mode::SavedMachines, window, cx);
     }
     fn open_machine_list(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
@@ -141,7 +145,8 @@ impl SnapshotView {
                 }),
         };
         super::super::design::dialog_overlay("saved-machines-overlay", &theme)
-            .child(
+            .child(bezel_motion::dialog_in(
+                "saved-machines-dialog-in",
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("saved-machines-dialog")
                     .w(px(520.))
@@ -185,7 +190,7 @@ impl SnapshotView {
                             ),
                         ),
                     ),
-            )
+            ))
             .into_any_element()
     }
 }

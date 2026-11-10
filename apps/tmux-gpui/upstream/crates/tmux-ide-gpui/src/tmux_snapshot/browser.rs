@@ -41,10 +41,23 @@ pub(super) enum NameSource {
     Title,
     Generated,
 }
+/// The most panes the native app streams for one session. It mirrors
+/// `PANE_STREAM_MAX_PANES` in packages/contracts/src/pane-stream.ts, which the
+/// daemon enforces when it issues a pane stream; keep the two equal.
+pub(super) const NATIVE_STREAM_MAX_PANES: u64 = 24;
+/// What a session row says after its pane count when the native app cannot
+/// open that session.
+pub(super) const TOO_MANY_PANES: &str = "too many";
 impl Choice {
     pub(super) fn pane_count_label(&self) -> Option<String> {
-        self.pane_count
-            .map(|count| format!("{count} {}", if count == 1 { "pane" } else { "panes" }))
+        self.pane_count.map(|count| {
+            let panes = format!("{count} {}", if count == 1 { "pane" } else { "panes" });
+            if count > NATIVE_STREAM_MAX_PANES {
+                format!("{panes} · {TOO_MANY_PANES}")
+            } else {
+                panes
+            }
+        })
     }
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -147,6 +160,9 @@ pub(super) struct State {
     pub reconnect_attempt: Option<u32>,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
+    /// Home is live, but the session the user chose has too many panes to
+    /// open; this names it and says what to do instead.
+    pub home_notice: Option<String>,
     /// Panes whose source the daemon closed; their headers say so (#701, #702).
     pub unavailable_panes: Vec<String>,
     pub native_frame_scope: Option<super::browser_native_preview::Route>,
@@ -588,6 +604,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             home_fault: false,
+            home_notice: None,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
             native_retained_preview: p.native_retained_preview,

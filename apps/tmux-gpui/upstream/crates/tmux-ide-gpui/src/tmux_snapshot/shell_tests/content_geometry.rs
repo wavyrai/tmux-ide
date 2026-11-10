@@ -24,10 +24,14 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
         let content = cx.debug_bounds("tmux-workspace-content").unwrap();
         let top_row = cx.debug_bounds("sidebar-top-row").unwrap();
         assert!(cx.debug_bounds("pane-header-row").is_none());
-        assert_eq!(
-            content.left(),
-            inset.left() + px(super::super::CONTENT_INSET)
-        );
+        // Beside the sidebar the cards start where it ends (#746); without
+        // it they keep the window's 8 pt inset.
+        let left = if hidden {
+            px(super::super::CONTENT_INSET)
+        } else {
+            px(0.)
+        };
+        assert_eq!(content.left(), inset.left() + left);
         assert_eq!(content.top(), inset.top() + px(super::super::CONTENT_INSET));
         assert_eq!(
             content.right(),
@@ -39,7 +43,8 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
         );
         if !hidden {
             let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();
-            assert_eq!(sidebar.size.width, px(224.));
+            // The #746 mockup's sidebar: 252 pt.
+            assert_eq!(sidebar.size.width, px(252.));
             assert_eq!(sidebar.right(), inset.left());
             assert_eq!(sidebar.top(), body.top());
         } else {

@@ -149,6 +149,9 @@ pub(crate) struct TerminalPainter {
     painted_separators: Vec<(Bounds<Pixels>, Rgba)>,
     #[cfg(feature = "integration-test")]
     pub uncached: bool,
+    /// Painting into a card that has its own fill: cells on the theme's
+    /// default background leave it unpainted, so the card shows through.
+    card_backed: bool,
 }
 
 impl Default for TerminalPainter {
@@ -169,6 +172,7 @@ impl Default for TerminalPainter {
             painted_separators: Vec::new(),
             #[cfg(feature = "integration-test")]
             uncached: false,
+            card_backed: false,
         }
     }
 }
@@ -213,6 +217,12 @@ fn paint_glyphs(
         }
     }
     Ok(())
+}
+
+/// Whether a cell background is painted: on a card with its own fill, the
+/// theme's default background is the card's, so it is left to show through.
+fn paints_background(card_backed: bool, theme: &Theme, color: u32) -> bool {
+    !card_backed || color != theme.background
 }
 
 fn background_spans<'a>(
@@ -283,6 +293,13 @@ impl TerminalPainter {
     #[cfg(test)]
     pub(crate) fn painted_images(&self) -> &[(i32, Bounds<Pixels>)] {
         &self.painted_images
+    }
+
+    /// Whether the cells sit on a card with its own fill (#746 v3, focus by
+    /// fill): the default background is then the card's, and only cells
+    /// with another background paint one.
+    pub fn set_card_backed(&mut self, card_backed: bool) {
+        self.card_backed = card_backed;
     }
 
     pub fn set_appearance(&mut self, font_size: f32, cell_height: f32, theme: Theme) {
@@ -482,13 +499,19 @@ impl TerminalPainter {
                             counts.quads += 1;
                         }
                     };
+                    let shows = |color| paints_background(self.card_backed, &self.theme, color);
                     if cached {
                         for (start, end, color) in background_spans(row, columns, &self.theme) {
-                            paint(start, end, color);
+                            if shows(color) {
+                                paint(start, end, color);
+                            }
                         }
                     } else {
                         for x in columns {
-                            paint(x, x + 1, cell_colors(&row[x], &self.theme).1);
+                            let color = cell_colors(&row[x], &self.theme).1;
+                            if shows(color) {
+                                paint(x, x + 1, color);
+                            }
                         }
                     }
                 }

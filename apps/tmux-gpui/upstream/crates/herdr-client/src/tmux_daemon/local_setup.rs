@@ -6,6 +6,28 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+/// Managed CLI releases Home can set up. 2.9.6 is the first release qualified
+/// for `run`: its exact `--version` line and `update --daemon --json` reply.
+/// Later patches keep that contract. The next minor stays out until the
+/// contract is checked against it; the test of the repository's own version
+/// fails until this range covers it.
+const SETUP_CLI: std::ops::Range<(u64, u64, u64)> = (2, 9, 6)..(2, 10, 0);
+fn setup_cli(version: &str) -> bool {
+    let number = |part: &str| {
+        (!part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0')))
+        .then(|| part.parse::<u64>().ok())
+        .flatten()
+    };
+    let mut parts = version.split('.').map(number);
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => {
+            SETUP_CLI.contains(&(major, minor, patch))
+        }
+        _ => false,
+    }
+}
 #[derive(Debug, thiserror::Error)]
 pub enum LocalSetupError {
     #[error("managed installation is missing")]
@@ -226,10 +248,7 @@ pub fn resolve_local_setup(home: &Path) -> Result<LocalSetupInstallation, LocalS
         .as_str()
         .ok_or(LocalSetupError::Installation)?
         .to_owned();
-    if !matches!(
-        version.as_str(),
-        "2.9.6" | "2.9.7" | "2.9.8" | "2.9.9" | "2.9.10" | "2.9.11" | "2.9.12"
-    ) {
+    if !setup_cli(&version) {
         return Err(LocalSetupError::Unsupported);
     }
     Ok(LocalSetupInstallation {

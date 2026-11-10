@@ -73,7 +73,7 @@ impl SnapshotView {
                     controls::Icon::Sidebar,
                     &theme,
                 ),
-                3,
+                4,
                 &theme,
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -110,7 +110,7 @@ impl SnapshotView {
                     controls::Icon::Search,
                     &theme,
                 ),
-                5,
+                6,
                 &theme,
             )
             .debug_selector(|| "application-search".into())
@@ -138,7 +138,7 @@ impl SnapshotView {
                     },
                     &theme,
                 ),
-                6,
+                7,
                 &theme,
             )
             .debug_selector(|| "application-new-session".into())

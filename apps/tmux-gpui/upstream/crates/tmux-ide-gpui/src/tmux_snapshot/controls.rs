@@ -33,7 +33,9 @@ pub(super) enum Icon {
     Home,
     Terminal,
     Sessions,
+    Machines,
     Theme,
+    Settings,
     Refresh,
     Check,
     Search,
@@ -49,7 +51,9 @@ impl Icon {
             Self::Home => "icons/tmux-home.svg",
             Self::Terminal => "icons/terminal.svg",
             Self::Sessions => "icons/sessions.svg",
+            Self::Machines => "icons/devices.svg",
             Self::Theme => "icons/theme.svg",
+            Self::Settings => "icons/settings.svg",
             Self::Refresh => "icons/refresh.svg",
             Self::Check => "icons/check.svg",
             Self::Search => "icons/search.svg",
@@ -166,5 +170,5 @@ pub(super) fn action_button_on(
                 .child(label)
                 .children(super::design::ink_probe(move || format!("control-{id}")))
         }))
-        .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
+        .tooltip(move |_, cx| super::glass_ink::tooltip(hint, None, cx))
 }

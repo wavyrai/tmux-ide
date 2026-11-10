@@ -19,7 +19,11 @@ fn sidebar_toggle_changes_only_layout_and_retains_preference(cx: &mut TestAppCon
     cx.update(|window, cx| window.draw(cx).clear(cx));
     view.read_with(cx, |v, _| {
         assert!(v.sidebar_hidden);
-        assert_eq!(v.input_geometry.unwrap().0.size.width, before + px(224.));
+        assert_eq!(
+            v.input_geometry.unwrap().0.size.width,
+            before + px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+                - px(crate::tmux_snapshot::shell::CONTENT_INSET)
+        );
         assert_eq!(v.browser_state.selected_pane.as_deref(), Some("pane-a"));
         assert!(v.input_interrupted);
         assert_eq!(v.browser_request, 7);

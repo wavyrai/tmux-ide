@@ -77,7 +77,7 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     let heights: Vec<_> = resting.iter().map(|row| row.size.height).collect();
     assert_eq!(
         heights,
-        [px(24.), px(24.), px(30.), px(24.), px(24.)],
+        [px(26.), px(26.), px(30.), px(26.), px(26.)],
         "{resting:?}"
     );
     assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_none());
@@ -269,7 +269,9 @@ fn appearance(colors: &serde_json::Value) -> super::super::appearance::Appearanc
 /// in a dark theme, its frost over a white and a black desktop.
 fn chrome_plates(bezel: &bezel_theme::Theme) -> Vec<(Hsla, &'static str)> {
     let mut plates = vec![(bezel.surface, "surface")];
-    if bezel.appearance == bezel_theme::Appearance::Dark {
+    // Wherever the window frosts, light or dark (#746 glass plan); a theme
+    // that runs opaque has only its surface.
+    if bezel.vibrancy {
         plates.push((
             bezel_theme::flatten(bezel.vibrancy_tint(), white()),
             "frost on white",

@@ -11,7 +11,10 @@ fn font_discovery_blocks_changes_and_picker_never_routes_terminal_input(cx: &mut
     view.read_with(cx, |view, _| {
         assert!(view.picker.as_ref().unwrap().mode == Mode::Font);
         assert!(!view.terminal_font.saving);
-        assert_eq!(view.terminal_font.config.size, 14.);
+        assert_eq!(
+            view.terminal_font.config.size,
+            crate::tmux_snapshot::terminal_font::DEFAULT_SIZE
+        );
     });
     cx.simulate_input("Mono");
     cx.simulate_keystrokes("escape");
@@ -36,8 +39,9 @@ fn changed_font_height_invalidates_then_repaints_shared_cursor_and_grid(cx: &mut
     });
     view.read_with(cx, |view, _| {
         let (_, cursor) = view.input_geometry.unwrap();
-        assert_eq!(cursor.size.height, px(30.));
-        assert_eq!(view.terminal_height(), 30.);
+        // 21 pt on the 1.25 line.
+        assert_eq!(cursor.size.height, px(26.25));
+        assert_eq!(view.terminal_height(), 26.25);
         assert!(view.input_interrupted);
     });
     assert!(receiver.try_iter().all(|command| matches!(

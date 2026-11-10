@@ -3,6 +3,7 @@
 //! machines are label lines over their rows, with no card and no rules. The
 //! rows themselves are in `fleet_rows`.
 use super::*;
+use crate::tmux_snapshot::motion;
 use bezel_ui::widgets::{Content, status_dot};
 use fleet_nav::View;
 
@@ -12,18 +13,25 @@ pub(super) const NAV_WIDTH: f32 = 232.;
 pub(super) const ROW_INDENT: f32 = 36.;
 /// Option A's tracks (#705): a row's height and gap, the favicon, the
 /// windows-and-panes column and the last-active column.
-pub(super) const ROW_HEIGHT: f32 = 34.;
+pub(super) const ROW_HEIGHT: f32 = 40.;
+/// A machine's header line over its rows.
+pub(super) const HEADER_HEIGHT: f32 = 34.;
 pub(super) const ROW_GAP: f32 = SPACE * 1.5;
 pub(super) const FAVICON: f32 = 16.;
 pub(super) const LAYOUT_WIDTH: f32 = 150.;
 pub(super) const ACTIVE_WIDTH: f32 = 96.;
 /// The agents column (#746): the widest it gets; it shares the free width
-/// with the names below that.
-pub(super) const AGENTS_WIDTH: f32 = 230.;
+/// with the names below that. Two chips fit side by side.
+pub(super) const AGENTS_WIDTH: f32 = 300.;
+/// How many agents a row shows as chips before "+N".
+pub(super) const AGENT_CHIPS: usize = 2;
+/// The widest an agent's name gets inside its chip.
+pub(super) const CHIP_NAME_MAX: f32 = 120.;
 /// The narrowest a session's name gets before the agents column gives way.
 pub(super) const NAME_MIN: f32 = 96.;
-/// The widest the table gets, so a value sits near its name.
-pub(super) const TABLE_MAX: f32 = 760. + AGENTS_WIDTH;
+/// The widest the table gets, so a value sits near its name: the mockup's
+/// 1120 pt column less its 48 pt sides (#746).
+pub(super) const TABLE_MAX: f32 = 1024.;
 /// The trailing column that holds the keyboard row's ↵ hint.
 pub(super) const HINT_WIDTH: f32 = 28.;
 
@@ -150,6 +158,7 @@ impl SnapshotView {
         };
         let selector = entry.selector(index);
         let hover = bezel.element_hover;
+        let theme = self.theme();
         let entry = entry.clone();
         div()
             .id(("home-nav", index))
@@ -164,13 +173,17 @@ impl SnapshotView {
             .gap(px(SPACE))
             .px(px(SPACE))
             .py(px(6.))
-            .rounded(px(bezel_theme::Theme::control_radius()))
+            // A filter is a capsule, like a sidebar row (#746 v3).
+            .rounded_full()
             .cursor_pointer()
             .map(|row| {
                 // The chosen filter is raised like a selected sidebar row.
                 let selection = bezel_theme::Selection::new(selected, false);
-                match selection.fill(&bezel) {
-                    Some(fill) => row.bg(fill).shadow(selection.shadows()),
+                match selection
+                    .is_selected()
+                    .then(|| design::selected_capsule(&theme))
+                {
+                    Some((fill, ring)) => row.bg(fill).shadow(ring),
                     None => row.hover(move |s| s.bg(hover)),
                 }
             })
@@ -188,6 +201,7 @@ impl SnapshotView {
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
+                    .when(selected, |label| label.font_weight(FontWeight::MEDIUM))
                     .child(crate::sidebar::label_text(&label)),
             )
             .children(group.map(|g| status_dot(machine_tone(&bezel, g))))
@@ -256,7 +270,7 @@ impl SnapshotView {
                 .aria_label("Add machine…")
                 .px(px(SPACE))
                 .py(px(6.))
-                .rounded(px(bezel_theme::Theme::control_radius()))
+                .rounded_full()
                 .flex()
                 .items_center()
                 .gap(px(SPACE))
@@ -355,27 +369,35 @@ impl SnapshotView {
             div()
                 .debug_selector(move || format!("fleet-machine-header-{index}"))
                 .min_w_0()
-                .min_h(px(ROW_HEIGHT))
+                .min_h(px(HEADER_HEIGHT))
                 .px(px(ROW_GAP))
                 .flex()
                 .items_center()
                 .gap(px(SPACE))
                 .when(collapse, |header| {
-                    header.child(self.fleet_preference_button(
-                        ("fleet-collapse", index),
-                        group.collapse_action.as_deref(),
-                        !group.collapsed,
-                        if group.collapsed {
-                            "Expand machine"
-                        } else {
-                            "Collapse machine"
-                        },
-                        if group.collapsed {
-                            "icons/chevron-right.svg"
-                        } else {
-                            "icons/chevron-down.svg"
-                        },
-                        cx,
+                    let turned = self.home_chevron(
+                        &group.id,
+                        cx.background_executor().now(),
+                        cx.reduce_motion(),
+                    );
+                    header.child(motion::turn(
+                        self.fleet_preference_button(
+                            ("fleet-collapse", index),
+                            group.collapse_action.as_deref(),
+                            !group.collapsed,
+                            if group.collapsed {
+                                "Expand machine"
+                            } else {
+                                "Collapse machine"
+                            },
+                            if group.collapsed {
+                                "icons/chevron-right.svg"
+                            } else {
+                                "icons/chevron-down.svg"
+                            },
+                            cx,
+                        ),
+                        turned,
                     ))
                 })
                 .child(
@@ -544,8 +566,8 @@ impl SnapshotView {
                 .flex_shrink_0()
                 .child(button)
                 .when(enabled, |tip_el| {
-                    tip_el.tooltip(move |window, cx| {
-                        bezel_ui::tooltip::Tooltip::text(tip.clone(), window, cx)
+                    tip_el.tooltip(move |_, cx| {
+                        crate::tmux_snapshot::glass_ink::tooltip(tip.clone(), None, cx)
                     })
                 })
                 .into_any_element(),
@@ -676,13 +698,15 @@ impl SnapshotView {
             body = body.child(self.fleet_column_header());
         }
         let several = fleet.groups.iter().filter(|g| shows_group(g)).count() > 1;
+        let (clock, reduced) = (cx.background_executor().now(), cx.reduce_motion());
         let mut shown = 0;
         for (index, group) in fleet.groups.iter().enumerate() {
             if !shows_group(group) {
                 continue;
             }
             shown += 1;
-            let mut block = div()
+            let entered = self.home_entered(&group.id, clock, reduced);
+            let mut block = motion::enter(div(), entered)
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
                 .flex()
@@ -732,13 +756,12 @@ impl SnapshotView {
                     block = block.child(self.fleet_note("No sessions"));
                 }
                 for (row, session) in rows {
-                    block = block.child(self.fleet_session_row(
-                        index,
-                        row,
-                        session,
-                        is_cursor(index, row),
-                        now,
-                        cx,
+                    let key =
+                        motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
+                    let entered = self.home_entered(&key, clock, reduced);
+                    block = block.child(motion::enter_any(
+                        self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
+                        entered,
                     ));
                 }
             }
@@ -748,13 +771,12 @@ impl SnapshotView {
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
             }) {
-                block = block.child(self.fleet_session_row(
-                    index,
-                    row,
-                    session,
-                    is_cursor(index, row),
-                    now,
-                    cx,
+                let key =
+                    motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
+                let entered = self.home_entered(&key, clock, reduced);
+                block = block.child(motion::enter_any(
+                    self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
+                    entered,
                 ));
             }
             if group.omitted_servers > 0 {

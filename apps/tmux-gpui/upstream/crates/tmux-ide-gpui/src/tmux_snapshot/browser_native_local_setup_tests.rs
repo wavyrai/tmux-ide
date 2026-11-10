@@ -5,6 +5,9 @@ use std::{
     os::unix::fs::{PermissionsExt, symlink},
 };
 fn fixture() -> tempfile::TempDir {
+    fixture_at("2.9.12")
+}
+fn fixture_at(version: &str) -> tempfile::TempDir {
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join(".local/share/tmux-ide");
     let release = root.join("releases/install-Test1");
@@ -22,7 +25,7 @@ fn fixture() -> tempfile::TempDir {
     .unwrap();
     fs::write(
         release.join("npm/lib/node_modules/tmux-ide/package.json"),
-        br#"{"name":"tmux-ide","version":"2.9.12","bin":{"tmux-ide":"bin/cli.js"}}"#,
+        format!(r#"{{"name":"tmux-ide","version":"{version}","bin":{{"tmux-ide":"bin/cli.js"}}}}"#),
     )
     .unwrap();
     symlink("releases/install-Test1", root.join("current")).unwrap();
@@ -104,4 +107,36 @@ fn isolated_record_never_resolves_the_personal_installation() {
     );
     assert!(gate.job.is_none());
     assert!(!home.path().join("ran").exists());
+}
+#[test]
+fn an_unrecognized_installation_is_reported_apart_from_an_unsupported_version() {
+    let offer = |home: &tempfile::TempDir| {
+        let owner = Owner::new(CatalogSource::Local(home.path().join("record")));
+        let mut owned = owner.0.lock().unwrap();
+        owned
+            .setup
+            .start_home(1, home.path().into(), false)
+            .unwrap();
+        drop(owned);
+        let phase = poll(&owner).1;
+        owner.shutdown().unwrap();
+        phase
+    };
+    assert!(offer(&fixture_at("2.10.0")) == Some(Phase::Unsupported));
+    let broken = fixture();
+    fs::write(
+        broken.path().join(".local/share/tmux-ide/installer-v1"),
+        b"2\n",
+    )
+    .unwrap();
+    assert!(offer(&broken) == Some(Phase::Unrecognized));
+    let dangling = fixture();
+    fs::remove_dir_all(
+        dangling
+            .path()
+            .join(".local/share/tmux-ide/releases/install-Test1"),
+    )
+    .unwrap();
+    assert!(offer(&dangling) == Some(Phase::Unrecognized));
+    assert!(!broken.path().join("ran").exists());
 }

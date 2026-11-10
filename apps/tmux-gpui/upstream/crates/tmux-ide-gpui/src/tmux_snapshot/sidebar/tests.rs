@@ -134,7 +134,10 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
     ] {
         let row = cx.debug_bounds(row).unwrap();
         let label = cx.debug_bounds(label).unwrap();
-        assert!(row.left() >= px(0.) && row.right() <= px(224.));
+        assert!(
+            row.left() >= px(0.)
+                && row.right() <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+        );
         assert!(row.size.height > px(0.));
         assert!(row.left() <= label.left());
         assert!(label.right() <= row.right());
@@ -146,8 +149,11 @@ fn actual_session_click_routes_exact_id_and_long_labels_fit(cx: &mut TestAppCont
     cx.update(|_, cx| {
         let probes = &cx.global::<crate::sidebar::layout_tests::PaintedProbes>().0;
         let probe = probes.get(&"界😀 session ".repeat(20)).unwrap();
-        assert!(probe.bounds.left() >= px(0.) && probe.bounds.right() <= px(224.));
-        assert!(probe.mask.right() <= px(224.));
+        assert!(
+            probe.bounds.left() >= px(0.)
+                && probe.bounds.right() <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+        );
+        assert!(probe.mask.right() <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH));
         assert!(probe.width > px(0.));
     });
     receiver.try_iter().for_each(drop);
