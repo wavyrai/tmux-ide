@@ -215,8 +215,9 @@ impl SnapshotView {
 
     /// The window's top row, and the sidebar as the body shows it (still a
     /// styled element, so it can be animated as one). Without the strip, a
-    /// status notice floats over the top of the sidebar's column, under the
-    /// band, on its own card: it never moves the list (#746 v3, #359 review).
+    /// status notice floats on its own card at the foot of the sidebar's
+    /// column, just over the footer: it never moves the list, and never
+    /// covers Home or the rows at the top (#746 v3, #359 review).
     /// With the strip, the row goes to the frame as before; without it, the
     /// row heads the sidebar's column as its own drag band, and a status
     /// notice sits under it rather than beside the tabs.
@@ -252,7 +253,7 @@ impl SnapshotView {
                 bezel_ui::popover::popover_card(&bezel)
                     .debug_selector(|| "sidebar-status-notice".into())
                     .absolute()
-                    .top(px(crate::titlebar::HEIGHT))
+                    .bottom(px(super::browser_ui::sidebar::footer_height()))
                     .left(px(super::shell::CONTENT_INSET))
                     .w(px(
                         super::browser_ui::SIDEBAR_WIDTH - 2. * super::shell::CONTENT_INSET

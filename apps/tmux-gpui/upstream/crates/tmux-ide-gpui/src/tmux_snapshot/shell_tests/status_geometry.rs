@@ -57,6 +57,14 @@ fn transient_status_preserves_terminal_geometry_without_resize(cx: &mut TestAppC
                 !status.intersects(&canvas),
                 "status must not cover terminal cells"
             );
+            // Nor Home at the top of the sidebar, nor the footer under it.
+            let home = cx.debug_bounds("tmux-sidebar-home").unwrap();
+            let footer = cx.debug_bounds("tmux-sidebar-footer").unwrap();
+            assert!(!status.intersects(&home), "{status:?} covers Home");
+            assert!(
+                status.bottom() <= footer.top(),
+                "{status:?} covers the footer"
+            );
         }
         if ready {
             super::super::super::fit_test_support::settle(&view, cx, &receiver);
