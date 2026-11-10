@@ -75,6 +75,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             browser_commands: Some(sender),
             _browser_task: None,
             _task: None,
+            reader: Default::default(),
             painter: Rc::new(RefCell::new(
                 crate::terminal_painter::TerminalPainter::default(),
             )),

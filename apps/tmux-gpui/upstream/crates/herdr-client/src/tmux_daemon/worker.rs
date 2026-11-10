@@ -69,6 +69,18 @@ pub enum CatalogAction {
         scope: ServerScope,
         target: super::EditorTarget,
     },
+    Reader {
+        scope: ServerScope,
+        target: super::EditorTarget,
+        have: Option<String>,
+        page: Option<super::ReaderPage>,
+    },
+    ReaderAsset {
+        scope: ServerScope,
+        target: super::EditorTarget,
+        src: String,
+        page: Option<super::ReaderPage>,
+    },
     Servers,
     History {
         scope: ServerScope,
@@ -113,6 +125,8 @@ pub enum CatalogResult {
     EditorOpened,
     EditorContext(super::EditorContext),
     NativeBrowser(Option<super::BrowserState>),
+    Reader(super::ReaderReply),
+    ReaderAsset(super::ReaderAsset),
     Servers(Vec<ServerRegistration>),
     History(Option<crate::tmux_history::AnchorResult>),
     SplitLayout(crate::tmux_control::SplitLayout),
@@ -398,6 +412,8 @@ fn execute(
         | CatalogAction::OpenEditor { scope, .. }
         | CatalogAction::EditorContext { scope, .. }
         | CatalogAction::NativeBrowser { scope, .. }
+        | CatalogAction::Reader { scope, .. }
+        | CatalogAction::ReaderAsset { scope, .. }
         | CatalogAction::Sessions { scope }
         | CatalogAction::Open { scope, .. }
         | CatalogAction::Create { scope, .. }
@@ -472,6 +488,16 @@ fn execute(
         CatalogAction::EditorContext { target, .. } => client
             .editor_context(&target)
             .map(CatalogResult::EditorContext),
+        CatalogAction::Reader {
+            target, have, page, ..
+        } => client
+            .pane_reader(&target, have.as_deref(), page.as_ref())
+            .map(CatalogResult::Reader),
+        CatalogAction::ReaderAsset {
+            target, src, page, ..
+        } => client
+            .pane_reader_asset(&target, &src, page.as_ref())
+            .map(CatalogResult::ReaderAsset),
         CatalogAction::History { request, .. } => {
             client.history_anchor(&request).map(CatalogResult::History)
         }

@@ -44,6 +44,11 @@ pub use create_pane::{
 pub use local_session::LocalSessionProof;
 mod browser_controls;
 pub use browser_controls::{BrowserAction, BrowserCommand, BrowserState};
+mod reader;
+pub use reader::{
+    ImageMime, READER_ASSET_MAX_BYTES, READER_MAX_BYTES, READER_PAGE_BYTES, ReaderAsset,
+    ReaderChunk, ReaderFile, ReaderPage, ReaderReply,
+};
 mod editor;
 mod editor_launch;
 mod history;

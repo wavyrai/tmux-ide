@@ -265,7 +265,7 @@ impl Group {
 mod preferences_tests;
 
 #[path = "browser_fleet/favicon_check.rs"]
-mod favicon_check;
+pub(in crate::tmux_snapshot) mod favicon_check;
 
 /// The largest favicon Home decodes, the daemon's own cap (#705).
 pub(in crate::tmux_snapshot) const FAVICON_MAX: usize = 32 * 1024;

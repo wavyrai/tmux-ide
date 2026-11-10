@@ -389,3 +389,34 @@ fn a_duplicate_or_missing_pane_id_stays_an_identity_fault() {
         );
     }
 }
+
+/// #756: a reader pane carries its file name only, and a name that could be a
+/// path or carry control characters refuses the whole layout.
+#[test]
+fn reader_badges_carry_a_bounded_file_name() {
+    let mut frame = frames()
+        .into_iter()
+        .find(|frame| frame["type"] == "layout-snapshot")
+        .unwrap();
+    frame["layouts"][0]["panes"][0]["reader"] = json!({"name": "release-notes.md"});
+    let mut state = topology(&frame);
+    let pane = &state.layouts()["window-a"].panes[0];
+    assert_eq!(
+        pane.reader.as_ref().map(|r| r.name.as_str()),
+        Some("release-notes.md")
+    );
+    for bad in [
+        json!({"name": ""}),
+        json!({"name": "docs/x.md"}),
+        json!({"name": "a\nb.md"}),
+        json!({"name": "x.md", "path": "/etc/x.md"}),
+        json!({"name": "x".repeat(256)}),
+    ] {
+        frame["topologyEpoch"] = json!(frame["topologyEpoch"].as_u64().unwrap() + 1);
+        frame["layouts"][0]["panes"][0]["reader"] = bad.clone();
+        assert!(
+            state.apply_control(&to_raw_value(&frame).unwrap()).is_err(),
+            "{bad}"
+        );
+    }
+}

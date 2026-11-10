@@ -34,12 +34,28 @@ pub struct LayoutPane {
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_icon: Option<String>,
+    /// A Markdown reader pane (#756): only the file name, never its path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader: Option<ReaderBadge>,
     pub display_name_source: Option<DisplayNameSource>,
     pub left: usize,
     pub top: usize,
     pub width: usize,
     pub height: usize,
     pub active: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReaderBadge {
+    pub name: String,
+}
+impl ReaderBadge {
+    fn valid(&self) -> bool {
+        !self.name.is_empty()
+            && self.name.chars().count() <= 255
+            && !self.name.contains('/')
+            && !self.name.chars().any(char::is_control)
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -130,6 +146,9 @@ impl Layout {
                             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
             }) {
                 return Err(Error::Bounds);
+            }
+            if pane.reader.as_ref().is_some_and(|reader| !reader.valid()) {
+                return Err(Error::Identity);
             }
             if pane.pane.as_ref().is_some_and(|id| !identity(id))
                 || pane

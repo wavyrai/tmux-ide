@@ -56,6 +56,7 @@ impl Local {
             return Ok(());
         }
         let mut choices = Vec::with_capacity(issued.len());
+        let mut readers = BTreeMap::new();
         let mut remaining = issued;
         for window in &layouts {
             let Some(window_id) = &window.semantic_window_id else {
@@ -67,6 +68,9 @@ impl Local {
                 };
                 if !remaining.remove(id) {
                     continue;
+                }
+                if let Some(reader) = &row.reader {
+                    readers.insert(id.to_owned(), reader.name.clone());
                 }
                 choices.push(Choice {
                     id: id.into(),
@@ -93,7 +97,9 @@ impl Local {
                 });
             }
         }
-        if choices == self.state.panes && self.state.session_catalog_complete {
+        let readers_changed = readers != self.state.reader_panes;
+        self.state.reader_panes = readers;
+        if choices == self.state.panes && self.state.session_catalog_complete && !readers_changed {
             return Ok(());
         }
         self.state.panes = choices;

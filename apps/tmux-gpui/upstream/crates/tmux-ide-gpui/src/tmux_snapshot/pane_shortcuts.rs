@@ -106,7 +106,7 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.browser_shortcut_key(event, window, cx) {
+        if self.browser_shortcut_key(event, window, cx) || self.reader_key(event, window, cx) {
             return true;
         }
         let Some(shortcut) = shortcut(&event.keystroke) else {

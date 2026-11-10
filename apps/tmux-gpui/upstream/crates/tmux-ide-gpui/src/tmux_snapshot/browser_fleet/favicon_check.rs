@@ -13,21 +13,38 @@ pub(super) const MAX_PIXELS: u64 = MAX_SIDE * MAX_SIDE;
 pub(super) const MAX_SVG_SIDE: u64 = 512;
 
 pub(super) fn admissible(format: ImageFormat, bytes: &[u8]) -> bool {
+    within(format, bytes, MAX_SIDE, MAX_PIXELS, MAX_SVG_SIDE)
+}
+
+/// The same header checks for a picture in a Markdown reader (#756), sized for
+/// documents: up to 8192 px a side and 16 M decoded pixels (64 MB RGBA), an
+/// SVG up to 2048 a side.
+pub(in crate::tmux_snapshot) fn admissible_reader(format: ImageFormat, bytes: &[u8]) -> bool {
+    within(format, bytes, 8192, 4096 * 4096, 2048)
+}
+
+fn within(
+    format: ImageFormat,
+    bytes: &[u8],
+    max_side: u64,
+    max_pixels: u64,
+    max_svg_side: u64,
+) -> bool {
     let pixels = match format {
         ImageFormat::Png => png(bytes).map(|(w, h)| (w, h, 1)),
         ImageFormat::Gif => gif(bytes),
         ImageFormat::Jpeg => jpeg(bytes).map(|(w, h)| (w, h, 1)),
         ImageFormat::Webp => webp(bytes).map(|(w, h)| (w, h, 1)),
         ImageFormat::Ico => ico(bytes).map(|(w, h)| (w, h, 1)),
-        ImageFormat::Svg => svg(bytes).map(|(w, h)| (w, h, 1)),
+        ImageFormat::Svg => svg(bytes, max_svg_side).map(|(w, h)| (w, h, 1)),
         _ => None,
     };
     pixels.is_some_and(|(w, h, frames)| {
         w > 0
             && h > 0
-            && w <= MAX_SIDE
-            && h <= MAX_SIDE
-            && w.saturating_mul(h).saturating_mul(frames) <= MAX_PIXELS
+            && w <= max_side
+            && h <= max_side
+            && w.saturating_mul(h).saturating_mul(frames) <= max_pixels
     })
 }
 
@@ -206,7 +223,7 @@ fn ico(b: &[u8]) -> Option<(u64, u64)> {
 /// document asks for (a file, URL or `data:` image) refuses it. A cheap text
 /// pass first refuses DTDs, imported style sheets and non-fragment
 /// references without parsing.
-fn svg(b: &[u8]) -> Option<(u64, u64)> {
+fn svg(b: &[u8], max_side: u64) -> Option<(u64, u64)> {
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -258,7 +275,7 @@ fn svg(b: &[u8]) -> Option<(u64, u64)> {
     }
     let size = tree.size();
     let (w, h) = (f64::from(size.width()), f64::from(size.height()));
-    if !(w.is_finite() && h.is_finite()) || w > MAX_SVG_SIDE as f64 || h > MAX_SVG_SIDE as f64 {
+    if !(w.is_finite() && h.is_finite()) || w > max_side as f64 || h > max_side as f64 {
         return None;
     }
     Some((w.ceil().max(1.0) as u64, h.ceil().max(1.0) as u64))

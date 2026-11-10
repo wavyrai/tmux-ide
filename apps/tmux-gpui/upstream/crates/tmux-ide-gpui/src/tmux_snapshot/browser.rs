@@ -94,6 +94,9 @@ pub(super) struct State {
         std::collections::BTreeMap<String, herdr_client::tmux_daemon::BrowserState>,
     /// Worker-owned: last good controls kept after a failed read, or a click that was lost.
     pub browser_marks: std::collections::BTreeMap<String, super::browser_toolbar::Mark>,
+    /// Reader panes (#756) by pane id, with the file name the layout gives.
+    pub reader_panes: std::collections::BTreeMap<String, String>,
+    pub readers: std::collections::BTreeMap<String, Arc<super::reader::Published>>,
     /// View-owned click awaiting the next observation; workers never publish it.
     pub browser_pending: Option<super::browser_toolbar::Pending>,
     pub renderer_probe_scope: Option<super::renderer_probe::Scope>,
@@ -540,6 +543,8 @@ impl Reader {
         Ok(State {
             browser_controls: Default::default(),
             browser_marks: Default::default(),
+            reader_panes: Default::default(),
+            readers: Default::default(),
             browser_pending: None,
             diagnostics: p.diagnostics,
             native_diagnostics: p.native_diagnostics,
