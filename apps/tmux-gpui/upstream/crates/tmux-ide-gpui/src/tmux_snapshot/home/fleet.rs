@@ -352,6 +352,7 @@ impl SnapshotView {
                     true,
                     &bezel,
                 )
+                .danger()
                 .on_press(cx.listener(move |view, _: &(), window, cx| {
                     cx.stop_propagation();
                     view.disconnect_fleet_machine(request, &token, window, cx);
@@ -442,7 +443,7 @@ impl SnapshotView {
                         .flex_none()
                         .flex()
                         .items_center()
-                        .gap(px(14.))
+                        .gap(px(aside_link::GAP))
                         .children(actions),
                 ),
         )
@@ -518,10 +519,10 @@ impl SnapshotView {
             })
     }
 
-    /// Where a server's "Use for new sessions" lives: a labelled Bezel button
-    /// while it is not the default, a muted "Default" once it is, but only
-    /// where there is more than one place new sessions could go. The tooltip
-    /// names the server.
+    /// Where a server's "Use for new sessions" lives: a text action
+    /// (aside_link) while it is not the default, a muted "Default for new
+    /// sessions" once it is, but only where there is more than one place new
+    /// sessions could go. The tooltip names the server.
     fn fleet_server_default(
         &self,
         index: usize,

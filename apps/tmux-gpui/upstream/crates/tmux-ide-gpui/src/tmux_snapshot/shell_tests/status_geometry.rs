@@ -16,6 +16,8 @@ fn transient_status_preserves_terminal_geometry_without_resize(cx: &mut TestAppC
     });
     super::super::super::fit_test_support::settle(&view, cx, &receiver);
     let canvas = view.read_with(cx, |view, _| view.input_geometry.unwrap().0);
+    // The sidebar's list never moves for a notice (#359 review): it floats.
+    let sidebar = cx.debug_bounds("tmux-sidebar-viewport").unwrap();
     for (ready, interrupted, status) in [
         (false, false, "Loading selection"),
         (true, true, "Keyboard ready"),
@@ -42,6 +44,11 @@ fn transient_status_preserves_terminal_geometry_without_resize(cx: &mut TestAppC
         );
         let visible = !ready || interrupted || !matches!(status, "Keyboard ready" | "Connected");
         assert_eq!(cx.debug_bounds("tmux-status-viewport").is_some(), visible);
+        assert_eq!(
+            cx.debug_bounds("tmux-sidebar-viewport").unwrap(),
+            sidebar,
+            "{status}: the sidebar moved"
+        );
         if visible {
             let status = cx.debug_bounds("tmux-status-viewport").unwrap();
             // Beside the sidebar it sits under the sidebar's top row (#746

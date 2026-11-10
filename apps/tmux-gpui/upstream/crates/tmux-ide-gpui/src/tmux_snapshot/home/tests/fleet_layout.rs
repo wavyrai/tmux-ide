@@ -110,7 +110,8 @@ fn home_toolbar_filters_and_machine_headers_take_v3_sizes(cx: &mut TestAppContex
     assert_eq!(header.size.height, px(34.));
     let disconnect = cx.debug_bounds("fleet-disconnect-0").unwrap();
     assert!(header.contains(&disconnect.center()));
-    assert!(disconnect.size.height < px(20.), "{disconnect:?}");
+    // Small text in a 24 pt hit box, not a 32 pt button (#359 review).
+    assert_eq!(disconnect.size.height, px(24.), "{disconnect:?}");
     assert_eq!(
         cx.debug_bounds("fleet-retry-1").unwrap().size.height,
         px(32.)

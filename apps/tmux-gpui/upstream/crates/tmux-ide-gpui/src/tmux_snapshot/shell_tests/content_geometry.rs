@@ -51,8 +51,8 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
             assert!(cx.debug_bounds("titlebar").is_none());
             assert_eq!(top_row.top(), body.top());
             assert!(top_row.right() <= inset.left());
-            // A status notice, when there is one, sits between them.
-            assert!(sidebar.top() >= top_row.bottom());
+            // A status notice floats over the list, so nothing sits between.
+            assert_eq!(sidebar.top(), top_row.bottom());
             assert_eq!(inset.top(), body.top());
             // The row's band and the 8 pt over the cards move the window.
             let band = cx.debug_bounds("sidebar-titlebar").unwrap();

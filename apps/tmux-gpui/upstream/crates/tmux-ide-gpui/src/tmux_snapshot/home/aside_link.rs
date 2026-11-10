@@ -1,6 +1,11 @@
 //! A machine header's action as small muted text (#746 v3): a real control,
-//! with a tab stop, Enter and Space activation and a focus ring, as the
-//! Bezel button it replaced had (bezel_ui::focus::pressable).
+//! as the Bezel button it replaced was (bezel_ui::focus::pressable's tab
+//! stop, Activate and focus ring), in a 24 pt hit box with side padding.
+
+/// The hit box's height: easy to hit on purpose, hard to hit by accident.
+pub(super) const HEIGHT: f32 = 24.;
+/// The room between two aside actions.
+pub(super) const GAP: f32 = 20.;
 use bezel_theme::{TextStyle, Typeset as _};
 use gpui::{prelude::*, *};
 use std::rc::Rc;
@@ -13,6 +18,8 @@ pub(super) struct AsideLink {
     selector: String,
     label: &'static str,
     enabled: bool,
+    /// A destructive action (Disconnect): the danger ink on hover and focus.
+    danger: bool,
     /// Home's palette: the muted and text inks, and the ring.
     bezel: bezel_theme::Theme,
     activate: Option<Rc<Activation>>,
@@ -33,9 +40,16 @@ impl AsideLink {
             selector,
             label,
             enabled,
+            danger: false,
             bezel: bezel.clone(),
             activate: None,
         }
+    }
+
+    /// Marks the action destructive (see `danger`).
+    pub(super) fn danger(mut self) -> Self {
+        self.danger = true;
+        self
     }
 
     /// Click, Enter and Space each call it once, when enabled.
@@ -54,27 +68,50 @@ impl RenderOnce for AsideLink {
         let focus = focus.read(cx).clone();
         let bezel = self.bezel;
         let enabled = self.enabled && self.activate.is_some();
-        let text = bezel.text;
+        // A destructive action turns to the danger ink when it is the one
+        // under the pointer or the keyboard (Disconnect).
+        let lit = if self.danger {
+            bezel.danger_muted
+        } else {
+            bezel.text
+        };
+        let ring = bezel.ring;
         let selector = self.selector.clone();
+        let probe = self.selector.clone();
         let focused = focus.is_focused(window);
-        let link = div()
+        let click = self.activate.clone();
+        let activate = self.activate;
+        div()
             .id(self.id)
             .role(Role::Button)
             .aria_label(self.label)
             .accessibility_id(self.selector.clone())
             .debug_selector(move || selector.clone())
+            .key_context(bezel_ui::focus::CONTROL_KEY_CONTEXT)
+            .track_focus(&focus.tab_stop(enabled))
             .flex_none()
-            .px(px(3.))
-            .rounded(px(4.))
+            .h(px(HEIGHT))
+            .px(px(6.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
             // The ring's slot: transparent until keyboard focus shows it.
             .border_1()
             .border_color(transparent_black())
+            .focus_visible(move |s| s.border_color(ring))
             .text_style(TextStyle::Subheadline)
-            .text_color(bezel.text_muted)
+            .text_color(if focused && enabled {
+                lit
+            } else {
+                bezel.text_muted
+            })
             .when(enabled, |link| {
-                link.cursor_pointer().hover(move |s| s.text_color(text))
+                link.cursor_pointer().hover(move |s| s.text_color(lit))
             })
             .when(!enabled, |link| link.opacity(0.6))
+            .children(crate::tmux_snapshot::design::ink_probe(move || {
+                format!("{probe}:ink")
+            }))
             .child(self.label)
             // Tests find the focused control by this marker.
             .when(focused, |link| {
@@ -84,12 +121,16 @@ impl RenderOnce for AsideLink {
                         .size_0()
                         .debug_selector(move || format!("{selector}:focused")),
                 )
-            });
-        let activate = self.activate;
-        bezel_ui::focus::pressable(&bezel, &focus, link, enabled, move |event, window, cx| {
-            if let Some(activate) = &activate {
-                activate(event, window, cx);
-            }
-        })
+            })
+            .on_click(move |_, window, cx| {
+                if enabled && let Some(click) = &click {
+                    click(&(), window, cx);
+                }
+            })
+            .on_action(move |_: &bezel_ui::focus::Activate, window, cx| {
+                if enabled && let Some(activate) = &activate {
+                    activate(&(), window, cx);
+                }
+            })
     }
 }

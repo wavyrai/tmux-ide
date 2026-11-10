@@ -237,9 +237,10 @@ pub(super) fn title_weight(focused: bool) -> FontWeight {
         FontWeight::NORMAL
     }
 }
-/// A pane header's plates: the card, and the card under its hover and
-/// selected washes.
-pub(super) fn header_plates(theme: &crate::config::Theme) -> [u32; 3] {
+/// A pane header's plates: the focused card, the card under its hover and
+/// selected washes, and an unfocused card's fill (#746 v3), which a header
+/// sits on too.
+pub(super) fn header_plates(theme: &crate::config::Theme) -> [u32; 4] {
     let bezel = super::design::palette(theme);
     let plate = bezel.terminal_bg;
     let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
@@ -247,12 +248,20 @@ pub(super) fn header_plates(theme: &crate::config::Theme) -> [u32; 3] {
         pack(plate),
         pack(bezel_theme::flatten(bezel.element_hover, plate)),
         pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+        pack(super::surfaces::card_fills(theme).1),
     ]
 }
 /// `color` as a mark in a pane header, such as an agent's state glyph: the
-/// contrast setting's mark ratio on each of the header's plates (#746).
+/// contrast setting's mark ratio, a little over, on each of the header's
+/// plates, an unfocused card's fill among them (#746).
 pub(super) fn header_mark(theme: &crate::config::Theme, color: u32) -> u32 {
-    crate::contrast::ink_on_chrome(color, header_plates(theme), theme.contrast.mark_ratio())
+    // A little over the ratio, as the chrome's icon tier is (ink::icon_target):
+    // an ink that meets it exactly can land just under after 8-bit rounding.
+    crate::contrast::ink_on_chrome(
+        color,
+        header_plates(theme),
+        theme.contrast.mark_ratio() + 0.1,
+    )
 }
 pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
     let bezel = super::design::palette(theme);

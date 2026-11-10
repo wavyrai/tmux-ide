@@ -103,3 +103,63 @@ fn a_disabled_header_action_ignores_presses(cx: &mut TestAppContext) {
     );
     assert!(!tab_to(cx, "fleet-use-server-action-0-0"), "no tab stop");
 }
+
+/// #359 review 2: Disconnect is hard to hit by accident and easy on
+/// purpose: 24 pt hit boxes with side padding, 20 pt apart, Disconnect last,
+/// and the danger ink under the pointer and the keyboard.
+#[gpui::test]
+fn disconnect_stands_apart_and_reads_as_the_destructive_one(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    // One server: its "Use for new sessions" joins Disconnect in the header.
+    cx.update(|window, cx| {
+        view.update(cx, |v, _| {
+            v.browser_state.fleet.as_mut().unwrap().groups[0]
+                .servers
+                .truncate(1);
+            v.browser_state.selected_server = None;
+        });
+        window.draw(cx).clear(cx);
+    });
+    let use_server = cx.debug_bounds("fleet-use-server-action-0-0").unwrap();
+    let disconnect = cx.debug_bounds("fleet-disconnect-0").unwrap();
+    for (name, b) in [("use", use_server), ("disconnect", disconnect)] {
+        assert!(b.size.height >= px(24.), "{name}: {b:?}");
+    }
+    assert!(disconnect.left() - use_server.right() >= px(20.));
+    let header = cx.debug_bounds("fleet-machine-header-0").unwrap();
+    assert!(
+        header.right() - disconnect.right() < px(20.),
+        "Disconnect is last"
+    );
+    let (muted, danger) = view.read_with(cx, |v, _| {
+        let p = v.home_palette();
+        (p.text_muted, p.danger_muted)
+    });
+    let ink = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            cx.global::<design::InkProbes>()
+                .0
+                .get("fleet-disconnect-0:ink")
+                .copied()
+        })
+    };
+    cx.update(|_, cx| cx.set_global(design::InkProbes::default()));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(ink(cx), Some(muted), "muted at rest");
+    cx.simulate_mouse_move(disconnect.center(), None, Modifiers::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(ink(cx), Some(danger), "danger under the pointer");
+    cx.simulate_mouse_move(header.origin, None, Modifiers::default());
+    assert!(tab_to(cx, "fleet-disconnect-0"));
+    assert_eq!(ink(cx), Some(danger), "danger under the keyboard");
+    // Use for new sessions lights in the text ink, not the danger ink.
+    cx.simulate_mouse_move(use_server.center(), None, Modifiers::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let use_ink = cx.update(|_, cx| {
+        cx.global::<design::InkProbes>()
+            .0
+            .get("fleet-use-server-action-0-0:ink")
+            .copied()
+    });
+    assert_ne!(use_ink, Some(danger));
+}

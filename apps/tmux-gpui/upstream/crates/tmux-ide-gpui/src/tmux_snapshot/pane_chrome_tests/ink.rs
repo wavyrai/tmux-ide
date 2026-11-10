@@ -270,3 +270,36 @@ fn the_headers_state_glyph_wears_the_headers_ink(cx: &mut TestAppContext) {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// #359 review: the icon tier's clamp, under Increase Contrast too. Raw
+/// faint ink misses the 4.5:1 mark ratio somewhere, so the clamp is what
+/// keeps every header glyph at the setting's ratio on each header plate and
+/// on the unfocused card.
+#[test]
+fn header_icons_hold_the_mark_ratio_at_both_contrast_settings() {
+    use crate::contrast::Contrast;
+    let mut failures = Vec::new();
+    let mut raw_misses = 0;
+    for (name, colors) in catalog() {
+        for contrast in [Contrast::Standard, Contrast::High] {
+            let mut theme = appearance(colors.clone()).native();
+            theme.contrast = contrast;
+            let ink = header_ink(&theme);
+            let bezel = palette(&theme);
+            let rest = crate::tmux_snapshot::surfaces::card_fills(&theme).1;
+            let mark = contrast.mark_ratio();
+            for plate in header_plates(&theme).into_iter().chain([rest]) {
+                raw_misses += usize::from(ratio(bezel.text_faint, plate) < mark);
+                let r = ratio(ink.icon, plate);
+                if r < mark - 0.01 {
+                    failures.push(format!("{name} {contrast:?}: {r:.2}:1 on {plate:?}"));
+                }
+            }
+        }
+    }
+    assert!(
+        raw_misses > 0,
+        "raw faint must miss somewhere, or this proves little"
+    );
+    assert!(failures.is_empty(), "{failures:#?}");
+}

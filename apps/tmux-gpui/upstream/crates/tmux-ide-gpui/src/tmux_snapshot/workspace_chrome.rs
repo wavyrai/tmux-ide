@@ -214,7 +214,9 @@ impl SnapshotView {
     }
 
     /// The window's top row, and the sidebar as the body shows it (still a
-    /// styled element, so it can be animated as one).
+    /// styled element, so it can be animated as one). Without the strip, a
+    /// status notice floats over the top of the sidebar's column, under the
+    /// band, on its own card: it never moves the list (#746 v3, #359 review).
     /// With the strip, the row goes to the frame as before; without it, the
     /// row heads the sidebar's column as its own drag band, and a status
     /// notice sits under it rather than beside the tabs.
@@ -233,22 +235,33 @@ impl SnapshotView {
         let band = crate::titlebar::render(Some(tabs), window)
             .debug_selector(|| "sidebar-titlebar".into())
             .w(px(super::browser_ui::SIDEBAR_WIDTH));
+        let bezel = bezel_theme::Theme::of(cx).clone();
         let column = div()
             .id("sidebar-column")
             .debug_selector(|| "sidebar-column".into())
+            .relative()
             .flex_none()
             .h_full()
             .min_h_0()
             .flex()
             .flex_col()
             .child(band)
+            .child(div().flex_1().min_h_0().child(sidebar))
             .children(notice.map(|notice| {
-                div()
-                    .w(px(super::browser_ui::SIDEBAR_WIDTH))
+                use bezel_ui::surface::Surfaced as _;
+                bezel_ui::popover::popover_card(&bezel)
+                    .debug_selector(|| "sidebar-status-notice".into())
+                    .absolute()
+                    .top(px(crate::titlebar::HEIGHT))
+                    .left(px(super::shell::CONTENT_INSET))
+                    .w(px(
+                        super::browser_ui::SIDEBAR_WIDTH - 2. * super::shell::CONTENT_INSET
+                    ))
                     .px(px(super::shell::CONTENT_INSET))
+                    .occlude()
                     .child(notice)
-            }))
-            .child(div().flex_1().min_h_0().child(sidebar));
+                    .surface(&bezel, bezel.popover_surface)
+            }));
         (None, column)
     }
 
