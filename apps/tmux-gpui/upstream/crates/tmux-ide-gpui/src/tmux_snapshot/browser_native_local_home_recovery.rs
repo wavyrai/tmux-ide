@@ -46,11 +46,10 @@ pub(super) fn act(
         Some(PLATFORM) => Act::Platform,
         Some(UNREADABLE) => Act::Unreadable,
         Some(_) => Act::Unreadable,
-        None if state.home_phase == HomePhase::Unavailable
-            && state.status == reconnect::GAVE_UP =>
-        {
-            Act::GaveUp
-        }
+        None if state.home_phase != HomePhase::Unavailable => return None,
+        None if state.status == reconnect::GAVE_UP => Act::GaveUp,
+        None if state.status == reconnect::UPDATE_APP => Act::AppUpdate,
+        None if state.status == reconnect::SSH_IDENTITY => Act::SshIdentity,
         None => return None,
     })
 }

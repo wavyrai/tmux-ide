@@ -87,6 +87,10 @@ pub(super) enum Act {
     Unreadable,
     /// A session window's recovery stopped.
     GaveUp,
+    /// The daemon was updated past what this app speaks.
+    AppUpdate,
+    /// Over SSH, a different daemon answered for the machine.
+    SshIdentity,
 }
 /// The one card Home shows for it, and the slot's short label.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,7 +98,9 @@ pub(super) struct Card {
     pub slot: &'static str,
     pub title: String,
     pub detail: String,
-    pub action: &'static str,
+    /// The one thing that can fix it here; `None` when nothing in the app can
+    /// (an app too old for the daemon), and only Copy details shows.
+    pub action: Option<&'static str>,
     /// A remote machine's retry token, when the action is to retry it.
     pub retry: Option<String>,
 }
@@ -102,16 +108,17 @@ pub(super) const KEEP_RUNNING: &str = "Your sessions keep running.";
 pub(super) const UPDATE_NEEDED: &str = "Update needed";
 pub(super) const SETUP_NEEDED: &str = "Set up needed";
 pub(super) const COULDNT_RECONNECT: &str = "Couldn't reconnect";
+pub(super) const CREDENTIALS_DETAIL: &str = "The daemon refused this app's credentials. Refresh reads them again from the daemon's record; if it is still refused, restart the tmux-ide daemon.";
 
 /// The card for `state`, if anything needs the user: this Mac's daemon or
 /// recovery first, then local setup, then the first remote machine.
 pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
     use browser::local_setup::Phase as P;
-    let card = |slot, title: &str, detail: &str, action| Card {
+    let card = |slot, title: &str, detail: &str, action: &'static str| Card {
         slot,
         title: title.into(),
         detail: detail.into(),
-        action,
+        action: Some(action),
         retry: None,
     };
     if let Some(act) = state.act {
@@ -129,10 +136,12 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
                 &detail,
                 "Refresh",
             ),
+            // Refresh reads the daemon's record and its credentials again,
+            // which is what fixes a rotated token; the text says so.
             Act::Credentials => card(
                 SETUP_NEEDED,
                 "The daemon refused this app",
-                &detail,
+                CREDENTIALS_DETAIL,
                 "Refresh",
             ),
             Act::Platform => card(
@@ -153,6 +162,17 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
                 &detail,
                 "Refresh sessions",
             ),
+            Act::SshIdentity => card(
+                SETUP_NEEDED,
+                "A different machine answered",
+                &detail,
+                "Refresh sessions",
+            ),
+            // Nothing in the app fixes an app that is too old: no button.
+            Act::AppUpdate => Card {
+                action: None,
+                ..card(UPDATE_NEEDED, "This app needs an update", &detail, "")
+            },
         });
     }
     if connected && let Some(setup) = &state.local_setup {
@@ -190,7 +210,7 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
         },
         title: format!("{} needs you", group.label),
         detail: group.connection_hint().unwrap_or_default().into(),
-        action: "Retry connection",
+        action: Some("Retry connection"),
         retry: group.retry.clone(),
     })
 }
@@ -466,24 +486,26 @@ impl SnapshotView {
         let request = self.browser_request;
         let retry = card.retry.clone();
         let details = format!("{}\n{}", card.title, card.detail);
-        let action = action_button_on(
-            "home-act-action",
-            Some(card.action),
-            card.action,
-            Icon::Refresh,
-            ButtonStyle::Secondary,
-            &bezel,
-        )
-        .debug_selector(|| "home-act-action".into())
-        .on_click(cx.listener(move |view, _, window, cx| {
-            cx.stop_propagation();
-            match &retry {
-                Some(token) => {
-                    view.retry_fleet_machine(request, token, window, cx);
+        let action = card.action.map(|label| {
+            action_button_on(
+                "home-act-action",
+                Some(label),
+                label,
+                Icon::Refresh,
+                ButtonStyle::Secondary,
+                &bezel,
+            )
+            .debug_selector(|| "home-act-action".into())
+            .on_click(cx.listener(move |view, _, window, cx| {
+                cx.stop_propagation();
+                match &retry {
+                    Some(token) => {
+                        view.retry_fleet_machine(request, token, window, cx);
+                    }
+                    None => view.home_refresh(request, window, cx),
                 }
-                None => view.home_refresh(request, window, cx),
-            }
-        }));
+            }))
+        });
         let copy = action_button_on(
             "home-act-copy",
             Some("Copy details"),
@@ -528,7 +550,7 @@ impl SnapshotView {
                 div()
                     .flex()
                     .gap(px(bezel_theme::Theme::SPACE))
-                    .child(action)
+                    .children(action)
                     .child(copy),
             )
             .into_any_element()

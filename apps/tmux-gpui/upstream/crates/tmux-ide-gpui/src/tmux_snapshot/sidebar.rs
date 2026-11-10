@@ -80,8 +80,16 @@ pub(in crate::tmux_snapshot) struct Row {
     pub away: bool,
 }
 pub(in crate::tmux_snapshot) fn rows(state: &browser::State) -> Vec<Row> {
+    rows_at(state, std::time::Instant::now())
+}
+/// The rows as of `now`: a remote machine that is away reads as before for
+/// 8 s, as the footer slot does, and then as away (r4).
+pub(in crate::tmux_snapshot) fn rows_at(
+    state: &browser::State,
+    now: std::time::Instant,
+) -> Vec<Row> {
     if let Some(fleet) = &state.fleet {
-        return hierarchy::rows(state, fleet);
+        return hierarchy::rows(state, fleet, now);
     }
     let mut out = Vec::new();
     for session in &state.sessions {

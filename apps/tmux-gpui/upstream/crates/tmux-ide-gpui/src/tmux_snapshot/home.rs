@@ -440,12 +440,20 @@ impl SnapshotView {
         let act = super::connection::card(&self.browser_state, connected);
         if let Some(card) = act.clone() {
             body = body.child(self.act_card(card, cx));
-        } else if (connected && setup_phase.is_some())
-            || (!is_live && !waiting && !self.browser_state.status.is_empty())
-            || (is_live && self.browser_state.home_fault)
-            || (is_live && self.browser_state.home_notice.is_some())
+        }
+        // The pane-limit notice is always loud: it shows beside a card too.
+        let notice = self.browser_state.home_notice.as_ref().filter(|_| is_live);
+        if (act.is_some() && notice.is_some())
+            || (act.is_none()
+                && ((connected && setup_phase.is_some())
+                    || (!is_live && !waiting && !self.browser_state.status.is_empty())
+                    || (is_live && self.browser_state.home_fault)
+                    || notice.is_some()))
         {
-            let status = status_message(&self.browser_state, connected);
+            let status = match notice.filter(|_| act.is_some()) {
+                Some(notice) => crate::notifications::safe_text(notice, 480),
+                None => status_message(&self.browser_state, connected),
+            };
             let line = match status_tone(&self.browser_state, connected) {
                 StatusTone::Normal => bezel
                     .page_subtitle(status)

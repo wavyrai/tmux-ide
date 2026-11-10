@@ -407,10 +407,14 @@ fn each_act_needed_state_has_its_card_and_slot_label() {
         (Act::Platform, SETUP_NEEDED),
         (Act::Unreadable, SETUP_NEEDED),
         (Act::GaveUp, COULDNT_RECONNECT),
+        (Act::SshIdentity, SETUP_NEEDED),
+        (Act::AppUpdate, UPDATE_NEEDED),
     ] {
         let card = card(&with_act(act), true).unwrap();
         assert_eq!(card.slot, slot, "{act:?}");
-        assert_eq!(card.detail, "reason");
+        if act != Act::Credentials {
+            assert_eq!(card.detail, "reason");
+        }
         assert!(card.retry.is_none());
     }
     use browser::local_setup::{Phase, Setup};
@@ -429,7 +433,7 @@ fn each_act_needed_state_has_its_card_and_slot_label() {
         };
         assert_eq!(card(&state, true).map(|c| c.slot), slot);
         assert_eq!(
-            card(&state, true).map(|c| c.action),
+            card(&state, true).and_then(|c| c.action),
             slot.map(|_| phase.label())
         );
     }
@@ -605,4 +609,56 @@ fn the_selection_hint_stays_during_a_reconnect(cx: &mut TestAppContext) {
             &line, false, true
         ));
     });
+}
+
+/// #360 review (c): the credentials card says what its button does, and that
+/// button (Refresh) reads the daemon's record and credentials again. An app
+/// too old for its daemon gets no button at all: nothing in the app fixes it.
+#[test]
+fn each_cards_text_and_action_agree() {
+    let state = |act| browser::State {
+        act: Some(act),
+        status: "reason".into(),
+        ..Default::default()
+    };
+    let credentials = card(&state(Act::Credentials), true).unwrap();
+    assert_eq!(credentials.action, Some("Refresh"));
+    assert!(credentials.detail.contains("Refresh reads them again"));
+    assert!(!credentials.detail.contains("Restart tmux-ide."));
+    assert_eq!(card(&state(Act::AppUpdate), true).unwrap().action, None);
+    assert_eq!(
+        card(&state(Act::GaveUp), true).unwrap().action,
+        Some("Refresh sessions")
+    );
+}
+
+/// #360 review (a): the pane-limit notice stays loud beside an act card.
+#[gpui::test]
+fn the_pane_limit_notice_shows_beside_an_act_card(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let state = browser::State {
+        surface: browser::Surface::Home,
+        home_phase: browser::HomePhase::Live,
+        request: 7,
+        home_notice: Some("This session has 38 panes; tmux-ide opens at most 24.".into()),
+        fleet: Some(
+            serde_json::from_value(serde_json::json!({
+                "groups": [{"id": "spark", "label": "spark", "state": "disconnected",
+                    "conflict": false, "omittedSessions": 0, "sessions": [],
+                    "retry": "22222222-2222-4222-8222-222222222222",
+                    "diagnostic": {"phase": "needs-attention", "failure": "ssh-authentication"}}],
+                "omittedGroups": 0,
+                "preferences": {"revision": 1, "phase": "ready", "error": null}
+            }))
+            .unwrap(),
+        ),
+        ..Default::default()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, _at) = clock();
+    view.update(cx, |view, _| view.connection.clock = clock);
+    cx.simulate_resize(size(px(1200.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("home-act-card").is_some());
+    assert!(cx.debug_bounds("home-status-warning").is_some());
 }

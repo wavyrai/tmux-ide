@@ -368,7 +368,22 @@ fn an_away_machines_rows_are_marked_away() {
     .unwrap();
     fleet.groups[1].away = Some((std::time::Instant::now(), std::time::SystemTime::now()));
     let state = browser::State::default();
-    let rows = hierarchy::rows(&state, &fleet);
+    let at = fleet.groups[1].away.unwrap().0;
+    // Under the slot's 8 s it reads as before: no tag, not muted.
+    let quiet = hierarchy::rows(&state, &fleet, at + std::time::Duration::from_secs(3));
+    let api = quiet.iter().find(|r| r.label == "api").unwrap();
+    assert!(!api.away);
+    assert_eq!(api.aside.as_deref(), Some("spark"));
+    assert!(
+        !quiet
+            .iter()
+            .any(|r| r.aside.as_deref() == Some("Reconnecting…"))
+    );
+    let rows = hierarchy::rows(&state, &fleet, at + std::time::Duration::from_secs(9));
+    assert!(
+        rows.iter()
+            .any(|r| r.aside.as_deref() == Some("Reconnecting…"))
+    );
     let api = rows.iter().find(|r| r.label == "api").unwrap();
     assert!(api.away);
     assert_eq!(api.aside.as_deref(), Some("spark · away"));

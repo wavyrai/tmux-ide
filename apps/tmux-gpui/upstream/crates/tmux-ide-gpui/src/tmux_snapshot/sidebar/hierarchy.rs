@@ -12,7 +12,13 @@ fn row(label: String, detail: Option<String>, depth: u8, target: Option<Target>)
 /// A session's heading (#746): the project's name and favicon, with its
 /// machine beside it when the fleet has more than one and the machine is not
 /// this Mac. An unavailable session keeps its heading and says so.
-fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
+/// How a remote machine being retried reads at `now`: as before for the
+/// slot's 8 s, then away (`Some(true)`); `None` when it is not away.
+fn away_shown(g: &Group, now: std::time::Instant) -> Option<bool> {
+    let (since, _) = g.away?;
+    Some(now.saturating_duration_since(since) >= crate::tmux_snapshot::connection::WORDS_AFTER)
+}
+fn session_row(fleet: &Fleet, g: &Group, s: &Session, now: std::time::Instant) -> Row {
     let server = s
         .server_id
         .as_ref()
@@ -36,15 +42,16 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     } else {
         None
     };
-    // r4: a machine being retried is away, not gone; its rows stay listed.
-    let unavailable = target.is_none().then(|| {
-        if g.away.is_some() {
-            "away"
-        } else {
-            "Unavailable"
-        }
-        .to_owned()
-    });
+    // r4: a machine being retried is away, not gone; its rows stay listed,
+    // quiet for the slot's 8 s and then tagged "away".
+    let unavailable = target
+        .is_none()
+        .then_some(())
+        .and_then(|()| match away_shown(g, now) {
+            Some(false) => None,
+            Some(true) => Some("away".to_owned()),
+            None => Some("Unavailable".to_owned()),
+        });
     let mut r = row(s.name.clone(), None, 0, target);
     r.kind = Kind::Heading;
     r.favicon = s.favicon.clone();
@@ -59,7 +66,7 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     };
     r.selected = s.active;
     r.favorite = Some((s.favorite_action.clone(), s.favorite));
-    r.away = g.away.is_some();
+    r.away = away_shown(g, now) == Some(true);
     r
 }
 /// The fleet's id for this Mac.
@@ -73,7 +80,7 @@ fn open(state: &browser::State, s: &Session) -> bool {
 }
 /// Sessions grouped by project (#746): each session is a heading, and the open
 /// one lists its panes. Machines, servers and their actions stay on Home.
-pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
+pub(super) fn rows(state: &browser::State, fleet: &Fleet, now: std::time::Instant) -> Vec<Row> {
     let mut out = Vec::new();
     // The open project leads, with its panes (#746, owner decision on card
     // 12: open project, then favourites, then by name).
@@ -83,22 +90,22 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
         .filter(|g| !g.conflict && g.state == Phase::Ready)
         .find_map(|g| g.sessions.iter().find(|s| open(state, s)).map(|s| (g, s)));
     if let Some((g, s)) = lead {
-        out.push(session_row(fleet, g, s));
+        out.push(session_row(fleet, g, s, now));
         out.extend(panes::rows(state, 0));
     }
     for g in &fleet.groups {
-        if g.conflict || g.state != Phase::Ready {
+        if g.conflict || (g.state != Phase::Ready && away_shown(g, now) != Some(false)) {
             let mut machine = row(g.label.clone(), None, 0, None);
             machine.kind = Kind::Heading;
             machine.aside = Some(if g.conflict {
                 "Identity conflict".into()
-            } else if g.away.is_some() {
+            } else if away_shown(g, now) == Some(true) {
                 crate::tmux_snapshot::connection::RECONNECTING.into()
             } else {
                 g.state.label().into()
             });
             machine.machine = Some(g.id.clone());
-            machine.away = g.away.is_some();
+            machine.away = away_shown(g, now) == Some(true);
             out.push(machine);
         }
         let mut sessions: Vec<_> = g.sessions.iter().collect();
@@ -112,7 +119,7 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
             if lead.is_some_and(|(_, led)| std::ptr::eq(led, s)) {
                 continue;
             }
-            out.push(session_row(fleet, g, s));
+            out.push(session_row(fleet, g, s, now));
             if open(state, s) {
                 out.extend(panes::rows(state, 0));
             }

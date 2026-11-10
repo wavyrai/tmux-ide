@@ -185,3 +185,28 @@ fn stops_publish_their_act_needed_state() {
     };
     assert_eq!(act(None, &gave_up), Some(Act::GaveUp));
 }
+
+/// #358 landed: its two stops are act-needed states too.
+#[test]
+fn a_session_recovery_stop_maps_to_its_act() {
+    use crate::tmux_snapshot::connection::Act;
+    let stopped = |status: &str| State {
+        home_phase: HomePhase::Unavailable,
+        status: status.into(),
+        ..State::default()
+    };
+    assert_eq!(
+        act(None, &stopped(reconnect::UPDATE_APP)),
+        Some(Act::AppUpdate)
+    );
+    assert_eq!(
+        act(None, &stopped(reconnect::SSH_IDENTITY)),
+        Some(Act::SshIdentity)
+    );
+    assert_eq!(act(None, &stopped("anything else")), None);
+    let live = State {
+        status: reconnect::UPDATE_APP.into(),
+        ..State::default()
+    };
+    assert_eq!(act(None, &live), None);
+}
