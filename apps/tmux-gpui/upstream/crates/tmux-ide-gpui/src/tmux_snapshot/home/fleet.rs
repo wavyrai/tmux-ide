@@ -303,12 +303,16 @@ impl SnapshotView {
     ) -> Option<Div> {
         let bezel = self.home_palette();
         let request = self.browser_request;
-        let ready = group.state == browser::fleet::Phase::Ready && !group.conflict;
+        // r4: an away machine retries by itself; it reads as before for 8 s.
+        let away = self.machine_away(group);
+        let ready = (group.state == browser::fleet::Phase::Ready
+            || away == Some(super::super::connection::Away::Quiet))
+            && !group.conflict;
         let mut actions: Vec<AnyElement> = Vec::new();
         if let [server] = group.servers.as_slice() {
             actions.extend(self.fleet_server_default(index, 0, group, server, cx));
         }
-        if let Some(token) = group.retry.clone() {
+        if let Some(token) = group.retry.clone().filter(|_| away.is_none()) {
             actions.push(
                 div()
                     .id(("fleet-retry", index))
@@ -419,10 +423,10 @@ impl SnapshotView {
                             .children(design::ink_probe(move || {
                                 format!("fleet-machine-status-{index}")
                             }))
-                            .child(if group.conflict {
-                                "Identity conflict"
-                            } else {
-                                group.state.label()
+                            .child(match (&away, group.conflict) {
+                                (_, true) => "Identity conflict".to_owned(),
+                                (Some(away), false) => away.label(),
+                                (None, false) => group.state.label().to_owned(),
                             }),
                     )
                 })

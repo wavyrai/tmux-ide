@@ -36,7 +36,10 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     } else {
         None
     };
-    let unavailable = target.is_none().then(|| "Unavailable".to_owned());
+    // r4: a machine being retried is away, not gone; its rows stay listed.
+    let unavailable = target
+        .is_none()
+        .then(|| if g.away.is_some() { "away" } else { "Unavailable" }.to_owned());
     let mut r = row(s.name.clone(), None, 0, target);
     r.kind = Kind::Heading;
     r.favicon = s.favicon.clone();
@@ -83,6 +86,8 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
             machine.kind = Kind::Heading;
             machine.aside = Some(if g.conflict {
                 "Identity conflict".into()
+            } else if g.away.is_some() {
+                crate::tmux_snapshot::connection::RECONNECTING.into()
             } else {
                 g.state.label().into()
             });

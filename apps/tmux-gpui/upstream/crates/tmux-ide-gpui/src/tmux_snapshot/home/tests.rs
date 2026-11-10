@@ -183,3 +183,6 @@ mod option_a;
 
 #[path = "tests/pane_limit.rs"]
 mod pane_limit;
+
+#[path = "tests/away.rs"]
+mod away;

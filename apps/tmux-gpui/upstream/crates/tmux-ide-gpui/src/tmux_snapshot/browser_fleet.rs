@@ -26,6 +26,9 @@ pub(in crate::tmux_snapshot) struct Group {
     pub retry: Option<String>,
     #[serde(default)]
     pub disconnect: Option<String>,
+    /// Unreachable and being retried since then (r4); in-process only.
+    #[serde(skip)]
+    pub away: Option<(std::time::Instant, std::time::SystemTime)>,
     pub omitted_sessions: u64,
     pub sessions: Vec<Session>,
     #[serde(default)]

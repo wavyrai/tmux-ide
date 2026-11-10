@@ -75,6 +75,35 @@ pub(super) fn animates(overlay: bool, reduce_motion: bool) -> bool {
     overlay && !reduce_motion
 }
 
+/// How an unreachable remote machine reads (r4): unchanged for 8 s, then
+/// reconnecting, then unreachable since a time, retried every minute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Away {
+    Quiet,
+    Reconnecting,
+    Unreachable(String),
+}
+impl Away {
+    pub(super) fn label(&self) -> String {
+        match self {
+            Self::Quiet => String::new(),
+            Self::Reconnecting => RECONNECTING.into(),
+            Self::Unreachable(since) => {
+                format!("Unreachable since {since} · trying again every minute")
+            }
+        }
+    }
+}
+pub(super) fn away(elapsed: Duration, since: SystemTime) -> Away {
+    if elapsed >= OFFLINE_AFTER {
+        Away::Unreachable(clock_time(since))
+    } else if elapsed >= WORDS_AFTER {
+        Away::Reconnecting
+    } else {
+        Away::Quiet
+    }
+}
+
 /// "10:42" in local time.
 fn clock_time(at: SystemTime) -> String {
     chrono::DateTime::<chrono::Local>::from(at)
@@ -89,6 +118,7 @@ pub(super) struct Watch {
     since: Option<(Kind, Instant, SystemTime)>,
     pub(super) clock: Clock,
     _wake: Option<Task<()>>,
+    _away_wake: Option<Task<()>>,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -96,6 +126,7 @@ impl Default for Watch {
             since: None,
             clock: Rc::new(|| (Instant::now(), SystemTime::now())),
             _wake: None,
+            _away_wake: None,
         }
     }
 }
@@ -121,6 +152,7 @@ impl SnapshotView {
     /// Starts or ends the wait from the latest publication, and wakes the view
     /// at each threshold so the slot changes without a new publication.
     pub(super) fn observe_connection(&mut self, cx: &mut Context<Self>) {
+        self.wake_for_away_machines(cx);
         let kind = waiting(&self.browser_state, self.browser_commands.is_some());
         let watch = &mut self.connection;
         match (kind, watch.since) {
@@ -151,6 +183,32 @@ impl SnapshotView {
         }
     }
 
+    /// Repaints at the 8 s and 60 s marks of each away machine.
+    fn wake_for_away_machines(&mut self, cx: &mut Context<Self>) {
+        let marks: Vec<Instant> = self
+            .browser_state
+            .fleet
+            .iter()
+            .flat_map(|f| f.groups.iter())
+            .filter_map(|g| g.away.map(|(at, _)| at))
+            .flat_map(|at| [at + WORDS_AFTER, at + OFFLINE_AFTER])
+            .filter(|mark| *mark > Instant::now())
+            .collect();
+        self.connection._away_wake = (!marks.is_empty()).then(|| {
+            cx.spawn(async move |this, cx| {
+                let mut marks = marks;
+                marks.sort();
+                for mark in marks {
+                    let wait = mark.saturating_duration_since(Instant::now());
+                    cx.background_executor().timer(wait).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        return;
+                    }
+                }
+            })
+        });
+    }
+
     /// A key typed while the stream is down was refused (#702: never queued).
     fn key_refused(&self) -> bool {
         self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
@@ -167,6 +225,23 @@ impl SnapshotView {
             now.saturating_duration_since(since),
             self.key_refused(),
         )
+    }
+
+    /// A remote machine's state while it is retried, by the watch's clock.
+    pub(super) fn machine_away(&self, group: &browser::fleet::Group) -> Option<Away> {
+        let (since, wall) = group.away?;
+        let (now, _) = (self.connection.clock)();
+        Some(away(now.saturating_duration_since(since), wall))
+    }
+
+    /// The away state of the machine that lists `session`, if it is away.
+    pub(super) fn session_away(&self, session: &browser::fleet::Session) -> Option<Away> {
+        let fleet = self.browser_state.fleet.as_ref()?;
+        let group = fleet
+            .groups
+            .iter()
+            .find(|g| g.sessions.iter().any(|s| std::ptr::eq(s, session)))?;
+        self.machine_away(group).filter(|a| *a != Away::Quiet)
     }
 
     /// Pane titles step down to the muted ink once the words show.

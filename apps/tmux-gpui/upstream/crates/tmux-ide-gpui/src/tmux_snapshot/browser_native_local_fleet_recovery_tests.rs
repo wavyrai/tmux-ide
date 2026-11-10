@@ -5,30 +5,40 @@ fn failure() -> DaemonError {
     DaemonError::CatalogWatch(Box::new(CatalogWatchError::Timeout))
 }
 #[test]
-fn delayed_attempts_are_bounded_and_require_fresh_authorization() {
+fn an_unreachable_machine_is_retried_until_disconnected_with_a_capped_backoff() {
     let now = Instant::now();
     let mut retries = Retries::default();
     let mut incarnation = uuid::Uuid::new_v4();
-    for count in 0..3 {
+    let mut delays = Vec::new();
+    for count in 0..10u32 {
         retries.failed("remote", incarnation, &failure(), now);
-        let delay = Duration::from_secs(1 << count);
-        assert_eq!(retries.wait(now), Some(delay));
+        let delay = retries.wait(now).unwrap();
+        delays.push(delay.as_secs());
         assert!(!retries.request(now + delay - Duration::from_millis(1)));
         assert!(retries.request(now + delay));
         assert!(retries.0["remote"].pending);
         assert_eq!(retries.0["remote"].count, count);
         assert!(!retries.request(now + delay));
-        // Simulate only the fresh registry continuation authorizing a new source.
+        // Only the fresh registry continuation authorizes a new source.
         let attempt = retries.0.get_mut("remote").unwrap();
         incarnation = uuid::Uuid::new_v4();
         attempt.incarnation = incarnation;
         attempt.count += 1;
         attempt.pending = false;
     }
-    retries.failed("remote", incarnation, &failure(), now);
-    assert_eq!(retries.wait(now), None);
+    // 1, 2, 4… seconds, capped at a minute, and it keeps going.
+    assert_eq!(delays, [1, 2, 4, 8, 16, 32, 60, 60, 60, 60]);
+    assert!(retries.away("remote").is_some_and(|(at, _)| at == now));
     retries.success("remote");
     assert!(retries.0.is_empty());
+    assert!(retries.away("remote").is_none());
+}
+#[test]
+fn the_delay_never_exceeds_a_minute() {
+    for count in [0, 5, 6, 7, 16, 63, u32::MAX] {
+        assert!(delay(count) <= MAX_DELAY, "{count}");
+    }
+    assert_eq!(delay(0), Duration::from_secs(1));
 }
 #[test]
 fn replacement_disconnect_and_authority_loss_revoke_pending_recovery() {
