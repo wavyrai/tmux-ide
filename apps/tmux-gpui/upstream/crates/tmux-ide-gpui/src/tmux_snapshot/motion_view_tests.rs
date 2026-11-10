@@ -194,6 +194,10 @@ fn the_sidebar_reveal_glides_over_scroll_glide(cx: &mut TestAppContext) {
         window.draw(cx).clear(cx);
     });
     let start = top(cx, "tmux-sidebar-row-35");
+    // Let the window's own entrances finish, then count what idle costs.
+    cx.background_executor.advance_clock(Duration::from_secs(1));
+    draw(cx);
+    let baseline = owed_when_idle(cx);
     cx.update(|window, cx| {
         view.update(cx, |view, _| {
             view.browser_state.selected_session = Some("s35".into())
@@ -216,4 +220,13 @@ fn the_sidebar_reveal_glides_over_scroll_glide(cx: &mut TestAppContext) {
     assert!(row.top() >= list.top() && row.bottom() <= list.bottom());
     draw(cx);
     assert_eq!(top(cx, "tmux-sidebar-row-35"), row.top(), "settled");
+    // A settled glide asks for no more frames (#352 review).
+    cx.background_executor
+        .advance_clock(Duration::from_millis(1));
+    draw(cx);
+    let owed = owed_when_idle(cx);
+    assert!(
+        owed <= baseline,
+        "no frames once settled: {owed} > {baseline}"
+    );
 }
