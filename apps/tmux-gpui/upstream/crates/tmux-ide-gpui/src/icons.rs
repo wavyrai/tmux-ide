@@ -116,6 +116,8 @@ impl AssetSource for Icons {
             "icons/arrow-right.svg" => include_bytes!("../../../assets/icons/arrow-right.svg"),
             "icons/external.svg" => include_bytes!("../../../assets/icons/external.svg"),
             "icons/split.svg" => include_bytes!("../../../assets/icons/split.svg"),
+            "icons/split-down.svg" => include_bytes!("../../../assets/icons/split-down.svg"),
+            "icons/neovim.svg" => include_bytes!("../../../assets/icons/neovim.svg"),
             "icons/fan-out.svg" => include_bytes!("../../../assets/icons/fan-out.svg"),
             "icons/more.svg" => include_bytes!("../../../assets/icons/more.svg"),
             "icons/zoom.svg" => include_bytes!("../../../assets/icons/zoom.svg"),
@@ -181,6 +183,8 @@ impl AssetSource for Icons {
             "icons/arrow-right.svg",
             "icons/external.svg",
             "icons/split.svg",
+            "icons/split-down.svg",
+            "icons/neovim.svg",
             "icons/fan-out.svg",
             "icons/more.svg",
             "icons/zoom.svg",
@@ -232,7 +236,7 @@ mod tests {
         assert!(Icons.load("unknown.svg").unwrap().is_none());
         assert_eq!(
             Icons.list("icons/").unwrap().len(),
-            49 + AgentIcon::ALL.len()
+            51 + AgentIcon::ALL.len()
         );
     }
 

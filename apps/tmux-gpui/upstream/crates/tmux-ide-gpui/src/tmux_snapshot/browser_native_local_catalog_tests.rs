@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+#[path = "browser_native_local_home_recovery_local_tests.rs"]
+mod home_recovery;
 #[path = "browser_native_local_presence_tests.rs"]
 mod presence;
 fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
@@ -31,6 +33,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             agents: Default::default(),
             appearance: None,
             recovery: None,
+            home: Default::default(),
             background_fleet: Default::default(),
             registry: Default::default(),
             preferences: Default::default(),

@@ -19,7 +19,8 @@ fn identity(target: &Target) -> Option<Identity> {
         } => Identity::FleetSession(machine.clone(), id.clone(), server.clone()),
         Target::FleetAgent { key, .. } => Identity::FleetAgent(key.clone()),
         Target::Pane { session, id } => Identity::Pane(session.clone(), id.clone()),
-        Target::FleetServer { .. } | Target::Collapse { .. } => return None,
+        Target::Home => return None,
+        Target::HomeAgent { key, .. } => Identity::FleetAgent(key.clone()),
     })
 }
 

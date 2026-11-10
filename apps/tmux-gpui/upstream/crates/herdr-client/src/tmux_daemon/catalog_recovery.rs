@@ -7,6 +7,20 @@ impl Error {
         transient(self)
     }
 }
+impl CatalogWatchError {
+    /// The daemon refused the events socket's upgrade for its credentials.
+    pub fn refused_credentials(&self) -> bool {
+        matches!(
+            self,
+            Self::Socket(socket)
+                if matches!(
+                    socket.as_ref(),
+                    tungstenite::Error::Http(response)
+                        if matches!(response.status().as_u16(), 401 | 403)
+                )
+        )
+    }
+}
 fn transient(error: &Error) -> bool {
     match error {
         Error::Network(ureq::Error::Io(_) | ureq::Error::Timeout(_)) => true,

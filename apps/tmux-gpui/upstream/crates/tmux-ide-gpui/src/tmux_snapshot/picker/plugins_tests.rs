@@ -365,6 +365,7 @@ mod keyboard {
             window_id: None,
             window_label: None,
             browser_icon: None,
+            display_name_source: None,
         };
         cx.update(|_, cx| {
             view.update(cx, |view, _| {
@@ -502,6 +503,7 @@ mod keyboard {
                     window_id: None,
                     window_label: None,
                     browser_icon: None,
+                    display_name_source: None,
                 }];
                 state.selected_session = Some("uuid-1".into());
                 state.selected_pane = Some("%4".into());

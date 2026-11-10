@@ -556,6 +556,10 @@ impl SnapshotView {
         {
             return;
         }
+        if let sidebar::Target::HomeAgent { revision, key } = target {
+            self.home_agent_select(request, *revision, key, window, cx);
+            return;
+        }
         if let sidebar::Target::FleetAgent {
             scope,
             revision,
@@ -565,28 +569,16 @@ impl SnapshotView {
             self.select_workspace_fleet_agent(request, *scope, *revision, key, cx);
             return;
         }
-        if let sidebar::Target::Collapse {
-            revision,
-            action,
-            enabled,
-            ..
-        } = target
-        {
-            self.change_fleet_preference(request, *revision, action, *enabled, cx);
-            return;
-        }
         self.select(
             match target {
-                sidebar::Target::Collapse { .. } | sidebar::Target::FleetAgent { .. } => return,
+                sidebar::Target::FleetAgent { .. } | sidebar::Target::HomeAgent { .. } => return,
+                sidebar::Target::Home => Selection::Home,
                 sidebar::Target::FleetSession {
                     selection, session, ..
                 } => Selection::FleetSession {
                     selection: selection.clone(),
                     session_id: session.clone(),
                 },
-                sidebar::Target::FleetServer { selection, .. } => {
-                    Selection::FleetServer(selection.clone())
-                }
                 sidebar::Target::Session(id) => Selection::Session(id.clone()),
                 sidebar::Target::Pane { id, .. } => Selection::Pane(id.clone()),
             },
@@ -644,7 +636,9 @@ impl SnapshotView {
         }
         let theme = self.theme();
         let is_home = self.browser_state.surface == browser::Surface::Home;
-        let show_sidebar = !is_home && !self.sidebar_hidden;
+        // Home shows the sidebar too, with its Home row selected (#746),
+        // while the window leaves Home's table room beside it.
+        let show_sidebar = self.sidebar_shown(window);
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
         self.chrome.sync(window, cx);
@@ -661,19 +655,10 @@ impl SnapshotView {
             .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .child(
-                div()
-                    .px_2()
-                    .pt_1()
-                    .pb_1()
-                    .text_style(TextStyle::Subheadline)
-                    .text_color(bezel.text_muted)
-                    .children(super::design::ink_probe(|| "sidebar-heading".into()))
-                    .child("Sessions"),
-            );
+            .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
+        sidebar = sidebar.child(self.sidebar_home_row(cx));
         for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
             let mut element = sidebar::render_row(
                 index,
@@ -687,20 +672,35 @@ impl SnapshotView {
                 focus_ring(
                     element,
                     self.sidebar_keyboard.active
-                        && (row.target.as_ref().is_some_and(|target| {
+                        && row.target.as_ref().is_some_and(|target| {
                             Some(target) == self.sidebar_keyboard.selected.as_ref()
-                        }) || row.machine.as_ref().is_some_and(|machine| {
-                            Some(machine) == self.sidebar_keyboard.machine_focus.as_ref()
-                        })),
+                        }),
                     &bezel,
                 )
             });
-            if let Some(key) = &row.agent
-                && let Some(publication) = &self.browser_state.workspace_fleet_agents
-                && let Some(agent) = publication.roster.rows.iter().find(|r| &r.key == key)
+            // What a screen reader says: the row and its agent's state.
+            let state = row
+                .pane
+                .as_deref()
+                .and_then(|pane| sidebar::panes::pane_agent(&self.browser_state, pane))
+                .or_else(|| sidebar::activity::row_agent(&self.browser_state, row.agent.as_ref()?))
+                .map(|(agent, unavailable)| {
+                    super::agent_indicator::state_label(agent, unavailable)
+                });
+            element = sidebar::pane_row::spoken(element, &row, state);
+            if let Some((agent, unavailable)) = row
+                .agent
+                .as_ref()
+                .and_then(|key| sidebar::activity::row_agent(&self.browser_state, key))
             {
-                element =
-                    element.child(self.agent_indicator(agent, !publication.roster.available(key)));
+                element = element.children(self.agent_state(
+                    agent,
+                    unavailable,
+                    super::agent_indicator::Plate::Sidebar,
+                ));
+            }
+            if let Some(pane) = &row.pane {
+                element = self.sidebar_pane_row(element, index, pane, cx);
             }
             if let Some((action, favorite)) = &row.favorite {
                 element = element.child(
@@ -746,12 +746,11 @@ impl SnapshotView {
                     .child(status.message().to_owned()),
             );
         }
-        sidebar = sidebar.children(self.workspace_agent_rows(cx));
         let sidebar = div()
             .id("sidebar-viewport")
             .debug_selector(|| "tmux-sidebar-viewport".into())
             .relative()
-            .w(px(224.))
+            .w(px(SIDEBAR_WIDTH))
             .h_full()
             .min_h_0()
             .flex_shrink_0()
@@ -856,7 +855,9 @@ impl SnapshotView {
             None
         };
         let application_tabs = self.application_tabs(notice, window, cx);
-        let content = super::shell::content_panel(content_background, is_home)
+        let card_border =
+            super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
+        let content = super::shell::content_panel(content_background, card_border, is_home)
             .relative()
             .children(home)
             .when(!is_home, |panel| {
@@ -928,6 +929,22 @@ impl SnapshotView {
             )
             .into_any_element();
         super::shell::themed_frame(body, window, cx, application_tabs)
+    }
+}
+
+/// The sidebar's width; the top row's sidebar controls end at its edge.
+pub(super) const SIDEBAR_WIDTH: f32 = 224.;
+/// The narrowest window that shows Home's sidebar beside its table.
+pub(super) const HOME_SIDEBAR_MIN: f32 = 900.;
+
+impl SnapshotView {
+    /// Whether the sidebar shows: unless hidden, and on Home only while the
+    /// window leaves Home's table room beside it (#746). The sidebar and the
+    /// top row both ask this, so they always agree.
+    pub(super) fn sidebar_shown(&self, window: &Window) -> bool {
+        !self.sidebar_hidden
+            && (self.browser_state.surface != browser::Surface::Home
+                || window.viewport_size().width >= px(HOME_SIDEBAR_MIN))
     }
 }
 

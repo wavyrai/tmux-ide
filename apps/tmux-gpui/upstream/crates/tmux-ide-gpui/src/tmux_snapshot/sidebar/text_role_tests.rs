@@ -44,7 +44,7 @@ pub(super) fn catalog() -> Vec<(String, Appearance)> {
             (name, appearance)
         })
         .collect();
-    assert_eq!(variants.len(), 50, "25 presets, two variants each");
+    assert_eq!(variants.len(), 54, "27 presets, two variants each");
     variants
 }
 
@@ -87,20 +87,15 @@ fn row(session: bool, count: bool, summary: Option<&str>) -> Row {
         target: Some(if session {
             Target::Session("tmux-ide".into())
         } else {
-            Target::Collapse {
-                machine: "m".into(),
-                revision: 1,
-                action: "a".into(),
-                enabled: true,
+            Target::Pane {
+                session: "s".into(),
+                id: "p".into(),
             }
         }),
         depth: u8::from(!session),
-        machine: None,
-        agent: None,
         icon: (!session).then_some("icons/terminal.svg"),
-        favorite: None,
         summary: summary.map(Into::into),
-        attention: 0,
+        ..Row::default()
     }
 }
 

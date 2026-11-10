@@ -99,7 +99,7 @@ mod tests;
 
 /// Insets keep native material visible while every terminal cell stays opaque.
 pub(super) const CONTENT_INSET: f32 = bezel_theme::Theme::CONTENT_INSET;
-pub(super) fn content_panel(canvas: u32, is_home: bool) -> Stateful<Div> {
+pub(super) fn content_panel(canvas: u32, border: Hsla, is_home: bool) -> Stateful<Div> {
     div()
         .id("workspace-content")
         .debug_selector(|| "tmux-workspace-content".into())
@@ -109,6 +109,9 @@ pub(super) fn content_panel(canvas: u32, is_home: bool) -> Stateful<Div> {
         .when(is_home, |panel| {
             panel
                 .rounded(px(bezel_theme::Theme::panel_radius()))
+                // The same 1 px border as the pane cards (#746).
+                .border_1()
+                .border_color(border)
                 .p(px(CONTENT_INSET / 2.))
                 .bg(rgb(canvas))
         })

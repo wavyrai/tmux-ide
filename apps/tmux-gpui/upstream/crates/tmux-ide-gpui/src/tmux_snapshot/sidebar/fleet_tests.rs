@@ -9,7 +9,7 @@ pub(super) fn fleet() -> browser::fleet::Fleet {
  {"id":"unscoped","name":"Unscoped","sessionId":"session-d","serverId":null,"paneCount":1,"selection":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]}]})).unwrap()
 }
 #[test]
-fn hierarchy_preserves_exact_routes_and_collapse_exceptions() {
+fn projects_are_headings_with_exact_routes_and_machines_stay_on_home() {
     let mut state = browser::State {
         fleet: Some(fleet()),
         selected_session: Some("session-a".into()),
@@ -17,40 +17,80 @@ fn hierarchy_preserves_exact_routes_and_collapse_exceptions() {
     };
     let projected = rows(&state);
     assert_eq!(projected.iter().filter(|r| r.selected).count(), 1);
+    // No machine, server or "Other sessions" rows (#746); an offline server
+    // is one quiet line.
+    assert!(projected.iter().all(|r| r.machine.is_none()));
+    assert!(!projected.iter().any(|r| r.label == "Other sessions"));
     assert!(
         projected
             .iter()
-            .any(|r| r.label == "Empty" && r.target.is_none())
+            .any(|r| r.label == "1 server offline" && r.target.is_none())
     );
-    assert!(projected.iter().any(|r| r.label == "Other sessions"));
+    // Favourites first, then by name; every session is a heading.
+    let headings: Vec<_> = projected
+        .iter()
+        .filter(|r| r.kind == Kind::Heading)
+        .map(|r| r.label.as_str())
+        .collect();
+    assert_eq!(headings, ["Duplicate", "Duplicate", "Other", "Unscoped"]);
     let target = projected
         .iter()
         .filter_map(|r| r.target.clone())
         .find(|t| matches!(t,Target::FleetSession{id,..}if id=="canonical-b"))
         .unwrap();
+    assert_eq!(projected[0].target.as_ref(), Some(&target));
     assert!(current(&state, &target));
     state.fleet.as_mut().unwrap().groups[0].servers[1].generation =
         Some("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into());
     assert!(!current(&state, &target));
+    // Collapsing a machine is Home's; the sidebar still lists every project.
     state.fleet.as_mut().unwrap().groups[0].collapsed = true;
-    let collapsed = rows(&state);
-    assert!(
-        !collapsed
-            .iter()
-            .any(|r| r.label == "Empty" || r.label == "Other" || r.label == "Unscoped")
-    );
     assert_eq!(
-        collapsed
+        rows(&state)
             .iter()
             .filter(|r| matches!(&r.target, Some(Target::FleetSession { .. })))
             .count(),
-        2
+        4
     );
     state.fleet.as_mut().unwrap().groups[0].conflict = true;
-    assert!(!rows(&state).iter().any(|r| matches!(
-        &r.target,
-        Some(Target::FleetSession { .. } | Target::FleetServer { .. })
-    )));
+    let conflicted = rows(&state);
+    assert!(
+        !conflicted
+            .iter()
+            .any(|r| matches!(&r.target, Some(Target::FleetSession { .. })))
+    );
+    assert!(
+        conflicted
+            .iter()
+            .any(|r| r.aside.as_deref() == Some("Identity conflict"))
+    );
+}
+#[test]
+fn a_remote_project_names_its_machine_only_when_there_are_several() {
+    let mut f = fleet();
+    let state = browser::State {
+        fleet: Some(f.clone()),
+        ..Default::default()
+    };
+    assert!(rows(&state).iter().all(|r| r.aside.is_none()));
+    let mut other = f.groups[0].clone();
+    other.id = "spark".into();
+    other.label = "spark".into();
+    for s in &mut other.sessions {
+        s.active = false;
+    }
+    f.groups.push(other);
+    let state = browser::State {
+        fleet: Some(f),
+        ..Default::default()
+    };
+    let asides: Vec<_> = rows(&state)
+        .into_iter()
+        .filter(|r| r.kind == Kind::Heading)
+        .map(|r| r.aside)
+        .collect();
+    assert!(asides.contains(&Some("spark".into())));
+    assert!(asides.contains(&Some("Duplicate".into())));
 }
 #[gpui::test]
 fn workspace_hierarchy_keyboard_exact_second_route_and_stale_removal(cx: &mut TestAppContext) {
@@ -64,14 +104,14 @@ fn workspace_hierarchy_keyboard_exact_second_route_and_stale_removal(cx: &mut Te
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g down down enter");
+    cx.simulate_keystrokes("ctrl-g home enter");
     assert!(
         matches!(receiver.try_recv().unwrap(),browser::Command::FleetSession{request:8,selection}if selection=="77777777-7777-4777-8777-777777777777")
     );
     assert!(receiver.try_recv().is_err());
 }
 #[gpui::test]
-fn collapse_and_favorite_do_not_navigate_or_rearm_workspace(cx: &mut TestAppContext) {
+fn arrows_are_inert_and_f_toggles_the_star_without_navigating(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
     cx.update(|w, cx| {
@@ -83,13 +123,15 @@ fn collapse_and_favorite_do_not_navigate_or_rearm_workspace(cx: &mut TestAppCont
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g home left");
+    cx.simulate_keystrokes("ctrl-g home left right");
+    assert!(receiver.try_recv().is_err(), "no machine to collapse here");
+    cx.simulate_keystrokes("f");
     assert!(matches!(
         receiver.try_recv().unwrap(),
         browser::Command::FleetPreference {
             request: 7,
             revision: 3,
-            enabled: true,
+            enabled: false,
             ..
         }
     ));
@@ -98,8 +140,6 @@ fn collapse_and_favorite_do_not_navigate_or_rearm_workspace(cx: &mut TestAppCont
         assert_eq!(v.browser_request, 7);
         assert!(v.input_interrupted);
     });
-    cx.simulate_keystrokes("left");
-    assert!(receiver.try_recv().is_err());
 }
 #[test]
 fn duplicate_live_session_ids_on_other_machine_do_not_duplicate_active_highlight() {
@@ -129,7 +169,7 @@ fn removed_displayed_fleet_session_enter_does_not_select_replacement(cx: &mut Te
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g down down");
+    cx.simulate_keystrokes("ctrl-g home");
     cx.update(|_, cx| {
         view.update(cx, |v, _| {
             v.browser_state.fleet.as_mut().unwrap().groups[0].sessions[1].selection =
@@ -152,7 +192,7 @@ fn workspace_favorite_pointer_isolated_from_session_navigation(cx: &mut TestAppC
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let bounds = cx.debug_bounds("sidebar-favorite-4").unwrap();
+    let bounds = cx.debug_bounds("sidebar-favorite-0").unwrap();
     cx.simulate_click(bounds.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),
@@ -202,53 +242,6 @@ fn missing_fleet_coverage_keeps_current_catalog_without_cross_machine_id_dedup()
     );
 }
 #[gpui::test]
-fn child_left_collapses_parent_and_redraw_preserves_machine_focus(cx: &mut TestAppContext) {
-    let (sender, receiver) = mpsc::sync_channel(64);
-    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
-    cx.update(|w, cx| {
-        view.update(cx, |v, _| {
-            v.browser_state.fleet = Some(fleet());
-        });
-        w.draw(cx).clear(cx);
-    });
-    receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g left");
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        browser::Command::FleetPreference { enabled: true, .. }
-    ));
-    cx.update(|w, cx| {
-        view.update(cx, |v, _| {
-            let f = v.browser_state.fleet.as_mut().unwrap();
-            f.preferences.as_mut().unwrap().phase = browser::fleet::PreferencePhase::Saving;
-            f.groups[0].collapse_action = None;
-        });
-        w.draw(cx).clear(cx);
-    });
-    cx.simulate_keystrokes("enter right");
-    assert!(receiver.try_recv().is_err());
-    cx.update(|w, cx| {
-        view.update(cx, |v, _| {
-            let f = v.browser_state.fleet.as_mut().unwrap();
-            f.preferences.as_mut().unwrap().phase = browser::fleet::PreferencePhase::Ready;
-            f.preferences.as_mut().unwrap().revision = 4;
-            f.groups[0].collapsed = true;
-            f.groups[0].collapse_action = Some("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into());
-        });
-        w.draw(cx).clear(cx);
-    });
-    cx.simulate_keystrokes("right");
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        browser::Command::FleetPreference {
-            revision: 4,
-            enabled: false,
-            ..
-        }
-    ));
-    assert!(receiver.try_recv().is_err());
-}
-#[gpui::test]
 fn sidebar_stale_publication_and_full_preference_queue_preserve_workspace(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(1);
     let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
@@ -257,12 +250,15 @@ fn sidebar_stale_publication_and_full_preference_queue_preserve_workspace(cx: &m
         view.update(cx, |v, cx| {
             v.browser_state.fleet = Some(fleet());
             v.prepare_home_filter(cx);
-            let target = rows(&v.browser_state)[0].target.clone().unwrap();
+            // The first heading's star: machines' collapse controls are Home's.
+            let (action, favorite) = rows(&v.browser_state)[0].favorite.clone().unwrap();
+            let action = action.unwrap();
             v.browser_state.request = 6;
-            v.select_sidebar(7, &target, w, cx);
+            v.change_fleet_preference(7, 3, &action, !favorite, cx);
             assert_eq!(v.browser_request, 7);
             v.browser_state.request = 7;
-            v.select_sidebar(7, &target, w, cx);
+            v.change_fleet_preference(7, 3, &action, !favorite, cx);
+            let _ = w;
             assert_eq!(v.browser_request, 7);
             assert!(v.frame.is_some());
             assert!(v.fleet_preference_status().is_some());

@@ -13,6 +13,7 @@ fn title_uses_selected_identity_and_keeps_readiness_independent() {
                 pane_count: None,
                 window_id: None,
                 browser_icon: None,
+                display_name_source: None,
                 window_label: None,
             },
             Choice {
@@ -21,6 +22,7 @@ fn title_uses_selected_identity_and_keeps_readiness_independent() {
                 pane_count: None,
                 window_id: None,
                 browser_icon: None,
+                display_name_source: None,
                 window_label: None,
             },
         ],
@@ -45,6 +47,7 @@ fn display_label_is_bounded_unicode_safe_and_control_free() {
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         }],
         ..Default::default()
@@ -87,6 +90,7 @@ fn header_state(rects: &[(&str, u16, u16, u16, u16)]) -> State {
                 pane_count: None,
                 window_id: None,
                 browser_icon: None,
+                display_name_source: None,
                 window_label: None,
             })
             .collect(),
@@ -235,6 +239,7 @@ fn choice(id: &str, label: &str) -> Choice {
         pane_count: None,
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }

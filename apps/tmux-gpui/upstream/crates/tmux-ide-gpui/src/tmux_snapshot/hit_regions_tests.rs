@@ -37,6 +37,7 @@ fn rejects_foreign_overlapping_and_out_of_frame_targets() -> anyhow::Result<()> 
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         },
         Choice {
@@ -45,6 +46,7 @@ fn rejects_foreign_overlapping_and_out_of_frame_targets() -> anyhow::Result<()> 
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         },
     ];

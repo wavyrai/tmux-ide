@@ -14,6 +14,9 @@ pub struct Theme {
     /// Herdr's optional `sidebar_bg`, which colors only the sidebar. Unset,
     /// the sidebar stays on [`Self::surface`].
     pub sidebar: Option<u32>,
+    /// A preset's own pane card border (#746: Linen). Unset, cards keep
+    /// Bezel's `border`.
+    pub card_border: Option<u32>,
     pub palette: [u32; 256],
     /// Applied by [`Theme::with_contrast`]; every theme loads as `Standard`.
     pub contrast: Contrast,
@@ -45,6 +48,7 @@ impl Default for Theme {
             active: 0x2b2933,
             muted: 0x827e91,
             sidebar: None,
+            card_border: None,
             palette,
             contrast: Contrast::Standard,
         }

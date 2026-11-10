@@ -244,6 +244,31 @@ impl SnapshotView {
             cx.notify();
         }
     }
+    /// Opens the captured pane's folder in VS Code from the command palette
+    /// (#746), as the pane menu's item does: admission only, on the exact
+    /// pane and its one-use capability.
+    pub(super) fn open_captured_editor(&mut self, target: &Target) -> bool {
+        if self.browser_request != target.request
+            || !self.presence.ready()
+            || !target.current(&self.browser_state)
+        {
+            return false;
+        }
+        let command = browser::Command::OpenEditor {
+            request: target.request,
+            id: target.actions.id.clone(),
+            token: target.actions.token.clone(),
+        };
+        if self
+            .browser_commands
+            .as_ref()
+            .is_none_or(|sender| sender.try_send(command).is_err())
+        {
+            return false;
+        }
+        self.browser_state.pane_actions = None;
+        true
+    }
     fn split_pane(
         &mut self,
         direction: SplitDirection,

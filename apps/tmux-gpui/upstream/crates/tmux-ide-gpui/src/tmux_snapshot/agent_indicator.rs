@@ -31,6 +31,10 @@ fn glyph(row: &Row, unavailable: bool, frame: usize) -> &'static str {
         Status::Idle => "○",
     }
 }
+/// The state's words, as the badge shows them and a screen reader says them.
+pub(super) fn state_label(row: &Row, unavailable: bool) -> &'static str {
+    label(row, unavailable)
+}
 fn label(row: &Row, unavailable: bool) -> &'static str {
     if unavailable {
         return "Unavailable";
@@ -55,19 +59,41 @@ fn label(row: &Row, unavailable: bool) -> &'static str {
 pub(super) fn attention_ink(theme: &crate::config::Theme) -> u32 {
     theme.ink(theme.palette[3])
 }
-fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
+/// Where a state mark is drawn, which decides the plates it is inked on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Plate {
+    /// The theme's own background, surface and active fill: Home's table.
+    Chrome,
+    /// A sidebar row on the frosted sidebar, bare or under its washes.
+    Sidebar,
+    /// A pane card's header, bare or under its washes.
+    Header,
+}
+/// The state's colour before inking.
+fn hue(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     if unavailable || matches!(row.status, Status::Disconnected) {
         theme.muted
     } else if matches!(row.status, Status::Failed) {
-        theme.ink(theme.palette[1])
+        theme.palette[1]
     } else if row.attention || matches!(row.status, Status::Blocked) {
-        attention_ink(theme)
-    } else if matches!(row.status, Status::Idle) {
-        theme.muted
+        theme.palette[3]
     } else if matches!(row.status, Status::Done) {
-        theme.ink(theme.palette[2])
+        theme.palette[2]
     } else {
-        theme.ink(theme.palette[4])
+        // Idle and Working are muted: the spinner's motion says Working, and
+        // the theme's one accent is left to "needs input" (#746).
+        theme.muted
+    }
+}
+/// The state's mark, inked to the contrast setting's mark ratio on the
+/// plates it is drawn on: with the pill's words gone, the glyph is the only
+/// sign of the state (#746).
+pub(super) fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme, on: Plate) -> u32 {
+    let hue = hue(row, unavailable, theme);
+    match on {
+        Plate::Chrome => theme.ink(hue),
+        Plate::Sidebar => super::design::row_mark(theme, hue),
+        Plate::Header => super::pane_chrome::header_mark(theme, hue),
     }
 }
 impl SnapshotView {
@@ -82,9 +108,6 @@ impl SnapshotView {
         self.agent_animation.sync(self.agent_motion(), cx);
     }
     pub(super) fn agent_indicator(&self, row: &Row, unavailable: bool) -> AnyElement {
-        let slots = self.agent_animation.clone();
-        // A running row only reserves its slot: the overlay paints the frames.
-        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
         let theme = self.theme();
         super::design::palette(&theme)
             .badge("")
@@ -92,34 +115,67 @@ impl SnapshotView {
             .flex()
             .items_center()
             .gap_1()
-            .text_color(rgb(color(row, unavailable, &theme)))
-            .child(
-                div()
-                    .relative()
-                    .w(px(16.))
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .when(running, |glyph| glyph.text_color(transparent_black()))
-                            .child(glyph(row, unavailable, slots.frame())),
-                    )
-                    .when(running, |slot| {
-                        slot.child(
-                            canvas(
-                                |_, _, _| (),
-                                move |bounds, _, window, _| slots.reserve(bounds, window),
-                            )
-                            // Pinned to the slot: without an inset, an absolute
-                            // child sits at its static position, one line below.
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full(),
-                        )
-                    }),
-            )
+            .text_color(rgb(color(row, unavailable, &theme, Plate::Chrome)))
+            .child(self.agent_glyph(row, unavailable))
             .child(label(row, unavailable))
             .into_any_element()
+    }
+    /// A sidebar pane row's state (#746): the full pill only when the agent
+    /// needs input; otherwise its bare glyph (the spinner, a check, a cross),
+    /// and nothing for an idle agent.
+    pub(super) fn agent_state(
+        &self,
+        row: &Row,
+        unavailable: bool,
+        on: Plate,
+    ) -> Option<AnyElement> {
+        if label(row, unavailable) == "Needs input" {
+            return Some(self.agent_indicator(row, unavailable));
+        }
+        if !unavailable && matches!(row.status, Status::Idle) {
+            return None;
+        }
+        let theme = self.theme();
+        Some(
+            div()
+                .debug_selector(|| "agent-glyph".into())
+                .flex_none()
+                .text_color(rgb(color(row, unavailable, &theme, on)))
+                // Keyed by where it's drawn, so a test reads each call site's ink.
+                .children(super::design::ink_probe(move || {
+                    format!("agent-glyph-{on:?}")
+                }))
+                .child(self.agent_glyph(row, unavailable))
+                .into_any_element(),
+        )
+    }
+    fn agent_glyph(&self, row: &Row, unavailable: bool) -> Div {
+        let slots = self.agent_animation.clone();
+        // A running row only reserves its slot: the overlay paints the frames.
+        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
+        div()
+            .relative()
+            .w(px(16.))
+            .flex_shrink_0()
+            .child(
+                div()
+                    .when(running, |glyph| glyph.text_color(transparent_black()))
+                    .child(glyph(row, unavailable, slots.frame())),
+            )
+            .when(running, |slot| {
+                slot.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| slots.reserve(bounds, window),
+                    )
+                    // Pinned to the slot: without an inset, an absolute
+                    // child sits at its static position, one line below.
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+            })
     }
 }
 #[cfg(test)]

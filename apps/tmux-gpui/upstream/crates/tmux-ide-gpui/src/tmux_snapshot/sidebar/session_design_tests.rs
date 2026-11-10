@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn single_populated_server_is_compact_but_empty_and_offline_remain_visible() {
+fn one_machine_lists_its_projects_and_an_offline_server_as_one_line() {
     let mut f = fleet_tests::fleet();
     f.groups[0].servers.truncate(1);
     f.groups[0].sessions.truncate(1);
@@ -10,24 +10,22 @@ fn single_populated_server_is_compact_but_empty_and_offline_remain_visible() {
         ..Default::default()
     };
     let projected = rows(&state);
-    assert_eq!(projected.len(), 2);
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].kind, Kind::Heading);
     assert!(projected[0].pane_count.is_none());
-    assert_eq!(projected[1].depth, 0);
     assert!(matches!(
-        projected[1].target,
+        projected[0].target,
         Some(Target::FleetSession { .. })
     ));
     state.fleet.as_mut().unwrap().groups[0].sessions.clear();
-    assert!(
-        rows(&state)
-            .iter()
-            .any(|r| r.pane_count.as_deref() == Some("No sessions"))
-    );
+    assert!(rows(&state).is_empty());
     state.fleet.as_mut().unwrap().groups[0].servers[0].state = browser::fleet::ServerPhase::Offline;
-    assert!(
+    assert_eq!(
         rows(&state)
             .iter()
-            .any(|r| r.pane_count.as_deref() == Some("Offline"))
+            .map(|r| r.label.as_str())
+            .collect::<Vec<_>>(),
+        ["1 server offline"]
     );
 }
 

@@ -1,5 +1,6 @@
 // Resolve the shared tmux-ide catalog in the helper, never on the GPUI thread.
 import {
+  VISUAL_THEME_CARD_BORDERS,
   VISUAL_THEME_PRESETS,
   findVisualThemePreset,
   resolveVisualTheme,
@@ -24,10 +25,15 @@ export const appearanceOptions = Object.freeze([
 type SystemAppearance = "dark" | "light";
 const packed = (c: RendererNeutralColor) => (c.red << 16) | (c.green << 8) | c.blue;
 
+/** What System (the default) paints in each macOS appearance (#746). */
+export const SYSTEM_PRESETS = Object.freeze({ light: "linen", dark: "linen-dark" } as const);
+
 export function resolveNativeAppearance(selected: string, system: SystemAppearance) {
   if (!appearanceOptions.some((option) => option.id === selected))
     throw new Error("Unknown native theme");
-  const preset = findVisualThemePreset(selected);
+  const presetId = selected === "system" ? SYSTEM_PRESETS[system] : selected;
+  const preset = findVisualThemePreset(presetId);
+  const cardBorder = VISUAL_THEME_CARD_BORDERS[presetId];
   const { tokens: t } = resolveVisualTheme({
     appearance: selected === "system" ? system : selected === "light" ? "light" : "dark",
     userTheme: preset,
@@ -70,6 +76,8 @@ export function resolveNativeAppearance(selected: string, system: SystemAppearan
       muted: colors.muted,
       accent: colors.accent,
       palette: createVisualTerminalPalette(colors),
+      // Only a preset that names its card border sends one (#746).
+      ...(cardBorder ? { cardBorder: parseInt(cardBorder.slice(1), 16) } : {}),
     },
     options: appearanceOptions,
   };

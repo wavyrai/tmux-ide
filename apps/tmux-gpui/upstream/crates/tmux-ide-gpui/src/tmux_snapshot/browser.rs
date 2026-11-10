@@ -27,6 +27,19 @@ pub(super) struct Choice {
     pub window_label: Option<String>,
     #[serde(default)]
     pub browser_icon: Option<String>,
+    /// Where the daemon's pane name came from. A pane named after its process
+    /// is the program running there (#746: the sidebar's pane icons).
+    #[serde(default)]
+    pub display_name_source: Option<NameSource>,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum NameSource {
+    Manual,
+    Agent,
+    Process,
+    Title,
+    Generated,
 }
 impl Choice {
     pub(super) fn pane_count_label(&self) -> Option<String> {
@@ -132,6 +145,8 @@ pub(super) struct State {
     /// `Some(attempt)` while the stream is being re-established; the last frame
     /// stays on screen, read-only, with the attempt count and a Retry button.
     pub reconnect_attempt: Option<u32>,
+    /// Home stopped on a failure that won't recover by itself; `status` says why.
+    pub home_fault: bool,
     /// Panes whose source the daemon closed; their headers say so (#701, #702).
     pub unavailable_panes: Vec<String>,
     pub native_frame_scope: Option<super::browser_native_preview::Route>,
@@ -572,6 +587,7 @@ impl Reader {
             input_ready: p.input_ready,
             retained_preview,
             reconnect_attempt: None,
+            home_fault: false,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
             native_retained_preview: p.native_retained_preview,

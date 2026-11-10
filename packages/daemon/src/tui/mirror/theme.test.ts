@@ -622,9 +622,9 @@ describe("semantic theme store", () => {
 });
 
 describe("theme library", () => {
-  it("provides 22 distinct readable presets without remapping truecolor terminal cells", () => {
-    expect(VISUAL_THEME_PRESETS).toHaveLength(22);
-    expect(new Set(VISUAL_THEME_PRESETS.map((p) => p.id)).size).toBe(22);
+  it("provides 24 distinct readable presets without remapping truecolor terminal cells", () => {
+    expect(VISUAL_THEME_PRESETS).toHaveLength(24);
+    expect(new Set(VISUAL_THEME_PRESETS.map((p) => p.id)).size).toBe(24);
     for (const preset of VISUAL_THEME_PRESETS) {
       const snapshot = createSemanticThemeSnapshot({ preset: preset.id });
       expect(snapshot.diagnostics, preset.id).toEqual([]);

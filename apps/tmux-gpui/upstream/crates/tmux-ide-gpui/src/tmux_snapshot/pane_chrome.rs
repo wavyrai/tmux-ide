@@ -4,7 +4,7 @@ use super::browser::State;
 mod agent_icon;
 #[path = "browser_icon.rs"]
 pub(super) mod browser_icon;
-pub(super) use agent_icon::path as agent_icon_path;
+pub(super) use agent_icon::{kind as pane_kind, path as agent_icon_path};
 pub(super) fn selected_title(state: &State) -> Option<String> {
     let selected = state.selected_pane.as_deref()?;
     let pane = state.panes.iter().find(|pane| pane.id == selected)?;
@@ -38,31 +38,51 @@ pub(super) struct Controls {
 }
 #[derive(Clone, Copy, Default)]
 enum HeaderIntent {
+    /// The pane menu: a right-click on the title.
     #[default]
     Menu,
+    SplitRight,
+    SplitDown,
     Expand,
     Close,
 }
 mod buttons;
-const OVERFLOW_WIDTH: f32 = 24.;
+use buttons::BUTTONS;
+#[cfg(test)]
+use buttons::{TITLE_HINT, button_a11y, face};
+/// One header button's hit area. The buttons sit edge to edge at the
+/// header's right end: split right, split down, zoom, close (#746).
+const SLOT: f32 = 28.;
+/// Where each button sits, counted in slots from the header's right edge.
+fn slot(intent: HeaderIntent) -> f32 {
+    match intent {
+        HeaderIntent::Close => 1.,
+        HeaderIntent::Expand => 2.,
+        HeaderIntent::SplitDown => 3.,
+        HeaderIntent::SplitRight => 4.,
+        HeaderIntent::Menu => 0.,
+    }
+}
+/// The width the header's buttons take. A narrow pane keeps zoom and close
+/// and drops the splits first, so its title keeps the room it needs.
 fn action_width(header: &Header, width: f32) -> f32 {
-    if f32::from(header.width) * width >= 160. {
-        56.
+    let header = f32::from(header.width) * width;
+    if !header.is_finite() {
+        0.
+    } else if header >= 240. {
+        4. * SLOT
+    } else if header >= 160. {
+        2. * SLOT
     } else {
         0.
     }
 }
 const MODE_WIDTH: f32 = 56.;
 fn has_mode(header: &Header, width: f32) -> bool {
-    has_control(header, width)
-        && header.width >= 14
-        && f32::from(header.width) * width >= MODE_WIDTH + OVERFLOW_WIDTH + 12.
-}
-fn has_control(header: &Header, width: f32) -> bool {
     width.is_finite()
         && width > 0.
-        && header.width >= 7
-        && f32::from(header.width) * width >= OVERFLOW_WIDTH + 12.
+        && header.width >= 14
+        && f32::from(header.width) * width >= MODE_WIDTH + 12.
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -209,15 +229,28 @@ pub(super) fn title_weight(focused: bool) -> FontWeight {
         FontWeight::NORMAL
     }
 }
+/// A pane header's plates: the card, and the card under its hover and
+/// selected washes.
+pub(super) fn header_plates(theme: &crate::config::Theme) -> [u32; 3] {
+    let bezel = super::design::palette(theme);
+    let plate = bezel.terminal_bg;
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    [
+        pack(plate),
+        pack(bezel_theme::flatten(bezel.element_hover, plate)),
+        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
+    ]
+}
+/// `color` as a mark in a pane header, such as an agent's state glyph: the
+/// contrast setting's mark ratio on each of the header's plates (#746).
+pub(super) fn header_mark(theme: &crate::config::Theme, color: u32) -> u32 {
+    crate::contrast::ink_on_chrome(color, header_plates(theme), theme.contrast.mark_ratio())
+}
 pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
     let bezel = super::design::palette(theme);
     let plate = bezel.terminal_bg;
     let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-    let plates = [
-        pack(plate),
-        pack(bezel_theme::flatten(bezel.element_hover, plate)),
-        pack(bezel_theme::flatten(bezel.card_selected_bg(), plate)),
-    ];
+    let plates = header_plates(theme);
     let ink = |c: Hsla| -> Hsla {
         rgb(crate::contrast::ink_on_chrome(
             pack(bezel_theme::flatten(c, plate)),
@@ -378,7 +411,6 @@ impl SnapshotView {
                 })
                 .absolute()
                 .left(px(f32::from(rect.right())
-                    - OVERFLOW_WIDTH
                     - MODE_WIDTH
                     - action_width(header, width)))
                 .top(rect.origin.y)
@@ -437,69 +469,6 @@ impl SnapshotView {
                 .into_any_element(),
         )
     }
-    fn header_overflow(
-        &self,
-        header: &Header,
-        width: f32,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !has_control(header, width) {
-            return None;
-        }
-        let frame = self.browser_state.frame.clone()?;
-        let regions = self.browser_state.regions.clone();
-        let request = self.browser_request;
-        let id = header.id.clone();
-        let palette = super::design::palette(&self.theme());
-        let rect = self.header_rect(header, width);
-        let hover = palette.element_hover;
-        Some(
-            div()
-                .id(SharedString::from(format!("pane-overflow:{id}")))
-                .role(Role::Button)
-                .aria_label("More pane actions")
-                .tooltip(|window, cx| {
-                    bezel_ui::tooltip::Tooltip::text("More pane actions", window, cx)
-                })
-                .debug_selector({
-                    let id = id.clone();
-                    move || format!("pane-overflow:{id}")
-                })
-                .absolute()
-                .left(px(f32::from(rect.right())
-                    - OVERFLOW_WIDTH
-                    - action_width(header, width)))
-                .top(rect.origin.y)
-                .w(px(OVERFLOW_WIDTH))
-                .h(rect.size.height)
-                .overflow_hidden()
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .occlude()
-                .child({
-                    use bezel_ui::widgets::Buttons as _;
-                    palette
-                        .icon_button(
-                            bezel_ui::icons::Icon::asset("icons/more.svg"),
-                            bezel_ui::widgets::ButtonStyle::Ghost,
-                            None,
-                        )
-                        .size(px(OVERFLOW_WIDTH).min(rect.size.height))
-                        .hover(move |s| s.bg(hover))
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    cx.stop_propagation();
-                    if current_header(view, request, &frame, &regions, &id) {
-                        view.header_controls.intent = HeaderIntent::Menu;
-                        view.activate_header_menu(&id, window, cx);
-                    }
-                }))
-                .into_any_element(),
-        )
-    }
     pub(super) fn lower_pane_header_controls(
         &self,
         width: f32,
@@ -518,14 +487,9 @@ impl SnapshotView {
             .iter()
             .filter(|h| h.row.is_some())
             .flat_map(|h| {
-                [
-                    self.header_overflow(h, width, cx),
-                    self.header_mode(h, width, cx),
-                    self.header_button(h, width, HeaderIntent::Expand, cx),
-                    self.header_button(h, width, HeaderIntent::Close, cx),
-                ]
-                .into_iter()
-                .flatten()
+                std::iter::once(self.header_mode(h, width, cx))
+                    .chain(BUTTONS.map(|intent| self.header_button(h, width, intent, cx)))
+                    .flatten()
             })
             .collect()
     }
@@ -565,9 +529,6 @@ impl SnapshotView {
             };
             let regions = self.browser_state.regions.clone();
             let id = header.id.clone();
-            let overflow = (!self.resize_gesture.busy())
-                .then(|| self.header_overflow(&header, width, cx))
-                .flatten();
             let mode = (!self.resize_gesture.busy())
                 .then(|| self.header_mode(&header, width, cx))
                 .flatten();
@@ -587,12 +548,16 @@ impl SnapshotView {
                                     view.terminal_focus.focus(window, cx);
                                 }
                             }
-                        })),
+                        }))
+                        .on_mouse_down(MouseButton::Right, self.header_menu_listener(&header, cx))
+                        .map(|title| self.pane_title_a11y(title, &header)),
                 )
-                .children(overflow)
                 .children(mode)
-                .children(self.header_button(&header, width, HeaderIntent::Expand, cx))
-                .children(self.header_button(&header, width, HeaderIntent::Close, cx));
+                .children(
+                    BUTTONS
+                        .into_iter()
+                        .filter_map(|intent| self.header_button(&header, width, intent, cx)),
+                );
         }
         row.into_any_element()
     }
@@ -625,12 +590,17 @@ impl SnapshotView {
             });
         let indicator = agent
             .filter(|_| header.width >= 20)
-            .map(|(row, unavailable)| self.agent_indicator(row, unavailable));
-        let icon = agent_icon_path(
+            .and_then(|(row, unavailable)| {
+                self.agent_state(row, unavailable, super::agent_indicator::Plate::Header)
+            });
+        // The same kind icon as the pane's sidebar row (#746).
+        let icon = pane_kind(
             agent
                 .filter(|(_, unavailable)| !unavailable)
                 .and_then(|(row, _)| row.harness.as_deref()),
-        );
+            self.browser_state.panes.iter().find(|p| p.id == header.id),
+        )
+        .icon();
         let browser_icon = self
             .browser_state
             .panes
@@ -657,15 +627,12 @@ impl SnapshotView {
             } else {
                 width.min(4.)
             }))
-            .when(has_control(header, width), |label| {
-                label.pr(px(OVERFLOW_WIDTH
-                    + action_width(header, width)
-                    + if self.header_mode_visible(header, width) {
-                        MODE_WIDTH + 2.
-                    } else {
-                        2.
-                    }))
-            })
+            .pr(px(action_width(header, width)
+                + if self.header_mode_visible(header, width) {
+                    MODE_WIDTH + 2.
+                } else {
+                    2.
+                }))
             .when(self.card_layout(width).is_none(), |label| {
                 label.bg(super::design::palette(&theme).terminal_bg)
             })
@@ -708,7 +675,20 @@ impl SnapshotView {
             return self
                 .lower_pane_headers(width)
                 .into_iter()
-                .map(IntoElement::into_any_element)
+                .zip(
+                    self.presentation_headers()
+                        .iter()
+                        .filter(|h| h.row.is_some()),
+                )
+                .map(|(label, header)| {
+                    let title = label
+                        .id(SharedString::from(format!(
+                            "pane-lower-header:{}",
+                            header.id
+                        )))
+                        .on_mouse_down(MouseButton::Right, self.header_menu_listener(header, cx));
+                    self.pane_title_a11y(title, header).into_any_element()
+                })
                 .collect();
         }
         if !hit_regions::is_painted(self.frame.as_ref(), self.browser_state.frame.as_ref()) {
@@ -730,6 +710,8 @@ impl SnapshotView {
                     .occlude()
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, self.header_menu_listener(h, cx))
+                    .map(|title| self.pane_title_a11y(title, h))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         cx.stop_propagation();
                         if frame.as_ref().is_some_and(|frame| {

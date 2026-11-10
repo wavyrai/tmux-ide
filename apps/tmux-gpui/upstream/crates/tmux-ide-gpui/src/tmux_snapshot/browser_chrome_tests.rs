@@ -12,6 +12,7 @@ fn choice(id: &str) -> browser::Choice {
         pane_count: None,
         window_id: None,
         browser_icon: None,
+        display_name_source: None,
         window_label: None,
     }
 }
@@ -50,7 +51,8 @@ fn row_bounds(cx: &mut VisualTestContext) -> Vec<Bounds<Pixels>> {
     [
         "tmux-sidebar-row-0",
         "tmux-sidebar-row-1",
-        "tmux-sidebar-row-2",
+        // The open session's pane row (#746).
+        "tmux-sidebar-pane:pane-a",
         "tmux-sidebar-row-3",
         "tmux-sidebar-row-4",
     ]
@@ -71,8 +73,11 @@ fn keyboard_focus_moves_no_row(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
     let resting = row_bounds(cx);
-    assert!(
-        resting.iter().all(|row| row.size.height == px(29.5)),
+    // Project headings, and the open project's pane row on its 20pt tile.
+    let heights: Vec<_> = resting.iter().map(|row| row.size.height).collect();
+    assert_eq!(
+        heights,
+        [px(24.), px(24.), px(30.), px(24.), px(24.)],
         "{resting:?}"
     );
     assert!(cx.debug_bounds("tmux-sidebar-focus-ring").is_none());
@@ -210,7 +215,8 @@ fn the_empty_pane_shows_bezels_empty_state_on_the_opaque_fill(cx: &mut TestAppCo
 
 #[test]
 fn the_home_panel_takes_bezels_panel_corner_and_inset() {
-    let mut panel = super::super::shell::content_panel(0x123456, true);
+    let border: Hsla = rgb(0xe1dbcf).into();
+    let mut panel = super::super::shell::content_panel(0x123456, border, true);
     let style = panel.style();
     let radius = Some(AbsoluteLength::Pixels(px(
         bezel_theme::Theme::panel_radius(),
@@ -222,6 +228,12 @@ fn the_home_panel_takes_bezels_panel_corner_and_inset() {
     ))));
     assert_eq!(style.padding.top, inset);
     assert_eq!(style.padding.left, inset);
+    // The same 1 px border as the pane cards (#746).
+    assert_eq!(style.border_color, Some(border));
+    assert_eq!(
+        style.border_widths.top,
+        Some(AbsoluteLength::Pixels(px(1.)))
+    );
 }
 
 #[derive(serde::Deserialize)]
@@ -291,11 +303,14 @@ fn check(
 
 #[gpui::test]
 fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(4096);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender, 3));
     cx.simulate_resize(size(px(1000.), px(700.)));
     let themes = catalog();
-    assert_eq!(themes.len(), 50);
+    assert_eq!(themes.len(), 54);
     let mut failures = Vec::new();
     for (name, colors) in &themes {
         for developer in [true, false] {
@@ -323,7 +338,6 @@ fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext)
             let probes = cx.update(|_, cx| std::mem::take(cx.global_mut::<InkProbes>()));
             check(&mut failures, name, &probes, "shell-root", &chrome);
             check(&mut failures, name, &probes, "workspace-body", &everywhere);
-            check(&mut failures, name, &probes, "sidebar-heading", &chrome);
             check(&mut failures, name, &probes, "sidebar-status", &chrome);
             if developer {
                 // The developer lane is opaque, on the terminal's background.

@@ -36,6 +36,7 @@ pub(super) enum Icon {
     Theme,
     Refresh,
     Check,
+    Search,
 }
 impl Icon {
     fn path(self) -> &'static str {
@@ -51,6 +52,7 @@ impl Icon {
             Self::Theme => "icons/theme.svg",
             Self::Refresh => "icons/refresh.svg",
             Self::Check => "icons/check.svg",
+            Self::Search => "icons/search.svg",
         }
     }
 }
@@ -165,63 +167,4 @@ pub(super) fn action_button_on(
                 .children(super::design::ink_probe(move || format!("control-{id}")))
         }))
         .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
-}
-
-pub(super) fn tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: Icon,
-    selected: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    let key = format!("{:?}", id.into());
-    bezel_ui::tabs::tab(
-        &super::design::palette(theme),
-        key,
-        bezel_ui::tabs::Label::new(label).with_icon(bezel_ui::icons::Icon::asset(icon.path())),
-        if selected {
-            bezel_ui::tabs::State::Focused
-        } else {
-            bezel_ui::tabs::State::Resting
-        },
-    )
-    .h(px(CONTROL_HEIGHT))
-}
-
-/// Bezel's tab styling with a decoded leading image instead of an SVG mark.
-pub(super) fn image_tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: AnyElement,
-    selected: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    bezel_ui::tabs::tab(
-        &super::design::palette(theme),
-        format!("{:?}", id.into()),
-        bezel_ui::tabs::Label::new(label),
-        if selected {
-            bezel_ui::tabs::State::Focused
-        } else {
-            bezel_ui::tabs::State::Resting
-        },
-    )
-    .h(px(CONTROL_HEIGHT))
-    .child(icon)
-    .flex_row_reverse()
-    .justify_end()
-}
-
-/// The same Bezel tab component in the compact native titlebar.
-pub(super) fn titlebar_tab(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: Icon,
-    selected: bool,
-    theme: &Theme,
-) -> Stateful<Div> {
-    tab(id, label, icon, selected, theme)
-        .h(px(26.))
-        .min_w(px(108.))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }

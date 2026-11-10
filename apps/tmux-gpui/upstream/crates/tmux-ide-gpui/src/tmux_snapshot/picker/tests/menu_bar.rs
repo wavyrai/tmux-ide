@@ -31,6 +31,7 @@ fn layout(view: &mut SnapshotView, surface: browser::Surface) {
         pane_count: None,
         window_id: Some(window.into()),
         browser_icon: None,
+        display_name_source: None,
         window_label: Some(window.into()),
     };
     view.browser_state.panes = vec![
@@ -253,6 +254,9 @@ fn the_menu_bar_has_the_mac_menus_and_no_shortcut_text() {
 
 #[gpui::test]
 fn choose_theme_opens_the_theme_picker(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (_, state) = outcome(cx, browser::Surface::Workspace, |cx| {
         cx.update(|window, cx| {
             let view = window.root::<SnapshotView>().flatten().unwrap();

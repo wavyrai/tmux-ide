@@ -35,6 +35,7 @@ fn fixture() -> Local {
                 window_id: Some("window-a".into()),
                 window_label: None,
                 browser_icon: None,
+                display_name_source: None,
             }],
             ..State::default()
         },
@@ -53,6 +54,7 @@ fn fixture() -> Local {
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
         preferences: Default::default(),

@@ -43,6 +43,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             agents: Default::default(),
             appearance: None,
             recovery: None,
+            home: Default::default(),
             background_fleet: Default::default(),
             registry: Default::default(),
             preferences: Default::default(),
@@ -680,6 +681,7 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             pane_count: None,
             window_id: None,
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         })
         .collect();

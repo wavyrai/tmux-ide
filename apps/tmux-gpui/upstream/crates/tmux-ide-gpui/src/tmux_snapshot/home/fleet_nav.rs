@@ -61,14 +61,15 @@ pub(super) fn reconcile(view: &View, fleet: Option<&Fleet>) -> View {
     }
 }
 
-/// The entry a navigation key moves to, or `None` for any other key.
+/// The filter a key moves to along the horizontal filter row (#746): ←/→
+/// and `[`/`]` step, Home and End jump; `None` for any other key.
 pub(super) fn step(view: &View, fleet: Option<&Fleet>, key: &str) -> Option<View> {
     let entries = entries(fleet);
     let current = entries.iter().position(|e| e == view).unwrap_or(0);
     let last = entries.len() - 1;
     let index = match key {
-        "up" | "[" => current.saturating_sub(1),
-        "down" | "]" => (current + 1).min(last),
+        "left" | "[" => current.saturating_sub(1),
+        "right" | "]" => (current + 1).min(last),
         "home" => 0,
         "end" => last,
         _ => return None,
@@ -213,11 +214,14 @@ mod tests {
         let fleet = fleet(&["local", "spark"]);
         let f = Some(&fleet);
         let spark = View::Machine("spark".into());
-        assert_eq!(step(&View::All, f, "down"), Some(View::Favourites));
+        assert_eq!(step(&View::All, f, "right"), Some(View::Favourites));
         assert_eq!(step(&View::All, f, "]"), Some(View::Favourites));
-        assert_eq!(step(&View::All, f, "up"), Some(View::All));
+        assert_eq!(step(&View::All, f, "left"), Some(View::All));
         assert_eq!(step(&View::All, f, "end"), Some(spark.clone()));
-        assert_eq!(step(&spark, f, "down"), Some(spark.clone()));
+        assert_eq!(step(&spark, f, "right"), Some(spark.clone()));
+        // ↓ and ↑ are the table's, not the filter row's.
+        assert_eq!(step(&View::All, f, "down"), None);
+        assert_eq!(step(&View::All, f, "up"), None);
         assert_eq!(step(&spark, f, "["), Some(View::Machine("local".into())));
         assert_eq!(step(&spark, f, "home"), Some(View::All));
         assert_eq!(step(&spark, f, "x"), None);

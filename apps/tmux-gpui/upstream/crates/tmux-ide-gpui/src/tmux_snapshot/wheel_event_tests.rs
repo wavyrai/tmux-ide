@@ -43,6 +43,7 @@ fn prepare(view: &mut SnapshotView) {
             pane_count: None,
             window_id: Some("window".into()),
             browser_icon: None,
+            display_name_source: None,
             window_label: None,
         })
         .collect();

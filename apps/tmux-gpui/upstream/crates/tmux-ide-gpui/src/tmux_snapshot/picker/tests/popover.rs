@@ -143,6 +143,9 @@ fn command_popover_marked_composition_owns_escape_and_return(cx: &mut TestAppCon
 
 #[gpui::test]
 fn palette_paints_bezels_selected_row_and_lighter_scrim(cx: &mut TestAppContext) {
+    // The appearance bezel paints in is process-wide: hold it, so no test
+    // running alongside changes it under this one.
+    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.simulate_resize(size(px(900.), px(700.)));

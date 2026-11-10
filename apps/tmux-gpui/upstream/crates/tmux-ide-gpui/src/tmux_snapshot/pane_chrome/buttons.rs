@@ -1,5 +1,118 @@
 use super::*;
+/// The header's buttons, left to right.
+pub(super) const BUTTONS: [HeaderIntent; 4] = [
+    HeaderIntent::SplitRight,
+    HeaderIntent::SplitDown,
+    HeaderIntent::Expand,
+    HeaderIntent::Close,
+];
+/// What a pane title tells a screen reader about the pane's actions.
+pub(super) const TITLE_HINT: &str =
+    "Pane actions: right-click or Control-click the title, or press F5 for every pane action";
+/// A header button as a screen reader meets it: its hint and its shortcut.
+pub(super) fn button_a11y(
+    button: Stateful<Div>,
+    hint: &'static str,
+    keys: Option<&'static str>,
+) -> Stateful<Div> {
+    button
+        .role(Role::Button)
+        .aria_label(hint)
+        .when_some(keys, |button, keys| button.aria_keyshortcuts(keys))
+}
+/// A header button's name, icon, tooltip and shortcut; the tooltip shows
+/// the shortcut beside the hint.
+pub(super) fn face(
+    intent: HeaderIntent,
+    restore: bool,
+) -> Option<(
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+)> {
+    Some(match intent {
+        HeaderIntent::SplitRight => (
+            "split-right",
+            "icons/split.svg",
+            "Split right",
+            Some(super::super::kbd::SPLIT_RIGHT),
+        ),
+        HeaderIntent::SplitDown => (
+            "split-down",
+            "icons/split-down.svg",
+            "Split down",
+            Some(super::super::kbd::SPLIT_DOWN),
+        ),
+        HeaderIntent::Close => ("close", "icons/close.svg", "Close pane…", None),
+        HeaderIntent::Expand if restore => (
+            "restore",
+            "icons/window-restore.svg",
+            "Restore pane layout",
+            Some(super::super::kbd::ZOOM),
+        ),
+        HeaderIntent::Expand => (
+            "expand",
+            "icons/window-maximize.svg",
+            "Expand pane to fill workspace",
+            Some(super::super::kbd::ZOOM),
+        ),
+        HeaderIntent::Menu => return None,
+    })
+}
 impl SnapshotView {
+    /// Opens pane `id`'s menu from outside its header buttons: a right-click
+    /// (or Control-click, which macOS sends as one) on its title or its
+    /// sidebar row, the row's … button, or Shift-F10 on the focused row.
+    /// Selects the pane first if it isn't.
+    pub(in crate::tmux_snapshot) fn open_pane_menu(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.browser_state.surface != super::super::browser::Surface::Workspace
+            || !self.browser_state.panes.iter().any(|p| p.id == id)
+            || self.picker.is_some()
+            || self.pane_actions.is_some()
+            || self.new_session.is_some()
+        {
+            return;
+        }
+        self.header_controls.intent = HeaderIntent::Menu;
+        self.activate_header_menu(id, window, cx);
+    }
+    /// A pane title as a screen reader meets it (#746): a button named after
+    /// the pane, which selects it. Its menu is a right-click (or
+    /// Control-click); without a pointer, F5 lists every pane action.
+    pub(super) fn pane_title_a11y(&self, element: Stateful<Div>, header: &Header) -> Stateful<Div> {
+        element
+            .role(Role::Button)
+            .aria_label(label(&self.browser_state, &header.id))
+            .aria_description(TITLE_HINT)
+    }
+    /// A right-click on a pane's title opens that pane's menu, selecting the
+    /// pane first if it isn't selected (#746: the header has no menu button).
+    pub(super) fn header_menu_listener(
+        &self,
+        header: &Header,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+        let frame = self.browser_state.frame.clone();
+        let regions = self.browser_state.regions.clone();
+        let request = self.browser_request;
+        let id = header.id.clone();
+        cx.listener(move |view, _: &MouseDownEvent, window, cx| {
+            cx.stop_propagation();
+            if frame
+                .as_ref()
+                .is_some_and(|frame| current_header(view, request, frame, &regions, &id))
+            {
+                view.header_controls.intent = HeaderIntent::Menu;
+                view.activate_header_menu(&id, window, cx);
+            }
+        })
+    }
     pub(super) fn perform_header_intent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let intent = self.header_controls.intent;
         self.header_controls = Default::default();
@@ -10,6 +123,19 @@ impl SnapshotView {
             HeaderIntent::Menu => self.open_header_actions(window, cx),
             HeaderIntent::Close => {
                 self.close_header_pane(target, window, cx);
+            }
+            HeaderIntent::SplitRight | HeaderIntent::SplitDown => {
+                let direction = if matches!(intent, HeaderIntent::SplitRight) {
+                    super::super::pane_actions::SplitDirection::Right
+                } else {
+                    super::super::pane_actions::SplitDirection::Down
+                };
+                self.dispatch_captured_pane_action(
+                    &target,
+                    super::super::pane_actions::Action::Split { direction },
+                    window,
+                    cx,
+                );
             }
             HeaderIntent::Expand => {
                 let desired = if self
@@ -38,7 +164,7 @@ impl SnapshotView {
         intent: HeaderIntent,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if action_width(header, width) == 0. {
+        if slot(intent) == 0. || action_width(header, width) < slot(intent) * SLOT {
             return None;
         }
         let frame = self.browser_state.frame.clone()?;
@@ -50,28 +176,14 @@ impl SnapshotView {
             .pane_actions
             .as_ref()
             .is_some_and(|a| a.zoomed);
-        let (name, icon, hint, offset) = match intent {
-            HeaderIntent::Close => ("close", "icons/close.svg", "Close pane…", 28.),
-            HeaderIntent::Expand if restore => (
-                "restore",
-                "icons/window-restore.svg",
-                "Restore pane layout",
-                56.,
-            ),
-            HeaderIntent::Expand => (
-                "expand",
-                "icons/window-maximize.svg",
-                "Expand pane to fill workspace",
-                56.,
-            ),
-            HeaderIntent::Menu => return None,
-        };
+        let offset = slot(intent) * SLOT;
+        let (name, icon, hint, keys) = face(intent, restore)?;
         let bezel = super::super::design::palette(&self.theme());
+        let ink = header_ink(&self.theme());
         Some(
             div()
                 .id(SharedString::from(format!("pane-{name}:{id}")))
-                .role(Role::Button)
-                .aria_label(hint)
+                .map(|button| button_a11y(button, hint, keys))
                 .debug_selector({
                     let id = id.clone();
                     move || format!("pane-{name}:{id}")
@@ -81,36 +193,29 @@ impl SnapshotView {
                     f32::from(self.header_rect(header, width).right()) - offset
                 ))
                 .top(self.header_rect(header, width).origin.y)
-                .w(px(28.))
+                .w(px(SLOT))
                 .h(self.header_rect(header, width).size.height)
                 .flex()
                 .items_center()
                 .justify_center()
                 .cursor_pointer()
                 .occlude()
-                .tooltip(move |window, cx| {
-                    if matches!(intent, HeaderIntent::Expand) {
-                        bezel_ui::tooltip::Tooltip::with_keystroke(
-                            hint,
-                            super::super::kbd::ZOOM,
-                            window,
-                            cx,
-                        )
-                    } else {
-                        bezel_ui::tooltip::Tooltip::text(hint, window, cx)
+                .tooltip(move |window, cx| match keys {
+                    Some(keys) => {
+                        bezel_ui::tooltip::Tooltip::with_keystroke(hint, keys, window, cx)
                     }
+                    None => bezel_ui::tooltip::Tooltip::text(hint, window, cx),
                 })
                 // Bezel's ghost icon button, sized to the cell-aligned header.
                 .child({
                     use bezel_ui::widgets::Buttons as _;
                     let side = px(24.).min(self.header_rect(header, width).size.height);
                     let hover = bezel.element_hover;
+                    // Quiet at rest: the header's muted ink, which reads on
+                    // the hover wash too (#746).
                     bezel
-                        .icon_button(
-                            bezel_ui::icons::Icon::asset(icon),
-                            bezel_ui::widgets::ButtonStyle::Ghost,
-                            None,
-                        )
+                        .tinted_icon_button(bezel_ui::icons::Icon::asset(icon), ink.muted)
+                        .rounded(px(bezel_theme::Theme::control_radius()))
                         .size(side)
                         .hover(move |s| s.bg(hover))
                 })

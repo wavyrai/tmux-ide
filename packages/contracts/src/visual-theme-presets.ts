@@ -195,6 +195,51 @@ const palettes = {
     selected: "#cdb796",
     selectedText: "#211810",
   },
+  // tmux-ide's own pair (#746): warm and low in contrast, with one accent.
+  // Warning is the accent, so "needs input" (ANSI yellow) is the only accented
+  // state; link and info keep the terminal's blue and cyan distinct.
+  linen: {
+    name: "Linen",
+    bg: "#f7f4ee",
+    panel: "#eeeae2",
+    border: "#e3ddd2",
+    borderFocused: "#984822",
+    text: "#2b2722",
+    textDim: "#625a4f",
+    textBright: "#17140f",
+    textMuted: "#8f8679",
+    positive: "#4f7034",
+    negative: "#a33a30",
+    neutral: "#8f8679",
+    warning: "#984822",
+    link: "#3b6587",
+    info: "#36706d",
+    cardBorder: "#e1dbcf",
+    header: "#e7e1d6",
+    selected: "#e3d9c8",
+    selectedText: "#2b2722",
+  },
+  "linen-dark": {
+    name: "Linen Dark",
+    bg: "#211f1b",
+    panel: "#1b1916",
+    border: "#36322c",
+    borderFocused: "#e0874f",
+    text: "#e9e3d8",
+    textDim: "#a39a8d",
+    textBright: "#fbf7f0",
+    textMuted: "#7d7569",
+    positive: "#a3b77a",
+    negative: "#e0705f",
+    neutral: "#7d7569",
+    warning: "#e0874f",
+    link: "#85a9c8",
+    info: "#8cbfb8",
+    cardBorder: "#3a362f",
+    header: "#2c2925",
+    selected: "#45403a",
+    selectedText: "#e9e3d8",
+  },
   "github-light": {
     name: "GitHub Light",
     bg: "#ffffff",
@@ -472,7 +517,9 @@ export const VISUAL_THEME_PRESETS: readonly VisualThemeDocumentV1[] = Object.ent
           secondary: color(p.textDim),
           muted: color(p.textDim),
           bright: color(p.textBright),
-          link: readable(p.borderFocused, p.panel),
+          // A preset may name its own link and info hues (ANSI blue and cyan);
+          // otherwise both follow the focused border.
+          link: readable("link" in p ? p.link : p.borderFocused, p.panel),
         },
         borders: {
           default: color(p.border),
@@ -484,7 +531,7 @@ export const VISUAL_THEME_PRESETS: readonly VisualThemeDocumentV1[] = Object.ent
         },
         statusTone: {
           neutral: color(p.neutral),
-          info: color(p.borderFocused),
+          info: color("info" in p ? p.info : p.borderFocused),
           warning: color(p.warning),
           danger: color(p.negative),
           success: color(p.positive),
@@ -493,6 +540,15 @@ export const VISUAL_THEME_PRESETS: readonly VisualThemeDocumentV1[] = Object.ent
       },
     };
   },
+);
+/**
+ * The Mac app's pane card border, for the presets that name their own (#746).
+ * Every other preset keeps the app's default card border.
+ */
+export const VISUAL_THEME_CARD_BORDERS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(palettes).flatMap(([id, p]) => ("cardBorder" in p ? [[id, p.cardBorder]] : [])),
+  ),
 );
 export function findVisualThemePreset(id: unknown): VisualThemeDocumentV1 | undefined {
   return typeof id === "string" ? VISUAL_THEME_PRESETS.find((p) => p.id === id) : undefined;

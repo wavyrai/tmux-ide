@@ -14,7 +14,6 @@ mod notifications;
 mod plural;
 mod search_input;
 mod sidebar;
-mod tab_scroll;
 mod terminal;
 mod terminal_painter;
 mod titlebar;
