@@ -94,9 +94,6 @@ impl SnapshotView {
         if self.picker.as_ref().is_some_and(|p| p.agent.is_some()) {
             return self.new_agent_render(cx);
         }
-        if self.picker.as_ref().is_some_and(|p| p.closing.is_some()) {
-            return self.pane_close_render(cx);
-        }
         let Some(picker) = &self.picker else {
             return div().into_any_element();
         };

@@ -68,6 +68,10 @@ impl Target {
             actions,
         })
     }
+    /// The pane the target names.
+    pub(super) fn pane_id(&self) -> &str {
+        &self.actions.id
+    }
     pub(super) fn current(&self, state: &browser::State) -> bool {
         Self::capture(state).is_some_and(|now| {
             now.request == self.request

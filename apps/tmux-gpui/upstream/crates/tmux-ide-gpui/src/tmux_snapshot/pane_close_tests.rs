@@ -76,3 +76,17 @@ fn the_roster_decides_working_or_at_rest() {
         assert!(agent_on(&rows, "q").is_none());
     }
 }
+
+#[test]
+fn the_card_hangs_under_its_button_and_flips_above_near_the_bottom() {
+    let viewport = size(px(1440.), px(900.));
+    let button = Bounds::new(point(px(1000.), px(40.)), size(px(24.), px(24.)));
+    let (at, anchor) = placement(button, viewport);
+    assert_eq!(anchor, Anchor::TopRight);
+    assert_eq!(at, point(px(1024.), px(70.)));
+    // A bottom pane's button with under 140 pt below: the card flips above.
+    let low = Bounds::new(point(px(1000.), px(780.)), size(px(24.), px(24.)));
+    let (at, anchor) = placement(low, viewport);
+    assert_eq!(anchor, Anchor::BottomRight);
+    assert_eq!(at, point(px(1024.), px(774.)));
+}

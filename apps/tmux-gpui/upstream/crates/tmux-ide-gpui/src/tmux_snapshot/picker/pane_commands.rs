@@ -94,9 +94,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.picker.as_ref().is_none_or(|picker| {
-            picker.mode != Mode::Commands || picker.closing.is_some() || picker.agent.is_some()
-        }) || self.new_session.is_some()
+        if self
+            .picker
+            .as_ref()
+            .is_none_or(|picker| picker.mode != Mode::Commands || picker.agent.is_some())
+            || self.new_session.is_some()
             || self.pane_actions.is_some()
         {
             return;
@@ -122,7 +124,10 @@ impl SnapshotView {
                 return;
             }
             if matches!(action, Action::Close) {
-                self.begin_pane_close(captured.clone(), window, cx);
+                // The palette makes way for the anchored card (c1).
+                let captured = captured.clone();
+                self.close_picker(window, cx);
+                self.begin_pane_close(captured, window, cx);
                 return;
             }
             if matches!(action, Action::OpenEditor) {
@@ -157,10 +162,7 @@ impl SnapshotView {
         let Some(captured) = picker.pane_scope.clone() else {
             return false;
         };
-        if picker.search.read(cx).is_composing()
-            || picker.closing.is_some()
-            || picker.agent.is_some()
-        {
+        if picker.search.read(cx).is_composing() || picker.agent.is_some() {
             return true;
         }
         let action = match shortcut {

@@ -69,7 +69,7 @@ fn outcome(
             "picker={:?} pane_scope={} closing={} surface={:?} sidebar_hidden={} pane_actions={}",
             view.picker.as_ref().map(|p| p.mode),
             view.picker.as_ref().is_some_and(|p| p.pane_scope.is_some()),
-            view.picker.as_ref().is_some_and(|p| p.closing.is_some()),
+            view.pane_close.is_some(),
             view.browser_state.surface,
             view.sidebar_hidden,
             view.pane_actions.is_some(),
