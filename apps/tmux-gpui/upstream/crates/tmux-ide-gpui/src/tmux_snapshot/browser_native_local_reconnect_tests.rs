@@ -934,3 +934,6 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
     local.reconnect_tick().unwrap();
     assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
 }
+
+#[path = "browser_native_local_update_tests.rs"]
+mod update;
