@@ -24,6 +24,8 @@ pub(super) const STARTUP_SPINNER_AFTER: Duration = Duration::from_secs(1);
 pub(super) const WORDS_AFTER: Duration = Duration::from_secs(8);
 pub(super) const OFFLINE_AFTER: Duration = Duration::from_secs(60);
 pub(super) const RECONNECTING: &str = "Reconnecting…";
+/// The words before the app has ever had a connection (#357 review, item 3).
+pub(super) const CONNECTING: &str = "Connecting…";
 pub(super) const NOT_SENT: &str = "Not sent. The connection is back in a moment. Type again then.";
 
 /// What is being waited for.
@@ -87,6 +89,8 @@ pub(super) type Clock = Rc<dyn Fn() -> (Instant, SystemTime)>;
 /// When the current wait began, by the clock the thresholds read.
 pub(super) struct Watch {
     since: Option<(Kind, Instant, SystemTime)>,
+    /// A connection existed: a live Home or a session was shown.
+    connected_once: bool,
     pub(super) clock: Clock,
     _wake: Option<Task<()>>,
 }
@@ -94,6 +98,7 @@ impl Default for Watch {
     fn default() -> Self {
         Self {
             since: None,
+            connected_once: false,
             clock: Rc::new(|| (Instant::now(), SystemTime::now())),
             _wake: None,
         }
@@ -123,6 +128,10 @@ impl SnapshotView {
     pub(super) fn observe_connection(&mut self, cx: &mut Context<Self>) {
         let kind = waiting(&self.browser_state, self.browser_commands.is_some());
         let watch = &mut self.connection;
+        watch.connected_once |= kind.is_none()
+            && self.browser_commands.is_some()
+            && (self.browser_state.home_phase == browser::HomePhase::Live
+                || self.browser_state.surface == browser::Surface::Workspace);
         match (kind, watch.since) {
             (None, _) => {
                 watch.since = None;
@@ -169,6 +178,14 @@ impl SnapshotView {
         )
     }
 
+    /// The slot's words: "Connecting…" until a connection has existed.
+    pub(super) fn connection_words(&self) -> &'static str {
+        match self.connection.since {
+            Some((Kind::Startup, _, _)) if !self.connection.connected_once => CONNECTING,
+            _ => RECONNECTING,
+        }
+    }
+
     /// Pane titles step down to the muted ink once the words show.
     pub(super) fn connection_mutes_titles(&self) -> bool {
         self.connection_stage() >= Stage::Words
@@ -201,7 +218,7 @@ impl SnapshotView {
             Stage::Spinner => fill.child(self.connection_spinner(cx)),
             Stage::Words => fill
                 .child(self.connection_spinner(cx))
-                .child(div().truncate().child(RECONNECTING)),
+                .child(div().truncate().child(self.connection_words())),
             Stage::Offline => {
                 let since = self
                     .connection
@@ -228,7 +245,7 @@ impl SnapshotView {
             }
         };
         slot.when(stage == Stage::Spinner, |slot| {
-            slot.aria_label(RECONNECTING)
+            slot.aria_label(self.connection_words())
         })
         .child(bezel_motion::fade_quick(
             SharedString::from(format!("connection-slot-{stage:?}")),

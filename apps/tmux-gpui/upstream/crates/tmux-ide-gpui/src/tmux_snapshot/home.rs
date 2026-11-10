@@ -159,9 +159,7 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     // A reconnect is the footer slot's: its words never reach Home's strip,
     // and the notice stays through it (r1, quiet reconnect).
     match &state.home_notice {
-        Some(notice) if !state.home_fault => {
-            crate::notifications::safe_text(notice, 480)
-        }
+        Some(notice) if !state.home_fault => crate::notifications::safe_text(notice, 480),
         _ => crate::notifications::safe_text(&state.status, 240),
     }
 }

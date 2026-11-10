@@ -14,6 +14,10 @@ impl super::SnapshotView {
     /// during a reconnect says so at once (card #702: refuse with a notice).
     pub(super) fn status_line(&self) -> String {
         let state = &self.browser_state;
+        // A selection explains why keys do nothing, reconnecting or not.
+        if self.selection.is_some() {
+            return SELECTING.into();
+        }
         // A reconnect is the footer slot's; a refused key is its pane's toast.
         if state.reconnect_attempt.is_some() && !self.developer_mode.enabled {
             return String::new();
@@ -28,8 +32,6 @@ impl super::SnapshotView {
             } else {
                 format!("Restoring terminal… — {}", state.status)
             }
-        } else if self.selection.is_some() {
-            "Selecting captured frame — Cmd-C copies; Escape or click resumes".into()
         } else if state.input_target_rejected {
             "Input interrupted — reselect pane, then retype".into()
         } else if self.input_interrupted {
@@ -42,6 +44,9 @@ impl super::SnapshotView {
         }
     }
 }
+/// Shown beside the tabs while a captured frame is selected.
+pub(super) const SELECTING: &str =
+    "Selecting captured frame — Cmd-C copies; Escape or click resumes";
 /// Shown when a key is refused because the stream is being re-established.
 pub(super) const INPUT_REFUSED: &str = "Input refused while reconnecting";
 
