@@ -215,6 +215,10 @@ impl SnapshotView {
                     let hover = bezel.element_hover;
                     let text = ink.text;
                     div()
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("pane-{name}-glyph:{id}")
+                        })
                         .group("pane-header-button")
                         .size(side)
                         .flex()

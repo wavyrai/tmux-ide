@@ -180,6 +180,18 @@ fn header_buttons_split_right_split_down_zoom_close_edge_to_edge(cx: &mut TestAp
     let header = cx.debug_bounds("pane-card-header:pane-a").unwrap();
     // #746 v3: 24 pt slots, the last 6 pt in from the card's edge.
     assert_eq!(buttons[0].size.width, px(24.));
+    // Each slot holds a 22 pt button, centred.
+    for selector in [
+        "pane-split-right-glyph:pane-a",
+        "pane-split-down-glyph:pane-a",
+        "pane-expand-glyph:pane-a",
+        "pane-close-glyph:pane-a",
+    ] {
+        let glyph = cx.debug_bounds(selector).unwrap();
+        assert_eq!(glyph.size, size(px(22.), px(22.)), "{selector}");
+    }
+    let glyph = cx.debug_bounds("pane-close-glyph:pane-a").unwrap();
+    assert_eq!(glyph.center(), buttons[3].center());
     assert_eq!(buttons[3].right(), header.right() - px(6.));
     let title = cx.debug_bounds("pane-title:pane-a").unwrap();
     assert!(title.right() <= buttons[0].left());

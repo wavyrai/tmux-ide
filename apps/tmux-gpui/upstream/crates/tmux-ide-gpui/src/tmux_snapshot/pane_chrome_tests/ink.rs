@@ -200,6 +200,14 @@ fn header_buttons_rest_muted_on_the_focused_card_and_at_the_icon_tier_elsewhere(
                 }
             }
         }
+        // The icon tier is Bezel's faint ink (the chrome's icon tier) at the
+        // mark ratio on the header's plates: nothing louder stands in.
+        let bezel = palette(&theme);
+        let faint = bezel_theme::flatten(bezel.text_faint, bezel.terminal_bg);
+        let expected: Hsla = rgb(header_mark(&theme, u32::from(Rgba::from(faint)) >> 8)).into();
+        if ink.icon != expected {
+            failures.push(format!("{name}: the icon ink is not the icon tier"));
+        }
         if ratio(ink.icon, plates[0]) > ratio(ink.muted, plates[0]) + 0.01 {
             failures.push(format!("{name}: the icon tier is louder than muted"));
         }
