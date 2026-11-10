@@ -305,3 +305,5 @@ mod fullscreen;
 
 #[path = "shell_tests/content_geometry.rs"]
 mod content_geometry;
+#[path = "shell_tests/drag_regions.rs"]
+mod drag_regions;

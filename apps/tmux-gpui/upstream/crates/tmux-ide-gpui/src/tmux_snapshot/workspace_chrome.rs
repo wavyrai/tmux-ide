@@ -197,6 +197,12 @@ impl SnapshotView {
     }
 }
 
+/// The strip stays unless the sidebar is shown and the system draws the
+/// window's caption buttons (card 5).
+pub(super) fn keeps_title_strip(sidebar_shown: bool, client_decorations: bool) -> bool {
+    !sidebar_shown || client_decorations
+}
+
 impl SnapshotView {
     /// Whether the window keeps the full-width title bar strip. #746 v3
     /// (card 5) drops it beside the sidebar: the top row moves into the
@@ -204,7 +210,7 @@ impl SnapshotView {
     /// the sidebar hidden the row has nowhere else to go, and a window that
     /// draws its own caption buttons keeps them in the strip.
     pub(super) fn title_strip(&self, window: &Window) -> bool {
-        !self.sidebar_shown(window) || crate::titlebar::client(window)
+        keeps_title_strip(self.sidebar_shown(window), crate::titlebar::client(window))
     }
 
     /// The window's top row, and the sidebar as the body shows it (still a

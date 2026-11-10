@@ -39,11 +39,7 @@ pub(crate) fn movable<E: InteractiveElement>(area: E, window: &Window) -> E {
     // by window-level drag handlers (selection, splits) before it bubbles up.
     let supported = window.window_controls();
     let area = area.on_mouse_down(MouseButton::Left, move |event, window, _| {
-        match event.click_count {
-            2 if !client => window.titlebar_double_click(),
-            2 if supported.maximize => window.zoom_window(),
-            _ => window.start_window_move(),
-        }
+        perform(press(event.click_count, client, supported.maximize), window);
     });
     if client && supported.window_menu {
         area.on_mouse_down(MouseButton::Right, |event, window, _| {
@@ -51,6 +47,46 @@ pub(crate) fn movable<E: InteractiveElement>(area: E, window: &Window) -> E {
         })
     } else {
         area
+    }
+}
+
+/// What a press on a title bar area does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Press {
+    /// Start moving the window.
+    Move,
+    /// The platform's double-click action (zoom or minimise, per the system).
+    DoubleClick,
+    /// Zoom, where the window draws its own frame.
+    Zoom,
+}
+
+fn press(clicks: usize, client: bool, maximize: bool) -> Press {
+    match clicks {
+        2 if !client => Press::DoubleClick,
+        2 if maximize => Press::Zoom,
+        _ => Press::Move,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The presses tests make, in place of moving a window the test
+    /// platform can't move.
+    pub(crate) static PRESSES: std::cell::RefCell<Vec<Press>> = Default::default();
+}
+
+fn perform(press: Press, window: &mut Window) {
+    #[cfg(test)]
+    {
+        let _ = window;
+        PRESSES.with(|p| p.borrow_mut().push(press));
+    }
+    #[cfg(not(test))]
+    match press {
+        Press::Move => window.start_window_move(),
+        Press::DoubleClick => window.titlebar_double_click(),
+        Press::Zoom => window.zoom_window(),
     }
 }
 
