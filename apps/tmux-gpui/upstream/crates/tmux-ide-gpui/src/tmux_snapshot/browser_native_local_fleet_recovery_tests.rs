@@ -108,3 +108,47 @@ fn http_timeout_recovers_but_http_unauthorized_does_not() {
         401
     ))));
 }
+
+/// r4 review (e): a machine ssh says it can't reach is retried with the same
+/// capped backoff; an unrecognised ssh exit, auth and host keys are not.
+#[cfg(unix)]
+#[test]
+fn an_unreachable_machine_is_retried_and_an_unknown_ssh_exit_is_not() {
+    use herdr_client::tmux_ssh::{DiscoveryError, TransportError};
+    let remote = |error| DaemonError::Remote(Box::new(TransportError::Discovery(error)));
+    assert!(transient(&remote(DiscoveryError::Unreachable)));
+    for fatal in [
+        DiscoveryError::Exit,
+        DiscoveryError::Authentication,
+        DiscoveryError::HostKey,
+        DiscoveryError::MissingCli,
+    ] {
+        assert!(!transient(&remote(fatal)));
+    }
+    let now = Instant::now();
+    let mut retries = Retries::default();
+    retries.failed(
+        "remote",
+        uuid::Uuid::new_v4(),
+        &remote(DiscoveryError::Unreachable),
+        now,
+    );
+    assert_eq!(retries.wait(now), Some(Duration::from_secs(1)));
+}
+
+/// review-chrome #360, retry-while-pending: a repeat failure before the try
+/// is due never pushes the try later.
+#[test]
+fn a_repeat_failure_does_not_postpone_a_scheduled_try() {
+    let now = Instant::now();
+    let incarnation = uuid::Uuid::new_v4();
+    let mut retries = Retries::default();
+    retries.failed("remote", incarnation, &failure(), now);
+    retries.failed(
+        "remote",
+        incarnation,
+        &failure(),
+        now + Duration::from_millis(900),
+    );
+    assert_eq!(retries.wait(now), Some(Duration::from_secs(1)));
+}

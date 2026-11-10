@@ -26,6 +26,11 @@ pub enum DiscoveryError {
     Authentication,
     #[error("SSH discovery failed")]
     Exit,
+    /// ssh said the machine can't be reached: no route, refused, an
+    /// unreachable network, an unresolved name or a timed-out connect. The
+    /// machine is likely off or away; retried like a timeout (r4).
+    #[error("SSH could not reach the machine")]
+    Unreachable,
     #[error("SSH discovery I/O failed")]
     Io(#[from] io::Error),
     #[error(transparent)]
@@ -143,7 +148,17 @@ pub(super) struct Diagnostics {
     tail: Vec<u8>,
     host_key: bool,
     authentication: bool,
+    unreachable: bool,
 }
+/// ssh's own words for a machine it could not reach, lowercased. Only these
+/// are retried; anything else unrecognised stays a failure.
+const UNREACHABLE: [&str; 5] = [
+    "no route to host",
+    "connection refused",
+    "network is unreachable",
+    "could not resolve hostname",
+    "operation timed out",
+];
 impl Diagnostics {
     pub(super) fn observe(&mut self, bytes: &[u8]) {
         self.tail.extend_from_slice(bytes);
@@ -156,12 +171,15 @@ impl Diagnostics {
         self.authentication |= ["publickey", "password", "keyboard-interactive"]
             .iter()
             .any(|method| text.contains(&format!("permission denied ({method}")));
+        self.unreachable |= UNREACHABLE.iter().any(|words| text.contains(words));
     }
     pub(super) fn failure(&self) -> DiscoveryError {
         if self.host_key {
             DiscoveryError::HostKey
         } else if self.authentication {
             DiscoveryError::Authentication
+        } else if self.unreachable {
+            DiscoveryError::Unreachable
         } else {
             DiscoveryError::Exit
         }

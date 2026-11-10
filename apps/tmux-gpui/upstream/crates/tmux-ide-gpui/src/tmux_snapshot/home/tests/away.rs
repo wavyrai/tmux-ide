@@ -79,6 +79,8 @@ fn the_header_steps_and_the_rows_stay_muted_and_tagged(cx: &mut TestAppContext) 
     at.set(Duration::from_secs(3));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(status(cx), Some(Away::Quiet));
+    // The header reads as before: no status words (away-quiet-not-ready).
+    assert!(cx.debug_bounds("fleet-machine-status-1").is_none());
     assert!(cx.debug_bounds("fleet-retry-1").is_none());
     assert!(cx.debug_bounds("fleet-session-away-1-0").is_none());
     // 8 s: "Reconnecting…", the rows muted and tagged.

@@ -45,7 +45,11 @@ fn transient(error: &Error) -> bool {
                 error.as_ref(),
                 TransportError::Timeout
                     | TransportError::Tunnel(TunnelError::Exited | TunnelError::Io(_))
-                    | TransportError::Discovery(DiscoveryError::Timeout | DiscoveryError::Io(_))
+                    | TransportError::Discovery(
+                        DiscoveryError::Timeout
+                            | DiscoveryError::Io(_)
+                            | DiscoveryError::Unreachable
+                    )
                     | TransportError::Connection(ConnectionError::Network(
                         ureq::Error::Io(_) | ureq::Error::Timeout(_)
                     ))
