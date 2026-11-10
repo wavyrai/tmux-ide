@@ -78,6 +78,34 @@ impl Gate {
         }
         self.last = Some(snapshot.clone());
     }
+    /// A read completed. The same daemon's catalog becomes the cursor's
+    /// base; a different daemon fails the lane.
+    fn on_read(
+        &mut self,
+        result: Result<CatalogResult, herdr_client::tmux_daemon::Error>,
+    ) -> Result<Option<Notice>, Error> {
+        match result {
+            Ok(CatalogResult::FleetCatalog(snapshot)) => {
+                if self
+                    .last
+                    .as_ref()
+                    .is_none_or(|last| last.identity != snapshot.identity)
+                {
+                    return Ok(Some(Notice::Failed(
+                        herdr_client::tmux_daemon::Error::IdentityChanged,
+                    )));
+                }
+                self.read_completed();
+                if self.last.as_ref() != Some(&snapshot) {
+                    self.last = Some(snapshot.clone());
+                    return Ok(Some(Notice::Changed(snapshot)));
+                }
+                Ok(None)
+            }
+            Ok(_) => Err(Error::Invalid("unexpected selected catalog response")),
+            Err(error) => Ok(Some(Notice::Failed(error))),
+        }
+    }
     fn poll(
         &mut self,
         source: &CatalogSource,
@@ -147,38 +175,16 @@ impl Gate {
             .flatten()
         {
             self.reader.take();
-            match result {
-                Ok(CatalogResult::FleetCatalog(snapshot)) => {
-                    if self
-                        .last
-                        .as_ref()
-                        .is_none_or(|last| last.identity != snapshot.identity)
-                    {
-                        return Ok(Some(Notice::Failed(
-                            herdr_client::tmux_daemon::Error::IdentityChanged,
-                        )));
-                    }
-                    self.read_completed();
-                    if self.last.as_ref() != Some(&snapshot) {
-                        self.last = Some(snapshot.clone());
-                        return Ok(Some(Notice::Changed(snapshot)));
-                    }
-                }
-                Ok(_) => return Err(Error::Invalid("unexpected selected catalog response")),
-                Err(error) => return Ok(Some(Notice::Failed(error))),
-            }
+            return self.on_read(result);
         }
         if self.dirty && self.reader.is_none() && self.last.is_some() {
+            // Sampled before the read is submitted: the read then reflects at
+            // least every change up to it. Only a live lane's sequence counts.
+            self.read_started(self.watch.as_ref().and_then(CatalogWatchWorker::read_start));
             let mut reader = CatalogWorker::spawn_source(source.clone())?;
             reader.submit(CatalogAction::FleetCatalog)?;
             self.reader = Some(reader);
             self.dirty = false;
-            let live = self
-                .watch
-                .as_ref()
-                .filter(|watch| watch.live())
-                .map(CatalogWatchWorker::sequence);
-            self.read_started(live);
         }
         Ok(None)
     }

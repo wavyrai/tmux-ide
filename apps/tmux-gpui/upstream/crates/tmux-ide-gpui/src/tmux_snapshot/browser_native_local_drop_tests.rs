@@ -124,6 +124,13 @@ fn a_same_daemon_drop_resumes_the_catalog_without_a_full_read() {
             DaemonError::CatalogWatch(Box::new(CatalogWatchError::Timeout)),
             true,
         ),
+        // A plain network failure is the same daemon too (P06).
+        (
+            DaemonError::Network(ureq::Error::Io(std::io::Error::from(
+                std::io::ErrorKind::ConnectionRefused,
+            ))),
+            true,
+        ),
         (DaemonError::IdentityChanged, false),
         (DaemonError::RecordChanged, false),
         (DaemonError::OwnerExited, false),
@@ -177,4 +184,72 @@ fn home_rows_keep_their_ids_only_for_the_same_daemon() {
             "a new daemon gets new ids"
         );
     }
+}
+
+/// The reset half of the invariant, where it happens: navigation, a refresh
+/// and an unrecoverable stop forget every agent row and control (P11).
+#[test]
+fn navigation_refresh_and_a_stop_forget_the_agents() {
+    for reset in ["refresh", "stop", "open-another-session"] {
+        let (mut local, events) = fixture();
+        attached(&mut local);
+        local.catalog_identity = Some(CatalogIdentity {
+            instance_id: "instance-a".into(),
+            environment_id: None,
+        });
+        local.agent_tick().unwrap();
+        local.state.workspace_agents = Some(workspace_roster());
+        local.state.home_agents = Some(roster());
+        local.state.agents_last_known = true;
+        match reset {
+            "refresh" => local.home(1).unwrap(),
+            "stop" => local.unavailable("Stopped").unwrap(),
+            _ => {
+                let key = uuid::Uuid::new_v4().to_string();
+                local.targets.insert(
+                    key.clone(),
+                    Target {
+                        scope: ServerScope {
+                            server_id: format!("tmux-server.{}", "b".repeat(32)),
+                            generation: uuid::Uuid::new_v4().to_string(),
+                        },
+                        live: "live-session.98765432109876543210".into(),
+                    },
+                );
+                local.open(2, key, None).unwrap();
+            }
+        }
+        drained(&events);
+        assert!(local.state.workspace_agents.is_none(), "{reset}");
+        assert!(local.state.home_agents.is_none(), "{reset}");
+        assert!(local.state.palette_agents.is_none(), "{reset}");
+        assert!(local.state.attention_agents.is_none(), "{reset}");
+        assert!(!local.state.agents_last_known, "{reset}");
+    }
+}
+
+/// A long recovery keeps the rows and says, the whole time, that they are
+/// last known; a reset clears both.
+#[test]
+fn a_long_recovery_publishes_last_known_and_a_reset_clears_it() {
+    let (mut local, events) = fixture();
+    attached(&mut local);
+    local.catalog_identity = Some(CatalogIdentity {
+        instance_id: "instance-a".into(),
+        environment_id: None,
+    });
+    local.agent_tick().unwrap();
+    local.state.workspace_agents = Some(workspace_roster());
+    assert!(!local.state.agents_last_known);
+    local.reconnect_start().unwrap();
+    for _ in 0..200 {
+        local.agent_tick().unwrap();
+    }
+    drained(&events);
+    assert!(local.state.agents_last_known);
+    assert!(local.state.workspace_agents.is_some());
+    local.home(1).unwrap();
+    drained(&events);
+    assert!(!local.state.agents_last_known);
+    assert!(local.state.workspace_agents.is_none());
 }

@@ -9,9 +9,19 @@
 use super::*;
 
 impl Local {
+    /// Publishes that the agent rows are last known, once, when it changes.
+    pub(super) fn publish_last_known(&mut self) -> Result<(), Error> {
+        let last_known = self.agents.last_known();
+        if self.state.agents_last_known == last_known {
+            return Ok(());
+        }
+        self.state.agents_last_known = last_known;
+        self.publish()
+    }
     /// Forgets every agent row and control: navigation or a different daemon.
     pub(super) fn forget_agents(&mut self) {
         self.agents.cancel();
+        self.state.agents_last_known = false;
         self.state.home_agents = None;
         self.state.workspace_agents = None;
         self.state.workspace_fleet_agents = None;

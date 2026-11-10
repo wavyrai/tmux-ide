@@ -160,6 +160,10 @@ pub(super) struct State {
     pub reconnect_attempt: Option<u32>,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
+    /// Agent rows and pills are last known: their link dropped, or the one
+    /// re-read after it hasn't finished. Worker-owned; the view decides how
+    /// long a drop must last before it shows (quiet reconnect).
+    pub agents_last_known: bool,
     /// Home is live, but the session the user chose has too many panes to
     /// open; this names it and says what to do instead.
     pub home_notice: Option<String>,
@@ -604,6 +608,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             home_fault: false,
+            agents_last_known: false,
             home_notice: None,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,

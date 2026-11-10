@@ -111,3 +111,29 @@ fn a_reset_forgets_the_rows() {
     assert!(shown(&mut gate).is_empty());
     assert!(!gate.stale);
 }
+
+/// Last known, not current: the flag holds for as long as the drop lasts and
+/// through the re-read after it, and clears only when that read completes.
+#[test]
+fn rows_say_last_known_until_the_reread_after_the_drop_completes() {
+    let mut gate = two_agents();
+    let before = shown(&mut gate);
+    assert!(!gate.last_known());
+    // A long recovery: the agent lane ticks many times while the link is down.
+    for _ in 0..1000 {
+        gate.pause();
+    }
+    assert!(gate.last_known());
+    assert_eq!(shown(&mut gate), before);
+    let contexts = gate.contexts.clone();
+    assert!(!gate.configure(contexts, 1, false, 0, Instant::now()));
+    assert!(gate.last_known(), "still last known while the re-read runs");
+    let now = Instant::now();
+    gate.poll(true, now);
+    assert!(gate.last_known());
+    assert!(
+        gate.poll(true, now),
+        "the re-read's end is a change to publish"
+    );
+    assert!(!gate.last_known());
+}

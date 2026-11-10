@@ -101,3 +101,31 @@ fn the_cursor_is_the_start_of_the_last_completed_read() {
     gate.read_completed();
     assert_eq!(gate.cursor, Some(7));
 }
+/// Through poll: the cursor is the lane's sequence when the read was
+/// submitted, even when the lane moves on before the read completes; a read
+/// started on a lane that isn't live never sets one (review of #362: P07, P08).
+#[test]
+fn poll_samples_the_cursor_before_the_read_not_after() {
+    let source = CatalogSource::Local(PathBuf::from("/nonexistent-selected-watch-fixture"));
+    let mut gate = Gate::default();
+    let snapshot = snapshot();
+    gate.seed(&snapshot);
+    gate.watch = Some(CatalogWatchWorker::detached(5));
+    gate.dirty = true;
+    assert!(gate.poll(&source, true, true).unwrap().is_none());
+    assert!(gate.reader.is_some(), "the read was submitted");
+    // A change lands while the read is in flight.
+    gate.watch.as_ref().unwrap().advance_detached(6);
+    gate.reader.take();
+    gate.on_read(Ok(CatalogResult::FleetCatalog(snapshot.clone())))
+        .unwrap();
+    assert_eq!(gate.cursor, Some(5), "the read reflects 5, not 6");
+    // A lane that isn't live gives no cursor for the next read.
+    gate.watch.as_ref().unwrap().cancel();
+    gate.dirty = true;
+    gate.poll(&source, true, true).unwrap();
+    gate.reader.take();
+    gate.on_read(Ok(CatalogResult::FleetCatalog(snapshot)))
+        .unwrap();
+    assert_eq!(gate.cursor, Some(5));
+}
