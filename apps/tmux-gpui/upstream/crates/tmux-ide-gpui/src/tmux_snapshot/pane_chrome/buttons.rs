@@ -184,6 +184,7 @@ impl SnapshotView {
         // muted on the focused one; the text ink under the hover wash.
         let focused = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let rest = if focused { ink.muted } else { ink.icon };
+        let pressed = matches!(intent, HeaderIntent::Close) && self.pane_close_open_for(&id);
         Some(
             div()
                 .id(SharedString::from(format!("pane-{name}:{id}")))
@@ -221,6 +222,8 @@ impl SnapshotView {
                         .justify_center()
                         .rounded(px(6.))
                         .text_color(rest)
+                        // Pressed while its close card is open (c1).
+                        .when(pressed, |b| b.bg(bezel.element_active))
                         .hover(move |s| s.bg(hover))
                         .children(super::super::design::ink_probe({
                             let id = id.clone();
@@ -243,5 +246,25 @@ impl SnapshotView {
                 }))
                 .into_any_element(),
         )
+    }
+}
+impl SnapshotView {
+    /// `pane`'s close button in window coordinates: the last 28 pt slot at
+    /// its header's right end, the 24 pt button centred in it.
+    pub(in crate::tmux_snapshot) fn close_button_bounds(
+        &self,
+        pane: &str,
+    ) -> Option<Bounds<Pixels>> {
+        let (canvas, _) = self.input_geometry?;
+        let width = self.input_cell_width?;
+        let header = self
+            .presentation_headers()
+            .into_iter()
+            .find(|h| h.id == pane)?;
+        let rect = self.header_rect(&header, width);
+        let side = px(22.).min(rect.size.height);
+        let right = canvas.origin.x + rect.right() - px(ACTS_PAD) - (px(SLOT) - side) / 2.;
+        let top = canvas.origin.y + rect.top() + (rect.size.height - side) / 2.;
+        Some(Bounds::new(point(right - side, top), size(side, side)))
     }
 }

@@ -10,6 +10,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The close-pane card holds the keyboard while it is open (c1).
+        if self.pane_close.is_some() {
+            self.pane_close_key(event, window, cx);
+            return;
+        }
         if self.pane_shortcut_key(event, window, cx) || self.session_tabs_key(event, window, cx) {
             return;
         }
@@ -29,10 +34,6 @@ impl SnapshotView {
             .as_ref()
             .is_some_and(|p| p.search.read(cx).is_composing())
         {
-            return;
-        }
-        if self.picker.as_ref().is_some_and(|p| p.closing.is_some()) {
-            self.pane_close_key(event, window, cx);
             return;
         }
         if self.picker.as_ref().is_some_and(|p| p.agent.is_some()) {

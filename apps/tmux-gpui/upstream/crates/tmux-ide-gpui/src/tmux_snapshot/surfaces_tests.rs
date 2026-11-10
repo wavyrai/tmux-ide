@@ -81,6 +81,29 @@ fn the_selected_capsule_is_opaque_in_both_appearances() {
     assert!(lstar(u32::from(gpui::Rgba::from(fill)) >> 8) > lstar(dark.surface) + 5.);
 }
 
+#[test]
+fn a_danger_plate_darkens_only_as_far_as_its_white_label_needs() {
+    // Already reads: unchanged.
+    assert_eq!(darken_for(0x9b1c1c, 0xffffff, 4.6), 0x9b1c1c);
+    // Bright red: darkened, hue kept, just past 4.6:1.
+    let bright = 0xff6467;
+    let dark = darken_for(bright, 0xffffff, 4.6);
+    assert!(crate::contrast::ratio(0xffffff, dark) >= 4.6);
+    assert!(lstar(dark) < lstar(bright));
+    assert!(crate::contrast::ratio(0xffffff, mix_oklab(dark, bright, 0.1)) < 4.7);
+}
+
+/// c5: every catalog theme's destructive button label reads at 4.5:1.
+#[test]
+fn every_destructive_label_reads_on_its_plate() {
+    for (name, theme) in crate::tmux_snapshot::ink::tests::catalog_themes() {
+        let bezel = crate::tmux_snapshot::design::palette(&theme);
+        let plate = u32::from(gpui::Rgba::from(bezel.danger_strong)) >> 8;
+        let ratio = crate::contrast::ratio(0xffffff, plate);
+        assert!(ratio >= 4.5, "{name}: {ratio:.2}:1 on #{plate:06x}");
+    }
+}
+
 /// #746 v3: in every catalog theme that takes the step, the unfocused card
 /// stands at least 3 L* from the focused one (a literal, not FOCUS_STEP, so
 /// a weaker constant can't pass).
