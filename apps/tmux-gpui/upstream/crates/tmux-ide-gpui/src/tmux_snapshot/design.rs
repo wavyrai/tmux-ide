@@ -37,7 +37,7 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // Terminal panes stay opaque under frosted chrome (owner, #666).
     result.content_opacity = 1.0;
     // The frost is the theme's own surface at Bezel's coverage; text drawn on
-    // it goes through `chrome_text`.
+    // it is inked by the tiers (`ink::tiers`).
     result.vibrancy_tone = color(theme.surface);
     result.vibrancy_alpha = frost(theme).unwrap_or(bezel_theme::Theme::VIBRANCY_ALPHA);
     result.cursor = color(theme.cursor);
@@ -70,17 +70,6 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.vibrancy = false;
     }
     result
-}
-
-/// `color` as text on the window chrome: moved only as far as it needs, hue
-/// kept, to read at 4.5:1 on the opaque surface and, in a dark theme (the one
-/// Bezel frosts), on the frost over a white and over a black desktop, since the
-/// desktop behind a translucent window can be either.
-pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
-    // Cached per colour and plates: the sidebar asks for every row, every frame.
-    // 4.6 rather than 4.5: the plates are rounded to 8-bit channels here, and
-    // the frost Bezel paints is not, which costs up to a few hundredths.
-    crate::contrast::ink(color, &chrome_plates(theme), 4.6)
 }
 
 /// `color` as a mark on a sidebar row, such as an agent's state glyph: the
@@ -314,12 +303,6 @@ pub(crate) fn popover_ink(theme: &Theme) -> PopoverInk {
     }
 }
 
-/// What chrome text is drawn on: the opaque surface and, while the window
-/// frosts, the frost over each of [`DESKTOPS`].
-fn chrome_plates(theme: &Theme) -> Vec<u32> {
-    plates_at(theme, frost(theme))
-}
-
 fn plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
     let mut plates = vec![theme.surface];
     if let Some(alpha) = alpha {
@@ -396,7 +379,7 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
+    use super::{dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, TestAppContext, rgb};
 
@@ -658,15 +641,6 @@ mod tests {
             let ratio = bezel_theme::contrast_ratio(color(ink), wash);
             if ratio < 4.5 {
                 failures.push(format!("{name}: attention pill is {ratio:.2}:1"));
-            }
-            for (role, value) in [("foreground", theme.foreground), ("muted", theme.muted)] {
-                let text = color(chrome_text(&theme, value));
-                for (plate, plate_name) in &plates {
-                    let ratio = bezel_theme::contrast_ratio(text, *plate);
-                    if ratio < 4.5 {
-                        failures.push(format!("{name}: {role} on {plate_name} is {ratio:.2}:1"));
-                    }
-                }
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");

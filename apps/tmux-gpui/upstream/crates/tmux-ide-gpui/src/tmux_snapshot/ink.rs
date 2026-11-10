@@ -51,6 +51,7 @@ fn least_alpha(theme: &Theme, surfaces: &[u32], target: f32) -> Option<f32> {
 }
 
 /// Every surface chrome text is drawn on.
+#[cfg(test)]
 pub(crate) fn surfaces(theme: &Theme) -> Vec<u32> {
     surfaces_at(theme, super::design::frost(theme))
 }
@@ -74,10 +75,11 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
 /// [`tiers`] at a given frost (`None`: opaque), which the frost's search
 /// asks about each alpha it tries.
 pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
+    /// The theme and the frost's bits.
+    type Key = (Theme, Option<u32>);
     // The sidebar asks for every row, every frame: a few themes are cached.
     thread_local! {
-        static CACHE: std::cell::RefCell<Vec<((Theme, Option<u32>), Tiers)>> =
-            Default::default();
+        static CACHE: std::cell::RefCell<Vec<(Key, Tiers)>> = Default::default();
     }
     let key = (theme.clone(), frost.map(f32::to_bits));
     if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, t)| *t)) {
@@ -100,7 +102,7 @@ pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
             }
         }
         Some(muted) => {
-            let text = (muted + 0.30).max(0.85).min(1.);
+            let text = (muted + 0.30).clamp(0.85, 1.);
             let three = text - muted >= SPREAD - 0.001;
             let label = if three { (text + muted) / 2. } else { text };
             let icon = least_alpha(theme, &all, icon_target(theme)).unwrap_or(muted);

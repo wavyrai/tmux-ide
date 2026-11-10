@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use super::*;
 use core::prelude::v1::test;
 
