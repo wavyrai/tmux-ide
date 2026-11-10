@@ -17,14 +17,13 @@ impl Outcome {
         self.current = outcome;
     }
 
-    /// Writes the outcome over the idle line or an earlier outcome. A
-    /// connection state (connecting, an inactive window, restoring history)
-    /// comes first, and the outcome returns once it clears.
+    /// Writes the outcome over the idle line or the outcome last shown (this
+    /// one or an earlier one). A connection state (connecting, an inactive
+    /// window, restoring history) comes first, and the outcome returns once
+    /// it clears.
     fn publish(&mut self, status: &mut String) {
         if let Some(outcome) = self.current
-            && (status == "Connected"
-                || status == outcome
-                || self.shown.is_some_and(|shown| status == shown))
+            && (status == "Connected" || self.shown.is_some_and(|shown| status == shown))
         {
             *status = outcome.into();
             self.shown = Some(outcome);
