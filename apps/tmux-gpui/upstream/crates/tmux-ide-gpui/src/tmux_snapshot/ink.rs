@@ -8,8 +8,11 @@ use gpui::{Hsla, Rgba, rgb};
 
 /// The contrast every tier keeps (a little over 4.5:1, for rounding).
 pub(crate) const TARGET: f32 = 4.6;
-/// Marks and icons at rest.
-pub(crate) const ICON_TARGET: f32 = 3.1;
+/// Marks and icons at rest: the contrast setting's mark ratio (3:1, or
+/// 4.5:1 under Increase Contrast), a little over for rounding.
+fn icon_target(theme: &Theme) -> f32 {
+    theme.contrast.mark_ratio() + 0.1
+}
 /// The least alpha step between muted and text that reads as a step.
 const SPREAD: f32 = 0.25;
 
@@ -87,7 +90,7 @@ pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
             // only as far as it must (to 4.75:1, so 8-bit rounding of the
             // frosted plates can't leave it just under 4.5).
             let ink = crate::contrast::ink(theme.foreground, &all, 4.75);
-            let icon = crate::contrast::ink(theme.foreground, &all, ICON_TARGET);
+            let icon = crate::contrast::ink(theme.foreground, &all, icon_target(theme));
             Tiers {
                 text: ink,
                 label: ink,
@@ -100,7 +103,7 @@ pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
             let text = (muted + 0.30).max(0.85).min(1.);
             let three = text - muted >= SPREAD - 0.001;
             let label = if three { (text + muted) / 2. } else { text };
-            let icon = least_alpha(theme, &all, ICON_TARGET).unwrap_or(muted);
+            let icon = least_alpha(theme, &all, icon_target(theme)).unwrap_or(muted);
             Tiers {
                 text: ink_at(theme, text),
                 label: ink_at(theme, label),

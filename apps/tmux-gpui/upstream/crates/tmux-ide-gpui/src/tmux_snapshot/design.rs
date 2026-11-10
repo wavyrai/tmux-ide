@@ -53,41 +53,15 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.text = color(theme.foreground);
         brand.ink.for_appearance(appearance).paint(&mut result);
     }
-    // Body text is drawn on the background and on the surface. Where Bezel's
-    // translucent ink drops it under 4.5:1 on either (the saturated presets,
-    // Solarized), it becomes the opaque foreground with its lightness moved
-    // just far enough to read; muted and faint keep their alphas.
-    let chrome = [theme.background, theme.surface];
-    let reads = |text: Hsla| {
-        chrome.iter().all(|&plate| {
-            let plate = color(plate);
-            bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate) >= 4.5
-        })
-    };
-    if !reads(result.text) {
-        let opaque = Hsla {
-            a: 1.0,
-            ..result.text
-        };
-        let packed = u32::from(Rgba::from(opaque)) >> 8;
-        result.text = color(crate::contrast::ink(packed, &chrome, 4.5));
-    }
-    // Bezel's translucent text roles paint the titlebar's tab labels on the
-    // frost; where they miss 4.5:1 on it, they take the inked chrome colour.
-    let plates = chrome_plates(theme);
-    let reads = |text: Hsla| {
-        plates.iter().all(|&plate| {
-            let plate = color(plate);
-            bezel_theme::contrast_ratio(bezel_theme::flatten(text, plate), plate) >= 4.5
-        })
-    };
-    // Only for a theme whose own ink is in use; a half-edited one keeps
-    // Bezel's, as above.
-    if foreground_reads && !reads(result.text) {
-        result.text = color(chrome_text(theme, theme.foreground));
-    }
-    if foreground_reads && !reads(result.text_muted) {
-        result.text_muted = color(chrome_text(theme, theme.muted));
+    // The chrome's inks are the theme's three tiers (#746 v3): text, muted
+    // and the icon ink, each opaque and reading on every surface it can be
+    // drawn on, frosted or not. The frost's density carries the contrast
+    // (`frost`), so muted is no longer brightened to fight a thin frost.
+    if foreground_reads {
+        let tiers = super::ink::tiers(theme);
+        result.text = color(tiers.text);
+        result.text_muted = color(tiers.muted);
+        result.text_faint = color(tiers.icon);
     }
     // A theme whose inks can't read over the frost at any density runs
     // opaque (#746 glass plan, G3).
@@ -510,7 +484,11 @@ mod tests {
             ..Theme::default()
         });
         assert!(!high.glass && !high.vibrancy);
-        assert!(high.text_faint.a > standard.text_faint.a);
+        // Faint (icons at rest) reads at text contrast under High.
+        let ratio = |p: &bezel_theme::Theme| {
+            bezel_theme::contrast_ratio(bezel_theme::flatten(p.text_faint, p.surface), p.surface)
+        };
+        assert!(ratio(&high) >= 4.5 && ratio(&high) > ratio(&standard));
     }
 
     #[derive(serde::Deserialize)]
