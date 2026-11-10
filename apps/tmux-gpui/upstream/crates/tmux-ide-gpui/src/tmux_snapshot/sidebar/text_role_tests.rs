@@ -59,16 +59,21 @@ pub(super) fn plates(theme: &Theme, washes: bool) -> Vec<Hsla> {
             bare.push(bezel_theme::flatten(bezel.vibrancy_tint(), desktop));
         }
     }
-    bare.into_iter()
+    let mut plates: Vec<Hsla> = bare
+        .into_iter()
         .flat_map(|plate| {
             let mut under = vec![plate];
             if washes {
-                under.push(bezel_theme::flatten(bezel.card_selected_bg(), plate));
                 under.push(bezel_theme::flatten(bezel.element_hover, plate));
             }
             under
         })
-        .collect()
+        .collect();
+    // The selected row is the opaque capsule (#746 v3), whatever the frost.
+    if washes {
+        plates.push(crate::tmux_snapshot::design::selected_capsule(theme).0);
+    }
+    plates
 }
 
 /// The lowest contrast `text` reaches on `plates`.

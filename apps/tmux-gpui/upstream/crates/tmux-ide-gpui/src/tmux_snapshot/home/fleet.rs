@@ -157,6 +157,7 @@ impl SnapshotView {
         };
         let selector = entry.selector(index);
         let hover = bezel.element_hover;
+        let theme = self.theme();
         let entry = entry.clone();
         div()
             .id(("home-nav", index))
@@ -177,8 +178,11 @@ impl SnapshotView {
             .map(|row| {
                 // The chosen filter is raised like a selected sidebar row.
                 let selection = bezel_theme::Selection::new(selected, false);
-                match selection.fill(&bezel) {
-                    Some(fill) => row.bg(fill).shadow(selection.shadows()),
+                match selection
+                    .is_selected()
+                    .then(|| design::selected_capsule(&theme))
+                {
+                    Some((fill, ring)) => row.bg(fill).shadow(ring),
                     None => row.hover(move |s| s.bg(hover)),
                 }
             })

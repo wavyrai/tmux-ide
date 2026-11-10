@@ -65,3 +65,19 @@ fn an_ansi_colour_that_would_drop_under_three_to_one_keeps_the_background() {
     t.palette[4] = edge;
     assert_eq!(unfocused_fill(&t), None);
 }
+
+#[test]
+fn the_selected_capsule_is_opaque_in_both_appearances() {
+    use crate::tmux_snapshot::design::selected_capsule;
+    // Light: the terminal background, the lightest surface.
+    let light = theme(0xf7f4ee, 0x2b2722);
+    let (fill, ring) = selected_capsule(&light);
+    assert_eq!(fill, rgb(0xf7f4ee).into());
+    assert_eq!(ring, bezel_theme::glass_selected_shadows());
+    // Dark: Bezel's selected wash flattened over the plate.
+    let mut dark = theme(0x211f1b, 0xe9e3d8);
+    dark.surface = 0x1b1916;
+    let (fill, _) = selected_capsule(&dark);
+    assert_eq!(fill.a, 1.);
+    assert!(lstar(u32::from(gpui::Rgba::from(fill)) >> 8) > lstar(dark.surface) + 5.);
+}

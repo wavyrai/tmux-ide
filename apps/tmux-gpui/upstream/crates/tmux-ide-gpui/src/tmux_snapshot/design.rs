@@ -210,11 +210,28 @@ fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
             let under: Hsla = rgb(plate).into();
             [
                 plate,
-                pack(bezel_theme::flatten(stock.card_selected_bg(), under)),
                 pack(bezel_theme::flatten(stock.element_hover, under)),
             ]
         })
+        // The selected capsule is opaque, whatever the frost under it.
+        .chain([pack(selected_capsule(theme).0)])
         .collect()
+}
+
+/// The selected row's capsule (#746 v3), opaque so it reads the same over
+/// the glass whatever the desktop: in a light theme the lightest surface, the
+/// terminal's own background (the focused card's colour); in a dark one
+/// Bezel's selected wash laid over the plate. Bezel's inset selection ring
+/// edges it; there is no drop shadow (Bezel has no shadow token for it).
+pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    let fill = if dark {
+        let stock = bezel_theme::Theme::for_appearance(bezel_theme::Appearance::Dark);
+        bezel_theme::flatten(stock.card_selected_bg(), rgb(theme.surface).into())
+    } else {
+        rgb(theme.background).into()
+    };
+    (fill, bezel_theme::glass_selected_shadows())
 }
 
 /// A sidebar row's label and caption colours, as `render_row` paints them.
@@ -648,12 +665,13 @@ mod tests {
             }
             // Row text over the selected and hover washes, on every plate.
             let mut row_plates = Vec::new();
+            // The selected row is the opaque capsule (#746 v3).
+            row_plates.push((
+                super::selected_capsule(&theme).0,
+                "the selected capsule".to_string(),
+            ));
             for (plate, plate_name) in &plates {
                 row_plates.push((*plate, plate_name.to_string()));
-                row_plates.push((
-                    bezel_theme::flatten(bezel.card_selected_bg(), *plate),
-                    format!("selected row on {plate_name}"),
-                ));
                 row_plates.push((
                     bezel_theme::flatten(bezel.element_hover, *plate),
                     format!("hovered row on {plate_name}"),

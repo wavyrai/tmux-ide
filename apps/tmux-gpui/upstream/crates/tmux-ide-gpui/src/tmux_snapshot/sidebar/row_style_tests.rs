@@ -21,7 +21,7 @@ fn fill(element: &mut Stateful<Div>) -> Option<Hsla> {
 }
 
 #[gpui::test]
-fn selection_takes_bezel_fills_and_emphasis_follows_sidebar_focus(cx: &mut TestAppContext) {
+fn a_selected_row_is_the_opaque_capsule_with_bezels_ring(cx: &mut TestAppContext) {
     let theme = Theme::default();
     cx.update(|cx| {
         crate::tmux_snapshot::design::prepare(&theme, false, cx);
@@ -30,24 +30,13 @@ fn selection_takes_bezel_fills_and_emphasis_follows_sidebar_focus(cx: &mut TestA
         let mut focused = render_row(0, &row(true), &theme, &bezel, painter, true);
         let mut unfocused = render_row(1, &row(true), &theme, &bezel, painter, false);
         let mut resting = render_row(2, &row(false), &theme, &bezel, painter, true);
-        assert_eq!(fill(&mut focused), Some(bezel.card_selected_bg()));
-        assert!(
-            !focused
-                .style()
-                .box_shadow
-                .clone()
-                .unwrap_or_default()
-                .is_empty()
-        );
-        assert_eq!(fill(&mut unfocused), Some(bezel.element_hover));
-        assert!(
-            unfocused
-                .style()
-                .box_shadow
-                .clone()
-                .unwrap_or_default()
-                .is_empty()
-        );
+        // #746 v3: the selected row is the opaque capsule with Bezel's ring,
+        // whether or not the sidebar holds the keyboard.
+        let (capsule, ring) = crate::tmux_snapshot::design::selected_capsule(&theme);
+        for row in [&mut focused, &mut unfocused] {
+            assert_eq!(fill(row), Some(capsule));
+            assert_eq!(row.style().box_shadow.clone().unwrap_or_default(), ring);
+        }
         // At rest the hover fade has not started: the row shows the chrome.
         assert_eq!(fill(&mut resting), Some(bezel.ink(0.0)));
     });

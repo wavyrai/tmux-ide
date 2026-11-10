@@ -356,8 +356,11 @@ pub(super) fn render_row(
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
-    match selection.fill(bezel) {
-        Some(fill) => element.bg(fill).shadow(selection.shadows()),
+    match selection
+        .is_selected()
+        .then(|| crate::tmux_snapshot::design::selected_capsule(theme))
+    {
+        Some((fill, ring)) => element.bg(fill).shadow(ring),
         None if row.target.is_some() => {
             element = element.cursor_pointer().bg(bezel_motion::hover_blend(
                 &fade,
