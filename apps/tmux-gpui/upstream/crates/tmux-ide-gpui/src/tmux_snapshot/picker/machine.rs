@@ -145,7 +145,7 @@ impl SnapshotView {
         let connect_identity = form.identity.clone();
         let theme = self.theme();
         Some(super::super::design::dialog_overlay("machine-dialog-overlay", &theme)
-            .child(bezel_ui::popover::dialog_card(&super::super::design::palette(&theme)).id("machine-dialog").w(px(440.)).max_w_full()
+            .child(bezel_motion::dialog_in("machine-dialog-in", bezel_ui::popover::dialog_card(&super::super::design::palette(&theme)).id("machine-dialog").w(px(440.)).max_w_full()
                 .flex().flex_col().gap_3()
                 .child(bezel_ui::popover::dialog_title(&super::super::design::palette(&theme), "Add machine"))
                 .child(bezel_ui::popover::dialog_body(&super::super::design::palette(&theme), "Use an existing SSH alias or user@host. The remote machine must run tmux-ide --headless. SSH keys and host trust use your SSH configuration. This saves the machine locally; if saving fails, the connection is marked temporary.").text_color(super::super::design::dialog_muted(&theme)).children(super::super::design::ink_probe(|| "dialog-body-machine".into())))
@@ -181,7 +181,7 @@ impl SnapshotView {
                             if view.machine_identity_current(&connect_identity, cx) {
                                 view.submit_machine(window, cx);
                             }
-                        })))))
+                        }))))))
             .into_any_element())
     }
 }

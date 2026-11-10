@@ -141,7 +141,8 @@ impl SnapshotView {
                 }),
         };
         super::super::design::dialog_overlay("saved-machines-overlay", &theme)
-            .child(
+            .child(bezel_motion::dialog_in(
+                "saved-machines-dialog-in",
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("saved-machines-dialog")
                     .w(px(520.))
@@ -185,7 +186,7 @@ impl SnapshotView {
                             ),
                         ),
                     ),
-            )
+            ))
             .into_any_element()
     }
 }
