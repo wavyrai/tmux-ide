@@ -99,6 +99,7 @@ pub(super) struct Card {
 pub(super) const KEEP_RUNNING: &str = "Your sessions keep running.";
 pub(super) const UPDATE_NEEDED: &str = "Update needed";
 pub(super) const SETUP_NEEDED: &str = "Set up needed";
+pub(super) const COULDNT_RECONNECT: &str = "Couldn't reconnect";
 
 /// The card for `state`, if anything needs the user: this Mac's daemon or
 /// recovery first, then local setup, then the first remote machine.
@@ -145,8 +146,8 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
                 "Refresh",
             ),
             Act::GaveUp => card(
-                SETUP_NEEDED,
-                "Couldn't reconnect",
+                COULDNT_RECONNECT,
+                COULDNT_RECONNECT,
                 &detail,
                 "Refresh sessions",
             ),

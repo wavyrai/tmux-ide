@@ -76,6 +76,8 @@ pub(in crate::tmux_snapshot) struct Row {
     pub aside: Option<String>,
     /// A pane row's pane: its agent state and its menu.
     pub pane: Option<String>,
+    /// Listed from a remote machine that is away (r4): muted ink.
+    pub away: bool,
 }
 pub(in crate::tmux_snapshot) fn rows(state: &browser::State) -> Vec<Row> {
     if let Some(fleet) = &state.fleet {
@@ -215,7 +217,8 @@ pub(super) fn render_row(
         .overflow_hidden()
         // Three inks (#746 v3): the full text only on the selection, the
         // middle label ink on other rows, muted on headings.
-        .text_color(rgb(if heading || window {
+        // An away machine's rows (r4) take the muted ink too.
+        .text_color(rgb(if heading || window || row.away {
             muted
         } else if row.selected {
             label

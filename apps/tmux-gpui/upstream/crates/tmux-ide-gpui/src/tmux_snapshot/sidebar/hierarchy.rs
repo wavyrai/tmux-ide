@@ -59,6 +59,7 @@ fn session_row(fleet: &Fleet, g: &Group, s: &Session) -> Row {
     };
     r.selected = s.active;
     r.favorite = Some((s.favorite_action.clone(), s.favorite));
+    r.away = g.away.is_some();
     r
 }
 /// The fleet's id for this Mac.
@@ -97,6 +98,7 @@ pub(super) fn rows(state: &browser::State, fleet: &Fleet) -> Vec<Row> {
                 g.state.label().into()
             });
             machine.machine = Some(g.id.clone());
+            machine.away = g.away.is_some();
             out.push(machine);
         }
         let mut sessions: Vec<_> = g.sessions.iter().collect();

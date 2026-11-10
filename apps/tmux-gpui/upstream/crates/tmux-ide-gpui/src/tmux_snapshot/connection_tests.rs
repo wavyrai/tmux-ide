@@ -406,7 +406,7 @@ fn each_act_needed_state_has_its_card_and_slot_label() {
         (Act::Credentials, SETUP_NEEDED),
         (Act::Platform, SETUP_NEEDED),
         (Act::Unreadable, SETUP_NEEDED),
-        (Act::GaveUp, SETUP_NEEDED),
+        (Act::GaveUp, COULDNT_RECONNECT),
     ] {
         let card = card(&with_act(act), true).unwrap();
         assert_eq!(card.slot, slot, "{act:?}");
