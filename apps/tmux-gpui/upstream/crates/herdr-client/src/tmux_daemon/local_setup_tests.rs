@@ -182,7 +182,15 @@ fn the_cli_version_this_repository_releases_can_be_set_up() {
 }
 #[test]
 fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
-    for version in ["2.9.6", "2.9.12", "2.9.13", "2.9.21", "2.9.100"] {
+    for version in [
+        "2.9.6",
+        "2.9.12",
+        "2.9.13",
+        "2.9.21",
+        "2.9.100",
+        "2.9.987654321",
+        "2.9.18446744073709551615",
+    ] {
         assert!(
             resolve_local_setup(&Fixture::at(version).0).is_ok(),
             "{version}"
@@ -197,6 +205,7 @@ fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
         "3.0.0",
         "2.9.22-beta.1",
         "2.9.07",
+        "2.9.18446744073709551616",
         "2.9",
         "v2.9.21",
         "",
