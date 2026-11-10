@@ -144,3 +144,29 @@ fn selected_tmux_version_is_strict_and_exports_no_scope() {
     };
     assert!(matches!(build(&state, false), Err(Error::InvalidVersion)));
 }
+
+#[test]
+fn export_names_the_local_setup_problem_without_paths() {
+    use browser::local_setup::Phase;
+    let with = |phase: &str| {
+        let state = browser::State {
+            status: "SECRET_TERMINAL_AND_ERROR".into(),
+            local_setup: Some(serde_json::from_value(json!({"phase": phase})).unwrap()),
+            ..Default::default()
+        };
+        serde_json::from_str::<Value>(&build(&state, false).unwrap()).unwrap()["localSetup"].clone()
+    };
+    assert_eq!(with("unsupported"), "unsupported-version");
+    assert_eq!(with("unrecognized"), "unrecognized-installation");
+    assert_eq!(with("missing"), "missing");
+    assert_eq!(with("available"), "available");
+    let none = build(&browser::State::default(), false).unwrap();
+    assert!(serde_json::from_str::<Value>(&none).unwrap()["localSetup"].is_null());
+    assert_ne!(
+        Phase::Unsupported.guidance(),
+        Phase::Unrecognized.guidance()
+    );
+    assert!(Phase::Unsupported.guidance().contains("version"));
+    assert!(Phase::Unrecognized.guidance().contains("installation"));
+    assert!(!Phase::Unrecognized.actionable() && !Phase::Unsupported.actionable());
+}
