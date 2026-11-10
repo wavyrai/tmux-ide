@@ -4,6 +4,9 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        Self::at("2.9.12")
+    }
+    fn at(version: &str) -> Self {
         let home = std::env::temp_dir().join(format!("tmux-native-setup-{}", uuid::Uuid::new_v4()));
         let root = home.join(".local/share/tmux-ide");
         let release = root.join("releases/install-Owned1");
@@ -24,7 +27,9 @@ impl Fixture {
         .unwrap();
         fs::write(
             release.join("npm/lib/node_modules/tmux-ide/package.json"),
-            br#"{"name":"tmux-ide","version":"2.9.12","bin":{"tmux-ide":"bin/cli.js"}}"#,
+            format!(
+                r#"{{"name":"tmux-ide","version":"{version}","bin":{{"tmux-ide":"bin/cli.js"}}}}"#
+            ),
         )
         .unwrap();
         symlink("releases/install-Owned1", root.join("current")).unwrap();
@@ -159,4 +164,58 @@ fn cancellation_reaps_only_the_owned_waiter() {
         Err(LocalSetupError::Stopped)
     ));
     assert!(began.elapsed() < Duration::from_secs(3));
+}
+#[test]
+fn the_cli_version_this_repository_releases_can_be_set_up() {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../package.json");
+    let package: serde_json::Value = serde_json::from_slice(&fs::read(package).unwrap()).unwrap();
+    let version = package["version"].as_str().unwrap();
+    assert_eq!(package["name"], "tmux-ide");
+    // Fails when a release moves past SETUP_CLI: widen it once `run`'s CLI contract is checked.
+    assert_eq!(
+        resolve_local_setup(&Fixture::at(version).0)
+            .map(|i| i.version().to_owned())
+            .ok(),
+        Some(version.to_owned()),
+        "CLI {version} is outside SETUP_CLI in local_setup.rs",
+    );
+}
+#[test]
+fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
+    for version in [
+        "2.9.6",
+        "2.9.12",
+        "2.9.13",
+        "2.9.21",
+        "2.9.100",
+        "2.9.987654321",
+        "2.9.18446744073709551615",
+    ] {
+        assert!(
+            resolve_local_setup(&Fixture::at(version).0).is_ok(),
+            "{version}"
+        );
+    }
+    for version in [
+        "2.9.5",
+        "2.8.40",
+        "2.9.21.1",
+        "2.9.+21",
+        "2.10.0",
+        "3.0.0",
+        "2.9.22-beta.1",
+        "2.9.07",
+        "2.9.18446744073709551616",
+        "2.9",
+        "v2.9.21",
+        "",
+    ] {
+        assert!(
+            matches!(
+                resolve_local_setup(&Fixture::at(version).0),
+                Err(LocalSetupError::Unsupported)
+            ),
+            "{version}"
+        );
+    }
 }

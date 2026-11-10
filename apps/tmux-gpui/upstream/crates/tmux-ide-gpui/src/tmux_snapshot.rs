@@ -32,8 +32,10 @@ mod direct_projection;
 mod display_frame;
 mod divider;
 mod geometry;
+mod glass_ink;
 mod hit_regions;
 mod home;
+mod ink;
 mod input_gate;
 mod kbd;
 mod keys;
@@ -61,6 +63,7 @@ mod session_tabs;
 mod shell;
 mod status_presentation;
 mod stream;
+pub(crate) mod surfaces;
 mod terminal_font;
 mod terminal_links;
 #[cfg(test)]

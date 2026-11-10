@@ -113,7 +113,7 @@ pub(super) fn faint_muted() -> serde_json::Value {
 }
 
 #[gpui::test]
-fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
+fn home_text_reads_where_bezels_muted_does_not(cx: &mut TestAppContext) {
     // The appearance bezel paints in is process-wide: hold it, so no test
     // running alongside changes it under this one.
     let _appearance = bezel_theme::lock_appearance();
@@ -122,7 +122,11 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
         let mut view = make_view(window, cx, sender);
         view.frame = None;
         view.browser_state.frame = None;
-        view.browser_state.appearance = Some(serde_json::from_value(faint_muted()).unwrap());
+        // Home's plate is the theme's background (#746 v3), so the hostile
+        // grey goes there.
+        let mut appearance = faint_muted();
+        appearance["theme"]["background"] = 0x404040.into();
+        view.browser_state.appearance = Some(serde_json::from_value(appearance).unwrap());
         view.browser_state.fleet = Some(
             serde_json::from_slice(include_bytes!(
                 "../../../../../../../fixtures/home-fleet.json"
@@ -145,15 +149,20 @@ fn home_text_reads_where_bezel_roles_do_not(cx: &mut TestAppContext) {
     receiver.try_iter().for_each(drop);
     let (theme, canvas) = view.read_with(cx, |v, _| (v.theme(), v.canvas()));
     let plates = plates_under_text(&theme, canvas);
+    // The chrome's tiers read on the chrome's own surfaces, Home's plate
+    // among them (#746 v3), so Bezel's text now reads here too. Its muted
+    // does not on Home's washes over the plate (the field, a hovered or
+    // selected row, a key cap): that is what the Home ink must answer for.
     let stock = design::palette(&theme);
-    for (role, color) in [("text", stock.text), ("muted", stock.text_muted)] {
-        assert!(
-            plates.iter().any(|(plate, _)| {
-                bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
-            }),
-            "Bezel's {role} must fail on Home's plates here, or the test proves nothing"
-        );
-    }
+    let fails = |color: Hsla| {
+        plates.iter().any(|(plate, _)| {
+            bezel_theme::contrast_ratio(bezel_theme::flatten(color, *plate), *plate) < 4.5
+        })
+    };
+    assert!(
+        fails(stock.text_muted),
+        "Bezel's muted must fail on one of Home's plates here, or the test proves nothing"
+    );
     cx.update(|_, cx| cx.set_global(InkProbes::default()));
     cx.simulate_resize(size(px(1400.), px(1800.)));
     // The table's keyboard row, for the ↵ hint's ink on the selected plate.

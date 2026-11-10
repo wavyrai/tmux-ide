@@ -436,7 +436,9 @@ impl SnapshotView {
         super::design::prepare(&theme, self.chrome.allowed(), cx);
         if menu.input.is_none() {
             let items = menu.items();
-            let bezel = bezel_theme::Theme::of(cx).clone();
+            // The menu floats on Glass::Regular: its inks read over any
+            // desktop (#746 glass plan, G6).
+            let bezel = super::glass_ink::on_regular_glass(bezel_theme::Theme::of(cx));
             let card = menu_render::card(&bezel, &items, &menu.cursor, window, cx);
             return Some(
                 div()

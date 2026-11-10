@@ -102,7 +102,8 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
         view.frame = None;
         view.browser_state.frame = None;
         let mut appearance = faint_muted();
-        appearance["theme"]["canvas"] = 0x808080.into();
+        // Home's plate is the theme's background (#746 v3).
+        appearance["theme"]["background"] = 0x808080.into();
         view.browser_state.appearance = Some(serde_json::from_value(appearance).unwrap());
         view.browser_state.fleet = Some(
             serde_json::from_value(serde_json::json!({"groups":[],"omittedGroups":0})).unwrap(),

@@ -14,8 +14,11 @@ pub(super) mod recovery;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
-/// it, so the table's values sit near its names.
-const PAGE_MAX: f32 = fleet::TABLE_MAX;
+/// it, so the table's values sit near its names, plus the page column's own
+/// 24 pt sides, so the table itself gets the whole width.
+const PAGE_MAX: f32 = fleet::TABLE_MAX + 2. * PAGE_SIDE;
+/// Bezel's `page_column` side padding.
+const PAGE_SIDE: f32 = 24.;
 /// The Browse sessions field's width in the header.
 const BROWSE_WIDTH: f32 = 220.;
 /// The alpha of `popover::key_cap`'s fill.
@@ -60,7 +63,7 @@ fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// `danger_muted` and `warning_muted`, the strips' text, are inked opaque on
 /// their strip's wash; `danger_muted` also on the bare canvas, where error
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
-/// as `design::chrome_text` does.
+/// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
@@ -126,7 +129,10 @@ fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
     match state.local_setup.as_ref().filter(|_| connected) {
         Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
         Some(_) => StatusTone::Normal,
-        None if state.home_phase == browser::HomePhase::Unavailable || state.home_fault => {
+        None if state.home_phase == browser::HomePhase::Unavailable
+            || state.home_fault
+            || state.home_notice.is_some() =>
+        {
             StatusTone::Warning
         }
         None => StatusTone::Normal,
@@ -149,7 +155,13 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     if connected && let Some(setup) = &state.local_setup {
         return setup.phase.guidance().into();
     }
-    crate::notifications::safe_text(&state.status, 240)
+    // Reconnecting and fault status outrank a pane-limit notice.
+    match &state.home_notice {
+        Some(notice) if state.reconnect_attempt.is_none() && !state.home_fault => {
+            crate::notifications::safe_text(notice, 480)
+        }
+        _ => crate::notifications::safe_text(&state.status, 240),
+    }
 }
 fn current(state: &browser::State, connected: bool, request: u64, captured: u64, id: &str) -> bool {
     state.surface == browser::Surface::Home
@@ -414,6 +426,7 @@ impl SnapshotView {
             || (!is_live && !self.browser_state.status.is_empty())
             || reconnect
             || (is_live && self.browser_state.home_fault)
+            || (is_live && self.browser_state.home_notice.is_some())
         {
             let status = status_message(&self.browser_state, connected);
             let line = match status_tone(&self.browser_state, connected) {
