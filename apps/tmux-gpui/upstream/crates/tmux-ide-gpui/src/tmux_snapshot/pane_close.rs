@@ -140,6 +140,42 @@ impl SnapshotView {
         }
     }
 
+    /// Whether the open card has lost what it asks about: its pane left the
+    /// layout, or the window no longer shows the workspace it was opened in
+    /// (another session, Home, a navigation, a held or switching frame, no
+    /// connection). A target that is merely stale (its one-use capability
+    /// spent, input briefly not ready) keeps the card, which then says
+    /// "Pane changed" if confirmed.
+    fn pane_close_lost(&self) -> bool {
+        let Some(card) = &self.pane_close else {
+            return false;
+        };
+        let state = &self.browser_state;
+        let (request, session) = card.target.origin();
+        self.browser_commands.is_none()
+            || self.browser_request != request
+            || state.request != request
+            || state.surface != super::browser::Surface::Workspace
+            || state.selected_session.as_deref() != Some(session)
+            || state.retained_preview
+            || state.frame.is_none()
+            || !state.panes.iter().any(|p| p.id == card.pane)
+            || !state.regions.iter().any(|r| r.id == card.pane)
+    }
+
+    /// Ends the card when it has lost its pane (see `pane_close_lost`).
+    /// Called where a publication is applied, so it never waits for the
+    /// card to fail to draw, and again before each frame for a layout
+    /// written without a publication (a window switch's retained frame).
+    /// Dropping the card drops its focus handle, so nothing holds focus and
+    /// that frame gives it to the terminal (browser_render's no-focus rule).
+    pub(super) fn refresh_pane_close(&mut self, cx: &mut Context<Self>) {
+        if self.pane_close_lost() {
+            self.pane_close = None;
+            cx.notify();
+        }
+    }
+
     /// The card's keys: Return activates the focused button (Cancel unless
     /// Tab moved), Escape cancels, Cmd-W again confirms, Tab and Shift-Tab
     /// move between the buttons; nothing reaches the terminal meanwhile.

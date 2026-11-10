@@ -68,6 +68,10 @@ impl Target {
             actions,
         })
     }
+    /// The publication request and the session the target was captured in.
+    pub(super) fn origin(&self) -> (u64, &str) {
+        (self.request, &self.session)
+    }
     /// The pane the target names.
     pub(super) fn pane_id(&self) -> &str {
         &self.actions.id

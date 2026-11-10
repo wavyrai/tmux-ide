@@ -517,6 +517,7 @@ impl SnapshotView {
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }
         // The preview windows have no browsing shell to install Bezel's theme,
