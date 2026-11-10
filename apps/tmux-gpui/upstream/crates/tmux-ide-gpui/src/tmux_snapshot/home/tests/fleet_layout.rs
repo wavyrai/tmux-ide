@@ -79,3 +79,40 @@ fn fleet_hierarchy_keeps_long_labels_and_statuses_separate(cx: &mut TestAppConte
     );
     assert!(receiver.try_recv().is_err());
 }
+
+/// #746 v3 (card 10): the toolbar's search is a 260 × 28 pt field, a filter
+/// is a 26 pt capsule, a machine's header is 34 pt, and its actions are
+/// small text, not 32 pt buttons. Retry, a recovery, stays a button.
+#[gpui::test]
+fn home_toolbar_filters_and_machine_headers_take_v3_sizes(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (_view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.fleet = Some(
+            serde_json::from_slice(include_bytes!(
+                "../../../../../../../fixtures/home-fleet.json"
+            ))
+            .unwrap(),
+        );
+        view.frame = None;
+        view.browser_state.frame = None;
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_resize(size(px(1200.), px(1800.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let browse = cx.debug_bounds("home-browse").unwrap();
+    assert_eq!(browse.size, size(px(260.), px(28.)));
+    for key in ["home-nav-all", "home-nav-machine-0"] {
+        assert_eq!(cx.debug_bounds(key).unwrap().size.height, px(26.), "{key}");
+    }
+    let header = cx.debug_bounds("fleet-machine-header-0").unwrap();
+    assert_eq!(header.size.height, px(34.));
+    let disconnect = cx.debug_bounds("fleet-disconnect-0").unwrap();
+    assert!(header.contains(&disconnect.center()));
+    assert!(disconnect.size.height < px(20.), "{disconnect:?}");
+    assert_eq!(
+        cx.debug_bounds("fleet-retry-1").unwrap().size.height,
+        px(32.)
+    );
+}

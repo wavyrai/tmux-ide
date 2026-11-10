@@ -1,7 +1,7 @@
 //! Home's fleet: the left list (All sessions, Favourites, machines, Add
 //! machine) and the session table for the list's entry (#684, #705 Option A):
-//! machines are label lines over their rows, with no card and no rules. The
-//! rows themselves are in `fleet_rows`.
+//! machines are label lines over their rows, with no card, each under a
+//! hairline (#746 v3). The rows themselves are in `fleet_rows`.
 use super::*;
 use bezel_ui::widgets::{Content, status_dot};
 use fleet_nav::View;
@@ -39,6 +39,32 @@ pub(super) fn glyph(path: &'static str, color: Hsla) -> Svg {
         .size(px(bezel_ui::widgets::ICON_GLYPH))
         .flex_none()
         .text_color(color)
+}
+
+/// A machine header's action as small muted text (#746 v3), the text ink
+/// under the pointer; a disabled one stays muted and inert.
+fn aside_link(
+    id: impl Into<ElementId>,
+    selector: String,
+    label: &'static str,
+    enabled: bool,
+    bezel: &bezel_theme::Theme,
+) -> Stateful<Div> {
+    let text = bezel.text;
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .accessibility_id(selector.clone())
+        .debug_selector(move || selector.clone())
+        .flex_none()
+        .text_style(TextStyle::Subheadline)
+        .text_color(bezel.text_muted)
+        .when(enabled, |link| {
+            link.cursor_pointer().hover(move |s| s.text_color(text))
+        })
+        .when(!enabled, |link| link.opacity(0.6))
+        .child(label)
 }
 
 /// The tone of a machine's status dot.
@@ -149,11 +175,12 @@ impl SnapshotView {
             View::Machine(id) => fleet.and_then(|f| f.groups.iter().find(|g| &g.id == id)),
             _ => None,
         };
+        // A machine's filter leads with its status dot, not an icon (#746 v3).
         let (icon, label) = match (entry, group) {
-            (View::All, _) => ("icons/sessions.svg", "All sessions".to_owned()),
-            (View::Favourites, _) => ("icons/fleet-star.svg", "Favourites".to_owned()),
-            (View::Machine(_), Some(group)) => ("icons/devices.svg", group.label.clone()),
-            (View::Machine(id), None) => ("icons/devices.svg", id.clone()),
+            (View::All, _) => (Some("icons/sessions.svg"), "All sessions".to_owned()),
+            (View::Favourites, _) => (Some("icons/fleet-star.svg"), "Favourites".to_owned()),
+            (View::Machine(_), Some(group)) => (None, group.label.clone()),
+            (View::Machine(id), None) => (None, id.clone()),
         };
         let selector = entry.selector(index);
         let hover = bezel.element_hover;
@@ -169,9 +196,9 @@ impl SnapshotView {
             .min_w_0()
             .flex()
             .items_center()
-            .gap(px(SPACE))
-            .px(px(SPACE))
-            .py(px(6.))
+            .gap(px(6.))
+            .px(px(10.))
+            .h(px(26.))
             // A filter is a capsule, like a sidebar row (#746 v3).
             .rounded_full()
             .cursor_pointer()
@@ -186,28 +213,36 @@ impl SnapshotView {
                     None => row.hover(move |s| s.bg(hover)),
                 }
             })
-            .child(glyph(
-                icon,
-                if selected {
-                    bezel.text
-                } else {
-                    bezel.text_muted
-                },
-            ))
+            .children(icon.map(|icon| {
+                glyph(
+                    icon,
+                    if selected {
+                        bezel.text
+                    } else {
+                        bezel.text_muted
+                    },
+                )
+            }))
+            .children(group.map(|g| status_dot(machine_tone(&bezel, g))))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_style(TextStyle::Body)
+                    .text_style(TextStyle::Callout)
+                    // The chosen filter in the text ink, the others muted.
+                    .text_color(if selected {
+                        bezel.text
+                    } else {
+                        bezel.text_muted
+                    })
                     .when(selected, |label| label.font_weight(FontWeight::MEDIUM))
                     .child(crate::sidebar::label_text(&label)),
             )
-            .children(group.map(|g| status_dot(machine_tone(&bezel, g))))
             .child(
                 div()
                     .flex_none()
-                    .text_style(TextStyle::Callout)
+                    .text_style(TextStyle::Subheadline)
                     .text_color(bezel.text_muted)
                     .children(design::ink_probe(move || format!("home-nav-count-{index}")))
                     .child(fleet_nav::count(&entry, fleet).to_string()),
@@ -267,12 +302,12 @@ impl SnapshotView {
                 .debug_selector(|| "home-add-machine".into())
                 .role(Role::Button)
                 .aria_label("Add machine…")
-                .px(px(SPACE))
-                .py(px(6.))
+                .px(px(10.))
+                .h(px(26.))
                 .rounded_full()
                 .flex()
                 .items_center()
-                .gap(px(SPACE))
+                .gap(px(6.))
                 .text_style(TextStyle::Callout)
                 .text_color(bezel.text_muted)
                 .cursor_pointer()
@@ -335,27 +370,18 @@ impl SnapshotView {
         }
         if let Some(token) = group.disconnect.clone() {
             actions.push(
-                div()
-                    .id(("fleet-disconnect", index))
-                    .child(
-                        native_controls::action_button_on(
-                            "fleet-disconnect-action",
-                            Some("Disconnect"),
-                            "Disconnect",
-                            native_controls::Icon::Close,
-                            native_controls::ButtonStyle::Quiet,
-                            &bezel,
-                        )
-                        .accessibility_id(format!("fleet-disconnect-{index}"))
-                        .debug_selector(move || format!("fleet-disconnect-{index}"))
-                        .on_click(cx.listener(
-                            move |view, _, window, cx| {
-                                cx.stop_propagation();
-                                view.disconnect_fleet_machine(request, &token, window, cx);
-                            },
-                        )),
-                    )
-                    .into_any_element(),
+                aside_link(
+                    ("fleet-disconnect", index),
+                    format!("fleet-disconnect-{index}"),
+                    "Disconnect",
+                    true,
+                    &bezel,
+                )
+                .on_click(cx.listener(move |view, _, window, cx| {
+                    cx.stop_propagation();
+                    view.disconnect_fleet_machine(request, &token, window, cx);
+                }))
+                .into_any_element(),
             );
         }
         // One machine needs no collapse (Favourites does that), unless it
@@ -365,10 +391,14 @@ impl SnapshotView {
             return None;
         }
         Some(
+            // #746 v3: 34 pt under a hairline; the name after its status
+            // dot, its state and actions to the right as small muted text.
             div()
                 .debug_selector(move || format!("fleet-machine-header-{index}"))
                 .min_w_0()
                 .min_h(px(HEADER_HEIGHT))
+                .border_t_1()
+                .border_color(bezel.border)
                 .px(px(ROW_GAP))
                 .flex()
                 .items_center()
@@ -391,13 +421,14 @@ impl SnapshotView {
                         cx,
                     ))
                 })
+                .child(status_dot(machine_tone(&bezel, group)))
                 .child(
                     div()
                         .debug_selector(move || format!("fleet-machine-label-{index}"))
                         .min_w_0()
                         .truncate()
                         .text_style(TextStyle::Subheadline)
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(bezel.text_muted)
                         .children(design::ink_probe(move || {
                             format!("fleet-machine-label-{index}")
@@ -410,12 +441,8 @@ impl SnapshotView {
                         div()
                             .debug_selector(move || format!("fleet-machine-status-{index}"))
                             .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_style(TextStyle::Callout)
+                            .text_style(TextStyle::Subheadline)
                             .text_color(bezel.text_muted)
-                            .child(status_dot(machine_tone(&bezel, group)))
                             .children(design::ink_probe(move || {
                                 format!("fleet-machine-status-{index}")
                             }))
@@ -427,7 +454,14 @@ impl SnapshotView {
                     )
                 })
                 .child(div().flex_1())
-                .children(actions),
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(14.))
+                        .children(actions),
+                ),
         )
     }
 
@@ -527,12 +561,12 @@ impl SnapshotView {
                 div()
                     .debug_selector(move || format!("fleet-server-default-{index}-{server_index}"))
                     .flex_none()
-                    .text_style(TextStyle::Callout)
+                    .text_style(TextStyle::Subheadline)
                     .text_color(bezel.text_muted)
                     .children(design::ink_probe(move || {
                         format!("fleet-server-default-{index}-{server_index}")
                     }))
-                    .child("Default")
+                    .child("Default for new sessions")
                     .into_any_element()
             });
         }
@@ -541,15 +575,19 @@ impl SnapshotView {
             && self.presence.ready()
             && self.browser_state.request == request;
         let tip: SharedString = format!("Use {} for new sessions", server.label).into();
-        let button =
-            bezel_ui::widgets::Button::new(("fleet-use-server", id), "Use for new sessions")
-                .icon(bezel_ui::icons::Icon::asset("icons/check.svg"))
-                .enabled(enabled)
-                .text_color(bezel.text_muted)
-                .on_press(cx.listener(move |view, _, window, cx| {
-                    cx.stop_propagation();
-                    view.open_fleet_server(request, &token, window, cx);
-                }));
+        let button = aside_link(
+            ("fleet-use-server", id),
+            format!("fleet-use-server-action-{index}-{server_index}"),
+            "Use for new sessions",
+            enabled,
+            &bezel,
+        )
+        .when(enabled, |link| {
+            link.on_click(cx.listener(move |view, _, window, cx| {
+                cx.stop_propagation();
+                view.open_fleet_server(request, &token, window, cx);
+            }))
+        });
         Some(
             div()
                 .id(("fleet-use-server-tip", id))

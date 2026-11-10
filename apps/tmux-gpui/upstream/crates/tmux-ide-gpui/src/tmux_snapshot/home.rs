@@ -19,8 +19,8 @@ const SPACE: f32 = bezel_theme::Theme::SPACE;
 const PAGE_MAX: f32 = fleet::TABLE_MAX + 2. * PAGE_SIDE;
 /// Bezel's `page_column` side padding.
 const PAGE_SIDE: f32 = 24.;
-/// The Browse sessions field's width in the header.
-const BROWSE_WIDTH: f32 = 220.;
+/// The Browse sessions field's width in the header (#746 v3).
+const BROWSE_WIDTH: f32 = 260.;
 /// The alpha of `popover::key_cap`'s fill.
 const KEY_CAP_FILL: f32 = 0.05;
 /// The alpha of the status strips' tinted fill.
@@ -30,18 +30,23 @@ fn pack(color: Hsla) -> u32 {
     u32::from(Rgba::from(color)) >> 8
 }
 
-/// What Home's text sits on: the opaque canvas, Bezel's card fill over it,
-/// the hover wash over each, the selected wash over the canvas (a hovered
-/// row takes the hover fill in place of its own), and a key cap over the
-/// canvas.
+/// The Browse sessions field's fill: Bezel's sunken code-and-field wash over
+/// the canvas (#746 v3: no border, no lift).
+pub(super) fn field(bezel: &bezel_theme::Theme, canvas: u32) -> Hsla {
+    bezel_theme::flatten(bezel.code_wash, rgb(canvas).into())
+}
+
+/// What Home's text sits on: the opaque canvas, the field over it, the hover
+/// wash over each, the selected wash over the canvas (a hovered row takes
+/// the hover fill in place of its own), and a key cap over the canvas.
 fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 6] {
     let canvas_color: Hsla = rgb(canvas).into();
-    let card = bezel_theme::flatten(bezel.card_glass_bg(), canvas_color);
+    let field = field(bezel, canvas);
     [
         canvas,
-        pack(card),
+        pack(field),
         pack(bezel_theme::flatten(bezel.element_hover, canvas_color)),
-        pack(bezel_theme::flatten(bezel.element_hover, card)),
+        pack(bezel_theme::flatten(bezel.element_hover, field)),
         pack(bezel_theme::flatten(bezel.card_selected_bg(), canvas_color)),
         pack(bezel_theme::flatten(bezel.ink(KEY_CAP_FILL), canvas_color)),
     ]
@@ -280,7 +285,8 @@ impl SnapshotView {
                 .home_filter
                 .as_ref()
                 .map(|controls| controls.actions.clone());
-            let hover = bezel.element_hover;
+            let fill = field(&bezel, canvas);
+            let hover = bezel_theme::flatten(bezel.element_hover, fill);
             actions = actions
                 .child(
                     div()
@@ -292,20 +298,18 @@ impl SnapshotView {
                         .aria_keyshortcuts("Meta+K")
                         .w(px(BROWSE_WIDTH))
                         .min_w_0()
-                        .h(px(bezel_theme::Theme::BUTTON_HEIGHT + 4.))
-                        .px(px(SPACE * 1.5))
+                        .h(px(28.))
+                        .px(px(8.))
                         .flex()
                         .items_center()
-                        .gap(px(SPACE))
-                        .rounded(px(bezel_theme::Theme::control_radius()))
-                        .border_1()
-                        .border_color(bezel.border)
-                        .bg(bezel.card_glass_bg())
+                        .gap(px(6.))
+                        .rounded(px(8.))
+                        .bg(fill)
                         .cursor_pointer()
                         .hover(move |s| s.bg(hover))
                         .child(
                             bezel_ui::icons::icon(bezel_ui::icons::Icon::asset("icons/search.svg"))
-                                .size(px(bezel_ui::widgets::ICON_GLYPH))
+                                .size(px(14.))
                                 .flex_none()
                                 .text_color(bezel.text_muted),
                         )
