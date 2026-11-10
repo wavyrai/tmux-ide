@@ -22,7 +22,10 @@ fn narrow_sidebar_keeps_controls_visible_while_end_reveals_exact_session(cx: &mu
             control.top() >= px(0.) && control.bottom() <= px(400.),
             "{selector} must remain inside the narrow viewport"
         );
-        assert!(control.left() >= px(0.) && control.right() <= px(224.));
+        assert!(
+            control.left() >= px(0.)
+                && control.right() <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+        );
     }
     cx.simulate_keystrokes("ctrl-g end");
     cx.update(|window, cx| window.draw(cx).clear(cx));

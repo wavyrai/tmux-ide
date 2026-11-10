@@ -53,9 +53,18 @@ pub(super) struct Settings {
     pub(super) path: Option<PathBuf>,
     pub source: Option<FontSource>,
 }
+/// The terminal's default size and line (#746 v3): 12 pt on a 15 pt line,
+/// denser than the shared 14 pt default. A size the user saves still wins;
+/// the line keeps this multiple at every size.
+pub(super) const DEFAULT_SIZE: f32 = 12.;
+pub(super) const LINE_HEIGHT_MULTIPLE: f32 = 1.25;
 impl Default for Settings {
     fn default() -> Self {
-        let config = Config::default().terminal;
+        let config = FontConfig {
+            size: DEFAULT_SIZE,
+            line_height_multiple: Some(LINE_HEIGHT_MULTIPLE),
+            ..Config::default().terminal
+        };
         Self {
             requested: config.family.clone(),
             config,

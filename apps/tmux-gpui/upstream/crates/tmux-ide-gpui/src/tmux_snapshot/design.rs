@@ -109,17 +109,9 @@ pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
 /// against a saturated label (Amber's selected row measured 4.49 at 4.6).
 const ROW_TARGET: f32 = 4.75;
 
-/// `color` as text on a sidebar row: [`chrome_text`]'s rule, also over the
-/// fills a row paints under it, the selected wash and the hover wash, on each
-/// of the chrome plates. The current session's row is always selected, so
-/// this is the most-read text in the sidebar.
-pub(crate) fn row_text(theme: &Theme, color: u32) -> u32 {
-    row_inked(theme, color, ROW_TARGET)
-}
-
 /// `color` as a mark on a sidebar row, such as an agent's state glyph: the
 /// contrast setting's mark ratio (3:1, or 4.5:1 at High) on every plate and
-/// wash [`row_text`] reads on (#746).
+/// wash a row's text reads on (#746).
 pub(crate) fn row_mark(theme: &Theme, color: u32) -> u32 {
     // A little over the ratio, as `ROW_TARGET` is over 4.5, so rounding in
     // the frost and wash blends never leaves a mark just under it.
@@ -210,24 +202,47 @@ fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
             let under: Hsla = rgb(plate).into();
             [
                 plate,
-                pack(bezel_theme::flatten(stock.card_selected_bg(), under)),
                 pack(bezel_theme::flatten(stock.element_hover, under)),
             ]
         })
+        // The selected capsule is opaque, whatever the frost under it.
+        .chain([pack(selected_capsule(theme).0)])
         .collect()
 }
 
-/// A sidebar row's label and caption colours, as `render_row` paints them.
-pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
-    (
-        row_text(theme, theme.foreground),
-        row_text(theme, theme.muted),
-    )
+/// The selected row's capsule (#746 v3), opaque so it reads the same over
+/// the glass whatever the desktop: in a light theme the lightest surface, the
+/// terminal's own background (the focused card's colour); in a dark one
+/// Bezel's selected wash laid over the plate. Bezel's inset selection ring
+/// edges it; there is no drop shadow (Bezel has no shadow token for it).
+pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    let fill = if dark {
+        let stock = bezel_theme::Theme::for_appearance(bezel_theme::Appearance::Dark);
+        bezel_theme::flatten(stock.card_selected_bg(), rgb(theme.surface).into())
+    } else {
+        rgb(theme.background).into()
+    };
+    (fill, bezel_theme::glass_selected_shadows())
 }
 
-/// The attention badge's count, on its filled `theme.active` pill.
-pub(crate) fn badge_text(theme: &Theme) -> u32 {
-    crate::contrast::ink_on_chrome(theme.foreground, [theme.active; 3], 4.6)
+/// The plates a sidebar row's text is read on: the chrome (frosted over each
+/// desktop it is checked on), a hovered row, and the selected capsule.
+pub(crate) fn sidebar_plates(theme: &Theme) -> Vec<u32> {
+    row_plates(theme)
+}
+
+/// A sidebar row's label and caption colours, as `render_row` paints them:
+/// the selected row's text tier and the muted tier (#746 v3).
+pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
+    let tiers = super::ink::tiers(theme);
+    (tiers.text, tiers.muted)
+}
+
+/// The sidebar's middle ink (#746 v3): an unselected row's label, the
+/// label tier between the selected row's text and the muted headings.
+pub(crate) fn row_label(theme: &Theme) -> u32 {
+    super::ink::tiers(theme).label
 }
 
 /// A dialog's secondary text (`popover::dialog_body`'s role), inked on the
@@ -407,7 +422,7 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge_text, chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
+    use super::{chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
     use gpui::{Hsla, TestAppContext, black, rgb, white};
 
@@ -633,12 +648,13 @@ mod tests {
             }
             // Row text over the selected and hover washes, on every plate.
             let mut row_plates = Vec::new();
+            // The selected row is the opaque capsule (#746 v3).
+            row_plates.push((
+                super::selected_capsule(&theme).0,
+                "the selected capsule".to_string(),
+            ));
             for (plate, plate_name) in &plates {
                 row_plates.push((*plate, plate_name.to_string()));
-                row_plates.push((
-                    bezel_theme::flatten(bezel.card_selected_bg(), *plate),
-                    format!("selected row on {plate_name}"),
-                ));
                 row_plates.push((
                     bezel_theme::flatten(bezel.element_hover, *plate),
                     format!("hovered row on {plate_name}"),
@@ -654,9 +670,16 @@ mod tests {
                     }
                 }
             }
-            let badge = bezel_theme::contrast_ratio(color(badge_text(&theme)), color(theme.active));
-            if badge < 4.5 {
-                failures.push(format!("{name}: badge count on its pill is {badge:.2}:1"));
+            // The "needs input" pill's words on its opaque wash, wherever
+            // the sidebar is drawn (#746).
+            let (wash, ink) = crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+                &theme,
+                crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+            );
+            assert_eq!(wash.a, 1.0, "{name}: the pill's wash is opaque");
+            let ratio = bezel_theme::contrast_ratio(color(ink), wash);
+            if ratio < 4.5 {
+                failures.push(format!("{name}: attention pill is {ratio:.2}:1"));
             }
             for (role, value) in [("foreground", theme.foreground), ("muted", theme.muted)] {
                 let text = color(chrome_text(&theme, value));

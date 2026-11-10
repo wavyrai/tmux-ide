@@ -3,7 +3,6 @@ use super::{
     SnapshotView,
     browser::home_agents::{Row, Status},
 };
-use bezel_ui::widgets::Content;
 use gpui::{prelude::*, *};
 pub(super) const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 fn animated(row: &Row, unavailable: bool) -> bool {
@@ -69,6 +68,53 @@ pub(super) enum Plate {
     /// A pane card's header, bare or under its washes.
     Header,
 }
+/// The "needs input" pill (#746 mockup): the attention colour as a wash (12%
+/// in a light theme, 14% in a dark one), a 5 pt dot and words at Caption,
+/// weight 600, 18 pt high, with no outline. The wash is laid opaque over the
+/// plate's own colour, so the pill reads the same over the frost whatever
+/// the desktop; the dot and words are the attention colour, moved only as
+/// far as they must to read at 4.6:1 on it.
+pub(super) fn attention_pill(
+    theme: &crate::config::Theme,
+    on: Plate,
+    words: impl Into<SharedString>,
+) -> Div {
+    let (wash, ink) = attention_pill_colors(theme, on);
+    div()
+        .debug_selector(|| "attention-pill".into())
+        .flex_none()
+        .h(px(18.))
+        .px(px(7.))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded_full()
+        .bg(wash)
+        .text_color(rgb(ink))
+        .text_size(px(bezel_theme::TextStyle::Caption.size()))
+        .font_weight(FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
+        .child(div().flex_none().size(px(5.)).rounded_full().bg(rgb(ink)))
+        .child(words.into())
+}
+/// The pill's opaque wash and the ink of its dot and words.
+pub(super) fn attention_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
+    let accent = attention_ink(theme);
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    // The plate is Bezel's: the sidebar's surface (the frost's own tone), or
+    // the background a card or Home's table sits on.
+    let bezel = super::design::palette(theme);
+    let plate = match on {
+        Plate::Sidebar => bezel.surface,
+        Plate::Chrome | Plate::Header => bezel.bg,
+    };
+    let wash = bezel_theme::flatten(
+        Hsla::from(rgb(accent)).opacity(if dark { 0.14 } else { 0.12 }),
+        plate,
+    );
+    let packed = u32::from(Rgba::from(wash)) >> 8;
+    (wash, crate::contrast::ink(accent, &[packed], 4.6))
+}
 /// The state's colour before inking.
 fn hue(row: &Row, unavailable: bool, theme: &crate::config::Theme) -> u32 {
     if unavailable || matches!(row.status, Status::Disconnected) {
@@ -107,18 +153,32 @@ impl SnapshotView {
     pub(super) fn tick_agent_indicators(&mut self, cx: &mut Context<Self>) {
         self.agent_animation.sync(self.agent_motion(), cx);
     }
-    pub(super) fn agent_indicator(&self, row: &Row, unavailable: bool) -> AnyElement {
+    /// A Home chip's state after the agent's name (#746): the spinner and
+    /// "Working", or "· Done", "· Idle" and the like, in the muted ink; a
+    /// failed agent's words in its own colour.
+    pub(super) fn agent_chip_state(&self, row: &Row, unavailable: bool) -> AnyElement {
         let theme = self.theme();
-        super::design::palette(&theme)
-            .badge("")
+        let words = label(row, unavailable);
+        let ink: Hsla = if !unavailable && matches!(row.status, Status::Failed) {
+            rgb(color(row, unavailable, &theme, Plate::Chrome)).into()
+        } else {
+            rgb(theme.ink(theme.muted)).into()
+        };
+        let state = div()
             .debug_selector(|| "agent-badge".into())
+            .flex_none()
             .flex()
             .items_center()
-            .gap_1()
-            .text_color(rgb(color(row, unavailable, &theme, Plate::Chrome)))
-            .child(self.agent_glyph(row, unavailable))
-            .child(label(row, unavailable))
-            .into_any_element()
+            .text_color(ink);
+        if animated(row, unavailable) {
+            state
+                .gap(px(2.))
+                .child(self.agent_glyph(row, unavailable))
+                .child(words)
+                .into_any_element()
+        } else {
+            state.child(format!("· {words}")).into_any_element()
+        }
     }
     /// A sidebar pane row's state (#746): the full pill only when the agent
     /// needs input; otherwise its bare glyph (the spinner, a check, a cross),
@@ -130,7 +190,11 @@ impl SnapshotView {
         on: Plate,
     ) -> Option<AnyElement> {
         if label(row, unavailable) == "Needs input" {
-            return Some(self.agent_indicator(row, unavailable));
+            return Some(
+                attention_pill(&self.theme(), on, "Needs input")
+                    .debug_selector(|| "agent-badge".into())
+                    .into_any_element(),
+            );
         }
         if !unavailable && matches!(row.status, Status::Idle) {
             return None;
