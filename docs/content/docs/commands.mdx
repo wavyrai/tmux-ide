@@ -58,15 +58,15 @@ Missing executables and invalid targets fail before creating a pane.
 
 ## Sessions and recovery
 
-| Command                                                                    | What it does                                                                         |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `tmux-ide init [--template <name>] [--json]`                               | Scaffold `.tmux-ide/workspace.yml`; auto-detect the stack unless a template is named |
-| `tmux-ide stop [session] [--json]`                                         | Kill the resolved project session or the named session                               |
-| `tmux-ide restart [session] [--json]`                                      | Stop and relaunch the session                                                        |
-| `tmux-ide attach [session] [--json]`                                       | Reattach to a running session                                                        |
-| `tmux-ide ls [--json]`                                                     | List tmux sessions                                                                   |
-| `tmux-ide status [session] [--json]`                                       | Show session status                                                                  |
-| `tmux-ide restore [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot                                             |
+| Command                                                                                  | What it does                                                                         |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `tmux-ide init [--template <name>] [--json]`                                             | Scaffold `.tmux-ide/workspace.yml`; auto-detect the stack unless a template is named |
+| `tmux-ide stop [session] [--json]`                                                       | Kill the resolved project session or the named session                               |
+| `tmux-ide restart [session] [--json]`                                                    | Stop and relaunch the session                                                        |
+| `tmux-ide attach [session] [--json]`                                                     | Reattach to a running session                                                        |
+| `tmux-ide ls [--json]`                                                                   | List tmux sessions                                                                   |
+| `tmux-ide status [session] [--json]`                                                     | Show session status                                                                  |
+| `tmux-ide restore [--from FILE] [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot, or from `FILE`                             |
 
 Restore does not replay recorded commands unless `--run-commands` is present.
 `--resume-agents` uses captured conversation IDs and each supported agent's
@@ -196,6 +196,14 @@ tmux-ide servers sessions <server-id> --json
 tmux-ide servers create <server-id> --session-name Work --dir /project/path --json
 tmux-ide app --server <server-id> [session]
 tmux-ide servers remove <server-id> --json
+```
+
+Move a running server onto tmux-ide's own tmux. The command snapshots every
+session, asks, restarts the server and restores the sessions. See
+[Move to tmux-ide's own tmux](/docs/tmux-upgrade).
+
+```bash
+tmux-ide servers upgrade [--socket-path PATH|--socket-name NAME] [--ssh HOST] [--yes] [--end-running-agents] [--no-resume-agents] [--dry-run] [--json]
 ```
 
 Add `--ssh HOST` to manage a remote machine's registrations or open its app.

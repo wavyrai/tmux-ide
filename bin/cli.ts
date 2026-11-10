@@ -113,6 +113,10 @@ const { positionals, values } = parseArgs({
     "run-commands": { type: "boolean" },
     // restore: revive agent conversations via `claude --resume <id>`
     "resume-agents": { type: "boolean" },
+    // servers upgrade: keep agents ended, end agents mid-turn, the detached worker's state file
+    "no-resume-agents": { type: "boolean" },
+    "end-running-agents": { type: "boolean" },
+    continue: { type: "string" },
     // statusline: the session whose bar is being rendered
     active: { type: "string" },
     // switcher: the tmux client the popup was invoked on (see `switcher` case)
@@ -285,7 +289,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide daemon info")} [--json] ${dim("Daemon identity, supervisor and actual log destination (credential-free)")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
-  ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
+  ${cyan("tmux-ide restore")} [--from FILE] [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
                               ${dim("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
   ${cyan("tmux-ide open")} [url]          ${dim("Open terminal-browser in a new pane (--session NAME outside tmux)")}
@@ -330,6 +334,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide app --server <id>")} [session] [--ssh HOST] ${dim("Select an exact registered tmux server")}
   ${cyan("tmux-ide servers")} list|sessions <id>|remove <id> [--ssh HOST] [--json]
   ${cyan("tmux-ide servers create <id>")} --session-name NAME [--dir PATH] [--ssh HOST] [--json]
+  ${cyan("tmux-ide servers upgrade")} [--ssh HOST] [--yes] [--end-running-agents] [--no-resume-agents] [--dry-run] [--json]
+                              ${dim("Move a running tmux server onto tmux-ide's own tmux: snapshot, restart, restore")}
   ${cyan("tmux-ide servers add")} --socket-name NAME|--socket-path /PATH [--name LABEL] [--ssh HOST]
   ${cyan("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
   ${cyan("tmux-ide machines")} edit <id-or-label> [--name <label>] [--ssh <alias>] [--write]
@@ -1027,6 +1033,7 @@ try {
         dryRun: values["dry-run"] === true,
         runCommands: values["run-commands"] === true,
         resumeAgents: values["resume-agents"] === true,
+        from: values.from,
       });
       break;
 
@@ -1048,6 +1055,28 @@ try {
     }
 
     case "servers": {
+      if (positionals[1] === "upgrade") {
+        if (positionals.length > 2 || (values.ssh?.length ?? 0) > 1)
+          throw new IdeError(
+            "Usage: tmux-ide servers upgrade [--socket-path PATH|--socket-name NAME] [--ssh HOST] [--yes] [--end-running-agents] [--no-resume-agents] [--dry-run] [--json]",
+            { code: "USAGE", exitCode: 2 },
+          );
+        await (
+          await import("../packages/daemon/src/tmux-upgrade/cli.ts")
+        ).runUpgradeCli({
+          yes: values.yes === true,
+          endRunningAgents: values["end-running-agents"] === true,
+          resumeAgents: values["no-resume-agents"] !== true,
+          dryRun: values["dry-run"] === true,
+          json,
+          socketPath: values["socket-path"],
+          socketName: values["socket-name"],
+          ssh: values.ssh?.[0],
+          continueFrom: values.continue,
+          cliEntry: nodeCliPath,
+        });
+        break;
+      }
       const { runTmuxServersCli, connectTmuxServersCli } =
         await import("../packages/daemon/src/lib/tmux-servers-cli.ts");
       if (positionals.length > 3 || (values.ssh?.length ?? 0) > 1)
