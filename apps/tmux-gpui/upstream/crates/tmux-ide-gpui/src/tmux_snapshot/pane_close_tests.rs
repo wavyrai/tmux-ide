@@ -66,6 +66,11 @@ fn the_roster_decides_working_or_at_rest() {
         ("IDLE", true, Agent::Working),
         ("DONE", false, Agent::AtRest),
         ("IDLE", false, Agent::AtRest),
+        ("DISCONNECTED", false, Agent::Unknown),
+        ("FAILED", false, Agent::Failed),
+        // Asking for the user still reads as working, whatever the state.
+        ("DISCONNECTED", true, Agent::Working),
+        ("FAILED", true, Agent::Working),
     ] {
         let rows = [row(status, attention)];
         assert_eq!(
@@ -104,4 +109,34 @@ fn the_body_wraps_between_words_and_keeps_the_command_whole() {
     assert!(words.contains(&vec![("claude --resume".into(), true), (" ".into(), false)]));
     assert!(words.contains(&vec![("in ".into(), false)]));
     assert_eq!(words.iter().flatten().filter(|(_, code)| *code).count(), 1);
+}
+
+/// #356 review: a Disconnected or Failed agent is never "finished"; each
+/// state's line says only what is true of it.
+#[test]
+fn every_agent_state_reads_true() {
+    let claude = |state| body_text(Some(("Claude", Some("claude-code"), state)));
+    let other = |state| body_text(Some(("Aider", Some("aider"), state)));
+    assert_eq!(
+        claude(Agent::Unknown),
+        "Claude isn't reporting its state, so it may still be running. Closing stops it \
+         if it is. The conversation is saved; claude --resume in a new pane picks it up."
+    );
+    assert_eq!(
+        other(Agent::Unknown),
+        "Aider isn't reporting its state, so it may still be running. Closing stops it if it is."
+    );
+    assert_eq!(
+        claude(Agent::Failed),
+        "Claude stopped with an error. Closing ends the agent; the conversation is saved, \
+         and claude --resume in a new pane picks it up."
+    );
+    assert_eq!(
+        other(Agent::Failed),
+        "Aider stopped with an error. Closing ends the agent."
+    );
+    for state in [Agent::Working, Agent::Unknown, Agent::Failed] {
+        assert!(!claude(state).contains("finished"), "{state:?}");
+        assert!(!other(state).contains("finished"), "{state:?}");
+    }
 }

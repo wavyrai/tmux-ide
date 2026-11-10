@@ -427,12 +427,16 @@ pub(super) fn words(body: &[Segment]) -> Vec<Vec<(String, bool)>> {
 }
 
 /// What a pane runs, as far as the card can tell: an agent working (or
-/// waiting on the user), an agent at rest, or anything else. A shell's
-/// foreground command is not reported yet, so "anything else" is generic.
+/// waiting on the user), at rest (done or idle), not reporting its state
+/// (Disconnected: unknown or a stale report, so it may still be running),
+/// stopped with an error, or anything else. A shell's foreground command is
+/// not reported yet, so "anything else" is generic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Agent {
     Working,
     AtRest,
+    Unknown,
+    Failed,
 }
 
 /// The agent on `pane`, if the workspace roster has one, and its state.
@@ -441,7 +445,11 @@ pub(super) fn agent_on<'a>(rows: &'a [Row], pane: &str) -> Option<(&'a Row, Agen
     let state = if row.attention || matches!(row.status, Status::Working | Status::Blocked) {
         Agent::Working
     } else {
-        Agent::AtRest
+        match row.status {
+            Status::Disconnected => Agent::Unknown,
+            Status::Failed => Agent::Failed,
+            _ => Agent::AtRest,
+        }
     };
     Some((row, state))
 }
@@ -474,6 +482,26 @@ pub(super) fn body(agent: Option<(&str, Option<&str>, Agent)>) -> Vec<Segment> {
         ],
         (Agent::AtRest, None) => vec![text(format!(
             "{name} has finished. Closing ends the agent."
+        ))],
+        (Agent::Unknown, Some(command)) => vec![
+            text(format!(
+                "{name} isn't reporting its state, so it may still be running. Closing stops it if it is. The conversation is saved; "
+            )),
+            Segment::Code(command),
+            text(" in a new pane picks it up.".into()),
+        ],
+        (Agent::Unknown, None) => vec![text(format!(
+            "{name} isn't reporting its state, so it may still be running. Closing stops it if it is."
+        ))],
+        (Agent::Failed, Some(command)) => vec![
+            text(format!(
+                "{name} stopped with an error. Closing ends the agent; the conversation is saved, and "
+            )),
+            Segment::Code(command),
+            text(" in a new pane picks it up.".into()),
+        ],
+        (Agent::Failed, None) => vec![text(format!(
+            "{name} stopped with an error. Closing ends the agent."
         ))],
     }
 }
