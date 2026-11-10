@@ -313,6 +313,7 @@ impl SnapshotView {
         {
             return false;
         }
+        let split = matches!(action, Action::Split { .. });
         let command = browser::Command::PaneAction {
             request: target.request,
             id: target.actions.id.clone(),
@@ -329,6 +330,9 @@ impl SnapshotView {
         // Admission consumes the one-use capability, not terminal input interruption.
         self.browser_state.pane_actions = None;
         self.close_pane_actions(window, cx);
+        if split {
+            self.hold_split_input();
+        }
         true
     }
     pub(super) fn pane_actions_key(

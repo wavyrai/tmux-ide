@@ -407,7 +407,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         if let Some(current) = active.as_mut() {
                             current.presentation.invalidate_overlay();
                         }
-                        state = *next;
+                        transition::adopt(&mut state, *next);
                         diagnostics::Stop::apply(&mut stopped, &mut state);
                         changed = true;
                     }

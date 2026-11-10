@@ -134,7 +134,8 @@ impl SnapshotView {
         }
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
-        if self.browser_state.retained_preview
+        // A split's hold takes keys while its stream is re-issued.
+        if (self.browser_state.retained_preview && !self.split_hold_waiting())
             || (self.resize_gesture.busy() && self.divider.is_none())
         {
             self.interrupt_input(cx);
@@ -308,7 +309,11 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
-        if self.browser_state.retained_preview || self.resize_gesture.busy() {
+        // Only terminal keys may wait in a split's hold; a wheel or scroll
+        // during its preview is refused, as before, never sent to the old pane.
+        if (self.browser_state.retained_preview && !(terminal && self.split_hold_waiting()))
+            || self.resize_gesture.busy()
+        {
             super::renderer_probe::runtime::rejected();
             if terminal {
                 self.interrupt_input(cx);
