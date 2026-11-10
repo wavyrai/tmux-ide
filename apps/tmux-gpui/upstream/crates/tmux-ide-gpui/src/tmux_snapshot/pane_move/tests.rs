@@ -412,3 +412,38 @@ fn only_the_middle_of_a_card_swaps() {
     assert!(!in_centre(card, at(100., 19.)), "top edge");
     assert!(!in_centre(card, at(170., 50.)), "right edge");
 }
+
+/// a and b exchange in the same publication that another client exchanges
+/// c and d. That isn't the user's swap alone, and Undo would put back only
+/// a and b, so it doesn't settle as swapped and offers no Undo; the drag
+/// waits for its own result or the deadline (#364 review, round 2).
+#[test]
+fn a_swap_published_with_another_exchange_is_not_settled() {
+    let before = vec![
+        region("a", 0, 0, 40, 10),
+        region("b", 41, 0, 40, 10),
+        region("c", 0, 11, 40, 9),
+        region("d", 41, 11, 40, 9),
+    ];
+    let both = vec![
+        region("b", 0, 0, 40, 10),
+        region("a", 41, 0, 40, 10),
+        region("d", 0, 11, 40, 9),
+        region("c", 41, 11, 40, 9),
+    ];
+    assert!(!swapped(&before, &both, "a", "b"));
+    let mut alone = both.clone();
+    alone[2] = region("c", 0, 11, 40, 9);
+    alone[3] = region("d", 41, 11, 40, 9);
+    assert!(swapped(&before, &alone, "a", "b"), "control: a and b alone");
+    let now = Instant::now();
+    let mut owner = Owner::default();
+    owner
+        .press("a", at(100., 10.), 7, Some("s".into()), &before, ready())
+        .unwrap();
+    owner.moved(at(300., 10.), pick("b"), &before);
+    owner.release(&before, now);
+    owner.sent("spent".into());
+    assert_eq!(owner.settle(&both, Some("next"), "", now), Settle::Waiting);
+    assert!(owner.undo.is_none(), "no Undo for a and b alone");
+}
