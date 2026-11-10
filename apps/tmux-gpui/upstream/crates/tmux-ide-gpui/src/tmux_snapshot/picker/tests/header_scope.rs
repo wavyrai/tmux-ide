@@ -41,7 +41,7 @@ fn old_global_callbacks_cannot_escape_replacement_pane_context(cx: &mut TestAppC
                 let picker = view.picker.as_ref().unwrap();
                 assert!(picker.pane_scope.is_some());
                 assert!(picker.agent.is_none());
-                assert!(picker.closing.is_none());
+                assert!(view.pane_close.is_none());
                 assert!(receiver.try_recv().is_err());
             }
         });

@@ -165,3 +165,5 @@ mod back_to_live;
 
 #[path = "header_buttons.rs"]
 mod buttons;
+#[path = "close_card_lifecycle.rs"]
+mod close_card_lifecycle;

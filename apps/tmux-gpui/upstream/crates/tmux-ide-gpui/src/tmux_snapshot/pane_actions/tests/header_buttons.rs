@@ -29,7 +29,15 @@ fn direct_expand_uses_current_target_and_close_requires_confirmation(cx: &mut Te
     cx.update(|window, cx| {
         window.draw(cx).clear(cx);
     });
-    assert!(cx.debug_bounds("pane-close-confirmation").is_some());
+    // The card hangs 6 pt under the close button, trailing edges aligned:
+    // the 22 pt button sits centred in its 24 pt slot (c1, #746 v3).
+    let card = cx.debug_bounds("pane-close-card").unwrap();
+    assert_eq!(card.right(), close.right() - px(1.));
+    assert_eq!(card.top(), close.top() + px(6. + 22. + 6.));
+    assert_eq!(card.size.width, px(300.));
+    // No scrim and no palette.
+    view.read_with(cx, |view, _| assert!(view.picker.is_none()));
+    assert!(cx.debug_bounds("commands-popover").is_none());
     cx.simulate_keystrokes("escape");
     cx.update(|window, cx| {
         window.draw(cx).clear(cx);
@@ -73,9 +81,10 @@ fn closing_an_unselected_header_waits_for_that_panes_authority(cx: &mut TestAppC
         });
         window.draw(cx).clear(cx);
     });
-    assert!(cx.debug_bounds("pane-close-confirmation").is_some());
+    assert!(cx.debug_bounds("pane-close-card").is_some());
     assert!(receiver.try_recv().is_err());
-    cx.simulate_keystrokes("enter");
+    // Cmd-W again confirms, on the pane the card names (c1).
+    cx.simulate_keystrokes("cmd-w");
     assert!(
         matches!(receiver.try_recv().unwrap(), browser::Command::PaneAction { request: 8, id, token, action: Action::Close } if id == "pane-b" && token == "new-token")
     );
@@ -135,7 +144,7 @@ fn pane_titles_sit_flat_in_the_header_with_or_without_focus(cx: &mut TestAppCont
     assert_eq!(heights.len(), 1, "{seen:?}");
     // Ink and weight are what is left to mark focus.
     use crate::tmux_snapshot::pane_chrome::title_weight;
-    assert_eq!(title_weight(true), FontWeight::SEMIBOLD);
+    assert_eq!(title_weight(true), FontWeight::MEDIUM);
     assert_eq!(title_weight(false), FontWeight::NORMAL);
 }
 
@@ -169,7 +178,21 @@ fn header_buttons_split_right_split_down_zoom_close_edge_to_edge(cx: &mut TestAp
         assert_eq!(pair[0].size, pair[1].size);
     }
     let header = cx.debug_bounds("pane-card-header:pane-a").unwrap();
-    assert_eq!(buttons[3].right(), header.right());
+    // #746 v3: 24 pt slots, the last 6 pt in from the card's edge.
+    assert_eq!(buttons[0].size.width, px(24.));
+    // Each slot holds a 22 pt button, centred.
+    for selector in [
+        "pane-split-right-glyph:pane-a",
+        "pane-split-down-glyph:pane-a",
+        "pane-expand-glyph:pane-a",
+        "pane-close-glyph:pane-a",
+    ] {
+        let glyph = cx.debug_bounds(selector).unwrap();
+        assert_eq!(glyph.size, size(px(22.), px(22.)), "{selector}");
+    }
+    let glyph = cx.debug_bounds("pane-close-glyph:pane-a").unwrap();
+    assert_eq!(glyph.center(), buttons[3].center());
+    assert_eq!(buttons[3].right(), header.right() - px(6.));
     let title = cx.debug_bounds("pane-title:pane-a").unwrap();
     assert!(title.right() <= buttons[0].left());
     for (index, direction) in [(0, SplitDirection::Right), (1, SplitDirection::Down)] {
@@ -345,4 +368,89 @@ fn right_click_on_the_header_row_title_opens_the_menu(cx: &mut TestAppContext) {
         "pane-a's menu"
     );
     assert!(receiver.try_recv().is_err());
+}
+
+/// c1 keys: Return cancels (Cancel has focus), Tab moves focus so Return
+/// closes, Escape cancels; Cmd-W twice closes.
+#[gpui::test]
+fn the_close_card_keys_cancel_by_default_and_confirm_on_purpose(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    let open = |cx: &mut VisualTestContext| {
+        cx.simulate_keystrokes("cmd-w");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("pane-close-card").is_some());
+    };
+    open(cx);
+    cx.simulate_keystrokes("enter");
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_none(), "Return cancels"));
+    assert!(receiver.try_recv().is_err());
+    open(cx);
+    cx.simulate_keystrokes("escape");
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_none(), "Escape cancels"));
+    assert!(receiver.try_recv().is_err());
+    open(cx);
+    cx.simulate_keystrokes("tab enter");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::PaneAction {
+            action: Action::Close,
+            ..
+        }
+    ));
+    assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_none()));
+}
+
+/// c1: a click outside the card cancels it, and sends nothing.
+#[gpui::test]
+fn a_click_outside_the_close_card_cancels(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    cx.simulate_keystrokes("cmd-w");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let card = cx.debug_bounds("pane-close-card").unwrap();
+    cx.simulate_click(
+        point(card.left() - px(40.), card.bottom() + px(80.)),
+        Modifiers::default(),
+    );
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_none()));
+    assert!(!receiver.try_iter().any(|c| matches!(
+        c,
+        browser::Command::PaneAction {
+            action: Action::Close,
+            ..
+        }
+    )));
+}
+
+/// c1: Cmd-W opens the card on the focused pane, and Cmd-W again closes it.
+#[gpui::test]
+fn cmd_w_twice_closes_the_focused_pane(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    cx.simulate_keystrokes("cmd-w");
+    assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_some()));
+    cx.simulate_keystrokes("cmd-w");
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        browser::Command::PaneAction {
+            action: Action::Close,
+            ..
+        }
+    ));
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_none()));
 }

@@ -68,6 +68,14 @@ impl Target {
             actions,
         })
     }
+    /// The publication request and the session the target was captured in.
+    pub(super) fn origin(&self) -> (u64, &str) {
+        (self.request, &self.session)
+    }
+    /// The pane the target names.
+    pub(super) fn pane_id(&self) -> &str {
+        &self.actions.id
+    }
     pub(super) fn current(&self, state: &browser::State) -> bool {
         Self::capture(state).is_some_and(|now| {
             now.request == self.request

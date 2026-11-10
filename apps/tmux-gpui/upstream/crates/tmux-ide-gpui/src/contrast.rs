@@ -149,17 +149,22 @@ pub(crate) fn ink(color: u32, backgrounds: &[u32], target: f32) -> u32 {
 /// dozen fixed colors, so this is only reached after many theme switches.
 const CACHE_LIMIT: usize = 512;
 
-type CacheKey = (u32, [u32; 3], u32);
+/// The color, up to four backgrounds (unused slots u32::MAX, which no
+/// 24-bit background is), and the target's bits.
+type CacheKey = (u32, [u32; 4], u32);
 
 thread_local! {
     static CACHE: RefCell<HashMap<CacheKey, u32>> = RefCell::new(HashMap::new());
 }
 
-/// [`ink`] against a theme's three chrome backgrounds, remembered per thread:
-/// render calls it for every dot and badge on every frame, and a color that
-/// has to move costs a bisection.
-pub(crate) fn ink_on_chrome(color: u32, chrome: [u32; 3], target: f32) -> u32 {
-    let key = (color, chrome, target.to_bits());
+/// [`ink`] against a theme's chrome backgrounds (up to four), remembered per
+/// thread: render calls it for every dot and badge on every frame, and a
+/// color that has to move costs a bisection.
+pub(crate) fn ink_on_chrome<const N: usize>(color: u32, chrome: [u32; N], target: f32) -> u32 {
+    const { assert!(N <= 4) };
+    let mut slots = [u32::MAX; 4];
+    slots[..N].copy_from_slice(&chrome);
+    let key = (color, slots, target.to_bits());
     CACHE.with(|cache| {
         if let Some(&inked) = cache.borrow().get(&key) {
             return inked;
