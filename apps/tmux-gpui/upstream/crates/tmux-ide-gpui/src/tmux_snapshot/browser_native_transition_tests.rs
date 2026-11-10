@@ -83,3 +83,19 @@ fn failures_are_not_hidden_by_retained_pixels() {
     assert!(shown.frame.is_none());
     assert_eq!(shown.status, failed.status);
 }
+/// The real sequence after a split: the worker records the outcome, revokes
+/// the stream and publishes. That publication is this preview, and it must
+/// carry the outcome to the view (review of #361, round 2).
+#[test]
+fn the_preview_carries_the_split_outcome() {
+    let mut t = Transition::default();
+    t.begin(&live(), 5, 0);
+    let mut pending = opening(5);
+    pending.pane_split = Some(crate::tmux_snapshot::browser::PaneSplit {
+        nonce: uuid::Uuid::new_v4(),
+        created: Some("pane.new".into()),
+    });
+    let shown = t.publication(&pending, true, 10);
+    assert!(shown.retained_preview, "the preview is what the view sees");
+    assert!(shown.pane_split == pending.pane_split);
+}

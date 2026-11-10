@@ -104,6 +104,10 @@ impl Transition {
             result.selected_server = state.selected_server.clone();
             result.appearance = state.appearance.clone();
             result.status = "Switching window…".into();
+            // A split's outcome is published while its stream is re-issued,
+            // which is exactly when this preview shows; the catalog's next
+            // state replaces it, so this is the view's one chance (#361).
+            result.pane_split = state.pane_split.clone();
             return result;
         }
         state.clone()
