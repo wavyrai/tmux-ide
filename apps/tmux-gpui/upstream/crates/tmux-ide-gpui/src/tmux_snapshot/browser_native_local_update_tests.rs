@@ -3,6 +3,7 @@
 //! generation serves the same tmux server and session.
 use super::*;
 use herdr_client::tmux_daemon::Error as E;
+use std::sync::mpsc;
 
 /// Runs the recovery up to the moment the new daemon answers a lease for the
 /// old generation, which it no longer knows, and rediscovery begins. Returns
@@ -162,25 +163,155 @@ fn rediscovery_stops_after_a_run_of_other_failures_with_no_listing() {
         rediscover(&mut local);
     }
     local.reconnect_retry(Failure::Other).unwrap();
-    assert!(local.recovery.is_none());
     // Many publications queue behind a full test channel; read the state itself.
-    assert_eq!(local.state.status, GIVE_UP);
+    ended_on_home(&local, GIVE_UP);
 }
 
+/// Ended on Home, unavailable, with a message that says what to do.
+fn ended_on_home(local: &Local, message: &str) {
+    assert!(local.recovery.is_none());
+    assert!(local.stage.is_none());
+    assert_eq!(local.state.surface, Surface::Home);
+    assert!(local.state.home_phase == HomePhase::Unavailable);
+    assert_eq!(local.state.status, message);
+}
+
+/// Review round 1, item 1: a session that is listed but whose reopening keeps
+/// failing must not refill the budget. The reviewer's probe: list, then fail,
+/// up to 200 times.
 #[test]
-fn a_listing_restarts_the_count_of_other_failures() {
+fn a_listed_session_that_keeps_failing_to_open_still_stops() {
     let (mut local, _events) = attached();
     let target = through_the_update(&mut local);
-    for _ in 0..MAX_OTHERS {
-        local.reconnect_retry(Failure::Other).unwrap();
-        rediscover(&mut local);
+    let mut cycles = 0;
+    while local.recovery.is_some() && cycles < 200 {
+        new_daemon_lists(&mut local, &target);
+        assert!(local.reconnect_catalog().unwrap());
+        // The lease for the reopened session fails.
+        local
+            .reconnect_retry(Failure::of(&E::RequestStatus(500)))
+            .unwrap();
+        if local.recovery.is_some() {
+            rediscover(&mut local);
+        }
+        cycles += 1;
     }
-    new_daemon_lists(&mut local, &target);
-    assert!(local.reconnect_catalog().unwrap());
-    assert_eq!(local.recovery.as_ref().unwrap().others, 0);
-    // Opening it fails: recovery goes on rather than stopping at once.
-    local.reconnect_retry(Failure::Other).unwrap();
-    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
+    assert_eq!(cycles, usize::from(MAX_OTHERS) + 1);
+    ended_on_home(&local, GIVE_UP);
+}
+
+/// Review round 1, item 2: identity failures are bounded too.
+#[test]
+fn a_local_identity_mismatch_that_never_clears_stops() {
+    let (mut local, _events) = attached();
+    through_the_update(&mut local);
+    let mut tries = 0;
+    while local.recovery.is_some() && tries < 200 {
+        local
+            .reconnect_retry(Failure::of(&E::IdentityChanged))
+            .unwrap();
+        if local.recovery.is_some() {
+            rediscover(&mut local);
+        }
+        tries += 1;
+    }
+    assert_eq!(tries, usize::from(MAX_OTHERS) + 1);
+    ended_on_home(&local, GIVE_UP);
+}
+
+/// Review round 1, item 2: over SSH an identity failure in rediscovery may be
+/// another machine answering, so it stops at once, as it did before.
+#[test]
+fn an_ssh_identity_failure_in_rediscovery_stops_at_once() {
+    for error in [E::IdentityChanged, E::IdentityFormat] {
+        let (mut local, _events) = attached();
+        local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: "Build".into(),
+            ssh_target: "fixture.invalid".into(),
+            expected_environment_id: None,
+            enabled: true,
+        });
+        through_the_update(&mut local);
+        local.reconnect_retry(Failure::of(&error)).unwrap();
+        ended_on_home(&local, SSH_IDENTITY);
+    }
+}
+
+/// Review round 1, item 3: rediscovery also asks the fleet to read its routes
+/// again, so a remote that failed with the old daemon is retried with the new.
+#[test]
+fn rediscovery_refreshes_the_background_fleet() {
+    let (mut local, _events) = attached();
+    assert!(!local.background_fleet.refresh_requested());
+    through_the_update(&mut local);
+    assert!(local.background_fleet.refresh_requested());
+}
+
+/// The user can leave the held window at any time: navigation ends recovery.
+#[test]
+fn navigation_during_the_hold_cancels_recovery() {
+    let (mut local, events) = attached();
+    through_the_update(&mut local);
+    assert!(local.recovery.is_some());
+    local.home(8).unwrap();
+    assert!(local.recovery.is_none());
+    let seen = last_catalog(&events);
+    assert_eq!(seen.surface, Surface::Home);
+    assert_eq!(seen.reconnect_attempt, None);
+}
+
+/// Keys typed during the rediscovery hold are refused and latched, and nothing
+/// is sent when the session is back.
+#[gpui::test]
+fn keys_during_the_hold_are_refused_and_never_replayed(cx: &mut gpui::TestAppContext) {
+    let (mut local, events) = attached();
+    through_the_update(&mut local);
+    let hold = last_catalog(&events);
+    assert!(hold.reconnect_attempt.is_some());
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::tmux_snapshot::fit_test_support::fixture_view(
+            window,
+            cx,
+            sender,
+            7,
+            State {
+                request: 7,
+                surface: Surface::Workspace,
+                input_ready: true,
+                ..State::default()
+            },
+        )
+    });
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.apply_browser_state(Some(hold.clone()), cx);
+            assert!(
+                !view.offer_terminal_input(cx),
+                "a key was accepted in the hold"
+            );
+            assert!(view.input_interrupted);
+        })
+    });
+    while receiver.try_recv().is_ok() {}
+    // The session is back.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            let mut back = hold.clone();
+            back.reconnect_attempt = None;
+            back.input_ready = true;
+            back.status = "Connected".into();
+            view.apply_browser_state(Some(back), cx);
+        })
+    });
+    let replayed: Vec<_> = receiver
+        .try_iter()
+        .map(|c| serde_json::to_value(c).unwrap())
+        .filter(|c| c["type"] == "input" && c["input"]["kind"] != "resize")
+        .collect();
+    assert!(replayed.is_empty(), "{replayed:?}");
+    view.read_with(cx, |view, _| assert!(view.input_interrupted));
 }
 
 #[test]

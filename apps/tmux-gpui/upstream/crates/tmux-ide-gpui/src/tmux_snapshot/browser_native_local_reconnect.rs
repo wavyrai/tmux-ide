@@ -53,10 +53,14 @@ impl Recovery {
 }
 /// Backoff doubles from 250 ms to this cap and never gives up on the same daemon.
 const MAX_DELAY: Duration = Duration::from_secs(30);
-/// Other failures in a row, with no catalog listing the session in between,
-/// before rediscovery stops: about nine minutes at the backoff cap.
+/// Other and identity failures rediscovery takes before it stops: a budget for
+/// the whole recovery, never refilled by a catalog listing (only a stream that
+/// is ready again ends a recovery), so at most about ten minutes at the cap.
 const MAX_OTHERS: u8 = 20;
 const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+/// Over SSH a different identity may be a different machine: stop at once.
+pub(super) const SSH_IDENTITY: &str =
+    "A different daemon answered for this machine. Check the machine, then refresh sessions.";
 /// The daemon now speaks a protocol this app does not: only an app update helps.
 pub(super) const UPDATE_APP: &str =
     "tmux-ide was updated and this app can no longer talk to it. Update the app to reconnect.";
@@ -66,8 +70,9 @@ pub(super) enum Failure {
     /// Retried with backoff, forever.
     Unreachable,
     /// A different daemon answered, or a stale record named the old one while
-    /// the new one already answered. A rebind turns into rediscovery; rediscovery
-    /// reads the record again and backs off, as for an unreachable daemon.
+    /// the new one already answered. A rebind turns into rediscovery. Locally,
+    /// rediscovery reads the record again and backs off, from the same budget
+    /// as [`Failure::Other`]; over SSH it stops at once ([`SSH_IDENTITY`]).
     Identity,
     /// The daemon speaks another protocol: recovery ends with [`UPDATE_APP`].
     Incompatible,
@@ -136,8 +141,11 @@ impl Local {
             recovery.rebind = None;
             recovery.others = 0;
         } else if recovery.rebind.is_none() {
-            if failure == Failure::Other {
-                recovery.others += 1;
+            if failure == Failure::Identity && recovery.local_record.is_none() {
+                return self.unavailable(SSH_IDENTITY);
+            }
+            if matches!(failure, Failure::Other | Failure::Identity) {
+                recovery.others = recovery.others.saturating_add(1);
             }
             if recovery.others > MAX_OTHERS {
                 return self.unavailable(GIVE_UP);
@@ -243,9 +251,6 @@ impl Local {
             return Ok(true);
         };
         self.open(self.state.request, key, recovery.pane.clone())?;
-        // Listed again: failures after this are counted afresh.
-        let mut recovery = recovery;
-        recovery.others = 0;
         // A session now over the pane limit is refused with a notice and no
         // stage; nothing would retry it, so its recovery ends here.
         if self.state.home_notice.is_none() {
