@@ -90,3 +90,18 @@ fn the_card_hangs_under_its_button_and_flips_above_near_the_bottom() {
     assert_eq!(anchor, Anchor::BottomRight);
     assert_eq!(at, point(px(1024.), px(774.)));
 }
+
+/// The line wraps between words; the 12 pt command is one word with the
+/// space after it, and no word starts with a space.
+#[test]
+fn the_body_wraps_between_words_and_keeps_the_command_whole() {
+    let body = body(Some(("Claude", Some("claude-code"), Agent::Working)));
+    let words = words(&body);
+    let joined: String = words.iter().flatten().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(joined, plain(&body));
+    assert!(words.iter().all(|w| !w[0].0.starts_with(' ')));
+    assert!(words.contains(&vec![("saved; ".into(), false)]));
+    assert!(words.contains(&vec![("claude --resume".into(), true), (" ".into(), false)]));
+    assert!(words.contains(&vec![("in ".into(), false)]));
+    assert_eq!(words.iter().flatten().filter(|(_, code)| *code).count(), 1);
+}

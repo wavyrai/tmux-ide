@@ -241,27 +241,30 @@ impl SnapshotView {
                         .child(hint),
                 )
         };
-        // One wrapping line: the words in the UI face and muted ink, a
-        // command in the terminal's mono face and the text ink.
-        let ui = crate::config::Config::default().ui.family;
-        let mut text = String::new();
-        let mut runs = Vec::new();
-        for segment in &card.body {
-            let (words, family, color) = match segment {
-                Segment::Text(words) => (words.as_str(), ui.clone(), theme.text_muted),
-                Segment::Code(code) => (*code, mono.to_string(), theme.text),
-            };
-            text.push_str(words);
-            runs.push(TextRun {
-                len: words.len(),
-                font: font(family),
-                color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            });
-        }
-        let body = StyledText::new(text).with_runs(runs);
+        // The words in the UI face and muted ink, a command in the terminal's
+        // mono face at 12 pt and the text ink (the mockup's <code>). A text
+        // run has one size, so the line flows as words that wrap.
+        let ui: SharedString = crate::config::Config::default().ui.family.into();
+        let body =
+            div()
+                .flex()
+                .flex_wrap()
+                .items_baseline()
+                .children(words(&card.body).into_iter().map(|word| {
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .children(word.into_iter().map(|(piece, code)| {
+                            let run = div().whitespace_nowrap().child(piece);
+                            if code {
+                                run.font_family(mono.clone())
+                                    .text_size(px(12.))
+                                    .text_color(theme.text)
+                            } else {
+                                run.font_family(ui.clone()).text_color(theme.text_muted)
+                            }
+                        }))
+                }));
         popover::popover_card(&theme)
             .id("pane-close-card")
             .debug_selector(|| "pane-close-card".into())
@@ -361,6 +364,30 @@ impl SnapshotView {
 pub(super) enum Segment {
     Text(String),
     Code(&'static str),
+}
+
+/// The body as the words its line wraps between: each word is its runs
+/// (text, and whether it is the mono command), its trailing space included,
+/// so a command keeps the space after it and never starts a line with one.
+pub(super) fn words(body: &[Segment]) -> Vec<Vec<(String, bool)>> {
+    let mut words: Vec<Vec<(String, bool)>> = Vec::new();
+    let mut push = |piece: &str, code: bool| {
+        let open = words
+            .last()
+            .and_then(|w| w.last())
+            .is_some_and(|(text, _)| !text.ends_with(' '));
+        match words.last_mut() {
+            Some(word) if open => word.push((piece.to_owned(), code)),
+            _ => words.push(vec![(piece.to_owned(), code)]),
+        }
+    };
+    for segment in body {
+        match segment {
+            Segment::Text(text) => text.split_inclusive(' ').for_each(|p| push(p, false)),
+            Segment::Code(code) => push(code, true),
+        }
+    }
+    words
 }
 
 /// What a pane runs, as far as the card can tell: an agent working (or
