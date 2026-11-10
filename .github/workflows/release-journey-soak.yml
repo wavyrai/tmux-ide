@@ -1,0 +1,96 @@
+name: Release journey soak
+
+# Runs the packed OpenTUI installed-package journey (scripts/pack-check-run.mjs)
+# several times in one job, in the configurations the release and CI use:
+# Node 22 or 24, and the system tmux ("system-fallback", as CI's OpenTUI
+# qualification) or the bundled patched tmux ("bundled", as the npm publish job
+# and the installed-package lane). It publishes nothing. Card #764.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Journey runs per configuration
+        default: "5"
+  pull_request:
+    paths:
+      - .github/workflows/release-journey-soak.yml
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: Journey soak (Node ${{ matrix.node }}, ${{ matrix.native }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        native: [bundled, system-fallback]
+    env:
+      RUNS: ${{ inputs.runs || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - name: Install supported system tmux
+        if: matrix.native == 'system-fallback'
+        uses: ./.github/actions/setup-tmux
+        with:
+          test-node-version: ${{ matrix.node }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Build the bundled patched tmux (as the release and installed lane do)
+        if: matrix.native == 'bundled'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake pkg-config libevent-dev libncurses-dev ncurses-base ncurses-term libutf8proc-dev bison patchelf
+          repository="$(node -p 'require("./native/tmux/provenance.json").repository')"
+          commit="$(node -p 'require("./native/tmux/provenance.json").commit')"
+          git init --quiet "$RUNNER_TEMP/tmux-source"
+          git -C "$RUNNER_TEMP/tmux-source" remote add origin "$repository"
+          git -C "$RUNNER_TEMP/tmux-source" fetch --depth=1 origin "$commit"
+          git -C "$RUNNER_TEMP/tmux-source" checkout --detach FETCH_HEAD
+          node scripts/build-bundled-tmux.mjs --source "$RUNNER_TEMP/tmux-source" --jobs 2
+          echo "$GITHUB_WORKSPACE/packages/daemon/dist/native/tmux/linux-x64" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - name: Run the installed-package journey ${{ env.RUNS }} times
+        env:
+          TMUX_IDE_PACK_NATIVE_MODE: ${{ matrix.native }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/soak"
+          node --version | tee "$RUNNER_TEMP/soak/node-version.txt"
+          command -v tmux | tee "$RUNNER_TEMP/soak/tmux-path.txt"
+          passed=0
+          for run in $(seq 1 "$RUNS"); do
+            export TMUX_IDE_PACK_EVIDENCE_DIR="$RUNNER_TEMP/soak/run-$run"
+            mkdir -p "$TMUX_IDE_PACK_EVIDENCE_DIR"
+            start=$(date +%s)
+            node scripts/pack-check-run.mjs > "$RUNNER_TEMP/soak/run-$run.log" 2>&1
+            status=$?
+            seconds=$(( $(date +%s) - start ))
+            if [ "$status" -eq 0 ]; then passed=$((passed + 1)); result=pass; else result=fail; fi
+            failure="$(grep -m1 -o 'Timed out waiting for [^"]*' "$RUNNER_TEMP/soak/run-$run.log" || true)"
+            echo "run $run: $result in ${seconds}s ${failure}" | tee -a "$RUNNER_TEMP/soak/summary.txt"
+            grep -h -o 'packed OpenTUI journey latency .*' "$RUNNER_TEMP/soak/run-$run.log" >> "$RUNNER_TEMP/soak/latency.txt" || true
+          done
+          echo "node ${{ matrix.node }} ${{ matrix.native }}: $passed/$RUNS passed" | tee -a "$RUNNER_TEMP/soak/summary.txt" "$GITHUB_STEP_SUMMARY"
+          test "$passed" -eq "$RUNS"
+      - name: Upload soak evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-journey-soak-node${{ matrix.node }}-${{ matrix.native }}
+          path: |
+            ${{ runner.temp }}/soak/*.txt
+            ${{ runner.temp }}/soak/*.log
+            ${{ runner.temp }}/soak/run-*/linked-refusal-frame.txt
+            ${{ runner.temp }}/soak/run-*/*.performance.jsonl
+            ${{ runner.temp }}/soak/run-*/proof.json
+          retention-days: 14
+          if-no-files-found: warn

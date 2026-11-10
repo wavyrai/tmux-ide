@@ -1212,10 +1212,13 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "=journey-beta:20",
   ]);
   if (linked.status !== 0) throw new Error(`Cannot link fixture window: ${linked.stderr}`);
+  // Wall-clock time of the trigger, to line up with the renderer's
+  // performance rows ("at") in the diagnostics when the wait times out.
+  const linkedAt = new Date().toISOString();
   const linkedDiagnostics = () => {
     const frame = capture(many.targetPane);
     if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
-    return many.diagnostics();
+    return `window linked at ${linkedAt}\n${many.diagnostics()}`;
   };
   await observe(
     "linked window actionable refusal",
@@ -1568,12 +1571,13 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       `Recreated agent semantic identity was not fresh: ${recreatedSemanticAgentPane}`,
     );
   }
+  const agentClickedAt = new Date().toISOString();
   clickText(one, agentClickLabel);
   await observe(
     "recreated sidebar agent exact-pane navigation",
     10_000,
     () => activePane("journey-beta") === recreatedAgentPane,
-    one.diagnostics,
+    () => `clicked ${agentClickLabel} at ${agentClickedAt}\n${one.diagnostics()}`,
   );
   let topologyInputWindow = null;
   if (topologyInputReproEnabled) {
