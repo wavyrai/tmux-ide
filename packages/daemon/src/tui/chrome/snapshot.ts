@@ -357,9 +357,8 @@ export function writeSnapshot(snapshot: FleetSnapshot): void {
   }
 }
 
-/** Read + validate the snapshot on disk. Returns null when missing or malformed. */
-export function readSnapshot(): FleetSnapshot | null {
-  const path = snapshotPath();
+/** Read + validate a snapshot file (default: the updater's). Returns null when missing or malformed. */
+export function readSnapshot(path: string = snapshotPath()): FleetSnapshot | null {
   try {
     if (!existsSync(path)) return null;
     const raw = readFileSync(path, "utf-8");
