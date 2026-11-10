@@ -191,6 +191,8 @@ fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
     for version in [
         "2.9.5",
         "2.8.40",
+        "2.9.21.1",
+        "2.9.+21",
         "2.10.0",
         "3.0.0",
         "2.9.22-beta.1",
