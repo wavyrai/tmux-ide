@@ -14,6 +14,11 @@ daemon, contracts, observers or tmux ownership code changes.
 2. Update `CHANGELOG.md` with only behavior that is in the release cut.
 3. Confirm `git status --short` contains only intentional changes.
 4. Confirm no retired OpenTUI root or parallel session authority is reachable.
+5. For a new minor or major version, widen `SETUP_CLI` in
+   `apps/tmux-gpui/upstream/crates/herdr-client/src/tmux_daemon/local_setup.rs`
+   after checking the CLI's `--version` line and `update --daemon --json` reply.
+   Until then the Mac app's Home can't set up that CLI, and the test
+   `the_cli_version_this_repository_releases_can_be_set_up` fails.
 
 ## Canonical verification
 

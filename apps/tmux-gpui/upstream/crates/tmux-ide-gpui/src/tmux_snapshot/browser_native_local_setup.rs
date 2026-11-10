@@ -68,7 +68,8 @@ impl Gate {
                         },
                         Ok(_) => Some(Phase::Available),
                         Err(LocalSetupError::Missing) => Some(Phase::Missing),
-                        Err(_) => Some(Phase::Unsupported),
+                        Err(LocalSetupError::Unsupported) => Some(Phase::Unsupported),
+                        Err(_) => Some(Phase::Unrecognized),
                     }
                 };
                 #[cfg(not(unix))]
