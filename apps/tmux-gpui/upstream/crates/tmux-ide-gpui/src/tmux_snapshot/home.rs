@@ -4,6 +4,7 @@ use bezel_theme::{TextStyle, Typeset};
 use bezel_ui::widgets::{Content as _, Scaffolding, Status as _};
 use gpui::{prelude::*, *};
 mod action_focus;
+mod aside_link;
 pub(super) mod filters;
 pub(super) mod fleet;
 pub(super) mod fleet_nav;

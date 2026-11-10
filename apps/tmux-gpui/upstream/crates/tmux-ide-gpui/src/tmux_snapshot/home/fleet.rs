@@ -42,32 +42,6 @@ pub(super) fn glyph(path: &'static str, color: Hsla) -> Svg {
         .text_color(color)
 }
 
-/// A machine header's action as small muted text (#746 v3), the text ink
-/// under the pointer; a disabled one stays muted and inert.
-fn aside_link(
-    id: impl Into<ElementId>,
-    selector: String,
-    label: &'static str,
-    enabled: bool,
-    bezel: &bezel_theme::Theme,
-) -> Stateful<Div> {
-    let text = bezel.text;
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(label)
-        .accessibility_id(selector.clone())
-        .debug_selector(move || selector.clone())
-        .flex_none()
-        .text_style(TextStyle::Subheadline)
-        .text_color(bezel.text_muted)
-        .when(enabled, |link| {
-            link.cursor_pointer().hover(move |s| s.text_color(text))
-        })
-        .when(!enabled, |link| link.opacity(0.6))
-        .child(label)
-}
-
 /// The tone of a machine's status dot.
 fn machine_tone(bezel: &bezel_theme::Theme, group: &browser::fleet::Group) -> Hsla {
     if group.conflict {
@@ -371,14 +345,14 @@ impl SnapshotView {
         }
         if let Some(token) = group.disconnect.clone() {
             actions.push(
-                aside_link(
+                aside_link::AsideLink::new(
                     ("fleet-disconnect", index),
                     format!("fleet-disconnect-{index}"),
                     "Disconnect",
                     true,
                     &bezel,
                 )
-                .on_click(cx.listener(move |view, _, window, cx| {
+                .on_press(cx.listener(move |view, _: &(), window, cx| {
                     cx.stop_propagation();
                     view.disconnect_fleet_machine(request, &token, window, cx);
                 }))
@@ -584,19 +558,17 @@ impl SnapshotView {
             && self.presence.ready()
             && self.browser_state.request == request;
         let tip: SharedString = format!("Use {} for new sessions", server.label).into();
-        let button = aside_link(
+        let button = aside_link::AsideLink::new(
             ("fleet-use-server", id),
             format!("fleet-use-server-action-{index}-{server_index}"),
             "Use for new sessions",
             enabled,
             &bezel,
         )
-        .when(enabled, |link| {
-            link.on_click(cx.listener(move |view, _, window, cx| {
-                cx.stop_propagation();
-                view.open_fleet_server(request, &token, window, cx);
-            }))
-        });
+        .on_press(cx.listener(move |view, _: &(), window, cx| {
+            cx.stop_propagation();
+            view.open_fleet_server(request, &token, window, cx);
+        }));
         Some(
             div()
                 .id(("fleet-use-server-tip", id))
