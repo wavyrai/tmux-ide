@@ -153,8 +153,7 @@ impl SnapshotView {
                     return true;
                 };
                 if shortcut == Shortcut::Close {
-                    self.open_header_actions(window, cx);
-                    self.picker_pane_shortcut(Shortcut::Close, window, cx);
+                    self.begin_pane_close(target, window, cx);
                 } else {
                     let action = match shortcut {
                         Shortcut::SplitRight => pane_actions::Action::Split {

@@ -16,6 +16,7 @@ pub(in crate::tmux_snapshot) mod panes;
 #[path = "sidebar/reveal.rs"]
 mod reveal;
 use crate::{config::Theme, tmux_snapshot::browser};
+pub(in crate::tmux_snapshot) use footer::height as footer_height;
 use gpui::{prelude::*, *};
 pub(in crate::tmux_snapshot) use keyboard::Keyboard;
 pub(super) use keyboard::focus_shortcut;

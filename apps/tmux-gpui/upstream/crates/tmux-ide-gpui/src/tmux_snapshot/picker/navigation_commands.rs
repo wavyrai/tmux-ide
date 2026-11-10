@@ -220,7 +220,6 @@ impl SnapshotView {
                 captured.picker != Some(p.search.entity_id())
                     || p.mode != Mode::Commands
                     || p.pane_scope.is_some()
-                    || p.closing.is_some()
                     || p.agent.is_some()
                     || p.edit.is_some()
                     || p.removal.is_some()

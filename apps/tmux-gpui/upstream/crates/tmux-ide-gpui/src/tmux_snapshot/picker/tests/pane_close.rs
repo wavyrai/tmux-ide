@@ -12,12 +12,18 @@ fn close_requires_confirmation_cancel_is_inert_and_pointer_dispatches_once(
     cx.simulate_resize(size(px(640.), px(400.)));
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    // The palette's row opens the card and makes way for it (c1).
     cx.simulate_keystrokes("f5");
     cx.simulate_input("close pane");
     cx.simulate_keystrokes("enter");
     assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |view, _| {
+        assert!(view.picker.is_none());
+        assert!(view.pane_close.is_some());
+    });
     cx.simulate_keystrokes("escape");
     assert!(receiver.try_recv().is_err());
+    view.read_with(cx, |view, _| assert!(view.pane_close.is_none()));
     cx.simulate_keystrokes("f5");
     cx.simulate_input("close pane");
     cx.simulate_keystrokes("enter");
@@ -50,39 +56,21 @@ fn close_reopen_stale_background_and_full_queue_refuse(cx: &mut TestAppContext) 
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             ready_pane(view, false);
-            view.open_commands(window, cx);
-            let stale_row = command_rows(&view.browser_state, "new terminal window")
-                .remove(0)
-                .target;
             let target =
                 crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
-            view.begin_pane_close(target.clone(), window, cx);
-            view.choose_picker(stale_row, window, cx);
-            assert!(receiver.try_recv().is_err());
-            assert!(view.picker.as_ref().unwrap().closing.is_some());
-            let old = view
-                .picker
-                .as_ref()
-                .unwrap()
-                .closing
-                .as_ref()
-                .unwrap()
-                .identity
-                .clone();
-            view.close_picker(window, cx);
+            // The card never opens over the palette (c1).
             view.open_commands(window, cx);
+            view.begin_pane_close(target.clone(), window, cx);
+            assert!(view.pane_close.is_none());
+            view.close_picker(window, cx);
+            view.begin_pane_close(target.clone(), window, cx);
+            assert!(receiver.try_recv().is_err());
+            let old = view.pane_close.as_ref().unwrap().identity.clone();
+            view.cancel_pane_close(window, cx);
             view.begin_pane_close(target, window, cx);
             view.confirm_pane_close(&old, window, cx);
             assert!(receiver.try_recv().is_err());
-            let current = view
-                .picker
-                .as_ref()
-                .unwrap()
-                .closing
-                .as_ref()
-                .unwrap()
-                .identity
-                .clone();
+            let current = view.pane_close.as_ref().unwrap().identity.clone();
             view.presence.set_active(false);
             view.confirm_pane_close(&current, window, cx);
             assert!(receiver.try_recv().is_err());
@@ -94,9 +82,19 @@ fn close_reopen_stale_background_and_full_queue_refuse(cx: &mut TestAppContext) 
             view.confirm_pane_close(&current, window, cx);
             assert!(receiver.try_recv().is_err());
             ready_pane(view, false);
-            assert_full_queue_refused(view, &receiver, |view| {
-                view.confirm_pane_close(&current, window, cx)
-            });
+            // A full queue: the card stays, says so, and sends nothing.
+            view.browser_commands
+                .as_ref()
+                .unwrap()
+                .try_send(browser::Command::Home { request: 99 })
+                .unwrap();
+            view.confirm_pane_close(&current, window, cx);
+            assert!(view.pane_close.as_ref().unwrap().error.is_some());
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                browser::Command::Home { request: 99 }
+            ));
+            assert!(receiver.try_recv().is_err());
             assert!(view.browser_state.pane_actions.is_some());
             view.confirm_pane_close(&current, window, cx);
             receiver.try_recv().unwrap();
