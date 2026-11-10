@@ -13,7 +13,9 @@ describe("reader pane option", () => {
       path: "/repo/docs/Release-Notes.MD",
       pid: 4242,
     });
-    expect(readerOption(raw({ ...good, path: "/a/b.markdown" }), pane, alive)?.name).toBe("b.markdown");
+    expect(readerOption(raw({ ...good, path: "/a/b.markdown" }), pane, alive)?.name).toBe(
+      "b.markdown",
+    );
   });
   it("refuses dead, malformed, relative, non-Markdown and control-character options", () => {
     for (const value of [
@@ -48,6 +50,9 @@ describe("reader pane option", () => {
     // process is the reader and pane_pid is the pid it recorded.
     expect(readerOption(raw(good), "4242", alive)).not.toBeNull();
     for (const other of ["4243", "", "0", "x", " 4242", "4242\n"])
-      expect(readerOption(raw(good), other, () => true), other).toBeNull();
+      expect(
+        readerOption(raw(good), other, () => true),
+        other,
+      ).toBeNull();
   });
 });

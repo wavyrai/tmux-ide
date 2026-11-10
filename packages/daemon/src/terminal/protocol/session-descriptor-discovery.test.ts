@@ -265,9 +265,9 @@ it("carries a live reader's file name and path, and drops a dead or malformed on
   const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
   // tmux `qa` escapes the option as one argument.
   const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  expect(
-    SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}\t#{pane_pid}"),
-  ).toBe(true);
+  expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}\t#{pane_pid}")).toBe(
+    true,
+  );
   const record = (raw: string, panePid: string | number = process.pid) =>
     `${line("%3")}\tmanual\t\t${raw}\t${panePid}`;
   expect(parseSessionPaneDescriptors([record(quoted)])[0]).toMatchObject({

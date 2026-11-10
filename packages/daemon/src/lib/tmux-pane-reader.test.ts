@@ -88,16 +88,16 @@ function fixture() {
         panes: state.duplicate ? [{ ...pane }, { ...pane, runtimePaneId: "%2" }] : [{ ...pane }],
         catalog: withProof(
           analyzeTrustedSemanticPaneCatalog([
-          {
-            workspaceName: pane.workspaceName,
-            semanticPaneId: pane.semanticPaneId,
-            sessionId: pane.sessionId,
-            windowId: pane.windowId,
-            runtimePaneId: pane.runtimePaneId,
-            windowStamp: pane.windowStamp,
-            windowPaneCount: 1,
-            sessionWindowCount: 1,
-          },
+            {
+              workspaceName: pane.workspaceName,
+              semanticPaneId: pane.semanticPaneId,
+              sessionId: pane.sessionId,
+              windowId: pane.windowId,
+              runtimePaneId: pane.runtimePaneId,
+              windowStamp: pane.windowStamp,
+              windowPaneCount: 1,
+              sessionWindowCount: 1,
+            },
           ]),
           state.invalidProof,
         ),
