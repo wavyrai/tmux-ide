@@ -117,8 +117,13 @@ impl SnapshotView {
         }
         cx.stop_propagation();
     }
-    fn terminal_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
+            return;
+        }
+        // A reader pane (#756) takes its keys; nothing typed reaches `tmux-ide show`.
+        if self.reader_owns_input() {
+            self.reader_key(event, window, cx);
             return;
         }
         // Let application navigation consume its keys before terminal input forwarding.
@@ -313,7 +318,11 @@ impl SnapshotView {
             }
             return;
         }
-        if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
+        if terminal && (self.selection.is_some() || self.reader_owns_input()) {
+            super::renderer_probe::runtime::rejected();
+            return;
+        }
+        if terminal && !self.offer_terminal_input(cx) {
             super::renderer_probe::runtime::rejected();
             return;
         }

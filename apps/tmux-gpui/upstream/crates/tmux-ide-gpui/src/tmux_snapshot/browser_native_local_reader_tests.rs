@@ -39,20 +39,25 @@ fn the_next_page_resumes_where_the_held_bytes_end() {
     );
 }
 
+/// R28, R29 and review round 1, item 3: only visible readers are served, none
+/// in the background, and in turn so that a later reader is not starved.
 #[test]
-fn only_admissible_images_reach_the_cache() {
-    let dir = tempfile::tempdir().unwrap();
-    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>"#;
-    let Asset::Ready(path) = store(dir.path(), ImageMime::Svg, svg) else {
-        panic!("svg refused")
-    };
-    assert!(path.starts_with(dir.path()));
-    assert_eq!(std::fs::read(&path).unwrap(), svg);
-    // An SVG that asks for another file, or bytes that are not the declared type.
-    let fetching = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image href="file:///etc/passwd" width="4" height="4"/></svg>"#;
-    assert_eq!(store(dir.path(), ImageMime::Svg, fetching), Asset::Refused);
+fn readers_are_served_in_turn_only_when_visible_and_in_front() {
+    let panes: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
+    let visible = |pane: &str| pane != "c";
+    assert_eq!(order(true, panes.iter(), visible, None), ["a", "b", "d"]);
     assert_eq!(
-        store(dir.path(), ImageMime::Png, b"not a png"),
-        Asset::Refused
+        order(true, panes.iter(), visible, Some("a")),
+        ["b", "d", "a"]
     );
+    assert_eq!(
+        order(true, panes.iter(), visible, Some("d")),
+        ["a", "b", "d"]
+    );
+    // A reader that is gone or hidden does not stall the turn.
+    assert_eq!(
+        order(true, panes.iter(), visible, Some("c")),
+        ["a", "b", "d"]
+    );
+    assert!(order(false, panes.iter(), visible, None).is_empty());
 }

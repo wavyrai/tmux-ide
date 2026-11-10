@@ -394,3 +394,6 @@ fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext)
         })
     });
 }
+
+#[path = "reader/keys_tests.rs"]
+mod reader_keys_tests;

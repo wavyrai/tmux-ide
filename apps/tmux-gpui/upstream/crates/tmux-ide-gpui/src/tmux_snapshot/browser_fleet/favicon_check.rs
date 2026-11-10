@@ -19,8 +19,9 @@ pub(super) fn admissible(format: ImageFormat, bytes: &[u8]) -> bool {
 /// The same header checks for a picture in a Markdown reader (#756), sized for
 /// documents: up to 8192 px a side and 16 M decoded pixels (64 MB RGBA), an
 /// SVG up to 2048 a side.
-pub(in crate::tmux_snapshot) fn admissible_reader(format: ImageFormat, bytes: &[u8]) -> bool {
-    within(format, bytes, 8192, 4096 * 4096, 2048)
+/// The pixels a reader picture decodes to, GIF frames included, if admissible.
+pub(in crate::tmux_snapshot) fn reader_pixels(format: ImageFormat, bytes: &[u8]) -> Option<u64> {
+    pixels_within(format, bytes, 8192, 4096 * 4096, 2048)
 }
 
 fn within(
@@ -30,6 +31,16 @@ fn within(
     max_pixels: u64,
     max_svg_side: u64,
 ) -> bool {
+    pixels_within(format, bytes, max_side, max_pixels, max_svg_side).is_some()
+}
+
+fn pixels_within(
+    format: ImageFormat,
+    bytes: &[u8],
+    max_side: u64,
+    max_pixels: u64,
+    max_svg_side: u64,
+) -> Option<u64> {
     let pixels = match format {
         ImageFormat::Png => png(bytes).map(|(w, h)| (w, h, 1)),
         ImageFormat::Gif => gif(bytes),
@@ -39,13 +50,9 @@ fn within(
         ImageFormat::Svg => svg(bytes, max_svg_side).map(|(w, h)| (w, h, 1)),
         _ => None,
     };
-    pixels.is_some_and(|(w, h, frames)| {
-        w > 0
-            && h > 0
-            && w <= max_side
-            && h <= max_side
-            && w.saturating_mul(h).saturating_mul(frames) <= max_pixels
-    })
+    let (w, h, frames) = pixels?;
+    let total = w.saturating_mul(h).saturating_mul(frames);
+    (w > 0 && h > 0 && w <= max_side && h <= max_side && total <= max_pixels).then_some(total)
 }
 
 fn be32(b: &[u8], at: usize) -> Option<u64> {

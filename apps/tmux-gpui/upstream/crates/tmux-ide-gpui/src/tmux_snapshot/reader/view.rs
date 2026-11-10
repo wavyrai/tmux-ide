@@ -59,7 +59,7 @@ impl SnapshotView {
     /// where the pane's terminal (`tmux-ide show`) is the better view.
     fn painted_reader(&self, pane: &str) -> Option<Arc<Published>> {
         self.reader(pane)
-            .filter(|r| !matches!(r.status, Status::Unavailable | Status::OldDaemon))
+            .filter(|r| r.status != Status::Unavailable)
             .cloned()
     }
 
@@ -163,7 +163,7 @@ impl SnapshotView {
         let Some(doc) = published.doc.clone() else {
             let text = match &published.status {
                 Status::TooLarge(size) => format!(
-                    "{} is too large to show here ({:.1} MB; the limit is 4 MB). Run tmux-ide show {} in a terminal to read it.",
+                    "{} is too large to show here ({:.1} MiB; the limit is 4 MiB). Run tmux-ide show {} in a terminal to read it.",
                     published.name,
                     *size as f64 / (1024. * 1024.),
                     published.name
@@ -525,8 +525,24 @@ impl SnapshotView {
         cx.notify();
     }
 
-    /// Keys for the focused reader pane: find, copy and scrolling. Plain keys
-    /// stop here so typing never reaches the `tmux-ide show` process below.
+    /// Whether the selected pane is a reader painted over its terminal: then
+    /// no key, paste or IME text may reach the `tmux-ide show` process below,
+    /// whatever the reader's state (loading, too large, removed or shown).
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn reader_find_open(&self) -> bool {
+        self.reader.find.is_some()
+    }
+
+    pub(in crate::tmux_snapshot) fn reader_owns_input(&self) -> bool {
+        self.browser_state
+            .selected_pane
+            .as_deref()
+            .is_some_and(|pane| self.is_reader_pane(pane))
+    }
+
+    /// Keys for the selected reader pane: find, copy and scrolling. Called
+    /// before any terminal input; every other key without ⌘, and ⌘V, stops
+    /// here. True when the key was used or swallowed.
     pub(in crate::tmux_snapshot) fn reader_key(
         &mut self,
         event: &KeyDownEvent,
@@ -549,17 +565,7 @@ impl SnapshotView {
         {
             self.refresh_reader_find(false, cx);
         }
-        let Some(doc) = self.reader_doc(&pane) else {
-            return false;
-        };
-        if !self.terminal_focus.is_focused(window)
-            || self.picker.is_some()
-            || self.new_session.is_some()
-            || self.pane_actions.is_some()
-            || self.browser_address.is_some()
-        {
-            return false;
-        }
+        let doc = self.reader_doc(&pane);
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         let key = keystroke.key.as_str();
@@ -572,62 +578,60 @@ impl SnapshotView {
             let y = (f32::from(offset.y) - delta).clamp(-f32::from(max), 0.);
             scroll.set_offset(point(offset.x, px(y)));
         };
+        let shown = doc.is_some();
         let handled = match (key, m.platform, m.control || m.alt) {
-            ("f", true, false) if !m.shift => {
+            ("f", true, false) if !m.shift && shown => {
                 self.open_reader_find(pane, window, cx);
                 true
             }
-            ("c", true, false) if !m.shift => match view.selection.filter(|s| !s.is_collapsed()) {
-                Some(selection) => {
+            ("c", true, false) if !m.shift => {
+                if let (Some(doc), Some(selection)) =
+                    (&doc, view.selection.filter(|s| !s.is_collapsed()))
+                {
                     cx.write_to_clipboard(ClipboardItem::new_string(selectable::copied(
-                        &doc, selection,
+                        doc, selection,
                     )));
-                    true
                 }
-                None => false,
-            },
-            ("up", true, false) => {
+                true
+            }
+            // Paste goes nowhere: a reader takes no text.
+            ("v", true, _) => true,
+            ("up" | "home", true, false) | ("home", false, false) if shown => {
                 by(f32::MIN / 4.);
                 true
             }
-            ("down", true, false) => {
+            ("down" | "end", true, false) | ("end", false, false) if shown => {
                 by(f32::MAX / 4.);
                 true
             }
-            ("up", false, false) => {
+            ("up", false, false) if shown => {
                 by(-LINE);
                 true
             }
-            ("down", false, false) => {
+            ("down", false, false) if shown => {
                 by(LINE);
                 true
             }
-            ("pageup", false, false) => {
+            ("pageup", false, false) if shown => {
                 by(-page);
                 true
             }
-            ("pagedown", false, false) => {
+            ("pagedown", false, false) if shown => {
                 by(page);
                 true
             }
-            ("space", false, false) => {
+            ("space", false, false) if shown => {
                 by(if m.shift { -page } else { page });
-                true
-            }
-            ("home", false, false) => {
-                by(f32::MIN / 4.);
-                true
-            }
-            ("end", false, false) => {
-                by(f32::MAX / 4.);
                 true
             }
             ("escape", false, false) => {
                 view.selection = None;
                 true
             }
-            // Plain typing: swallowed so it never reaches `tmux-ide show`.
-            (_, false, false) => true,
+            // Everything else without ⌘, Control and Option included: swallowed,
+            // so typing never reaches `tmux-ide show` (Control-C would end it).
+            (_, false, _) => true,
+            // Other ⌘ shortcuts are the app's, never the terminal's.
             _ => false,
         };
         if handled {

@@ -16,6 +16,8 @@ pub(super) mod find;
 pub(super) mod policy;
 #[path = "reader/view.rs"]
 mod view;
+#[path = "reader/work.rs"]
+pub(super) mod work;
 pub(super) use view::Views;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -26,10 +28,10 @@ pub(super) enum Status {
     /// Removed or renamed; the last content stays, dimmed.
     Missing,
     TooLarge(u64),
-    /// Reads keep failing; the pane shows its terminal again.
+    /// Reads keep failing (any error, a 404 included: a daemon without the
+    /// route never sends the reader badge, so a 404 is a pane that went away);
+    /// the pane shows its terminal again.
     Unavailable,
-    /// The daemon has no reader route.
-    OldDaemon,
 }
 
 /// One reader pane as the worker publishes it.
@@ -85,3 +87,7 @@ impl bezel_markdown::Links for ReaderLinks {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "reader/links_tests.rs"]
+mod links_tests;

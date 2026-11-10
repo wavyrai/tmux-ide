@@ -31,6 +31,13 @@ pub(in crate::tmux_snapshot) fn link_action(url: &str) -> LinkAction {
     if url.starts_with('#') {
         return LinkAction::Jump;
     }
+    // A user name or password in a link is never handed to the browser.
+    match url::Url::parse(url) {
+        Ok(parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
+            return LinkAction::Refused;
+        }
+        _ => {}
+    }
     match crate::web_url::WebUrl::try_from(url) {
         Ok(web) => LinkAction::Web(web.into()),
         Err(_) => LinkAction::Refused,

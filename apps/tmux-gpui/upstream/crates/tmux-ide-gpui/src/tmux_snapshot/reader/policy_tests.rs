@@ -28,6 +28,10 @@ fn only_web_links_reach_the_system_browser() {
         "/etc/hosts",
         "https://",
         "https://exa mple.com",
+        "https://user:pass@example.com/",
+        "https://user@example.com/",
+        "https://:secret@example.com/",
+        "docs#intro",
         "",
     ] {
         assert_eq!(link_action(refused), LinkAction::Refused, "{refused}");
@@ -121,6 +125,13 @@ fn local_images_point_only_at_the_app_cache_once_fetched() {
         ("../b.png".to_owned(), Asset::Refused),
     ]);
     let (ready, _) = rewrite(&doc, &assets);
+    assert_eq!(image_urls(&ready), vec![cache.display().to_string()]);
+    // R12: an image among text gets the same treatment, never its path as written.
+    let inline = bezel_markdown::parse("see ![i](images/a.png) here\n");
+    let (pending, wanted) = rewrite(&inline, &BTreeMap::new());
+    assert_eq!(wanted, vec!["images/a.png".to_owned()]);
+    assert_eq!(image_urls(&pending), vec![String::new()]);
+    let (ready, _) = rewrite(&inline, &assets);
     assert_eq!(image_urls(&ready), vec![cache.display().to_string()]);
 }
 

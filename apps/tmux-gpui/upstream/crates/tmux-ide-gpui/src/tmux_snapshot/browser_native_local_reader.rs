@@ -1,13 +1,20 @@
-//! Reader panes' file and image reads (#756), on their own bounded worker so
-//! terminal delivery never waits for them. One request is in flight at a
-//! time. A visible reader is polled every 750 ms with the revision it shows;
-//! the daemon answers `unchanged` for the cost of one stat. A changed file
-//! arrives in 512 KiB pages, is decoded and parsed here, off the UI thread,
-//! and is published with its images rewritten to the app's own cache.
+//! Reader panes' file and image reads (#756). Requests go out on their own
+//! catalog worker, one at a time, so terminal delivery never waits for a
+//! daemon round trip. Decoding, parsing, rewriting images and admitting them
+//! run on the reader work thread (`reader::work`), never on this actor, which
+//! also carries terminal input; this actor only assembles pages and sends jobs.
+//!
+//! A visible reader is polled every 750 ms with the revision it shows. Each
+//! poll costs the daemon what a browser toolbar poll costs: a catalog read
+//! (`tmux list-panes -a`), the terminal inventory, and two `display-message`
+//! calls to prove the pane before and after, plus a stat of the file; an
+//! unchanged file sends no bytes. Visible readers are polled in turn
+//! (round-robin), so with several readers over a slow link none starves.
 use super::*;
 use crate::tmux_snapshot::reader::{
     Published, Status,
-    policy::{self, Asset},
+    policy::Asset,
+    work::{Done, Job as Work, Kitchen, PIXEL_BUDGET},
 };
 use herdr_client::tmux_daemon::{
     EditorTarget, ImageMime, ReaderAsset, ReaderChunk, ReaderFile, ReaderPage, ReaderReply,
@@ -47,6 +54,16 @@ struct PaneFetch {
     name: String,
     folder: String,
     source: Option<(String, Arc<bezel_markdown::Doc>, bool)>,
+    /// The source with its images rewritten, as last rendered by the work thread.
+    rendered: Option<Arc<bezel_markdown::Doc>>,
+    /// The latest render asked for; an older render's result is dropped.
+    ticket: u64,
+    /// A new source whose first render is still to come.
+    fresh: bool,
+    /// Decoded pixels of each cached picture, against the document's budget.
+    pixels: BTreeMap<String, u64>,
+    /// Pictures being admitted on the work thread.
+    storing: std::collections::BTreeSet<String>,
     progress: Option<Progress>,
     asset: Option<AssetProgress>,
     assets: BTreeMap<String, Asset>,
@@ -62,6 +79,9 @@ pub(in crate::tmux_snapshot) struct Gate {
     pending: Option<Pending>,
     panes: BTreeMap<String, PaneFetch>,
     cache: Option<tempfile::TempDir>,
+    kitchen: Option<Kitchen>,
+    /// The pane polled last: the next poll starts after it.
+    last: Option<String>,
 }
 
 /// Appends a page to a read in progress. `None` when the page does not continue
@@ -82,37 +102,29 @@ fn assemble(progress: Option<Progress>, chunk: ReaderChunk) -> Option<Progress> 
     }
 }
 
+/// The readers to serve, in turn: none in the background, only visible ones,
+/// starting after the one served last so that none starves.
+fn order<'a>(
+    foreground: bool,
+    panes: impl Iterator<Item = &'a String>,
+    visible: impl Fn(&str) -> bool,
+    last: Option<&str>,
+) -> Vec<String> {
+    if !foreground {
+        return Vec::new();
+    }
+    let mut order: Vec<String> = panes.filter(|pane| visible(pane)).cloned().collect();
+    if let Some(at) = last.and_then(|last| order.iter().position(|pane| pane == last)) {
+        order.rotate_left(at + 1);
+    }
+    order
+}
+
 fn page_of(progress: Option<&Progress>) -> Option<ReaderPage> {
     progress.map(|p| ReaderPage {
         revision: p.revision.clone(),
         offset: p.bytes.len() as u64,
     })
-}
-
-/// Checks a fetched image and copies it into the cache under its own digest.
-fn store(cache: &std::path::Path, mime: ImageMime, bytes: &[u8]) -> Asset {
-    use gpui::ImageFormat;
-    use sha2::Digest as _;
-    let (format, extension) = match mime {
-        ImageMime::Png => (ImageFormat::Png, "png"),
-        ImageMime::Jpeg => (ImageFormat::Jpeg, "jpg"),
-        ImageMime::Gif => (ImageFormat::Gif, "gif"),
-        ImageMime::Webp => (ImageFormat::Webp, "webp"),
-        ImageMime::Svg => (ImageFormat::Svg, "svg"),
-    };
-    if !fleet::favicon_check::admissible_reader(format, bytes) {
-        return Asset::Refused;
-    }
-    let digest: String = sha2::Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let path = cache.join(format!("{digest}.{extension}"));
-    if path.exists() || std::fs::write(&path, bytes).is_ok() {
-        Asset::Ready(path)
-    } else {
-        Asset::Failed
-    }
 }
 
 impl Local {
@@ -130,21 +142,106 @@ impl Local {
             route.request,
         ))
     }
+    /// Sends a job to the work thread, starting it on first use.
+    fn reader_work(&mut self, job: Work) -> bool {
+        let gate = &mut self.browser_controls.reader;
+        if gate.kitchen.is_none() {
+            gate.kitchen = Kitchen::spawn().ok();
+        }
+        gate.kitchen
+            .as_ref()
+            .is_some_and(|kitchen| kitchen.send(job))
+    }
+    /// Asks for the pane's document to be rendered again with its images.
+    fn reader_render(&mut self, pane: &str) {
+        let Some(fetch) = self.browser_controls.reader.panes.get_mut(pane) else {
+            return;
+        };
+        let Some((_, doc, _)) = &fetch.source else {
+            return;
+        };
+        fetch.ticket += 1;
+        let job = Work::Render {
+            pane: pane.to_owned(),
+            ticket: fetch.ticket,
+            doc: doc.clone(),
+            assets: fetch.assets.clone(),
+        };
+        self.reader_work(job);
+    }
+    /// Takes the work thread's results. True when a publication changed.
+    fn reader_finished(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(done) = self
+            .browser_controls
+            .reader
+            .kitchen
+            .as_ref()
+            .and_then(Kitchen::poll)
+        {
+            let pane = match &done {
+                Done::Parsed { pane, .. }
+                | Done::Rendered { pane, .. }
+                | Done::Stored { pane, .. } => pane.clone(),
+            };
+            let Some(fetch) = self.browser_controls.reader.panes.get_mut(&pane) else {
+                continue;
+            };
+            match done {
+                Done::Parsed {
+                    revision,
+                    doc,
+                    lossy,
+                    ..
+                } => {
+                    fetch.source = Some((revision, doc, lossy));
+                    fetch
+                        .assets
+                        .retain(|_, asset| matches!(asset, Asset::Ready(_)));
+                    let assets = &fetch.assets;
+                    fetch.pixels.retain(|src, _| assets.contains_key(src));
+                    fetch.fresh = true;
+                    self.reader_render(&pane);
+                }
+                Done::Rendered {
+                    ticket,
+                    doc,
+                    wanted,
+                    ..
+                } if ticket == fetch.ticket => {
+                    fetch.rendered = Some(doc);
+                    fetch.wanted = wanted;
+                    if std::mem::take(&mut fetch.fresh) {
+                        fetch.generation += 1;
+                    }
+                    self.reader_refresh(&pane);
+                    changed = true;
+                }
+                Done::Rendered { .. } => {}
+                Done::Stored {
+                    src, asset, pixels, ..
+                } => {
+                    fetch.storing.remove(&src);
+                    if pixels > 0 {
+                        fetch.pixels.insert(src.clone(), pixels);
+                    }
+                    fetch.assets.insert(src, asset);
+                    self.reader_render(&pane);
+                }
+            }
+        }
+        changed
+    }
     /// Republishes one pane's reader from what is held.
     fn reader_refresh(&mut self, pane: &str) {
         let Some(fetch) = self.browser_controls.reader.panes.get_mut(pane) else {
             return;
         };
-        let doc = fetch.source.as_ref().map(|(_, doc, _)| {
-            let (rendered, wanted) = policy::rewrite(doc, &fetch.assets);
-            fetch.wanted = wanted;
-            Arc::new(rendered)
-        });
         let published = Published {
             name: fetch.name.clone(),
             folder: fetch.folder.clone(),
             status: fetch.status.clone(),
-            doc,
+            doc: fetch.rendered.clone().filter(|_| fetch.source.is_some()),
             lossy: fetch.source.as_ref().is_some_and(|(_, _, lossy)| *lossy),
             generation: fetch.generation,
         };
@@ -178,6 +275,7 @@ impl Local {
         {
             changed |= self.reader_reply(result);
         }
+        changed |= self.reader_finished();
         if changed {
             self.publish()?;
         }
@@ -187,19 +285,17 @@ impl Local {
         Ok(())
     }
     fn reader_dispatch(&mut self) -> Result<(), Error> {
-        if !self.foreground || self.active.is_none() {
+        if self.active.is_none() {
             return Ok(());
         }
         let now = Instant::now();
-        let visible: Vec<String> = self
-            .browser_controls
-            .reader
-            .panes
-            .keys()
-            .filter(|pane| self.state.browser_pane_visible(pane))
-            .cloned()
-            .collect();
         let gate = &self.browser_controls.reader;
+        let visible = order(
+            self.foreground,
+            gate.panes.keys(),
+            |pane| self.state.browser_pane_visible(pane),
+            gate.last.as_deref(),
+        );
         let mut next: Option<(String, Job, Option<String>, Option<ReaderPage>)> = None;
         for pane in &visible {
             let fetch = &gate.panes[pane];
@@ -230,10 +326,9 @@ impl Local {
         if next.is_none() {
             next = visible.iter().find_map(|pane| {
                 let fetch = &gate.panes[pane];
-                let src = fetch
-                    .wanted
-                    .iter()
-                    .find(|src| !fetch.assets.contains_key(*src))?;
+                let src = fetch.wanted.iter().find(|src| {
+                    !fetch.assets.contains_key(*src) && !fetch.storing.contains(*src)
+                })?;
                 Some((pane.clone(), Job::Asset(src.clone()), None, None))
             });
         }
@@ -264,6 +359,7 @@ impl Local {
         }
         if let Some(worker) = &mut self.browser_controls.reader.worker {
             worker.submit(action)?;
+            self.browser_controls.reader.last = Some(pane.clone());
             self.browser_controls.reader.pending = Some(Pending {
                 route,
                 request,
@@ -294,7 +390,7 @@ impl Local {
             (Job::Asset(src), Ok(CatalogResult::ReaderAsset(asset))) => {
                 self.reader_asset(&pane, src, asset)
             }
-            (job, result) => {
+            (job, _) => {
                 let gate = &mut self.browser_controls.reader;
                 let Some(fetch) = gate.panes.get_mut(&pane) else {
                     return false;
@@ -306,13 +402,7 @@ impl Local {
                 } else {
                     fetch.progress = None;
                     fetch.failures = fetch.failures.saturating_add(1);
-                    let old = matches!(
-                        result,
-                        Err(herdr_client::tmux_daemon::Error::RequestStatus(404))
-                    );
-                    let status = if old {
-                        Status::OldDaemon
-                    } else if fetch.failures >= FAILURE_LIMIT {
+                    let status = if fetch.failures >= FAILURE_LIMIT {
                         Status::Unavailable
                     } else {
                         fetch.status.clone()
@@ -326,6 +416,8 @@ impl Local {
             }
         };
         if changed {
+            // An image's outcome or a status: render again on the work thread.
+            self.reader_render(&pane);
             self.reader_refresh(&pane);
         }
         changed
@@ -339,6 +431,7 @@ impl Local {
         fetch.folder = reply.folder;
         fetch.failures = 0;
         let now = Instant::now();
+        let mut parse = None;
         let status = match reply.file {
             ReaderFile::Unchanged { .. } => {
                 fetch.due = Some(now + POLL);
@@ -349,15 +442,13 @@ impl Local {
                 fetch.progress = assemble(fetch.progress.take(), chunk);
                 match fetch.progress.take_if(|p| p.bytes.len() as u64 == size) {
                     Some(done) => {
-                        let (text, lossy) = policy::decode(&done.bytes);
-                        let doc = Arc::new(bezel_markdown::parse(&text));
-                        fetch.source = Some((done.revision, doc, lossy));
-                        fetch
-                            .assets
-                            .retain(|_, asset| matches!(asset, Asset::Ready(_)));
-                        fetch.generation += 1;
+                        // Parsed on the work thread; shown once rendered.
                         fetch.due = Some(now + POLL);
-                        changed = true;
+                        parse = Some(Work::Parse {
+                            pane: pane.to_owned(),
+                            revision: done.revision,
+                            bytes: done.bytes,
+                        });
                         Status::Ready
                     }
                     // Mid-read: the next page goes out on the next tick.
@@ -383,6 +474,9 @@ impl Local {
         };
         changed |= status != fetch.status;
         fetch.status = status;
+        if let Some(job) = parse {
+            self.reader_work(job);
+        }
         changed
     }
     fn reader_asset(&mut self, pane: &str, src: String, asset: ReaderAsset) -> bool {
@@ -402,10 +496,24 @@ impl Local {
                 let size = chunk.size;
                 let progress = assemble(held.filter(|a| a.mime == mime).map(|a| a.progress), chunk);
                 match progress {
-                    Some(p) if p.bytes.len() as u64 == size => Some(match &gate.cache {
-                        Some(cache) => store(cache.path(), mime, &p.bytes),
-                        None => Asset::Failed,
-                    }),
+                    Some(p) if p.bytes.len() as u64 == size => match &gate.cache {
+                        // Admitted and cached on the work thread, within what is
+                        // left of the document's pixel budget.
+                        Some(cache) => {
+                            fetch.storing.insert(src.clone());
+                            let job = Work::Store {
+                                pane: pane.to_owned(),
+                                src,
+                                mime,
+                                bytes: p.bytes,
+                                cache: cache.path().to_owned(),
+                                budget: PIXEL_BUDGET.saturating_sub(fetch.pixels.values().sum()),
+                            };
+                            self.reader_work(job);
+                            return false;
+                        }
+                        None => Some(Asset::Failed),
+                    },
                     Some(progress) => {
                         fetch.asset = Some(AssetProgress {
                             src: src.clone(),
