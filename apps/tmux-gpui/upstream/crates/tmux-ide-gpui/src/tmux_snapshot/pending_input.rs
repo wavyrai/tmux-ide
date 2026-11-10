@@ -89,8 +89,11 @@ impl Pending {
         })
     }
     fn compatible(&self, view: &SnapshotView) -> bool {
-        let waiting = matches!(self.kind, Kind::Split(_));
-        self.started.elapsed() < self.limit()
+        // A split hold waits for the pane it created; one that was not
+        // applied has nowhere to deliver.
+        let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting());
+        !matches!(&self.kind, Kind::Split(hold) if hold.failed())
+            && self.started.elapsed() < self.limit()
             && self.request == view.browser_request
             && (waiting || view.browser_state.selected_pane.as_ref() == Some(&self.id))
             && view.browser_state.selected_session.as_ref() == Some(&self.session)
@@ -121,8 +124,8 @@ impl Pending {
             && view.divider.is_none()
             && view.browser_commands.is_some()
             && match self.kind {
-                Kind::Split(_) => true,
-                Kind::Selection => view
+                Kind::Split(_) if waiting => true,
+                Kind::Selection | Kind::Split(_) => view
                     .browser_state
                     .input_targets
                     .iter()

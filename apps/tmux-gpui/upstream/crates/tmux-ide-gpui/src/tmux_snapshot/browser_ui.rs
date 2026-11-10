@@ -307,7 +307,9 @@ impl SnapshotView {
                 | super::keys::Input::Key(_)
                 | super::keys::Input::Bytes(_)
         );
-        if (self.browser_state.retained_preview && !self.split_hold_waiting())
+        // Only terminal keys may wait in a split's hold; a wheel or scroll
+        // during its preview is refused, as before, never sent to the old pane.
+        if (self.browser_state.retained_preview && !(terminal && self.split_hold_waiting()))
             || self.resize_gesture.busy()
         {
             super::renderer_probe::runtime::rejected();
