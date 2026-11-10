@@ -398,6 +398,7 @@ fn stale_ready_does_not_clear_recovery() {
         due: None,
         others: 1,
         local_record: None,
+        remote: None,
         rebind: None,
         rediscover_owner: false,
     });

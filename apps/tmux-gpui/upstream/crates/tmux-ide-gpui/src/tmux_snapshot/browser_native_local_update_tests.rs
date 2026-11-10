@@ -327,25 +327,116 @@ fn a_session_gone_after_the_update_ends_recovery_on_home() {
     assert!(seen.home_phase == HomePhase::Unavailable);
 }
 
-/// Unchanged on purpose (owner decision pending): without a local record the
-/// app accepts only the exact old generation, so a remote daemon update drops
-/// the window to the session list.
-#[test]
-fn an_ssh_daemon_update_drops_the_window_to_select_a_session() {
-    let (mut local, events) = attached();
-    local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
-        id: uuid::Uuid::new_v4().to_string(),
+fn ssh_profile(id: &str) -> herdr_client::tmux_daemon::SavedMachine {
+    herdr_client::tmux_daemon::SavedMachine {
+        id: id.into(),
         label: "Build".into(),
         ssh_target: "fixture.invalid".into(),
         expected_environment_id: None,
         enabled: true,
-    });
-    let target = through_the_update(&mut local);
-    new_daemon_lists(&mut local, &target);
+    }
+}
+
+fn identity(
+    instance: &str,
+    environment: Option<&str>,
+) -> herdr_client::tmux_daemon::CatalogIdentity {
+    herdr_client::tmux_daemon::CatalogIdentity {
+        instance_id: instance.into(),
+        environment_id: environment.map(str::to_owned),
+    }
+}
+
+const PROFILE: &str = "11111111-1111-4111-8111-111111111111";
+const ENVIRONMENT: &str = "22222222-2222-4222-8222-222222222222";
+
+/// An SSH window across a remote daemon update (owner, D). `before`/`after`
+/// are the remote environment ids the catalog reported; `profile_after` the
+/// saved machine then selected; the new daemon lists `listed`.
+fn ssh_update(
+    before: Option<&str>,
+    after: Option<&str>,
+    profile_after: &str,
+    listed: impl FnOnce(&mut Target),
+) -> (Local, mpsc::Receiver<Incoming>) {
+    let (mut local, events) = attached();
+    // A selected saved machine makes the source remote: no local record.
+    local.selected_profile = Some(ssh_profile(PROFILE));
+    local.catalog_identity = Some(identity("old-instance", before));
+    let mut target = through_the_update(&mut local);
+    local.selected_profile = Some(ssh_profile(profile_after));
+    local.catalog_identity = Some(identity("new-instance", after));
+    target.scope.generation = "generation-after-update".into();
+    listed(&mut target);
+    local.targets.insert("token-after-update".into(), target);
     assert!(local.reconnect_catalog().unwrap());
+    (local, events)
+}
+
+fn selects_a_session(local: &Local) {
     assert!(local.recovery.is_none());
+    assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(
-        last_catalog(&events).status,
+        local.state.status,
         "Previous session identity changed or disappeared — select a session"
     );
+}
+
+#[test]
+fn an_ssh_window_reopens_after_a_remote_update_on_the_same_machine_and_session() {
+    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |_| {});
+    reopened_the_same_session(&local);
+}
+
+#[test]
+fn same_ids_on_a_different_environment_are_refused() {
+    let other = "33333333-3333-4333-8333-333333333333";
+    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(other), PROFILE, |_| {});
+    selects_a_session(&local);
+}
+
+#[test]
+fn a_different_saved_machine_is_refused() {
+    let other = "44444444-4444-4444-8444-444444444444";
+    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), other, |_| {});
+    selects_a_session(&local);
+}
+
+#[test]
+fn another_tmux_server_or_a_restored_session_is_refused() {
+    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
+        target.scope.server_id = "other-server".into();
+    });
+    selects_a_session(&local);
+    // `servers upgrade` restores sessions on a new server: new live ids.
+    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
+        target.live = "live-session.restored".into();
+    });
+    selects_a_session(&local);
+}
+
+#[test]
+fn a_daemon_without_an_environment_id_keeps_todays_behaviour() {
+    for (before, after) in [
+        (None, None),
+        (None, Some(ENVIRONMENT)),
+        (Some(ENVIRONMENT), None),
+    ] {
+        let (local, _events) = ssh_update(before, after, PROFILE, |_| {});
+        selects_a_session(&local);
+    }
+}
+
+#[test]
+fn an_ssh_environment_mismatch_error_is_an_identity_failure_and_stops_at_once() {
+    use herdr_client::tmux_ssh::{DiscoveryError, Error as SshError, TransportError};
+    let mismatch = E::Remote(Box::new(TransportError::Discovery(
+        DiscoveryError::Descriptor(SshError::Environment),
+    )));
+    assert_eq!(Failure::of(&mismatch), Failure::Identity);
+    let (mut local, _events) = attached();
+    local.selected_profile = Some(ssh_profile(PROFILE));
+    through_the_update(&mut local);
+    local.reconnect_retry(Failure::of(&mismatch)).unwrap();
+    ended_on_home(&local, SSH_IDENTITY);
 }

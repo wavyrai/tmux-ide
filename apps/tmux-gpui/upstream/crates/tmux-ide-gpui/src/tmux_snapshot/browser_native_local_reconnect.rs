@@ -2,10 +2,12 @@
 //! app re-issues a lease for the same session and keeps retrying with backoff; the
 //! terminal loop keeps the last frame on screen meanwhile. Only a changed daemon
 //! sends recovery through rediscovery, which also keeps the window as it was
-//! until it ends. A new daemon authorizes an old server generation only for a
-//! local restart with the identical live session (`reconnect_catalog`), so
-//! retrying through a daemon update can never bind the window to another
-//! session, and recovery never repeats owner mutations.
+//! until it ends. A new daemon authorizes an old server generation only for
+//! the same local daemon record, or over SSH the same saved machine and remote
+//! environment, with the identical server and live session
+//! (`reconnect_catalog`), so retrying through a daemon update can never bind
+//! the window to another session. An identity failure over SSH stops at once,
+//! and recovery never repeats owner mutations.
 use super::*;
 
 /// What a rebind needs to re-issue a lease without reading the catalog again.
@@ -23,6 +25,9 @@ pub(super) struct Recovery {
     others: u8,
     /// The private local record recovery began on; `None` for any remote source.
     local_record: Option<PathBuf>,
+    /// Over SSH: the saved machine and the remote environment recovery began
+    /// on, the machine half of what may reopen across daemon generations.
+    remote: Option<(String, String)>,
     /// `Some` while the daemon is the one the stream was issued by.
     rebind: Option<Rebind>,
     /// The daemon was unreachable: rediscover its record before the next try.
@@ -39,6 +44,7 @@ impl Recovery {
             due: None,
             others: 0,
             local_record: None,
+            remote: None,
             rebind: None,
             rediscover_owner: false,
         }
@@ -87,10 +93,21 @@ impl Failure {
             E::Network(_) | E::RecordChanged | E::OwnerExited => Self::Unreachable,
             E::RecordIo(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Unreachable,
             E::IdentityFormat | E::IdentityChanged => Self::Identity,
+            // The saved machine's expected environment answered with another.
+            #[cfg(unix)]
+            E::Remote(remote) if remote_environment_mismatch(remote) => Self::Identity,
             E::Incompatible(_) => Self::Incompatible,
             _ => Self::Other,
         }
     }
+}
+#[cfg(unix)]
+fn remote_environment_mismatch(remote: &herdr_client::tmux_ssh::TransportError) -> bool {
+    use herdr_client::tmux_ssh::{DiscoveryError, Error, TransportError};
+    matches!(
+        remote,
+        TransportError::Discovery(DiscoveryError::Descriptor(Error::Environment))
+    )
 }
 impl Local {
     pub(super) fn reconnect_start(&mut self) -> Result<(), Error> {
@@ -120,6 +137,7 @@ impl Local {
             due: None,
             others: 0,
             local_record: self.current_local_record(),
+            remote: self.current_remote(),
             rebind,
             rediscover_owner: false,
         });
@@ -220,6 +238,16 @@ impl Local {
             _ => None,
         }
     }
+    /// The saved machine and remote environment the catalog came from, when
+    /// both are known: an SSH profile, and a daemon that reports its
+    /// environment id (minted once per state home, kept across restarts).
+    /// A selected profile is what makes the source remote, so a local record
+    /// never has one.
+    fn current_remote(&self) -> Option<(String, String)> {
+        let profile = self.selected_profile.as_ref()?.id.clone();
+        let environment = self.catalog_identity.as_ref()?.environment_id.clone()?;
+        Some((profile, environment))
+    }
     /// Select an exact generation/session match in the newly verified catalog. A
     /// restarted local daemon has a new generation; its live session id hashes the
     /// tmux server pid, session id and creation time, so an identical id on the
@@ -230,6 +258,11 @@ impl Local {
         };
         let same_local_daemon =
             recovery.local_record.is_some() && recovery.local_record == self.current_local_record();
+        // Over SSH (owner, D): the same saved machine and the same remote
+        // environment, both known on both sides. Then the server id and the
+        // live id (server pid, session id, creation time) decide, as locally.
+        let same_remote_machine =
+            recovery.remote.is_some() && recovery.remote == self.current_remote();
         let key = self
             .targets
             .iter()
@@ -238,7 +271,7 @@ impl Local {
             })
             .or_else(|| {
                 self.targets.iter().find(|(_, target)| {
-                    same_local_daemon
+                    (same_local_daemon || same_remote_machine)
                         && target.scope.server_id == recovery.target.scope.server_id
                         && target.live == recovery.target.live
                 })
