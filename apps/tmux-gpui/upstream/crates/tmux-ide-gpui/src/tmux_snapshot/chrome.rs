@@ -1,7 +1,7 @@
 //! The window's chrome material, from Bezel: the platform blurs what is behind
 //! the window, and the palette's frost paints the sidebar and titlebar over it.
 //! Terminal panes stay opaque. Reduce Transparency and Increase Contrast turn
-//! the material off.
+//! the material off. Reduce Motion turns Bezel's motion off (#761).
 use gpui::{App, Window, WindowBackgroundAppearance};
 #[cfg(target_os = "macos")]
 mod macos;
@@ -35,6 +35,11 @@ pub(super) struct Chrome {
     /// Tests stand in for the accessibility settings here.
     #[cfg(test)]
     forced: Option<bool>,
+    /// Tests and offscreen captures stand in for Reduce Motion here. Unset,
+    /// tests draw with motion reduced, so every frame they paint is the
+    /// settled one.
+    #[cfg(any(test, feature = "visual-capture"))]
+    forced_motion: Option<bool>,
 }
 impl Chrome {
     /// Whether accessibility settings allow translucent chrome, as of the last
@@ -60,6 +65,46 @@ impl Chrome {
             self.allowed = macos::translucency_allowed();
         }
         self.allowed
+    }
+
+    /// Hands macOS "Reduce motion" to gpui (#761), which then draws every
+    /// Bezel entrance at its end state and schedules no frames for it. Runs
+    /// once per render, before the chrome is built; the accessibility
+    /// watcher redraws the view when the setting changes.
+    pub(super) fn sync_motion(&self, cx: &mut App) {
+        use bezel_motion::AppExt as _;
+        let reduced = self.motion_reduced();
+        if cx.reduced_motion() != reduced {
+            cx.set_reduced_motion(reduced);
+        }
+    }
+
+    fn motion_reduced(&self) -> bool {
+        #[cfg(test)]
+        {
+            self.forced_motion.unwrap_or(true)
+        }
+        #[cfg(not(test))]
+        {
+            #[cfg(feature = "visual-capture")]
+            if let Some(reduced) = self.forced_motion {
+                return reduced;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                macos::motion_reduced()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        }
+    }
+
+    /// Draws as if macOS "Reduce motion" were `reduced`.
+    #[cfg(any(test, feature = "visual-capture"))]
+    pub(super) fn force_motion(&mut self, reduced: bool) {
+        self.forced_motion = Some(reduced);
     }
 
     /// Puts the window's background where the installed palette wants it:

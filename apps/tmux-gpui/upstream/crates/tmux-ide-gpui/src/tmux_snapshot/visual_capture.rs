@@ -220,7 +220,12 @@ fn capture_view(
         _activation: None,
         _appearance: None,
         last_system: state.appearance.as_ref().map(|a| a.system),
-        chrome: Default::default(),
+        chrome: {
+            // A capture is one frame: draw it settled, as Reduce motion does.
+            let mut chrome = super::chrome::Chrome::default();
+            chrome.force_motion(true);
+            chrome
+        },
         last_workspace_session: None,
         pending_session_open: None,
         header_controls: Default::default(),
