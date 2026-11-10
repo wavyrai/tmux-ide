@@ -9,7 +9,16 @@ pub enum PaneAction {
     Zoom(Zoom),
     Split(Direction),
     Close,
-    Resize { axis: Axis, cells: u16 },
+    Resize {
+        axis: Axis,
+        cells: u16,
+    },
+    /// Exchange the selected pane with `target`, which must still be the
+    /// pane at `lifetime` when the intent is sent.
+    Swap {
+        target: String,
+        lifetime: Lifetime,
+    },
 }
 impl PaneAction {
     pub fn structural(&self) -> bool {
@@ -38,6 +47,10 @@ impl PaneAction {
                 pane: pane.into(),
                 axis: *axis,
                 cells: *cells,
+            },
+            Self::Swap { target, .. } => Intent::Swap {
+                source: pane.into(),
+                target: target.clone(),
             },
         }
     }
@@ -110,9 +123,12 @@ impl ActionState {
             PaneAction::Resize { cells, .. } if !(1..=4096).contains(cells) => {
                 return Err(Error::Invalid);
             }
+            PaneAction::Swap { target, .. } if target == pane => {
+                return Err(Error::Invalid);
+            }
             _ => {}
         }
-        if !current(c, pane, lifetime) {
+        if !current(c, pane, lifetime) || !target_current(c, &action) {
             return Err(tmux_control::Error::Lifetime.into());
         }
         self.pending = Some(Pending {
@@ -189,7 +205,10 @@ impl ActionState {
             })
         } else if update.intent_timeouts.contains(&pending.operation) || now >= pending.deadline {
             Some(ActionOutcome::TimedOut)
-        } else if !pending.sent && !current(c, &pending.pane, &pending.lifetime) {
+        } else if !pending.sent
+            && (!current(c, &pending.pane, &pending.lifetime)
+                || !target_current(c, &pending.action))
+        {
             Some(ActionOutcome::Stale)
         } else {
             None
@@ -244,6 +263,13 @@ fn current(c: &Controller, pane: &str, lifetime: &Lifetime) -> bool {
         && c.selected() == pane
         && c.owns(Authority::Input)
         && c.selectable(pane).as_ref() == Some(lifetime)
+}
+/// A swap's second pane is still the one the caller captured.
+fn target_current(c: &Controller, action: &PaneAction) -> bool {
+    match action {
+        PaneAction::Swap { target, lifetime } => c.selectable(target).as_ref() == Some(lifetime),
+        _ => true,
+    }
 }
 #[cfg(test)]
 #[path = "tmux_controller_actions_tests.rs"]
