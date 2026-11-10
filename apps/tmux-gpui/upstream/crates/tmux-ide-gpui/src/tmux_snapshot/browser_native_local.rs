@@ -57,6 +57,8 @@ mod watch;
 pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
 #[path = "browser_native_local_home_recovery.rs"]
 mod home_recovery;
+#[path = "browser_native_local_pane_limit.rs"]
+mod pane_limit;
 #[path = "browser_native_local_split.rs"]
 mod split;
 enum Stage {
@@ -488,7 +490,7 @@ impl Local {
         let Some(target) = self.targets.get(&key).cloned() else {
             return Ok(());
         };
-        if self.home_open_blocked()? {
+        if self.home_open_blocked()? || self.pane_limit_refused(request, &key)? {
             return Ok(());
         }
         self.cancel()?;
@@ -773,9 +775,9 @@ impl Local {
     fn completed(&mut self, stage: Stage, result: CatalogResult) -> Result<(), Error> {
         match (stage, result) {
             (Stage::AgentOpen { target, .. }, CatalogResult::AgentOpened(opened)) => {
-                if opened.panes.is_empty() || opened.panes.len() > 24 {
-                    return self.unavailable("Session exceeds the native stream pane limit");
-                };
+                if let Some(done) = self.pane_limit_exceeded(&target, &opened.panes) {
+                    return done;
+                }
                 self.stage = Some(Stage::Issue {
                     target,
                     workspace: opened.workspace_name,
@@ -860,8 +862,8 @@ impl Local {
                 else {
                     return self.unavailable("Session has no attachable terminal panes");
                 };
-                if panes.len() > 24 {
-                    return self.unavailable("Session exceeds the native stream pane limit");
+                if let Some(done) = self.pane_limit_exceeded(&target, &panes) {
+                    return done;
                 }
                 self.stage = Some(Stage::Issue {
                     target,

@@ -363,8 +363,17 @@ fn agents_column() -> Div {
         .items_center()
 }
 
-/// A session's windows and panes; a version 1 daemon reports panes only.
+/// A session's windows and panes; a version 1 daemon reports panes only. A
+/// session over the native pane limit shows its pane count and that it can't
+/// be opened here; selecting it says what to do instead.
 pub(super) fn layout(session: &browser::fleet::Session) -> String {
+    if session.pane_count > browser::NATIVE_STREAM_MAX_PANES {
+        return format!(
+            "{} · {}",
+            panes(session.pane_count),
+            browser::TOO_MANY_PANES
+        );
+    }
     match session.window_count {
         Some(windows) => format!(
             "{} · {}",

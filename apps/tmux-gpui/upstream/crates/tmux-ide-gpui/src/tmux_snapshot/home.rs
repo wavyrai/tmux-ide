@@ -126,7 +126,10 @@ fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
     match state.local_setup.as_ref().filter(|_| connected) {
         Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
         Some(_) => StatusTone::Normal,
-        None if state.home_phase == browser::HomePhase::Unavailable || state.home_fault => {
+        None if state.home_phase == browser::HomePhase::Unavailable
+            || state.home_fault
+            || state.home_notice.is_some() =>
+        {
             StatusTone::Warning
         }
         None => StatusTone::Normal,
@@ -149,7 +152,10 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     if connected && let Some(setup) = &state.local_setup {
         return setup.phase.guidance().into();
     }
-    crate::notifications::safe_text(&state.status, 240)
+    match &state.home_notice {
+        Some(notice) => crate::notifications::safe_text(notice, 480),
+        None => crate::notifications::safe_text(&state.status, 240),
+    }
 }
 fn current(state: &browser::State, connected: bool, request: u64, captured: u64, id: &str) -> bool {
     state.surface == browser::Surface::Home
@@ -414,6 +420,7 @@ impl SnapshotView {
             || (!is_live && !self.browser_state.status.is_empty())
             || reconnect
             || (is_live && self.browser_state.home_fault)
+            || (is_live && self.browser_state.home_notice.is_some())
         {
             let status = status_message(&self.browser_state, connected);
             let line = match status_tone(&self.browser_state, connected) {
