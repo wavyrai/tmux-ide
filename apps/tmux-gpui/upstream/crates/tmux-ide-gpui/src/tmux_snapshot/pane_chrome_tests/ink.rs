@@ -123,8 +123,8 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
         for (key, expected, plates) in [
             ("pane-mode:pane-a", ink.muted, &header[..]),
             ("pane-title:pane-a", ink.text, &header[..]),
-            ("pane-title:pane-b", ink.muted, &header[..]),
-            ("browser-address:pane-c", ink.muted, &header[..]),
+            ("pane-title:pane-b", ink.label, &header[..]),
+            ("browser-address:pane-c", ink.label, &header[..]),
             ("browser-rejected", ink.warning, &header[..1]),
             ("browser-address-cap-return", probes_cap, &cap[..]),
             ("browser-address-hint-Open", dialog_muted(&theme), &cap[..1]),
@@ -148,6 +148,60 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
                     failures.push(format!("{name}: {key} is {r:.2}:1 on {plate:?}"));
                 }
             }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #746 v3: a header button's glyph rests in the muted ink on the focused
+/// card and the icon tier on the others, each at the contrast setting's mark
+/// ratio on every header plate, and the unfocused one is the quieter.
+#[gpui::test]
+fn header_buttons_rest_muted_on_the_focused_card_and_at_the_icon_tier_elsewhere(
+    cx: &mut TestAppContext,
+) {
+    let _appearance = bezel_theme::lock_appearance();
+    let (sender, receiver) = mpsc::sync_channel(256);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    let mut failures = Vec::new();
+    for (name, colors) in catalog() {
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.appearance = Some(appearance(colors))
+            });
+            cx.global_mut::<InkProbes>().0.clear();
+            window.draw(cx).clear(cx);
+        });
+        receiver.try_iter().for_each(drop);
+        let theme = view.read_with(cx, |v, _| v.theme());
+        let ink = header_ink(&theme);
+        let plates = header_plates(&theme);
+        let mark = theme.contrast.mark_ratio();
+        let probes = cx.update(|_, cx| cx.global::<InkProbes>().0.clone());
+        for (key, expected) in [
+            ("pane-close-icon:pane-a", ink.muted),
+            ("pane-close-icon:pane-b", ink.icon),
+        ] {
+            let Some(&painted) = probes.get(key) else {
+                failures.push(format!("{name}: {key} not painted"));
+                continue;
+            };
+            if painted != expected {
+                failures.push(format!("{name}: {key} painted {painted:?}"));
+            }
+            // The unfocused card's own fill too: its header sits on it.
+            let rest = crate::tmux_snapshot::surfaces::card_fills(&theme).1;
+            for plate in plates.into_iter().chain([rest]) {
+                let r = ratio(painted, plate);
+                if r < mark {
+                    failures.push(format!("{name}: {key} is {r:.2}:1 on {plate:?}"));
+                }
+            }
+        }
+        if ratio(ink.icon, plates[0]) > ratio(ink.muted, plates[0]) + 0.01 {
+            failures.push(format!("{name}: the icon tier is louder than muted"));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

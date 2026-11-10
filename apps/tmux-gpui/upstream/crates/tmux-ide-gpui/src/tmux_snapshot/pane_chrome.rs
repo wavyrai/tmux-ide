@@ -51,8 +51,11 @@ use buttons::BUTTONS;
 #[cfg(test)]
 use buttons::{TITLE_HINT, button_a11y, face};
 /// One header button's hit area. The buttons sit edge to edge at the
-/// header's right end: split right, split down, zoom, close (#746).
-const SLOT: f32 = 28.;
+/// header's right end: split right, split down, zoom, close (#746 v3: 24 pt
+/// slots holding a 22 pt button).
+const SLOT: f32 = 24.;
+/// The room after the last button, before the card's right edge.
+const ACTS_PAD: f32 = 6.;
 /// Where each button sits, counted in slots from the header's right edge.
 fn slot(intent: HeaderIntent) -> f32 {
     match intent {
@@ -70,9 +73,9 @@ fn action_width(header: &Header, width: f32) -> f32 {
     if !header.is_finite() {
         0.
     } else if header >= 240. {
-        4. * SLOT
+        4. * SLOT + ACTS_PAD
     } else if header >= 160. {
-        2. * SLOT
+        2. * SLOT + ACTS_PAD
     } else {
         0.
     }
@@ -217,14 +220,19 @@ fn publication_current(
 #[derive(Clone, Copy)]
 pub(super) struct HeaderInk {
     pub text: Hsla,
+    /// An unfocused pane's title (#746 v3: the middle tier).
+    pub label: Hsla,
     pub muted: Hsla,
+    /// An unfocused pane's buttons at rest: the icon tier, at the contrast
+    /// setting's mark ratio.
+    pub icon: Hsla,
     pub warning: Hsla,
 }
 /// With the chip gone, a focused pane's title differs from the others only
-/// in its ink and this weight.
+/// in its ink and this weight (#746 v3: 500 focused, 400 otherwise).
 pub(super) fn title_weight(focused: bool) -> FontWeight {
     if focused {
-        FontWeight::SEMIBOLD
+        FontWeight::MEDIUM
     } else {
         FontWeight::NORMAL
     }
@@ -261,7 +269,13 @@ pub(super) fn header_ink(theme: &crate::config::Theme) -> HeaderInk {
     };
     HeaderInk {
         text: ink(bezel.text),
+        label: ink(rgb(super::design::row_label(theme)).into()),
         muted: ink(bezel.text_muted),
+        icon: rgb(header_mark(
+            theme,
+            pack(bezel_theme::flatten(bezel.text_faint, plate)),
+        ))
+        .into(),
         warning: ink(bezel.warning),
     }
 }
@@ -393,17 +407,9 @@ impl SnapshotView {
                 .id(SharedString::from(format!("pane-mode:{id}")))
                 .role(Role::Button)
                 .aria_label(hint)
-                .tooltip(move |window, cx| {
-                    if history > 0 {
-                        bezel_ui::tooltip::Tooltip::text(hint, window, cx)
-                    } else {
-                        bezel_ui::tooltip::Tooltip::with_keystroke(
-                            hint,
-                            super::kbd::ZOOM,
-                            window,
-                            cx,
-                        )
-                    }
+                .tooltip(move |_, cx| {
+                    let keys = (history == 0).then(|| super::kbd::ZOOM.into());
+                    super::glass_ink::tooltip(hint, keys, cx)
                 })
                 .debug_selector({
                     let id = id.clone();
@@ -610,8 +616,11 @@ impl SnapshotView {
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
         let ink = header_ink(&theme);
-        let tint = if selected { ink.text } else { ink.muted };
-        let size = (self.terminal_height() - 2.).min(bezel_theme::TextStyle::Callout.size());
+        // #746 v3: the focused title in the text ink, the others in the
+        // label tier; the kind icon a step quieter on an unfocused card.
+        let tint = if selected { ink.text } else { ink.label };
+        let icon_tint = if selected { ink.text } else { ink.muted };
+        let size = (self.terminal_height() - 2.).min(bezel_theme::TextStyle::Body.size());
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
         // with native elements. Never insert title glyphs into terminal cells.
         div()
@@ -641,14 +650,13 @@ impl SnapshotView {
             .font_weight(title_weight(selected))
             .flex()
             .items_center()
-            .gap(px(bezel_theme::Theme::SPACE / 2.))
+            .gap(px(7.))
             .child(browser_icon::element(
                 browser_icon,
                 icon,
                 (self.terminal_height() - 2.).clamp(8., 14.),
-                tint,
+                icon_tint,
             ))
-            .children(indicator)
             .child(browser.unwrap_or_else(|| {
                 // The title sits flat in the header row for every pane. Focus
                 // shows in its ink and weight, never in a raised chip.
@@ -669,6 +677,8 @@ impl SnapshotView {
                     .child(label(&self.browser_state, &header.id))
                     .into_any_element()
             }))
+            // The agent's spinner or pill follows the title (#746 v3).
+            .children(indicator)
     }
     pub(super) fn pane_header_labels(&self, width: f32, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if self.card_layout(width).is_none() {
