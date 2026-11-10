@@ -84,7 +84,7 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
             }
         }
         Some(muted) => {
-            let text = (muted + 0.30).max(0.85).min(1.);
+            let text = (muted + 0.30).clamp(0.85, 1.);
             let three = text - muted >= SPREAD - 0.001;
             let label = if three { (text + muted) / 2. } else { text };
             let icon = least_alpha(theme, &all, ICON_TARGET).unwrap_or(muted);
