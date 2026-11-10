@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
-import { forwardedUpgradeArgs } from "./cli.ts";
+import { forwardedUpgradeArgs, runUpgradeCli } from "./cli.ts";
 import {
   answerIsYes,
   confirmAt,
@@ -41,6 +41,25 @@ describe("targetSocket", () => {
   });
   it("rejects --socket-path together with --socket-name", () => {
     expect(() => targetSocket({ socketPath: "/x/s", socketName: "n" }, {})).toThrow(/not both/);
+  });
+});
+
+describe("runUpgradeCli", () => {
+  it("rejects both socket flags before anything else, --ssh included", async () => {
+    for (const ssh of [undefined, "spark"])
+      await expect(
+        runUpgradeCli({
+          yes: true,
+          endRunningAgents: false,
+          json: true,
+          dryRun: false,
+          resumeAgents: true,
+          socketPath: "/x/s",
+          socketName: "n",
+          ssh,
+          cliEntry: "/nonexistent/cli.js",
+        }),
+      ).rejects.toThrow(/not both/);
   });
 });
 

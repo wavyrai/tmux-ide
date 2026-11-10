@@ -386,3 +386,45 @@ it.skipIf(!ready)(
   },
   LIVE_TIMEOUT_MS,
 );
+
+it.skipIf(!ready)(
+  "answers No for the user when there is no terminal to ask in",
+  () => {
+    const oldPid = serverPid();
+    const result = spawnSync(
+      process.execPath,
+      [cliPath, "servers", "upgrade", "--socket-path", socket],
+      {
+        cwd: dir,
+        env,
+        encoding: "utf8",
+        timeout: 60_000,
+        stdio: ["pipe", "pipe", "pipe"],
+        input: "y\n",
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(
+      /No terminal to ask in\. Pass --yes to go ahead\. Nothing was stopped\./,
+    );
+    expect(result.stdout.trim().split("\n").at(-1)).toBe("Nothing was stopped.");
+    expect(serverPid()).toBe(oldPid);
+  },
+  LIVE_TIMEOUT_MS,
+);
+
+it.skipIf(!ready)(
+  "refuses --yes alone when a not-restored session of the user's runs a program",
+  () => {
+    const now = Math.floor(Date.now() / 1000);
+    run(stock!, ["set-option", "-p", "-t", "api:code.1", "@agent_state", `idle:${now}`]);
+    run(stock!, ["new-session", "-d", "-s", "_work", "sleep 600"]);
+    const oldPid = serverPid();
+    const refused = upgrade("--yes");
+    expect(refused.code).toBe(1);
+    expect(refused.status).toBe("refused");
+    expect(refused.message).toMatch(/1 pane in sessions that are not restored run something/);
+    expect(serverPid()).toBe(oldPid);
+  },
+  LIVE_TIMEOUT_MS,
+);
