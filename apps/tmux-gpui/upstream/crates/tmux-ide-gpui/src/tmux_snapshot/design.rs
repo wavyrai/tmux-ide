@@ -63,6 +63,10 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
         result.text_muted = color(tiers.muted);
         result.text_faint = color(tiers.icon);
     }
+    // A destructive button's white label reads at 4.6:1 on its plate: the
+    // theme's danger_strong, darkened in OKLab only as far as it must.
+    let danger = u32::from(Rgba::from(result.danger_strong)) >> 8;
+    result.danger_strong = rgb(super::surfaces::darken_for(danger, 0xffffff, 4.6)).into();
     // A theme whose inks can't read over the frost at any density runs
     // opaque (#746 glass plan, G3).
     if high || frost(theme).is_none() {
