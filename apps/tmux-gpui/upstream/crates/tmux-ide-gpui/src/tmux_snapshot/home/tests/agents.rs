@@ -208,3 +208,51 @@ fn agent_dispatch_rejects_changed_revision_unavailable_and_disconnected(cx: &mut
     });
     assert!(receiver.try_recv().is_err());
 }
+/// Three agents on one session: two chips side by side, then "+1" (#746).
+#[gpui::test]
+fn a_session_shows_two_agent_chips_on_a_forty_point_row(cx: &mut TestAppContext) {
+    let agent = |n: u32, status: &str| {
+        serde_json::json!({"key": format!("session-two\u{0}agent-{n}"), "sessionId": "session-two",
+            "paneId": format!("pane-{n}"), "name": format!("Agent {n}"), "sessionLabel": "Same name",
+            "status": status, "attention": false, "available": true})
+    };
+    let roster: browser::home_agents::Roster = serde_json::from_value(serde_json::json!({
+        "revision": 4, "phase": "live",
+        "rows": [agent(1, "IDLE"), agent(2, "DONE"), agent(3, "IDLE")],
+        "observedSessions": 2, "totalSessions": 2, "truncatedSessions": 0,
+        "truncatedRows": 0, "note": null}))
+    .unwrap();
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (_view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = catalog_view(window, cx, sender);
+        view.browser_state.request = 7;
+        view.browser_state.home_agents = Some(roster);
+        view.browser_state.fleet = Some(fleet());
+        view
+    });
+    cx.simulate_resize(size(px(1440.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let row = cx.debug_bounds("fleet-session-0-1").unwrap();
+    assert_eq!(row.size.height, px(40.));
+    let first = cx.debug_bounds("fleet-session-agent-0-1").unwrap();
+    let second = cx.debug_bounds("fleet-session-agent-0-1-1").unwrap();
+    assert!(cx.debug_bounds("fleet-session-agent-0-1-2").is_none());
+    assert_eq!(first.size.height, px(22.));
+    assert!(second.left() > first.right());
+    assert!(row.contains(&second.center()));
+}
+/// The table is the mockup's 1024 pt wide when the window has the room.
+#[gpui::test]
+fn the_table_is_the_mockups_width(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (_view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = catalog_view(window, cx, sender);
+        view.browser_state.request = 7;
+        view.browser_state.fleet = Some(fleet());
+        view
+    });
+    cx.simulate_resize(size(px(1600.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let column = cx.debug_bounds("home-fleet-column").unwrap();
+    assert_eq!(column.size.width, px(1024.));
+}

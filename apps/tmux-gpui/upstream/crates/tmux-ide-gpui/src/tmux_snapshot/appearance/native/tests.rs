@@ -158,3 +158,36 @@ fn only_linen_names_its_own_card_border() {
         }
     }
 }
+#[test]
+fn linens_needs_input_pill_is_the_accent_on_its_wash() {
+    use crate::tmux_snapshot::agent_indicator::{Plate, attention_pill_colors};
+    let mut owner = Owner::load(None).unwrap();
+    // #746 mockup: the accent at 14% (dark) or 12% (light) over the plate,
+    // and its words in the accent itself.
+    for (system, accent, alpha) in [
+        (System::Dark, 0xe0874f, 0.14),
+        (System::Light, 0x984822, 0.12),
+    ] {
+        owner.system(system);
+        let theme = owner.publication().native();
+        for (on, plate) in [
+            (Plate::Sidebar, theme.surface),
+            (Plate::Header, theme.background),
+        ] {
+            let (wash, ink) = attention_pill_colors(&theme, on);
+            // The accent, moved at most a few levels to clear 4.6:1.
+            let near = |a: u32, b: u32| {
+                [16, 8, 0]
+                    .iter()
+                    .all(|s| ((a >> s) & 0xff).abs_diff((b >> s) & 0xff) <= 4)
+            };
+            assert!(near(ink, accent), "#{ink:06x} vs #{accent:06x}");
+            assert!(bezel_theme::contrast_ratio(gpui::rgb(ink).into(), wash) >= 4.5);
+            let expected = bezel_theme::flatten(
+                gpui::Hsla::from(gpui::rgb(accent)).opacity(alpha),
+                gpui::rgb(plate).into(),
+            );
+            assert_eq!(wash, expected);
+        }
+    }
+}

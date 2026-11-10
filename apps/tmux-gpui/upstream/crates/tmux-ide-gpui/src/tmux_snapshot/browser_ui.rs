@@ -641,6 +641,7 @@ impl SnapshotView {
         let show_sidebar = self.sidebar_shown(window);
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
+        self.chrome.sync_motion(cx);
         self.chrome.sync(window, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
         let mut sidebar = div()
@@ -655,6 +656,7 @@ impl SnapshotView {
             .p(px(bezel_theme::Theme::SPACE))
             .flex()
             .flex_col()
+            // Rows sit 2 pt apart, as in the mockup (#746 v3).
             .gap(px(2.));
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
@@ -795,6 +797,9 @@ impl SnapshotView {
                 .child(self.terminal_render(window, cx))
         });
         let home = is_home.then(|| self.home_render(window, cx));
+        if !is_home && let Some(controls) = self.home_filter.as_mut() {
+            controls.motion.end();
+        }
         // Connection messages can wrap; retain the scroll owner instead of
         // imposing the upstream status bar's fixed single-line height.
         let context = bezel
@@ -850,7 +855,10 @@ impl SnapshotView {
         let content_background = self.canvas();
         let mut context = Some(context);
         let notice = if show_status && !self.developer_mode.enabled && !is_home {
-            context.take().map(IntoElement::into_any_element)
+            // The notice fades in over FADE_QUICK and leaves at once (#761).
+            context.take().map(|notice| {
+                bezel_motion::fade_quick("top-row-notice-in", notice).into_any_element()
+            })
         } else {
             None
         };
@@ -898,7 +906,11 @@ impl SnapshotView {
             .min_h_0()
             .w_full()
             .flex()
-            .when(show_sidebar, |main| main.child(sidebar))
+            // The width snaps, so the terminal grid resizes once; the
+            // contents fade in over FADE_QUICK (#761).
+            .when(show_sidebar, |main| {
+                main.child(bezel_motion::fade_quick("sidebar-in", sidebar))
+            })
             .child(
                 div()
                     .id("workspace-inset")
@@ -907,6 +919,9 @@ impl SnapshotView {
                     .min_w_0()
                     .h_full()
                     .p(px(super::shell::CONTENT_INSET))
+                    // Beside the sidebar the cards start where it ends: its
+                    // own 8 pt edge is the gutter (#746).
+                    .when(show_sidebar, |inset| inset.pl_0())
                     .child(content),
             );
         let body = div()
@@ -933,7 +948,8 @@ impl SnapshotView {
 }
 
 /// The sidebar's width; the top row's sidebar controls end at its edge.
-pub(super) const SIDEBAR_WIDTH: f32 = 224.;
+/// The sidebar's width: the #746 mockup's 252 pt.
+pub(super) const SIDEBAR_WIDTH: f32 = 252.;
 /// The narrowest window that shows Home's sidebar beside its table.
 pub(super) const HOME_SIDEBAR_MIN: f32 = 900.;
 

@@ -127,16 +127,22 @@ mod text_role_tests;
 /// The attention count: Bezel's badge, filled as it was before Bezel, since
 /// the count is what asks for the user and should stand out of the row
 /// rather than outline. Its count is inked on the pill.
-fn attention_badge(theme: &Theme, bezel: &bezel_theme::Theme, count: usize, index: usize) -> Div {
-    use bezel_ui::widgets::Content as _;
-    bezel
-        .badge(count.to_string())
-        .bg(rgb(theme.active))
-        .border_color(rgb(theme.active))
-        .text_color(rgb(crate::tmux_snapshot::design::badge_text(theme)))
-        .children(crate::tmux_snapshot::design::ink_probe(move || {
-            format!("sidebar-badge-{index}")
-        }))
+/// A pane row's kind tile (#746 v3): 18 pt, radius 5, its icon 11 pt.
+pub(super) const TILE: f32 = 18.;
+const TILE_RADIUS: f32 = 5.;
+const TILE_ICON: f32 = 11.;
+/// A project heading's slot (#746 v3).
+pub(super) const HEADING_SLOT: f32 = 26.;
+/// How many agents wait on the user, as the "needs input" pill (#746).
+fn attention_badge(theme: &Theme, count: usize, index: usize) -> Div {
+    crate::tmux_snapshot::agent_indicator::attention_pill(
+        theme,
+        crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+        count.to_string(),
+    )
+    .children(crate::tmux_snapshot::design::ink_probe(move || {
+        format!("sidebar-badge-{index}")
+    }))
 }
 
 /// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
@@ -174,7 +180,10 @@ pub(super) fn render_row(
     let tiled = !heading && !window && !session && (row.pane.is_some() || row.agent.is_some());
     let role = if heading || window {
         TextStyle::Subheadline
-    } else if session || tiled {
+    } else if tiled {
+        // A pane's label reads at Body, as in the mockup (#746).
+        TextStyle::Body
+    } else if session {
         TextStyle::Callout
     } else {
         TextStyle::Subheadline
@@ -194,12 +203,25 @@ pub(super) fn render_row(
         .pl(px(if window { indent + 28. } else { indent }))
         .pr_2()
         .py(px(if session || tiled { 5. } else { 3. }))
-        .when(heading, |h| h.mt(px(10.)))
-        .rounded(px(bezel_theme::Theme::control_radius()))
+        // A project's heading (#746 v3): a 26 pt slot, 12 pt below the
+        // group above (the list's 2 pt gap included).
+        .when(heading, |h| h.py_0().min_h(px(HEADING_SLOT)).mt(px(10.)))
+        // A pane row is the mockup's 30 pt whatever Body's leading.
+        .when(tiled, |r| r.py_0().h(px(30.)))
+        // A row, selected or hovered, is a full capsule (#746 v3).
+        .rounded_full()
         .min_w_0()
         .flex_shrink_0()
         .overflow_hidden()
-        .text_color(rgb(if heading || window { muted } else { label }))
+        // Three inks (#746 v3): the full text only on the selection, the
+        // middle label ink on other rows, muted on headings.
+        .text_color(rgb(if heading || window {
+            muted
+        } else if row.selected {
+            label
+        } else {
+            crate::tmux_snapshot::design::row_label(theme)
+        }))
         // The ladder's sizes at gpui's own leading, which the rows' heights
         // are laid out on.
         .text_style(role)
@@ -207,7 +229,10 @@ pub(super) fn render_row(
         .line_height(phi())
         .font_weight(if heading {
             FontWeight::MEDIUM
-        } else if row.selected || row.machine.is_some() {
+        } else if row.selected {
+            // The mockup's selected row (#746): medium, not semibold.
+            FontWeight::MEDIUM
+        } else if row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
@@ -247,6 +272,7 @@ pub(super) fn render_row(
                             bezel_ui::icons::Icon::asset(path),
                         )
                         .flex_none()
+                        .when(tiled, |icon| icon.size(px(TILE_ICON)))
                         .text_color(rgb(if row.selected { label } else { muted }));
                     if tiled {
                         // A pane's or agent's kind sits on a small tile, as in
@@ -254,10 +280,13 @@ pub(super) fn render_row(
                         div()
                             .debug_selector(move || format!("tmux-sidebar-tile-{index}"))
                             .flex_none()
-                            .size(px(20.))
-                            .rounded(px(bezel_theme::Theme::control_radius()))
+                            .size(px(TILE))
+                            .rounded(px(TILE_RADIUS))
                             .border_1()
                             .border_color(bezel.border)
+                            // Filled with the terminal's background, so the
+                            // tile reads as a small card on the plate (#746 v3).
+                            .bg(bezel.terminal_bg)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -323,12 +352,15 @@ pub(super) fn render_row(
         );
     if row.attention > 0 && !heading {
         element = element.child(
-            attention_badge(theme, bezel, row.attention, index)
+            attention_badge(theme, row.attention, index)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
-    match selection.fill(bezel) {
-        Some(fill) => element.bg(fill).shadow(selection.shadows()),
+    match selection
+        .is_selected()
+        .then(|| crate::tmux_snapshot::design::selected_capsule(theme))
+    {
+        Some((fill, ring)) => element.bg(fill).shadow(ring),
         None if row.target.is_some() => {
             element = element.cursor_pointer().bg(bezel_motion::hover_blend(
                 &fade,

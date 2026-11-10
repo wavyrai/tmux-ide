@@ -16,13 +16,21 @@ fn narrow_sidebar_keeps_controls_visible_while_end_reveals_exact_session(cx: &mu
     });
     receiver.try_iter().for_each(drop);
     crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
-    for selector in ["open-picker", "open-theme-picker", "refresh-sessions"] {
+    for selector in [
+        "open-picker",
+        "open-machines",
+        "open-theme-picker",
+        "open-commands",
+    ] {
         let control = cx.debug_bounds(selector).unwrap();
         assert!(
             control.top() >= px(0.) && control.bottom() <= px(400.),
             "{selector} must remain inside the narrow viewport"
         );
-        assert!(control.left() >= px(0.) && control.right() <= px(224.));
+        assert!(
+            control.left() >= px(0.)
+                && control.right() <= px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH)
+        );
     }
     cx.simulate_keystrokes("ctrl-g end");
     cx.update(|window, cx| window.draw(cx).clear(cx));

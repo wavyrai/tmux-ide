@@ -1,9 +1,10 @@
 //! Opt-in chrome traversal belongs to Ctrl+G, never the terminal Tab key.
 use super::*;
 use crate::tmux_snapshot::SnapshotView;
-/// The sidebar's Tab stops after its rows: the footer's three buttons, the
-/// show/hide toggle, Home, search and New session (#746).
-pub(in crate::tmux_snapshot) const CONTROLS: usize = 7;
+/// The sidebar's Tab stops after its rows: the footer's four buttons
+/// (sessions, machines, theme, settings), the show/hide toggle, Home, search
+/// and New session (#746).
+pub(in crate::tmux_snapshot) const CONTROLS: usize = 8;
 
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn sidebar_footer_current(&self, request: u64) -> bool {
@@ -21,10 +22,10 @@ impl SnapshotView {
 
     fn sidebar_control_available(&self, index: usize) -> bool {
         match index {
-            1 => self.browser_state.appearance.is_some(),
-            // Home (4) and search (5) always work; New session (6) only
+            2 => self.browser_state.appearance.is_some(),
+            // Home (5) and search (6) always work; New session (7) only
             // while a local session can start.
-            6 => self.local_session_available(),
+            7 => self.local_session_available(),
             _ => true,
         }
     }

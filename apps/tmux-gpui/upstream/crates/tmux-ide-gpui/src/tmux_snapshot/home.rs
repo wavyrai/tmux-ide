@@ -14,8 +14,11 @@ pub(super) mod recovery;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
-/// it, so the table's values sit near its names.
-const PAGE_MAX: f32 = fleet::TABLE_MAX;
+/// it, so the table's values sit near its names, plus the page column's own
+/// 24 pt sides, so the table itself gets the whole width.
+const PAGE_MAX: f32 = fleet::TABLE_MAX + 2. * PAGE_SIDE;
+/// Bezel's `page_column` side padding.
+const PAGE_SIDE: f32 = 24.;
 /// The Browse sessions field's width in the header.
 const BROWSE_WIDTH: f32 = 220.;
 /// The alpha of `popover::key_cap`'s fill.
@@ -60,7 +63,7 @@ fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// `danger_muted` and `warning_muted`, the strips' text, are inked opaque on
 /// their strip's wash; `danger_muted` also on the bare canvas, where error
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
-/// as `design::chrome_text` does.
+/// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
@@ -234,6 +237,14 @@ impl SnapshotView {
     ) -> AnyElement {
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
+        let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
+        if let Some(controls) = self.home_filter.as_mut() {
+            let machines = super::motion::home_machines(&self.browser_state);
+            controls.motion.observe(&machines, now);
+            if controls.motion.settle(now, reduced) {
+                window.request_animation_frame();
+            }
+        }
         if self.browser_state.appearance.is_none()
             && self.home_action_current(self.browser_request)
             && self.home_action_index(window) == Some(1)
@@ -442,19 +453,17 @@ impl SnapshotView {
             let line = line
                 .w_full()
                 .children(design::ink_probe(|| "home-status".into()));
-            body = if reconnect {
-                let retry = self.reconnect_retry(cx);
-                body.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .child(line)
-                        .children(retry),
-                )
-            } else {
-                body.child(line)
-            };
+            let retry = reconnect.then(|| self.reconnect_retry(cx)).flatten();
+            // The slot fades in over FADE_QUICK and leaves at once (#761).
+            body = body.child(bezel_motion::fade_quick(
+                "home-status-in",
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(line)
+                    .children(retry),
+            ));
         }
         if self.home_diagnostics_available() {
             body = body.child(
@@ -515,8 +524,8 @@ impl SnapshotView {
                 .map(|(index, session)| {
                     let id = session.id.clone();
                     let (hover, muted) = (bezel.element_hover, bezel.text_muted);
-                    bezel
-                        .card_row(index == 0)
+                    let entered = self.home_entered(&session.id, now, reduced);
+                    super::motion::enter(bezel.card_row(index == 0), entered)
                         .id(("tmux-home-session", index))
                         .debug_selector(move || format!("tmux-home-session-{index}"))
                         .py(px(6.))

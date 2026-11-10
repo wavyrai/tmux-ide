@@ -275,12 +275,9 @@ impl SnapshotView {
                     .aria_label(label)
                     .debug_selector(move || name.into())
                     .h(px(26.))
-                    .tooltip(move |window, cx| {
-                        if action == BrowserAction::Reload {
-                            bezel_ui::tooltip::Tooltip::with_keystroke(label, "⌘R", window, cx)
-                        } else {
-                            bezel_ui::tooltip::Tooltip::text(label, window, cx)
-                        }
+                    .tooltip(move |_, cx| {
+                        let keys = (action == BrowserAction::Reload).then(|| "⌘R".into());
+                        super::glass_ink::tooltip(label, keys, cx)
                     })
                     .when(pressed, |b| b.bg(palette.element_active))
                     .when(!available, |b| b.cursor_default())
@@ -303,13 +300,8 @@ impl SnapshotView {
                     .ghost("browser-address")
                     .role(Role::Button)
                     .aria_label("Edit browser address")
-                    .tooltip(|window, cx| {
-                        bezel_ui::tooltip::Tooltip::with_keystroke(
-                            "Edit browser address",
-                            "⌘L",
-                            window,
-                            cx,
-                        )
+                    .tooltip(|_, cx| {
+                        super::glass_ink::tooltip("Edit browser address", Some("⌘L".into()), cx)
                     })
                     .debug_selector(|| "browser-address".into())
                     .flex_1()
@@ -371,46 +363,52 @@ impl SnapshotView {
         .into();
         let space = px(bezel_theme::Theme::SPACE);
         Some(
-            bezel_ui::popover::dialog_card(&palette)
-                .id("browser-address-dialog")
-                .role(Role::Dialog)
-                .aria_label("Browser address")
+            // The wrapper holds the place above the footer; the card inside
+            // it rises over DIALOG_IN, which positions it relatively (#761).
+            div()
                 .absolute()
                 .bottom(relative(1.))
                 .left_0()
-                .w(px(480.))
-                .p(space)
-                .gap(space)
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
-                    match event.keystroke.key.as_str() {
-                        "escape" => view.finish_browser_address(false, window, cx),
-                        "enter" => {
-                            if view
-                                .browser_address
-                                .as_ref()
-                                .is_some_and(|a| a.input.read(cx).is_composing())
-                            {
-                                return;
-                            }
-                            view.finish_browser_address(true, window, cx);
-                        }
-                        _ => return,
-                    }
-                    cx.stop_propagation();
-                    window.prevent_default();
-                }))
-                .child(bezel_ui::popover::dialog_title(&palette, "URL or search"))
-                .child(address.input.clone())
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
+                .child(bezel_motion::dialog_in(
+                    "browser-address-dialog-in",
+                    bezel_ui::popover::dialog_card(&palette)
+                        .id("browser-address-dialog")
+                        .role(Role::Dialog)
+                        .aria_label("Browser address")
+                        .w(px(480.))
+                        .p(space)
                         .gap(space)
-                        .child(key_hint(&palette, (cap, muted), "return", "Open"))
-                        .child(key_hint(&palette, (cap, muted), "esc", "Cancel")),
-                )
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                            match event.keystroke.key.as_str() {
+                                "escape" => view.finish_browser_address(false, window, cx),
+                                "enter" => {
+                                    if view
+                                        .browser_address
+                                        .as_ref()
+                                        .is_some_and(|a| a.input.read(cx).is_composing())
+                                    {
+                                        return;
+                                    }
+                                    view.finish_browser_address(true, window, cx);
+                                }
+                                _ => return,
+                            }
+                            cx.stop_propagation();
+                            window.prevent_default();
+                        }))
+                        .child(bezel_ui::popover::dialog_title(&palette, "URL or search"))
+                        .child(address.input.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(space)
+                                .child(key_hint(&palette, (cap, muted), "return", "Open"))
+                                .child(key_hint(&palette, (cap, muted), "esc", "Cancel")),
+                        ),
+                ))
                 .into_any_element(),
         )
     }
