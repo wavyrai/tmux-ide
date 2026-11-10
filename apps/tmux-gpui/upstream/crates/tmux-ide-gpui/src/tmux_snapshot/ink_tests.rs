@@ -103,3 +103,21 @@ fn every_theme_frosts_only_where_its_tiers_hold() {
     assert_eq!(frost(&washed), None);
     assert!(!palette(&washed).vibrancy);
 }
+
+/// G5: the dark capsule is the flattened selected wash, which stands clear
+/// of the plate in every dark catalog theme, and muted reads on it.
+#[test]
+fn the_dark_capsule_stands_clear_of_the_plate_and_muted_reads_on_it() {
+    use crate::tmux_snapshot::{design::selected_capsule, surfaces::lstar};
+    for (name, theme) in catalog_themes() {
+        if crate::contrast::luminance(theme.background) >= 0.5 {
+            continue;
+        }
+        let capsule = pack(selected_capsule(&theme).0);
+        assert!(lstar(capsule) - lstar(theme.surface) >= 8., "{name}");
+        assert!(
+            crate::contrast::ratio(tiers(&theme).muted, capsule) >= 4.5,
+            "{name}"
+        );
+    }
+}

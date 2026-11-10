@@ -188,6 +188,10 @@ pub(crate) fn row_plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
 /// terminal's own background (the focused card's colour); in a dark one
 /// Bezel's selected wash laid over the plate. Bezel's inset selection ring
 /// edges it; there is no drop shadow (Bezel has no shadow token for it).
+///
+/// Not `surface_raised` in dark (glass plan G5): in most catalog themes it
+/// sits within 2.5 L* of the plate, or below it (Nord, Solarized), so the
+/// selection would vanish; the flattened wash stands 9 to 13 L* above it.
 pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
     let dark = crate::contrast::luminance(theme.background) < 0.5;
     let fill = if dark {
