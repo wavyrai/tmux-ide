@@ -9,9 +9,12 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -23,11 +26,13 @@ import { restoreFleet } from "../restore.ts";
 import {
   collectFleetSnapshot,
   readSnapshot,
+  resolvePaneCommand,
   SNAPSHOT_PANE_FORMAT,
   SNAPSHOT_SESSION_FORMAT,
   type FleetSnapshot,
 } from "../tui/chrome/snapshot.ts";
 import { readProcessTable } from "../tui/detect/process-tree.ts";
+import { isListableSession } from "../tui/team/sessions.ts";
 import { resolveBundledTmux, withBundledTmuxResources } from "../lib/bundled-tmux.ts";
 import { IdeError } from "../lib/errors.ts";
 import { resolveRuntimeNamespace } from "../lib/runtime-namespace.ts";
@@ -37,7 +42,7 @@ import {
   type TmuxProbe,
 } from "../lib/tmux-server-features.ts";
 import { COVERAGE_PANE_FORMAT } from "./plan.ts";
-import type { ServerFacts, UpgradeIo, WorkerState } from "./run.ts";
+import type { ServerFacts, UpgradeIo, UpgradeResult, WorkerState } from "./run.ts";
 
 /** A hidden session that starts the new server before restore rebuilds into it. */
 export const UPGRADE_HOLD_SESSION = "_tmux-ide-upgrade";
@@ -49,16 +54,26 @@ export interface UpgradeTarget {
 }
 
 /**
- * The socket to upgrade: `--socket-path`, `--socket-name`, the server this
- * shell runs in, else tmux's default socket.
+ * The socket to upgrade: `--socket-path`, `--socket-name`, then the
+ * TMUX_IDE_TMUX_SOCKET_PATH / _NAME environment (as doctor reads them), the
+ * server this shell runs in, else tmux's default socket.
  */
 export function targetSocket(
   target: UpgradeTarget,
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
-  if (target.socketPath) return target.socketPath;
+  if (target.socketPath && target.socketName)
+    throw new IdeError("Pass --socket-path or --socket-name, not both.", {
+      code: "USAGE",
+      exitCode: 2,
+    });
   const directory = join(environment.TMUX_TMPDIR || "/tmp", `tmux-${process.getuid?.() ?? 0}`);
+  if (target.socketPath) return target.socketPath;
   if (target.socketName) return join(directory, target.socketName);
+  const envPath = environment.TMUX_IDE_TMUX_SOCKET_PATH?.trim();
+  if (envPath) return envPath;
+  const envName = environment.TMUX_IDE_TMUX_SOCKET_NAME?.trim();
+  if (envName) return join(directory, envName);
   const inside = environment.TMUX?.split(",")[0];
   if (inside) return inside;
   return join(directory, "default");
@@ -88,10 +103,34 @@ function stderrOf(error: unknown): string {
 
 const NO_SERVER = /no server running|error connecting|failed to connect|connection refused/u;
 
-/** The binary a process runs, or "" when it can't be read. */
-function processExecutable(pid: number): string {
+/**
+ * PURE: the executable from `lsof -a -p PID -d txt -Fn` output. The first `n`
+ * line of the txt descriptors is the program itself; dylibs follow.
+ */
+export function executableFromLsof(output: string): string {
+  const line = output.split("\n").find((entry) => entry.startsWith("n/"));
+  return line ? line.slice(1) : "";
+}
+
+/**
+ * The binary a process runs, or "" when it can't be read. `ps -o comm=` gives
+ * only "tmux" for a server started by its PATH name, so macOS asks lsof.
+ */
+export function processExecutable(pid: number): string {
   try {
     if (process.platform === "linux") return readlinkSync(`/proc/${pid}/exe`);
+    const lsof = executableFromLsof(
+      execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5000,
+      }),
+    );
+    if (lsof) return lsof;
+  } catch {
+    // Fall through to ps.
+  }
+  try {
     const comm = execFileSync("/bin/ps", ["-o", "comm=", "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -101,6 +140,65 @@ function processExecutable(pid: number): string {
   } catch {
     return "";
   }
+}
+
+/** PURE: tmux ends the server only when both its pid and start time still match. */
+export function killGuardArgs(server: { pid: number; startTime: number }): string[] {
+  const guard = `#{&&:#{==:#{pid},${server.pid}},#{==:#{start_time},${server.startTime}}}`;
+  return ["if-shell", "-F", guard, "kill-server", "display-message -p identity-mismatch"];
+}
+
+/** PURE: what the guarded kill's output means. */
+export function killOutcome(
+  result: { stdout: string } | { stderr: string },
+): "ended" | "mismatch" | { error: string } {
+  if ("stdout" in result) return result.stdout.includes("identity-mismatch") ? "mismatch" : "ended";
+  // kill-server ends the server under the client; that is success.
+  if (NO_SERVER.test(result.stderr) || /server exited|lost server/u.test(result.stderr))
+    return "ended";
+  return { error: result.stderr.trim() || "tmux refused" };
+}
+
+/** The pids of this process and its ancestors, nearest first. */
+function ancestry(): number[] {
+  const pids: number[] = [];
+  let pid = process.pid;
+  for (let step = 0; step < 64 && pid > 1; step++) {
+    pids.push(pid);
+    try {
+      pid = Number(
+        execFileSync("/bin/ps", ["-o", "ppid=", "-p", String(pid)], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 3000,
+        }).trim(),
+      );
+    } catch {
+      break;
+    }
+    if (!Number.isInteger(pid)) break;
+  }
+  return pids;
+}
+
+/**
+ * PURE: the pane (`session:window.pane`) whose process is this process or one
+ * of its ancestors, from `#{pane_pid}\t<target>` lines; null when none is.
+ */
+export function ownPaneFrom(ancestors: readonly number[], lines: readonly string[]): string | null {
+  const panes = new Map(
+    lines.map((line) => {
+      const [pid = "", target = ""] = line.split("\t");
+      return [Number(pid), target] as const;
+    }),
+  );
+  const mine = ancestors.find((pid) => panes.has(pid));
+  return mine === undefined ? null : (panes.get(mine) ?? null);
+}
+
+/** PURE: the prompt's answer. Anything but y or yes, including nothing, is No. */
+export function answerIsYes(answer: string | null): boolean {
+  return answer !== null && /^y(es)?$/iu.test(answer.trim());
 }
 
 /** Write a new file, fsync it and its folder. Never overwrites. */
@@ -153,6 +251,49 @@ const WorkerStateSchemaZ = z
 
 export function parseWorkerState(text: string): WorkerState {
   return WorkerStateSchemaZ.parse(JSON.parse(text));
+}
+
+const WorkerResultSchemaZ = z.object({
+  status: z.enum([
+    "already-full",
+    "preview",
+    "declined",
+    "refused",
+    "handed-off",
+    "upgraded",
+    "failed",
+  ]),
+  message: z.string(),
+  restored: z.array(z.string()).optional(),
+  failed: z.array(z.string()).optional(),
+});
+
+/** The worker's result, written once at the end; null while it is still running. */
+export function readWorkerResult(path: string): UpgradeResult | null {
+  try {
+    return WorkerResultSchemaZ.parse(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/** Write the worker's result atomically, so the foreground never reads half a file. */
+export function writeWorkerResult(path: string, result: UpgradeResult): void {
+  const { status, message, restored, failed } = result;
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify({ status, message, restored, failed }) + "\n", {
+    mode: 0o600,
+  });
+  renameSync(temporary, path);
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 export interface UpgradeIoOptions {
@@ -247,6 +388,32 @@ export function createUpgradeIo(options: UpgradeIoOptions): UpgradeIo {
         rmSync(scratch, { recursive: true, force: true });
       }
     },
+    endingPanes(client, at) {
+      const table = readProcessTable();
+      return tmux(client, at, ["list-panes", "-a", "-F", SNAPSHOT_PANE_FORMAT])
+        .split("\n")
+        .filter(Boolean)
+        .flatMap((line) => {
+          const [
+            session = "",
+            window = "",
+            ,
+            ,
+            ,
+            pane = "",
+            cwd = "",
+            cmd = "",
+            pid = "0",
+            ,
+            ,
+            hint = "",
+          ] = line.split("\t");
+          // tmux-ide's own hidden sessions (updater, app host) hold no user work.
+          if (isListableSession(session) || session.startsWith("_tmux-ide")) return [];
+          const { agent, command } = resolvePaneCommand(cmd, Number(pid) || 0, hint, table);
+          return [{ target: `${session}:${window}.${pane}`, cwd, agent, command }];
+        });
+    },
     listPanes: (client, at) =>
       tmux(client, at, ["list-panes", "-a", "-F", COVERAGE_PANE_FORMAT])
         .split("\n")
@@ -264,18 +431,38 @@ export function createUpgradeIo(options: UpgradeIoOptions): UpgradeIo {
       return path;
     },
     loadSnapshot: (path) => readSnapshot(path),
-    insideTarget(at) {
+    ownPane(client, at) {
+      let lines: string[];
+      try {
+        lines = tmux(client, at, [
+          "list-panes",
+          "-a",
+          "-F",
+          "#{pane_pid}\t#{session_name}:#{window_index}.#{pane_index}",
+        ])
+          .split("\n")
+          .filter(Boolean);
+      } catch {
+        return null;
+      }
+      return ownPaneFrom(ancestry(), lines);
+    },
+    insideTarget(client, at) {
       const inside = process.env.TMUX?.split(",")[0];
-      return Boolean(inside) && sameFile(inside!, at);
+      if (inside && sameFile(inside, at)) return true;
+      // $TMUX can be unset or wrong; the process tree can't.
+      return this.ownPane(client, at) !== null;
     },
     async confirm(question) {
       if (!process.stdin.isTTY) {
         print("No terminal to ask in. Pass --yes to go ahead. Nothing was stopped.");
-        return false;
+        return answerIsYes(null);
       }
       const prompt = createInterface({ input: process.stdin, output: process.stdout });
       try {
-        return /^y(es)?$/iu.test((await prompt.question(question)).trim());
+        return answerIsYes(await prompt.question(question));
+      } catch {
+        return answerIsYes(null);
       } finally {
         prompt.close();
       }
@@ -285,40 +472,59 @@ export function createUpgradeIo(options: UpgradeIoOptions): UpgradeIo {
       const statePath = join(folder, "worker.json");
       writeDurably(statePath, JSON.stringify(work, null, 2) + "\n");
       const log = join(folder, "log");
+      const resultPath = join(folder, "result.json");
       const fd = openSync(log, "a", 0o600);
+      let pid: number;
       try {
         const child = spawn(
           process.execPath,
           [options.cliEntry, "servers", "upgrade", "--continue", statePath],
-          // A new session of its own: the pane closing must not take it down.
+          // A session of its own and no terminal: a closing pane, a hangup or
+          // Ctrl-C in the foreground does not reach it.
           { detached: true, stdio: ["ignore", fd, fd], env: process.env },
         );
         child.unref();
+        if (!child.pid) throw new Error("the background worker did not start");
+        pid = child.pid;
       } finally {
         closeSync(fd);
       }
-      return log;
+      return { log, resultPath, pid };
+    },
+    async waitForWorker(handle) {
+      const note = () => print(`\nThe restart continues in the background. Log: ${handle.log}`);
+      const onSignal = () => {
+        note();
+        process.exit(130);
+      };
+      process.once("SIGINT", onSignal);
+      process.once("SIGTERM", onSignal);
+      try {
+        const deadline = Date.now() + 10 * 60_000;
+        for (;;) {
+          const result = readWorkerResult(handle.resultPath);
+          if (result) return result;
+          if (!processAlive(handle.pid) || Date.now() > deadline) {
+            // One last look: it may have written the result just before it exited.
+            return readWorkerResult(handle.resultPath);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      } finally {
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+      }
     },
     kill(client, server) {
       // tmux checks the identity itself, so a newer server on the socket is never ended.
-      const guard = `#{&&:#{==:#{pid},${server.pid}},#{==:#{start_time},${server.startTime}}}`;
-      let out: string;
+      let outcome: ReturnType<typeof killOutcome>;
       try {
-        out = tmux(client, server.socketPath, [
-          "if-shell",
-          "-F",
-          guard,
-          "kill-server",
-          "display-message -p identity-mismatch",
-        ]);
+        outcome = killOutcome({ stdout: tmux(client, server.socketPath, killGuardArgs(server)) });
       } catch (error) {
-        // kill-server ends the server under the client; that is success.
-        const text = stderrOf(error);
-        if (NO_SERVER.test(text) || /server exited|lost server/u.test(text)) return;
-        throw new Error(text.trim() || "tmux refused", { cause: error });
+        outcome = killOutcome({ stderr: stderrOf(error) });
       }
-      if (out.includes("identity-mismatch"))
-        throw new Error("another server now answers on that socket");
+      if (outcome === "mismatch") throw new Error("another server now answers on that socket");
+      if (typeof outcome === "object") throw new Error(outcome.error);
     },
     serverGone(client, at) {
       const deadline = Date.now() + 5000;

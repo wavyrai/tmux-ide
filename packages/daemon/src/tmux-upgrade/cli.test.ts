@@ -5,18 +5,40 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
 import { forwardedUpgradeArgs } from "./cli.ts";
-import { parseWorkerState, targetSocket } from "./io.ts";
+import {
+  answerIsYes,
+  executableFromLsof,
+  ownPaneFrom,
+  killGuardArgs,
+  killOutcome,
+  parseWorkerState,
+  readWorkerResult,
+  targetSocket,
+  writeWorkerResult,
+} from "./io.ts";
 
 const uid = process.getuid?.() ?? 0;
 
 describe("targetSocket", () => {
   it("prefers --socket-path, then --socket-name, then the shell's server, then the default", () => {
     const env = { TMUX_TMPDIR: "/t", TMUX: "/inside/sock,123,0" };
-    expect(targetSocket({ socketPath: "/x/s", socketName: "n" }, env)).toBe("/x/s");
     expect(targetSocket({ socketName: "work" }, env)).toBe(`/t/tmux-${uid}/work`);
     expect(targetSocket({}, env)).toBe("/inside/sock");
     expect(targetSocket({}, { TMUX_TMPDIR: "/t" })).toBe(`/t/tmux-${uid}/default`);
     expect(targetSocket({}, {})).toBe(`/tmp/tmux-${uid}/default`);
+  });
+  it("reads TMUX_IDE_TMUX_SOCKET_PATH and _NAME as doctor does, after the flags", () => {
+    const env = { TMUX_TMPDIR: "/t", TMUX: "/inside/sock,1,0" };
+    expect(targetSocket({}, { ...env, TMUX_IDE_TMUX_SOCKET_PATH: "/env/s" })).toBe("/env/s");
+    expect(targetSocket({}, { ...env, TMUX_IDE_TMUX_SOCKET_NAME: "work" })).toBe(
+      `/t/tmux-${uid}/work`,
+    );
+    expect(
+      targetSocket({ socketPath: "/flag/s" }, { ...env, TMUX_IDE_TMUX_SOCKET_PATH: "/env/s" }),
+    ).toBe("/flag/s");
+  });
+  it("rejects --socket-path together with --socket-name", () => {
+    expect(() => targetSocket({ socketPath: "/x/s", socketName: "n" }, {})).toThrow(/not both/);
   });
 });
 
@@ -95,5 +117,73 @@ describe("parseWorkerState", () => {
       parseWorkerState(JSON.stringify({ ...state, server: { ...state.server, pid: 0 } })),
     ).toThrow();
     expect(() => parseWorkerState(JSON.stringify({ ...state, extra: 1 }))).toThrow();
+  });
+});
+
+describe("the guarded kill", () => {
+  it("asks tmux to end the server only when both pid and start time match", () => {
+    expect(killGuardArgs({ pid: 4242, startTime: 1_700_000_000 })).toEqual([
+      "if-shell",
+      "-F",
+      "#{&&:#{==:#{pid},4242},#{==:#{start_time},1700000000}}",
+      "kill-server",
+      "display-message -p identity-mismatch",
+    ]);
+  });
+  it("reads a mismatch as a refusal, and a lost server as ended", () => {
+    expect(killOutcome({ stdout: "identity-mismatch\n" })).toBe("mismatch");
+    expect(killOutcome({ stdout: "" })).toBe("ended");
+    expect(killOutcome({ stderr: "server exited unexpectedly" })).toBe("ended");
+    expect(killOutcome({ stderr: "no server running on /s" })).toBe("ended");
+    expect(killOutcome({ stderr: "permission denied" })).toEqual({ error: "permission denied" });
+  });
+});
+
+describe("process facts", () => {
+  it("takes the executable from lsof's first txt name", () => {
+    expect(
+      executableFromLsof(
+        "p123\nftxt\nn/opt/homebrew/Cellar/tmux/3.5a/bin/tmux\nftxt\nn/usr/lib/dyld\n",
+      ),
+    ).toBe("/opt/homebrew/Cellar/tmux/3.5a/bin/tmux");
+    expect(executableFromLsof("p123\n")).toBe("");
+  });
+  it("finds the pane this process runs in from its ancestry", () => {
+    const lines = ["700\tapi:0.1", "555\tweb:1.0"];
+    expect(ownPaneFrom([900, 800, 700, 1], lines)).toBe("api:0.1");
+    expect(ownPaneFrom([900, 800, 1], lines)).toBeNull();
+  });
+});
+
+describe("the prompt's answer", () => {
+  it("is No for an empty answer, no terminal, or anything but y/yes", () => {
+    expect(answerIsYes("")).toBe(false);
+    expect(answerIsYes("\n")).toBe(false);
+    expect(answerIsYes(null)).toBe(false);
+    expect(answerIsYes("n")).toBe(false);
+    expect(answerIsYes("yep")).toBe(false);
+    expect(answerIsYes("y")).toBe(true);
+    expect(answerIsYes(" YES ")).toBe(true);
+  });
+});
+
+describe("the worker's result file", () => {
+  it("round-trips without the plan, and reads as null while missing or partial", () => {
+    const root = mkdtempSync(join(tmpdir(), "worker-result-"));
+    try {
+      const path = join(root, "result.json");
+      expect(readWorkerResult(path)).toBeNull();
+      writeFileSync(path, '{"status":"upg');
+      expect(readWorkerResult(path)).toBeNull();
+      writeWorkerResult(path, { status: "upgraded", message: "ok", restored: ["api"], failed: [] });
+      expect(readWorkerResult(path)).toEqual({
+        status: "upgraded",
+        message: "ok",
+        restored: ["api"],
+        failed: [],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

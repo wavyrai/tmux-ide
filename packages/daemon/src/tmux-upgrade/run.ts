@@ -4,16 +4,22 @@
  * written to its own file, read back and parsed, covers a fresh listing of the
  * server, and the user (or `--yes`, with `--end-running-agents` when an agent
  * is mid-turn) agreed. Real io: ./io.ts.
+ *
+ * The kill and the restore always run in a detached worker, so the step that
+ * ends the server never depends on the invoking terminal, ssh connection or
+ * shell staying alive. The foreground waits for the worker's result file.
  */
 import { IdeError } from "../lib/errors.ts";
 import type { FleetSnapshot } from "../tui/chrome/snapshot.ts";
 import type { ServerFeatures } from "../lib/tmux-server-features.ts";
 import {
+  atRisk,
   buildUpgradePlan,
   confirmation,
   coverage,
   renderPlan,
   sameShape,
+  type EndingPane,
   type ServerIdentity,
   type UpgradePlan,
 } from "./plan.ts";
@@ -39,15 +45,22 @@ export interface UpgradeIo {
   /** Start a throwaway server from `client` on a private socket and probe it. */
   scratchFeatures(client: string): ServerFeatures;
   listPanes(client: string, socket: string): string[];
+  /** Panes of sessions the snapshot skips (`_…`, `zz-…`), with what they run. */
+  endingPanes(client: string, socket: string): EndingPane[];
   collect(client: string, socket: string): FleetSnapshot;
   /** Write the snapshot to a new file of its own (fsync'd); returns its path. */
   saveSnapshot(snapshot: FleetSnapshot): string;
   loadSnapshot(path: string): FleetSnapshot | null;
-  /** Whether this process runs in a pane of the server at `socket`. */
-  insideTarget(socket: string): boolean;
+  /** The `session:window.pane` this process runs in on that server, by process ancestry. */
+  ownPane(client: string, socket: string): string | null;
+  /** Whether this process runs in a pane of that server ($TMUX or process ancestry). */
+  insideTarget(client: string, socket: string): boolean;
+  /** Ask; the answer is No unless the user types y or yes at a terminal. */
   confirm(text: string): Promise<boolean>;
-  /** Start a detached worker that runs {@link finishUpgrade}; returns its log path. */
-  startWorker(state: WorkerState): string;
+  /** Start a detached worker that runs {@link finishUpgrade} and writes its result. */
+  startWorker(state: WorkerState): WorkerHandle;
+  /** Wait for the worker's result; null when it exited without one or timed out. */
+  waitForWorker(handle: WorkerHandle): Promise<UpgradeResult | null>;
   /** Kill exactly this server (guarded by pid and start time). */
   kill(client: string, server: ServerIdentity): void;
   /** Wait briefly; true once no server answers on the socket. */
@@ -60,6 +73,12 @@ export interface UpgradeIo {
   }): Promise<{ restored: string[]; failed: string[] }>;
   print(text: string): void;
   nowSec(): number;
+}
+
+export interface WorkerHandle {
+  log: string;
+  resultPath: string;
+  pid: number;
 }
 
 export interface UpgradeOptions {
@@ -86,6 +105,10 @@ export interface UpgradeResult {
   restored?: string[];
   failed?: string[];
 }
+
+/** The line that rebuilds the sessions by hand from a pinned snapshot. */
+export const retryCommand = (snapshotPath: string, resumeAgents: boolean) =>
+  `tmux-ide restore --from ${snapshotPath}${resumeAgents ? " --resume-agents" : ""}`;
 
 const nothingChanged = (message: string, code: string) =>
   new IdeError(`${message} Nothing was stopped.`, { code, exitCode: 1 });
@@ -159,10 +182,12 @@ export async function upgradeServer(
       snapshot: pinned.snapshot,
       snapshotPath: pinned.path,
       notRestored: pinned.notRestored,
+      ending: io.endingPanes(client, server.socketPath),
+      selfPane: io.ownPane(client, server.socketPath),
       resumeAgents: options.resumeAgents,
       nowSec: io.nowSec(),
     });
-    const decision = confirmation({ ...options, midTurn: plan.midTurn });
+    const decision = confirmation({ ...options, risk: atRisk(plan) });
     if (decision.kind === "preview") return { status: "preview", message: renderPlan(plan), plan };
     if (decision.kind === "refuse") {
       if (!options.json) io.print(renderPlan(plan));
@@ -189,15 +214,26 @@ export async function upgradeServer(
       snapshotPath: pinned.path,
       resumeAgents: options.resumeAgents,
     };
-    if (io.insideTarget(server.socketPath)) {
-      const log = io.startWorker(work);
+    // Before anything is ended, in every mode: where the snapshot is and how to use it.
+    io.print(
+      `Snapshot saved: ${pinned.path}\nIf the sessions do not come back, run: ${retryCommand(pinned.path, options.resumeAgents)}`,
+    );
+    const inside = io.insideTarget(client, server.socketPath);
+    const worker = io.startWorker(work);
+    io.print(`The restart runs in the background. Log: ${worker.log}`);
+    if (inside)
       return {
         status: "handed-off",
-        message: `This terminal runs inside that server and closes in a moment. Reopen tmux-ide or run \`tmux attach\` in a few seconds. Log: ${log}`,
+        message: `This terminal runs inside that server and closes in a moment. Reopen tmux-ide or run \`tmux attach\` in a few seconds. Log: ${worker.log}`,
         plan,
       };
-    }
-    const result = await stopAndRestore(io, work, pinned.snapshot);
+    const result = await io.waitForWorker(worker);
+    if (!result)
+      return {
+        status: "failed",
+        message: `The background restart did not report back. Read ${worker.log}. If the sessions are missing, run: ${retryCommand(pinned.path, options.resumeAgents)}`,
+        plan,
+      };
     return { ...result, plan };
   }
 }
@@ -225,20 +261,26 @@ async function stopAndRestore(
   snapshot: FleetSnapshot,
 ): Promise<UpgradeResult> {
   const { server, client, snapshotPath, resumeAgents } = work;
-  const retry = `Retry with: tmux-ide restore --from ${snapshotPath}`;
+  const retry = `Snapshot: ${snapshotPath}. Retry with: ${retryCommand(snapshotPath, resumeAgents)}`;
   try {
     io.kill(client, server);
   } catch (error) {
     return {
       status: "failed",
-      message: `The kill failed (${(error as Error).message}); the server is still running. Nothing was stopped.`,
+      message: `The kill failed (${(error as Error).message}); the server is still running. ${retry}`,
     };
   }
-  if (!io.serverGone(client, server.socketPath))
-    return {
-      status: "failed",
-      message: "The server is still running after the kill. Check it with `tmux-ide doctor`.",
-    };
+  if (!io.serverGone(client, server.socketPath)) {
+    // Something answers on the socket. The same server: it did not end. Another
+    // server (someone started one in the gap): rebuild into it; live names are skipped.
+    const now = io.identify(client);
+    if (!now || (now.pid === server.pid && now.startTime === server.startTime))
+      return {
+        status: "failed",
+        message: `The server is still running after the kill. ${retry}`,
+      };
+    io.print(`Another server (pid ${now.pid}) now answers on the socket; restoring into it.`);
+  }
   const input = { socket: server.socketPath, snapshotPath, resumeAgents };
   let outcome: { restored: string[]; failed: string[] };
   try {

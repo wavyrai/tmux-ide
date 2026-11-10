@@ -4,11 +4,18 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { SavedMachineSchema } from "@tmux-ide/contracts";
 import { IdeError } from "../lib/errors.ts";
 import { remoteTmuxIdeArgsCommand } from "../lib/remote-tmux-command.ts";
-import { createUpgradeIo, parseWorkerState, type UpgradeTarget } from "./io.ts";
-import { finishUpgrade, upgradeServer, type UpgradeOptions, type UpgradeResult } from "./run.ts";
+import { createUpgradeIo, parseWorkerState, writeWorkerResult, type UpgradeTarget } from "./io.ts";
+import {
+  finishUpgrade,
+  retryCommand,
+  upgradeServer,
+  type UpgradeOptions,
+  type UpgradeResult,
+} from "./run.ts";
 
 export interface UpgradeCliOptions extends UpgradeOptions, UpgradeTarget {
   ssh?: string;
@@ -54,6 +61,11 @@ function report(result: UpgradeResult, json: boolean): void {
 }
 
 export async function runUpgradeCli(options: UpgradeCliOptions): Promise<void> {
+  if (options.socketPath && options.socketName)
+    throw new IdeError("Pass --socket-path or --socket-name, not both.", {
+      code: "USAGE",
+      exitCode: 2,
+    });
   if (options.ssh !== undefined) {
     SavedMachineSchema.shape.sshTarget.parse(options.ssh);
     // The remote runs the same command against its own server, bundle and
@@ -79,8 +91,19 @@ export async function runUpgradeCli(options: UpgradeCliOptions): Promise<void> {
       cliEntry: options.cliEntry,
       json: false,
     });
-    const result = await finishUpgrade(io, work);
+    // Nothing the foreground's terminal does may stop the worker mid-restore.
+    for (const signal of ["SIGHUP", "SIGINT", "SIGPIPE"] as const) process.on(signal, () => {});
+    let result: UpgradeResult;
+    try {
+      result = await finishUpgrade(io, work);
+    } catch (error) {
+      result = {
+        status: "failed",
+        message: `${(error as Error).message} If the sessions are missing, run: ${retryCommand(work.snapshotPath, work.resumeAgents)}`,
+      };
+    }
     console.log(`${new Date().toISOString()} ${result.status}: ${result.message}`);
+    writeWorkerResult(join(dirname(options.continueFrom), "result.json"), result);
     process.exitCode = EXIT[result.status];
     return;
   }
