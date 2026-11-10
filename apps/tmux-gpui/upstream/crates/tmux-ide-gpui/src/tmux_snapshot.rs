@@ -1,6 +1,7 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
 mod agent_indicator;
+mod agent_resume;
 mod agent_spinner;
 mod appearance;
 mod browser;
@@ -47,6 +48,7 @@ mod new_session;
 mod pane_actions;
 mod pane_cards;
 mod pane_chrome;
+mod pane_close;
 mod pane_shortcuts;
 mod pending_input;
 mod picker;
