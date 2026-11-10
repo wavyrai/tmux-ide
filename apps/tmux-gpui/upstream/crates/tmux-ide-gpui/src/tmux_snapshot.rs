@@ -34,6 +34,7 @@ mod divider;
 mod geometry;
 mod hit_regions;
 mod home;
+mod ink;
 mod input_gate;
 mod kbd;
 mod keys;

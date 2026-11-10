@@ -109,17 +109,9 @@ pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
 /// against a saturated label (Amber's selected row measured 4.49 at 4.6).
 const ROW_TARGET: f32 = 4.75;
 
-/// `color` as text on a sidebar row: [`chrome_text`]'s rule, also over the
-/// fills a row paints under it, the selected wash and the hover wash, on each
-/// of the chrome plates. The current session's row is always selected, so
-/// this is the most-read text in the sidebar.
-pub(crate) fn row_text(theme: &Theme, color: u32) -> u32 {
-    row_inked(theme, color, ROW_TARGET)
-}
-
 /// `color` as a mark on a sidebar row, such as an agent's state glyph: the
 /// contrast setting's mark ratio (3:1, or 4.5:1 at High) on every plate and
-/// wash [`row_text`] reads on (#746).
+/// wash a row's text reads on (#746).
 pub(crate) fn row_mark(theme: &Theme, color: u32) -> u32 {
     // A little over the ratio, as `ROW_TARGET` is over 4.5, so rounding in
     // the frost and wash blends never leaves a mark just under it.
@@ -234,32 +226,23 @@ pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
     (fill, bezel_theme::glass_selected_shadows())
 }
 
-/// A sidebar row's label and caption colours, as `render_row` paints them.
-pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
-    (
-        row_text(theme, theme.foreground),
-        row_text(theme, theme.muted),
-    )
+/// The plates a sidebar row's text is read on: the chrome (frosted over each
+/// desktop it is checked on), a hovered row, and the selected capsule.
+pub(crate) fn sidebar_plates(theme: &Theme) -> Vec<u32> {
+    row_plates(theme)
 }
 
-/// The sidebar's middle ink (#746 v3): an unselected row's label, between
-/// the selected row's full text and the muted headings. Bezel has no token
-/// for it, so it is the even mix of Bezel's `text` and `text_muted`, each
-/// laid on the sidebar's `surface`, then inked like any row text
-/// ([`row_text`]) so it reads at 4.75:1 on every row plate.
+/// A sidebar row's label and caption colours, as `render_row` paints them:
+/// the selected row's text tier and the muted tier (#746 v3).
+pub(crate) fn row_ink(theme: &Theme) -> (u32, u32) {
+    let tiers = super::ink::tiers(theme);
+    (tiers.text, tiers.muted)
+}
+
+/// The sidebar's middle ink (#746 v3): an unselected row's label, the
+/// label tier between the selected row's text and the muted headings.
 pub(crate) fn row_label(theme: &Theme) -> u32 {
-    let bezel = palette(theme);
-    let plate = bezel.surface;
-    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-    let text = Rgba::from(bezel_theme::flatten(bezel.text, plate));
-    let muted = Rgba::from(bezel_theme::flatten(bezel.text_muted, plate));
-    let mid = Rgba {
-        r: (text.r + muted.r) / 2.,
-        g: (text.g + muted.g) / 2.,
-        b: (text.b + muted.b) / 2.,
-        a: 1.,
-    };
-    row_text(theme, pack(mid.into()))
+    super::ink::tiers(theme).label
 }
 
 /// A dialog's secondary text (`popover::dialog_body`'s role), inked on the
