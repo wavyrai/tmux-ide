@@ -109,4 +109,4 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
 
 #[cfg(test)]
 #[path = "ink_tests.rs"]
-mod tests;
+pub(crate) mod tests;
