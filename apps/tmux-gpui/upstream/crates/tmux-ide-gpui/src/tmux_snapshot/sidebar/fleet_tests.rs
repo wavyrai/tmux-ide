@@ -104,7 +104,8 @@ fn workspace_hierarchy_keyboard_exact_second_route_and_stale_removal(cx: &mut Te
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g home enter");
+    // The open project leads with its pane (#746); the favourite follows.
+    cx.simulate_keystrokes("ctrl-g home down down enter");
     assert!(
         matches!(receiver.try_recv().unwrap(),browser::Command::FleetSession{request:8,selection}if selection=="77777777-7777-4777-8777-777777777777")
     );
@@ -123,7 +124,7 @@ fn arrows_are_inert_and_f_toggles_the_star_without_navigating(cx: &mut TestAppCo
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g home left right");
+    cx.simulate_keystrokes("ctrl-g home down down left right");
     assert!(receiver.try_recv().is_err(), "no machine to collapse here");
     cx.simulate_keystrokes("f");
     assert!(matches!(
@@ -169,7 +170,7 @@ fn removed_displayed_fleet_session_enter_does_not_select_replacement(cx: &mut Te
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g home");
+    cx.simulate_keystrokes("ctrl-g home down down");
     cx.update(|_, cx| {
         view.update(cx, |v, _| {
             v.browser_state.fleet.as_mut().unwrap().groups[0].sessions[1].selection =
@@ -192,7 +193,8 @@ fn workspace_favorite_pointer_isolated_from_session_navigation(cx: &mut TestAppC
         w.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let bounds = cx.debug_bounds("sidebar-favorite-0").unwrap();
+    // Row 2: the favourite, after the open project and its pane (#746).
+    let bounds = cx.debug_bounds("sidebar-favorite-2").unwrap();
     cx.simulate_click(bounds.center(), Modifiers::default());
     assert!(matches!(
         receiver.try_recv().unwrap(),
@@ -250,8 +252,12 @@ fn sidebar_stale_publication_and_full_preference_queue_preserve_workspace(cx: &m
         view.update(cx, |v, cx| {
             v.browser_state.fleet = Some(fleet());
             v.prepare_home_filter(cx);
-            // The first heading's star: machines' collapse controls are Home's.
-            let (action, favorite) = rows(&v.browser_state)[0].favorite.clone().unwrap();
+            // The first star with an action: machines' collapse controls are
+            // Home's.
+            let (action, favorite) = rows(&v.browser_state)
+                .into_iter()
+                .find_map(|r| r.favorite.filter(|(action, _)| action.is_some()))
+                .unwrap();
             let action = action.unwrap();
             v.browser_state.request = 6;
             v.change_fleet_preference(7, 3, &action, !favorite, cx);
@@ -300,4 +306,46 @@ fn hierarchy_omitted_counts_use_singular_only_for_one() {
         assert!(labels.iter().any(|l| l == group_line), "{labels:?}");
         assert!(labels.iter().any(|l| l == fleet_line), "{labels:?}");
     }
+}
+#[test]
+fn the_open_project_leads_and_this_macs_projects_name_no_machine() {
+    let mut f = fleet();
+    f.groups[0].id = "local".into();
+    f.groups[0].label = "Local".into();
+    let mut other = f.groups[0].clone();
+    other.id = "spark".into();
+    other.label = "spark".into();
+    for s in &mut other.sessions {
+        s.active = false;
+        s.session_id = s.session_id.as_ref().map(|id| format!("{id}-spark"));
+    }
+    // The open project is on spark, after the whole of Local.
+    other.sessions[3].active = true;
+    for s in &mut f.groups[0].sessions {
+        s.active = false;
+    }
+    f.groups.push(other);
+    let state = browser::State {
+        fleet: Some(f),
+        surface: browser::Surface::Workspace,
+        selected_session: Some("session-d-spark".into()),
+        ..Default::default()
+    };
+    let headings: Vec<_> = rows(&state)
+        .into_iter()
+        .filter(|r| r.kind == Kind::Heading)
+        .map(|r| (r.label, r.aside))
+        .collect();
+    // Open project first (#746, card 12 option C), then each machine's
+    // favourites, then by name; only spark's projects name their machine.
+    assert_eq!(headings[0], ("Unscoped".into(), Some("spark".into())));
+    assert_eq!(headings[1], ("Duplicate".into(), None));
+    assert_eq!(headings.len(), 8);
+    assert_eq!(
+        headings
+            .iter()
+            .filter(|(label, _)| label == "Unscoped")
+            .count(),
+        2
+    );
 }
