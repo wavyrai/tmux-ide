@@ -92,7 +92,11 @@ impl SnapshotView {
     pub(super) fn open_machine_management(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_machine_list(Mode::ManageMachines, window, cx);
     }
-    pub(super) fn open_saved_machines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::tmux_snapshot) fn open_saved_machines(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_machine_list(Mode::SavedMachines, window, cx);
     }
     fn open_machine_list(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {

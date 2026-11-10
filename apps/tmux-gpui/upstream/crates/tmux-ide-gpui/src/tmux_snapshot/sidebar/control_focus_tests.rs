@@ -1,7 +1,7 @@
 use super::*;
 
 #[gpui::test]
-fn chrome_tab_is_opt_in_skips_unavailable_controls_and_refreshes_once(cx: &mut TestAppContext) {
+fn chrome_tab_is_opt_in_skips_unavailable_controls_and_acts_once(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
@@ -17,29 +17,28 @@ fn chrome_tab_is_opt_in_skips_unavailable_controls_and_refreshes_once(cx: &mut T
     } if key == "Tab")
     );
     assert!(receiver.try_recv().is_err());
-    cx.simulate_keystrokes("ctrl-g tab tab");
+    // Sessions, machines, then settings: the theme button (2) waits for an
+    // appearance, so Tab skips it.
+    cx.simulate_keystrokes("ctrl-g tab tab tab");
     cx.update(|window, cx| {
         view.read_with(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[2].is_focused(window));
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[3].is_focused(window));
         });
     });
-    cx.simulate_keystrokes("shift-tab");
+    cx.simulate_keystrokes("shift-tab shift-tab");
     cx.update(|window, cx| {
         view.read_with(cx, |view, _| {
             assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[0].is_focused(window));
         });
     });
-    cx.simulate_keystrokes("tab enter");
+    // Enter on Switch session opens the switcher once and sends nothing.
+    cx.simulate_keystrokes("enter");
     cx.simulate_event(KeyUpEvent {
         layout: None,
         keystroke: Keystroke::parse("enter").unwrap(),
     });
-    let commands: Vec<_> = receiver.try_iter().collect();
-    assert_eq!(commands.len(), 1);
-    assert_eq!(
-        serde_json::to_value(&commands[0]).unwrap(),
-        serde_json::json!({"type":"refresh","request":8})
-    );
+    assert!(view.read_with(cx, |view, _| view.picker.is_some()));
+    assert!(receiver.try_recv().is_err());
 }
 
 #[gpui::test]
@@ -58,7 +57,7 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("ctrl-g shift-tab");
     cx.update(|window, cx| {
         view.read_with(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[5].is_focused(window));
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[6].is_focused(window));
         });
     });
     cx.simulate_keystrokes("tab");
@@ -191,7 +190,7 @@ fn home_and_search_are_tab_stops_after_the_toggle(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("ctrl-g shift-tab shift-tab");
     cx.update(|window, cx| {
         view.read_with(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[4].is_focused(window));
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[5].is_focused(window));
         });
     });
     cx.simulate_keystrokes("enter");
@@ -234,7 +233,7 @@ fn modal_between_control_keydown_and_keyup_preserves_picker_and_blocks_refresh(
 }
 
 #[gpui::test]
-fn pointer_refresh_remains_available_while_terminal_presence_is_pending(cx: &mut TestAppContext) {
+fn pointer_footer_remains_available_while_terminal_presence_is_pending(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {
@@ -246,14 +245,11 @@ fn pointer_refresh_remains_available_while_terminal_presence_is_pending(cx: &mut
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    let bounds = cx.debug_bounds("refresh-sessions").unwrap();
+    // The commands palette, where Refresh sessions now lives, still opens.
+    let bounds = cx.debug_bounds("open-commands").unwrap();
     cx.simulate_click(bounds.center(), Modifiers::default());
-    let commands: Vec<_> = receiver.try_iter().collect();
-    assert_eq!(commands.len(), 1);
-    assert_eq!(
-        serde_json::to_value(&commands[0]).unwrap(),
-        serde_json::json!({"type":"refresh","request":8})
-    );
+    assert!(view.read_with(cx, |view, _| view.picker.is_some()));
+    assert!(receiver.try_recv().is_err());
 }
 
 #[gpui::test]
@@ -312,10 +308,10 @@ fn lost_theme_readiness_returns_chrome_focus_to_rows(cx: &mut TestAppContext) {
         window.draw(cx).clear(cx);
     });
     receiver.try_iter().for_each(drop);
-    cx.simulate_keystrokes("ctrl-g tab tab");
+    cx.simulate_keystrokes("ctrl-g tab tab tab");
     cx.update(|window, cx| {
         view.update(cx, |view, _| {
-            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[1].is_focused(window));
+            assert!(view.sidebar_keyboard.controls.as_ref().unwrap()[2].is_focused(window));
             view.browser_state.appearance = None;
         });
         window.draw(cx).clear(cx);
