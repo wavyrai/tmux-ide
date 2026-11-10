@@ -1,0 +1,59 @@
+---
+title: Markdown reader
+metaTitle: "Markdown reader: read .md files in the Mac app"
+description: "tmux-ide open notes.md shows a Markdown file in a native, read-only reader pane in the Mac app, with live reload, find and safe links and images."
+---
+
+`tmux-ide open notes.md` opens a Markdown file in a pane next to the one you ran
+it from. In the Mac app the pane shows a native reader. In a plain terminal the
+same pane shows the terminal rendering of `tmux-ide show`.
+
+```sh
+tmux-ide open notes.md
+tmux-ide open docs/release-notes.md --split down
+```
+
+The reader is read-only. Closing, zooming and splitting work as on any pane,
+because the reader is a tmux pane underneath.
+
+## What it shows
+
+- Headings, paragraphs, lists, task lists, quotes, GitHub alerts (Note, Tip,
+  Warning), rules, tables and code blocks.
+- Code blocks are monospace, with a copy button. There is no syntax
+  highlighting yet.
+- Raw HTML in the file is shown as text. It is never interpreted.
+
+## Live reload
+
+While the pane is visible the reader picks up changes to the file. If the file
+is removed or renamed, the reader says so and keeps the last content until the
+file comes back.
+
+## Find
+
+Press ⌘F in a focused reader to search the document. Enter and ⇧Enter move
+between matches, and Esc closes the find field.
+
+## Links
+
+- A `#heading` link scrolls to that heading.
+- `http://` and `https://` links open in your system browser.
+- Other links, such as `file:` and custom schemes, are not opened.
+
+## Images
+
+- Local images load only from the Markdown file's folder, or from its git
+  repository when the file is inside one. Paths that leave that folder or
+  repository, including through a symlink, are not loaded.
+- PNG, JPEG, GIF, WebP and SVG images up to 10 MB each are shown, at most 64 per
+  document.
+- Remote images are never fetched. The reader shows the image's host and a link
+  you can open in your browser instead.
+
+## Limits
+
+- Files up to 4 MiB are shown. For a larger file, run `tmux-ide show <file>` in
+  a terminal pane.
+- Over SSH the file is read by tmux-ide on the remote machine, so the remote
+  machine needs a tmux-ide version with the reader.

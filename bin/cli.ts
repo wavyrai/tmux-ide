@@ -255,10 +255,12 @@ IDs: 1–128 characters; start with a letter or digit, then letters, digits, per
 Inspect ownership: tmux-ide daemon info --json
 Managed service setup: tmux-ide daemon service install <absolute-stable-launcher>`);
   } else if (command === "open") {
-    console.log(`Usage: tmux-ide open [url] [--session NAME] [--pane %ID] [--split right|down] [--size 10..90] [--window] [--json]
+    console.log(`Usage: tmux-ide open [url|file.md] [--session NAME] [--pane %ID] [--split right|down] [--size 10..90] [--window] [--json]
 
 Open terminal-browser in a new pane beside the current pane, or in a new window with --window.
 Without a URL, open the browser's start page. URLs, localhost addresses and HTML files are accepted.
+A .md or .markdown file opens in a reader pane: the Mac app shows it in its native reader, and other
+clients see the terminal rendering of tmux-ide show. A missing Markdown file is an error.
 Outside tmux, select a running session with --session. Native-capable browser builds connect to the GUI automatically; other viewers use Kitty.
 Set TMUX_IDE_TERMINAL_BROWSER_BIN to an absolute launcher path to use a separate browser build.`);
   } else printHelp();
@@ -288,7 +290,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
                               ${dim("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
-  ${cyan("tmux-ide open")} [url]          ${dim("Open terminal-browser in a new pane (--session NAME outside tmux)")}
+  ${cyan("tmux-ide open")} [url|file.md]  ${dim("Open a URL in terminal-browser, or a Markdown file in a reader pane")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team assign")} %PANE TEAM ${dim("Group a pane; unassign removes membership")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
@@ -908,18 +910,31 @@ try {
           exitCode: 2,
         });
       if (positionals.length > 2)
-        throw new IdeError("tmux-ide open accepts at most one URL.", {
+        throw new IdeError("tmux-ide open accepts at most one URL or Markdown file.", {
           code: "USAGE",
           exitCode: 2,
         });
-      const { openBrowser } = await import("../packages/daemon/src/open-browser.ts");
-      const result = await openBrowser(positionals[1], {
+      const openOptions = {
         session: values.session,
         pane: values.pane,
         split: values.split,
         size: values.size,
         window: values.window,
-      });
+      };
+      const { classifyOpenTarget, openReader } =
+        await import("../packages/daemon/src/open-reader.ts");
+      const openTarget = classifyOpenTarget(positionals[1], process.cwd());
+      if (openTarget.kind === "reader") {
+        const result = await openReader(openTarget, openOptions);
+        console.log(
+          json
+            ? JSON.stringify(result)
+            : `Opened ${openTarget.display} in a reader pane (${result.pane})`,
+        );
+        break;
+      }
+      const { openBrowser } = await import("../packages/daemon/src/open-browser.ts");
+      const result = await openBrowser(positionals[1], openOptions);
       console.log(json ? JSON.stringify(result) : `Created browser pane ${result.pane}.`);
       break;
     }

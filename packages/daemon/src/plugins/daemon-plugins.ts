@@ -15,6 +15,7 @@ import {
   type NotifyLevel,
 } from "./host-calls.ts";
 import { cliRunner } from "./worktree-calls.ts";
+import { resolveCliCommand } from "../lib/cli-command.ts";
 import { defaultControlSocketPath } from "../control/server.ts";
 import { DEFAULT_PLUGIN_LIMITS } from "./protocol.ts";
 import { minimalHostEnv, PluginSupervisor, secretEnvValues } from "./supervisor.ts";
@@ -85,18 +86,7 @@ export async function tmuxSocketDirs(
   return [...dirs];
 }
 
-/**
- * The argv prefix that runs this tmux-ide's CLI: the bundled `bin/cli.js`,
- * or `bin/cli.ts` under the runtime's loader flags when run from source.
- */
-export function resolveCliCommand(
-  here: string = fileURLToPath(import.meta.url),
-  runtime: { execPath: string; execArgv: readonly string[] } = process,
-): string[] {
-  if (basename(here) === "cli.js") return [runtime.execPath, here];
-  const cli = join(dirname(here), "..", "..", "..", "..", "bin", `cli${extname(here)}`);
-  return [runtime.execPath, ...runtime.execArgv, cli];
-}
+export { resolveCliCommand } from "../lib/cli-command.ts";
 
 /**
  * Files programs from plugins may not read: the daemon record (its port and

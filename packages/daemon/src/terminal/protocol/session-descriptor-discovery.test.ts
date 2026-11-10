@@ -260,3 +260,20 @@ it("carries live browser icon metadata without changing pane identity", () => {
     browserIcon: null,
   });
 });
+
+it("carries a live reader's file name and path, and drops a dead or malformed one", () => {
+  const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
+  // tmux `qa` escapes the option as one argument.
+  const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}")).toBe(true);
+  expect(parseSessionPaneDescriptors([`${line("%3")}\tmanual\t\t${quoted}`])[0]).toMatchObject({
+    runtimePaneId: "%3",
+    reader: { name: "notes.md", path: "/repo/docs/notes.md" },
+  });
+  const dead = JSON.stringify({ version: 1, pid: 2 ** 31 - 2, path: "/repo/notes.md" });
+  for (const raw of ["", "bad", dead])
+    expect(parseSessionPaneDescriptors([`${line("%3")}\tmanual\t\t${raw}`])[0]).toMatchObject({
+      runtimePaneId: "%3",
+      reader: null,
+    });
+});

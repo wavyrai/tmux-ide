@@ -1,3 +1,4 @@
+import { hasControlCharacter } from "./pane-reader.ts";
 import {
   TerminalSurfaceWatchSchemaZ,
   TerminalSurfaceReceiverSchemaZ,
@@ -251,6 +252,11 @@ export const PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION = 105;
 export const PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION = 106;
 /** Bundles zlib capability 102 and optional browser icon metadata; fixed 16×16 RGBA hex, empty means browser fallback. */
 export const PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = 117;
+/**
+ * Bundles 117 (browser icons with zlib 102) and adds `reader` pane metadata.
+ * Offered in place of 117 because the offer array has nine slots.
+ */
+export const PANE_STREAM_READER_CAPABILITY_VERSION = 118;
 export const PaneStreamInputLifetimeSchemaZ = z
   .object({
     generation: z.string().min(1).max(256),
@@ -563,6 +569,18 @@ export const PaneStreamLayoutFrameSchemaZ = z
             browserIcon: z
               .string()
               .regex(/^(?:[0-9a-f]{2048})?$/u)
+              .nullable()
+              .optional(),
+            /** Only with capability 118: the Markdown reader's file name, never its path. */
+            reader: z
+              .object({
+                name: z
+                  .string()
+                  .min(1)
+                  .max(255)
+                  .refine((value) => !hasControlCharacter(value) && !value.includes("/")),
+              })
+              .strict()
               .nullable()
               .optional(),
             left: CellCoordinateSchemaZ,

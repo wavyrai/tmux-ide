@@ -1,7 +1,10 @@
 import { browserIcon } from "./browser-icon.ts";
+import { readerOption, type ReaderOption } from "./reader-option.ts";
 
 export interface SessionPaneDescriptor {
   browserIcon?: string | null;
+  /** A live `tmux-ide open file.md` reader; the path stays daemon-side. */
+  reader?: ReaderOption | null;
   nativePaneBirthId?: string | null;
   sessionName: string;
   runtimePaneId: string;
@@ -56,6 +59,7 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{pane_birth_id}",
   "#{qa:@tmux_ide_name_source}",
   "#{qa:@tmux_ide_browser_icon}",
+  "#{qa:@tmux_ide_reader}",
 ].join("\t");
 
 /** Decode the escapes emitted by tmux's `qa` format modifier. */
@@ -135,7 +139,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length !== 21 && encoded.length !== 22 && encoded.length !== 23) continue;
+    if (encoded.length < 21 || encoded.length > 24) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -160,6 +164,7 @@ export function parseSessionPaneDescriptorReply(
       nativePaneBirthId = "",
       nameSource = "",
       browserIconRaw = "",
+      readerRaw = "",
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -200,6 +205,7 @@ export function parseSessionPaneDescriptorReply(
     }
     descriptors.push({
       browserIcon: browserIcon(browserIconRaw),
+      reader: readerOption(readerRaw),
       sessionName,
       runtimePaneId,
       runtimeSessionId,
