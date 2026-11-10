@@ -240,6 +240,7 @@ fn capture_view(
         workspace_fleet_agents: Default::default(),
         home_filter: None,
         pane_actions: None,
+        pane_close: None,
         browser_address: None,
         new_session: None,
         new_session_queued: None,
@@ -538,6 +539,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     // `+glyphs`: the mock's shell also shows box drawing and a powerline
     // prompt, to check cells join at the terminal's line height.
     let glyphs = extras.contains(&"glyphs");
+    // `+closing`: the close-pane card open on the mock's selected pane.
+    let closing = extras.contains(&"closing");
     let state = if mock {
         mock::with_mock_fleet(state)?
     } else {
@@ -706,6 +709,28 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             })
         })?;
         for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+        }
+    }
+    if closing && let Some(view) = root.borrow().clone() {
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.browser_state.pane_actions =
+                    view.browser_state
+                        .selected_pane
+                        .clone()
+                        .map(|id| browser::PaneActions {
+                            token: "capture".into(),
+                            id,
+                            zoomed: false,
+                        });
+                if let Some(target) = super::pane_actions::Target::capture(&view.browser_state) {
+                    view.begin_pane_close(target, window, cx);
+                }
+            })
+        })?;
+        for _ in 0..2 {
             cx.run_until_parked();
             cx.update_window(handle.into(), |_, window, _| window.refresh())?;
         }

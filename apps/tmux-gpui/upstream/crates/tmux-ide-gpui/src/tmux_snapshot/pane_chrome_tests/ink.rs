@@ -123,8 +123,8 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
         for (key, expected, plates) in [
             ("pane-mode:pane-a", ink.muted, &header[..]),
             ("pane-title:pane-a", ink.text, &header[..]),
-            ("pane-title:pane-b", ink.muted, &header[..]),
-            ("browser-address:pane-c", ink.muted, &header[..]),
+            ("pane-title:pane-b", ink.label, &header[..]),
+            ("browser-address:pane-c", ink.label, &header[..]),
             ("browser-rejected", ink.warning, &header[..1]),
             ("browser-address-cap-return", probes_cap, &cap[..]),
             ("browser-address-hint-Open", dialog_muted(&theme), &cap[..1]),
@@ -148,6 +148,68 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
                     failures.push(format!("{name}: {key} is {r:.2}:1 on {plate:?}"));
                 }
             }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #746 v3: a header button's glyph rests in the muted ink on the focused
+/// card and the icon tier on the others, each at the contrast setting's mark
+/// ratio on every header plate, and the unfocused one is the quieter.
+#[gpui::test]
+fn header_buttons_rest_muted_on_the_focused_card_and_at_the_icon_tier_elsewhere(
+    cx: &mut TestAppContext,
+) {
+    let _appearance = bezel_theme::lock_appearance();
+    let (sender, receiver) = mpsc::sync_channel(256);
+    cx.update(|cx| cx.set_global(InkProbes::default()));
+    let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(700.)));
+    let mut failures = Vec::new();
+    for (name, colors) in catalog() {
+        cx.update(|window, cx| {
+            view.update(cx, |v, _| {
+                v.browser_state.appearance = Some(appearance(colors))
+            });
+            cx.global_mut::<InkProbes>().0.clear();
+            window.draw(cx).clear(cx);
+        });
+        receiver.try_iter().for_each(drop);
+        let theme = view.read_with(cx, |v, _| v.theme());
+        let ink = header_ink(&theme);
+        let plates = header_plates(&theme);
+        let mark = theme.contrast.mark_ratio();
+        let probes = cx.update(|_, cx| cx.global::<InkProbes>().0.clone());
+        for (key, expected) in [
+            ("pane-close-icon:pane-a", ink.muted),
+            ("pane-close-icon:pane-b", ink.icon),
+        ] {
+            let Some(&painted) = probes.get(key) else {
+                failures.push(format!("{name}: {key} not painted"));
+                continue;
+            };
+            if painted != expected {
+                failures.push(format!("{name}: {key} painted {painted:?}"));
+            }
+            // The unfocused card's own fill too: its header sits on it.
+            let rest = crate::tmux_snapshot::surfaces::card_fills(&theme).1;
+            for plate in plates.into_iter().chain([rest]) {
+                let r = ratio(painted, plate);
+                if r < mark {
+                    failures.push(format!("{name}: {key} is {r:.2}:1 on {plate:?}"));
+                }
+            }
+        }
+        // The icon tier is Bezel's faint ink (the chrome's icon tier) at the
+        // mark ratio on the header's plates: nothing louder stands in.
+        let bezel = palette(&theme);
+        let faint = bezel_theme::flatten(bezel.text_faint, bezel.terminal_bg);
+        let expected: Hsla = rgb(header_mark(&theme, u32::from(Rgba::from(faint)) >> 8)).into();
+        if ink.icon != expected {
+            failures.push(format!("{name}: the icon ink is not the icon tier"));
+        }
+        if ratio(ink.icon, plates[0]) > ratio(ink.muted, plates[0]) + 0.01 {
+            failures.push(format!("{name}: the icon tier is louder than muted"));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -206,5 +268,38 @@ fn the_headers_state_glyph_wears_the_headers_ink(cx: &mut TestAppContext) {
             }
         }
     }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #359 review: the icon tier's clamp, under Increase Contrast too. Raw
+/// faint ink misses the 4.5:1 mark ratio somewhere, so the clamp is what
+/// keeps every header glyph at the setting's ratio on each header plate and
+/// on the unfocused card.
+#[test]
+fn header_icons_hold_the_mark_ratio_at_both_contrast_settings() {
+    use crate::contrast::Contrast;
+    let mut failures = Vec::new();
+    let mut raw_misses = 0;
+    for (name, colors) in catalog() {
+        for contrast in [Contrast::Standard, Contrast::High] {
+            let mut theme = appearance(colors.clone()).native();
+            theme.contrast = contrast;
+            let ink = header_ink(&theme);
+            let bezel = palette(&theme);
+            let rest = crate::tmux_snapshot::surfaces::card_fills(&theme).1;
+            let mark = contrast.mark_ratio();
+            for plate in header_plates(&theme).into_iter().chain([rest]) {
+                raw_misses += usize::from(ratio(bezel.text_faint, plate) < mark);
+                let r = ratio(ink.icon, plate);
+                if r < mark - 0.01 {
+                    failures.push(format!("{name} {contrast:?}: {r:.2}:1 on {plate:?}"));
+                }
+            }
+        }
+    }
+    assert!(
+        raw_misses > 0,
+        "raw faint must miss somewhere, or this proves little"
+    );
     assert!(failures.is_empty(), "{failures:#?}");
 }
