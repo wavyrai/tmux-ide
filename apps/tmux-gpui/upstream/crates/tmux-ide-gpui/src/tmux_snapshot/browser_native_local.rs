@@ -55,6 +55,8 @@ mod topology;
 #[path = "browser_native_local_watch.rs"]
 mod watch;
 pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
+#[path = "browser_native_local_drop.rs"]
+mod drop_link;
 #[path = "browser_native_local_home_recovery.rs"]
 mod home_recovery;
 #[path = "browser_native_local_pane_limit.rs"]
@@ -248,18 +250,17 @@ impl Local {
         }
         Ok(())
     }
+    /// Ends this link and forgets what it showed: navigation, a refresh, or a
+    /// different daemon. A recoverable drop uses [`Self::drop_link`] instead.
     fn cancel(&mut self) -> Result<(), Error> {
+        self.forget_agents();
+        self.drop_link()
+    }
+    /// Ends this link's work but keeps what the window shows: agents, the
+    /// catalog, targets and held frames stay until fresh data replaces them.
+    fn drop_link(&mut self) -> Result<(), Error> {
         self.recovery = None;
         self.cancel_local_creation();
-        self.agents.cancel();
-        self.state.home_agents = None;
-        self.state.workspace_agents = None;
-        self.state.workspace_fleet_agents = None;
-        self.state.workspace_fleet_agent_rejected = None;
-        self.state.palette_agents = None;
-        self.state.attention_agents = None;
-        self.state.palette_selection_rejected = None;
-        self.state.attention_selection_rejected = None;
         self.sources.cancel_catalog_read()?;
         self.sources.cancel_setup()?;
         self.fleet_cancel_control();

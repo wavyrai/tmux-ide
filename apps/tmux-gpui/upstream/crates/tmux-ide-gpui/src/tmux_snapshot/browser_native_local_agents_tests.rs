@@ -247,6 +247,8 @@ fn failed_routes_revoke_rows_and_incomplete_fleet_is_not_reported_live() {
     assert!(gate.publication().phase == home_agents::Phase::Partial);
 }
 
+#[path = "browser_native_local_agents_drop_tests.rs"]
+mod drop_link;
 #[path = "browser_native_local_agent_recovery_tests.rs"]
 mod recovery;
 

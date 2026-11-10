@@ -172,6 +172,21 @@ pub enum Event {
     /// Negotiated graphics binary envelope; validated by the graphics owner.
     GraphicsBinary(Vec<u8>),
 }
+impl Event {
+    /// The pane a delivery frame belongs to, and its payload size: what a
+    /// reconnect costs per pane (card 0 of the reconnect plan).
+    pub fn pane_bytes(&self) -> Option<(&str, usize)> {
+        match self {
+            Self::DeliveryReady { pane, negotiation } => Some((pane, negotiation.get().len())),
+            Self::ProjectionEnvelope { pane, envelope } | Self::Envelope { pane, envelope } => {
+                Some((pane, envelope.get().len()))
+            }
+            Self::Chunk { pane, data, .. } => Some((pane, data.len())),
+            Self::BinaryChunk { pane, data, .. } => Some((pane, data.len())),
+            Self::Ready(_) | Self::Control(_) | Self::GraphicsBinary(_) => None,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct Kind<'a> {

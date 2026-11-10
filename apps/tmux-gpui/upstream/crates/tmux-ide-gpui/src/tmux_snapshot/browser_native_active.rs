@@ -76,6 +76,23 @@ pub(super) fn admit_next(
     Some(command)
 }
 
+/// One stderr line per stream: how long from its start until the window took
+/// input, and the delivery bytes each pane received until then (card 0 of the
+/// reconnect plan). Pane ids are tmux's own `%N`; nothing else is logged.
+pub(super) fn input_report_line(report: &herdr_client::tmux_controller::InputReport) -> String {
+    let total: u64 = report.received.values().sum();
+    let panes: Vec<String> = report
+        .received
+        .iter()
+        .map(|(pane, bytes)| format!("{pane}={bytes}"))
+        .collect();
+    format!(
+        "tmux-preview: stream input ready after {} ms, {total} bytes over {} panes [{}]",
+        report.elapsed.as_millis(),
+        report.received.len(),
+        panes.join(" ")
+    )
+}
 impl Active {
     pub(super) fn owner_completed(&mut self, completion: browser_native_owner::Completion) {
         self.action_status.set(match completion.outcome {
@@ -185,6 +202,9 @@ impl Active {
         let prior_actions = state.pane_actions.clone();
         let prior_status = state.status.clone();
         let update = self.controller.poll(now)?;
+        if let Some(report) = self.controller.input_report() {
+            eprintln!("{}", input_report_line(&report));
+        }
         state.unavailable_panes = update.unavailable.iter().cloned().collect();
         let prior_split = state.split_layout.clone();
         let prior_gesture = state.split_gesture.clone();

@@ -212,3 +212,88 @@ fn missing_required_nullable_cursor_and_null_environment_are_rejected() {
         .is_err()
     );
 }
+fn resumed(after: u64, hello_sequence: u64) -> CatalogEvents {
+    let mut lane = CatalogEvents::resume(serde_json::from_value(identity()).unwrap(), after);
+    assert_eq!(
+        receive(
+            &mut lane,
+            json!({"type":"hello","daemon":identity(),"sessions":[],"eventSequence":hello_sequence})
+        )
+        .unwrap(),
+        CatalogEventEffect::Subscribe {
+            after_sequence: after
+        },
+        "a resume subscribes after the kept cursor, not the daemon's current one"
+    );
+    lane
+}
+fn resumed_ack(sequence: u64) -> Value {
+    json!({"type":"resource.interests-ack","interestRevision":1,"sequence":sequence,"unavailableInterests":[]})
+}
+/// Nothing changed during the drop: the barrier reports the lane current, and
+/// no catalog read is asked for.
+#[test]
+fn a_resume_with_nothing_changed_costs_no_read() {
+    let mut lane = resumed(10, 12);
+    // Replayed changes to other resources don't touch the catalog.
+    assert_eq!(
+        receive(&mut lane, change(11, "workspace-files")).unwrap(),
+        CatalogEventEffect::Unchanged
+    );
+    assert_eq!(
+        receive(&mut lane, change(12, "application-shell")).unwrap(),
+        CatalogEventEffect::Unchanged
+    );
+    assert_eq!(
+        receive(&mut lane, resumed_ack(12)).unwrap(),
+        CatalogEventEffect::Resumed
+    );
+    assert!(lane.ready());
+    assert_eq!(lane.sequence(), 12);
+}
+/// A catalog change replayed from the journal asks for one read.
+#[test]
+fn a_replayed_catalog_change_invalidates() {
+    let mut lane = resumed(10, 11);
+    assert_eq!(
+        receive(&mut lane, change(11, "fleet-catalog")).unwrap(),
+        CatalogEventEffect::Invalidate
+    );
+    assert_eq!(
+        receive(&mut lane, resumed_ack(11)).unwrap(),
+        CatalogEventEffect::Resumed
+    );
+}
+/// A cursor outside the daemon's journal (a gap, or a daemon that restarted
+/// and counts from zero again) gets snapshot-required: a full read.
+#[test]
+fn a_cursor_outside_the_journal_falls_back_to_a_full_read() {
+    for (after, hello, reason) in [(10, 400, "journal-gap"), (500, 3, "cursor-ahead")] {
+        let mut lane = resumed(after, hello);
+        assert_eq!(
+            receive(
+                &mut lane,
+                json!({"type":"snapshot-required","afterSequence":after,
+                    "oldestAvailableSequence":144,"currentSequence":hello,"reason":reason})
+            )
+            .unwrap(),
+            CatalogEventEffect::Invalidate,
+            "{reason}"
+        );
+        assert_eq!(lane.sequence(), hello);
+    }
+}
+/// A resume never crosses daemons: a different identity in the hello fails.
+#[test]
+fn a_resume_refuses_a_different_daemon() {
+    let mut lane = CatalogEvents::resume(serde_json::from_value(identity()).unwrap(), 10);
+    let mut other = identity();
+    other["instanceId"] = json!("00000000-0000-4000-8000-000000000000");
+    assert!(matches!(
+        receive(
+            &mut lane,
+            json!({"type":"hello","daemon":other,"sessions":[],"eventSequence":10})
+        ),
+        Err(CatalogEventError::Identity)
+    ));
+}

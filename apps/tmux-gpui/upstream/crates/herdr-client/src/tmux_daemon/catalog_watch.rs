@@ -5,7 +5,7 @@ use std::{
     net::{Shutdown, TcpStream},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -40,6 +40,10 @@ struct Cancellation {
     socket: Mutex<Option<TcpStream>>,
     /// Set once the live lane confirms the daemon pushes fleet changes.
     fleet_push: AtomicBool,
+    /// The last sequence the lane has seen, for a later resume.
+    sequence: AtomicU64,
+    /// The lane passed its barrier.
+    live: AtomicBool,
 }
 impl Cancellation {
     fn check(&self) -> Result<(), CatalogWatchError> {
@@ -76,6 +80,18 @@ impl CatalogWatchWorker {
         expected: CatalogIdentity,
         wake: impl Fn() + Send + 'static,
     ) -> Result<Self, WorkerError> {
+        Self::resume(source, expected, None, wake)
+    }
+    /// Like [`Self::spawn`], but replays only the changes after `after`, a
+    /// cursor from an earlier lane whose catalog the caller still holds. The
+    /// worker then reports [`Self::live`] instead of an invalidation when
+    /// nothing changed.
+    pub fn resume(
+        source: CatalogSource,
+        expected: CatalogIdentity,
+        after: Option<u64>,
+        wake: impl Fn() + Send + 'static,
+    ) -> Result<Self, WorkerError> {
         let cancel = Arc::new(Cancellation::default());
         let stop = cancel.clone();
         let mailbox: Mailbox = Arc::new(Mutex::new(None));
@@ -101,7 +117,8 @@ impl CatalogWatchWorker {
                         wake();
                     }
                 };
-                if let Err(error) = run(&source, &expected, &stop, || notify(Ok(()))) {
+                let woke = || wake();
+                if let Err(error) = run(&source, &expected, after, &stop, || notify(Ok(())), woke) {
                     notify(Err(error));
                 }
                 stop.cancel();
@@ -121,6 +138,15 @@ impl CatalogWatchWorker {
     /// sessions and agents. Callers may then drop their own periodic reads.
     pub fn fleet_push(&self) -> bool {
         self.cancel.fleet_push.load(Ordering::Acquire) && self.cancel.check().is_ok()
+    }
+    /// The last sequence the lane has seen. A catalog read started after it
+    /// reflects at least every change up to it.
+    pub fn sequence(&self) -> u64 {
+        self.cancel.sequence.load(Ordering::Acquire)
+    }
+    /// The lane passed its barrier and is still running.
+    pub fn live(&self) -> bool {
+        self.cancel.live.load(Ordering::Acquire) && self.cancel.check().is_ok()
     }
     pub fn cancel(&self) {
         self.cancel.cancel();
@@ -145,8 +171,10 @@ impl Drop for CatalogWatchWorker {
 fn run(
     source: &CatalogSource,
     expected: &CatalogIdentity,
+    after: Option<u64>,
     cancel: &Cancellation,
     changed: impl Fn(),
+    woke: impl Fn(),
 ) -> Result<(), CatalogWatchError> {
     cancel.check()?;
     let owner = source.discover(&cancel.stopped)?;
@@ -184,7 +212,10 @@ fn run(
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(1)))?;
-    let mut lane = CatalogEvents::new(endpoint.identity);
+    let mut lane = match after {
+        Some(after) => CatalogEvents::resume(endpoint.identity, after),
+        None => CatalogEvents::new(endpoint.identity),
+    };
     let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut received = Instant::now();
     let mut ping = received;
@@ -226,7 +257,10 @@ fn run(
         received = Instant::now();
         cancel.check()?;
         match message {
-            Message::Text(text) => match lane.receive(text.as_bytes())? {
+            Message::Text(text) => match lane.receive(text.as_bytes()).inspect(|_| {
+                cancel.sequence.store(lane.sequence(), Ordering::Release);
+                cancel.live.store(lane.ready(), Ordering::Release);
+            })? {
                 CatalogEventEffect::Subscribe { after_sequence } => socket.send(Message::Text(
                     CatalogEvents::subscription(after_sequence)?.into(),
                 ))?,
@@ -236,6 +270,12 @@ fn run(
                         .store(lane.ready() && !lane.needs_fallback(), Ordering::Release);
                     changed();
                     refresh = Instant::now();
+                }
+                CatalogEventEffect::Resumed => {
+                    cancel
+                        .fleet_push
+                        .store(!lane.needs_fallback(), Ordering::Release);
+                    woke();
                 }
                 CatalogEventEffect::Unchanged => {}
             },

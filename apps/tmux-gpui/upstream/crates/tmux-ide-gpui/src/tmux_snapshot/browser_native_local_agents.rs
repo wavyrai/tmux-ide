@@ -65,6 +65,9 @@ pub(super) struct Gate {
     contexts: Vec<Context>,
     slots: Vec<Slot>,
     epoch: Option<uuid::Uuid>,
+    /// Paused across a connection drop: the shown rows are last known and are
+    /// re-read once the link is back (`Self::pause`).
+    stale: bool,
     revision: u64,
     published: BTreeMap<String, u64>,
     total: usize,
@@ -104,7 +107,19 @@ impl Gate {
             _ => TabObservation::Unavailable,
         }
     }
+    /// A connection drop: stop reading, keep every shown row as last known.
+    /// Cancelled reads never deliver (`AgentObservationPool::cancel`), so no
+    /// row turns into a failure because the link was down.
+    pub(super) fn pause(&mut self) {
+        if self.enabled {
+            self.pool.cancel();
+            self.cycle = false;
+            self.due = None;
+            self.stale = true;
+        }
+    }
     pub(super) fn cancel(&mut self) {
+        self.stale = false;
         self.pool.cancel();
         self.picker.cancel();
         self.workspace_scope = None;
@@ -202,8 +217,14 @@ impl Gate {
             && self.workspace == workspace
             && self.incomplete_routes == incomplete_routes
         {
+            // Back from a drop on the same sessions: one re-read replaces the
+            // last-known rows, as a fresh load would.
+            if std::mem::take(&mut self.stale) {
+                self.due = Some(now);
+            }
             return false;
         }
+        self.stale = false;
         self.pool.cancel();
         self.contexts = contexts;
         self.total = total;
@@ -275,6 +296,7 @@ impl Gate {
         }
         self.pool.cancel();
         self.enabled = false;
+        self.stale = false;
         self.slots.clear();
         self.published.clear();
         self.epoch = None;
@@ -433,6 +455,11 @@ impl Local {
         self.agent_tick()
     }
     pub(super) fn agent_tick(&mut self) -> Result<(), Error> {
+        // While a stream or Home reconnects, the rows stay as last known.
+        if self.recovery.is_some() || self.home.active() {
+            self.agents.pause();
+            return Ok(());
+        }
         let visible = self.foreground
             && self.background_fleet.allows_current()
             && ((self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live)

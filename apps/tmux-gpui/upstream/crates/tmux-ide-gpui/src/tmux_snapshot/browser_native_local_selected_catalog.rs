@@ -11,10 +11,21 @@ pub(super) struct Gate {
     failure: Option<herdr_client::tmux_daemon::Error>,
     /// A push notification arrived since the agents last asked.
     notified: bool,
+    /// The lane sequence `last` is known to reflect: the sequence when the
+    /// last completed read started. A drop resumes the lane after it.
+    cursor: Option<u64>,
+    /// The lane sequence when the current read started.
+    reading_from: Option<u64>,
+    /// Dropped: the kept catalog waits for Home's retry (`release`).
+    held: bool,
+    /// Re-armed after a drop: report `Resumed` once the lane is live.
+    recovering: bool,
 }
 enum Notice {
     Changed(FleetCatalog),
     Failed(herdr_client::tmux_daemon::Error),
+    /// The lane is back after a drop; the kept catalog stands until a change.
+    Resumed,
 }
 impl Gate {
     pub(super) fn reset(&mut self) {
@@ -23,7 +34,39 @@ impl Gate {
     fn cancel_read(&mut self) {
         if self.reader.take().is_some() {
             self.dirty = true;
+            self.reading_from = None;
         }
+    }
+    /// A read starts. Only a live lane's sequence is a safe cursor for it: the
+    /// read then reflects at least every change up to that sequence.
+    fn read_started(&mut self, live_sequence: Option<u64>) {
+        self.reading_from = live_sequence;
+    }
+    /// The read completed for the same daemon: its start becomes the cursor.
+    /// A read without a live lane keeps the older cursor, which only replays
+    /// more.
+    fn read_completed(&mut self) {
+        if let Some(sequence) = self.reading_from.take() {
+            self.cursor = Some(sequence);
+        }
+    }
+    /// A connection drop: end the lane and any read, keep the catalog and the
+    /// cursor, and wait for Home's retry before connecting again.
+    fn drop_link(&mut self) {
+        self.cancel_read();
+        self.watch.take();
+        self.failure = None;
+        self.held = true;
+    }
+    /// Home's retry is due. True when the kept catalog can be resumed rather
+    /// than read again from scratch.
+    fn release(&mut self) -> bool {
+        if !self.held || self.last.is_none() {
+            return false;
+        }
+        self.held = false;
+        self.recovering = true;
+        true
     }
     fn seed(&mut self, snapshot: &FleetCatalog) {
         if self
@@ -52,12 +95,16 @@ impl Gate {
         if eligible
             && self.watch.is_none()
             && self.failure.is_none()
+            && !self.held
             && let Some(last) = &self.last
         {
             let actor = std::thread::current();
-            self.watch = Some(CatalogWatchWorker::spawn(
+            // After a drop, replay only what changed since the cursor.
+            let after = self.cursor.filter(|_| self.recovering);
+            self.watch = Some(CatalogWatchWorker::resume(
                 source.clone(),
                 last.identity.clone(),
+                after,
                 move || actor.unpark(),
             )?);
         }
@@ -88,6 +135,10 @@ impl Gate {
         if let Some(error) = self.failure.take() {
             return Ok(Some(Notice::Failed(error)));
         }
+        if self.recovering && self.watch.as_ref().is_some_and(CatalogWatchWorker::live) {
+            self.recovering = false;
+            return Ok(Some(Notice::Resumed));
+        }
         if let Some(result) = self
             .reader
             .as_mut()
@@ -107,6 +158,7 @@ impl Gate {
                             herdr_client::tmux_daemon::Error::IdentityChanged,
                         )));
                     }
+                    self.read_completed();
                     if self.last.as_ref() != Some(&snapshot) {
                         self.last = Some(snapshot.clone());
                         return Ok(Some(Notice::Changed(snapshot)));
@@ -121,6 +173,12 @@ impl Gate {
             reader.submit(CatalogAction::FleetCatalog)?;
             self.reader = Some(reader);
             self.dirty = false;
+            let live = self
+                .watch
+                .as_ref()
+                .filter(|watch| watch.live())
+                .map(CatalogWatchWorker::sequence);
+            self.read_started(live);
         }
         Ok(None)
     }
@@ -147,6 +205,22 @@ impl Owner {
             .catalog
             .reset();
         Ok(())
+    }
+    pub(in crate::tmux_snapshot) fn drop_catalog_link(&self) -> Result<(), Error> {
+        self.0
+            .lock()
+            .map_err(|_| Error::Invalid("native owner closed"))?
+            .catalog
+            .drop_link();
+        Ok(())
+    }
+    pub(in crate::tmux_snapshot) fn release_catalog(&self) -> Result<bool, Error> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| Error::Invalid("native owner closed"))?
+            .catalog
+            .release())
     }
     pub(in crate::tmux_snapshot) fn cancel_catalog_read(&self) -> Result<(), Error> {
         self.0
@@ -217,6 +291,8 @@ impl Local {
             Some(Notice::Changed(snapshot)) if home => self.receive_catalog(snapshot, false),
             Some(Notice::Changed(snapshot)) => self.picker_catalog(&snapshot),
             Some(Notice::Failed(_)) if !home => self.workspace_catalog_failed(),
+            Some(Notice::Resumed) if home => self.home_resumed(),
+            Some(Notice::Resumed) => Ok(()),
             Some(Notice::Failed(error)) => self.home_catalog_failed(error),
             None => Ok(()),
         }
