@@ -855,7 +855,7 @@ impl SnapshotView {
         } else {
             None
         };
-        let application_tabs = self.application_tabs(notice, window, cx);
+        let (application_tabs, sidebar) = self.top_chrome(sidebar, notice, window, cx);
         let card_border =
             super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
         let content = super::shell::content_panel(content_background, card_border, is_home)
@@ -907,10 +907,7 @@ impl SnapshotView {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .p(px(super::shell::CONTENT_INSET))
-                    // Beside the sidebar the cards start where it ends: its
-                    // own 8 pt edge is the gutter (#746).
-                    .when(show_sidebar, |inset| inset.pl_0())
+                    .map(|inset| self.inset_edges(inset, show_sidebar, window))
                     .child(content),
             );
         let body = div()

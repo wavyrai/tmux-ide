@@ -197,5 +197,83 @@ impl SnapshotView {
     }
 }
 
+impl SnapshotView {
+    /// Whether the window keeps the full-width title bar strip. #746 v3
+    /// (card 5) drops it beside the sidebar: the top row moves into the
+    /// sidebar's column and the cards start 8 pt from the window's top. With
+    /// the sidebar hidden the row has nowhere else to go, and a window that
+    /// draws its own caption buttons keeps them in the strip.
+    pub(super) fn title_strip(&self, window: &Window) -> bool {
+        !self.sidebar_shown(window) || crate::titlebar::client(window)
+    }
+
+    /// The window's top row, and the sidebar as the body shows it (still a
+    /// styled element, so it can be animated as one).
+    /// With the strip, the row goes to the frame as before; without it, the
+    /// row heads the sidebar's column as its own drag band, and a status
+    /// notice sits under it rather than beside the tabs.
+    pub(super) fn top_chrome(
+        &mut self,
+        sidebar: Stateful<Div>,
+        notice: Option<AnyElement>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<AnyElement>, Stateful<Div>) {
+        if self.title_strip(window) {
+            let tabs = self.application_tabs(notice, window, cx);
+            return (Some(tabs), sidebar);
+        }
+        let tabs = self.application_tabs(None, window, cx);
+        let band = crate::titlebar::render(Some(tabs), window)
+            .debug_selector(|| "sidebar-titlebar".into())
+            .w(px(super::browser_ui::SIDEBAR_WIDTH));
+        let column = div()
+            .id("sidebar-column")
+            .debug_selector(|| "sidebar-column".into())
+            .flex_none()
+            .h_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(band)
+            .children(notice.map(|notice| {
+                div()
+                    .w(px(super::browser_ui::SIDEBAR_WIDTH))
+                    .px(px(super::shell::CONTENT_INSET))
+                    .child(notice)
+            }))
+            .child(div().flex_1().min_h_0().child(sidebar));
+        (None, column)
+    }
+
+    /// The content inset's edges: 8 pt round the cards, none on the side
+    /// the sidebar's own edge already gives (#746). Without the title
+    /// strip, its top 8 pt moves the window as the strip did.
+    pub(super) fn inset_edges(
+        &self,
+        inset: Stateful<Div>,
+        sidebar: bool,
+        window: &Window,
+    ) -> Stateful<Div> {
+        let strip = self.title_strip(window);
+        inset
+            .relative()
+            .p(px(super::shell::CONTENT_INSET))
+            .when(sidebar, |inset| inset.pl_0())
+            .when(!strip, |inset| {
+                let grip = div()
+                    .id("content-titlebar-grip")
+                    .debug_selector(|| "content-titlebar-grip".into())
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(super::shell::CONTENT_INSET))
+                    .occlude();
+                inset.child(crate::titlebar::movable(grip, window))
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests;

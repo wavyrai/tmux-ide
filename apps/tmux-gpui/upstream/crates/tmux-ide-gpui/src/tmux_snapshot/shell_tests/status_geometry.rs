@@ -44,8 +44,10 @@ fn transient_status_preserves_terminal_geometry_without_resize(cx: &mut TestAppC
         assert_eq!(cx.debug_bounds("tmux-status-viewport").is_some(), visible);
         if visible {
             let status = cx.debug_bounds("tmux-status-viewport").unwrap();
+            // Beside the sidebar it sits under the sidebar's top row (#746
+            // v3, card 5); either way never over the cells.
             assert!(
-                status.bottom() <= canvas.top(),
+                !status.intersects(&canvas),
                 "status must not cover terminal cells"
             );
         }

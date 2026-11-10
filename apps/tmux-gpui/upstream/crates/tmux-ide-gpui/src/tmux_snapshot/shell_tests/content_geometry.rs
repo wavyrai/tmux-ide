@@ -46,16 +46,35 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
             // The #746 mockup's sidebar: 252 pt.
             assert_eq!(sidebar.size.width, px(252.));
             assert_eq!(sidebar.right(), inset.left());
-            assert_eq!(sidebar.top(), body.top());
+            // #746 v3 (card 5): no full-width strip. The top row heads the
+            // sidebar's column, and the cards start 8 pt from the top.
+            assert!(cx.debug_bounds("titlebar").is_none());
+            assert_eq!(top_row.top(), body.top());
+            assert!(top_row.right() <= inset.left());
+            // A status notice, when there is one, sits between them.
+            assert!(sidebar.top() >= top_row.bottom());
+            assert_eq!(inset.top(), body.top());
+            // The row's band and the 8 pt over the cards move the window.
+            let band = cx.debug_bounds("sidebar-titlebar").unwrap();
+            assert_eq!(band.size.width, px(252.));
+            assert!(band.contains(&top_row.center()));
+            let grip = cx.debug_bounds("content-titlebar-grip").unwrap();
+            assert_eq!(grip.top(), body.top());
+            assert_eq!(grip.size.height, px(super::super::CONTENT_INSET));
+            assert_eq!((grip.left(), grip.right()), (inset.left(), inset.right()));
+            assert_eq!(grip.bottom(), content.top());
         } else {
+            assert!(cx.debug_bounds("content-titlebar-grip").is_none());
+            assert!(cx.debug_bounds("sidebar-titlebar").is_none());
             assert_eq!(inset.left(), body.left());
+            // Hidden, the sidebar's row keeps the strip over everything.
+            assert!(top_row.bottom() <= body.top());
         }
         let expected = view.read_with(cx, |v, _| {
             let canvas = v.input_geometry.unwrap().0;
             assert_eq!(canvas.left(), content.left());
             assert_eq!(canvas.right(), content.right());
-            assert!(canvas.top() >= top_row.bottom());
-            assert!(top_row.bottom() <= body.top());
+            assert!(!canvas.intersects(&top_row));
             assert_eq!(canvas.top(), content.top());
             assert_eq!(canvas.bottom(), content.bottom());
             v.test_fitted_grid()

@@ -8,7 +8,7 @@ use gpui::{prelude::*, *};
 pub(super) const HEIGHT: f32 = bezel_theme::Theme::TITLEBAR_HEIGHT;
 
 /// The band, with `leading` right after the traffic lights.
-pub(super) fn render(leading: Option<AnyElement>, window: &Window) -> Stateful<Div> {
+pub(crate) fn render(leading: Option<AnyElement>, window: &Window) -> Stateful<Div> {
     let bar = titlebar::titlebar("titlebar", cfg!(target_os = "macos"), window)
         .debug_selector(|| "titlebar".into())
         .flex_none()
@@ -18,7 +18,7 @@ pub(super) fn render(leading: Option<AnyElement>, window: &Window) -> Stateful<D
 
 /// Whether the window draws its own frame and buttons (a compositor without
 /// server-side decorations).
-fn client(window: &Window) -> bool {
+pub(crate) fn client(window: &Window) -> bool {
     matches!(window.window_decorations(), Decorations::Client { .. })
 }
 
