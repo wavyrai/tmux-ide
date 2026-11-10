@@ -225,7 +225,46 @@ fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
                 pack(bezel_theme::flatten(stock.element_hover, under)),
             ]
         })
+        // A raised selected row is opaque, whatever the frost under it.
+        .chain(theme.chrome.map(|chrome| chrome.raised))
         .collect()
+}
+
+/// A selected row's (or chosen filter's) fill and shadow. A preset that names
+/// a raised plate (#746: Linen) lifts the row onto it, with a soft drop and a
+/// hairline ring, whether or not its list holds the keyboard; any other theme
+/// keeps Bezel's `Selection` washes. `None` when the row is not selected.
+pub(crate) fn selection(
+    theme: &Theme,
+    bezel: &bezel_theme::Theme,
+    selection: bezel_theme::Selection,
+) -> Option<(Hsla, Vec<BoxShadow>)> {
+    if !selection.is_selected() {
+        return None;
+    }
+    let Some(chrome) = theme.chrome else {
+        return selection
+            .fill(bezel)
+            .map(|fill| (fill, selection.shadows()));
+    };
+    let dark = crate::contrast::luminance(theme.background) < 0.5;
+    // The mockup's shadow: 0 1 2 under the row, and a 0.5 px ring.
+    let (drop, ring) = if dark {
+        (hsla(0., 0., 0., 0.35), Hsla::from(rgba(0xfff5e60f)))
+    } else {
+        (Hsla::from(rgba(0x46321e1a)), Hsla::from(rgba(0x46321e14)))
+    };
+    let shadow = |color, y: f32, blur: f32, spread: f32| BoxShadow {
+        color,
+        offset: point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    Some((
+        rgb(chrome.raised).into(),
+        vec![shadow(drop, 1., 2., 0.), shadow(ring, 0., 0., 0.5)],
+    ))
 }
 
 /// A sidebar row's label and caption colours, as `render_row` paints them.

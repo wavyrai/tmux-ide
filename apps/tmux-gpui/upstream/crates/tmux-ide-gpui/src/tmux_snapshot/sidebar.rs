@@ -207,7 +207,10 @@ pub(super) fn render_row(
         .line_height(phi())
         .font_weight(if heading {
             FontWeight::MEDIUM
-        } else if row.selected || row.machine.is_some() {
+        } else if row.selected {
+            // The mockup's selected row (#746): medium, not semibold.
+            FontWeight::MEDIUM
+        } else if row.machine.is_some() {
             FontWeight::SEMIBOLD
         } else {
             FontWeight::NORMAL
@@ -327,8 +330,8 @@ pub(super) fn render_row(
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }
-    match selection.fill(bezel) {
-        Some(fill) => element.bg(fill).shadow(selection.shadows()),
+    match crate::tmux_snapshot::design::selection(theme, bezel, selection) {
+        Some((fill, shadows)) => element.bg(fill).shadow(shadows),
         None if row.target.is_some() => {
             element = element.cursor_pointer().bg(bezel_motion::hover_blend(
                 &fade,

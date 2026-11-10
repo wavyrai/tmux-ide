@@ -204,11 +204,13 @@ test("only Linen names its Mac chrome inks; every other preset keeps the app's",
     hairline: 0xe3ddd2,
     outline: 0xd6cfc2,
     faint: 0x8f8679,
+    raised: 0xfdfbf7,
   });
   assert.deepEqual(resolveNativeAppearance("linen-dark", "light").theme.chrome, {
     hairline: 0x36322c,
     outline: 0x423d36,
     faint: 0x7d7569,
+    raised: 0x2c2925,
   });
   assert.equal(resolveNativeAppearance("system", "light").theme.chrome?.outline, 0xd6cfc2);
   assert.equal(resolveNativeAppearance("system", "dark").theme.chrome?.outline, 0x423d36);

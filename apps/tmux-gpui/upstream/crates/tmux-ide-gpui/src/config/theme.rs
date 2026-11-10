@@ -34,6 +34,8 @@ pub struct Chrome {
     pub outline: u32,
     /// Icons at rest: Bezel's `text_faint`.
     pub faint: u32,
+    /// The plate a selected row or filter is raised on.
+    pub raised: u32,
 }
 
 impl Default for Theme {

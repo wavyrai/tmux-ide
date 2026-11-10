@@ -88,6 +88,7 @@ export function resolveNativeAppearance(selected: string, system: SystemAppearan
               hairline: hex(nativeChrome.hairline),
               outline: hex(nativeChrome.outline),
               faint: hex(nativeChrome.faint),
+              raised: hex(nativeChrome.raised),
             },
           }
         : {}),

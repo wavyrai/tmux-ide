@@ -216,8 +216,8 @@ const palettes = {
     info: "#36706d",
     cardBorder: "#e1dbcf",
     // The Mac app's chrome inks (#746): hairline dividers, tile and chip
-    // outlines, and icons at rest.
-    nativeChrome: { hairline: "#e3ddd2", outline: "#d6cfc2", faint: "#8f8679" },
+    // outlines, icons at rest, and the raised plate a selected row sits on.
+    nativeChrome: { hairline: "#e3ddd2", outline: "#d6cfc2", faint: "#8f8679", raised: "#fdfbf7" },
     header: "#e7e1d6",
     selected: "#e3d9c8",
     selectedText: "#2b2722",
@@ -239,7 +239,7 @@ const palettes = {
     link: "#85a9c8",
     info: "#8cbfb8",
     cardBorder: "#3a362f",
-    nativeChrome: { hairline: "#36322c", outline: "#423d36", faint: "#7d7569" },
+    nativeChrome: { hairline: "#36322c", outline: "#423d36", faint: "#7d7569", raised: "#2c2925" },
     header: "#2c2925",
     selected: "#45403a",
     selectedText: "#e9e3d8",
@@ -559,6 +559,7 @@ export interface VisualThemeNativeChrome {
   readonly hairline: string;
   readonly outline: string;
   readonly faint: string;
+  readonly raised: string;
 }
 /**
  * The presets that name their Mac chrome inks. Every other preset keeps the

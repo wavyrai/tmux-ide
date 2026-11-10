@@ -150,6 +150,7 @@ impl SnapshotView {
         };
         let selector = entry.selector(index);
         let hover = bezel.element_hover;
+        let theme = self.theme();
         let entry = entry.clone();
         div()
             .id(("home-nav", index))
@@ -169,8 +170,8 @@ impl SnapshotView {
             .map(|row| {
                 // The chosen filter is raised like a selected sidebar row.
                 let selection = bezel_theme::Selection::new(selected, false);
-                match selection.fill(&bezel) {
-                    Some(fill) => row.bg(fill).shadow(selection.shadows()),
+                match design::selection(&theme, &bezel, selection) {
+                    Some((fill, shadows)) => row.bg(fill).shadow(shadows),
                     None => row.hover(move |s| s.bg(hover)),
                 }
             })
@@ -188,6 +189,7 @@ impl SnapshotView {
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
+                    .when(selected, |label| label.font_weight(FontWeight::MEDIUM))
                     .child(crate::sidebar::label_text(&label)),
             )
             .children(group.map(|g| status_dot(machine_tone(&bezel, g))))

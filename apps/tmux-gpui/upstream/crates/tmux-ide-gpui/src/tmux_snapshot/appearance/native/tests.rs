@@ -188,3 +188,38 @@ fn linen_paints_its_own_chrome_inks_and_others_keep_bezels() {
     assert!(palette.border.a < 1.);
     assert!(palette.text_faint.a < 1.);
 }
+#[test]
+fn linen_raises_a_selected_row_and_other_themes_keep_bezels_washes() {
+    use bezel_theme::Selection;
+    let mut owner = Owner::load(None).unwrap();
+    // #746 mockup: the raised plate, with a drop and a hairline ring.
+    for (system, raised) in [(System::Dark, 0x2c2925), (System::Light, 0xfdfbf7)] {
+        owner.system(system);
+        let theme = owner.publication().native();
+        let bezel = crate::tmux_snapshot::design::palette(&theme);
+        for emphasized in [false, true] {
+            let (fill, shadows) = crate::tmux_snapshot::design::selection(
+                &theme,
+                &bezel,
+                Selection::new(true, emphasized),
+            )
+            .unwrap();
+            assert_eq!(fill, gpui::rgb(raised).into());
+            assert_eq!(shadows.len(), 2);
+            assert_eq!(shadows[0].offset.y, gpui::px(1.));
+            assert_eq!(shadows[0].blur_radius, gpui::px(2.));
+            assert_eq!(shadows[1].spread_radius, gpui::px(0.5));
+        }
+        assert!(crate::tmux_snapshot::design::selection(&theme, &bezel, Selection::None).is_none());
+    }
+    let mut theme = owner.publication().native();
+    theme.chrome = None;
+    let bezel = crate::tmux_snapshot::design::palette(&theme);
+    let unemphasized = Selection::new(true, false);
+    assert_eq!(
+        crate::tmux_snapshot::design::selection(&theme, &bezel, unemphasized),
+        unemphasized
+            .fill(&bezel)
+            .map(|fill| (fill, unemphasized.shadows()))
+    );
+}

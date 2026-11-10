@@ -41,6 +41,7 @@ pub(super) struct ChromeColors {
     pub hairline: u32,
     pub outline: u32,
     pub faint: u32,
+    pub raised: u32,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,7 +75,7 @@ impl Appearance {
             && c.palette.iter().all(|v| *v <= 0xffffff)
             && c.card_border.is_none_or(|v| v <= 0xffffff)
             && c.chrome.is_none_or(|c| {
-                [c.hairline, c.outline, c.faint]
+                [c.hairline, c.outline, c.faint, c.raised]
                     .iter()
                     .all(|v| *v <= 0xffffff)
             })
@@ -105,6 +106,7 @@ impl Appearance {
                 hairline: c.hairline,
                 outline: c.outline,
                 faint: c.faint,
+                raised: c.raised,
             }),
             ..Theme::default()
         };
