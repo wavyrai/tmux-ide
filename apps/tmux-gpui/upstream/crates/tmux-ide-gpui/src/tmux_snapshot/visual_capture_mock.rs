@@ -335,3 +335,99 @@ pub(super) fn with_mock_panes(
     ]))?;
     Ok(state)
 }
+
+/// `+mockhome`: Home with the #746 mockup's fleet. Two machines, nine
+/// sessions, five agents (one waiting on the user), and the mockup's favicons
+/// and times, so the capture lines up with `home-light.png`.
+pub(super) fn with_mock_home(mut state: browser::State) -> Result<browser::State> {
+    let token =
+        |n: u128| uuid::Uuid::from_u128(0x7460_0000_0000_4000_8000_0000_0000_0000 + n).to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
+    let row = |name: &str,
+               w: u64,
+               p: u64,
+               ago: i64,
+               n: u128,
+               fav: bool,
+               active: bool,
+               icon: Option<(&str, &str)>| {
+        let mut s = serde_json::json!({"id": format!("m-{name}"), "name": name, "paneCount": p,
+            "windowCount": w, "lastActivity": now - ago, "favoriteAction": token(100 + n),
+            "serverId": "default", "sessionId": format!("${n}"), "selection": token(200 + n),
+            "favorite": fav, "active": active});
+        if let Some((letter, fill)) = icon {
+            s["favicon"] = favicon(letter, fill);
+        }
+        s
+    };
+    let local = vec![
+        row("tmux-ide", 2, 4, 5, 1, true, true, Some(("T", "#2f6f5e"))),
+        row("notes", 1, 2, 3 * 3600, 2, false, false, None),
+    ];
+    let spark = vec![
+        row("sfora", 1, 2, 60, 10, true, false, Some(("S", "#3b5fa8"))),
+        row("bezel", 1, 2, 8 * 60, 11, false, false, None),
+        row(
+            "api",
+            2,
+            4,
+            25 * 60,
+            12,
+            false,
+            false,
+            Some(("A", "#b0632e")),
+        ),
+        row(
+            "growth",
+            1,
+            1,
+            3600,
+            13,
+            false,
+            false,
+            Some(("G", "#5b8a3a")),
+        ),
+        row("infra", 2, 3, 26 * 3600, 14, false, false, None),
+        row("docs", 1, 1, 30 * 3600, 15, false, false, None),
+        row("scratch", 1, 1, 8 * 86_400, 16, false, false, None),
+    ];
+    state.fleet = Some(serde_json::from_value(serde_json::json!({
+        "preferences": {"revision": 1, "phase": "ready", "error": null}, "omittedGroups": 0,
+        "groups": [
+            {"id": "local", "label": "Local", "state": "ready", "conflict": false, "collapsed": false,
+             "collapseAction": token(1), "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online", "generation": token(2), "selection": token(3)}],
+             "sessions": local},
+            {"id": "spark", "label": "spark", "state": "ready", "conflict": false, "collapsed": false,
+             "collapseAction": token(6), "disconnect": token(7), "omittedSessions": 0, "omittedServers": 0,
+             "servers": [{"id": "default", "label": "default", "state": "online", "generation": token(8), "selection": token(9)}],
+             "sessions": spark}
+        ]
+    }))?);
+    state.selected_server = Some(browser::fleet::SelectedServer {
+        machine_id: "local".into(),
+        machine_label: "Local".into(),
+        server_id: "default".into(),
+        generation: token(2),
+        label: "default".into(),
+    });
+    let a = |key: &str, sid: &str, label: &str, name: &str, harness: &str, status: &str| {
+        serde_json::json!(
+        {"key": key, "sessionId": sid, "paneId": format!("p-{key}"), "name": name, "sessionLabel": label,
+         "harness": harness, "status": status, "attention": status == "BLOCKED", "available": true})
+    };
+    state.home_agents = Some(serde_json::from_value(serde_json::json!({
+    "revision": 1, "phase": "live", "observedSessions": 9, "totalSessions": 9,
+    "truncatedSessions": 0, "truncatedRows": 0, "note": null, "rows": [
+        a("a1", "$1", "tmux-ide", "Claude", "claude-code", "WORKING"),
+        a("a2", "$10", "sfora", "Codex", "codex", "BLOCKED"),
+        a("a3", "$11", "bezel", "Claude", "claude-code", "DONE"),
+        a("a4", "$12", "api", "Codex", "codex", "IDLE"),
+        a("a5", "$12", "api", "Claude", "claude-code", "WORKING"),
+    ]}))?);
+    state.sessions.clear();
+    state.surface = browser::Surface::Home;
+    Ok(state)
+}
