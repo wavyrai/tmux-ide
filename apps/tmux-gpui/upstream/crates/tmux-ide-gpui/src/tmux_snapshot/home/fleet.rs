@@ -3,6 +3,7 @@
 //! machines are label lines over their rows, with no card and no rules. The
 //! rows themselves are in `fleet_rows`.
 use super::*;
+use crate::tmux_snapshot::motion;
 use bezel_ui::widgets::{Content, status_dot};
 use fleet_nav::View;
 
@@ -361,21 +362,29 @@ impl SnapshotView {
                 .items_center()
                 .gap(px(SPACE))
                 .when(collapse, |header| {
-                    header.child(self.fleet_preference_button(
-                        ("fleet-collapse", index),
-                        group.collapse_action.as_deref(),
-                        !group.collapsed,
-                        if group.collapsed {
-                            "Expand machine"
-                        } else {
-                            "Collapse machine"
-                        },
-                        if group.collapsed {
-                            "icons/chevron-right.svg"
-                        } else {
-                            "icons/chevron-down.svg"
-                        },
-                        cx,
+                    let turned = self.home_chevron(
+                        &group.id,
+                        cx.background_executor().now(),
+                        cx.reduce_motion(),
+                    );
+                    header.child(motion::turn(
+                        self.fleet_preference_button(
+                            ("fleet-collapse", index),
+                            group.collapse_action.as_deref(),
+                            !group.collapsed,
+                            if group.collapsed {
+                                "Expand machine"
+                            } else {
+                                "Collapse machine"
+                            },
+                            if group.collapsed {
+                                "icons/chevron-right.svg"
+                            } else {
+                                "icons/chevron-down.svg"
+                            },
+                            cx,
+                        ),
+                        turned,
                     ))
                 })
                 .child(
@@ -676,13 +685,15 @@ impl SnapshotView {
             body = body.child(self.fleet_column_header());
         }
         let several = fleet.groups.iter().filter(|g| shows_group(g)).count() > 1;
+        let (clock, reduced) = (cx.background_executor().now(), cx.reduce_motion());
         let mut shown = 0;
         for (index, group) in fleet.groups.iter().enumerate() {
             if !shows_group(group) {
                 continue;
             }
             shown += 1;
-            let mut block = div()
+            let entered = self.home_entered(&group.id, clock, reduced);
+            let mut block = motion::enter(div(), entered)
                 .debug_selector(move || format!("fleet-machine-{index}"))
                 .min_w_0()
                 .flex()
@@ -732,13 +743,12 @@ impl SnapshotView {
                     block = block.child(self.fleet_note("No sessions"));
                 }
                 for (row, session) in rows {
-                    block = block.child(self.fleet_session_row(
-                        index,
-                        row,
-                        session,
-                        is_cursor(index, row),
-                        now,
-                        cx,
+                    let key =
+                        motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
+                    let entered = self.home_entered(&key, clock, reduced);
+                    block = block.child(motion::enter_any(
+                        self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
+                        entered,
                     ));
                 }
             }
@@ -748,13 +758,12 @@ impl SnapshotView {
                         .as_ref()
                         .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
             }) {
-                block = block.child(self.fleet_session_row(
-                    index,
-                    row,
-                    session,
-                    is_cursor(index, row),
-                    now,
-                    cx,
+                let key =
+                    motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
+                let entered = self.home_entered(&key, clock, reduced);
+                block = block.child(motion::enter_any(
+                    self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
+                    entered,
                 ));
             }
             if group.omitted_servers > 0 {

@@ -39,6 +39,7 @@ mod kbd;
 mod keys;
 mod kitty_graphics;
 mod menu_bar;
+mod motion;
 mod native_quit;
 mod navigation;
 mod new_session;
