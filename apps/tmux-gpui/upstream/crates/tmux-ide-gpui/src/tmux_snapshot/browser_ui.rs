@@ -117,8 +117,11 @@ impl SnapshotView {
         }
         cx.stop_propagation();
     }
-    fn terminal_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
+            return;
+        }
+        if self.pane_move_key(event, window, cx) {
             return;
         }
         // Let application navigation consume its keys before terminal input forwarding.

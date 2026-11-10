@@ -47,6 +47,7 @@ mod new_session;
 mod pane_actions;
 mod pane_cards;
 mod pane_chrome;
+mod pane_move;
 mod pane_shortcuts;
 mod pending_input;
 mod picker;
@@ -918,6 +919,7 @@ impl SnapshotView {
             .children(self.pane_header_labels(width, cx))
             .children(self.divider_handles(width))
             .children(self.lower_pane_header_controls(width, cx))
+            .children(self.pane_move_layers(window, cx))
             .into_any_element()
     }
 }

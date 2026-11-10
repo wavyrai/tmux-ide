@@ -208,6 +208,8 @@ fn editor_uses_captured_target_once_and_rejects_changed_selection(cx: &mut TestA
 
 mod header_controls;
 
+mod pane_move;
+
 #[gpui::test]
 fn bezel_menu_arrows_select_without_terminal_input_and_enter_consumes_capability(
     cx: &mut TestAppContext,
