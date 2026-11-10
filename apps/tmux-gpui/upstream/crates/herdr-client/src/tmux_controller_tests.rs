@@ -428,3 +428,39 @@ fn a_reseeding_or_unavailable_selected_pane_refuses_input() {
         "the update did not name the unavailable pane"
     );
 }
+
+/// A swap names its second pane by lifetime. A target replaced before the
+/// intent is sent is stale, never swapped; and a swap captured against a
+/// lifetime that has gone is refused at submit (#364 review).
+#[test]
+fn a_swap_whose_target_changes_before_it_is_sent_is_stale() {
+    let (mut c, observed, response, peer) = fixture();
+    let source = c.selectable("left").unwrap();
+    let target = c.selectable("right").unwrap();
+    let swap = || PaneAction::Swap {
+        target: "right".into(),
+        lifetime: target.clone(),
+    };
+    let mut actions = ActionState::default();
+    actions
+        .submit(&mut c, "left", &source, OP, swap(), 0)
+        .unwrap();
+    // Geometry isn't owned yet, so the intent waits unsent.
+    assert!(actions.waiting());
+    observed.recv_timeout(Duration::from_secs(3)).unwrap();
+    c.current.remove("right");
+    let update = c.poll(1).unwrap();
+    let completion = actions.poll(&mut c, &update, 1).unwrap().unwrap();
+    assert_eq!(completion.outcome, ActionOutcome::Stale);
+    assert!(!actions.busy());
+    let mut fresh = ActionState::default();
+    assert!(
+        fresh
+            .submit(&mut c, "left", &source, OP, swap(), 2)
+            .is_err()
+    );
+    assert!(!fresh.busy());
+    c.retire();
+    drop(response);
+    peer.join().unwrap();
+}

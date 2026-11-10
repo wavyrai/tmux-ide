@@ -4,17 +4,24 @@ use super::*;
 use crate::tmux_snapshot::{browser_ui::Selection, design, pane_actions::Target};
 
 impl SnapshotView {
-    fn pane_move_facts(&self) -> Facts {
+    /// What rules a drag out: at the press, and on every draw while one
+    /// runs. Once dragging, the source's own selection briefly takes the
+    /// pane action capability and input away, so those two count only at
+    /// the press.
+    fn pane_move_facts(&self, dragging: bool) -> Facts {
         let s = &self.browser_state;
         Facts {
             zoomed: s.pane_actions.as_ref().is_some_and(|a| a.zoomed),
-            held: s.retained_preview || !s.input_ready || s.frame.is_none(),
+            held: s.retained_preview
+                || s.frame.is_none()
+                || !self.presence.ready()
+                || (!dragging && !s.input_ready),
             reconnecting: s.reconnect_attempt.is_some(),
             dialog: self.picker.is_some()
                 || self.pane_actions.is_some()
                 || self.new_session.is_some()
                 || self.browser_address.is_some(),
-            pending: Target::capture(s).is_none()
+            pending: (!dragging && Target::capture(s).is_none())
                 || self.divider.is_some()
                 || self.resize_gesture.busy(),
             cards: self
@@ -47,13 +54,23 @@ impl SnapshotView {
         Some(at - self.input_geometry?.0.origin)
     }
 
-    /// The pane whose swap zone holds the window point `at`.
-    fn pane_move_target(&self, at: Point<Pixels>) -> Option<String> {
+    /// The pane whose swap zone holds the window point `at`, with the input
+    /// token it is published with now.
+    fn pane_move_target(&self, at: Point<Pixels>) -> Option<Pick> {
         let at = self.pane_move_local(at)?;
-        self.pane_move_cards()
+        let id = self
+            .pane_move_cards()
             .into_iter()
             .find(|(_, card)| in_centre(*card, at))
-            .map(|(id, _)| id)
+            .map(|(id, _)| id)?;
+        let token = self
+            .browser_state
+            .input_targets
+            .iter()
+            .find(|t| t.id == id)?
+            .token
+            .clone();
+        Some(Pick { id, token })
     }
 
     /// A left press on a pane's header title. The buttons stop their own
@@ -70,7 +87,7 @@ impl SnapshotView {
         {
             return;
         }
-        let facts = self.pane_move_facts();
+        let facts = self.pane_move_facts(false);
         let pressed = self.pointer.moving.press(
             id,
             event.position,
@@ -107,7 +124,14 @@ impl SnapshotView {
             if let Some(source) = source
                 && self.browser_state.selected_pane.as_ref() != Some(&source)
             {
+                let before = self.browser_state.selected_pane.clone();
                 self.select(Selection::Pane(source), window, cx);
+                // The selection is a new request on the same session; the
+                // drag goes on under it.
+                if let Some(gesture) = self.pointer.moving.gesture.as_mut() {
+                    gesture.restore = before;
+                    gesture.request = self.browser_request;
+                }
             }
             self.clear_selection(cx);
         }
@@ -133,14 +157,15 @@ impl SnapshotView {
                 self.pane_move_toast("The layout changed. Drop the pane again.", false, cx);
             }
             Release::Swap { source, target } => {
-                if self.pane_move_send(&source, &target, window, cx) {
+                if let Some(spent) = self.pane_move_send(&source, &target, window, cx) {
+                    self.pointer.moving.sent(spent);
                     self.pane_move_wake(cx);
                 } else {
                     self.pointer.moving.fail(now);
                     let text = format!(
                         "Couldn't swap {} and {}. Try again.",
                         label(&self.browser_state, &source),
-                        label(&self.browser_state, &target)
+                        label(&self.browser_state, &target.id)
                     );
                     self.pane_move_toast(text, false, cx);
                 }
@@ -149,49 +174,42 @@ impl SnapshotView {
         cx.notify();
     }
 
-    /// Sends the swap from the selected pane `source` with `target`'s input
-    /// token as published now.
+    /// Sends the swap from the selected pane `source` to `target` as the
+    /// preview showed it. Returns the pane action capability it spent.
     fn pane_move_send(
         &mut self,
         source: &str,
-        target: &str,
+        target: &Pick,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Option<String> {
         let state = &self.browser_state;
-        if state.pane_actions.as_ref().is_none_or(|a| a.id != source) {
-            return false;
-        }
-        let (Some(captured), Some(token)) = (
-            Target::capture(state),
-            state
-                .input_targets
-                .iter()
-                .find(|t| t.id == target)
-                .map(|t| t.token.clone()),
-        ) else {
-            return false;
-        };
+        let spent = state
+            .pane_actions
+            .as_ref()
+            .filter(|a| a.id == source)?
+            .token
+            .clone();
+        let captured = Target::capture(state)?;
         self.dispatch_captured_pane_action(
             &captured,
             pane_actions::Action::Swap {
-                target: target.into(),
-                target_token: token,
+                target: target.id.clone(),
+                target_token: target.token.clone(),
             },
             window,
             cx,
         )
+        .then_some(spent)
     }
 
     /// Redraws when a pending swap may have to give up.
     fn pane_move_wake(&self, cx: &mut Context<Self>) {
-        for after in [GRACE, SETTLE] {
-            cx.spawn(async move |view, cx| {
-                cx.background_executor().timer(after).await;
-                let _ = view.update(cx, |_, cx| cx.notify());
-            })
-            .detach();
-        }
+        cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            let _ = view.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
     }
 
     fn pane_move_toast(
@@ -256,12 +274,21 @@ impl SnapshotView {
             .undo
             .as_ref()
             .and_then(|u| u.reverse(self.browser_request, &state.regions, &selected))
+            .and_then(|id| {
+                let token = state
+                    .input_targets
+                    .iter()
+                    .find(|t| t.id == id)?
+                    .token
+                    .clone();
+                Some(Pick { id, token })
+            })
         else {
             return false;
         };
-        if !self.pane_move_send(&selected, &target, window, cx) {
+        let Some(spent) = self.pane_move_send(&selected, &target, window, cx) else {
             return false;
-        }
+        };
         let now = cx.background_executor().now();
         self.pointer.moving.undo = None;
         self.pointer.moving.gesture = Some(Gesture {
@@ -274,9 +301,11 @@ impl SnapshotView {
                 target,
                 before: self.browser_state.regions.clone(),
                 since: now,
+                sent: Some(spent),
             },
             seen: self.browser_state.regions.clone(),
             undoing: true,
+            restore: None,
         });
         self.pane_move_wake(cx);
         cx.stop_propagation();
@@ -285,14 +314,21 @@ impl SnapshotView {
     }
 
     /// Reads the published state each draw: a drag from another session
-    /// ends, a pane that went away ends the drag, a pending swap settles.
+    /// ends; so does one the window can no longer take (a reconnect, a held
+    /// frame, focus lost, a dialog, a divider drag, zoom); a pane that went
+    /// away ends it; a pending swap settles. A drag that ends without a swap
+    /// selects the pane that was selected before it.
     fn pane_move_observe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
+        let ruled_out = self.pane_move_facts(true).refusal().is_some();
         let moving = &mut self.pointer.moving;
         if moving.gesture.as_ref().is_some_and(|g| {
             g.request != self.browser_request || g.session != self.browser_state.selected_session
         }) {
             moving.gesture = None;
+        }
+        if ruled_out {
+            moving.cancel(now);
         }
         if moving.relayout(&self.browser_state.regions, now) {
             self.pane_move_toast("A pane closed, so the drag was cancelled.", false, cx);
@@ -303,7 +339,7 @@ impl SnapshotView {
             .gesture
             .as_ref()
             .and_then(|g| match &g.phase {
-                Phase::Pending { target, .. } => Some((g.source.clone(), target.clone())),
+                Phase::Pending { target, .. } => Some((g.source.clone(), target.id.clone())),
                 _ => None,
             });
         if let Some((a, b)) = pending {
@@ -311,9 +347,15 @@ impl SnapshotView {
                 label(&self.browser_state, &a),
                 label(&self.browser_state, &b),
             );
+            let actions = self
+                .browser_state
+                .pane_actions
+                .as_ref()
+                .map(|a| a.token.clone());
             match self.pointer.moving.settle(
                 &self.browser_state.regions,
-                self.browser_state.pane_actions.is_some(),
+                actions.as_deref(),
+                &self.browser_state.status,
                 now,
             ) {
                 Settle::Swapped => self.pane_move_toast(format!("Swapped {a} and {b}"), true, cx),
@@ -322,6 +364,12 @@ impl SnapshotView {
                 }
                 Settle::Waiting => {}
             }
+        }
+        if let Some(before) = self.pointer.moving.take_restore()
+            && self.browser_state.panes.iter().any(|p| p.id == before)
+            && self.browser_state.selected_pane.as_ref() != Some(&before)
+        {
+            self.select(Selection::Pane(before), window, cx);
         }
         if self
             .pointer
@@ -354,8 +402,8 @@ impl SnapshotView {
             let card = |id: &str| cards.iter().find(|(c, _)| c == id).map(|(_, b)| *b);
             let source = label(&self.browser_state, &gesture.source);
             let target = match &gesture.phase {
-                Phase::Dragging { target } => target.clone(),
-                Phase::Pending { target, .. } => Some(target.clone()),
+                Phase::Dragging { target } => target.as_ref().map(|t| t.id.clone()),
+                Phase::Pending { target, .. } => Some(target.id.clone()),
                 _ => None,
             };
             let shown = !matches!(gesture.phase, Phase::Pressed);

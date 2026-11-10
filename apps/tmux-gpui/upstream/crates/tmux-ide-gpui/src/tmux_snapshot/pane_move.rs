@@ -4,24 +4,15 @@
 //! The gesture is local until release, like a divider drag: the source
 //! fades in place with a dashed outline, a small card on Bezel's carried
 //! surface follows the pointer, and a translucent preview marks the pane it
-//! would swap with. Release sends one `Swap` pane action; the published
-//! layout settles it. Cmd-Z swaps back while the layout is unchanged.
-use super::{SnapshotView, browser, hit_regions::Region, pane_actions};
+//! would swap with. Release sends one `Swap` pane action naming the target
+//! as the preview showed it; the published layout settles it. Cmd-Z swaps
+//! back while the layout is unchanged.
+use super::{SnapshotView, browser, hit_regions::Region, motion::progress, pane_actions};
 use gpui::{prelude::*, *};
 use std::time::{Duration, Instant};
 
 /// What a screen reader adds to a pane's title.
 pub(super) const HINT: &str = "Drag the title onto another pane to swap them";
-
-/// How far `spec` has eased `elapsed` after it started: 1 once done, and at
-/// once under Reduce motion.
-fn progress(spec: &bezel_motion::MotionSpec, elapsed: Duration, reduced: bool) -> f32 {
-    let total = spec.total().mul_f32(bezel_motion::speed_scale());
-    if reduced || total.is_zero() || elapsed >= total {
-        return 1.;
-    }
-    spec.progress(elapsed.as_secs_f32() / total.as_secs_f32())
-}
 
 /// How far the pointer moves before a press on a header becomes a drag. Less
 /// is a click, which focuses the pane as before.
@@ -31,11 +22,11 @@ pub(super) const THRESHOLD: f32 = 4.;
 const EDGE: f32 = 0.2;
 /// How long a result stays on screen.
 const TOAST: Duration = Duration::from_secs(4);
-/// How long a sent swap may take after its action has finished before the
-/// layout must show it.
-const GRACE: Duration = Duration::from_secs(2);
-/// The longest a sent swap may wait at all: the client's own deadline is 12 s.
+/// The longest a sent swap may wait for its layout: the client's own
+/// deadline is 12 s, so past this it can no longer land.
 const SETTLE: Duration = Duration::from_secs(15);
+/// The status the transport writes when the daemon refuses a pane action.
+const NOT_APPLIED: &str = "Pane action was not applied";
 
 /// Why a header press doesn't start a drag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,26 +91,41 @@ pub(super) fn in_centre(card: Bounds<Pixels>, pointer: Point<Pixels>) -> bool {
     .contains(&pointer)
 }
 
-/// Whether `after` shows `a` and `b` exchanged from `before`, with every
-/// other pane where it was.
+/// Each pane's place in reading order (top, then left).
+fn slots(layout: &[Region]) -> Vec<&str> {
+    let mut ordered: Vec<&Region> = layout.iter().collect();
+    ordered.sort_by_key(|r| (r.top, r.left));
+    ordered.into_iter().map(|r| r.id.as_str()).collect()
+}
+
+/// Whether `after` shows `a` and `b` exchanged from `before`: each in the
+/// other's place, in reading order, and every other pane in its own. Sizes
+/// may differ, so a resize published before or with the swap still counts.
 pub(super) fn swapped(before: &[Region], after: &[Region], a: &str, b: &str) -> bool {
-    let rect = |r: &Region| (r.left, r.top, r.width, r.height);
-    let find = |regions: &[Region], id: &str| regions.iter().find(|r| r.id == id).map(rect);
-    let (Some(a0), Some(b0), Some(a1), Some(b1)) = (
-        find(before, a),
-        find(before, b),
-        find(after, a),
-        find(after, b),
-    ) else {
+    let (was, now) = (slots(before), slots(after));
+    let at = |order: &[&str], id: &str| order.iter().position(|p| *p == id);
+    let (Some(a0), Some(b0), Some(a1), Some(b1)) =
+        (at(&was, a), at(&was, b), at(&now, a), at(&now, b))
+    else {
         return false;
     };
-    a1 == b0
+    a0 != b0
+        && a1 == b0
         && b1 == a0
-        && before.len() == after.len()
-        && before
+        && was.len() == now.len()
+        && was
             .iter()
-            .filter(|r| r.id != a && r.id != b)
-            .all(|r| find(after, &r.id) == Some(rect(r)))
+            .filter(|p| **p != a && **p != b)
+            .all(|p| at(&now, p) == at(&was, p))
+}
+
+/// The pane under the pointer, as the preview showed it: its id and the
+/// input token it was published with. The swap names this token, so a pane
+/// replaced under the same id since is refused, never swapped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Pick {
+    pub id: String,
+    pub token: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -127,12 +133,14 @@ pub(super) enum Phase {
     /// Pressed, not yet past the threshold.
     Pressed,
     /// Dragging; `target` is the pane under the pointer's swap zone.
-    Dragging { target: Option<String> },
-    /// Released over `target`; the swap was sent.
+    Dragging { target: Option<Pick> },
+    /// Released over `target`; the swap was sent with the source's pane
+    /// action capability `sent`.
     Pending {
-        target: String,
+        target: Pick,
         before: Vec<Region>,
         since: Instant,
+        sent: Option<String>,
     },
     /// Cancelled or refused: the card glides back to its header.
     Returning { from: Point<Pixels>, since: Instant },
@@ -150,8 +158,10 @@ pub(super) struct Gesture {
     pub seen: Vec<Region>,
     /// Cmd-Z's swap back: nothing is carried or previewed.
     pub undoing: bool,
+    /// The pane that was selected before the drag selected the source. A
+    /// drag that ends without a swap selects it again.
+    pub restore: Option<String>,
 }
-
 /// A swap that Cmd-Z can reverse while the layout is still `layout`.
 #[derive(Clone, PartialEq)]
 pub(super) struct Undo {
@@ -199,7 +209,7 @@ pub(super) enum Release {
     Stale,
     Swap {
         source: String,
-        target: String,
+        target: Pick,
     },
 }
 
@@ -253,6 +263,7 @@ impl Owner {
             phase: Phase::Pressed,
             seen: layout.to_vec(),
             undoing: false,
+            restore: None,
         });
         Ok(())
     }
@@ -261,7 +272,7 @@ impl Owner {
     pub(super) fn moved(
         &mut self,
         at: Point<Pixels>,
-        target: Option<String>,
+        target: Option<Pick>,
         layout: &[Region],
     ) -> bool {
         let Some(gesture) = self.gesture.as_mut() else {
@@ -282,9 +293,19 @@ impl Owner {
             _ => false,
         }
     }
-    fn retarget(&mut self, target: Option<String>, layout: &[Region]) {
+    fn retarget(&mut self, target: Option<Pick>, layout: &[Region]) {
         if let Some(gesture) = self.gesture.as_mut() {
-            let target = target.filter(|t| *t != gesture.source);
+            // The token is the one published when the preview first showed
+            // this pane; hovering on doesn't pick up a replacement.
+            let shown = match &gesture.phase {
+                Phase::Dragging {
+                    target: Some(shown),
+                } => Some(shown.clone()),
+                _ => None,
+            };
+            let target = target
+                .filter(|t| t.id != gesture.source)
+                .map(|t| shown.filter(|s| s.id == t.id).unwrap_or(t));
             gesture.phase = Phase::Dragging { target };
             gesture.seen = layout.to_vec();
         }
@@ -301,7 +322,7 @@ impl Owner {
             Phase::Pressed | Phase::Dragging { target: None } => !has(&gesture.source),
             Phase::Dragging {
                 target: Some(target),
-            } => !has(&gesture.source) || !has(target),
+            } => !has(&gesture.source) || !has(&target.id),
             _ => false,
         };
         if gone {
@@ -336,6 +357,7 @@ impl Owner {
                     target: target.clone(),
                     before: layout.to_vec(),
                     since: now,
+                    sent: None,
                 }
             }
             Release::Cancel | Release::Stale => {
@@ -362,9 +384,25 @@ impl Owner {
             _ => {}
         }
     }
-    /// Reads a pending swap's result off the published state: the layout
-    /// shows it, or the action finished without it.
-    pub(super) fn settle(&mut self, layout: &[Region], action_done: bool, now: Instant) -> Settle {
+    /// The swap went out, spending the source's pane action capability
+    /// `token`.
+    pub(super) fn sent(&mut self, token: String) {
+        if let Some(Phase::Pending { sent, .. }) = self.gesture.as_mut().map(|g| &mut g.phase) {
+            *sent = Some(token);
+        }
+    }
+    /// Reads a pending swap's result off the published state. The layout
+    /// showing the exchange settles it, whatever else changed first. Only
+    /// the daemon's refusal or the deadline fails it: `actions` is the pane
+    /// action capability published now, and one other than the spent one
+    /// means the swap was admitted and has finished, so the status is its.
+    pub(super) fn settle(
+        &mut self,
+        layout: &[Region],
+        actions: Option<&str>,
+        status: &str,
+        now: Instant,
+    ) -> Settle {
         let Some(gesture) = self.gesture.as_ref() else {
             return Settle::Waiting;
         };
@@ -372,35 +410,40 @@ impl Owner {
             target,
             before,
             since,
+            sent,
         } = &gesture.phase
         else {
             return Settle::Waiting;
         };
-        let waited = now.saturating_duration_since(*since);
-        if swapped(before, layout, &gesture.source, target) {
+        if swapped(before, layout, &gesture.source, &target.id) {
             self.undo = Some(Undo {
                 request: gesture.request,
                 a: gesture.source.clone(),
-                b: target.clone(),
+                b: target.id.clone(),
                 layout: layout.to_vec(),
             });
             self.gesture = None;
             return Settle::Swapped;
         }
-        // The action has finished (its capability is published again) and
-        // the layout still doesn't show the swap: refused or timed out.
-        let refused = action_done && waited >= GRACE;
-        if refused || before.as_slice() != layout || waited >= SETTLE {
-            let center = gesture.pointer;
+        let finished = actions.is_some_and(|now| sent.as_deref().is_some_and(|sent| now != sent));
+        let refused = finished && status == NOT_APPLIED;
+        if refused || now.saturating_duration_since(*since) >= SETTLE {
+            let from = gesture.pointer;
             if let Some(gesture) = self.gesture.as_mut() {
-                gesture.phase = Phase::Returning {
-                    from: center,
-                    since: now,
-                };
+                gesture.phase = Phase::Returning { from, since: now };
             }
             return Settle::Failed;
         }
         Settle::Waiting
+    }
+    /// The pane to select again now that the drag has ended without a swap.
+    pub(super) fn take_restore(&mut self) -> Option<String> {
+        let gesture = self.gesture.as_mut()?;
+        if matches!(gesture.phase, Phase::Returning { .. }) {
+            gesture.restore.take()
+        } else {
+            None
+        }
     }
     /// A swap that couldn't be sent: the card goes home.
     pub(super) fn fail(&mut self, now: Instant) {
