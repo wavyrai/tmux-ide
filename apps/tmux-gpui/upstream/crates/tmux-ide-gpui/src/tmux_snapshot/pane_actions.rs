@@ -32,6 +32,14 @@ pub(super) enum Action {
     Split {
         direction: SplitDirection,
     },
+    /// Exchange the selected pane with `target` (a header drag). The token
+    /// is the target's input token as published, so a target that changed
+    /// since is refused.
+    Swap {
+        target: String,
+        #[serde(rename = "targetToken")]
+        target_token: String,
+    },
 }
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
