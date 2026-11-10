@@ -27,6 +27,20 @@ pub(super) struct Recovery {
     rediscover_owner: bool,
 }
 impl Recovery {
+    /// A recovery of `target` that is due now, for tests outside this module.
+    #[cfg(test)]
+    pub(super) fn of(target: Target) -> Self {
+        Self {
+            target,
+            pane: None,
+            attempts: 1,
+            due: None,
+            others: 0,
+            local_record: None,
+            rebind: None,
+            rediscover_owner: false,
+        }
+    }
     pub(super) fn waiting(&self) -> bool {
         self.due.is_some()
     }
@@ -212,7 +226,11 @@ impl Local {
             return Ok(true);
         };
         self.open(self.state.request, key, recovery.pane.clone())?;
-        self.recovery = Some(recovery);
+        // A session now over the pane limit is refused with a notice and no
+        // stage; nothing would retry it, so its recovery ends here.
+        if self.state.home_notice.is_none() {
+            self.recovery = Some(recovery);
+        }
         Ok(true)
     }
 }

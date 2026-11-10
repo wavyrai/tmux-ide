@@ -28,6 +28,7 @@ struct Summary {
     architecture: &'static str,
     developer_mode: bool,
     input_ready: bool,
+    local_setup: Option<&'static str>,
     fleet: FleetSummary,
 }
 
@@ -91,6 +92,10 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
         architecture: std::env::consts::ARCH,
         developer_mode,
         input_ready: state.input_ready,
+        local_setup: state
+            .local_setup
+            .as_ref()
+            .map(|setup| setup_name(setup.phase)),
         fleet: FleetSummary {
             states,
             diagnostics: diagnostics.into_values().collect(),
@@ -101,6 +106,19 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
         return Err(Error::TooLarge);
     }
     Ok(text)
+}
+
+fn setup_name(phase: browser::local_setup::Phase) -> &'static str {
+    use browser::local_setup::Phase;
+    match phase {
+        Phase::Available => "available",
+        Phase::Running => "running",
+        Phase::Missing => "missing",
+        Phase::Unsupported => "unsupported-version",
+        Phase::Unrecognized => "unrecognized-installation",
+        Phase::Failed => "failed",
+        Phase::StoppedWaiting => "stopped-waiting",
+    }
 }
 
 #[cfg(test)]
