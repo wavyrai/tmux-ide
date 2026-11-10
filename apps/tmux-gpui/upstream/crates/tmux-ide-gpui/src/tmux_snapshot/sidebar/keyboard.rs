@@ -84,6 +84,7 @@ impl SnapshotView {
                 &self.sidebar_keyboard.scroll,
                 self.sidebar_keyboard.active && valid,
                 window,
+                cx,
             );
         }
         if !valid && self.sidebar_keyboard.active {

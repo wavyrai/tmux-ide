@@ -267,15 +267,12 @@ fn an_unreachable_daemon_is_retried_forever() {
     assert_eq!(local.recovery.as_ref().unwrap().attempt(), 400);
 }
 #[test]
-fn an_identity_failure_never_retries() {
+fn an_identity_failure_in_rediscovery_backs_off_and_retries() {
     let (mut local, _events) = fixture();
     local.reconnect_start().unwrap();
     local.reconnect_retry(Failure::Identity).unwrap();
-    assert!(local.recovery.is_none());
-    assert_eq!(
-        local.state.status,
-        "Couldn't reconnect. Refresh sessions to try again."
-    );
+    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
+    assert_eq!(local.state.status, "Connection lost. Reconnecting…");
 }
 #[test]
 fn daemon_errors_are_classified_for_recovery() {
@@ -288,22 +285,23 @@ fn daemon_errors_are_classified_for_recovery() {
         std::io::ErrorKind::ConnectionRefused,
     )));
     assert_eq!(Failure::of(&refused), Failure::Unreachable);
-    for identity in [E::IdentityChanged, E::IdentityFormat, E::Incompatible(3)] {
+    for identity in [E::IdentityChanged, E::IdentityFormat] {
         assert_eq!(Failure::of(&identity), Failure::Identity);
     }
+    assert_eq!(Failure::of(&E::Incompatible(3)), Failure::Incompatible);
     let denied = E::RecordIo(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
     assert_eq!(Failure::of(&denied), Failure::Other);
     assert_eq!(Failure::of(&E::RequestStatus(500)), Failure::Other);
 }
 #[test]
-fn other_failures_get_exactly_three_retries() {
+fn other_failures_get_a_bounded_run_of_retries() {
     let (mut local, _events) = fixture();
     local.reconnect_start().unwrap();
     assert_eq!(local.recovery.as_ref().unwrap().others, 0);
-    local.reconnect_retry(Failure::Other).unwrap();
-    local.reconnect_retry(Failure::Other).unwrap();
-    local.reconnect_retry(Failure::Other).unwrap();
-    assert_eq!(local.recovery.as_ref().unwrap().others, 3);
+    for _ in 0..MAX_OTHERS {
+        local.reconnect_retry(Failure::Other).unwrap();
+    }
+    assert_eq!(local.recovery.as_ref().unwrap().others, MAX_OTHERS);
     assert!(local.recovery.as_ref().unwrap().waiting());
     assert_eq!(local.state.status, "Connection lost. Reconnecting…");
     local.reconnect_retry(Failure::Other).unwrap();
@@ -317,7 +315,7 @@ fn other_failures_get_exactly_three_retries() {
 fn retry_budget_stops() {
     let (mut local, _events) = fixture();
     local.reconnect_start().unwrap();
-    local.recovery.as_mut().unwrap().others = 3;
+    local.recovery.as_mut().unwrap().others = MAX_OTHERS;
     local.reconnect_retry(Failure::Other).unwrap();
     assert!(local.recovery.is_none());
     assert!(local.stage.is_none());
@@ -400,6 +398,7 @@ fn stale_ready_does_not_clear_recovery() {
         due: None,
         others: 1,
         local_record: None,
+        remote: None,
         rebind: None,
         rediscover_owner: false,
     });
@@ -934,3 +933,6 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
     local.reconnect_tick().unwrap();
     assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
 }
+
+#[path = "browser_native_local_update_tests.rs"]
+mod update;

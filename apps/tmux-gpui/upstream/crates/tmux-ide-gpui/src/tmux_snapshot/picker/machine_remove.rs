@@ -198,7 +198,8 @@ impl SnapshotView {
         let registry = self.browser_state.machines.as_ref();
         let (removed, status) = captured.feedback(registry);
         super::super::design::dialog_overlay("machine-remove-overlay", &theme)
-            .child(
+            .child(bezel_motion::dialog_in(
+                "machine-remove-dialog-in",
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-remove-dialog")
                     .w(px(480.))
@@ -316,7 +317,7 @@ impl SnapshotView {
                             },
                         )),
                     ),
-            )
+            ))
             .into_any_element()
     }
 }

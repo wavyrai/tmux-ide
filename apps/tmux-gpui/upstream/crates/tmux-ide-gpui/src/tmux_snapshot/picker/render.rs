@@ -62,30 +62,35 @@ impl SnapshotView {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .child(
-                    // Bezel's popover card, on an opaque plate rather than
-                    // glass: it floats over live terminal output (PM, #671
-                    // round 2). Glass stays on the sidebar and titlebar.
-                    bezel_ui::popover::popover_card(&super::super::design::palette(&theme))
-                        .bg(ink.plate)
-                        .border_1()
-                        .border_color(super::super::design::palette(&theme).border)
-                        .shadow(bezel_theme::surface_shadows())
-                        .text_color(ink.text)
-                        .id("commands-popover")
-                        .debug_selector(|| "commands-popover".into())
-                        .w((viewport.width - px(24.))
-                            .max(px(0.))
-                            .min(px(if pane_scope { 360. } else { 560. })))
-                        .h(
-                            (viewport.height - (viewport.height / 6.).min(px(80.)) - px(48.))
+                    // The card enters as Bezel's menus do, over MENU_IN (#761);
+                    // the scrim is there at once, and closing is instant.
+                    bezel_motion::menu_in(
+                        "commands-popover-in",
+                        // Bezel's popover card, on an opaque plate rather than
+                        // glass: it floats over live terminal output (PM, #671
+                        // round 2). Glass stays on the sidebar and titlebar.
+                        bezel_ui::popover::popover_card(&super::super::design::palette(&theme))
+                            .bg(ink.plate)
+                            .border_1()
+                            .border_color(super::super::design::palette(&theme).border)
+                            .shadow(bezel_theme::surface_shadows())
+                            .text_color(ink.text)
+                            .id("commands-popover")
+                            .debug_selector(|| "commands-popover".into())
+                            .w((viewport.width - px(24.))
                                 .max(px(0.))
-                                .min(px(content_height)),
-                        )
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(self.picker_render(cx)),
+                                .min(px(if pane_scope { 360. } else { 560. })))
+                            .h(
+                                (viewport.height - (viewport.height / 6.).min(px(80.)) - px(48.))
+                                    .max(px(0.))
+                                    .min(px(content_height)),
+                            )
+                            .occlude()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                            .on_click(|_, _, cx| cx.stop_propagation())
+                            .child(self.picker_render(cx)),
+                    ),
                 )
                 .into_any_element(),
         )

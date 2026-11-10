@@ -461,9 +461,13 @@ impl SnapshotView {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                    .child(bezel_ui::surface::popover(
-                        bezel_theme::Theme::surface_radius(),
-                        card,
+                    // The menu enters over MENU_IN (#761); closing is instant.
+                    .child(bezel_motion::menu_in(
+                        "pane-actions-menu-in",
+                        div().child(bezel_ui::surface::popover(
+                            bezel_theme::Theme::surface_radius(),
+                            card,
+                        )),
                     ))
                     .into_any_element(),
             );
@@ -471,72 +475,82 @@ impl SnapshotView {
         let bezel = super::design::palette(&theme);
         let input = menu.input.as_ref()?;
         Some(
-            bezel_ui::popover::dialog_card(&bezel)
-                .id("pane-actions-panel")
-                .debug_selector(|| "pane-actions-panel".into())
-                .role(Role::Dialog)
-                .aria_label("Rename pane")
+            // The wrapper holds the place above the footer; the card inside
+            // it rises over DIALOG_IN, which positions it relatively (#761).
+            div()
                 .absolute()
                 .bottom(relative(1.))
                 .left_0()
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .flex_none()
                 .w_full()
                 .max_w(px(320.))
-                .max_h(px(180.))
-                .overflow_y_scroll()
-                .p_2()
-                .gap_2()
-                .text_size(px(12.))
-                .child(bezel_ui::popover::dialog_title(&bezel, "Rename pane"))
-                .child(input.clone())
-                .children(menu.error.map(|error| {
-                    use bezel_ui::widgets::Status as _;
-                    bezel
-                        .error_strip(error)
-                        .debug_selector(|| "pane-name-error".into())
-                        .mt_0()
-                        .px_2()
-                        .py_1()
+                .child(bezel_motion::dialog_in(
+                    "pane-actions-panel-in",
+                    bezel_ui::popover::dialog_card(&bezel)
+                        .id("pane-actions-panel")
+                        .debug_selector(|| "pane-actions-panel".into())
+                        .role(Role::Dialog)
+                        .aria_label("Rename pane")
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                        .flex_none()
                         .w_full()
-                }))
-                // Mac order: Cancel, then the default action, right-aligned.
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .justify_end()
+                        .max_w(px(320.))
+                        .max_h(px(180.))
+                        .overflow_y_scroll()
+                        .p_2()
                         .gap_2()
+                        .text_size(px(12.))
+                        .child(bezel_ui::popover::dialog_title(&bezel, "Rename pane"))
+                        .child(input.clone())
+                        .children(menu.error.map(|error| {
+                            use bezel_ui::widgets::Status as _;
+                            bezel
+                                .error_strip(error)
+                                .debug_selector(|| "pane-name-error".into())
+                                .mt_0()
+                                .px_2()
+                                .py_1()
+                                .w_full()
+                        }))
+                        // Mac order: Cancel, then the default action, right-aligned.
                         .child(
-                            super::controls::button(
-                                "pane-actions-cancel",
-                                Some("Cancel"),
-                                "Cancel rename",
-                                super::controls::Icon::Close,
-                                &theme,
-                            )
-                            .aria_label("Cancel rename")
-                            .on_click(cx.listener(
-                                |view, _, window, cx| view.close_pane_actions(window, cx),
-                            )),
-                        )
-                        .child(
-                            super::controls::action_button(
-                                "pane-name-submit",
-                                Some("Rename"),
-                                "Rename pane",
-                                super::controls::Icon::Check,
-                                super::controls::ButtonStyle::Primary,
-                                &theme,
-                            )
-                            .aria_label("Rename pane")
-                            .on_click(cx.listener(
-                                |view, _, window, cx| view.send_pane_action(true, window, cx),
-                            )),
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    super::controls::button(
+                                        "pane-actions-cancel",
+                                        Some("Cancel"),
+                                        "Cancel rename",
+                                        super::controls::Icon::Close,
+                                        &theme,
+                                    )
+                                    .aria_label("Cancel rename")
+                                    .on_click(cx.listener(
+                                        |view, _, window, cx| view.close_pane_actions(window, cx),
+                                    )),
+                                )
+                                .child(
+                                    super::controls::action_button(
+                                        "pane-name-submit",
+                                        Some("Rename"),
+                                        "Rename pane",
+                                        super::controls::Icon::Check,
+                                        super::controls::ButtonStyle::Primary,
+                                        &theme,
+                                    )
+                                    .aria_label("Rename pane")
+                                    .on_click(cx.listener(
+                                        |view, _, window, cx| {
+                                            view.send_pane_action(true, window, cx)
+                                        },
+                                    )),
+                                ),
                         ),
-                )
+                ))
                 .into_any_element(),
         )
     }
