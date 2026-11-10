@@ -57,181 +57,13 @@ mod watch;
 pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
 #[path = "browser_native_local_home_recovery.rs"]
 mod home_recovery;
+#[path = "browser_native_local_pane_limit.rs"]
+mod pane_limit;
 #[path = "browser_native_local_split.rs"]
 mod split;
-enum Stage {
-    AgentOpen {
-        target: Target,
-        selection: Box<herdr_client::tmux_daemon::AgentSelection>,
-    },
-    LocalProve,
-    LocalCreate {
-        proof: herdr_client::tmux_daemon::LocalSessionProof,
-        operation_id: uuid::Uuid,
-        name: String,
-    },
-    LocalCatalog {
-        proof: herdr_client::tmux_daemon::LocalSessionProof,
-        receipt: herdr_client::tmux_daemon::CreatedSession,
-    },
-    Preferences {
-        change: Option<(
-            herdr_client::tmux_daemon::LocalOwnerStamp,
-            herdr_client::tmux_daemon::FleetPreferenceChange,
-        )>,
-    },
-    AddMachine {
-        target: String,
-    },
-    VerifyProfile,
-    MachineSelection {
-        expected: herdr_client::tmux_daemon::SavedMachineRegistry,
-        id: String,
-    },
-    Machines {
-        change: Option<(
-            herdr_client::tmux_daemon::SavedMachineRegistry,
-            herdr_client::tmux_daemon::MachineChange,
-        )>,
-    },
-    Owner {
-        scope: ServerScope,
-        operation_id: uuid::Uuid,
-        creation: herdr_client::tmux_daemon::PaneCreation,
-        request: browser_native_owner::Request,
-    },
-    Editor {
-        scope: ServerScope,
-        target: herdr_client::tmux_daemon::EditorTarget,
-        request: super::super::super::browser_native_editor::Request,
-    },
-    History {
-        scope: ServerScope,
-        id: String,
-        request: u64,
-        operation_id: u64,
-        body: herdr_client::tmux_history::AnchorRequest,
-    },
-    Create {
-        scope: ServerScope,
-        operation_id: uuid::Uuid,
-        name: String,
-    },
-    Servers,
-    Open {
-        target: Target,
-        preferred: Option<String>,
-    },
-    Issue {
-        target: Target,
-        workspace: String,
-        panes: Vec<String>,
-        selected: String,
-    },
-}
-impl Stage {
-    fn local_owner(&self) -> bool {
-        self.registry()
-            || matches!(
-                self,
-                Self::Preferences { .. }
-                    | Self::LocalProve
-                    | Self::LocalCreate { .. }
-                    | Self::LocalCatalog { .. }
-            )
-    }
-    fn registry(&self) -> bool {
-        matches!(
-            self,
-            Self::Machines { .. }
-                | Self::MachineSelection { .. }
-                | Self::VerifyProfile
-                | Self::AddMachine { .. }
-        )
-    }
-    fn action(&self) -> CatalogAction {
-        match self {
-            Self::AgentOpen { target, selection } => CatalogAction::OpenObservedAgent {
-                scope: target.scope.clone(),
-                selection: selection.clone(),
-            },
-            Self::LocalProve => CatalogAction::ProveLocalSession,
-            Self::LocalCreate {
-                proof,
-                operation_id,
-                name,
-            } => CatalogAction::CreateLocalSession {
-                proof: proof.clone(),
-                operation_id: *operation_id,
-                display_name: name.clone(),
-            },
-            Self::LocalCatalog { proof, .. } => CatalogAction::LocalSessionCatalog {
-                proof: proof.clone(),
-            },
-            Self::Preferences { change } => CatalogAction::FleetPreferences {
-                change: change.clone(),
-            },
-            Self::AddMachine { target } => CatalogAction::PrepareMachine {
-                target: target.clone(),
-            },
-            Self::MachineSelection { .. } | Self::VerifyProfile => CatalogAction::SavedMachines,
-            Self::Machines { change: None } => CatalogAction::SavedMachines,
-            Self::Machines {
-                change: Some((expected, change)),
-            } => CatalogAction::MutateMachine {
-                expected: expected.clone(),
-                change: change.clone(),
-            },
-            Self::Owner {
-                scope,
-                operation_id,
-                creation,
-                ..
-            } => CatalogAction::CreatePane {
-                scope: scope.clone(),
-                operation_id: *operation_id,
-                creation: creation.clone(),
-            },
-            Self::Editor { scope, target, .. } => CatalogAction::OpenEditor {
-                scope: scope.clone(),
-                target: target.clone(),
-            },
-            Self::Servers => CatalogAction::FleetCatalog,
-            Self::Create {
-                scope,
-                operation_id,
-                name,
-            } => CatalogAction::Create {
-                scope: scope.clone(),
-                operation_id: *operation_id,
-                display_name: name.clone(),
-            },
-            Self::History { scope, body, .. } => CatalogAction::History {
-                scope: scope.clone(),
-                request: body.clone(),
-            },
-            Self::Open { target, .. } => CatalogAction::Open {
-                scope: target.scope.clone(),
-                live_session_id: target.live.clone(),
-            },
-            Self::Issue {
-                target,
-                workspace,
-                panes,
-                selected,
-            } => CatalogAction::Issue {
-                scope: target.scope.clone(),
-                selection: TerminalSelection {
-                    workspace_name: workspace.clone(),
-                    live_session_id: target.live.clone(),
-                    selected_pane: selected.clone(),
-                    visible_panes: panes.clone(),
-                    mode: ViewerMode::Interactive,
-                },
-            },
-        }
-    }
-}
+#[path = "browser_native_local_stage.rs"]
+mod stage;
+use stage::Stage;
 struct Local {
     machine_id: String,
     machine_label: String,
@@ -364,6 +196,7 @@ impl Local {
         self.events.emit(event)
     }
     fn publish(&mut self) -> Result<(), Error> {
+        self.pane_limit_superseded();
         let mut state = self.state.clone();
         // Home has no terminal stream to acknowledge focus. Once a route is
         // open, its controller remains the authority for presence admission.
@@ -488,7 +321,7 @@ impl Local {
         let Some(target) = self.targets.get(&key).cloned() else {
             return Ok(());
         };
-        if self.home_open_blocked()? {
+        if self.home_open_blocked()? || self.pane_limit_refused(request, &key)? {
             return Ok(());
         }
         self.cancel()?;
@@ -773,9 +606,9 @@ impl Local {
     fn completed(&mut self, stage: Stage, result: CatalogResult) -> Result<(), Error> {
         match (stage, result) {
             (Stage::AgentOpen { target, .. }, CatalogResult::AgentOpened(opened)) => {
-                if opened.panes.is_empty() || opened.panes.len() > 24 {
-                    return self.unavailable("Session exceeds the native stream pane limit");
-                };
+                if let Some(done) = self.pane_limit_exceeded(&target, &opened.panes) {
+                    return done;
+                }
                 self.stage = Some(Stage::Issue {
                     target,
                     workspace: opened.workspace_name,
@@ -860,8 +693,8 @@ impl Local {
                 else {
                     return self.unavailable("Session has no attachable terminal panes");
                 };
-                if panes.len() > 24 {
-                    return self.unavailable("Session exceeds the native stream pane limit");
+                if let Some(done) = self.pane_limit_exceeded(&target, &panes) {
+                    return done;
                 }
                 self.stage = Some(Stage::Issue {
                     target,

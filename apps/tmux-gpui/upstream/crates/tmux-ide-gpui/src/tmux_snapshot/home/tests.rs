@@ -180,3 +180,6 @@ mod fleet_view;
 
 #[path = "tests/option_a.rs"]
 mod option_a;
+
+#[path = "tests/pane_limit.rs"]
+mod pane_limit;
