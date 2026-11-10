@@ -662,3 +662,42 @@ fn the_pane_limit_notice_shows_beside_an_act_card(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("home-act-card").is_some());
     assert!(cx.debug_bounds("home-status-warning").is_some());
 }
+
+/// review-chrome on the main merge: a real drop holds the last frame with
+/// input not ready. The empty status line must not raise an empty notice card
+/// at the foot of the sidebar, nor an empty status bar beside the tabs.
+#[gpui::test]
+fn a_real_drop_with_input_not_ready_shows_no_empty_notice(cx: &mut TestAppContext) {
+    for sidebar_hidden in [false, true] {
+        let (sender, _receiver) = mpsc::sync_channel(64);
+        let (view, cx) =
+            cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, session_drop()));
+        let (clock, at) = clock();
+        view.update(cx, |view, _| {
+            view.connection.clock = clock;
+            view.sidebar_hidden = sidebar_hidden;
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.browser_state.reconnect_attempt = Some(1);
+                view.browser_state.retained_preview = true;
+                view.browser_state.input_ready = false;
+                view.browser_state.status = "Reconnecting… attempt 1".into();
+                view.observe_connection(cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        for ms in [0, 1_500, 9_000] {
+            at.set(S(ms));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert!(
+                cx.debug_bounds("sidebar-status-notice").is_none(),
+                "{ms} ms, sidebar hidden {sidebar_hidden}: notice card"
+            );
+            assert!(
+                cx.debug_bounds("tmux-status-viewport").is_none(),
+                "{ms} ms, sidebar hidden {sidebar_hidden}: status bar"
+            );
+        }
+    }
+}

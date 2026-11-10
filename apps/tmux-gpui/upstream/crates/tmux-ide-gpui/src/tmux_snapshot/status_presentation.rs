@@ -1,8 +1,10 @@
 //! Normal mode suppresses only known routine guidance, never unknown failures.
 //! Authority still comes from the bridge; presentation cannot enable input.
+/// An empty line (a reconnect, which the footer slot shows) is never a
+/// notice, even while input is not ready.
 pub(super) fn visible(status: &str, developer_mode: bool, input_ready: bool) -> bool {
     developer_mode
-        || !input_ready
+        || (!status.is_empty() && !input_ready)
         || !matches!(
             status,
             "" | "Connected" | "Keyboard ready" | "Keyboard ready — click terminal to type"
