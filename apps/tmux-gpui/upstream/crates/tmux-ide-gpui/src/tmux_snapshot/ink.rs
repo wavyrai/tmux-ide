@@ -127,4 +127,4 @@ pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
 
 #[cfg(test)]
 #[path = "ink_tests.rs"]
-mod tests;
+pub(crate) mod tests;

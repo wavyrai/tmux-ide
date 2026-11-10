@@ -170,5 +170,5 @@ pub(super) fn action_button_on(
                 .child(label)
                 .children(super::design::ink_probe(move || format!("control-{id}")))
         }))
-        .tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(hint, window, cx))
+        .tooltip(move |_, cx| super::glass_ink::tooltip(hint, None, cx))
 }

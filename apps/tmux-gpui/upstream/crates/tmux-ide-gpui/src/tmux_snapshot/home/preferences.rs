@@ -103,7 +103,7 @@ impl SnapshotView {
                     .child(button),
             )
             .when(enabled, |tip| {
-                tip.tooltip(move |window, cx| bezel_ui::tooltip::Tooltip::text(label, window, cx))
+                tip.tooltip(move |_, cx| crate::tmux_snapshot::glass_ink::tooltip(label, None, cx))
             })
             .into_any_element()
     }

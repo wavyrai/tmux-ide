@@ -275,12 +275,9 @@ impl SnapshotView {
                     .aria_label(label)
                     .debug_selector(move || name.into())
                     .h(px(26.))
-                    .tooltip(move |window, cx| {
-                        if action == BrowserAction::Reload {
-                            bezel_ui::tooltip::Tooltip::with_keystroke(label, "⌘R", window, cx)
-                        } else {
-                            bezel_ui::tooltip::Tooltip::text(label, window, cx)
-                        }
+                    .tooltip(move |_, cx| {
+                        let keys = (action == BrowserAction::Reload).then(|| "⌘R".into());
+                        super::glass_ink::tooltip(label, keys, cx)
                     })
                     .when(pressed, |b| b.bg(palette.element_active))
                     .when(!available, |b| b.cursor_default())
@@ -303,13 +300,8 @@ impl SnapshotView {
                     .ghost("browser-address")
                     .role(Role::Button)
                     .aria_label("Edit browser address")
-                    .tooltip(|window, cx| {
-                        bezel_ui::tooltip::Tooltip::with_keystroke(
-                            "Edit browser address",
-                            "⌘L",
-                            window,
-                            cx,
-                        )
+                    .tooltip(|_, cx| {
+                        super::glass_ink::tooltip("Edit browser address", Some("⌘L".into()), cx)
                     })
                     .debug_selector(|| "browser-address".into())
                     .flex_1()

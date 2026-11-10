@@ -32,6 +32,7 @@ mod direct_projection;
 mod display_frame;
 mod divider;
 mod geometry;
+mod glass_ink;
 mod hit_regions;
 mod home;
 mod ink;
