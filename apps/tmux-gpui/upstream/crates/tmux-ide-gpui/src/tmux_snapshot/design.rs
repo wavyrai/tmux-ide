@@ -39,7 +39,7 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // The frost is the theme's own surface at Bezel's coverage; text drawn on
     // it goes through `chrome_text`.
     result.vibrancy_tone = color(theme.surface);
-    result.vibrancy_alpha = frost_alpha(theme);
+    result.vibrancy_alpha = frost(theme).unwrap_or(bezel_theme::Theme::VIBRANCY_ALPHA);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
     result.selection = color(theme.active);
@@ -104,14 +104,8 @@ pub(crate) fn chrome_text(theme: &Theme, color: u32) -> u32 {
     // Cached per colour and plates: the sidebar asks for every row, every frame.
     // 4.6 rather than 4.5: the plates are rounded to 8-bit channels here, and
     // the frost Bezel paints is not, which costs up to a few hundredths.
-    crate::contrast::ink_on_chrome(color, chrome_plates(theme), 4.6)
+    crate::contrast::ink(color, &chrome_plates(theme), 4.6)
 }
-
-/// What row text is inked to. Further over 4.5 than `chrome_text`'s 4.6: a
-/// row's plates are two flattenings deep (wash over frost over desktop), and
-/// rounding each to 8-bit channels moves a dark plate by enough to cost 0.1:1
-/// against a saturated label (Amber's selected row measured 4.49 at 4.6).
-const ROW_TARGET: f32 = 4.75;
 
 /// `color` as a mark on a sidebar row, such as an agent's state glyph: the
 /// contrast setting's mark ratio (3:1, or 4.5:1 at High) on every plate and
@@ -145,54 +139,49 @@ fn row_inked(theme: &Theme, color: u32, target: f32) -> u32 {
     inked
 }
 
-/// The frost's coverage: Bezel's 0.80, raised just far enough that the
-/// theme's foreground and muted text, inked, can still reach 4.6:1 on a
-/// selected or hovered row over a white desktop. A light frost under a 12% light wash otherwise leaves no colour
-/// that reads there (Nord's selected row topped out at 4.31:1).
-fn frost_alpha(theme: &Theme) -> f32 {
+/// The desktops the frost is checked over (#746 glass plan): white, black,
+/// a dark blue-grey wallpaper, and macOS's vivid accent colours.
+pub(crate) const DESKTOPS: [u32; 9] = [
+    0xffffff, 0x000000, 0x1c2333, 0x0a84ff, 0xff3b30, 0x34c759, 0xaf52de, 0xff9f0a, 0xffd60a,
+];
+/// The lightest frost the search starts from, and the densest it allows.
+const FROST_FROM: u32 = 60;
+const FROST_TO: u32 = 94;
+
+/// The frost's coverage, per theme and the same rule in light and dark: the
+/// lowest alpha at which the three ink tiers hold (muted at 4.6:1, text at
+/// least 0.25 above it) on the frosted plate and a hovered row over every
+/// one of [`DESKTOPS`]. Bezel's 0.80 where no alpha up to 0.94 gets there.
+pub(crate) fn frost(theme: &Theme) -> Option<f32> {
     thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<(u32, u32), f32>> =
-            Default::default();
+        static CACHE: std::cell::RefCell<Vec<(Theme, Option<f32>)>> = Default::default();
     }
-    let key = (theme.surface, theme.background);
-    if let Some(alpha) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
-        return alpha;
+    if let Some(found) =
+        CACHE.with(|c| c.borrow().iter().find(|(t, _)| t == theme).map(|(_, f)| *f))
+    {
+        return found;
     }
-    let start = (bezel_theme::Theme::VIBRANCY_ALPHA * 100.).round() as u32;
-    let dark = crate::contrast::luminance(theme.background) < 0.5;
-    let alpha = (start..=100)
-        .filter(|_| dark)
+    let found = (FROST_FROM..=FROST_TO)
         .map(|step| step as f32 / 100.)
-        .find(|&alpha| {
-            let plates = row_plates_at(theme, alpha);
-            [theme.foreground, theme.muted].iter().all(|&text| {
-                let inked = crate::contrast::ink(text, &plates, ROW_TARGET);
-                plates
-                    .iter()
-                    .all(|&plate| crate::contrast::ratio(inked, plate) >= ROW_TARGET)
-            })
-        })
-        .unwrap_or(if dark {
-            1.0
-        } else {
-            bezel_theme::Theme::VIBRANCY_ALPHA
-        });
-    CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if cache.len() > 256 {
-            cache.clear();
+        .find(|&alpha| super::ink::tiers_at(theme, Some(alpha)).levels == 3)
+        .or(Some(bezel_theme::Theme::VIBRANCY_ALPHA));
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= 8 {
+            c.remove(0);
         }
-        cache.insert(key, alpha);
+        c.push((theme.clone(), found));
     });
-    alpha
+    found
 }
 
-/// The chrome plates, bare and under a row's selected and hover washes.
+/// The chrome plates, bare and under a hovered row, and the selected capsule.
 fn row_plates(theme: &Theme) -> Vec<u32> {
-    row_plates_at(theme, frost_alpha(theme))
+    row_plates_at(theme, frost(theme))
 }
 
-fn row_plates_at(theme: &Theme, alpha: f32) -> Vec<u32> {
+/// [`row_plates`] at a given frost (`None`: opaque).
+pub(crate) fn row_plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
     let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
         bezel_theme::Appearance::Dark
     } else {
@@ -228,12 +217,6 @@ pub(crate) fn selected_capsule(theme: &Theme) -> (Hsla, Vec<BoxShadow>) {
         rgb(theme.background).into()
     };
     (fill, bezel_theme::glass_selected_shadows())
-}
-
-/// The plates a sidebar row's text is read on: the chrome (frosted over each
-/// desktop it is checked on), a hovered row, and the selected capsule.
-pub(crate) fn sidebar_plates(theme: &Theme) -> Vec<u32> {
-    row_plates(theme)
 }
 
 /// A sidebar row's label and caption colours, as `render_row` paints them:
@@ -347,22 +330,25 @@ pub(crate) fn popover_ink(theme: &Theme) -> PopoverInk {
     }
 }
 
-/// What chrome text is drawn on: the opaque surface and, in a dark theme (the
-/// one Bezel frosts), the frost over a white and over a black desktop.
-fn chrome_plates(theme: &Theme) -> [u32; 3] {
-    plates_at(theme, frost_alpha(theme))
+/// What chrome text is drawn on: the opaque surface and, while the window
+/// frosts, the frost over each of [`DESKTOPS`].
+fn chrome_plates(theme: &Theme) -> Vec<u32> {
+    plates_at(theme, frost(theme))
 }
 
-fn plates_at(theme: &Theme, alpha: f32) -> [u32; 3] {
-    let mut plates = [theme.surface; 3];
-    if crate::contrast::luminance(theme.background) < 0.5 {
+fn plates_at(theme: &Theme, alpha: Option<f32>) -> Vec<u32> {
+    let mut plates = vec![theme.surface];
+    if let Some(alpha) = alpha {
         let frost = Hsla {
             a: alpha,
             ..rgb(theme.surface).into()
         };
         let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
-        plates[1] = pack(bezel_theme::flatten(frost, white()));
-        plates[2] = pack(bezel_theme::flatten(frost, black()));
+        plates.extend(
+            DESKTOPS
+                .iter()
+                .map(|&desktop| pack(bezel_theme::flatten(frost, rgb(desktop).into()))),
+        );
     }
     plates
 }
@@ -428,7 +414,7 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
 mod tests {
     use super::{chrome_text, dialog_muted, palette, popover_ink, prepare, row_ink};
     use crate::{config::Theme, contrast::Contrast};
-    use gpui::{Hsla, TestAppContext, black, rgb, white};
+    use gpui::{Hsla, TestAppContext, rgb};
 
     fn color(value: u32) -> Hsla {
         rgb(value).into()
@@ -627,14 +613,14 @@ mod tests {
             let bezel = palette(&theme);
             assert_eq!(bezel.content_opacity, 1.0, "{name}: panes must stay opaque");
             assert_eq!(bezel.vibrancy_tone, color(theme.surface), "{name}");
-            let mut plates = vec![(color(theme.surface), "surface")];
-            if bezel.appearance == bezel_theme::Appearance::Dark {
-                for (desktop, desktop_name) in
-                    [(white(), "white desktop"), (black(), "black desktop")]
-                {
+            let mut plates = vec![(color(theme.surface), "surface".to_string())];
+            // Light frosts as well as dark (#746 glass plan), over every
+            // desktop the frost is checked on.
+            if bezel.vibrancy {
+                for desktop in super::DESKTOPS {
                     plates.push((
-                        bezel_theme::flatten(bezel.vibrancy_tint(), desktop),
-                        desktop_name,
+                        bezel_theme::flatten(bezel.vibrancy_tint(), color(desktop)),
+                        format!("desktop #{desktop:06x}"),
                     ));
                 }
             }

@@ -54,9 +54,13 @@ pub(super) fn catalog() -> Vec<(String, Appearance)> {
 pub(super) fn plates(theme: &Theme, washes: bool) -> Vec<Hsla> {
     let bezel = palette(theme);
     let mut bare = vec![Hsla::from(rgb(theme.surface))];
-    if bezel.appearance == bezel_theme::Appearance::Dark {
-        for desktop in [white(), black()] {
-            bare.push(bezel_theme::flatten(bezel.vibrancy_tint(), desktop));
+    // Light frosts too (#746 glass plan), over every checked desktop.
+    if bezel.vibrancy {
+        for desktop in crate::tmux_snapshot::design::DESKTOPS {
+            bare.push(bezel_theme::flatten(
+                bezel.vibrancy_tint(),
+                rgb(desktop).into(),
+            ));
         }
     }
     let mut plates: Vec<Hsla> = bare

@@ -49,8 +49,13 @@ fn least_alpha(theme: &Theme, surfaces: &[u32], target: f32) -> Option<f32> {
 
 /// Every surface chrome text is drawn on.
 pub(crate) fn surfaces(theme: &Theme) -> Vec<u32> {
+    surfaces_at(theme, super::design::frost(theme))
+}
+
+/// [`surfaces`] at a given frost (`None`: opaque).
+fn surfaces_at(theme: &Theme, frost: Option<f32>) -> Vec<u32> {
     let (focused, rest) = super::surfaces::card_fills(theme);
-    let mut all = super::design::sidebar_plates(theme);
+    let mut all = super::design::row_plates_at(theme, frost);
     all.extend([pack(focused), pack(rest)]);
     all
 }
@@ -60,14 +65,22 @@ pub(crate) fn surfaces(theme: &Theme) -> Vec<u32> {
 /// closer, at most 1; label is half way. When text can't stand 0.25 above
 /// muted, label folds into text (two tiers).
 pub(crate) fn tiers(theme: &Theme) -> Tiers {
+    tiers_at(theme, super::design::frost(theme))
+}
+
+/// [`tiers`] at a given frost (`None`: opaque), which the frost's search
+/// asks about each alpha it tries.
+pub(crate) fn tiers_at(theme: &Theme, frost: Option<f32>) -> Tiers {
     // The sidebar asks for every row, every frame: a few themes are cached.
     thread_local! {
-        static CACHE: std::cell::RefCell<Vec<(Theme, Tiers)>> = Default::default();
+        static CACHE: std::cell::RefCell<Vec<((Theme, Option<u32>), Tiers)>> =
+            Default::default();
     }
-    if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(t, _)| t == theme).map(|(_, t)| *t)) {
+    let key = (theme.clone(), frost.map(f32::to_bits));
+    if let Some(t) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, t)| *t)) {
         return t;
     }
-    let all = surfaces(theme);
+    let all = surfaces_at(theme, frost);
     let tiers = match least_alpha(theme, &all, TARGET) {
         None => {
             // The theme's own ink can't reach it: one tier, the ink moved
@@ -99,10 +112,10 @@ pub(crate) fn tiers(theme: &Theme) -> Tiers {
     };
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() >= 8 {
+        if c.len() >= 64 {
             c.remove(0);
         }
-        c.push((theme.clone(), tiers));
+        c.push((key, tiers));
     });
     tiers
 }
