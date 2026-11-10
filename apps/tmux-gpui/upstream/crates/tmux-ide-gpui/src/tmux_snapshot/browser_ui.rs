@@ -123,11 +123,6 @@ impl SnapshotView {
         if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
             return;
         }
-        // A reader pane (#756) takes its keys; nothing typed reaches `tmux-ide show`.
-        if self.reader_owns_input() {
-            self.reader_key(event, window, cx);
-            return;
-        }
         // Let application navigation consume its keys before terminal input forwarding.
         if super::picker::commands::shortcut(&event.keystroke)
             || super::session_history::shortcut(&event.keystroke)
@@ -135,6 +130,11 @@ impl SnapshotView {
             || sidebar::focus_shortcut(&event.keystroke)
             || super::pane_shortcuts::shortcut(&event.keystroke).is_some()
         {
+            return;
+        }
+        // A reader pane (#756) takes every other key; nothing typed reaches `tmux-ide show`.
+        if self.reader_owns_input() {
+            self.reader_key(event, window, cx);
             return;
         }
         self.cancel_tab_focus_restore();

@@ -220,3 +220,77 @@ fn the_reader_takes_each_key_itself_and_refuses_text(cx: &mut TestAppContext) {
         });
     }
 }
+
+/// What one keystroke did: picker open, sidebar hidden, terminal focused,
+/// commands that are not pane input, and the pane input sent.
+type Effect = (bool, bool, bool, usize, Vec<String>);
+
+fn effect(cx: &mut TestAppContext, reader: bool, keys: &str) -> (Effect, Effect) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::tmux_snapshot::fit_test_support::fixture_view(
+            window,
+            cx,
+            sender,
+            7,
+            browser::State {
+                surface: browser::Surface::Workspace,
+                ..Default::default()
+            },
+        )
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            setup(view, window, cx, Status::Ready);
+            if !reader {
+                view.browser_state.readers.clear();
+            }
+        })
+    });
+    receiver.try_iter().for_each(drop);
+    let state = |cx: &mut VisualTestContext, receiver: &mpsc::Receiver<browser::Command>| {
+        let (mut other, mut input) = (0, Vec::new());
+        for command in receiver.try_iter() {
+            match command {
+                browser::Command::Input { input: i, .. } if !matches!(i, Input::Resize { .. }) => {
+                    input.push(format!("{i:?}"))
+                }
+                _ => other += 1,
+            }
+        }
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                (
+                    v.picker.is_some(),
+                    v.sidebar_hidden,
+                    v.terminal_focus.is_focused(window),
+                    other,
+                    input,
+                )
+            })
+        })
+    };
+    let before = state(cx, &receiver);
+    cx.simulate_keystrokes(keys);
+    (before, state(cx, &receiver))
+}
+
+/// #756 review round 2, item 1: the app's own shortcuts (F-keys, Ctrl-G) act
+/// from a reader pane exactly as from a terminal pane, and the reader's
+/// process still gets nothing.
+#[gpui::test]
+fn app_shortcuts_work_from_a_reader_pane(cx: &mut TestAppContext) {
+    for keys in [
+        "f1", "f2", "f5", "f6", "f7", "f8", "f9", "f10", "ctrl-g", "cmd-k",
+    ] {
+        let control = effect(cx, false, keys);
+        let reader = effect(cx, true, keys);
+        assert!(reader.1.4.is_empty(), "{keys}: {:?}", reader.1.4);
+        assert_eq!(reader, control, "{keys}");
+    }
+    // The comparison means something: these keys visibly act without a reader.
+    for keys in ["f1", "f5", "f6", "f7", "f10", "ctrl-g"] {
+        let (before, after) = effect(cx, true, keys);
+        assert_ne!(before, after, "{keys} did nothing from a reader pane");
+    }
+}

@@ -45,9 +45,10 @@ While the reader is shown, its pane takes these keys:
 | Esc                        | Close find, or clear a selection |
 | ⌘C                         | Copy the selected text           |
 
-Every other key, paste included, is ignored while the reader is shown, so
-nothing you type reaches the `tmux-ide show` process in the pane underneath.
-App shortcuts that use ⌘ keep working.
+The app's own shortcuts keep working from a reader pane: the ⌘ shortcuts, the
+function keys (F1 Home, F5 commands, F6 sessions, F10 sidebar and the rest) and
+Ctrl-G. Every other key, paste included, is ignored while the reader is shown,
+so nothing you type reaches the `tmux-ide show` process in the pane underneath.
 
 ## Find
 
