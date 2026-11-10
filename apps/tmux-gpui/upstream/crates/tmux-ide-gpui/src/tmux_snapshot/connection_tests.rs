@@ -493,3 +493,116 @@ fn the_slot_says_so_at_once_and_home_shows_the_card(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("home-act-copy").is_some());
     assert!(cx.debug_bounds("home-status-warning").is_none());
 }
+
+/// #357 review, item 2: the wait starts when the window does. A worker that
+/// never publishes still brings the spinner at 1 s and the words at 8 s.
+#[gpui::test]
+fn a_worker_that_never_publishes_still_reaches_the_spinner_and_words(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let state = browser::State {
+        surface: browser::Surface::Home,
+        request: 7,
+        ..crate::tmux_snapshot::home::initial_state()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, at) = clock();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.connection.clock = clock;
+            // What window creation does; no publication follows.
+            view.observe_connection(cx);
+        })
+    });
+    for (ms, stage) in [
+        (500, Stage::Quiet),
+        (2_000, Stage::Spinner),
+        (8_000, Stage::Words),
+    ] {
+        at.set(S(ms));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.connection_stage(), stage, "{ms} ms")
+        });
+    }
+}
+
+/// #357 review, item 3: "Connecting…" until a connection has existed, then
+/// "Reconnecting…".
+#[gpui::test]
+fn first_connection_says_connecting_and_later_drops_say_reconnecting(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let state = browser::State {
+        surface: browser::Surface::Home,
+        request: 7,
+        ..crate::tmux_snapshot::home::initial_state()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, at) = clock();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.connection.clock = clock;
+            view.observe_connection(cx);
+        })
+    });
+    at.set(S(9_000));
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.connection_words(), CONNECTING)
+    });
+    // Connected: Home is live. Then a refresh reloads, and later a drop.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.home_phase = browser::HomePhase::Live;
+            view.observe_connection(cx);
+            view.browser_state.home_phase = browser::HomePhase::Loading;
+            view.observe_connection(cx);
+        })
+    });
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.connection_words(), RECONNECTING)
+    });
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.home_phase = browser::HomePhase::Live;
+            view.browser_state.reconnect_attempt = Some(1);
+            view.observe_connection(cx);
+        })
+    });
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.connection_words(), RECONNECTING)
+    });
+}
+
+/// #357 review, item 4: a selected captured frame says why keys do nothing,
+/// beside the tabs as before, also during a reconnect.
+#[gpui::test]
+fn the_selection_hint_stays_during_a_reconnect(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let mut state = session_drop();
+    state.reconnect_attempt = Some(1);
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    view.read_with(cx, |view, _| assert_eq!(view.status_line(), ""));
+    view.update(cx, |view, _| {
+        let frame = view.browser_state.frame.clone().unwrap();
+        let (width, height) = (frame.view().width(), frame.view().height());
+        let mut at = view.browser_state.clone();
+        at.reconnect_attempt = None;
+        at.selected_pane = Some("pane".into());
+        at.copy_region = Some(crate::tmux_snapshot::copy::Region {
+            id: "pane".into(),
+            left: 0,
+            top: 0,
+            width,
+            height,
+            wrapped: vec![false; usize::from(height)],
+        });
+        view.selection = crate::tmux_snapshot::selection::Capture::begin(&at, 0., 0.);
+        assert!(view.selection.is_some());
+    });
+    view.read_with(cx, |view, _| {
+        let line = view.status_line();
+        assert_eq!(line, crate::tmux_snapshot::status_presentation::SELECTING);
+        assert!(crate::tmux_snapshot::status_presentation::visible(
+            &line, false, true
+        ));
+    });
+}

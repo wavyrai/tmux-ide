@@ -291,6 +291,18 @@ impl Local {
         self.begin_home(request, false)
     }
     fn begin_home(&mut self, request: u64, profile_verified: bool) -> Result<(), Error> {
+        self.restart_discovery(profile_verified)?;
+        self.state = State {
+            request,
+            home_phase: HomePhase::Loading,
+            status: "Loading sessions".into(),
+            ..State::default()
+        };
+        self.publish()
+    }
+    /// A fresh discovery from the daemon record on. What the window shows is the
+    /// caller's: Home resets it, a reconnect keeps it.
+    fn restart_discovery(&mut self, profile_verified: bool) -> Result<(), Error> {
         self.cancel()?;
         self.sources.reset_catalog()?;
         // Explicit refresh may discover a replacement owner; an existing request
@@ -301,19 +313,13 @@ impl Local {
         self.catalog_identity = None;
         self.home = Default::default();
         self.preferences.refresh();
-        self.state = State {
-            request,
-            home_phase: HomePhase::Loading,
-            status: "Loading sessions".into(),
-            ..State::default()
-        };
         self.stage = Some(if self.selected_profile.is_some() && !profile_verified {
             self.registry.begin();
             Stage::VerifyProfile
         } else {
             Stage::Servers
         });
-        self.publish()
+        Ok(())
     }
     fn open(&mut self, request: u64, key: String, preferred: Option<String>) -> Result<(), Error> {
         if !self.background_fleet.allows_current() {

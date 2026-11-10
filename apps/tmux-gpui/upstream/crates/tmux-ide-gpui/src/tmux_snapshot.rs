@@ -42,6 +42,7 @@ mod kbd;
 mod keys;
 mod kitty_graphics;
 mod menu_bar;
+mod motion;
 mod native_quit;
 mod navigation;
 mod new_session;
@@ -412,6 +413,9 @@ fn show_owned(
                     view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
+                    // The first wait starts with the window, not with the
+                    // worker's first publication (#357 review, item 2).
+                    view.observe_connection(cx);
                     view
                 });
                 agent_spinner::window_root(snapshot, window, cx)

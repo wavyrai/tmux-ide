@@ -147,6 +147,10 @@ impl Gate {
         let _ = (record, value, selected);
         Ok(())
     }
+    #[cfg(test)]
+    pub(super) fn refresh_requested(&self) -> bool {
+        self.refresh_requested
+    }
     pub(super) fn refresh(&mut self) {
         // Wait for the Home operation's fresh local registry read before retrying
         // failed routes; never reconnect from an old saved-profile publication.

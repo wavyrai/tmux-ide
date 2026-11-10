@@ -21,6 +21,8 @@ pub(in crate::tmux_snapshot) struct Controls {
     pub(in crate::tmux_snapshot) table_cursor: Option<fleet_nav::RowKey>,
     /// The needs-input pill is on: the table shows waiting sessions only.
     pub(in crate::tmux_snapshot) waiting_only: bool,
+    /// What is entering on Home this visit (#761).
+    pub(in crate::tmux_snapshot) motion: crate::tmux_snapshot::motion::HomeMotion,
 }
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn prepare_home_filter(&mut self, cx: &mut Context<Self>) {
@@ -37,6 +39,7 @@ impl SnapshotView {
                 fleet_table: cx.focus_handle(),
                 table_cursor: None,
                 waiting_only: false,
+                motion: Default::default(),
             });
         }
     }
