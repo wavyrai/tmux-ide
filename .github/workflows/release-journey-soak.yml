@@ -10,26 +10,30 @@ on:
     inputs:
       runs:
         description: Journey runs per configuration
-        default: "5"
+        default: "10"
   pull_request:
     paths:
       - .github/workflows/release-journey-soak.yml
+      - scripts/pack-check-run.mjs
 
 permissions:
   contents: read
 
 jobs:
   soak:
-    name: Journey soak (Node ${{ matrix.node }}, ${{ matrix.native }})
+    name: Journey soak (Node ${{ matrix.node }}, ${{ matrix.native }}, load ${{ matrix.load }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
         native: [bundled, system-fallback]
+        # A busy runner, as a publish or a loaded CI host can be: two CPU
+        # hogs beside the journey, to make a timing race likelier.
+        load: [none, cpu]
     env:
-      RUNS: ${{ inputs.runs || '5' }}
+      RUNS: ${{ inputs.runs || '10' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -58,9 +62,15 @@ jobs:
           node scripts/build-bundled-tmux.mjs --source "$RUNNER_TEMP/tmux-source" --jobs 2
           echo "$GITHUB_WORKSPACE/packages/daemon/dist/native/tmux/linux-x64" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
+      - name: Start background CPU load
+        if: matrix.load == 'cpu'
+        run: |
+          for i in 1 2; do (while :; do :; done) & done
+          echo "load started"
       - name: Run the installed-package journey ${{ env.RUNS }} times
         env:
           TMUX_IDE_PACK_NATIVE_MODE: ${{ matrix.native }}
+          TMUX_IDE_PACK_RUNTIME_TRACE: "1"
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/soak"
@@ -85,11 +95,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-journey-soak-node${{ matrix.node }}-${{ matrix.native }}
+          name: release-journey-soak-node${{ matrix.node }}-${{ matrix.native }}-${{ matrix.load }}
           path: |
             ${{ runner.temp }}/soak/*.txt
             ${{ runner.temp }}/soak/*.log
             ${{ runner.temp }}/soak/run-*/linked-refusal-frame.txt
+            ${{ runner.temp }}/soak/run-*/recreated-agent-*
             ${{ runner.temp }}/soak/run-*/*.performance.jsonl
             ${{ runner.temp }}/soak/run-*/proof.json
           retention-days: 14

@@ -814,6 +814,48 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       return [];
     }
   };
+  // Card #764: what tmux, the daemon and a second click say after the
+  // recreated agent's click did not navigate. Diagnostics only: the journey
+  // still fails, so a repaired retry never hides the bug.
+  const recreatedAgentClickReport = async (before, after, nativePane, semanticPane) => {
+    const panes = tmuxResult([
+      "list-panes",
+      "-s",
+      "-t",
+      "=journey-beta",
+      "-F",
+      "#{pane_id} window=#{window_id} window_active=#{window_active} pane_active=#{pane_active} semantic=#{@tmux_ide_pane_id} command=#{pane_current_command}",
+    ]).stdout.trim();
+    const shell = await daemonApplicationShell("journey-beta");
+    const resource = shell?.resource;
+    const daemonView = JSON.stringify({
+      selectedPane: resource?.workspace?.selectedPaneId ?? resource?.workspace?.activePaneId ?? null,
+      agents: (resource?.workspace?.sidebar?.agents ?? []).map(({ id, paneId, status }) => ({
+        id,
+        paneId,
+        status,
+      })),
+      inventory: (resource?.terminalInventory?.resources ?? []).map(({ id, kind }) => `${kind}:${id}`),
+    });
+    clickText(one, agentClickLabel);
+    await cancellation.pause(3_000);
+    const retried = activePane("journey-beta") === nativePane;
+    if (evidenceDir) {
+      mkdirSync(evidenceDir, { recursive: true });
+      const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
+      if (existsSync(trace))
+        writeFileSync(join(evidenceDir, "recreated-agent-daemon.performance.jsonl"), readFileSync(trace));
+      writeFileSync(join(evidenceDir, "recreated-agent-frame-before-click.txt"), before);
+      writeFileSync(join(evidenceDir, "recreated-agent-frame-after-click.txt"), after);
+    }
+    return [
+      `recreated agent: native ${nativePane} semantic ${semanticPane}`,
+      `tmux panes:\n${panes}`,
+      `daemon: ${daemonView}`,
+      `frame 300 ms after the click:\n${after}`,
+      `a second click navigated: ${retried}`,
+    ].join("\n");
+  };
   const daemonApplicationShell = async (sessionName) => {
     const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
     if (!existsSync(infoPath)) return null;
@@ -1572,13 +1614,28 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     );
   }
   const agentClickedAt = new Date().toISOString();
+  const clickFrame = capture(one.targetPane);
   clickText(one, agentClickLabel);
-  await observe(
-    "recreated sidebar agent exact-pane navigation",
-    10_000,
-    () => activePane("journey-beta") === recreatedAgentPane,
-    () => `clicked ${agentClickLabel} at ${agentClickedAt}\n${one.diagnostics()}`,
-  );
+  // Card #764: what the app showed around the click, for a timeout's report.
+  await cancellation.pause(300);
+  const frameAfterClick = capture(one.targetPane);
+  try {
+    await observe(
+      "recreated sidebar agent exact-pane navigation",
+      10_000,
+      () => activePane("journey-beta") === recreatedAgentPane,
+      () => `clicked ${agentClickLabel} at ${agentClickedAt}\n${one.diagnostics()}`,
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${await recreatedAgentClickReport(
+        clickFrame,
+        frameAfterClick,
+        recreatedAgentPane,
+        recreatedSemanticAgentPane,
+      )}`,
+    );
+  }
   let topologyInputWindow = null;
   if (topologyInputReproEnabled) {
     const topologyStatus = () =>
