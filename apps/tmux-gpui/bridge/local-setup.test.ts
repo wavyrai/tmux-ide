@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, symlink, rm, chmod, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
+import { readFileSync } from "node:fs";
+import {
+  resolveLocalSetup,
+  runLocalSetup,
+  setupCli,
+  SETUP_CLI_BELOW,
+  SETUP_CLI_FROM,
+  unavailablePhase,
+} from "./local-setup.ts";
 
 async function fixture(version = "2.9.7") {
   const home = await realpath(await mkdtemp(join(tmpdir(), "gpui-setup-")));
@@ -42,7 +50,15 @@ const ready = (version: string) =>
   });
 
 test("fixed managed lookup and explicit supported update use pinned paths and bounded runner", async () => {
-  for (const version of ["2.9.6", "2.9.7", "2.9.8", "2.9.9", "2.9.10", "2.9.11", "2.9.12"]) {
+  for (const version of [
+    "2.9.6",
+    "2.9.12",
+    "2.9.13",
+    "2.9.21",
+    "2.9.100",
+    "2.9.987654321",
+    "2.9.18446744073709551615",
+  ]) {
     const f = await fixture(version);
     try {
       const result = await resolveLocalSetup({ home: f.home });
@@ -75,8 +91,16 @@ test("fixed managed lookup and explicit supported update use pinned paths and bo
 test("unsupported versions never execute, including newer installs and prereleases", async () => {
   for (const version of [
     "2.9.5",
-    "2.9.13",
+    "2.8.40",
+    "2.10.0",
     "3.0.0",
+    "2.9.21.1",
+    "2.9.+21",
+    "2.9.07",
+    "02.9.6",
+    "2.9",
+    "v2.9.21",
+    "2.9.18446744073709551616",
     "2.9.8-beta.1",
     "2.9.9-beta.1",
     "2.9.10-beta.1",
@@ -273,3 +297,31 @@ for (const version of ["2.9.8", "2.9.9", "2.9.10", "2.9.11", "2.9.12"]) {
     }
   });
 }
+
+const root = new URL("../../../", import.meta.url);
+
+test("the bridge and the native app accept the same CLI versions", () => {
+  const rust = readFileSync(
+    new URL("apps/tmux-gpui/upstream/crates/herdr-client/src/tmux_daemon/local_setup.rs", root),
+    "utf8",
+  );
+  const bounds =
+    /const SETUP_CLI: std::ops::Range<\(u64, u64, u64\)> = \((\d+), (\d+), (\d+)\)\.\.\((\d+), (\d+), (\d+)\);/u.exec(
+      rust,
+    );
+  assert.ok(bounds, "SETUP_CLI not found in local_setup.rs");
+  assert.deepEqual([...SETUP_CLI_FROM], bounds.slice(1, 4).map(BigInt));
+  assert.deepEqual([...SETUP_CLI_BELOW], bounds.slice(4, 7).map(BigInt));
+});
+
+test("the CLI version this repository releases can be set up by the bridge", () => {
+  const { name, version } = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
+  assert.equal(name, "tmux-ide");
+  assert.ok(setupCli(version), `CLI ${version} is outside SETUP_CLI_FROM..SETUP_CLI_BELOW`);
+});
+
+test("a broken installation is unrecognized, not an unsupported version", () => {
+  assert.equal(unavailablePhase("missing"), "missing");
+  assert.equal(unavailablePhase("invalid"), "unrecognized");
+  assert.equal(unavailablePhase("unsupported-version"), "unsupported");
+});

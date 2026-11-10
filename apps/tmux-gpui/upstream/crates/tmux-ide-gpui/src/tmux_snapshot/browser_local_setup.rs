@@ -11,7 +11,10 @@ pub(in crate::tmux_snapshot) enum Phase {
     Available,
     Running,
     Missing,
+    /// The CLI version is outside the range this app can set up.
     Unsupported,
+    /// The managed installation's files or layout are not what setup expects.
+    Unrecognized,
     Failed,
     StoppedWaiting,
 }
@@ -24,7 +27,7 @@ impl Phase {
             Self::Available => "Set up local sessions",
             Self::Running => "Setting up…",
             Self::Failed | Self::StoppedWaiting => "Retry setup",
-            Self::Missing | Self::Unsupported => "Refresh sessions",
+            Self::Missing | Self::Unsupported | Self::Unrecognized => "Refresh sessions",
         }
     }
     pub fn guidance(self) -> &'static str {
@@ -33,7 +36,10 @@ impl Phase {
             Self::Running => "Setting up local sessions. Waiting for the local connection.",
             Self::Missing => "Install the tmux-ide CLI to set up local sessions, then refresh.",
             Self::Unsupported => {
-                "This CLI installation is not supported for automatic setup. Check for an app and CLI update, then refresh."
+                "This app can't set up this version of the tmux-ide CLI. Update the app and the CLI, then refresh."
+            }
+            Self::Unrecognized => {
+                "The tmux-ide CLI installation wasn't recognized. Reinstall the CLI, then refresh."
             }
             Self::Failed => {
                 "Local setup could not be confirmed. Retry setup, or use Copy diagnostics in the F5 menu."

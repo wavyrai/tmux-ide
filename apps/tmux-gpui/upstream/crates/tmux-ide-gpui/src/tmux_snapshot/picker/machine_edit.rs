@@ -255,7 +255,8 @@ impl SnapshotView {
             "Changing the SSH target disconnects this app's existing route. Remote sessions keep running. The saved identity pin is preserved."
         };
         super::super::design::dialog_overlay("machine-edit-overlay", &theme)
-            .child(
+            .child(bezel_motion::dialog_in(
+                "machine-edit-dialog-in",
                 bezel_ui::popover::dialog_card(&super::super::design::palette(&theme))
                     .id("machine-edit-dialog")
                     .w(px(520.))
@@ -369,7 +370,7 @@ impl SnapshotView {
                             },
                         )),
                     ),
-            )
+            ))
             .into_any_element()
     }
 }

@@ -20,7 +20,7 @@ import {
   acceptsNativeInterrupted,
 } from "./direct-terminal-ready.ts";
 import { encodeBinaryFrame } from "./binary-framing.ts";
-import { resolveLocalSetup, runLocalSetup } from "./local-setup.ts";
+import { resolveLocalSetup, runLocalSetup, unavailablePhase } from "./local-setup.ts";
 import { createTerminalRecovery } from "./terminal-recovery.ts";
 import { createSessionTabs, sessionTabCommandSchema } from "./session-tabs.ts";
 import {
@@ -503,6 +503,7 @@ type LocalSetupPhase =
   | "running"
   | "missing"
   | "unsupported"
+  | "unrecognized"
   | "failed"
   | "stopped-waiting";
 let localSetup: { phase: LocalSetupPhase } | null = null;
@@ -665,12 +666,7 @@ async function offerLocalSetup(token: number) {
   )
     return;
   localSetup = {
-    phase:
-      resolution.kind === "available"
-        ? "available"
-        : resolution.kind === "missing"
-          ? "missing"
-          : "unsupported",
+    phase: resolution.kind === "available" ? "available" : unavailablePhase(resolution.kind),
   };
   publish();
 }
@@ -699,7 +695,7 @@ function startLocalSetup() {
     const resolution = await resolveLocalSetup();
     if (!current()) return;
     if (resolution.kind !== "available") {
-      localSetup = { phase: resolution.kind === "missing" ? "missing" : "unsupported" };
+      localSetup = { phase: unavailablePhase(resolution.kind) };
       return;
     }
     const result = await runLocalSetup(resolution.installation, { signal: controller.signal });

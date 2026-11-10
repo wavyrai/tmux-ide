@@ -129,7 +129,10 @@ fn status_tone(state: &browser::State, connected: bool) -> StatusTone {
     match state.local_setup.as_ref().filter(|_| connected) {
         Some(setup) if setup.phase == browser::local_setup::Phase::Failed => StatusTone::Error,
         Some(_) => StatusTone::Normal,
-        None if state.home_phase == browser::HomePhase::Unavailable || state.home_fault => {
+        None if state.home_phase == browser::HomePhase::Unavailable
+            || state.home_fault
+            || state.home_notice.is_some() =>
+        {
             StatusTone::Warning
         }
         None => StatusTone::Normal,
@@ -152,7 +155,13 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     if connected && let Some(setup) = &state.local_setup {
         return setup.phase.guidance().into();
     }
-    crate::notifications::safe_text(&state.status, 240)
+    // Reconnecting and fault status outrank a pane-limit notice.
+    match &state.home_notice {
+        Some(notice) if state.reconnect_attempt.is_none() && !state.home_fault => {
+            crate::notifications::safe_text(notice, 480)
+        }
+        _ => crate::notifications::safe_text(&state.status, 240),
+    }
 }
 fn current(state: &browser::State, connected: bool, request: u64, captured: u64, id: &str) -> bool {
     state.surface == browser::Surface::Home
@@ -228,6 +237,14 @@ impl SnapshotView {
     ) -> AnyElement {
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
+        let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
+        if let Some(controls) = self.home_filter.as_mut() {
+            let machines = super::motion::home_machines(&self.browser_state);
+            controls.motion.observe(&machines, now);
+            if controls.motion.settle(now, reduced) {
+                window.request_animation_frame();
+            }
+        }
         if self.browser_state.appearance.is_none()
             && self.home_action_current(self.browser_request)
             && self.home_action_index(window) == Some(1)
@@ -417,6 +434,7 @@ impl SnapshotView {
             || (!is_live && !self.browser_state.status.is_empty())
             || reconnect
             || (is_live && self.browser_state.home_fault)
+            || (is_live && self.browser_state.home_notice.is_some())
         {
             let status = status_message(&self.browser_state, connected);
             let line = match status_tone(&self.browser_state, connected) {
@@ -435,19 +453,17 @@ impl SnapshotView {
             let line = line
                 .w_full()
                 .children(design::ink_probe(|| "home-status".into()));
-            body = if reconnect {
-                let retry = self.reconnect_retry(cx);
-                body.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .child(line)
-                        .children(retry),
-                )
-            } else {
-                body.child(line)
-            };
+            let retry = reconnect.then(|| self.reconnect_retry(cx)).flatten();
+            // The slot fades in over FADE_QUICK and leaves at once (#761).
+            body = body.child(bezel_motion::fade_quick(
+                "home-status-in",
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(line)
+                    .children(retry),
+            ));
         }
         if self.home_diagnostics_available() {
             body = body.child(
@@ -508,8 +524,8 @@ impl SnapshotView {
                 .map(|(index, session)| {
                     let id = session.id.clone();
                     let (hover, muted) = (bezel.element_hover, bezel.text_muted);
-                    bezel
-                        .card_row(index == 0)
+                    let entered = self.home_entered(&session.id, now, reduced);
+                    super::motion::enter(bezel.card_row(index == 0), entered)
                         .id(("tmux-home-session", index))
                         .debug_selector(move || format!("tmux-home-session-{index}"))
                         .py(px(6.))

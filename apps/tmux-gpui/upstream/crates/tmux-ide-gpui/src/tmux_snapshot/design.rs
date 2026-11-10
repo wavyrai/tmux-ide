@@ -39,7 +39,8 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     // The frost is the theme's own surface at Bezel's coverage; text drawn on
     // it is inked by the tiers (`ink::tiers`).
     result.vibrancy_tone = color(theme.surface);
-    result.vibrancy_alpha = frost(theme).unwrap_or(bezel_theme::Theme::VIBRANCY_ALPHA);
+    let frost = frost(theme);
+    result.vibrancy_alpha = frost.unwrap_or(bezel_theme::Theme::VIBRANCY_ALPHA);
     result.cursor = color(theme.cursor);
     result.caret = color(theme.cursor);
     result.selection = color(theme.active);
@@ -65,7 +66,7 @@ pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
     }
     // A theme whose inks can't read over the frost at any density runs
     // opaque (#746 glass plan, G3).
-    if high || frost(theme).is_none() {
+    if high || frost.is_none() {
         result.glass = false;
         result.vibrancy = false;
     }
@@ -104,11 +105,16 @@ fn row_inked(theme: &Theme, color: u32, target: f32) -> u32 {
     inked
 }
 
-/// The desktops the frost is checked over (#746 glass plan): white, black,
-/// a dark blue-grey wallpaper, and macOS's vivid accent colours.
-pub(crate) const DESKTOPS: [u32; 9] = [
-    0xffffff, 0x000000, 0x1c2333, 0x0a84ff, 0xff3b30, 0x34c759, 0xaf52de, 0xff9f0a, 0xffd60a,
-];
+/// The desktops the frost is checked over: white and black. No other
+/// desktop can be worse. Each channel of the frosted plate (the surface at
+/// alpha over the desktop) lies between its value over black and over white,
+/// so its luminance does too, and so do a hover wash's over it. An ink that
+/// reads at 4.6:1 on both ends cannot fall below it in between: the ink would
+/// have to sit between the two plates and 4.6:1 from each, which needs the
+/// plates 4.6² ≈ 21.2:1 apart, more than black and white allow (21:1). The
+/// glass plan's vivid desktops (#0a84ff, #ff3b30, #34c759, #af52de, #ff9f0a,
+/// #ffd60a, #1c2333) are kept in a test that checks exactly this.
+pub(crate) const DESKTOPS: [u32; 2] = [0xffffff, 0x000000];
 /// The lightest frost the search starts from, and the densest it allows.
 const FROST_FROM: u32 = 60;
 const FROST_TO: u32 = 94;
@@ -121,10 +127,11 @@ const FROST_TO: u32 = 94;
 /// over the worst desktop, `None`: that theme runs opaque, glass off.
 pub(crate) fn frost(theme: &Theme) -> Option<f32> {
     thread_local! {
-        static CACHE: std::cell::RefCell<Vec<(Theme, Option<f32>)>> = Default::default();
+        static CACHE: std::cell::RefCell<Vec<(super::ink::ChromeKey, Option<f32>)>> =
+            Default::default();
     }
-    if let Some(found) =
-        CACHE.with(|c| c.borrow().iter().find(|(t, _)| t == theme).map(|(_, f)| *f))
+    let key = super::ink::ChromeKey::of(theme);
+    if let Some(found) = CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, f)| *f))
     {
         return found;
     }
@@ -139,7 +146,7 @@ pub(crate) fn frost(theme: &Theme) -> Option<f32> {
         if c.len() >= 8 {
             c.remove(0);
         }
-        c.push((theme.clone(), found));
+        c.push((key, found));
     });
     found
 }

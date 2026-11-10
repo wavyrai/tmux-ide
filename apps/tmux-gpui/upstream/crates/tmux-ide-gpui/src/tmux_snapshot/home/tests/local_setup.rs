@@ -59,6 +59,7 @@ fn recovery_publication_prefers_supported_setup_guidance_without_rewriting_diagn
         ("stopped-waiting", Phase::StoppedWaiting),
         ("missing", Phase::Missing),
         ("unsupported", Phase::Unsupported),
+        ("unrecognized", Phase::Unrecognized),
     ] {
         let state = browser::State {
             status: raw.into(),
