@@ -421,10 +421,10 @@ impl SnapshotView {
         // or error strip for a fault (home_fault); then guidance and the
         // new-session form. A live Home shows a status line only while it
         // reconnects or has stopped.
-        let reconnect = is_live && self.browser_state.reconnect_attempt.is_some();
+        // A reconnect or the first load is the footer slot's (r1, r5): no line here.
+        let waiting = super::connection::waiting(&self.browser_state, connected).is_some();
         if (connected && setup_phase.is_some())
-            || (!is_live && !self.browser_state.status.is_empty())
-            || reconnect
+            || (!is_live && !waiting && !self.browser_state.status.is_empty())
             || (is_live && self.browser_state.home_fault)
             || (is_live && self.browser_state.home_notice.is_some())
         {
@@ -445,19 +445,7 @@ impl SnapshotView {
             let line = line
                 .w_full()
                 .children(design::ink_probe(|| "home-status".into()));
-            body = if reconnect {
-                let retry = self.reconnect_retry(cx);
-                body.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .child(line)
-                        .children(retry),
-                )
-            } else {
-                body.child(line)
-            };
+            body = body.child(line);
         }
         if self.home_diagnostics_available() {
             body = body.child(
@@ -560,7 +548,7 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if !connected || setup_phase.is_none() {
+        } else if (!connected || setup_phase.is_none()) && !waiting {
             let guidance = if !connected {
                 bezel
                     .error_strip("Connection lost. Reopen tmux-ide to reconnect.")
@@ -574,18 +562,11 @@ impl SnapshotView {
                     .debug_selector(|| "home-guidance-warning".into())
                     .children(design::ink_probe(|| "home-guidance-warning".into()))
             } else {
-                let (title, hint) = if self.browser_state.home_phase == browser::HomePhase::Loading
-                {
-                    (
-                        "Loading sessions…",
-                        "Waiting for the daemon’s session catalog.",
-                    )
-                } else {
-                    (
-                        "No live sessions",
-                        "Start a new local session, or select a fleet server to create a session there.",
-                    )
-                };
+                // Loading is the footer slot's (r5): this is only ever an empty list.
+                let (title, hint) = (
+                    "No live sessions",
+                    "Start a new local session, or select a fleet server to create a session there.",
+                );
                 bezel
                     .empty_state(
                         bezel_ui::icons::Icon::asset("icons/terminal.svg"),

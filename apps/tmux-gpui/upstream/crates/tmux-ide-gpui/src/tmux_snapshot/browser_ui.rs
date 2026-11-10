@@ -845,8 +845,7 @@ impl SnapshotView {
                     .children(super::design::ink_probe(|| "status-text".into()))
                     .child(div().w_full().child(status)),
                 Axis::Vertical,
-            ))
-            .children(self.reconnect_retry(cx));
+            ));
         // Cards own their terminal background; the surrounding canvas exposes gutters.
         let content_background = self.canvas();
         let mut context = Some(context);
@@ -923,6 +922,7 @@ impl SnapshotView {
             .on_key_down(cx.listener(Self::picker_key))
             .map(|body| self.menu_actions(body, cx))
             .child(main)
+            .children(self.floating_connection_slot(show_sidebar, cx))
             .children(
                 self.picker_popover(window, cx)
                     .map(|popover| deferred(popover).with_priority(2)),

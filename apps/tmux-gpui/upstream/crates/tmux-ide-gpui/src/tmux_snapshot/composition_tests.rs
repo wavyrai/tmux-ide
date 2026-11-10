@@ -66,6 +66,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             selection: None,
             divider: None,
             wheel: crate::terminal::WheelRemainder::default(),
+            connection: Default::default(),
             browser_request: 7,
             browser_state: browser::State {
                 input_ready: true,

@@ -5,7 +5,7 @@ pub(super) fn visible(status: &str, developer_mode: bool, input_ready: bool) -> 
         || !input_ready
         || !matches!(
             status,
-            "Connected" | "Keyboard ready" | "Keyboard ready — click terminal to type"
+            "" | "Connected" | "Keyboard ready" | "Keyboard ready — click terminal to type"
         )
 }
 
@@ -14,6 +14,10 @@ impl super::SnapshotView {
     /// during a reconnect says so at once (card #702: refuse with a notice).
     pub(super) fn status_line(&self) -> String {
         let state = &self.browser_state;
+        // A reconnect is the footer slot's; a refused key is its pane's toast.
+        if state.reconnect_attempt.is_some() && !self.developer_mode.enabled {
+            return String::new();
+        }
         if state.retained_preview {
             if state.reconnect_attempt.is_some() && self.input_interrupted {
                 format!("{INPUT_REFUSED} — {}", state.status)

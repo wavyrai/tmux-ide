@@ -256,6 +256,7 @@ fn capture_view(
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
+        connection: Default::default(),
         browser_request: 7,
         browser_state: state,
         browser_commands: Some(sender),

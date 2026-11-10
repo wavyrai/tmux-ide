@@ -127,6 +127,7 @@ fn browser_fixture(
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
+        connection: Default::default(),
         browser_request: 7,
         browser_state: browser::State {
             surface: browser::Surface::Workspace,

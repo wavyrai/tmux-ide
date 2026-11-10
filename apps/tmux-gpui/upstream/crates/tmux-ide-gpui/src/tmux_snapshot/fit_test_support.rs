@@ -153,6 +153,7 @@ pub(super) fn fixture_view(
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
+        connection: Default::default(),
         browser_request,
         browser_state: state,
         browser_commands: Some(sender),

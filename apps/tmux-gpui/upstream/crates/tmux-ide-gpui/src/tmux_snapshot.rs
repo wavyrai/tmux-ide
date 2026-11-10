@@ -22,6 +22,7 @@ mod browser_toolbar;
 mod browser_ui;
 mod chrome;
 mod composition;
+mod connection;
 mod controls;
 mod copy;
 mod decode;
@@ -403,6 +404,7 @@ fn show_owned(
                         selection: None,
                         divider: None,
                         wheel: crate::terminal::WheelRemainder::default(),
+                        connection: Default::default(),
                         browser_request: 0,
                         browser_state: home::initial_state(),
                         browser_commands: browser.map(|b| b.commands),
@@ -486,6 +488,7 @@ struct SnapshotView {
     selection: Option<selection::Capture>,
     divider: Option<divider::Drag>,
     wheel: crate::terminal::WheelRemainder,
+    connection: connection::Watch,
     input_geometry: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
     browser_request: u64,
     browser_state: browser::State,
@@ -918,6 +921,7 @@ impl SnapshotView {
             .children(self.pane_header_labels(width, cx))
             .children(self.divider_handles(width))
             .children(self.lower_pane_header_controls(width, cx))
+            .children(self.not_sent_toast(width, cx))
             .into_any_element()
     }
 }

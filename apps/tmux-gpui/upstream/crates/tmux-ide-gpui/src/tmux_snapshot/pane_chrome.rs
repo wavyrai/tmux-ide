@@ -147,7 +147,7 @@ fn headers(state: &State) -> Vec<Header> {
         })
         .collect()
 }
-fn label(state: &State, id: &str) -> String {
+pub(super) fn label(state: &State, id: &str) -> String {
     state
         .panes
         .iter()
@@ -610,7 +610,11 @@ impl SnapshotView {
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
         let ink = header_ink(&theme);
-        let tint = if selected { ink.text } else { ink.muted };
+        let tint = if selected && !self.connection_mutes_titles() {
+            ink.text
+        } else {
+            ink.muted
+        };
         let size = (self.terminal_height() - 2.).min(bezel_theme::TextStyle::Callout.size());
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
         // with native elements. Never insert title glyphs into terminal cells.
