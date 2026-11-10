@@ -641,6 +641,7 @@ impl SnapshotView {
         let show_sidebar = self.sidebar_shown(window);
         // One material backs the header, sidebar and the gutter around opaque content.
         super::design::prepare(&theme, self.chrome.refresh(), cx);
+        self.chrome.sync_motion(cx);
         self.chrome.sync(window, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
         let mut sidebar = div()
