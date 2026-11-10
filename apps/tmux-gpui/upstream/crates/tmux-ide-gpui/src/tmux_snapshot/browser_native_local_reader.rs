@@ -62,7 +62,8 @@ struct PaneFetch {
     fresh: bool,
     /// Decoded pixels of each cached picture, against the document's budget.
     pixels: BTreeMap<String, u64>,
-    /// Pictures being admitted on the work thread.
+    /// Pictures being admitted on the work thread. At most one at a time, so
+    /// that each store sees the budget the ones before it left.
     storing: std::collections::BTreeSet<String>,
     progress: Option<Progress>,
     asset: Option<AssetProgress>,
@@ -208,16 +209,12 @@ impl Local {
                     doc,
                     wanted,
                     ..
-                } if ticket == fetch.ticket => {
-                    fetch.rendered = Some(doc);
-                    fetch.wanted = wanted;
-                    if std::mem::take(&mut fetch.fresh) {
-                        fetch.generation += 1;
+                } => {
+                    if fetch.take_render(ticket, doc, wanted) {
+                        self.reader_refresh(&pane);
+                        changed = true;
                     }
-                    self.reader_refresh(&pane);
-                    changed = true;
                 }
-                Done::Rendered { .. } => {}
                 Done::Stored {
                     src, asset, pixels, ..
                 } => {
@@ -325,11 +322,8 @@ impl Local {
         }
         if next.is_none() {
             next = visible.iter().find_map(|pane| {
-                let fetch = &gate.panes[pane];
-                let src = fetch.wanted.iter().find(|src| {
-                    !fetch.assets.contains_key(*src) && !fetch.storing.contains(*src)
-                })?;
-                Some((pane.clone(), Job::Asset(src.clone()), None, None))
+                let src = gate.panes[pane].next_asset()?;
+                Some((pane.clone(), Job::Asset(src.to_owned()), None, None))
             });
         }
         let Some((pane, job, have, page)) = next else {
@@ -503,14 +497,24 @@ impl Local {
                             fetch.storing.insert(src.clone());
                             let job = Work::Store {
                                 pane: pane.to_owned(),
-                                src,
+                                src: src.clone(),
                                 mime,
                                 bytes: p.bytes,
                                 cache: cache.path().to_owned(),
-                                budget: PIXEL_BUDGET.saturating_sub(fetch.pixels.values().sum()),
+                                budget: fetch.budget_left(),
                             };
-                            self.reader_work(job);
-                            return false;
+                            if self.reader_work(job) {
+                                return false;
+                            }
+                            // No work thread: the picture fails rather than
+                            // waiting in `storing` for ever.
+                            let Some(fetch) = self.browser_controls.reader.panes.get_mut(pane)
+                            else {
+                                return false;
+                            };
+                            fetch.storing.remove(&src);
+                            fetch.assets.insert(src, Asset::Failed);
+                            return true;
                         }
                         None => Some(Asset::Failed),
                     },
@@ -534,6 +538,41 @@ impl Local {
             return false;
         };
         fetch.assets.insert(src, done);
+        true
+    }
+}
+
+impl PaneFetch {
+    /// Pixels the document may still decode: the budget less what its cached
+    /// pictures hold. Stores run one at a time, so none is unaccounted for.
+    fn budget_left(&self) -> u64 {
+        PIXEL_BUDGET.saturating_sub(self.pixels.values().sum())
+    }
+    /// The next picture to fetch: none while one is still being stored.
+    fn next_asset(&self) -> Option<&str> {
+        if !self.storing.is_empty() {
+            return None;
+        }
+        self.wanted
+            .iter()
+            .find(|src| !self.assets.contains_key(*src))
+            .map(String::as_str)
+    }
+    /// Takes a render if it is the latest asked for. True when it was.
+    fn take_render(
+        &mut self,
+        ticket: u64,
+        doc: Arc<bezel_markdown::Doc>,
+        wanted: Vec<String>,
+    ) -> bool {
+        if ticket != self.ticket {
+            return false;
+        }
+        self.rendered = Some(doc);
+        self.wanted = wanted;
+        if std::mem::take(&mut self.fresh) {
+            self.generation += 1;
+        }
         true
     }
 }

@@ -61,3 +61,43 @@ fn readers_are_served_in_turn_only_when_visible_and_in_front() {
     );
     assert!(order(false, panes.iter(), visible, None).is_empty());
 }
+
+/// Review round 2, finding 3 and B2: the budget left is the budget less the
+/// cached pictures' pixels, and no second picture is fetched while one is
+/// still being stored, so every store sees what the ones before it used.
+#[test]
+fn stores_run_one_at_a_time_against_the_budget_left() {
+    let mut fetch = PaneFetch {
+        wanted: ["a.png", "b.png", "c.png"].map(String::from).to_vec(),
+        ..Default::default()
+    };
+    assert_eq!(fetch.budget_left(), PIXEL_BUDGET);
+    assert_eq!(fetch.next_asset(), Some("a.png"));
+    fetch.storing.insert("a.png".into());
+    assert_eq!(fetch.next_asset(), None);
+    fetch.storing.clear();
+    fetch.assets.insert("a.png".into(), Asset::Failed);
+    fetch.pixels.insert("a.png".into(), 10_000_000);
+    fetch.pixels.insert("x.png".into(), 6_000_000);
+    assert_eq!(fetch.budget_left(), PIXEL_BUDGET - 16_000_000);
+    assert_eq!(fetch.next_asset(), Some("b.png"));
+    fetch.pixels.insert("y.png".into(), PIXEL_BUDGET);
+    assert_eq!(fetch.budget_left(), 0);
+}
+
+/// T1: a render older than the latest asked for is dropped.
+#[test]
+fn a_stale_render_is_dropped() {
+    let doc = Arc::new(bezel_markdown::parse("# a\n"));
+    let mut fetch = PaneFetch {
+        ticket: 2,
+        fresh: true,
+        ..Default::default()
+    };
+    assert!(!fetch.take_render(1, doc.clone(), vec!["old.png".into()]));
+    assert!(fetch.rendered.is_none() && fetch.wanted.is_empty());
+    assert_eq!((fetch.generation, fetch.fresh), (0, true));
+    assert!(fetch.take_render(2, doc, vec!["new.png".into()]));
+    assert_eq!(fetch.wanted, ["new.png"]);
+    assert_eq!((fetch.generation, fetch.fresh), (1, false));
+}

@@ -294,3 +294,51 @@ fn app_shortcuts_work_from_a_reader_pane(cx: &mut TestAppContext) {
         assert_ne!(before, after, "{keys} did nothing from a reader pane");
     }
 }
+
+/// K2: queued input on its own. Paste, text, keys and bytes queued straight
+/// into `queue_input` for a reader pane are dropped there; the same queue
+/// sends them for a terminal pane.
+#[gpui::test]
+fn queued_input_is_dropped_for_a_reader_pane(cx: &mut TestAppContext) {
+    for reader in [true, false] {
+        let (sender, receiver) = mpsc::sync_channel(64);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            crate::tmux_snapshot::fit_test_support::fixture_view(
+                window,
+                cx,
+                sender,
+                7,
+                browser::State {
+                    surface: browser::Surface::Workspace,
+                    ..Default::default()
+                },
+            )
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                setup(view, window, cx, Status::Ready);
+                if !reader {
+                    view.browser_state.readers.clear();
+                }
+            })
+        });
+        receiver.try_iter().for_each(drop);
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.queue_input(Input::Paste("rm -rf x\n".into()), cx);
+                view.queue_input(Input::Text("q".into()), cx);
+                view.queue_input(Input::Key("Enter".into()), cx);
+                view.queue_input(Input::Bytes("\u{3}".into()), cx);
+            })
+        });
+        cx.run_until_parked();
+        let sent = receiver
+            .try_iter()
+            .filter(|c| {
+                matches!(c, browser::Command::Input { input, .. }
+                    if !matches!(input, Input::Resize { .. }))
+            })
+            .count();
+        assert_eq!(sent == 0, reader, "reader {reader}: {sent} sent");
+    }
+}
