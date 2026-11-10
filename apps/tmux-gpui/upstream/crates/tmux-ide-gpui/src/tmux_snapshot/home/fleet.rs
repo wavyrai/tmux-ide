@@ -12,18 +12,25 @@ pub(super) const NAV_WIDTH: f32 = 232.;
 pub(super) const ROW_INDENT: f32 = 36.;
 /// Option A's tracks (#705): a row's height and gap, the favicon, the
 /// windows-and-panes column and the last-active column.
-pub(super) const ROW_HEIGHT: f32 = 34.;
+pub(super) const ROW_HEIGHT: f32 = 40.;
+/// A machine's header line over its rows.
+pub(super) const HEADER_HEIGHT: f32 = 34.;
 pub(super) const ROW_GAP: f32 = SPACE * 1.5;
 pub(super) const FAVICON: f32 = 16.;
 pub(super) const LAYOUT_WIDTH: f32 = 150.;
 pub(super) const ACTIVE_WIDTH: f32 = 96.;
 /// The agents column (#746): the widest it gets; it shares the free width
-/// with the names below that.
-pub(super) const AGENTS_WIDTH: f32 = 230.;
+/// with the names below that. Two chips fit side by side.
+pub(super) const AGENTS_WIDTH: f32 = 300.;
+/// How many agents a row shows as chips before "+N".
+pub(super) const AGENT_CHIPS: usize = 2;
+/// The widest an agent's name gets inside its chip.
+pub(super) const CHIP_NAME_MAX: f32 = 120.;
 /// The narrowest a session's name gets before the agents column gives way.
 pub(super) const NAME_MIN: f32 = 96.;
-/// The widest the table gets, so a value sits near its name.
-pub(super) const TABLE_MAX: f32 = 760. + AGENTS_WIDTH;
+/// The widest the table gets, so a value sits near its name: the mockup's
+/// 1120 pt column less its 48 pt sides (#746).
+pub(super) const TABLE_MAX: f32 = 1024.;
 /// The trailing column that holds the keyboard row's ↵ hint.
 pub(super) const HINT_WIDTH: f32 = 28.;
 
@@ -357,7 +364,7 @@ impl SnapshotView {
             div()
                 .debug_selector(move || format!("fleet-machine-header-{index}"))
                 .min_w_0()
-                .min_h(px(ROW_HEIGHT))
+                .min_h(px(HEADER_HEIGHT))
                 .px(px(ROW_GAP))
                 .flex()
                 .items_center()

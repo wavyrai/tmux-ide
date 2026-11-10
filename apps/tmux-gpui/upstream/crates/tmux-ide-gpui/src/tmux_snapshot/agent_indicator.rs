@@ -3,7 +3,6 @@ use super::{
     SnapshotView,
     browser::home_agents::{Row, Status},
 };
-use bezel_ui::widgets::Content;
 use gpui::{prelude::*, *};
 pub(super) const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 fn animated(row: &Row, unavailable: bool) -> bool {
@@ -152,18 +151,32 @@ impl SnapshotView {
     pub(super) fn tick_agent_indicators(&mut self, cx: &mut Context<Self>) {
         self.agent_animation.sync(self.agent_motion(), cx);
     }
-    pub(super) fn agent_indicator(&self, row: &Row, unavailable: bool) -> AnyElement {
+    /// A Home chip's state after the agent's name (#746): the spinner and
+    /// "Working", or "· Done", "· Idle" and the like, in the muted ink; a
+    /// failed agent's words in its own colour.
+    pub(super) fn agent_chip_state(&self, row: &Row, unavailable: bool) -> AnyElement {
         let theme = self.theme();
-        super::design::palette(&theme)
-            .badge("")
+        let words = label(row, unavailable);
+        let ink: Hsla = if !unavailable && matches!(row.status, Status::Failed) {
+            rgb(color(row, unavailable, &theme, Plate::Chrome)).into()
+        } else {
+            rgb(theme.ink(theme.muted)).into()
+        };
+        let state = div()
             .debug_selector(|| "agent-badge".into())
+            .flex_none()
             .flex()
             .items_center()
-            .gap_1()
-            .text_color(rgb(color(row, unavailable, &theme, Plate::Chrome)))
-            .child(self.agent_glyph(row, unavailable))
-            .child(label(row, unavailable))
-            .into_any_element()
+            .text_color(ink);
+        if animated(row, unavailable) {
+            state
+                .gap(px(2.))
+                .child(self.agent_glyph(row, unavailable))
+                .child(words)
+                .into_any_element()
+        } else {
+            state.child(format!("· {words}")).into_any_element()
+        }
     }
     /// A sidebar pane row's state (#746): the full pill only when the agent
     /// needs input; otherwise its bare glyph (the spinner, a check, a cross),

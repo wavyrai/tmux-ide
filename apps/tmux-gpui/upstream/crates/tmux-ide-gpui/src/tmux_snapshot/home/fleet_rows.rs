@@ -2,8 +2,8 @@
 //! labels: the favicon, the name, the session's agent, windows and panes,
 //! and when it was last active.
 use super::fleet::{
-    ACTIVE_WIDTH, AGENTS_WIDTH, FAVICON, HINT_WIDTH, LAYOUT_WIDTH, NAME_MIN, ROW_GAP, ROW_HEIGHT,
-    glyph, panes,
+    ACTIVE_WIDTH, AGENT_CHIPS, AGENTS_WIDTH, CHIP_NAME_MAX, FAVICON, HINT_WIDTH, LAYOUT_WIDTH,
+    NAME_MIN, ROW_GAP, ROW_HEIGHT, glyph, panes,
 };
 use super::*;
 
@@ -99,7 +99,7 @@ impl SnapshotView {
         // The session's agents, in their own column (#746).
         let agents = agents_column()
             .debug_selector(move || format!("fleet-session-agents-{index}-{row}"))
-            .children(self.fleet_session_agent(index, row, session, cx));
+            .children(self.fleet_session_agents(index, row, session, cx));
         let layout = layout(session);
         div()
             .id(("fleet-session", index * 128 + row))
@@ -177,20 +177,62 @@ impl SnapshotView {
             .into_any_element()
     }
 
-    /// The session's agent, inline after its name: the agent's name and its
-    /// status badge, and "+N" for more. A click opens that agent.
-    fn fleet_session_agent(
+    /// The session's agents, inline after its name (#746): one chip per agent
+    /// with its mark, its name and its state on one line, up to
+    /// [`AGENT_CHIPS`] of them, then "+N" for more. A click opens that agent.
+    fn fleet_session_agents(
         &self,
         index: usize,
         row: usize,
         session: &browser::fleet::Session,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let roster = self.browser_state.home_agents.as_ref()?;
-        let live = session.session_id.as_deref()?;
-        let mut agents = roster.rows.iter().filter(|r| r.session_id == live);
-        let agent = agents.next()?;
-        let more = agents.count();
+    ) -> Vec<AnyElement> {
+        let Some(roster) = self.browser_state.home_agents.as_ref() else {
+            return Vec::new();
+        };
+        let Some(live) = session.session_id.as_deref() else {
+            return Vec::new();
+        };
+        let agents: Vec<_> = roster
+            .rows
+            .iter()
+            .filter(|r| r.session_id == live)
+            .collect();
+        let more = agents.len().saturating_sub(AGENT_CHIPS);
+        let bezel = self.home_palette();
+        let mut chips: Vec<AnyElement> = agents
+            .iter()
+            .take(AGENT_CHIPS)
+            .enumerate()
+            .map(|(n, agent)| self.fleet_agent_chip(index, row, n, agent, cx))
+            .collect();
+        if more > 0 {
+            chips.push(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Callout)
+                    .text_color(bezel.text_muted)
+                    .child(format!("+{more}"))
+                    .into_any_element(),
+            );
+        }
+        chips
+    }
+
+    /// One agent's chip: a 22 pt outlined capsule with the harness mark, the
+    /// agent's name and "· Done", "· Idle" or the spinner and "Working"; on
+    /// the accent wash, its words in the accent, when it needs input.
+    fn fleet_agent_chip(
+        &self,
+        index: usize,
+        row: usize,
+        n: usize,
+        agent: &browser::home_agents::Row,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(roster) = self.browser_state.home_agents.as_ref() else {
+            return div().into_any_element();
+        };
         let bezel = self.home_palette();
         let request = self.browser_request;
         let revision = roster.revision;
@@ -204,73 +246,74 @@ impl SnapshotView {
         let asks =
             crate::tmux_snapshot::agent_indicator::state_label(agent, unavailable) == "Needs input";
         let (wash, ink) = needs_input_chip(&self.theme(), self.canvas());
-        Some(
-            div()
-                .id(("fleet-session-agent", index * 128 + row))
-                .debug_selector(move || format!("fleet-session-agent-{index}-{row}"))
+        // The first chip keeps the selectors tests and the keyboard know.
+        let suffix = if n == 0 {
+            format!("{index}-{row}")
+        } else {
+            format!("{index}-{row}-{n}")
+        };
+        let (chip_id, probe_id, asks_id) = (
+            format!("fleet-session-agent-{suffix}"),
+            format!("fleet-session-agent-{suffix}"),
+            format!("fleet-session-asks-{suffix}"),
+        );
+        div()
+            .id(SharedString::from(chip_id.clone()))
+            .debug_selector(move || chip_id.clone())
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .text_style(TextStyle::Callout)
+            .h(px(22.))
+            .pl(px(6.))
+            .pr(px(8.))
+            .rounded_full()
+            .border_1()
+            .map(|chip| match asks {
+                true => chip
+                    .border_color(transparent_black())
+                    .bg(rgb(wash))
+                    .text_color(rgb(ink)),
+                false => chip.border_color(bezel.border),
+            })
+            .child(
+                bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(
+                    crate::tmux_snapshot::pane_chrome::agent_icon_path(agent.harness.as_deref()),
+                ))
+                .size(px(12.))
                 .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_style(TextStyle::Callout)
-                // A chip with the agent's mark (#746): outlined, or on the
-                // accent wash, its words in the accent, when it needs input.
-                .h(px(24.))
-                .pl(px(6.))
-                .pr(px(if asks { 8. } else { 2. }))
-                .rounded_full()
-                .border_1()
-                .map(|chip| match asks {
-                    true => chip
-                        .border_color(transparent_black())
-                        .bg(rgb(wash))
-                        .text_color(rgb(ink)),
-                    false => chip.border_color(bezel.border),
-                })
-                .child(
-                    bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(
-                        crate::tmux_snapshot::pane_chrome::agent_icon_path(
-                            agent.harness.as_deref(),
-                        ),
-                    ))
-                    .size(px(13.))
-                    .flex_none()
-                    .text_color(bezel.text),
-                )
-                .child(
+                .text_color(if asks { rgb(ink).into() } else { bezel.text }),
+            )
+            .child(
+                div()
+                    .max_w(px(CHIP_NAME_MAX))
+                    .truncate()
+                    .when(!asks, |name| name.text_color(bezel.text))
+                    .children(design::ink_probe(move || probe_id.clone()))
+                    .child(crate::sidebar::label_text(&agent.name)),
+            )
+            .map(|chip| match asks {
+                true => chip.child(
                     div()
-                        .when(!asks, |name| name.text_color(bezel.text))
-                        .children(design::ink_probe(move || {
-                            format!("fleet-session-agent-{index}-{row}")
+                        .debug_selector(move || asks_id.clone())
+                        .font_weight(FontWeight::MEDIUM)
+                        .children(design::ink_probe({
+                            let asks_id = format!("fleet-session-asks-{suffix}");
+                            move || asks_id.clone()
                         }))
-                        .child(crate::sidebar::label_text(&agent.name)),
-                )
-                // The app's agent status: Bezel's colours and the spinner;
-                // on the wash, the words alone.
-                .map(|chip| match asks {
-                    true => chip.child(
-                        div()
-                            .debug_selector(move || format!("fleet-session-asks-{index}-{row}"))
-                            .font_weight(FontWeight::MEDIUM)
-                            .children(design::ink_probe(move || {
-                                format!("fleet-session-asks-{index}-{row}")
-                            }))
-                            .child("· Needs input"),
-                    ),
-                    false => chip.child(self.agent_indicator(agent, unavailable)),
-                })
-                .when(more > 0, |line| {
-                    line.child(div().text_color(bezel.text_muted).child(format!("+{more}")))
-                })
-                .when(enabled, |line| {
-                    line.cursor_pointer()
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            cx.stop_propagation();
-                            view.home_agent_select(request, revision, &key, window, cx);
-                        }))
-                })
-                .into_any_element(),
-        )
+                        .child("· Needs input"),
+                ),
+                false => chip.child(self.agent_chip_state(agent, unavailable)),
+            })
+            .when(enabled, |line| {
+                line.cursor_pointer()
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        cx.stop_propagation();
+                        view.home_agent_select(request, revision, &key, window, cx);
+                    }))
+            })
+            .into_any_element()
     }
 
     /// The table's column labels, once at its top, on the rows' tracks.
@@ -361,6 +404,8 @@ fn agents_column() -> Div {
         .overflow_hidden()
         .flex()
         .items_center()
+        // Chips sit 6 pt apart, as in the mockup.
+        .gap(px(6.))
 }
 
 /// A session's windows and panes; a version 1 daemon reports panes only.
