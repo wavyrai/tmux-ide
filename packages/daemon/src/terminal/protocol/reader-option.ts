@@ -23,8 +23,15 @@ export function isMarkdownPath(path: string): boolean {
  * only on the pane whose own process it is: `panePid` is that pane's
  * `#{pane_pid}`. The CLI starts `tmux-ide show` with tmux's direct exec (no
  * shell), so the pane's process is the reader itself and records exactly that
- * pid. Equality rather than "a descendant of": no process-tree walk, and a
- * process inside the pane cannot point the pane's reader at another file.
+ * pid. Equality rather than "a descendant of" needs no process-tree walk.
+ *
+ * What the tie rules out: an option left behind by a reader that has exited,
+ * and a later process that happens to reuse its pid. What it does not: the
+ * option is not proof that `tmux-ide show` set it. In a shell pane the shell
+ * is the pane's process, so the shell can set an option naming its own pid,
+ * and any process that can talk to the tmux server can read another pane's
+ * pid and set that pane's option. Both are the same user, who can already
+ * read the file; the reader grants no access they do not have.
  */
 export function readerOption(
   value: string,

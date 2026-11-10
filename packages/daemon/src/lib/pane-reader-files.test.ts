@@ -20,10 +20,9 @@ import {
 } from "@tmux-ide/contracts";
 import {
   isInside,
-  readChunkForTest,
   readReaderAssetPage,
   readReaderPage,
-  readerFileTestHooks,
+  type ReaderFileSeams,
 } from "./pane-reader-files.ts";
 
 const roots: string[] = [];
@@ -220,11 +219,6 @@ describe("reader image assets", () => {
 });
 
 describe("reader file guards (#353 round 2)", () => {
-  afterEach(() => {
-    readerFileTestHooks.afterOpen = null;
-    readerFileTestHooks.read = null;
-  });
-
   it("D02: the parent of the root is not inside it", () => {
     expect(isInside("/repo/docs", "/repo")).toBe(false);
     expect(isInside("/repo", "/repo")).toBe(true);
@@ -250,13 +244,13 @@ describe("reader file guards (#353 round 2)", () => {
     const { md } = repo();
     const first = readReaderPage(md, null, null);
     if (first.state !== "ok") throw new Error(first.state);
-    readerFileTestHooks.read = (fd, offset, size) => {
-      const bytes = readChunkForTest(fd, offset, size);
+    const read: ReaderFileSeams["read"] = (fd, offset, size, real) => {
+      const bytes = real(fd, offset, size);
       // Same length, new metadata: only the revision after the read shows it.
       utimesSync(md, new Date(1_000), new Date(2_000));
       return bytes;
     };
-    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 })).toEqual({
+    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 }, { read })).toEqual({
       state: "changed",
     });
   });
@@ -265,9 +259,9 @@ describe("reader file guards (#353 round 2)", () => {
     const { md } = repo();
     const first = readReaderPage(md, null, null);
     if (first.state !== "ok") throw new Error(first.state);
-    readerFileTestHooks.read = (fd, offset, size) =>
-      readChunkForTest(fd, offset, size).subarray(0, 3);
-    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 })).toEqual({
+    const read: ReaderFileSeams["read"] = (fd, offset, size, real) =>
+      real(fd, offset, size).subarray(0, 3);
+    expect(readReaderPage(md, null, { revision: first.revision, offset: 0 }, { read })).toEqual({
       state: "changed",
     });
   });
@@ -284,11 +278,25 @@ describe("reader file guards (#353 round 2)", () => {
   it("D22: a file swapped for another after it was opened is refused", () => {
     const { md, repoDir } = repo();
     const image = join(repoDir, "docs", "b.png");
-    readerFileTestHooks.afterOpen = () => {
+    const afterOpen = () => {
       // Replace the opened file by a different inode at the same path.
       unlinkSync(image);
       writeFileSync(image, PNG);
     };
-    expect(readReaderAssetPage(md, "b.png", null)).toEqual({ state: "refused" });
+    expect(readReaderAssetPage(md, "b.png", null, { afterOpen })).toEqual({ state: "refused" });
+  });
+
+  it("E05: a folder on the path swapped for a symlink after the open is refused", () => {
+    const { md, root, repoDir } = repo();
+    const images = join(repoDir, "images");
+    const afterOpen = () => {
+      // The opened picture's folder now leads outside the repository.
+      execFileSync("mv", [images, join(root, "images-moved")]);
+      writeFileSync(join(root, "outside", "a.png"), PNG);
+      symlinkSync(join(root, "outside"), images);
+    };
+    expect(readReaderAssetPage(md, "../images/a.png", null, { afterOpen })).toEqual({
+      state: "refused",
+    });
   });
 });

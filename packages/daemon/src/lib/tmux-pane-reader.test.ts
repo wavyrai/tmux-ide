@@ -62,6 +62,7 @@ function fixture() {
     invalidProof: false,
     hold: null as null | Promise<void>,
     alive: true,
+    live: [4242],
     afterFirst: null as null | (() => void),
   };
   let observed = 0;
@@ -105,7 +106,7 @@ function fixture() {
     },
     run,
     assertOpen: () => undefined,
-    alive: (pid) => state.alive && pid === 4242,
+    alive: (pid) => state.alive && state.live.includes(pid),
   });
   return { root, md, state, resolver, run };
 }
@@ -221,6 +222,14 @@ describe("identity guards (#353 round 2)", () => {
     refused((s) => (s.invalidProof = true)));
   it("refuses an option whose pid is not the pane's own process", () =>
     refused((s) => (s.panePid = "4243")));
+  it("E02: a new process in the pane during the read, with the same file, is refused", () =>
+    refused((s, f) => {
+      s.live = [4242, 4343];
+      s.afterFirst = () => {
+        s.panePid = "4343";
+        s.option = JSON.stringify({ version: 1, pid: 4343, path: f.md });
+      };
+    }));
   it("D39: at most eight reads run at once", async () => {
     const f = fixture();
     let release!: () => void;
