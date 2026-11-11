@@ -175,6 +175,13 @@ impl Kitchen {
     pub(in crate::tmux_snapshot) fn poll(&self) -> Option<Done> {
         self.done.try_recv().ok()
     }
+    /// A kitchen whose work thread is gone: every send fails.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn closed() -> Self {
+        let (jobs, _) = mpsc::channel();
+        let (_, done) = mpsc::channel();
+        Self { jobs, done }
+    }
 }
 
 #[cfg(test)]
