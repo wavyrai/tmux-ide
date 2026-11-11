@@ -107,13 +107,15 @@ fn draw(
 ) -> BTreeMap<String, String> {
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            setup(view, window, cx);
+            // The drop first, so a site set up afterwards (the close card)
+            // reads the clock as it stands `when.after` into it.
             let (clock, at) = clock(Instant::now());
             view.connection.clock = clock;
             view.browser_state.agents_last_known = when.flag;
             view.browser_state.reconnect_attempt = Some(1);
             view.observe_connection(cx);
             at.set(when.after);
+            setup(view, window, cx);
         })
     });
     cx.update(|_, cx| cx.global_mut::<TextProbes>().0.clear());
@@ -433,4 +435,120 @@ fn other_states_are_muted_only_when_last_known(cx: &mut TestAppContext) {
             "{when:?}"
         );
     }
+}
+
+/// An away machine's session open in the workspace: its agent's pane row,
+/// that row's spoken label, the pane's header and the close card say "last
+/// known" without this Mac's flag (review r2), and not in the machine's quiet
+/// first second.
+fn away_workspace(after: Duration) -> (browser::State, When) {
+    let mut state = workspace();
+    let mut fleet: browser::fleet::Fleet = serde_json::from_value(serde_json::json!({
+        "omittedGroups":0,"groups":[{"id":"remote","label":"Studio","state":"ready",
+        "conflict":false,"omittedSessions":0,"sessions":[
+        {"id":"remote-a","name":"Alpha","paneCount":1,"sessionId":"session-a","active":true,
+         "selection":"70500000-0000-4000-8000-000000000001"}]}]}))
+    .unwrap();
+    fleet.groups[0].away = Some((Instant::now(), std::time::SystemTime::now()));
+    state.fleet = Some(fleet);
+    (state, When { flag: false, after })
+}
+#[gpui::test]
+fn an_away_machines_open_session_says_last_known(cx: &mut TestAppContext) {
+    for (after, marked) in [
+        (Duration::from_secs(600), true),
+        (Duration::from_secs(1), false),
+    ] {
+        let (state, when) = away_workspace(after);
+        let probes = painted(cx, state, when, split);
+        let tag = if marked {
+            "Needs input · last known"
+        } else {
+            "Needs input"
+        };
+        assert_eq!(says(&probes, "agent-state-Sidebar"), tag, "{after:?}");
+        assert_eq!(says(&probes, "agent-state-Header"), tag, "{after:?}");
+        let spoken = probes
+            .iter()
+            .filter(|(k, _)| k.starts_with("spoken-"))
+            .map(|(_, v)| v.as_str())
+            .find(|v| v.contains("Needs input"))
+            .unwrap_or_else(|| panic!("{probes:#?}"))
+            .to_owned();
+        assert_eq!(
+            spoken.ends_with(", last known"),
+            marked,
+            "{after:?} {spoken}"
+        );
+        let (state, when) = away_workspace(after);
+        let probes = painted(cx, state, when, |view, window, cx| {
+            split(view, window, cx);
+            close(view, window, cx);
+            // The flag stays clear: only the machine is away.
+            view.pane_close = None;
+            view.browser_state.agents_last_known = false;
+            let target =
+                crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
+            view.begin_pane_close(target, window, cx);
+        });
+        let body = says(&probes, "pane-close-body");
+        assert_eq!(
+            body.contains("may still be running"),
+            marked,
+            "{after:?} {body}"
+        );
+    }
+}
+
+/// An agent joins its session within its own machine when the fleet
+/// publication scopes it: another machine that is away, with a session of
+/// the same live id, doesn't make a current agent "last known". Unscoped
+/// (Home's roster) the join is by live id alone and errs toward the mark.
+#[gpui::test]
+fn the_away_join_stays_on_the_agents_machine(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let mut fleet: browser::fleet::Fleet = serde_json::from_value(serde_json::json!({
+        "omittedGroups":0,"groups":[
+        {"id":"local","label":"Local","state":"ready","conflict":false,"omittedSessions":0,
+         "sessions":[{"id":"local-a","name":"Alpha","paneCount":1,"sessionId":"session-a"}]},
+        {"id":"remote","label":"Studio","state":"ready","conflict":false,"omittedSessions":0,
+         "sessions":[{"id":"remote-a","name":"Alpha","paneCount":1,"sessionId":"session-a"}]}]}))
+    .unwrap();
+    let start = Instant::now();
+    fleet.groups[1].away = Some((start, std::time::SystemTime::now()));
+    let mut publication = roster(None, agent("session-a"));
+    publication["request"] = 7.into();
+    publication["scope"] = 1.into();
+    publication["selectedKey"] = serde_json::Value::Null;
+    let mut publication: crate::tmux_snapshot::workspace_fleet_agents::Publication =
+        serde_json::from_value(publication).unwrap();
+    publication.sessions.insert(
+        "agent".into(),
+        crate::tmux_snapshot::workspace_fleet_agents::SessionScope {
+            machine: "local".into(),
+            server: "server".into(),
+            generation: "generation".into(),
+            session: "session-a".into(),
+        },
+    );
+    let state = browser::State {
+        fleet: Some(fleet),
+        workspace_fleet_agents: Some(publication),
+        ..workspace()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let row: Row = serde_json::from_value(agent("session-a")).unwrap();
+    let (clock, at) = clock(start);
+    view.update(cx, |view, _| view.connection.clock = clock);
+    at.set(Duration::from_secs(600));
+    view.read_with(cx, |view, _| assert!(!view.agent_last_known(&row)));
+    view.update(cx, |view, _| {
+        view.browser_state
+            .workspace_fleet_agents
+            .as_mut()
+            .unwrap()
+            .sessions
+            .clear()
+    });
+    view.read_with(cx, |view, _| assert!(view.agent_last_known(&row)));
 }

@@ -82,6 +82,31 @@ fn last_known_marks_show_from_the_words_threshold_on(cx: &mut TestAppContext) {
     view.read_with(cx, |view, _| assert!(!view.agents_shown_last_known()));
 }
 
+/// The re-read clears the mark even when nothing draws an agent between it
+/// and the next pause (review r2): the next drop isn't marked from 0 s.
+#[gpui::test]
+fn the_re_read_clears_the_mark_without_a_draw(cx: &mut TestAppContext) {
+    let (view, cx, at) = dropped(cx, true);
+    at.set(Duration::from_secs(600));
+    view.read_with(cx, |view, _| assert!(view.agents_shown_last_known()));
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            // The link is back and the re-read lands, through the mailbox.
+            let mut state = view.browser_state.clone();
+            state.reconnect_attempt = None;
+            state.agents_last_known = false;
+            view.apply_browser_state(Some(state), cx);
+            view.observe_connection(cx);
+            // A new drop pauses the lane again; nothing has drawn since.
+            view.browser_state.agents_last_known = true;
+            view.browser_state.reconnect_attempt = Some(1);
+            view.observe_connection(cx);
+        })
+    });
+    at.set(Duration::from_secs(601));
+    view.read_with(cx, |view, _| assert!(!view.agents_shown_last_known()));
+}
+
 /// Fresh agent state is never drawn as last known, however long the wait.
 #[gpui::test]
 fn current_agents_are_never_muted(cx: &mut TestAppContext) {

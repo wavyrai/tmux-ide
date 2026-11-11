@@ -82,7 +82,13 @@ impl SnapshotView {
             .unwrap_or_default();
         // While the lane is paused for a drop, the roster may be old (#362):
         // claim neither working nor finished.
-        let agent = agent_on(rows, &pane, self.browser_state.agents_last_known);
+        // An away machine's agent is just as unknown (review r2).
+        let last_known = self.browser_state.agents_last_known
+            || rows
+                .iter()
+                .find(|r| r.pane_id.as_deref() == Some(pane.as_str()))
+                .is_some_and(|r| self.agent_last_known(r));
+        let agent = agent_on(rows, &pane, last_known);
         let icon = agent.map_or("icons/terminal.svg", |(row, _)| {
             super::pane_chrome::agent_icon_path(row.harness.as_deref())
         });

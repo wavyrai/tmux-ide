@@ -611,7 +611,7 @@ impl SnapshotView {
                     row,
                     unavailable,
                     super::agent_indicator::Plate::Header,
-                    self.agents_shown_last_known(),
+                    self.agent_last_known(row),
                 )
             });
         // The same kind icon as the pane's sidebar row (#746).

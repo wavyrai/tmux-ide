@@ -452,6 +452,10 @@ impl SnapshotView {
                 || row.agent.as_ref().is_some_and(|key| {
                     sidebar::activity::row_agent(&self.browser_state, key)
                         .is_some_and(|(agent, _)| self.agent_last_known(agent))
+                })
+                || row.pane.as_deref().is_some_and(|pane| {
+                    sidebar::panes::pane_agent(&self.browser_state, pane)
+                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
                 });
             let mut element = sidebar::render_row(
                 index,

@@ -17,7 +17,7 @@ impl SnapshotView {
                     agent,
                     unavailable,
                     crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
-                    self.agents_shown_last_known(),
+                    self.agent_last_known(agent),
                 )
             });
         let more = self.pane_row_more(index, pane, cx);

@@ -173,16 +173,31 @@ impl SnapshotView {
     }
     /// One agent's state may be old: this Mac's lane is marked last known,
     /// or the machine that lists its session is away (#360's r4).
+    ///
+    /// The session is joined by its live id within the agent's machine when
+    /// the workspace fleet publication scopes the agent; otherwise (Home's
+    /// roster carries no machine id) by the live id alone, which errs toward
+    /// "last known" if another machine that is away has a session with the
+    /// same id.
     pub(super) fn agent_last_known(&self, row: &Row) -> bool {
-        self.agents_shown_last_known()
-            || self.browser_state.fleet.as_ref().is_some_and(|fleet| {
-                fleet
-                    .groups
-                    .iter()
-                    .flat_map(|group| group.sessions.iter())
-                    .filter(|session| session.session_id.as_deref() == Some(&row.session_id))
-                    .any(|session| self.session_away(session).is_some())
-            })
+        if self.agents_shown_last_known() {
+            return true;
+        }
+        let machine = self
+            .browser_state
+            .workspace_fleet_agents
+            .as_ref()
+            .and_then(|p| p.sessions.get(&row.key))
+            .map(|scope| scope.machine.as_str());
+        self.browser_state.fleet.as_ref().is_some_and(|fleet| {
+            fleet
+                .groups
+                .iter()
+                .filter(|group| machine.is_none_or(|machine| group.id == machine))
+                .flat_map(|group| group.sessions.iter())
+                .filter(|session| session.session_id.as_deref() == Some(&row.session_id))
+                .any(|session| self.session_away(session).is_some())
+        })
     }
     fn agent_motion(&self) -> bool {
         self.presence.active()
