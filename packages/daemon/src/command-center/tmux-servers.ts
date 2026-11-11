@@ -5,6 +5,7 @@ import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-au
 import { streamTmuxInteractions } from "./tmux-server-interaction-events.ts";
 import { mountTmuxServerNativeBackingRoute } from "./tmux-server-native-backing.ts";
 import { mountTmuxServerEditorContextRoute } from "./tmux-server-editor-context.ts";
+import { mountTmuxServerReaderRoutes } from "./tmux-server-reader.ts";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { projectApplicationShellResource } from "./resources/application-shell.ts";
@@ -153,6 +154,11 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
   });
   mountTmuxServerDiagnosticsRoute(app, { scopedPath: scoped, owners: options.owners });
   mountTmuxServerEditorContextRoute(app, {
+    scopedPath: scoped,
+    owners: options.owners,
+    readBody: (request) => boundedJson(request, 8 * 1024),
+  });
+  mountTmuxServerReaderRoutes(app, {
     scopedPath: scoped,
     owners: options.owners,
     readBody: (request) => boundedJson(request, 8 * 1024),

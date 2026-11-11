@@ -4218,3 +4218,80 @@ it("delivers browser icons only to clients offering capability 117", async () =>
     socket.close();
   }
 });
+
+it("delivers reader names only with capability 118, which also carries 117's browser icons", async () => {
+  for (const [versions, icon, reader] of [
+    [[1], false, false],
+    [[1, 117], true, false],
+    [[1, 118], true, true],
+  ] as const) {
+    const h = harness();
+    const layout = authoritativeLayout(["pane.editor", "pane.shell"]);
+    layout.panes[0]!.browserIcon = "ff00807f".repeat(256);
+    layout.panes[1]!.reader = { name: "notes.md" };
+    h.mirror.initialLayouts = [layout];
+    const { socket } = await connect(h, {
+      semanticDelivery: true,
+      protocolVersions: [...versions],
+    });
+    const panes = socket.framesOfType("layout-snapshot")[0]?.layouts[0]?.panes;
+    expect(panes?.[0]?.browserIcon).toBe(icon ? "ff00807f".repeat(256) : undefined);
+    expect(panes?.[1]?.reader).toEqual(reader ? { name: "notes.md" } : undefined);
+    expect(panes?.[0]?.reader).toEqual(reader ? null : undefined);
+    expect(JSON.stringify(panes)).not.toContain("/");
+    socket.close();
+  }
+});
+
+it.each([[[1, 117]], [[1, 118]]])(
+  "serves zlib graphics without inflating to clients offering %j",
+  async (versions) => {
+    vi.mocked(inflateSync).mockClear();
+    const digest = "b".repeat(32);
+    const data = deflateSync(Buffer.alloc(4, 1));
+    const image = { imageId: 1, digest, width: 1, height: 1, format: "rgba-zlib" as const, data };
+    const h = harness({
+      openTerminalDelivery: async () => ({
+        negotiation: {
+          accepted: true as const,
+          negotiated: {
+            protocolVersion: 1 as const,
+            encoding: "semantic-v1" as const,
+            richPlacements: false,
+            generation: INSTANCE,
+            deliveryNonce: "00000000-0000-4000-8000-000000000097",
+          },
+        },
+        ack: () => undefined,
+        nack: () => undefined,
+        setVisibility: () => undefined,
+        close: async () => undefined,
+        graphics: {
+          subscribe(listener) {
+            listener({
+              revision: 1,
+              images: [{ ...image, bytes: data.length, placeholder: null }],
+              placements: [],
+            });
+            return () => undefined;
+          },
+          image: () => image,
+        },
+      }),
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.editor"],
+      semanticDelivery: true,
+      protocolVersions: versions,
+    });
+    socket.drainAll();
+    socket.message({ type: "terminal-graphics-request", pane: "pane.editor", digests: [digest] });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    h.scheduler.runDue();
+    const blobs = socket.framesOfType("terminal-graphics-blob");
+    socket.close();
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0]).toMatchObject({ blob: { format: "rgba-zlib" } });
+    expect(inflateSync).not.toHaveBeenCalled();
+  },
+);

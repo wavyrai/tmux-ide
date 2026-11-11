@@ -617,6 +617,11 @@ impl SnapshotView {
             self.browser_state.panes.iter().find(|p| p.id == header.id),
         )
         .icon();
+        let icon = if self.is_reader_pane(&header.id) {
+            "icons/note.svg"
+        } else {
+            icon
+        };
         let browser_icon = self
             .browser_state
             .panes

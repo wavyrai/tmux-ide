@@ -13,8 +13,12 @@ pub(super) struct Write {
     basis: BrowserState,
     retried: bool,
 }
+#[path = "browser_native_local_reader.rs"]
+mod reader;
 #[derive(Default)]
 pub(super) struct Gate {
+    /// Reader panes' reads (#756) share this gate's reset on failure.
+    reader: reader::Gate,
     worker: Option<CatalogWorker>,
     pending: Option<(String, u64, String)>,
     writing: Option<Write>,
@@ -156,6 +160,7 @@ impl Local {
         self.publish()
     }
     pub(super) fn browser_controls_tick(&mut self) -> Result<(), Error> {
+        self.reader_tick()?;
         // Closed/replaced panes must not accumulate observations over a long session.
         let panes = &self.state.panes;
         let open = |id: &String| panes.iter().any(|pane| &pane.id == id);

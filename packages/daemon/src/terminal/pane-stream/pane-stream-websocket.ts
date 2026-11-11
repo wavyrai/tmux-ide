@@ -22,6 +22,8 @@ import type { LocalImageOwner } from "../graphics/local-image-owner.ts";
 import {
   PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION,
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
+  PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION,
+  PANE_STREAM_READER_CAPABILITY_VERSION,
   type PaneStreamInputLifetime,
 } from "@tmux-ide/contracts";
 import { inflateSync } from "node:zlib";
@@ -1933,7 +1935,10 @@ export class PaneStreamLiveConnection {
     // when served.
     const zlib =
       this.#descriptor.terminalDelivery?.protocolVersions.some(
-        (version) => version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION || version === 117,
+        (version) =>
+          version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION ||
+          version === PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION ||
+          version === PANE_STREAM_READER_CAPABILITY_VERSION,
       ) === true;
     channel.graphicsZlib = zlib;
     channel.graphicsLocal =
@@ -2414,6 +2419,10 @@ export class PaneStreamLiveConnection {
     this.#sendFrame(null, frame);
   }
 
+  #offers(version: number): boolean {
+    return this.#descriptor.terminalDelivery?.protocolVersions.includes(version) === true;
+  }
+
   #layoutFrame(event: MirrorLayoutEvent): PaneStreamServerFrame | null {
     const frame = {
       type: "layout",
@@ -2429,8 +2438,12 @@ export class PaneStreamLiveConnection {
         pane: pane.semanticPaneId,
         displayName: pane.displayName,
         displayNameSource: pane.displayNameSource,
-        ...(this.#descriptor.terminalDelivery?.protocolVersions.includes(117)
+        ...(this.#offers(PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION) ||
+        this.#offers(PANE_STREAM_READER_CAPABILITY_VERSION)
           ? { browserIcon: pane.browserIcon ?? null }
+          : {}),
+        ...(this.#offers(PANE_STREAM_READER_CAPABILITY_VERSION)
+          ? { reader: pane.reader ? { name: pane.reader.name } : null }
           : {}),
         left: pane.left,
         top: pane.top,

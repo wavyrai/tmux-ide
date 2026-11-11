@@ -14,6 +14,7 @@ workspace = true
 bezel_theme.workspace = true
 bezel_ui.workspace = true
 bezel_motion.workspace = true
+bezel_markdown.workspace = true
 url.workspace = true
 anyhow.workspace               = true
 chrono.workspace               = true

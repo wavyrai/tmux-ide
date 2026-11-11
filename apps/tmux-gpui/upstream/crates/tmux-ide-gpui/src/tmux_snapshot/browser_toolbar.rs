@@ -218,6 +218,9 @@ impl SnapshotView {
         cx.notify();
     }
     pub(super) fn browser_header(&self, pane: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(reader) = self.reader_header(pane, cx) {
+            return Some(reader);
+        }
         // Observation owns the layout; input authority only enables its actions.
         let state = self.observed_browser(pane)?;
         let ready = self.current_browser(pane).is_some();

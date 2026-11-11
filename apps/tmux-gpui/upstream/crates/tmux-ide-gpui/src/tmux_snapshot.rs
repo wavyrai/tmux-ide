@@ -57,6 +57,7 @@ mod pending_input;
 mod picker;
 mod pointer;
 mod presence;
+mod reader;
 mod reconnect_retry;
 mod renderer_probe;
 mod roster_counts;
@@ -374,6 +375,7 @@ fn show_owned(
                         header_controls: Default::default(),
                         painter: Rc::new(RefCell::new(TerminalPainter::default())),
                         _task: task,
+                        reader: Default::default(),
                         _browser_task: browser_task,
                         browsing: browser.is_some(),
                         terminal_focus: cx.focus_handle(),
@@ -506,6 +508,7 @@ struct SnapshotView {
     _browser_task: Option<Task<()>>,
     _task: Option<Task<()>>,
     painter: Rc<RefCell<TerminalPainter>>,
+    reader: reader::Views,
 }
 impl SnapshotView {
     /// Repaint when an image completes; ask the bridge for absent images.
@@ -929,6 +932,7 @@ impl SnapshotView {
                 )
                 .size_full(),
             )
+            .children(self.reader_overlays(width, window, cx))
             .children(self.pane_header_labels(width, cx))
             .children(self.pane_close_card(window, cx))
             .children(self.divider_handles(width))

@@ -127,9 +127,11 @@ impl ServerClient {
         // file leases unless this handoff carries actual local image access.
         // 117 bundles favicon metadata with zlib support (102), retaining the
         // nine-slot offer bound. Older daemons fall back to inflated image bytes.
+        // 118 is 117 plus the reader pane badge (#756); a daemon that predates it
+        // sends neither icons nor badges and serves inflated image bytes.
         let graphics_bundle = if local_images.is_some() { 114 } else { 113 };
         let mut versions = if graphics {
-            vec![1, 101, graphics_bundle, 117, 103, 104]
+            vec![1, 101, graphics_bundle, 118, 103, 104]
         } else {
             vec![1, 109]
         };
