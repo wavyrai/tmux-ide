@@ -4,6 +4,10 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod versions;
+/// This app's version, from its bundle (None outside one).
+pub(super) fn app_version() -> Option<String> {
+    versions::native_bundle().0
+}
 pub(super) use versions::Versions;
 
 const MAX_BYTES: usize = 4096;

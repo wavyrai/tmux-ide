@@ -75,6 +75,7 @@ mod terminal_links;
 mod tests;
 #[cfg(feature = "visual-capture")]
 pub(crate) mod visual_capture;
+mod welcome;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
@@ -392,6 +393,7 @@ fn show_owned(
                         home_filter: None,
                         pane_actions: None,
                         pane_close: None,
+                        welcome: Default::default(),
                         browser_address: None,
                         new_session: None,
                         new_session_queued: None,
@@ -420,6 +422,7 @@ fn show_owned(
                     };
                     view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
+                    view.load_welcome(cx);
                     view.follow_system(cx);
                     // The first wait starts with the window, not with the
                     // worker's first publication (#357 review, item 2).
@@ -482,6 +485,8 @@ struct SnapshotView {
     pane_actions: Option<pane_actions::Menu>,
     /// The close-pane card, while it asks (c1).
     pane_close: Option<pane_close::Card>,
+    /// First run and What's new (onboarding A1, A5).
+    welcome: welcome::State,
     browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,

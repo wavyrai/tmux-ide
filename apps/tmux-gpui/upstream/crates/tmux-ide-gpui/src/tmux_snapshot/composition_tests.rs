@@ -46,6 +46,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             home_filter: None,
             pane_actions: None,
             pane_close: None,
+            welcome: Default::default(),
             browser_address: None,
             new_session: None,
             new_session_queued: None,
