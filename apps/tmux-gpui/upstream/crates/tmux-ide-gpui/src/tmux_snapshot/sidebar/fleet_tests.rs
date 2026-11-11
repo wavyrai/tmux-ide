@@ -349,3 +349,44 @@ fn the_open_project_leads_and_this_macs_projects_name_no_machine() {
         2
     );
 }
+
+/// r4: a remote machine being retried lists its sessions as away, muted.
+#[test]
+fn an_away_machines_rows_are_marked_away() {
+    let mut fleet: browser::fleet::Fleet = serde_json::from_value(serde_json::json!({
+        "groups": [
+            {"id": "local", "label": "local", "state": "ready", "conflict": false,
+             "omittedSessions": 0, "sessions": [
+                {"id": "local-web", "name": "web", "paneCount": 1, "sessionId": "live-local-web"}]},
+            {"id": "spark", "label": "spark", "state": "disconnected", "conflict": false,
+             "omittedSessions": 0, "sessions": [
+                {"id": "spark-api", "name": "api", "paneCount": 2, "sessionId": "live-spark-api"}]}
+        ],
+        "omittedGroups": 0,
+        "preferences": {"revision": 1, "phase": "ready", "error": null}
+    }))
+    .unwrap();
+    fleet.groups[1].away = Some((std::time::Instant::now(), std::time::SystemTime::now()));
+    let state = browser::State::default();
+    let at = fleet.groups[1].away.unwrap().0;
+    // Under the slot's 8 s it reads as before: no tag, not muted.
+    let quiet = hierarchy::rows(&state, &fleet, at + std::time::Duration::from_secs(3));
+    let api = quiet.iter().find(|r| r.label == "api").unwrap();
+    assert!(!api.away);
+    assert_eq!(api.aside.as_deref(), Some("spark"));
+    assert!(
+        !quiet
+            .iter()
+            .any(|r| r.aside.as_deref() == Some("Reconnecting…"))
+    );
+    let rows = hierarchy::rows(&state, &fleet, at + std::time::Duration::from_secs(9));
+    assert!(
+        rows.iter()
+            .any(|r| r.aside.as_deref() == Some("Reconnecting…"))
+    );
+    let api = rows.iter().find(|r| r.label == "api").unwrap();
+    assert!(api.away);
+    assert_eq!(api.aside.as_deref(), Some("spark · away"));
+    let web = rows.iter().find(|r| r.label == "web").unwrap();
+    assert!(!web.away);
+}

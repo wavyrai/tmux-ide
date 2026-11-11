@@ -141,6 +141,7 @@ impl Local {
                 conflict: false,
                 retry: None,
                 disconnect: None,
+                away: None,
                 omitted_sessions: 0,
                 sessions: Vec::new(),
                 servers,

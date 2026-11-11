@@ -80,3 +80,42 @@ fn ssh_failure_classification_is_bounded_and_redacted() {
     assert!(diagnostics.tail.len() <= 4096);
     assert!(matches!(diagnostics.failure(), DiscoveryError::HostKey));
 }
+
+/// r4 review (owner decision): a machine that is off or away is retried, but
+/// only when ssh says so in these words; auth and host-key failures are read
+/// first and stay final, and anything unrecognised stays a failure.
+#[test]
+fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
+    let failure = |stderr: &str| {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.observe(stderr.as_bytes());
+        diagnostics.failure()
+    };
+    for stderr in [
+        "ssh: connect to host spark port 22: No route to host",
+        "ssh: connect to host spark port 22: Connection refused",
+        "ssh: connect to host spark port 22: Network is unreachable",
+        "ssh: Could not resolve hostname spark: nodename nor servname provided",
+        "ssh: connect to host spark port 22: Operation timed out",
+    ] {
+        assert!(
+            matches!(failure(stderr), DiscoveryError::Unreachable),
+            "{stderr}"
+        );
+    }
+    for stderr in [
+        "Connection closed by 10.0.0.2 port 22",
+        "kex_exchange_identification: read: Connection reset by peer",
+        "",
+    ] {
+        assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
+    }
+    assert!(matches!(
+        failure("Connection refused\nuser@spark: Permission denied (publickey)."),
+        DiscoveryError::Authentication
+    ));
+    assert!(matches!(
+        failure("No route to host\nHost key verification failed."),
+        DiscoveryError::HostKey
+    ));
+}

@@ -427,7 +427,11 @@ impl SnapshotView {
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
         sidebar = sidebar.child(self.sidebar_home_row(cx));
-        for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
+        let now = (self.connection.clock)().0;
+        for (index, row) in sidebar::rows_at(&self.browser_state, now)
+            .into_iter()
+            .enumerate()
+        {
             let mut element = sidebar::render_row(
                 index,
                 &row,

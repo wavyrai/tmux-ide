@@ -76,6 +76,7 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             "home-status-subtitle",
             "home-status-warning",
             "home-status-error",
+            "home-act-card",
         ]
         .into_iter()
         .filter(|key| cx.debug_bounds(key).is_some())
@@ -86,7 +87,8 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             phase: Phase::Failed,
         })
     });
-    assert_eq!(shown(cx), ["home-status-error"]);
+    // r3: setup that needs the user is the act card, at once.
+    assert_eq!(shown(cx), ["home-act-card"]);
     draw(&view, cx, |v| {
         v.browser_state.local_setup = None;
         v.browser_state.home_phase = browser::HomePhase::Unavailable;
@@ -98,7 +100,7 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             phase: Phase::Available,
         })
     });
-    assert_eq!(shown(cx), ["home-status-subtitle"]);
+    assert_eq!(shown(cx), ["home-act-card"]);
     draw(&view, cx, |v| {
         v.browser_state.local_setup = None;
         v.browser_state.home_phase = browser::HomePhase::Loading;

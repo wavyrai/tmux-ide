@@ -69,6 +69,8 @@ impl SnapshotView {
                 .child(glyph("icons/terminal.svg", bezel.text_muted))
                 .into_any_element(),
         };
+        // r4: a machine away for 8 s keeps its last known rows, muted and tagged.
+        let away = self.session_away(session).is_some();
         let name = name_column()
             .debug_selector(move || format!("fleet-session-name-{index}-{row}"))
             .flex()
@@ -80,8 +82,22 @@ impl SnapshotView {
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
+                    .when(away, |label| label.text_color(bezel.text_muted))
+                    .children(design::ink_probe(move || {
+                        format!("fleet-session-label-{index}-{row}")
+                    }))
                     .child(crate::sidebar::label_text(&session.name)),
             )
+            .when(away, |line| {
+                line.child(
+                    div()
+                        .debug_selector(move || format!("fleet-session-away-{index}-{row}"))
+                        .flex_none()
+                        .text_style(TextStyle::Callout)
+                        .text_color(bezel.text_muted)
+                        .child("away"),
+                )
+            })
             .when(session.active, |line| {
                 // Plain words, not a pill: one box fewer on the row.
                 line.child(

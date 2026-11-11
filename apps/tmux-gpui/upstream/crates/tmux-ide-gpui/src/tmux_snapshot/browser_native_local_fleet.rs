@@ -238,15 +238,17 @@ impl Gate {
         };
         let mut groups = BTreeMap::from([(selected.to_owned(), current)]);
         for (id, (label, _)) in &self.labels {
-            groups.insert(
-                id.clone(),
-                group(
-                    id,
-                    label,
-                    self.catalogs.get(id),
-                    self.failed.contains(id) || self.disconnected.contains(id),
-                )?,
-            );
+            let mut group = group(
+                id,
+                label,
+                self.catalogs.get(id),
+                self.failed.contains(id) || self.disconnected.contains(id),
+            )?;
+            group.away = self
+                .recovery
+                .away(id)
+                .filter(|_| !self.disconnected.contains(id));
+            groups.insert(id.clone(), group);
         }
         let mut identities = Vec::new();
         for id in std::iter::once(selected).chain(self.labels.keys().map(String::as_str)) {
@@ -416,6 +418,7 @@ fn group(
         conflict: false,
         retry: None,
         disconnect: None,
+        away: None,
         omitted_sessions: 0,
         sessions: vec![],
         servers: vec![],

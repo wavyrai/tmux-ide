@@ -77,10 +77,20 @@ pub(in crate::tmux_snapshot) struct Row {
     pub aside: Option<String>,
     /// A pane row's pane: its agent state and its menu.
     pub pane: Option<String>,
+    /// Listed from a remote machine that is away (r4): muted ink.
+    pub away: bool,
 }
 pub(in crate::tmux_snapshot) fn rows(state: &browser::State) -> Vec<Row> {
+    rows_at(state, std::time::Instant::now())
+}
+/// The rows as of `now`: a remote machine that is away reads as before for
+/// 8 s, as the footer slot does, and then as away (r4).
+pub(in crate::tmux_snapshot) fn rows_at(
+    state: &browser::State,
+    now: std::time::Instant,
+) -> Vec<Row> {
     if let Some(fleet) = &state.fleet {
-        return hierarchy::rows(state, fleet);
+        return hierarchy::rows(state, fleet, now);
     }
     let mut out = Vec::new();
     for session in &state.sessions {
@@ -216,7 +226,8 @@ pub(super) fn render_row(
         .overflow_hidden()
         // Three inks (#746 v3): the full text only on the selection, the
         // middle label ink on other rows, muted on headings.
-        .text_color(rgb(if heading || window {
+        // An away machine's rows (r4) take the muted ink too.
+        .text_color(rgb(if heading || window || row.away {
             muted
         } else if row.selected {
             label
