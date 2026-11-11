@@ -50,6 +50,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
+      - name: Fall back to public DNS for package installs
+        if: matrix.native == 'bundled'
+        uses: ./.github/actions/apt-dns-fallback
       - name: Build the bundled patched tmux (as the release and installed lane do)
         if: matrix.native == 'bundled'
         run: |
