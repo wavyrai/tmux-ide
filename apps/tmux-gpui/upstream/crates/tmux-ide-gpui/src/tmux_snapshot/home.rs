@@ -190,7 +190,13 @@ impl SnapshotView {
     pub(super) fn home_palette(&self) -> bezel_theme::Theme {
         palette(&self.theme(), self.canvas())
     }
-    fn home_select(&mut self, request: u64, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn home_select(
+        &mut self,
+        request: u64,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if current(
             &self.browser_state,
             self.browser_commands.is_some(),
@@ -256,6 +262,11 @@ impl SnapshotView {
     ) -> AnyElement {
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
+        // First run: the welcome takes Home's place (onboarding A1).
+        self.observe_welcome(cx);
+        if self.welcome.open {
+            return self.welcome_render(window, cx);
+        }
         let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
         if let Some(controls) = self.home_filter.as_mut() {
             let machines = super::motion::home_machines(&self.browser_state);

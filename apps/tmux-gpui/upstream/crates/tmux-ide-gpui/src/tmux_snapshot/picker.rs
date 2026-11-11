@@ -725,6 +725,7 @@ impl SnapshotView {
                 Action::Shortcuts => self.open_picker_mode(Mode::Reference, window, cx),
                 Action::Help => self.open_picker_mode(Mode::Help, window, cx),
                 Action::WhatsNew => self.open_picker_mode(Mode::WhatsNew, window, cx),
+                Action::Welcome => self.open_welcome(window, cx),
                 Action::ToggleSidebar => self.toggle_sidebar(cx),
                 Action::SavedMachines => self.open_saved_machines(window, cx),
                 Action::ManageMachines => self.open_machine_management(window, cx),

@@ -243,6 +243,7 @@ fn capture_view(
         home_filter: None,
         pane_actions: None,
         pane_close: None,
+        welcome: Default::default(),
         browser_address: None,
         new_session: None,
         new_session_queued: None,
@@ -633,6 +634,30 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         }
         state.surface = browser::Surface::Home;
     }
+    // `+welcome` is first run with setup needed (onboarding A1), with
+    // `+running` or `+failed` its states; `+welcome-existing` the welcome
+    // opened from Commands over sessions.
+    let welcome = extras.contains(&"welcome");
+    let welcome_existing = extras.contains(&"welcome-existing");
+    if welcome {
+        state.surface = browser::Surface::Home;
+        state.home_phase = browser::HomePhase::Unavailable;
+        state.sessions.clear();
+        state.panes.clear();
+        state.fleet = None;
+        state.selected_session = None;
+        let phase = if extras.contains(&"running") {
+            browser::local_setup::Phase::Running
+        } else if extras.contains(&"failed") {
+            browser::local_setup::Phase::StoppedWaiting
+        } else {
+            browser::local_setup::Phase::Available
+        };
+        state.local_setup = Some(browser::local_setup::Setup { phase });
+    }
+    if welcome_existing {
+        state.surface = browser::Surface::Home;
+    }
     let (sender, receiver) = mpsc::sync_channel(1024);
     let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let bounds = Bounds {
@@ -657,6 +682,19 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     let mut view = capture_view(window, cx, sender, state);
                     // `+sidebar` keeps Home's sidebar (#746).
                     view.sidebar_hidden = (home_b && !with_sidebar) || nosidebar;
+                    if welcome || welcome_existing {
+                        let now = cx.background_executor().now();
+                        view.welcome = super::welcome::State::preview(
+                            welcome_existing,
+                            false,
+                            extras
+                                .contains(&"running")
+                                .then(|| now - std::time::Duration::from_secs(3)),
+                            extras
+                                .contains(&"failed")
+                                .then_some(super::welcome::SETUP_DEADLINE),
+                        );
+                    }
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {

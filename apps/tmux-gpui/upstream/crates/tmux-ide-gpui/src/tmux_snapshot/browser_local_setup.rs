@@ -5,7 +5,7 @@ use serde::Deserialize;
 pub(in crate::tmux_snapshot) struct Setup {
     pub phase: Phase,
 }
-#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(in crate::tmux_snapshot) enum Phase {
     Available,
