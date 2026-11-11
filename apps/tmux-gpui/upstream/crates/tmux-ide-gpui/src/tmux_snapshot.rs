@@ -292,7 +292,9 @@ fn show_owned(
                 } else {
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
-                            title: Some("tmux-ide — read-only preview".into()),
+                            title: Some(
+                                format!("{} — read-only preview", menu_bar::APP_NAME).into(),
+                            ),
                             ..Default::default()
                         }),
                         ..Default::default()
