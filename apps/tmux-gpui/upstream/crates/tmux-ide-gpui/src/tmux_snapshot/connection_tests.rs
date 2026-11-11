@@ -392,6 +392,112 @@ fn what_only_the_user_can_act_on_stays_loud(cx: &mut TestAppContext) {
     });
 }
 
+/// r3: each state only the user can fix gives one card and its slot label.
+#[test]
+fn each_act_needed_state_has_its_card_and_slot_label() {
+    let with_act = |act| browser::State {
+        act: Some(act),
+        status: "reason".into(),
+        ..Default::default()
+    };
+    for (act, slot) in [
+        (Act::DaemonUpdate, UPDATE_NEEDED),
+        (Act::Record, SETUP_NEEDED),
+        (Act::Credentials, SETUP_NEEDED),
+        (Act::Platform, SETUP_NEEDED),
+        (Act::Unreadable, SETUP_NEEDED),
+        (Act::GaveUp, COULDNT_RECONNECT),
+        (Act::SshIdentity, SETUP_NEEDED),
+        (Act::AppUpdate, UPDATE_NEEDED),
+    ] {
+        let card = card(&with_act(act), true).unwrap();
+        assert_eq!(card.slot, slot, "{act:?}");
+        if act != Act::Credentials {
+            assert_eq!(card.detail, "reason");
+        }
+        assert!(card.retry.is_none());
+    }
+    use browser::local_setup::{Phase, Setup};
+    for (phase, slot) in [
+        (Phase::Available, Some(SETUP_NEEDED)),
+        (Phase::Missing, Some(SETUP_NEEDED)),
+        (Phase::Unsupported, Some(UPDATE_NEEDED)),
+        (Phase::Unrecognized, Some(SETUP_NEEDED)),
+        (Phase::Failed, Some(SETUP_NEEDED)),
+        (Phase::StoppedWaiting, Some(SETUP_NEEDED)),
+        (Phase::Running, None),
+    ] {
+        let state = browser::State {
+            local_setup: Some(Setup { phase }),
+            ..Default::default()
+        };
+        assert_eq!(card(&state, true).map(|c| c.slot), slot);
+        assert_eq!(
+            card(&state, true).and_then(|c| c.action),
+            slot.map(|_| phase.label())
+        );
+    }
+    // Nothing to act on: no card.
+    assert_eq!(card(&browser::State::default(), true), None);
+}
+
+#[test]
+fn a_remote_machine_only_the_user_can_fix_gets_the_card_with_its_retry() {
+    let fleet = |failure: &str| -> browser::fleet::Fleet {
+        serde_json::from_value(serde_json::json!({
+            "groups": [{"id": "spark", "label": "spark", "state": "disconnected",
+                "conflict": false, "omittedSessions": 0, "sessions": [],
+                "retry": "22222222-2222-4222-8222-222222222222",
+                "diagnostic": {"phase": "needs-attention", "failure": failure}}],
+            "omittedGroups": 0,
+            "preferences": {"revision": 1, "phase": "ready", "error": null}
+        }))
+        .unwrap()
+    };
+    for (failure, slot) in [
+        ("ssh-authentication", Some(SETUP_NEEDED)),
+        ("ssh-host-key", Some(SETUP_NEEDED)),
+        ("remote-cli-missing", Some(SETUP_NEEDED)),
+        ("daemon-missing", Some(SETUP_NEEDED)),
+        ("incompatible", Some(UPDATE_NEEDED)),
+        // Unreachable is retried by itself (r4): no card.
+        ("unavailable", None),
+    ] {
+        let state = browser::State {
+            fleet: Some(fleet(failure)),
+            ..Default::default()
+        };
+        let card = card(&state, true);
+        assert_eq!(card.as_ref().map(|c| c.slot), slot, "{failure}");
+        if let Some(card) = card {
+            assert_eq!(card.title, "spark needs you");
+            assert!(card.retry.is_some());
+        }
+    }
+}
+
+#[gpui::test]
+fn the_slot_says_so_at_once_and_home_shows_the_card(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let state = browser::State {
+        surface: browser::Surface::Home,
+        home_phase: browser::HomePhase::Unavailable,
+        request: 7,
+        act: Some(Act::DaemonUpdate),
+        status: "This daemon needs an update. Update tmux-ide, then refresh.".into(),
+        ..Default::default()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, _at) = clock();
+    view.update(cx, |view, _| view.connection.clock = clock);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("tmux-connection-act").is_some());
+    assert!(cx.debug_bounds("home-act-card").is_some());
+    assert!(cx.debug_bounds("home-act-action").is_some());
+    assert!(cx.debug_bounds("home-act-copy").is_some());
+    assert!(cx.debug_bounds("home-status-warning").is_none());
+}
+
 /// #357 review, item 2: the wait starts when the window does. A worker that
 /// never publishes still brings the spinner at 1 s and the words at 8 s.
 #[gpui::test]
@@ -503,6 +609,58 @@ fn the_selection_hint_stays_during_a_reconnect(cx: &mut TestAppContext) {
             &line, false, true
         ));
     });
+}
+
+/// #360 review (c): the credentials card says what its button does, and that
+/// button (Refresh) reads the daemon's record and credentials again. An app
+/// too old for its daemon gets no button at all: nothing in the app fixes it.
+#[test]
+fn each_cards_text_and_action_agree() {
+    let state = |act| browser::State {
+        act: Some(act),
+        status: "reason".into(),
+        ..Default::default()
+    };
+    let credentials = card(&state(Act::Credentials), true).unwrap();
+    assert_eq!(credentials.action, Some("Refresh"));
+    assert!(credentials.detail.contains("Refresh reads them again"));
+    assert!(!credentials.detail.contains("Restart tmux-ide."));
+    assert_eq!(card(&state(Act::AppUpdate), true).unwrap().action, None);
+    assert_eq!(
+        card(&state(Act::GaveUp), true).unwrap().action,
+        Some("Refresh sessions")
+    );
+}
+
+/// #360 review (a): the pane-limit notice stays loud beside an act card.
+#[gpui::test]
+fn the_pane_limit_notice_shows_beside_an_act_card(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let state = browser::State {
+        surface: browser::Surface::Home,
+        home_phase: browser::HomePhase::Live,
+        request: 7,
+        home_notice: Some("This session has 38 panes; tmux-ide opens at most 24.".into()),
+        fleet: Some(
+            serde_json::from_value(serde_json::json!({
+                "groups": [{"id": "spark", "label": "spark", "state": "disconnected",
+                    "conflict": false, "omittedSessions": 0, "sessions": [],
+                    "retry": "22222222-2222-4222-8222-222222222222",
+                    "diagnostic": {"phase": "needs-attention", "failure": "ssh-authentication"}}],
+                "omittedGroups": 0,
+                "preferences": {"revision": 1, "phase": "ready", "error": null}
+            }))
+            .unwrap(),
+        ),
+        ..Default::default()
+    };
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, _at) = clock();
+    view.update(cx, |view, _| view.connection.clock = clock);
+    cx.simulate_resize(size(px(1200.), px(900.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("home-act-card").is_some());
+    assert!(cx.debug_bounds("home-status-warning").is_some());
 }
 
 /// review-chrome on the main merge: a real drop holds the last frame with

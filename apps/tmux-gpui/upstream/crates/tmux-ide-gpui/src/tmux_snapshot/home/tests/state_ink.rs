@@ -156,7 +156,9 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
             }
             Some(_) => {}
         };
-    check(&probes, "home-status", error);
+    // r3: failed setup is the act card, on the warning wash; its text reads there.
+    check(&probes, "home-act-title", warning);
+    check(&probes, "home-act-detail", warning);
     check(&probes, "home-recovery-error", bare);
     let probes = paint(cx, &|v| {
         v.browser_state.local_setup = None;

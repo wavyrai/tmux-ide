@@ -1,13 +1,24 @@
-//! Bounded read-only recovery, authorized only by a fresh local registry read.
+//! Read-only recovery of remote machines, authorized only by a fresh local
+//! registry read. A transient failure is retried until the user disconnects
+//! (owner, r4): 1, 2, 4… seconds, capped at a minute. Authentication, host
+//! keys and other failures only the user can fix are never retried.
 use super::*;
 use herdr_client::tmux_daemon::Error as DaemonError;
+/// The longest wait between two tries of an unreachable machine.
+pub(in crate::tmux_snapshot) const MAX_DELAY: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub(super) struct Retries(BTreeMap<String, Attempt>);
 struct Attempt {
     incarnation: uuid::Uuid,
-    count: u8,
+    count: u32,
     due: Option<Instant>,
     pending: bool,
+    /// When the machine was first found unreachable in this run of failures.
+    since: (Instant, std::time::SystemTime),
+}
+/// The delay before try `count + 1`.
+pub(super) fn delay(count: u32) -> Duration {
+    Duration::from_secs(1u64.checked_shl(count.min(16)).unwrap_or(u64::MAX)).min(MAX_DELAY)
 }
 impl Retries {
     pub(super) fn success(&mut self, id: &str) {
@@ -38,14 +49,15 @@ impl Retries {
             count: 0,
             due: None,
             pending: false,
+            since: (now, std::time::SystemTime::now()),
         });
-        if attempt.incarnation == incarnation
-            && attempt.count < 3
-            && attempt.due.is_none()
-            && !attempt.pending
-        {
-            attempt.due = Some(now + Duration::from_secs(1 << attempt.count));
+        if attempt.incarnation == incarnation && attempt.due.is_none() && !attempt.pending {
+            attempt.due = Some(now + delay(attempt.count));
         }
+    }
+    /// When an unreachable machine was first found so, while it is retried.
+    pub(super) fn away(&self, id: &str) -> Option<(Instant, std::time::SystemTime)> {
+        self.0.get(id).map(|attempt| attempt.since)
     }
     fn wait(&self, now: Instant) -> Option<Duration> {
         self.0
@@ -110,12 +122,12 @@ impl Local {
                     continue;
                 }
                 if let Some(next) = registry.retry(id, attempt.incarnation)? {
-                    attempt.count += 1;
+                    attempt.count = attempt.count.saturating_add(1);
                     attempt.incarnation = next;
                     if let Some(label) = self.background_fleet.labels.get_mut(id) {
                         label.1 = next;
                     }
-                    self.background_fleet.catalogs.remove(id);
+                    // The last known sessions stay listed, muted, while it is away.
                     self.background_fleet.failed.remove(id);
                     self.background_fleet
                         .selections
