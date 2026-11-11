@@ -174,11 +174,15 @@ impl SnapshotView {
     /// One agent's state may be old: this Mac's lane is marked last known,
     /// or the machine that lists its session is away (#360's r4).
     ///
-    /// The session is joined by its live id within the agent's machine when
-    /// the workspace fleet publication scopes the agent; otherwise (Home's
-    /// roster carries no machine id) by the live id alone, which errs toward
-    /// "last known" if another machine that is away has a session with the
-    /// same id.
+    /// The agent's session is found, in order:
+    /// - within the agent's machine, when the workspace fleet publication
+    ///   scopes the agent;
+    /// - for the open workspace's own agents, as the open session's fleet
+    ///   entry (the one the sidebar leads with), since live ids (`$0`, …)
+    ///   repeat across machines;
+    /// - otherwise (Home's roster carries no machine id) by the live id
+    ///   alone, which errs toward "last known" if another machine that is
+    ///   away has a session with the same id.
     pub(super) fn agent_last_known(&self, row: &Row) -> bool {
         if self.agents_shown_last_known() {
             return true;
@@ -189,6 +193,11 @@ impl SnapshotView {
             .as_ref()
             .and_then(|p| p.sessions.get(&row.key))
             .map(|scope| scope.machine.as_str());
+        if machine.is_none()
+            && let Some(open) = self.workspace_open_session(&row.session_id)
+        {
+            return self.session_away(open).is_some();
+        }
         self.browser_state.fleet.as_ref().is_some_and(|fleet| {
             fleet
                 .groups
@@ -198,6 +207,24 @@ impl SnapshotView {
                 .filter(|session| session.session_id.as_deref() == Some(&row.session_id))
                 .any(|session| self.session_away(session).is_some())
         })
+    }
+    /// The fleet entry of the session open in the workspace, when `session`
+    /// is its live id: as the sidebar's lead (`hierarchy::open`).
+    fn workspace_open_session(&self, session: &str) -> Option<&super::browser::fleet::Session> {
+        let state = &self.browser_state;
+        if state.surface != super::browser::Surface::Workspace
+            || state.selected_session.as_deref() != Some(session)
+        {
+            return None;
+        }
+        state
+            .fleet
+            .as_ref()?
+            .groups
+            .iter()
+            .filter(|g| !g.conflict && g.state == super::browser::fleet::Phase::Ready)
+            .flat_map(|g| g.sessions.iter())
+            .find(|s| s.active && s.session_id.as_deref() == Some(session))
     }
     fn agent_motion(&self) -> bool {
         self.presence.active()

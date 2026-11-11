@@ -247,6 +247,9 @@ fn close(view: &mut SnapshotView, window: &mut Window, cx: &mut Context<Snapshot
     });
     view.input_interrupted = true;
     let target = crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
+    // Interrupted input with a reconnect counts as refused keys, which shows
+    // the words at once; the card's own rule must hold before them too.
+    view.input_interrupted = false;
     view.browser_state.agents_last_known = true;
     view.begin_pane_close(target, window, cx);
 }
@@ -254,7 +257,20 @@ fn close(view: &mut SnapshotView, window: &mut Window, cx: &mut Context<Snapshot
 fn the_close_card_says_it_may_still_be_running(cx: &mut TestAppContext) {
     // The flag alone decides here, at any length of drop.
     for after in [Duration::ZERO, Duration::from_secs(600)] {
-        let probes = painted(cx, workspace(), When { flag: true, after }, close);
+        let probes = painted(
+            cx,
+            workspace(),
+            When { flag: true, after },
+            |view, window, cx| {
+                close(view, window, cx);
+                // At 0 s the words aren't up: only the flag can say "unknown".
+                assert_eq!(
+                    view.connection_mutes_titles(),
+                    !after.is_zero(),
+                    "{after:?}"
+                );
+            },
+        );
         let body = says(&probes, "pane-close-body");
         assert!(
             body.starts_with("Claude isn't reporting its state, so it may still be running."),
@@ -442,12 +458,20 @@ fn other_states_are_muted_only_when_last_known(cx: &mut TestAppContext) {
 /// known" without this Mac's flag (review r2), and not in the machine's quiet
 /// first second.
 fn away_workspace(after: Duration) -> (browser::State, When) {
+    namesake_workspace(after, true)
+}
+/// This Mac's session open (when `remote_open` is false) beside an away
+/// remote with a session of the same live id; or that remote's session open.
+fn namesake_workspace(after: Duration, remote_open: bool) -> (browser::State, When) {
     let mut state = workspace();
     let mut fleet: browser::fleet::Fleet = serde_json::from_value(serde_json::json!({
-        "omittedGroups":0,"groups":[{"id":"remote","label":"Studio","state":"ready",
-        "conflict":false,"omittedSessions":0,"sessions":[
-        {"id":"remote-a","name":"Alpha","paneCount":1,"sessionId":"session-a","active":true,
-         "selection":"70500000-0000-4000-8000-000000000001"}]}]}))
+        "omittedGroups":0,"groups":[
+        {"id":"remote","label":"Studio","state":"ready","conflict":false,"omittedSessions":0,
+         "sessions":[{"id":"remote-a","name":"Alpha","paneCount":1,"sessionId":"session-a",
+          "active":remote_open,"selection":"70500000-0000-4000-8000-000000000001"}]},
+        {"id":"local","label":"Local","state":"ready","conflict":false,"omittedSessions":0,
+         "sessions":[{"id":"local-a","name":"Alpha","paneCount":1,"sessionId":"session-a",
+          "active":!remote_open,"selection":"70500000-0000-4000-8000-000000000002"}]}]}))
     .unwrap();
     fleet.groups[0].away = Some((Instant::now(), std::time::SystemTime::now()));
     state.fleet = Some(fleet);
@@ -551,4 +575,33 @@ fn the_away_join_stays_on_the_agents_machine(cx: &mut TestAppContext) {
             .clear()
     });
     view.read_with(cx, |view, _| assert!(view.agent_last_known(&row)));
+}
+
+/// This Mac's open session beside an away machine with a session of the same
+/// live id (`$0` on both is the usual case): the local agent is current on
+/// its pane row, header, spoken label and close card (review r3).
+#[gpui::test]
+fn a_namesake_on_an_away_machine_leaves_the_open_session_current(cx: &mut TestAppContext) {
+    let (state, when) = namesake_workspace(Duration::from_secs(600), false);
+    let probes = painted(cx, state, when, split);
+    assert_eq!(says(&probes, "agent-state-Sidebar"), "Needs input");
+    assert_eq!(says(&probes, "agent-state-Header"), "Needs input");
+    assert!(
+        probes
+            .iter()
+            .filter(|(k, _)| k.starts_with("spoken-"))
+            .all(|(_, v)| !v.contains("last known")),
+        "{probes:#?}"
+    );
+    let (state, when) = namesake_workspace(Duration::from_secs(600), false);
+    let probes = painted(cx, state, when, |view, window, cx| {
+        split(view, window, cx);
+        close(view, window, cx);
+        view.pane_close = None;
+        view.browser_state.agents_last_known = false;
+        let target =
+            crate::tmux_snapshot::pane_actions::Target::capture(&view.browser_state).unwrap();
+        view.begin_pane_close(target, window, cx);
+    });
+    assert!(says(&probes, "pane-close-body").starts_with("Claude is working on this."));
 }
