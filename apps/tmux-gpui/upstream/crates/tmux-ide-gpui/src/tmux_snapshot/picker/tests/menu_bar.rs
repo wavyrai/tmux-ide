@@ -351,3 +351,23 @@ fn the_app_menu_names_tmux_ide() {
     assert!(carried("Show All").is_some_and(|a| a.partial_eq(&ShowAll)));
     assert!(carried("Quit Tmux IDE").is_some_and(|a| a.partial_eq(&crate::Quit)));
 }
+
+/// Hide, Hide Others and Show All act on the whole app, so their handlers are
+/// app-wide ones that `install` adds: without them the items would be dead.
+#[gpui::test]
+fn the_hide_items_reach_an_app_wide_handler(cx: &mut TestAppContext) {
+    let expected: [(&str, &dyn gpui::Action); 3] = [
+        ("Hide Tmux IDE", &HideApp),
+        ("Hide Others", &HideOthers),
+        ("Show All", &ShowAll),
+    ];
+    cx.update(|cx| {
+        for (title, action) in expected {
+            assert!(!cx.is_action_available(action), "{title} before install");
+        }
+        install(cx);
+        for (title, action) in expected {
+            assert!(cx.is_action_available(action), "{title}");
+        }
+    });
+}
