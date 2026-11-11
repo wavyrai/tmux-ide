@@ -8,7 +8,7 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.16, build 2026111101.** The app is Developer ID
+**Public alpha — version 0.1.17, build @BUILD@.** The app is Developer ID
 signed and Apple notarized, and its packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
 
@@ -31,13 +31,22 @@ discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
 
+In 0.1.17, a Mac that isn't set up yet opens on a welcome instead of Home. It shows what
+is ready and sets Tmux IDE up with one button, Set up Tmux IDE. If setup fails, it says what
+happened and offers Try again and Copy details. Someone already set up never sees it; open it
+again from Commands → Welcome to Tmux IDE…. Setup, Home and connection problems now say what
+happened in plain words. After each update, a short What's new card shows once on Home, and
+Commands → What's new lists every version's notes. The app menu's first item, About Tmux IDE,
+shows the app's version and build, the version of the tmux-ide it is connected to, and Copy
+diagnostics.
+
 In 0.1.16, the window follows the reviewed design more closely. The sidebar is 252 pt wide
 and lists the open project first, then favourites, then the rest by name. The focused pane
 is painted in the terminal's background colour and the other panes one small step toward the
 text colour, so focus shows by fill rather than by an outline. A new terminal uses 12 pt type
 on a 15 pt line; a font size you saved still wins. The sidebar is frosted glass in light and
-dark mode, with a density chosen per theme; Blue, Pink, Purple, Red, Solarized and Solarized
-Light stay opaque, and Reduce transparency or Increase contrast turns the glass off. Its
+dark mode, with a density chosen per theme; Blue Phosphor, Hot Pink, Purple Phosphor, Red
+Phosphor, Solarized Dark and Solarized Light stay opaque, and Reduce transparency or Increase contrast turns the glass off. Its
 footer holds Switch session and Switch machine on the left, and Choose theme and Settings and
 commands (F5) on the right. With the sidebar shown, the traffic lights, the sidebar toggle,
 search and New session head the sidebar, and the pane cards start just under the window's top
@@ -183,8 +192,8 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026111101)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111101/tmux-ide-gpui-0.1.16-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-@BUILD@)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-@BUILD@/tmux-ide-gpui-0.1.17-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
 Install the native alpha with one command. This also installs CLI 2.9.22 at
