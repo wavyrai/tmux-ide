@@ -399,3 +399,6 @@ fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext)
 
 #[path = "reader/keys_tests.rs"]
 mod reader_keys_tests;
+
+#[path = "terminal_links/gui_links_tests.rs"]
+mod gui_links_tests;

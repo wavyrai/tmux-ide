@@ -1,6 +1,7 @@
-//! Resolve user-selected links within the painted pane or popup only: web
-//! addresses, and the local file paths a pane prints, which open only on a
-//! link-modifier click on the machine that runs the pane.
+//! Resolve user-selected links within the painted pane or popup only: plain
+//! `http://` and `https://` addresses in the text, and explicit (OSC 8)
+//! hyperlinks to such addresses when a frame carries them. Nothing else opens:
+//! not file paths, not other schemes.
 use super::{HIDDEN, selection::shown};
 use std::ops::Range;
 
@@ -58,11 +59,23 @@ pub(super) fn plain_url(text: &str, hit: usize) -> Option<(Range<usize>, bool)> 
 
 /// Resolve a bounded, already-proven logical line without constructing a flat frame.
 /// The caller owns pane bounds and soft-wrap provenance; only web links escape.
+#[cfg(test)]
 pub(crate) fn logical_web_link(
     cells: &[&herdr_client::protocol::CellData],
     selected: usize,
     hyperlinks: &[String],
 ) -> Option<String> {
+    logical_web_link_span(cells, selected, hyperlinks).map(|(url, _)| url)
+}
+
+/// [`logical_web_link`] and the indices of the cells it covers, so a cue can
+/// mark exactly what a click opens. A wide character's padding cell belongs
+/// to it.
+pub(crate) fn logical_web_link_span(
+    cells: &[&herdr_client::protocol::CellData],
+    selected: usize,
+    hyperlinks: &[String],
+) -> Option<(String, Range<usize>)> {
     if cells.len() > 8192 {
         return None;
     }
@@ -75,14 +88,28 @@ pub(crate) fn logical_web_link(
         return None;
     }
     if let Some(index) = cells.get(selected)?.hyperlink.or(cell.hyperlink) {
-        return web_url(hyperlinks.get(index as usize)?);
+        let url = web_url(hyperlinks.get(index as usize)?)?;
+        let carries = |i: usize| cells[i].hyperlink == Some(index);
+        let mut start = source;
+        while start > 0 && carries(start - 1) {
+            start -= 1;
+        }
+        let mut end = source + 1;
+        while end < cells.len() && (carries(end) || cells[end].skip) {
+            end += 1;
+        }
+        return Some((url, start..end));
     }
     let mut text = String::new();
+    // The byte at which each cell's text starts; a padding cell starts where
+    // its wide character ends.
+    let mut starts = Vec::with_capacity(cells.len());
     let mut hit = None;
     for (index, cell) in cells.iter().enumerate() {
         if index == source {
             hit = Some(text.len());
         }
+        starts.push(text.len());
         if cell.skip {
             continue;
         }
@@ -96,5 +123,15 @@ pub(crate) fn logical_web_link(
     if truncated {
         return None;
     }
-    web_url(&text[range])
+    let url = web_url(&text[range.clone()])?;
+    let first = (0..cells.len()).find(|&i| !cells[i].skip && starts[i] >= range.start)?;
+    let end = starts
+        .iter()
+        .rposition(|&start| start < range.end)
+        .map_or(first + 1, |last| last + 1);
+    let mut end = end.max(first + 1);
+    while end < cells.len() && cells[end].skip {
+        end += 1;
+    }
+    Some((url, first..end))
 }

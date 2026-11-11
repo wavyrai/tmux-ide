@@ -86,3 +86,88 @@ fn retained_coordinates_require_original_exact_viewport_identity() -> anyhow::Re
     assert!(capture.save().unwrap().restore(&state).is_none());
     Ok(())
 }
+
+/// A pane of `lines` (padded to the widest), with soft-wrap flags.
+fn lines(text: &[&str], wrapped: Vec<bool>) -> browser::State {
+    use herdr_client::protocol::{CellData, FrameData};
+    let width = text.iter().map(|l| l.chars().count()).max().unwrap() as u16;
+    let cells = text
+        .iter()
+        .flat_map(|l| {
+            l.chars()
+                .chain(std::iter::repeat(' '))
+                .take(usize::from(width))
+        })
+        .map(|c| CellData {
+            symbol: c.to_string(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: false,
+            hyperlink: None,
+        })
+        .collect();
+    let frame = FrameData {
+        width,
+        height: text.len() as u16,
+        cells,
+        cursor: None,
+        hyperlinks: vec![],
+        graphics: vec![],
+    };
+    browser::State {
+        frame: Some(Arc::new(frame).into()),
+        copy_region: Some(copy::Region {
+            id: "pane".into(),
+            left: 0,
+            top: 0,
+            width,
+            height: text.len() as u16,
+            wrapped,
+        }),
+        selected_pane: Some("pane".into()),
+        ..Default::default()
+    }
+}
+
+fn unit(state: &browser::State, unit: Unit, x: f32, y: f32) -> String {
+    let mut selection = Capture::begin(state, x, y).unwrap();
+    selection.select(unit, x, y).unwrap();
+    selection.text().unwrap()
+}
+
+/// Card 9: double-click selects a word, as the terminal app does: letters,
+/// digits and `_` run together; a run of spaces or of punctuation is its own
+/// unit; soft-wrapped rows join.
+#[test]
+fn double_click_selects_the_word_under_the_pointer() {
+    let state = lines(&["cargo test_all --lib  ok"], vec![false]);
+    assert_eq!(unit(&state, Unit::Word, 2.5, 0.5), "cargo");
+    assert_eq!(unit(&state, Unit::Word, 8.5, 0.5), "test_all");
+    assert_eq!(unit(&state, Unit::Word, 15.5, 0.5), "--");
+    assert_eq!(unit(&state, Unit::Word, 20.5, 0.5), "  ");
+    let state = lines(&["say hel", "lo now"], vec![false, true]);
+    assert_eq!(unit(&state, Unit::Word, 5.5, 0.5), "hello");
+    assert_eq!(unit(&state, Unit::Word, 0.5, 1.5), "hello");
+}
+
+/// Card 9: triple-click selects the whole logical line, across soft wraps.
+#[test]
+fn triple_click_selects_the_line_across_soft_wraps() {
+    let state = lines(&["one", "two", "three"], vec![false, false, false]);
+    assert_eq!(unit(&state, Unit::Line, 1.5, 1.5), "two");
+    let state = lines(&["abcd", "ef", "gh"], vec![false, true, false]);
+    assert_eq!(unit(&state, Unit::Line, 0.5, 1.5), "abcdef");
+}
+
+/// Dragging after a double-click keeps the first word and grows by words.
+#[test]
+fn dragging_after_a_double_click_extends_by_words() {
+    let state = lines(&["alpha beta gamma"], vec![false]);
+    let mut selection = Capture::begin(&state, 7.5, 0.5).unwrap();
+    selection.select(Unit::Word, 7.5, 0.5).unwrap();
+    selection.update(12., 0.5).unwrap();
+    assert_eq!(selection.text().unwrap(), "beta gamma");
+    selection.update(1., 0.5).unwrap();
+    assert_eq!(selection.text().unwrap(), "alpha beta");
+}

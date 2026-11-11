@@ -1,6 +1,8 @@
 mod links;
 mod selection;
-pub(crate) use links::logical_web_link;
+#[cfg(test)]
+use links::logical_web_link;
+pub(crate) use links::logical_web_link_span;
 pub(crate) use selection::MAX_SELECTION_BYTES;
 
 use crate::config::Theme;

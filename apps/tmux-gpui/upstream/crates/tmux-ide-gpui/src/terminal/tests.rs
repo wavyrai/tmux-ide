@@ -134,6 +134,66 @@ fn logical_web_links_resolve_plain_and_explicit_links_but_not_hidden_cells() {
     assert_eq!(logical_web_link(&row, 0, &[]), None);
 }
 
+/// Card 2 (link hover): the cells a link covers, so the cue underlines
+/// exactly what a click opens. Wide characters keep their padding cell.
+#[test]
+fn a_link_span_covers_exactly_its_cells() {
+    let cells = text_cells("see https://a.test/x. now");
+    let row: Vec<&CellData> = cells.iter().collect();
+    assert_eq!(
+        logical_web_link_span(&row, 8, &[]),
+        Some(("https://a.test/x".to_owned(), 4..20))
+    );
+    assert_eq!(logical_web_link_span(&row, 1, &[]), None);
+    let mut cells = text_cells("界 https://w.test/ x");
+    cells.insert(
+        1,
+        CellData {
+            symbol: String::new(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: true,
+            hyperlink: None,
+        },
+    );
+    let row: Vec<&CellData> = cells.iter().collect();
+    assert_eq!(
+        logical_web_link_span(&row, 5, &[]),
+        Some(("https://w.test/".to_owned(), 3..18))
+    );
+    // A wide character right before the link: its padding cell is not
+    // part of the link.
+    let mut cells = text_cells("界https://w.test/ x");
+    cells.insert(
+        1,
+        CellData {
+            symbol: String::new(),
+            fg: 0,
+            bg: 0,
+            modifier: 0,
+            skip: true,
+            hyperlink: None,
+        },
+    );
+    let row: Vec<&CellData> = cells.iter().collect();
+    assert_eq!(
+        logical_web_link_span(&row, 4, &[]),
+        Some(("https://w.test/".to_owned(), 2..17))
+    );
+    // An explicit hyperlink covers the run of cells that carry it.
+    let mut cells = text_cells("open docs here");
+    for cell in &mut cells[5..9] {
+        cell.hyperlink = Some(0);
+    }
+    let row: Vec<&CellData> = cells.iter().collect();
+    let hyperlinks = ["https://b.test/".to_owned()];
+    assert_eq!(
+        logical_web_link_span(&row, 6, &hyperlinks),
+        Some(("https://b.test/".to_owned(), 5..9))
+    );
+}
+
 fn scrolled_pane(rows: u16, offset: u64, max: u64) -> PaneSurfacePane {
     let rect = SurfaceRect {
         x: 0,

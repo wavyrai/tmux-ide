@@ -222,6 +222,10 @@ impl Local {
         self.agents.publish_filter(&mut state);
         self.published_preferences(&mut state);
         state.machines = Some(self.registry.publication());
+        state.remote_machine = self.selected_profile.as_ref().map(|profile| RemoteMachine {
+            label: profile.label.clone(),
+            ssh_target: profile.ssh_target.clone(),
+        });
         self.publish_tabs(&mut state);
         state.session_history = self.navigation.publication(state.request, self.foreground);
         state.reconnect_attempt = (self.recovery.as_ref().map(reconnect::Recovery::attempt))
