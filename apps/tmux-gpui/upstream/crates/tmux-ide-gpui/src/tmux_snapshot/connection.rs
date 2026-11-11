@@ -261,6 +261,10 @@ pub(super) struct Watch {
     pub(super) clock: Clock,
     _wake: Option<Task<()>>,
     _away_wake: Option<Task<()>>,
+    /// Agent marks have shown "last known" for this drop (#362): they keep
+    /// it until the agent lane's re-read clears the flag, even once the link
+    /// is back and the connection's words are gone.
+    pub(super) agents_marked: std::cell::Cell<bool>,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -270,6 +274,7 @@ impl Default for Watch {
             clock: Rc::new(|| (Instant::now(), SystemTime::now())),
             _wake: None,
             _away_wake: None,
+            agents_marked: std::cell::Cell::new(false),
         }
     }
 }

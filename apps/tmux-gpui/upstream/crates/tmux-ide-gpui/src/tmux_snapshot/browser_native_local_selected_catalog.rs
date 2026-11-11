@@ -20,6 +20,11 @@ pub(super) struct Gate {
     held: bool,
     /// Re-armed after a drop: report `Resumed` once the lane is live.
     recovering: bool,
+    /// Tests: a change the detached lane takes right after the next read is
+    /// submitted, so a test sees which side of the submit the cursor was
+    /// sampled on.
+    #[cfg(test)]
+    advance_after_submit: Option<u64>,
 }
 enum Notice {
     Changed(FleetCatalog),
@@ -183,6 +188,10 @@ impl Gate {
             self.read_started(self.watch.as_ref().and_then(CatalogWatchWorker::read_start));
             let mut reader = CatalogWorker::spawn_source(source.clone())?;
             reader.submit(CatalogAction::FleetCatalog)?;
+            #[cfg(test)]
+            if let (Some(sequence), Some(watch)) = (self.advance_after_submit.take(), &self.watch) {
+                watch.advance_detached(sequence);
+            }
             self.reader = Some(reader);
             self.dirty = false;
         }

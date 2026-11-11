@@ -322,13 +322,18 @@ impl SnapshotView {
                             move || asks_id.clone()
                         }))
                         // Full strength, but tagged when it may be old (#362).
-                        .child(if last_known {
-                            format!(
-                                "· Needs input · {}",
-                                crate::tmux_snapshot::agent_indicator::LAST_KNOWN
-                            )
-                        } else {
-                            "· Needs input".into()
+                        .map(|asks| {
+                            let words = if last_known {
+                                format!(
+                                    "· Needs input · {}",
+                                    crate::tmux_snapshot::agent_indicator::LAST_KNOWN
+                                )
+                            } else {
+                                "· Needs input".into()
+                            };
+                            let key = format!("fleet-session-asks-{suffix}");
+                            asks.children(design::text_probe(move || key.clone(), words.clone()))
+                                .child(words)
                         }),
                 ),
                 false => chip.child(self.agent_chip_state(agent, unavailable, last_known)),

@@ -112,10 +112,12 @@ fn poll_samples_the_cursor_before_the_read_not_after() {
     gate.seed(&snapshot);
     gate.watch = Some(CatalogWatchWorker::detached(5));
     gate.dirty = true;
+    // A change lands the moment the read is submitted, before poll returns:
+    // sampling after the submit would record 6.
+    gate.advance_after_submit = Some(6);
     assert!(gate.poll(&source, true, true).unwrap().is_none());
     assert!(gate.reader.is_some(), "the read was submitted");
-    // A change lands while the read is in flight.
-    gate.watch.as_ref().unwrap().advance_detached(6);
+    assert_eq!(gate.watch.as_ref().unwrap().read_start(), Some(6));
     gate.reader.take();
     gate.on_read(Ok(CatalogResult::FleetCatalog(snapshot.clone())))
         .unwrap();

@@ -84,12 +84,6 @@ pub(super) fn attention_pill(
 }
 /// What a last-known pill and chip add after their words (#362).
 pub(super) const LAST_KNOWN: &str = "last known";
-/// A "needs input" pill whose state is last known, not current: it stays at
-/// full strength, as an away machine's does (#360, r4), because the owner
-/// wants it loud; only its words say it may be old.
-pub(super) fn last_known_pill(theme: &crate::config::Theme, on: Plate) -> Div {
-    attention_pill(theme, on, last_known_words())
-}
 /// A last-known "needs input" mark's words.
 pub(super) fn last_known_words() -> String {
     format!("Needs input · {LAST_KNOWN}")
@@ -162,8 +156,33 @@ impl SnapshotView {
     /// lane is paused for a drop (#362), and the drop has lasted long enough
     /// for quiet reconnect to show its words and mute pane titles (#357's
     /// 8 s, on its clock). A shorter drop changes nothing on screen.
+    ///
+    /// Once shown, the mark stays until the flag clears: the link coming back
+    /// ends the connection's words, but the rows are still the old ones
+    /// until the re-read lands.
     pub(super) fn agents_shown_last_known(&self) -> bool {
-        self.browser_state.agents_last_known && self.connection_mutes_titles()
+        let marked = &self.connection.agents_marked;
+        if !self.browser_state.agents_last_known {
+            marked.set(false);
+            return false;
+        }
+        if self.connection_mutes_titles() {
+            marked.set(true);
+        }
+        marked.get()
+    }
+    /// One agent's state may be old: this Mac's lane is marked last known,
+    /// or the machine that lists its session is away (#360's r4).
+    pub(super) fn agent_last_known(&self, row: &Row) -> bool {
+        self.agents_shown_last_known()
+            || self.browser_state.fleet.as_ref().is_some_and(|fleet| {
+                fleet
+                    .groups
+                    .iter()
+                    .flat_map(|group| group.sessions.iter())
+                    .filter(|session| session.session_id.as_deref() == Some(&row.session_id))
+                    .any(|session| self.session_away(session).is_some())
+            })
     }
     fn agent_motion(&self) -> bool {
         self.presence.active()
@@ -196,11 +215,12 @@ impl SnapshotView {
             .flex_none()
             .flex()
             .items_center()
-            .text_color(ink);
+            .text_color(ink)
+            .children(super::design::ink_probe(|| "agent-chip-state".into()));
         if animated(row, unavailable) && !last_known {
             state
                 .gap(px(2.))
-                .child(self.agent_glyph(row, unavailable))
+                .child(self.agent_glyph(row, unavailable, last_known))
                 .child(words)
                 .into_any_element()
         } else {
@@ -210,24 +230,28 @@ impl SnapshotView {
     /// A sidebar pane row's state (#746): the full pill only when the agent
     /// needs input; otherwise its bare glyph (the spinner, a check, a cross),
     /// and nothing for an idle agent.
+    /// `last_known`: this agent's state may be old (`agents_shown_last_known`,
+    /// or its machine is away).
     pub(super) fn agent_state(
         &self,
         row: &Row,
         unavailable: bool,
         on: Plate,
+        last_known: bool,
     ) -> Option<AnyElement> {
-        let last_known = self.agents_shown_last_known();
-        if label(row, unavailable) == "Needs input" && last_known {
-            return Some(
-                last_known_pill(&self.theme(), on)
-                    .debug_selector(|| "agent-badge".into())
-                    .into_any_element(),
-            );
-        }
         if label(row, unavailable) == "Needs input" {
+            let words = if last_known {
+                last_known_words()
+            } else {
+                "Needs input".into()
+            };
             return Some(
-                attention_pill(&self.theme(), on, "Needs input")
+                attention_pill(&self.theme(), on, words.clone())
                     .debug_selector(|| "agent-badge".into())
+                    .children(super::design::text_probe(
+                        move || format!("agent-state-{on:?}"),
+                        words,
+                    ))
                     .into_any_element(),
             );
         }
@@ -244,17 +268,16 @@ impl SnapshotView {
                 .children(super::design::ink_probe(move || {
                     format!("agent-glyph-{on:?}")
                 }))
-                .child(self.agent_glyph(row, unavailable))
+                .child(self.agent_glyph(row, unavailable, last_known))
                 .into_any_element(),
         )
     }
-    fn agent_glyph(&self, row: &Row, unavailable: bool) -> Div {
+    /// `still`: the state is last known, so a running agent's mark doesn't turn.
+    fn agent_glyph(&self, row: &Row, unavailable: bool, still: bool) -> Div {
         let slots = self.agent_animation.clone();
         // A running row only reserves its slot: the overlay paints the frames.
-        let running = animated(row, unavailable)
-            && slots.attached()
-            && self.agent_motion()
-            && !self.agents_shown_last_known();
+        let running =
+            animated(row, unavailable) && slots.attached() && self.agent_motion() && !still;
         div()
             .relative()
             .w(px(16.))
@@ -280,6 +303,9 @@ impl SnapshotView {
             })
     }
 }
+#[cfg(test)]
+#[path = "agents_last_known_sites_tests.rs"]
+mod last_known_sites_tests;
 #[cfg(test)]
 #[path = "agents_last_known_tests.rs"]
 mod last_known_tests;

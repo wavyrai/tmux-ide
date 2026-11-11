@@ -80,7 +80,9 @@ impl SnapshotView {
             .as_ref()
             .map(|w| w.roster.rows.as_slice())
             .unwrap_or_default();
-        let agent = agent_on(rows, &pane);
+        // While the lane is paused for a drop, the roster may be old (#362):
+        // claim neither working nor finished.
+        let agent = agent_on(rows, &pane, self.browser_state.agents_last_known);
         let icon = agent.map_or("icons/terminal.svg", |(row, _)| {
             super::pane_chrome::agent_icon_path(row.harness.as_deref())
         });
@@ -344,6 +346,16 @@ impl SnapshotView {
                     .mt(px(6.))
                     .ml(px(22.))
                     .line_height(px(18.))
+                    .children(super::design::text_probe(
+                        || "pane-close-body".into(),
+                        card.body
+                            .iter()
+                            .map(|s| match s {
+                                Segment::Text(t) => t.as_str(),
+                                Segment::Code(c) => c,
+                            })
+                            .collect::<String>(),
+                    ))
                     .child(body),
             )
             .children(card.error.map(|error| {
@@ -439,10 +451,17 @@ pub(super) enum Agent {
     Failed,
 }
 
-/// The agent on `pane`, if the workspace roster has one, and its state.
-pub(super) fn agent_on<'a>(rows: &'a [Row], pane: &str) -> Option<(&'a Row, Agent)> {
+/// The agent on `pane`, if the workspace roster has one, and its state;
+/// Unknown when `last_known` (the roster may be old).
+pub(super) fn agent_on<'a>(
+    rows: &'a [Row],
+    pane: &str,
+    last_known: bool,
+) -> Option<(&'a Row, Agent)> {
     let row = rows.iter().find(|r| r.pane_id.as_deref() == Some(pane))?;
-    let state = if row.attention || matches!(row.status, Status::Working | Status::Blocked) {
+    let state = if last_known {
+        Agent::Unknown
+    } else if row.attention || matches!(row.status, Status::Working | Status::Blocked) {
         Agent::Working
     } else {
         match row.status {

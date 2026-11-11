@@ -17,6 +17,7 @@ impl SnapshotView {
                     agent,
                     unavailable,
                     crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+                    self.agents_shown_last_known(),
                 )
             });
         let more = self.pane_row_more(index, pane, cx);
@@ -104,6 +105,9 @@ impl SnapshotView {
             label: "Home".into(),
             icon: Some("icons/tmux-home.svg"),
             attention: waiting,
+            last_known: waiting_rows(&self.browser_state)
+                .iter()
+                .any(|r| r.attention && self.agent_last_known(r)),
             selected: self.browser_state.surface == browser::Surface::Home,
             target: Some(Target::Home),
             ..Row::default()
@@ -141,17 +145,20 @@ impl SnapshotView {
 /// Agents across the fleet that wait for the user: the workspace's fleet
 /// roster, or on Home, Home's own roster.
 pub(in crate::tmux_snapshot) fn waiting_agents(state: &browser::State) -> usize {
-    let waiting = |rows: &[browser::home_agents::Row]| rows.iter().filter(|r| r.attention).count();
+    waiting_rows(state).iter().filter(|r| r.attention).count()
+}
+/// The roster [`waiting_agents`] counts from.
+fn waiting_rows(state: &browser::State) -> &[browser::home_agents::Row] {
     match state
         .workspace_fleet_agents
         .as_ref()
         .filter(|p| p.request == state.request && p.valid())
     {
-        Some(p) => waiting(&p.roster.rows),
+        Some(p) => &p.roster.rows,
         None => state
             .home_agents
             .as_ref()
-            .map_or(0, |roster| waiting(&roster.rows)),
+            .map_or(&[], |roster| &roster.rows),
     }
 }
 
@@ -177,6 +184,13 @@ pub(in crate::tmux_snapshot) fn label(row: &Row, state: Option<&'static str>) ->
             crate::plural::count(row.attention as u64, "needs input", "need input")
         ));
     }
+    // Said as it is drawn: state that may be old is "last known" (#362).
+    if row.last_known && (state.is_some() || (row.attention > 0 && row.kind != Kind::Heading)) {
+        out.push_str(&format!(
+            ", {}",
+            crate::tmux_snapshot::agent_indicator::LAST_KNOWN
+        ));
+    }
     out
 }
 
@@ -196,4 +210,11 @@ pub(in crate::tmux_snapshot) fn spoken(
         })
         .aria_label(label(row, state))
         .aria_selected(row.selected)
+        .children(crate::tmux_snapshot::design::text_probe(
+            {
+                let key = format!("spoken-{}", row.label);
+                move || key.clone()
+            },
+            label(row, state),
+        ))
 }

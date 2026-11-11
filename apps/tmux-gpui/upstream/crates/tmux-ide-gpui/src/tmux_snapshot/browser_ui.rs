@@ -440,10 +440,19 @@ impl SnapshotView {
         let painter = bezel_motion::Painter::of(cx);
         sidebar = sidebar.child(self.sidebar_home_row(cx));
         let now = (self.connection.clock)().0;
-        for (index, row) in sidebar::rows_at(&self.browser_state, now)
+        let local_last_known = self.agents_shown_last_known();
+        for (index, mut row) in sidebar::rows_at(&self.browser_state, now)
             .into_iter()
             .enumerate()
         {
+            // #362: agent state on this row may be old: this Mac's lane is
+            // marked, or the row's machine (or its agent's) is away.
+            row.last_known = local_last_known
+                || row.away
+                || row.agent.as_ref().is_some_and(|key| {
+                    sidebar::activity::row_agent(&self.browser_state, key)
+                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
+                });
             let mut element = sidebar::render_row(
                 index,
                 &row,
@@ -481,6 +490,7 @@ impl SnapshotView {
                     agent,
                     unavailable,
                     super::agent_indicator::Plate::Sidebar,
+                    row.last_known,
                 ));
             }
             if let Some(pane) = &row.pane {
