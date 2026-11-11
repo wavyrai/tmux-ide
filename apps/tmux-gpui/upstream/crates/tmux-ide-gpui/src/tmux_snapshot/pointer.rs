@@ -53,6 +53,8 @@ struct Lease {
 pub(super) struct Owner {
     serial: u64,
     held: Option<(u64, u8, Lease)>,
+    /// A pane header drag (pane_move).
+    pub(super) moving: super::pane_move::Owner,
 }
 fn button(b: MouseButton) -> Option<u8> {
     match b {

@@ -372,6 +372,7 @@ impl SnapshotView {
     pub(super) fn divider_handles(&self, width: f32) -> Vec<AnyElement> {
         if !self.presence.ready()
             || self.selection.is_some()
+            || self.pointer.moving.dragging()
             || (self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some())
             || !width.is_finite()
             || width <= 0.
@@ -613,6 +614,7 @@ impl SnapshotView {
         };
         if !self.presence.ready()
             || self.selection.is_some()
+            || self.pointer.moving.dragging()
             || (self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some())
             || self.browser_request != drag.request
             || !drag.compatible(&self.browser_state)
