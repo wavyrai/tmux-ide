@@ -114,7 +114,7 @@ export function validateBrowserOpen(url: string | undefined, options: OpenBrowse
     });
 }
 
-type Run = (args: readonly string[]) => string;
+export type Run = (args: readonly string[]) => string;
 
 /** Printed when the opened browser never publishes tmux-ide's native controls. */
 export const NO_NATIVE_CONTROLS_NOTICE =
@@ -163,16 +163,16 @@ export async function nativeControlsNotice(
     await sleep(250);
   }
 }
-export function createBrowserPane(
+type PaneKind = "BROWSER" | "READER";
+
+/** Where a new browser or reader pane goes: resolved IDs, before any mutation. */
+export function resolveOpenPaneTarget(
   run: Run,
-  executable: string,
-  url: string | undefined,
   options: OpenBrowserOptions,
   environment: NodeJS.ProcessEnv,
-  cwd: string,
-  namespace: Readonly<Record<string, string>>,
-): { pane: string; session: string; window: string; status: "created" } {
-  validateBrowserOpen(url, options);
+  kind: PaneKind = "BROWSER",
+): { session: string; window: string; sourcePane: string } {
+  const noun = kind.toLowerCase();
   const inheritedPane = /^%\d+$/u.test(environment.TMUX_PANE ?? "")
     ? environment.TMUX_PANE
     : undefined;
@@ -188,7 +188,7 @@ export function createBrowserPane(
   if (!target)
     throw new IdeError(
       "Run tmux-ide open inside a tmux pane, or select a session with --session NAME.",
-      { code: "BROWSER_TARGET_REQUIRED", exitCode: 2 },
+      { code: `${kind}_TARGET_REQUIRED`, exitCode: 2 },
     );
   // Resolve IDs before mutation. No implicit last-used session or window target.
   const identity = run([
@@ -207,13 +207,13 @@ export function createBrowserPane(
     !/^@\d+$/u.test(window ?? "") ||
     !/^%\d+$/u.test(sourcePane ?? "")
   )
-    throw new IdeError("The browser target is no longer available.", {
-      code: "BROWSER_TARGET_UNAVAILABLE",
+    throw new IdeError(`The ${noun} target is no longer available.`, {
+      code: `${kind}_TARGET_UNAVAILABLE`,
     });
   if (implicit && serverPid !== inheritedServer?.[2])
     throw new IdeError(
       "The current pane belongs to a different tmux server. Select a session explicitly.",
-      { code: "BROWSER_TARGET_MISMATCH", exitCode: 2 },
+      { code: `${kind}_TARGET_MISMATCH`, exitCode: 2 },
     );
   if (options.session && options.pane) {
     const selected = run([
@@ -225,21 +225,38 @@ export function createBrowserPane(
     ]).trim();
     if (selected !== session)
       throw new IdeError("The pane does not belong to the requested session.", {
-        code: "BROWSER_TARGET_MISMATCH",
+        code: `${kind}_TARGET_MISMATCH`,
         exitCode: 2,
       });
   }
+  return { session: session!, window: window!, sourcePane: sourcePane! };
+}
+
+/**
+ * The tmux argv that creates the pane and runs `command` in it directly (no
+ * shell parsing). `format` is what tmux prints for the new pane.
+ */
+export function openPaneArgs(
+  target: { session: string; window: string; sourcePane: string },
+  options: OpenBrowserOptions,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  namespace: Readonly<Record<string, string>>,
+  command: readonly string[],
+  format: string,
+  windowName: string,
+): string[] {
   const args = options.window
-    ? ["new-window", "-t", `${session}:`, "-n", "Browser"]
+    ? ["new-window", "-t", `${target.session}:`, "-n", windowName]
     : [
         "split-window",
         options.split === "down" ? "-v" : "-h",
         "-t",
-        `${session}:${window}.${sourcePane}`,
+        `${target.session}:${target.window}.${target.sourcePane}`,
         "-l",
         `${options.size ?? "50"}%`,
       ];
-  args.push("-c", resolve(cwd), "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}");
+  args.push("-c", resolve(cwd), "-P", "-F", format);
   // tmux supplies the new pane's TMUX and TMUX_PANE. Never copy the caller's
   // native-surface route, which belongs to a different pane.
   const childEnvironment: Record<string, string> = { ...namespace };
@@ -255,11 +272,35 @@ export function createBrowserPane(
     if (environment[key] !== undefined) childEnvironment[key] = environment[key];
   for (const [key, value] of Object.entries(childEnvironment)) args.push("-e", `${key}=${value}`);
   // Multiple command arguments use tmux's direct exec path, not shell parsing.
-  args.push(executable, "open", ...(url === undefined ? [] : [url]), "--no-merge");
+  args.push(...command);
+  return args;
+}
+
+export function createBrowserPane(
+  run: Run,
+  executable: string,
+  url: string | undefined,
+  options: OpenBrowserOptions,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  namespace: Readonly<Record<string, string>>,
+): { pane: string; session: string; window: string; status: "created" } {
+  validateBrowserOpen(url, options);
+  const target = resolveOpenPaneTarget(run, options, environment);
+  const args = openPaneArgs(
+    target,
+    options,
+    environment,
+    cwd,
+    namespace,
+    [executable, "open", ...(url === undefined ? [] : [url]), "--no-merge"],
+    "#{session_id}\t#{window_id}\t#{pane_id}",
+    "Browser",
+  );
   const [createdSession, createdWindow, pane] = run(args).trim().split("\t");
   if (
     !/^%\d+$/u.test(pane ?? "") ||
-    createdSession !== session ||
+    createdSession !== target.session ||
     !/^@\d+$/u.test(createdWindow ?? "")
   )
     throw new IdeError("tmux did not return the created browser pane ID.", {

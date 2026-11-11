@@ -48,8 +48,9 @@ enum HeaderIntent {
 }
 mod buttons;
 use buttons::BUTTONS;
+use buttons::TITLE_HINT;
 #[cfg(test)]
-use buttons::{TITLE_HINT, button_a11y, face};
+use buttons::{button_a11y, face};
 /// One header button's hit area. The buttons sit edge to edge at the
 /// header's right end: split right, split down, zoom, close (#746 v3: 24 pt
 /// slots holding a 22 pt button).
@@ -616,6 +617,11 @@ impl SnapshotView {
             self.browser_state.panes.iter().find(|p| p.id == header.id),
         )
         .icon();
+        let icon = if self.is_reader_pane(&header.id) {
+            "icons/note.svg"
+        } else {
+            icon
+        };
         let browser_icon = self
             .browser_state
             .panes
@@ -741,9 +747,16 @@ impl SnapshotView {
                     })
                     .occlude()
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Left, {
+                        let id = id.clone();
+                        cx.listener(move |view, event, _, cx| {
+                            cx.stop_propagation();
+                            view.pane_move_press(&id, event, cx);
+                        })
+                    })
                     .on_mouse_down(MouseButton::Right, self.header_menu_listener(h, cx))
                     .map(|title| self.pane_title_a11y(title, h))
+                    .aria_description(format!("{}. {}", TITLE_HINT, super::pane_move::HINT))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         cx.stop_propagation();
                         if frame.as_ref().is_some_and(|frame| {

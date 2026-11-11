@@ -260,3 +260,44 @@ it("carries live browser icon metadata without changing pane identity", () => {
     browserIcon: null,
   });
 });
+
+it("carries a live reader's file name and path, and drops a dead or malformed one", () => {
+  const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
+  // tmux `qa` escapes the option as one argument.
+  const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}\t#{pane_pid}")).toBe(
+    true,
+  );
+  const record = (raw: string, panePid: string | number = process.pid) =>
+    `${line("%3")}\tmanual\t\t${raw}\t${panePid}`;
+  expect(parseSessionPaneDescriptors([record(quoted)])[0]).toMatchObject({
+    runtimePaneId: "%3",
+    reader: { name: "notes.md", path: "/repo/docs/notes.md", pid: process.pid },
+  });
+  const dead = JSON.stringify({ version: 1, pid: 2 ** 31 - 2, path: "/repo/notes.md" });
+  for (const raw of ["", "bad", dead])
+    expect(parseSessionPaneDescriptors([record(raw, 2 ** 31 - 2)])[0]).toMatchObject({
+      runtimePaneId: "%3",
+      reader: null,
+    });
+});
+
+it("drops a reader option that another process set on the pane (#353 round 2)", () => {
+  const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
+  const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  for (const panePid of [process.pid + 1, "", "abc"])
+    expect(
+      parseSessionPaneDescriptors([`${line("%3")}\tmanual\t\t${quoted}\t${panePid}`])[0],
+    ).toMatchObject({ runtimePaneId: "%3", reader: null });
+});
+
+it("drops a reader whose file name has a C1 control character, keeping the pane", () => {
+  const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/no\u0085tes.md" });
+  const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  expect(
+    // Control mode delivers UTF-8 bytes; the C1 character is two of them.
+    parseSessionPaneDescriptors([
+      controlModeBytes(`${line("%3")}\tmanual\t\t${quoted}\t${process.pid}`),
+    ])[0],
+  ).toMatchObject({ runtimePaneId: "%3", reader: null });
+});

@@ -389,3 +389,41 @@ fn a_duplicate_or_missing_pane_id_stays_an_identity_fault() {
         );
     }
 }
+
+/// #756: a reader pane carries its file name only. A name that could be a
+/// path, carries C0 or C1 control characters, is too long, or a badge with
+/// unknown fields is dropped, and the layout stands (review round 1, item 2).
+#[test]
+fn reader_badges_carry_a_bounded_file_name() {
+    let mut frame = frames()
+        .into_iter()
+        .find(|frame| frame["type"] == "layout-snapshot")
+        .unwrap();
+    frame["layouts"][0]["panes"][0]["reader"] = json!({"name": "release-notes.md"});
+    let mut state = topology(&frame);
+    let pane = &state.layouts()["window-a"].panes[0];
+    assert_eq!(
+        pane.reader.as_ref().map(|r| r.name.as_str()),
+        Some("release-notes.md")
+    );
+    for bad in [
+        json!({"name": ""}),
+        json!({"name": "docs/x.md"}),
+        json!({"name": "a\nb.md"}),
+        json!({"name": "a\u{85}b.md"}),
+        json!({"name": "a\u{9f}b.md"}),
+        json!({"name": "x.md", "path": "/etc/x.md"}),
+        json!({"name": "x".repeat(256)}),
+        json!("x.md"),
+    ] {
+        frame["topologyEpoch"] = json!(frame["topologyEpoch"].as_u64().unwrap() + 1);
+        frame["layouts"][0]["panes"][0]["reader"] = bad.clone();
+        state
+            .apply_control(&to_raw_value(&frame).unwrap())
+            .unwrap_or_else(|error| panic!("{bad}: {error}"));
+        assert!(
+            state.layouts()["window-a"].panes[0].reader.is_none(),
+            "{bad}"
+        );
+    }
+}

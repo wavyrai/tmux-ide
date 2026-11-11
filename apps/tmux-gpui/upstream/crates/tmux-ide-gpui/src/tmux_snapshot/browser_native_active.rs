@@ -479,3 +479,6 @@ fn publish_pane_actions(
 #[cfg(test)]
 #[path = "browser_native_active_tests.rs"]
 mod idle_tests;
+#[cfg(test)]
+#[path = "browser_native_swap_tests.rs"]
+mod swap_tests;

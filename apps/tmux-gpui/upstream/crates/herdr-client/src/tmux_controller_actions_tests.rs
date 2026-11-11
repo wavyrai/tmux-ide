@@ -58,6 +58,41 @@ fn waiting_cancellation_and_sent_completion_are_distinct() {
     assert!(!state.busy());
 }
 
+/// The swap a pane drag sends encodes exactly as the daemon's own vector:
+/// the selected pane is the source, the captured pane the target.
+#[test]
+fn swap_encodes_as_the_daemon_vector() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("tmux_control/tests/extra-intent-vectors.json"))
+            .unwrap_or_else(|_| panic!("vectors"));
+    let vector = vectors["vectors"]
+        .as_array()
+        .and_then(|v| {
+            v.iter()
+                .find(|v| v["command"]["intent"]["verb"] == "workspace.pane.swap")
+        })
+        .unwrap_or_else(|| panic!("swap vector"));
+    let mut expected = vector["command"]["intent"].clone();
+    if let Some(intent) = expected.as_object_mut() {
+        intent.remove("workspaceName");
+    }
+    let action = PaneAction::Swap {
+        target: "pane.two".into(),
+        lifetime: Lifetime {
+            generation: "gen".into(),
+            incarnation: "pane.two:1".into(),
+        },
+    };
+    let intent =
+        serde_json::to_value(action.intent("pane.one")).unwrap_or_else(|_| panic!("intent"));
+    assert_eq!(intent, expected);
+    assert!(action.geometry(), "a swap moves panes: it needs geometry");
+    assert!(
+        !action.structural(),
+        "a swap keeps both panes and their lifetimes"
+    );
+}
+
 #[path = "tmux_controller_actions_tests/interruption.rs"]
 mod interruption;
 /// A split's completion names the pane it created only from its own current,
