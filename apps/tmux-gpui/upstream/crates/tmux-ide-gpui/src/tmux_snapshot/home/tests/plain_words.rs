@@ -126,6 +126,24 @@ fn every_string_in_the_setup_phases_is_plain() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// About Tmux IDE (0.1.17) reads plainly too: every string literal in
+/// about.rs that a user can read.
+#[test]
+fn every_string_in_about_is_plain() {
+    let source: String = include_str!("../../about.rs")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut failures = Vec::new();
+    for (index, part) in source.split('"').enumerate() {
+        if index % 2 == 1 {
+            check(&mut failures, "about literal", part);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn the_jargon_check_finds_each_word() {
     for (text, word) in [

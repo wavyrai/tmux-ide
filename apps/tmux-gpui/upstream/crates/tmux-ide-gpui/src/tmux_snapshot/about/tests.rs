@@ -56,7 +56,7 @@ fn the_icon_is_the_app_icon_at_128_px() {
 
 #[test]
 fn about_says_background_service_not_daemon() {
-    assert_eq!(CONNECTION_LABEL, "CLI and background service");
+    assert_eq!(CONNECTION_LABEL, "Background service");
     let live = versions(Some("2.9.22"), Some("3.5a"));
     for text in [
         CONNECTION_LABEL.to_owned(),
@@ -65,5 +65,11 @@ fn about_says_background_service_not_daemon() {
         connection_line(None, false),
     ] {
         assert!(!text.to_lowercase().contains("daemon"), "{text}");
+        // Onboarding A0's plain words: no daemon, CLI, fleet, catalog or F5.
+        assert_eq!(
+            crate::tmux_snapshot::connection::jargon(&text),
+            None,
+            "{text}"
+        );
     }
 }

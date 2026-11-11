@@ -13,13 +13,14 @@ pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
         &[
             "A welcome screen sets Tmux IDE up in one click.",
             "Setup and connection problems say what happened in plain words.",
+            "About Tmux IDE, in the Tmux IDE menu, shows the versions of the app, the background service and tmux.",
             "What's new shows once after each update, like this.",
         ],
     ),
     (
         "Earlier",
         &[
-            "Home and fleet · Agent search, machine filters, observation retry and load more, plus saved-machine management.",
+            "Home and machines · Agent search, machine filters, observation retry and load more, plus saved-machine management.",
             "Workspace · New terminal windows and named Claude or Codex agents; pane rename, split, zoom and confirmed close.",
             "Native controls · Pane header menus, sidebar visibility, searchable Commands and keyboard reference popovers.",
             "Terminal font · Installed family selection, size controls and automatic symbol fallbacks, saved for the next launch.",

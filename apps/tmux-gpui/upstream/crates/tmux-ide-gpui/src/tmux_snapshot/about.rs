@@ -1,5 +1,5 @@
 //! About Tmux IDE: a small Bezel dialog card with the app's name, version and
-//! channel, the CLI and background service it is connected to, three links and Copy
+//! channel, the background service it is connected to, three links and Copy
 //! diagnostics. A placeholder for the designed About, kept to Bezel parts.
 use super::SnapshotView;
 use super::controls::{self, ButtonStyle, Icon};
@@ -52,7 +52,7 @@ pub(super) fn channel(bundle_id: Option<&str>) -> Option<&'static str> {
 }
 
 /// The row naming what the app is connected to, in plain words.
-pub(super) const CONNECTION_LABEL: &str = "CLI and background service";
+pub(super) const CONNECTION_LABEL: &str = "Background service";
 
 /// What the [`CONNECTION_LABEL`] row says. A version shows only while the
 /// connection that reported it is live, never a stale one.
@@ -61,9 +61,9 @@ pub(super) fn connection_line(
     connected: bool,
 ) -> String {
     match live.and_then(|v| v.daemon_version.as_deref().map(|d| (d, v))) {
-        Some((daemon, versions)) => match versions.tmux_version.as_deref() {
-            Some(tmux) => format!("tmux-ide {daemon} · tmux {tmux}"),
-            None => format!("tmux-ide {daemon}"),
+        Some((service, versions)) => match versions.tmux_version.as_deref() {
+            Some(tmux) => format!("tmux-ide {service} · tmux {tmux}"),
+            None => format!("tmux-ide {service}"),
         },
         None if connected => "Connected · open a terminal to see its version".into(),
         None => "Not connected".into(),

@@ -301,7 +301,9 @@ fn the_welcome_speaks_plainly() {
         texts.extend(secondary.map(|b| b.label));
         texts.push(primary.label);
     }
-    for (_, notes) in whats_new::RELEASES.iter().take(1) {
+    // Every user-facing line of What's new, every version and "Earlier".
+    for (version, notes) in whats_new::RELEASES {
+        texts.push(version.to_string());
         texts.extend(notes.iter().map(|n| n.to_string()));
     }
     for text in texts {
@@ -540,7 +542,8 @@ fn whats_new_is_due_once_per_version_for_the_welcomed() {
         ..Default::default()
     };
     assert_eq!(whats_new::due(&state), whats_new::notes("0.1.17"));
-    assert!(whats_new::notes("0.1.17").unwrap().len() <= 3);
+    // A short card: a handful of one-line items.
+    assert!(whats_new::notes("0.1.17").unwrap().len() <= 4);
     state.whats_new_seen = Some("0.1.17".into());
     assert_eq!(whats_new::due(&state), None, "seen");
     state.whats_new_seen = Some("0.1.16".into());
