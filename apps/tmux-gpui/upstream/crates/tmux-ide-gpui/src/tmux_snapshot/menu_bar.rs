@@ -28,6 +28,7 @@ actions!(
         PreviousWindow,
         Minimize,
         Attention,
+        AboutApp,
         HideApp,
         HideOthers,
         ShowAll,
@@ -70,6 +71,8 @@ pub(super) fn keystroke(action: &dyn Action) -> Option<&'static str> {
 pub(super) fn menus() -> Vec<Menu> {
     vec![
         Menu::new(APP_NAME).items([
+            MenuItem::action(format!("About {APP_NAME}"), AboutApp),
+            MenuItem::separator(),
             MenuItem::action("Choose Theme…", ChooseTheme),
             MenuItem::separator(),
             MenuItem::action(format!("Hide {APP_NAME}"), HideApp),
@@ -185,6 +188,7 @@ impl SnapshotView {
         body.on_action(
             cx.listener(|view, _: &ChooseTheme, window, cx| view.open_theme_picker(window, cx)),
         )
+        .on_action(cx.listener(|view, _: &AboutApp, window, cx| view.open_about(window, cx)))
         .on_action(|_: &Minimize, window, _| window.minimize_window())
     }
 }

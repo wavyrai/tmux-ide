@@ -1,5 +1,6 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
+mod about;
 mod agent_indicator;
 mod agent_resume;
 mod agent_spinner;
@@ -393,6 +394,7 @@ fn show_owned(
                         pane_actions: None,
                         pane_close: None,
                         browser_address: None,
+                        about: None,
                         new_session: None,
                         new_session_queued: None,
                         agent_animation: Default::default(),
@@ -483,6 +485,7 @@ struct SnapshotView {
     /// The close-pane card, while it asks (c1).
     pane_close: Option<pane_close::Card>,
     browser_address: Option<browser_toolbar::Address>,
+    about: Option<about::About>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
     agent_animation: agent_spinner::Slots,

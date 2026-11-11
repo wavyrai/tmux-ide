@@ -244,6 +244,7 @@ fn capture_view(
         pane_actions: None,
         pane_close: None,
         browser_address: None,
+        about: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
@@ -633,6 +634,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         }
         state.surface = browser::Surface::Home;
     }
+    // `+about-live`: About while a terminal's daemon reports its versions.
+    if extras.contains(&"about-live") {
+        state.diagnostics = Some(serde_json::from_value(
+            serde_json::json!({"daemonVersion": "2.9.22", "tmuxVersion": "3.5a"}),
+        )?);
+    }
     let (sender, receiver) = mpsc::sync_channel(1024);
     let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let bounds = Bounds {
@@ -674,6 +681,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 }
                 if machine {
                     view.update(cx, |view, cx| view.open_add_machine(window, cx));
+                }
+                // `+about`: About as the alpha bundle shows it.
+                if extras.contains(&"about") || extras.contains(&"about-live") {
+                    super::about::CAPTURE_RELEASE.with(|release| release.set(true));
+                    view.update(cx, |view, cx| view.open_about(window, cx));
                 }
                 if reader_pane {
                     view.update(cx, |view, cx| reader_fixture::find(view, window, cx));

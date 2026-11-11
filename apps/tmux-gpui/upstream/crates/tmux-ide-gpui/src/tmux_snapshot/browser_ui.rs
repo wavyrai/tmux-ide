@@ -735,6 +735,10 @@ impl SnapshotView {
                 self.machine_dialog(cx)
                     .map(|dialog| deferred(dialog).with_priority(2)),
             )
+            .children(
+                self.about_dialog(cx)
+                    .map(|dialog| deferred(dialog).with_priority(3)),
+            )
             .into_any_element();
         super::shell::themed_frame(body, window, cx, application_tabs)
     }

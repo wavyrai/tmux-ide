@@ -328,6 +328,8 @@ fn the_app_menu_names_tmux_ide() {
     assert_eq!(
         items,
         [
+            "About Tmux IDE",
+            "—",
             "Choose Theme…",
             "—",
             "Hide Tmux IDE",
@@ -343,6 +345,7 @@ fn the_app_menu_names_tmux_ide() {
             _ => None,
         })
     };
+    assert!(carried("About Tmux IDE").is_some_and(|a| a.partial_eq(&AboutApp)));
     assert!(carried("Hide Tmux IDE").is_some_and(|a| a.partial_eq(&HideApp)));
     assert!(carried("Hide Others").is_some_and(|a| a.partial_eq(&HideOthers)));
     assert!(carried("Show All").is_some_and(|a| a.partial_eq(&ShowAll)));

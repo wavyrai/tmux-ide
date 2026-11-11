@@ -131,6 +131,7 @@ pub(super) fn fixture_view(
         pane_actions: None,
         pane_close: None,
         browser_address: None,
+        about: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),

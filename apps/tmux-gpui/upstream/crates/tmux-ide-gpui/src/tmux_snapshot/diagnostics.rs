@@ -8,6 +8,22 @@ pub(super) use versions::Versions;
 
 const MAX_BYTES: usize = 4096;
 
+/// The running app's version, build and release channel, for About.
+pub(super) struct NativeIdentity {
+    pub version: Option<String>,
+    pub build: Option<String>,
+    pub channel: Option<&'static str>,
+}
+
+pub(super) fn native_identity() -> NativeIdentity {
+    let (id, version, build) = versions::native_bundle_info();
+    NativeIdentity {
+        version,
+        build,
+        channel: super::about::channel(id.as_deref()),
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum Error {
     Encoding,
