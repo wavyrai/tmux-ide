@@ -5,7 +5,11 @@ import {
   type HomeAgentNavigationTarget,
 } from "./application-home-agent-navigation.ts";
 import { applicationGenerationNavigationKey } from "./application-generation-starter.ts";
-import { waitForHomeAgentSemantic } from "./application-home-agents-owner.ts";
+import {
+  agentOpeningOwnsKey,
+  waitForHomeAgentListed,
+  waitForHomeAgentSemantic,
+} from "./application-home-agents-owner.ts";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 
 type HomeNavigatorOptions = Parameters<typeof createApplicationHomeAgentNavigator>[0];
@@ -19,7 +23,8 @@ export function createApplicationMachineAgentNavigator(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
   readonly sessionName: () => string | null;
   readonly startGeneration: HomeNavigatorOptions["startGeneration"];
-  readonly selectPane: HomeNavigatorOptions["selectPane"];
+  /** The interaction controller's selectPane: `admission` must reach it (#764). */
+  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
   readonly showTerminals: HomeNavigatorOptions["showTerminals"];
   readonly setNote: HomeNavigatorOptions["setNote"];
 }) {
@@ -27,6 +32,11 @@ export function createApplicationMachineAgentNavigator(options: {
   let disposed = false;
   let opening = false;
   let request = 0;
+  const cancel = () => {
+    request++;
+    opening = false;
+    current?.cancel();
+  };
   return {
     open(
       machineId: string,
@@ -48,7 +58,7 @@ export function createApplicationMachineAgentNavigator(options: {
       ) {
         // Reserve before the next key; the terminal controller waits for a fresh
         // coherent runtime and remains the only owner of physical input.
-        options.selectPane(target.paneId!, source);
+        options.selectPane(target.paneId!);
         options.showTerminals(source);
         options.setNote(null);
         opening = false;
@@ -72,6 +82,8 @@ export function createApplicationMachineAgentNavigator(options: {
           };
         },
         waitForGeneration: (key, signal) => waitForHomeAgentSemantic(generation, key, signal),
+        waitForAgent: (key, listed, signal) =>
+          waitForHomeAgentListed(generation, key, listed, signal),
         startGeneration: (session, prepared, origin, focus, admission) =>
           options.startGeneration(
             session,
@@ -81,7 +93,8 @@ export function createApplicationMachineAgentNavigator(options: {
             () =>
               selected() && options.isCurrentTarget(machineId, target) && (admission?.() ?? true),
           ),
-        selectPane: options.selectPane,
+        selectPane: (paneId, _source, admission) =>
+          admission ? options.selectPane(paneId, admission) : options.selectPane(paneId),
         showTerminals: options.showTerminals,
         setNote: options.setNote,
       });
@@ -90,11 +103,9 @@ export function createApplicationMachineAgentNavigator(options: {
       });
     },
     opening: () => opening,
-    cancel() {
-      request++;
-      opening = false;
-      current?.cancel();
-    },
+    cancel,
+    /** Esc cancels an open in progress; other keys are ignored meanwhile. */
+    ownsKey: (name: string) => agentOpeningOwnsKey(name, { opening: () => opening, cancel }),
     dispose() {
       disposed = true;
       request++;
