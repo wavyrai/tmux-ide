@@ -71,6 +71,8 @@ export interface MirrorServiceOptions {
   /** True only when the server positively lacks the native commands: a stock tmux. */
   splitLayoutStock?: () => Promise<boolean>;
   onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
+  /** #764 diagnostics: the registered-window guard's lifecycle and pushes. */
+  onWindowOwnershipDiagnostic?: (phase: string, details?: Record<string, unknown>) => void;
   createOwnedViewerAdapter?: (session: string) => OwnedViewerAdapter | undefined;
   nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
   resolveSocketPath?: () => string;
@@ -180,6 +182,9 @@ interface ChannelEntry {
   retired: boolean;
 }
 
+/** Backoff for re-reading registered windows after a failed read (#764). */
+const OWNERSHIP_RETRY_MS = [100, 250, 500, 1_000] as const;
+
 export class MirrorService {
   private readonly opts: MirrorServiceOptions;
   private readonly channels = new Map<string, ChannelEntry>();
@@ -205,24 +210,64 @@ export class MirrorService {
   }
 
   private invalidateRegisteredWindows(): void {
+    this.opts.onWindowOwnershipDiagnostic?.("guard-invalidate", {
+      wasPending: this.registeredWindows?.pending() ?? null,
+    });
     this.registeredWindows?.invalidate();
+  }
+
+  /**
+   * #764: a failed re-read must not leave every session "being verified"
+   * for good. Nothing else re-reads until the next operation, so retry with
+   * a short bounded backoff while a channel is retained; success pushes
+   * any conflict as usual.
+   */
+  private ownershipRetries = 0;
+  private ownershipRetry: ReturnType<typeof setTimeout> | null = null;
+  private retryRegisteredWindows(guard: RegisteredWindowGuard): void {
+    if (this.ownershipRetry || this.disposed || guard !== this.registeredWindows) return;
+    if (this.channelSessions.size === 0) return;
+    const delay =
+      OWNERSHIP_RETRY_MS[Math.min(this.ownershipRetries, OWNERSHIP_RETRY_MS.length - 1)]!;
+    this.ownershipRetries += 1;
+    this.ownershipRetry = setTimeout(() => {
+      this.ownershipRetry = null;
+      if (this.disposed || guard !== this.registeredWindows || !guard.pending()) return;
+      void this.verifyRegisteredWindows().catch(() => {});
+    }, delay);
+    this.ownershipRetry.unref?.();
   }
 
   async verifyRegisteredWindows(): Promise<void> {
     const guard = this.registeredWindows;
     if (!guard) return;
-    await guard.verify();
+    const diagnostic = this.opts.onWindowOwnershipDiagnostic;
+    diagnostic?.("guard-verify-start", { pending: guard.pending() });
+    try {
+      await guard.verify();
+    } catch (error) {
+      diagnostic?.("guard-verify-failed", {
+        reason: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      });
+      this.retryRegisteredWindows(guard);
+      throw error;
+    }
+    this.ownershipRetries = 0;
     if (guard !== this.registeredWindows || this.disposed)
       throw new Error("Window ownership changed during discovery");
+    const blocked: string[] = [];
     for (const [channel, session] of this.channelSessions) {
       if (guard.blocked(session)) {
+        blocked.push(session);
         channel.setGeometryParticipation(false);
         if (!this.registeredConflicts.has(session)) {
           this.registeredConflicts.add(session);
+          diagnostic?.("guard-conflict-push", { session });
           this.opts.onSharedWindowConflict?.(session, true);
         }
       } else this.registeredConflicts.delete(session);
     }
+    diagnostic?.("guard-verify-ok", { blocked, channels: this.channelSessions.size });
   }
   private readonly pendingDisposals = new Set<Promise<void>>();
   private readonly drainingChannels = new Map<string, Promise<void>>();
@@ -605,6 +650,7 @@ export class MirrorService {
       const session = this.channelSessions.get(peer);
       if (session === undefined) continue;
       if (conflict) peer.setGeometryParticipation(false);
+      this.opts.onWindowOwnershipDiagnostic?.("membership-conflict-push", { session, conflict });
       this.opts.onSharedWindowConflict?.(session, conflict);
     }
   }
@@ -729,6 +775,8 @@ export class MirrorService {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    if (this.ownershipRetry) clearTimeout(this.ownershipRetry);
+    this.ownershipRetry = null;
     this.registeredWindows?.dispose();
     this.sessionExitListeners.clear();
     const entries = [...this.channels.values()];
@@ -793,6 +841,10 @@ export class MirrorService {
           hasSharedWindowConflict: () => this.hasSharedWindowConflict(session),
           beforeIdentityRepair: () => this.verifyRegisteredWindows(),
           onWindowTopologyChanged: () => {
+            this.opts.onWindowOwnershipDiagnostic?.("topology-notification", {
+              session,
+              current: this.channelSessions.has(channel),
+            });
             if (this.channelSessions.has(channel)) this.invalidateRegisteredWindows();
           },
           ownedViewer,

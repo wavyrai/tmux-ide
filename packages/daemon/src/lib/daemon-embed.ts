@@ -1554,6 +1554,9 @@ async function startEmbeddedDaemonGeneration(
             { processId: `daemon:${process.pid}`, daemonInstanceId: instanceId },
           )
         : null;
+      let windowOwnershipDiagnostic:
+        | ((phase: string, details?: Record<string, unknown>) => void)
+        | undefined;
       const runtimeObservability = runtimeTracePath
         ? createSessionRuntimeObservability({
             // The JSONL stream is the qualifying record. Keep only a small
@@ -1586,6 +1589,13 @@ async function startEmbeddedDaemonGeneration(
         };
         externalInteractionObserver.setDiagnostics(diagnostics);
         setFleetFactsObserverDiagnostics(diagnostics);
+        windowOwnershipDiagnostic = (phase, details = {}) =>
+          publishObserverDiagnostic({
+            operation: "window-ownership",
+            phase,
+            atMicros: Math.floor(performance.now() * 1_000),
+            ...details,
+          });
       }
       const nativeSurfaces =
         process.platform === "darwin" ? new NativeSurfaceProviderRegistry(instanceId) : undefined;
@@ -1624,6 +1634,10 @@ async function startEmbeddedDaemonGeneration(
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
+          // #764 diagnostics (draft only): the window-ownership guard.
+          ...(windowOwnershipDiagnostic
+            ? { onWindowOwnershipDiagnostic: windowOwnershipDiagnostic }
+            : {}),
           onNativeClientPresence: (session, present) =>
             nativeSurfaces?.demand.presence(session, present),
           splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
