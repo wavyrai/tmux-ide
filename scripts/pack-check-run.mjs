@@ -1262,16 +1262,68 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
     return `window linked at ${linkedAt}\n${many.diagnostics()}`;
   };
-  await observe(
-    "linked window actionable refusal",
-    15000,
-    () => {
-      const frame = capture(many.targetPane);
-      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
-      return /unlink/i.test(frame);
-    },
-    linkedDiagnostics,
-  );
+  try {
+    await observe(
+      "linked window actionable refusal",
+      15000,
+      () => {
+        const frame = capture(many.targetPane);
+        if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+        return /unlink/i.test(frame);
+      },
+      linkedDiagnostics,
+    );
+  } catch (error) {
+    // Card #764: does anything push the shared window, or does only the
+    // next operation find it? Diagnostics only; the journey still fails.
+    const windows = tmuxResult([
+      "list-windows",
+      "-a",
+      "-F",
+      "#{session_name} #{window_id} linked=#{window_linked} sessions=#{window_linked_sessions} active=#{window_active}",
+    ]).stdout.trim();
+    const shells = {};
+    for (const name of ["journey-alpha", "journey-beta"]) {
+      const shell = await daemonApplicationShell(name);
+      shells[name] = shell
+        ? Object.keys(shell.resource ?? {}).length
+          ? {
+              runtime: shell.resource?.terminalRuntime?.status ?? shell.resource?.runtime?.status ?? null,
+              keys: Object.keys(shell.resource).sort(),
+            }
+          : null
+        : null;
+    }
+    const before = capture(many.targetPane);
+    const poke = tmuxResult([
+      "send-keys",
+      "-l",
+      "-t",
+      many.targetPane,
+      `\u001b[200~printf 'PACK_LINK_POKE_%s\\n' '${process.pid}'\n\u001b[201~`,
+    ]);
+    await cancellation.pause(2_000);
+    const after = capture(many.targetPane);
+    const pokeLanded = ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(`PACK_LINK_POKE_${process.pid}`),
+    );
+    if (evidenceDir) {
+      const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
+      if (existsSync(trace))
+        writeFileSync(join(evidenceDir, "linked-refusal-daemon.performance.jsonl"), readFileSync(trace));
+      writeFileSync(join(evidenceDir, "linked-refusal-frame-after-poke.txt"), after);
+    }
+    throw new Error(
+      [
+        error instanceof Error ? error.message : String(error),
+        `tmux windows:\n${windows}`,
+        `daemon shells: ${JSON.stringify(shells)}`,
+        `refusal before the poke: ${/unlink/i.test(before)}`,
+        `poke sent: ${poke.status === 0}; refusal 2 s after the poke: ${/unlink/i.test(after)}; poke reached a terminal: ${pokeLanded}`,
+        `frame after the poke:\n${after}`,
+      ].join("\n"),
+    );
+  }
   const blockedMarker = `PACK_LINK_BLOCKED_${process.pid}`;
   // Paste is a terminal input event. Raw keystrokes on a recovery screen
   // intentionally navigate UI controls instead of testing terminal delivery.
