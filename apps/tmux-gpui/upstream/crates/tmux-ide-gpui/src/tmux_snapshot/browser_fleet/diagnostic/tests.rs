@@ -11,6 +11,7 @@ fn group(state: Phase, diagnostic: Option<Diagnostic>) -> Group {
         conflict: false,
         retry: None,
         disconnect: None,
+        away: None,
         omitted_sessions: 0,
         sessions: vec![],
         servers: vec![],

@@ -172,6 +172,8 @@ pub(super) struct State {
     /// re-read after it hasn't finished. Worker-owned; the view decides how
     /// long a drop must last before it shows (quiet reconnect).
     pub agents_last_known: bool,
+    /// What only the user can fix, shown at once (r3).
+    pub act: Option<super::connection::Act>,
     /// The last split's outcome, for keys held since its click
     /// (pending_input/split.rs). Worker-owned.
     pub pane_split: Option<PaneSplit>,
@@ -620,6 +622,7 @@ impl Reader {
             reconnect_attempt: None,
             home_fault: false,
             agents_last_known: false,
+            act: None,
             pane_split: None,
             home_notice: None,
             unavailable_panes: Vec::new(),

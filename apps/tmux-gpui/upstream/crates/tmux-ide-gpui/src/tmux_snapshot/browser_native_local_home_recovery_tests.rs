@@ -150,3 +150,63 @@ fn a_refused_websocket_upgrade_is_a_credentials_failure() {
     }
     assert_eq!(classify(&refused(503)), HomeFailure::Retry);
 }
+
+/// r3: each stop reason maps to its act-needed state from this module's own
+/// constants, and a session recovery that gave up is one too.
+#[test]
+fn stops_publish_their_act_needed_state() {
+    use crate::tmux_snapshot::connection::Act;
+    let state = State::default();
+    let fatal = |error: DaemonError| match classify(&error) {
+        HomeFailure::Fatal(message) => message,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        act(Some(fatal(DaemonError::Incompatible(9))), &state),
+        Some(Act::DaemonUpdate)
+    );
+    assert_eq!(
+        act(Some(fatal(DaemonError::RecordFormat)), &state),
+        Some(Act::Record)
+    );
+    assert_eq!(
+        act(Some(fatal(DaemonError::RequestStatus(401))), &state),
+        Some(Act::Credentials)
+    );
+    assert_eq!(
+        act(Some(fatal(DaemonError::UnsupportedPlatform)), &state),
+        Some(Act::Platform)
+    );
+    assert_eq!(act(None, &state), None);
+    let gave_up = State {
+        home_phase: HomePhase::Unavailable,
+        status: reconnect::GAVE_UP.into(),
+        ..State::default()
+    };
+    assert_eq!(act(None, &gave_up), Some(Act::GaveUp));
+}
+
+/// #358 landed: its two stops are act-needed states too.
+#[test]
+fn a_session_recovery_stop_maps_to_its_act() {
+    use crate::tmux_snapshot::connection::Act;
+    let stopped = |status: &str| State {
+        home_phase: HomePhase::Unavailable,
+        status: status.into(),
+        ..State::default()
+    };
+    assert_eq!(
+        act(None, &stopped(reconnect::UPDATE_APP)),
+        Some(Act::AppUpdate)
+    );
+    assert_eq!(
+        act(None, &stopped(reconnect::SSH_IDENTITY)),
+        Some(Act::SshIdentity)
+    );
+    assert_eq!(act(None, &stopped("anything else")), None);
+    let live = State {
+        status: reconnect::UPDATE_APP.into(),
+        ..State::default()
+    };
+    assert_eq!(act(None, &live), None);
+}

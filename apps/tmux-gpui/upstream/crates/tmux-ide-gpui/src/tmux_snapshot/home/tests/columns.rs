@@ -216,11 +216,8 @@ fn the_status_slot_sits_between_the_toolbar_and_the_filters(cx: &mut TestAppCont
     let header = cx.debug_bounds("home-header").unwrap();
     let title = cx.debug_bounds("home-title").unwrap();
     let nav = cx.debug_bounds("home-fleet-nav").unwrap();
-    let strip = cx
-        .debug_bounds("home-status-warning")
-        .or_else(|| cx.debug_bounds("home-status-error"))
-        .or_else(|| cx.debug_bounds("home-status-subtitle"))
-        .unwrap();
+    // r3: failed setup is the act card, in the same slot.
+    let strip = cx.debug_bounds("home-act-card").unwrap();
     assert!(header.bottom() <= strip.top());
     assert!(strip.bottom() <= nav.top());
     assert!((strip.left() - title.left()).abs() <= px(1.));
@@ -412,6 +409,7 @@ fn only_a_fault_uses_the_status_slot_a_reconnect_does_not(cx: &mut TestAppContex
         }
         let line = cx
             .debug_bounds("home-status-warning")
+            .or_else(|| cx.debug_bounds("home-act-card"))
             .unwrap_or_else(|| panic!("the status line (fault: {fault})"));
         assert!(header.bottom() <= line.top(), "fault: {fault}");
         assert!(line.bottom() <= nav.top(), "fault: {fault}");
