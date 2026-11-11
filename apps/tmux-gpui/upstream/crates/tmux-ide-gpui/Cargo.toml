@@ -16,6 +16,7 @@ bezel_ui.workspace = true
 bezel_motion.workspace = true
 url.workspace = true
 anyhow.workspace               = true
+chrono.workspace               = true
 flate2.workspace               = true
 gpui.workspace                 = true
 # Unlike gpui 0.2.2, the platform crate enables nothing by default: without

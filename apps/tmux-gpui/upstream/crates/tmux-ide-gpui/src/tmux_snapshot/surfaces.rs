@@ -53,6 +53,17 @@ pub(crate) fn mix_oklab(from: u32, to: u32, k: f32) -> u32 {
     let (a, b) = (oklab(from), oklab(to));
     from_oklab([0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * k))
 }
+/// `fill` darkened in OKLab (lightness down, hue and chroma kept) just far
+/// enough that `label` reads on it at `target`; unchanged when it already
+/// does. For a destructive button's white label on its danger plate.
+pub(crate) fn darken_for(fill: u32, label: u32, target: f32) -> u32 {
+    let [l, a, b] = oklab(fill);
+    (0..=200)
+        .map(|n| from_oklab([(l - n as f32 * 0.005).max(0.), a, b]))
+        .find(|&c| crate::contrast::ratio(label, c) >= target)
+        .unwrap_or(0x000000)
+}
+
 /// CIE L*, the lightness a step between two fills is judged by.
 pub(crate) fn lstar(value: u32) -> f32 {
     let [r, g, b] = linear(value);

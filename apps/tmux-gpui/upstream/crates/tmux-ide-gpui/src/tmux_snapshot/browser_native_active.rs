@@ -203,6 +203,18 @@ impl Active {
             if completion.outcome != herdr_client::tmux_controller::ActionOutcome::Applied {
                 self.action_status.set(Some("Pane action was not applied"));
             }
+            if completion.split {
+                // tmux splits without moving focus (`split-window -d`): the
+                // re-issued stream opens on the new pane, and keys held since
+                // the click may go only there (#361).
+                if let Some(created) = &completion.created {
+                    self.preferred_pane = Some(created.clone());
+                }
+                state.pane_split = Some(PaneSplit {
+                    nonce: uuid::Uuid::new_v4(),
+                    created: completion.created,
+                });
+            }
         }
         let mut selection_rejected = false;
         if let Some(notice) =
@@ -447,3 +459,6 @@ fn publish_pane_actions(
 #[cfg(test)]
 #[path = "browser_native_active_tests.rs"]
 mod idle_tests;
+#[cfg(test)]
+#[path = "browser_native_swap_tests.rs"]
+mod swap_tests;

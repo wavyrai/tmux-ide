@@ -5929,6 +5929,7 @@ dependencies = [
  "bezel-theme",
  "bezel-ui",
  "block2 0.6.2",
+ "chrono",
  "flate2",
  "fontdb",
  "herdr-client",

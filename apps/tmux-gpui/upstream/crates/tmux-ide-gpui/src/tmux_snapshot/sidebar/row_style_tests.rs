@@ -211,3 +211,32 @@ fn a_selected_row_is_a_full_capsule(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// r4: a row listed from a machine that is away paints the muted ink; its
+/// needs-input badge keeps its full-strength wash (last known).
+#[gpui::test]
+fn an_away_row_is_muted_and_keeps_its_needs_input_badge(cx: &mut TestAppContext) {
+    let theme = Theme::default();
+    let (label, muted) = crate::tmux_snapshot::design::row_ink(&theme);
+    assert_ne!(label, muted);
+    cx.update(|cx| {
+        crate::tmux_snapshot::design::prepare(&theme, false, cx);
+        let bezel = bezel_theme::Theme::of(cx).clone();
+        let painter = bezel_motion::Painter::from(cx.new(|_| ()).entity_id());
+        let mut away = row(false);
+        away.away = true;
+        away.attention = 1;
+        let mut element = render_row(0, &away, &theme, &bezel, painter, true);
+        assert_eq!(element.style().text.color, Some(rgb(muted).into()));
+        let mut badge = attention_badge(&theme, 1, 0);
+        let fill = match badge.style().background.clone() {
+            Some(Fill::Color(background)) => background.as_solid(),
+            None => None,
+        };
+        let (wash, _) = crate::tmux_snapshot::agent_indicator::attention_pill_colors(
+            &theme,
+            crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
+        );
+        assert_eq!(fill, Some(wash));
+    });
+}

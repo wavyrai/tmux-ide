@@ -24,21 +24,22 @@ pub(super) fn options() -> WindowOptions {
 #[cfg(test)]
 pub(super) fn frame(body: impl IntoElement, window: &mut Window, cx: &mut App) -> AnyElement {
     super::design::prepare(&crate::config::Theme::default(), false, cx);
-    themed_frame(body, window, cx, "Home")
+    themed_frame(body, window, cx, Some("Home".into_any_element()))
 }
 /// The window: Bezel's frame around the chrome material, the title bar band
-/// and `body`. The chrome is the palette's sidebar fill, which is frost over
+/// (when `navigation` is given: #746 v3 drops it beside the sidebar) and
+/// `body`. The chrome is the palette's sidebar fill, which is frost over
 /// the blurred desktop where the palette is translucent; terminal panes paint
 /// their own opaque fill over it.
 pub(super) fn themed_frame(
     body: impl IntoElement,
     window: &mut Window,
     cx: &App,
-    navigation: impl IntoElement,
+    navigation: Option<AnyElement>,
 ) -> AnyElement {
     let font = Config::default().ui;
     let bezel = bezel_theme::Theme::of(cx);
-    let header = crate::titlebar::navigation_header(window, navigation.into_any_element(), cx);
+    let header = navigation.map(|nav| crate::titlebar::navigation_header(window, nav, cx));
     let content = div()
         .on_action(|action: &crate::RunCommand, window, cx| {
             if action.command == crate::controls::Command::ToggleFullScreen {
@@ -56,7 +57,7 @@ pub(super) fn themed_frame(
         .bg(bezel.sidebar_bg())
         .text_color(bezel.text)
         .children(super::design::ink_probe(|| "shell-root".into()))
-        .child(header)
+        .children(header)
         .child(
             div()
                 .debug_selector(|| "tmux-shell-body".into())

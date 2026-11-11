@@ -32,6 +32,14 @@ pub(super) enum Action {
     Split {
         direction: SplitDirection,
     },
+    /// Exchange the selected pane with `target` (a header drag). The token
+    /// is the target's input token as published, so a target that changed
+    /// since is refused.
+    Swap {
+        target: String,
+        #[serde(rename = "targetToken")]
+        target_token: String,
+    },
 }
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -67,6 +75,14 @@ impl Target {
             session: state.selected_session.clone()?,
             actions,
         })
+    }
+    /// The publication request and the session the target was captured in.
+    pub(super) fn origin(&self) -> (u64, &str) {
+        (self.request, &self.session)
+    }
+    /// The pane the target names.
+    pub(super) fn pane_id(&self) -> &str {
+        &self.actions.id
     }
     pub(super) fn current(&self, state: &browser::State) -> bool {
         Self::capture(state).is_some_and(|now| {
@@ -305,6 +321,7 @@ impl SnapshotView {
         {
             return false;
         }
+        let split = matches!(action, Action::Split { .. });
         let command = browser::Command::PaneAction {
             request: target.request,
             id: target.actions.id.clone(),
@@ -321,6 +338,9 @@ impl SnapshotView {
         // Admission consumes the one-use capability, not terminal input interruption.
         self.browser_state.pane_actions = None;
         self.close_pane_actions(window, cx);
+        if split {
+            self.hold_split_input();
+        }
         true
     }
     pub(super) fn pane_actions_key(

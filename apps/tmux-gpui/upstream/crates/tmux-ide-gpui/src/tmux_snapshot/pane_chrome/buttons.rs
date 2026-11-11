@@ -53,7 +53,7 @@ pub(super) fn face(
         ),
         HeaderIntent::Expand => (
             "expand",
-            "icons/window-maximize.svg",
+            "icons/zoom.svg",
             "Expand pane to fill workspace",
             Some(super::super::kbd::ZOOM),
         ),
@@ -176,10 +176,15 @@ impl SnapshotView {
             .pane_actions
             .as_ref()
             .is_some_and(|a| a.zoomed);
-        let offset = slot(intent) * SLOT;
+        let offset = slot(intent) * SLOT + ACTS_PAD;
         let (name, icon, hint, keys) = face(intent, restore)?;
         let bezel = super::super::design::palette(&self.theme());
         let ink = header_ink(&self.theme());
+        // #746 v3: quiet at rest, the icon tier on an unfocused card and
+        // muted on the focused one; the text ink under the hover wash.
+        let focused = self.browser_state.selected_pane.as_deref() == Some(&header.id);
+        let rest = if focused { ink.muted } else { ink.icon };
+        let pressed = matches!(intent, HeaderIntent::Close) && self.pane_close_open_for(&id);
         Some(
             div()
                 .id(SharedString::from(format!("pane-{name}:{id}")))
@@ -200,24 +205,40 @@ impl SnapshotView {
                 .justify_center()
                 .cursor_pointer()
                 .occlude()
-                .tooltip(move |window, cx| match keys {
-                    Some(keys) => {
-                        bezel_ui::tooltip::Tooltip::with_keystroke(hint, keys, window, cx)
-                    }
-                    None => bezel_ui::tooltip::Tooltip::text(hint, window, cx),
+                .tooltip(move |_, cx| {
+                    super::super::glass_ink::tooltip(hint, keys.map(Into::into), cx)
                 })
-                // Bezel's ghost icon button, sized to the cell-aligned header.
+                // A 22 pt ghost button with a 12 pt glyph, sized to the
+                // cell-aligned header.
                 .child({
-                    use bezel_ui::widgets::Buttons as _;
-                    let side = px(24.).min(self.header_rect(header, width).size.height);
+                    let side = px(22.).min(self.header_rect(header, width).size.height);
                     let hover = bezel.element_hover;
-                    // Quiet at rest: the header's muted ink, which reads on
-                    // the hover wash too (#746).
-                    bezel
-                        .tinted_icon_button(bezel_ui::icons::Icon::asset(icon), ink.muted)
-                        .rounded(px(bezel_theme::Theme::control_radius()))
+                    let text = ink.text;
+                    div()
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("pane-{name}-glyph:{id}")
+                        })
+                        .group("pane-header-button")
                         .size(side)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(6.))
+                        .text_color(rest)
+                        // Pressed while its close card is open (c1).
+                        .when(pressed, |b| b.bg(bezel.element_active))
                         .hover(move |s| s.bg(hover))
+                        .children(super::super::design::ink_probe({
+                            let id = id.clone();
+                            move || format!("pane-{name}-icon:{id}")
+                        }))
+                        .child(
+                            bezel_ui::icons::icon(bezel_ui::icons::Icon::asset(icon))
+                                .size(px(12.))
+                                .text_color(rest)
+                                .group_hover("pane-header-button", move |s| s.text_color(text)),
+                        )
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, window, cx| {
@@ -229,5 +250,25 @@ impl SnapshotView {
                 }))
                 .into_any_element(),
         )
+    }
+}
+impl SnapshotView {
+    /// `pane`'s close button in window coordinates: the last 28 pt slot at
+    /// its header's right end, the 24 pt button centred in it.
+    pub(in crate::tmux_snapshot) fn close_button_bounds(
+        &self,
+        pane: &str,
+    ) -> Option<Bounds<Pixels>> {
+        let (canvas, _) = self.input_geometry?;
+        let width = self.input_cell_width?;
+        let header = self
+            .presentation_headers()
+            .into_iter()
+            .find(|h| h.id == pane)?;
+        let rect = self.header_rect(&header, width);
+        let side = px(22.).min(rect.size.height);
+        let right = canvas.origin.x + rect.right() - px(ACTS_PAD) - (px(SLOT) - side) / 2.;
+        let top = canvas.origin.y + rect.top() + (rect.size.height - side) / 2.;
+        Some(Bounds::new(point(right - side, top), size(side, side)))
     }
 }

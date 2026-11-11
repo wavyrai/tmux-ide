@@ -725,3 +725,43 @@ fn the_focused_card_keeps_the_terminal_background_and_the_others_step_back(
     assert_eq!(fills["a"], rgb(rest).into());
     assert_ne!(fills["a"], fills["b"]);
 }
+
+/// A divider drag in progress rules out a pane drag from a header press
+/// (review of #364).
+#[gpui::test]
+fn a_divider_drag_rules_out_a_pane_drag(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state = state(Axis::Cols);
+        view.browser_state.pane_actions = Some(browser::PaneActions {
+            token: "actions".into(),
+            id: "a".into(),
+            zoomed: false,
+        });
+        view.frame = view.browser_state.frame.clone();
+        view.painted_frame = view.frame.clone();
+        view
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_resize(size(px(900.), px(600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let press = MouseDownEvent {
+        button: MouseButton::Left,
+        position: cx.debug_bounds("pane-card-header:a").unwrap().center(),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+        first_mouse: false,
+    };
+    view.update(cx, |view, cx| {
+        view.pane_move_press("a", &press, cx);
+        assert!(
+            view.pointer.moving.gesture.is_some(),
+            "control: a drag can start"
+        );
+        view.pointer.moving.gesture = None;
+        assert!(view.begin_divider(view.test_cell_point(5.5, 2.), cx));
+        view.pane_move_press("a", &press, cx);
+        assert!(view.pointer.moving.gesture.is_none());
+    });
+}

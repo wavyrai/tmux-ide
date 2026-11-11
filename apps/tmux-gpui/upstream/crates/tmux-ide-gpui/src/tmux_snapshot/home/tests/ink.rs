@@ -8,17 +8,17 @@ pub(super) fn plates_under_text(
 ) -> Vec<(Hsla, &'static str)> {
     let bezel = design::palette(theme);
     let canvas: Hsla = rgb(canvas).into();
-    let card = bezel_theme::flatten(bezel.card_glass_bg(), canvas);
+    let field = bezel_theme::flatten(bezel.code_wash, canvas);
     vec![
         (canvas, "canvas"),
-        (card, "card"),
+        (field, "browse field"),
         (
             bezel_theme::flatten(bezel.element_hover, canvas),
             "hovered row",
         ),
         (
-            bezel_theme::flatten(bezel.element_hover, card),
-            "hovered row in a card",
+            bezel_theme::flatten(bezel.element_hover, field),
+            "hovered browse field",
         ),
         (
             bezel_theme::flatten(bezel.card_selected_bg(), canvas),

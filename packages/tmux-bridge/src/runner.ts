@@ -64,6 +64,8 @@ type TmuxClientResolver = (
 ) => {
   executable: string;
   environment: NodeJS.ProcessEnv;
+  /** Global options put before every command, e.g. `["-S", socket]` to pin one server. */
+  globalArgs?: readonly string[];
 };
 
 let clientResolver: TmuxClientResolver | undefined;
@@ -84,7 +86,7 @@ export function runTmux(args: string[], options: ExecFileSyncOptions = {}): stri
   const resolved = clientResolver?.(options.env ?? process.env, options.cwd);
   return runTmuxBinary(
     resolved?.executable ?? "tmux",
-    args,
+    resolved?.globalArgs?.length ? [...resolved.globalArgs, ...args] : args,
     resolved ? { ...options, env: resolved.environment } : options,
   );
 }

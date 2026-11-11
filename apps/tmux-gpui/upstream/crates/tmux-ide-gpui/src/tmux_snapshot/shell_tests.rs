@@ -106,6 +106,7 @@ fn browser_fixture(
         workspace_fleet_agents: Default::default(),
         home_filter: None,
         pane_actions: None,
+        pane_close: None,
         browser_address: None,
         new_session: None,
         new_session_queued: None,
@@ -127,6 +128,7 @@ fn browser_fixture(
         selection: None,
         divider: None,
         wheel: crate::terminal::WheelRemainder::default(),
+        connection: Default::default(),
         browser_request: 7,
         browser_state: browser::State {
             surface: browser::Surface::Workspace,
@@ -304,3 +306,5 @@ mod fullscreen;
 
 #[path = "shell_tests/content_geometry.rs"]
 mod content_geometry;
+#[path = "shell_tests/drag_regions.rs"]
+mod drag_regions;

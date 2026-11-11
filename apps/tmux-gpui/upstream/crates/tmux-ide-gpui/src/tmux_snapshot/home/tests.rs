@@ -157,6 +157,8 @@ mod fleet_admission;
 #[path = "tests/action_admission.rs"]
 mod action_admission;
 
+#[path = "tests/aside_keys.rs"]
+mod aside_keys;
 #[path = "tests/fleet_layout.rs"]
 mod fleet_layout;
 
@@ -183,3 +185,6 @@ mod option_a;
 
 #[path = "tests/pane_limit.rs"]
 mod pane_limit;
+
+#[path = "tests/away.rs"]
+mod away;

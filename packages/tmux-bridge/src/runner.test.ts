@@ -647,4 +647,29 @@ describe("ordinary client host resolution", () => {
       restore();
     }
   });
+
+  it("puts a resolver's global args before every command, and drops them on release", () => {
+    const restore = configureTmuxClientResolver((environment) => ({
+      executable: "/bundle/tmux",
+      environment,
+      globalArgs: ["-S", "/pinned/socket"],
+    }));
+    mockExec.mockReturnValue("");
+    try {
+      runTmux(["new-session", "-d", "-s", "api"]);
+      expect(mockExec.mock.calls[0][0]).toBe("/bundle/tmux");
+      expect(mockExec.mock.calls[0][1]).toEqual([
+        "-S",
+        "/pinned/socket",
+        "new-session",
+        "-d",
+        "-s",
+        "api",
+      ]);
+    } finally {
+      restore();
+    }
+    runTmux(["list-sessions"]);
+    expect(mockExec.mock.calls[1][1]).toEqual(["list-sessions"]);
+  });
 });

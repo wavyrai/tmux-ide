@@ -40,7 +40,7 @@ impl ActionOwner {
             token,
             operation,
         } = target;
-        let action = adapt(action)?;
+        let action = adapt(action, p)?;
         let lifetime = p.resolve_action(pane, token).ok_or(Error::Stale)?;
         self.state
             .submit(c, pane, &lifetime, operation, action, now)?;
@@ -92,8 +92,18 @@ impl ActionOwner {
         self.state.cancel_waiting()
     }
 }
-fn adapt(action: pane_actions::Action) -> Result<PaneAction, Error> {
+fn adapt(action: pane_actions::Action, p: &NativePresentation) -> Result<PaneAction, Error> {
     Ok(match action {
+        // The second pane must still be the one the drag captured.
+        pane_actions::Action::Swap {
+            target,
+            target_token,
+        } => PaneAction::Swap {
+            lifetime: p
+                .resolve(&target, Some(&target_token))
+                .ok_or(Error::Stale)?,
+            target,
+        },
         pane_actions::Action::Rename { name } => PaneAction::Rename(name),
         pane_actions::Action::Zoom { desired } => PaneAction::Zoom(match desired {
             pane_actions::Zoom::Zoomed => Zoom::Zoomed,
