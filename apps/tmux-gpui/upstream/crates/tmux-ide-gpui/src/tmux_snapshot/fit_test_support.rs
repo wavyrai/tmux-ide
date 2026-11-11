@@ -160,6 +160,7 @@ pub(super) fn fixture_view(
         browser_commands: Some(sender),
         _browser_task: None,
         _task: None,
+        reader: Default::default(),
         painter: Rc::new(RefCell::new(
             crate::terminal_painter::TerminalPainter::default(),
         )),

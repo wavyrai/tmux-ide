@@ -10,9 +10,10 @@ crash. This page lists every public command in `2.9.5`, matching
 `tmux-ide --help`. Scripting commands that list `--json` below print JSON;
 interactive commands do not.
 
-Version `2.9.21` adds the `plugin`, `action` and `lua` commands and
-`worktree create --plain`. See the
-[2.9.21 release notes](/docs/release-2-9-21).
+Version `2.9.21` added the `plugin`, `action` and `lua` commands and
+`worktree create --plain`. Version `2.9.22` adds `servers upgrade`,
+`restore --from` and Markdown files in `tmux-ide open`. See the
+[2.9.22 release notes](/docs/release-2-9-22).
 
 ## Open a browser pane
 
@@ -40,6 +41,24 @@ select a different browser build. No browser is downloaded automatically.
 `--json` returns `{ "pane": "%3", "session": "$0", "window": "@1", "status": "created" }`.
 This confirms pane creation, not completion of page loading or native rendering.
 Missing executables and invalid targets fail before creating a pane.
+
+## Open a Markdown file
+
+```sh
+tmux-ide open notes.md                # Reader pane beside the current pane
+tmux-ide open docs/README.markdown --split down --size 40
+```
+
+An argument that ends in `.md` or `.markdown` (in any case), has no `scheme://`
+and names an existing file opens in a reader pane instead of the browser. The
+pane runs `tmux-ide show <file>`, so a plain terminal shows the terminal
+rendering, and the Mac app paints its native [Markdown reader](/docs/markdown-reader)
+over the pane. A missing Markdown file fails with `FILE_NOT_FOUND` and creates no
+pane. `--split`, `--size`, `--pane`, `--session` and `--window` work as they do
+for the browser. The reader shows files up to 4 MiB and takes the pane's keys
+while it is shown; see [Markdown reader](/docs/markdown-reader#keys).
+
+`--json` returns `{ "pane": "%3", "session": "$0", "window": "@1", "status": "created", "kind": "reader" }`.
 
 ## Open tmux-ide
 

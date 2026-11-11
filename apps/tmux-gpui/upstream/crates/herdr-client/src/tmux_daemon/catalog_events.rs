@@ -30,6 +30,9 @@ pub enum CatalogEventEffect {
     },
     /// The initial barrier also invalidates to close the read/subscribe race.
     Invalidate,
+    /// A resumed lane reached its barrier: every change after the cursor was
+    /// replayed (each one invalidating), so the caller's catalog is current.
+    Resumed,
     Unchanged,
 }
 #[derive(Deserialize)]
@@ -95,6 +98,8 @@ pub struct CatalogEvents {
     /// agents), so no fallback refresh is needed. False for a daemon that
     /// offers only the workspace catalog.
     fleet_push: bool,
+    /// Subscribes after a cursor kept from an earlier lane on the same daemon.
+    resumed: bool,
 }
 impl CatalogEvents {
     /// Expected identity must come from the authenticated discovery owner, never
@@ -105,7 +110,23 @@ impl CatalogEvents {
             phase: Phase::Hello,
             sequence: 0,
             fleet_push: false,
+            resumed: false,
         }
+    }
+    /// A lane that replays the changes after `after_sequence`, a cursor the
+    /// caller's catalog is known to reflect. The daemon answers
+    /// `snapshot-required` (an invalidation) when the cursor is outside its
+    /// journal; a different daemon fails the hello as for a new lane.
+    pub fn resume(expected: CatalogEventIdentity, after_sequence: u64) -> Self {
+        Self {
+            sequence: after_sequence.min(MAX_SEQUENCE),
+            resumed: true,
+            ..Self::new(expected)
+        }
+    }
+    /// The last sequence this lane has seen.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
     pub fn subscription(after_sequence: u64) -> Result<String, CatalogEventError> {
         if after_sequence > MAX_SEQUENCE {
@@ -157,10 +178,12 @@ impl CatalogEvents {
             if sessions.len() > 4096 || event_sequence > MAX_SEQUENCE {
                 return Err(CatalogEventError::Frame);
             }
-            self.sequence = event_sequence;
+            if !self.resumed {
+                self.sequence = event_sequence;
+            }
             self.phase = Phase::Barrier;
             return Ok(CatalogEventEffect::Subscribe {
-                after_sequence: event_sequence,
+                after_sequence: self.sequence,
             });
         }
         match frame {
@@ -238,7 +261,11 @@ impl CatalogEvents {
                 self.fleet_push = unavailable_interests.is_empty();
                 self.advance(sequence, true)?;
                 self.phase = Phase::Live;
-                Ok(Invalidate)
+                Ok(if self.resumed {
+                    CatalogEventEffect::Resumed
+                } else {
+                    Invalidate
+                })
             }
             Frame::Snapshot {
                 after_sequence,

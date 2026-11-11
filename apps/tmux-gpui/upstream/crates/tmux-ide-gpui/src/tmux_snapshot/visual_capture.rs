@@ -20,6 +20,8 @@ use std::{
 
 #[path = "visual_capture_mock.rs"]
 mod mock;
+#[path = "visual_capture_reader.rs"]
+mod reader_fixture;
 
 const WIDTH: f32 = 1440.;
 const HEIGHT: f32 = 900.;
@@ -268,6 +270,7 @@ fn capture_view(
         browser_commands: Some(sender),
         _browser_task: None,
         _task: None,
+        reader: Default::default(),
         painter: Rc::new(RefCell::new(
             crate::terminal_painter::TerminalPainter::default(),
         )),
@@ -541,6 +544,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let glyphs = extras.contains(&"glyphs");
     // `+closing`: the close-pane card open on the mock's selected pane.
     let closing = extras.contains(&"closing");
+    // `+nosidebar`: the sidebar hidden (F10), as a user toggles it.
+    let nosidebar = extras.contains(&"nosidebar");
     let state = if mock {
         mock::with_mock_fleet(state)?
     } else {
@@ -556,6 +561,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     } else {
         state
     };
+    // `+reader`: pane-b is a Markdown reader with find open (#756).
+    let reader_pane = extras.contains(&"reader");
+    if reader_pane {
+        state = reader_fixture::with_reader(state, dir)?;
+    }
     if extras.contains(&"agents") {
         state.workspace_agents = Some(serde_json::from_value(serde_json::json!({
             "sessionId": "session-a", "revision": 1, "phase": "loading",
@@ -646,7 +656,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 let view = cx.new(|cx| {
                     let mut view = capture_view(window, cx, sender, state);
                     // `+sidebar` keeps Home's sidebar (#746).
-                    view.sidebar_hidden = home_b && !with_sidebar;
+                    view.sidebar_hidden = (home_b && !with_sidebar) || nosidebar;
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {
@@ -664,6 +674,9 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 }
                 if machine {
                     view.update(cx, |view, cx| view.open_add_machine(window, cx));
+                }
+                if reader_pane {
+                    view.update(cx, |view, cx| reader_fixture::find(view, window, cx));
                 }
                 super::agent_spinner::window_root(view, window, cx)
             },

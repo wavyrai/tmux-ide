@@ -79,6 +79,10 @@ pub(in crate::tmux_snapshot) struct Row {
     pub pane: Option<String>,
     /// Listed from a remote machine that is away (r4): muted ink.
     pub away: bool,
+    /// Its agent state may be old (#362): this Mac's agent lane is paused for
+    /// a drop that showed its words, or the machine is away. The badge and
+    /// the spoken label say "last known".
+    pub last_known: bool,
 }
 pub(in crate::tmux_snapshot) fn rows(state: &browser::State) -> Vec<Row> {
     rows_at(state, std::time::Instant::now())
@@ -145,15 +149,28 @@ const TILE_ICON: f32 = 11.;
 /// A project heading's slot (#746 v3).
 pub(super) const HEADING_SLOT: f32 = 26.;
 /// How many agents wait on the user, as the "needs input" pill (#746).
-fn attention_badge(theme: &Theme, count: usize, index: usize) -> Div {
+fn attention_badge(theme: &Theme, count: usize, index: usize, last_known: bool) -> Div {
+    // A count that may be old stays loud, as needs-input does, and says so.
+    let words = if last_known {
+        format!(
+            "{count} · {}",
+            crate::tmux_snapshot::agent_indicator::LAST_KNOWN
+        )
+    } else {
+        count.to_string()
+    };
     crate::tmux_snapshot::agent_indicator::attention_pill(
         theme,
         crate::tmux_snapshot::agent_indicator::Plate::Sidebar,
-        count.to_string(),
+        words.clone(),
     )
     .children(crate::tmux_snapshot::design::ink_probe(move || {
         format!("sidebar-badge-{index}")
     }))
+    .children(crate::tmux_snapshot::design::text_probe(
+        move || format!("sidebar-badge-{index}"),
+        words,
+    ))
 }
 
 /// One sidebar row on Bezel's nav-row recipe (`widgets::Layout::nav_row`):
@@ -364,7 +381,7 @@ pub(super) fn render_row(
         );
     if row.attention > 0 && !heading {
         element = element.child(
-            attention_badge(theme, row.attention, index)
+            attention_badge(theme, row.attention, index, row.last_known)
                 .debug_selector(move || format!("tmux-sidebar-attention-{index}")),
         );
     }

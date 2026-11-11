@@ -132,7 +132,7 @@ fn rows_paint_the_row_ink_and_a_filled_badge(cx: &mut TestAppContext) {
         let mut element = render_row(0, &row(true), &theme, &bezel, painter, true);
         let painted = element.style().text.color;
         assert_eq!(painted, Some(rgb(label).into()));
-        let mut badge = attention_badge(&theme, 2, 0);
+        let mut badge = attention_badge(&theme, 2, 0, false);
         let fill = match badge.style().background.clone() {
             Some(Fill::Color(background)) => background.as_solid(),
             None => None,
@@ -228,7 +228,7 @@ fn an_away_row_is_muted_and_keeps_its_needs_input_badge(cx: &mut TestAppContext)
         away.attention = 1;
         let mut element = render_row(0, &away, &theme, &bezel, painter, true);
         assert_eq!(element.style().text.color, Some(rgb(muted).into()));
-        let mut badge = attention_badge(&theme, 1, 0);
+        let mut badge = attention_badge(&theme, 1, 0, false);
         let fill = match badge.style().background.clone() {
             Some(Fill::Color(background)) => background.as_solid(),
             None => None,

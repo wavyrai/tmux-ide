@@ -135,6 +135,11 @@ impl SnapshotView {
         {
             return;
         }
+        // A reader pane (#756) takes every other key; nothing typed reaches `tmux-ide show`.
+        if self.reader_owns_input() {
+            self.reader_key(event, window, cx);
+            return;
+        }
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
         // A split's hold takes keys while its stream is re-issued.
@@ -323,7 +328,11 @@ impl SnapshotView {
             }
             return;
         }
-        if terminal && (self.selection.is_some() || !self.offer_terminal_input(cx)) {
+        if terminal && (self.selection.is_some() || self.reader_owns_input()) {
+            super::renderer_probe::runtime::rejected();
+            return;
+        }
+        if terminal && !self.offer_terminal_input(cx) {
             super::renderer_probe::runtime::rejected();
             return;
         }
@@ -431,10 +440,23 @@ impl SnapshotView {
         let painter = bezel_motion::Painter::of(cx);
         sidebar = sidebar.child(self.sidebar_home_row(cx));
         let now = (self.connection.clock)().0;
-        for (index, row) in sidebar::rows_at(&self.browser_state, now)
+        let local_last_known = self.agents_shown_last_known();
+        for (index, mut row) in sidebar::rows_at(&self.browser_state, now)
             .into_iter()
             .enumerate()
         {
+            // #362: agent state on this row may be old: this Mac's lane is
+            // marked, or the row's machine (or its agent's) is away.
+            row.last_known = local_last_known
+                || row.away
+                || row.agent.as_ref().is_some_and(|key| {
+                    sidebar::activity::row_agent(&self.browser_state, key)
+                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
+                })
+                || row.pane.as_deref().is_some_and(|pane| {
+                    sidebar::panes::pane_agent(&self.browser_state, pane)
+                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
+                });
             let mut element = sidebar::render_row(
                 index,
                 &row,
@@ -472,6 +494,7 @@ impl SnapshotView {
                     agent,
                     unavailable,
                     super::agent_indicator::Plate::Sidebar,
+                    row.last_known,
                 ));
             }
             if let Some(pane) = &row.pane {

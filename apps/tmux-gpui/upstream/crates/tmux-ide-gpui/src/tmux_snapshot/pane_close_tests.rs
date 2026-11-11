@@ -74,11 +74,11 @@ fn the_roster_decides_working_or_at_rest() {
     ] {
         let rows = [row(status, attention)];
         assert_eq!(
-            agent_on(&rows, "p").map(|(_, a)| a),
+            agent_on(&rows, "p", false).map(|(_, a)| a),
             Some(expected),
             "{status}"
         );
-        assert!(agent_on(&rows, "q").is_none());
+        assert!(agent_on(&rows, "q", false).is_none());
     }
 }
 

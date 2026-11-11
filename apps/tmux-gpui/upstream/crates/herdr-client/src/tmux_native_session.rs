@@ -118,6 +118,8 @@ pub struct Updates {
     pub graphics_placements: BTreeMap<String, Arc<PaneGraphics>>,
     pub cell_pixels: bool,
     pub precise_cell_pixels: bool,
+    /// Delivery bytes per pane since the last drain.
+    pub received: BTreeMap<String, u64>,
 }
 
 struct Pending {
@@ -140,6 +142,7 @@ struct Mailbox {
     graphics_placements: BTreeMap<String, Arc<PaneGraphics>>,
     cell_pixels: bool,
     precise_cell_pixels: bool,
+    received: BTreeMap<String, u64>,
 }
 
 impl Mailbox {
@@ -159,6 +162,7 @@ impl Mailbox {
             graphics_placements: BTreeMap::new(),
             cell_pixels: false,
             precise_cell_pixels: false,
+            received: BTreeMap::new(),
         }
     }
 
@@ -438,6 +442,7 @@ impl NativeSession {
             controls: std::mem::take(&mut mailbox.controls),
             graphics: std::mem::take(&mut mailbox.graphics),
             graphics_placements: std::mem::take(&mut mailbox.graphics_placements),
+            received: std::mem::take(&mut mailbox.received),
             cell_pixels: mailbox.cell_pixels,
             precise_cell_pixels: mailbox.precise_cell_pixels,
         };
@@ -604,6 +609,13 @@ fn run(
                     let update = graphics.accept_binary(&bytes, Instant::now())?;
                     publish_graphics(shared, stream, update)?;
                     continue;
+                }
+                if let Some((pane, bytes)) = event.pane_bytes() {
+                    let mut mailbox = shared.lock().map_err(|_| Error::Mailbox)?;
+                    // A stream carries at most 24 panes; never grow past that.
+                    if mailbox.received.len() < 64 || mailbox.received.contains_key(pane) {
+                        *mailbox.received.entry(pane.to_owned()).or_default() += bytes as u64;
+                    }
                 }
                 let failure = tmux_terminal::Failure::of(&event);
                 let outcome = state.apply(event).map_err(|error| Error::Terminal(error, failure))?;

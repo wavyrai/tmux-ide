@@ -48,11 +48,16 @@ impl SnapshotView {
         })
         .detach();
     }
-    fn accepts_text(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+    pub(in crate::tmux_snapshot) fn accepts_text(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
             && self.selection.is_none()
+            && !self.reader_owns_input()
             && self.offer_terminal_input(cx)
             && self.terminal_focus.is_focused(window)
     }

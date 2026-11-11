@@ -70,17 +70,16 @@ fn a_due_retry_is_a_fresh_catalog_read_only_while_home_is_in_front() {
 }
 
 #[test]
-fn a_successful_read_ends_recovery_and_replaces_the_list() {
+fn a_successful_read_ends_recovery_and_leaves_row_ids_to_the_catalog() {
     let (mut local, _events) = home_with_a_session();
     local
         .home_catalog_failed(DaemonError::RecordChanged)
         .unwrap();
     local.home_recovered();
     assert!(!local.home.active());
-    assert!(
-        local.targets.is_empty(),
-        "the next catalog rebuilds every target"
-    );
+    // `receive_catalog` keeps an id only for the same daemon identity, so the
+    // kept rows don't repaint after a drop (browser_native_local_drop_tests).
+    assert_eq!(local.targets.len(), 1);
 }
 
 #[test]

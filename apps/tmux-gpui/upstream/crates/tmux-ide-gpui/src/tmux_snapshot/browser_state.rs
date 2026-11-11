@@ -45,6 +45,11 @@ impl SnapshotView {
                     .and_then(|p| p.carried(&state));
                 self.browser_state = state;
                 self.browser_state.browser_pending = pending;
+                // #366: the last-known mark is for the drop that showed it; a
+                // re-read clears it here, drawn or not.
+                if !self.browser_state.agents_last_known {
+                    self.connection.agents_marked.set(false);
+                }
                 if self.browser_state.input_target_rejected {
                     self.interrupt_input(cx);
                 }
