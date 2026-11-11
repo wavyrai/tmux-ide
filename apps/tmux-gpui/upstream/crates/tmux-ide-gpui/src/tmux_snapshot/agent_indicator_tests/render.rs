@@ -225,9 +225,23 @@ fn the_spinner_paints_inside_its_badge(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_last_known_spinner_stands_still(cx: &mut TestAppContext) {
     let (snapshot, cx) = open(cx);
+    // Wide enough for the sidebar, and the session selectable, so the
+    // sidebar lists the agent under its project and its agent_state draws.
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            if let Some(fleet) = view.browser_state.fleet.as_mut() {
+                fleet.groups[0].sessions[0].selection =
+                    Some("70500000-0000-4000-8000-000000000001".into());
+            }
+            cx.notify();
+        })
+    });
+    cx.simulate_resize(size(px(1200.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let spinning = cx.update(|_, cx| slot_bounds(snapshot.read(cx))).len();
     assert!(
-        !cx.update(|_, cx| slot_bounds(snapshot.read(cx))).is_empty(),
-        "a current working agent spins"
+        spinning >= 2,
+        "Home's chip and the sidebar row spin: {spinning}"
     );
     let start = std::time::Instant::now();
     let wall = std::time::SystemTime::now();
