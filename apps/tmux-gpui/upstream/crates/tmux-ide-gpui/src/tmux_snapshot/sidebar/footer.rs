@@ -106,6 +106,7 @@ impl SnapshotView {
                 &bezel,
                 [sessions, machines],
             ))
+            .child(self.connection_slot(cx))
             .child(capsule(
                 "tmux-sidebar-footer-right",
                 &bezel,

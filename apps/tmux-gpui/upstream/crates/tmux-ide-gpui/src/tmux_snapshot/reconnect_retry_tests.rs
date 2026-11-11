@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use core::prelude::v1::test;
+use gpui::TestAppContext;
 use std::sync::mpsc;
 
 fn view_state(attempt: Option<u32>) -> browser::State {
@@ -14,8 +15,10 @@ fn view_state(attempt: Option<u32>) -> browser::State {
     }
 }
 
+/// r1: no Retry button while the app retries by itself; a retry asks only for
+/// the request it was offered for (the footer slot's offline button).
 #[gpui::test]
-fn retry_is_drawn_only_while_reconnecting_and_asks_for_this_request(cx: &mut TestAppContext) {
+fn no_retry_button_and_a_retry_asks_for_this_request_only(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(32);
     let (view, cx) = cx.add_window_view(|window, cx| {
         crate::tmux_snapshot::fit_test_support::fixture_view(
@@ -27,10 +30,9 @@ fn retry_is_drawn_only_while_reconnecting_and_asks_for_this_request(cx: &mut Tes
         )
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(cx.debug_bounds("tmux-reconnect-retry").is_some());
+    assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
     while receiver.try_recv().is_ok() {}
     view.read_with(cx, |view, _| {
-        // A button drawn for an older request never retries a newer one.
         assert!(!view.retry_reconnect(6));
         assert!(view.retry_reconnect(7));
     });
@@ -40,19 +42,15 @@ fn retry_is_drawn_only_while_reconnecting_and_asks_for_this_request(cx: &mut Tes
         serde_json::to_value(&sent[0]).unwrap(),
         serde_json::json!({"type":"retry-reconnect","request":7})
     );
-    cx.update(|window, cx| {
-        view.update(cx, |view, _| view.browser_state = view_state(None));
-        window.draw(cx).clear(cx);
-    });
-    assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
+    cx.update(|_, cx| view.update(cx, |view, _| view.browser_state = view_state(None)));
     view.read_with(cx, |view, _| assert!(!view.retry_reconnect(7)));
     assert!(receiver.try_recv().is_err());
 }
 
-/// Review round 1, item 1: a key refused while the frame is held is reported
-/// at once, beside the attempt count.
+/// r1/r2: a reconnect puts nothing beside the tabs, before or after a key is
+/// refused; the refusal is the pane's "Not sent" toast.
 #[gpui::test]
-fn a_key_refused_while_reconnecting_says_so(cx: &mut TestAppContext) {
+fn a_key_refused_while_reconnecting_leaves_the_tab_strip_alone(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(32);
     let (view, cx) = cx.add_window_view(|window, cx| {
         crate::tmux_snapshot::fit_test_support::fixture_view(
@@ -64,9 +62,7 @@ fn a_key_refused_while_reconnecting_says_so(cx: &mut TestAppContext) {
         )
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    view.read_with(cx, |view, _| {
-        assert_eq!(view.status_line(), "Reconnecting… attempt 2");
-    });
+    view.read_with(cx, |view, _| assert_eq!(view.status_line(), ""));
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
             assert!(
@@ -75,15 +71,9 @@ fn a_key_refused_while_reconnecting_says_so(cx: &mut TestAppContext) {
             );
         })
     });
-    view.read_with(cx, |view, _| {
-        assert_eq!(
-            view.status_line(),
-            format!(
-                "{} — Reconnecting… attempt 2",
-                crate::tmux_snapshot::status_presentation::INPUT_REFUSED
-            )
-        );
-    });
+    view.read_with(cx, |view, _| assert_eq!(view.status_line(), ""));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("tmux-not-sent").is_some());
 }
 
 /// Review N4: a window switch shows a "Restoring terminal…" preview with no
@@ -110,4 +100,6 @@ fn a_key_refused_while_restoring_a_window_keeps_the_restoring_status(cx: &mut Te
     view.read_with(cx, |view, _| {
         assert_eq!(view.status_line(), "Restoring terminal… window 2");
     });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("tmux-not-sent").is_none());
 }
