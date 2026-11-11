@@ -1,0 +1,65 @@
+---
+title: tmux-ide 2.9.22
+metaTitle: "What's new in 2.9.22"
+description: "Read Markdown files in the Mac app with tmux-ide open, move a tmux server onto tmux-ide's own tmux with servers upgrade, and restore from any snapshot."
+---
+
+`2.9.22` is a CLI/daemon release. Pair it with native macOS alpha `0.1.16`,
+which brings the Markdown reader and a redesigned window. See
+[Native macOS alpha](/docs/native-alpha).
+
+## Markdown reader
+
+`tmux-ide open` opens a Markdown file in a pane beside the current one:
+
+```bash
+tmux-ide open notes.md
+```
+
+In the Mac app the pane is a native, read-only reader. It reloads when the file
+changes, finds text with Cmd-F and copies with Cmd-C. In a terminal the same pane
+shows `tmux-ide show`. The reader shows files up to 4 MiB, loads images only from
+the file's folder or its git repository, and never fetches remote images. A
+Markdown file that does not exist fails with `FILE_NOT_FOUND` and opens nothing.
+Before 2.9.22 such a path opened in the browser.
+
+Read [Markdown reader](/docs/markdown-reader) for the keys, links and limits.
+
+## Move a server onto tmux-ide's own tmux
+
+A tmux server started by Homebrew's or another stock tmux runs with reduced
+features. `tmux-ide servers upgrade` restarts it on tmux-ide's own tmux and
+brings its sessions back:
+
+```bash
+tmux-ide servers upgrade
+```
+
+It saves and checks a snapshot first, names the machine and socket it will end,
+and asks before it does anything (the default is No). Sessions, windows,
+layouts, folders and agent conversations come back. Running programs, shell
+state and scrollback do not, and agents come back without the extra flags they
+were started with. Read [Move to tmux-ide's own tmux](/docs/tmux-upgrade) first.
+
+## Also in 2.9.22
+
+- With no tmux server running, tmux-ide now starts its own tmux even when
+  another `tmux` is first on your PATH. A running server is left alone. Set
+  `TMUX_IDE_TMUX_BIN` to choose a tmux for everything.
+- `tmux-ide restore --from FILE` restores from a snapshot file, such as the one
+  `servers upgrade` keeps. When one session fails, `restore` rebuilds the others
+  and lists the failure.
+- `tmux-ide doctor` shows how old the crash snapshot is, and fails when it
+  misses a running session.
+- The TUI's theme picker adds Linen and Linen Dark.
+- Clicking an agent that has just appeared on Home opens it on the first click.
+
+## Updating
+
+Update the CLI/daemon with `tmux-ide update`. Existing tmux sessions are
+preserved. Update the daemon on remote machines too: until a remote machine
+runs 2.9.22, the Mac app 0.1.16 can't open Markdown readers there, gets no
+browser favicons from it, and receives its terminal graphics uncompressed.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
