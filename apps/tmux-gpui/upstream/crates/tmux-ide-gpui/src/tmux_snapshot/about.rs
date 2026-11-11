@@ -1,5 +1,5 @@
 //! About Tmux IDE: a small Bezel dialog card with the app's name, version and
-//! channel, the CLI and daemon it is connected to, three links and Copy
+//! channel, the CLI and background service it is connected to, three links and Copy
 //! diagnostics. A placeholder for the designed About, kept to Bezel parts.
 use super::SnapshotView;
 use super::controls::{self, ButtonStyle, Icon};
@@ -51,7 +51,10 @@ pub(super) fn channel(bundle_id: Option<&str>) -> Option<&'static str> {
     }
 }
 
-/// What the "CLI and daemon" row says. A version shows only while the
+/// The row naming what the app is connected to, in plain words.
+pub(super) const CONNECTION_LABEL: &str = "CLI and background service";
+
+/// What the [`CONNECTION_LABEL`] row says. A version shows only while the
 /// connection that reported it is live, never a stale one.
 pub(super) fn connection_line(
     live: Option<&super::diagnostics::Versions>,
@@ -207,7 +210,7 @@ impl SnapshotView {
                 div()
                     .w_full()
                     .debug_selector(|| "about-connection".into())
-                    .child(row("CLI and daemon", self.about_connection())),
+                    .child(row(CONNECTION_LABEL, self.about_connection())),
             )
             .child(
                 div()

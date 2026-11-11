@@ -19,7 +19,7 @@ fn the_app_menu_opens_about_and_escape_closes_it(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("about-card").is_some());
     assert!(cx.debug_bounds("about-copy-diagnostics").is_some());
     assert!(cx.debug_bounds("about-changelog").is_some());
-    // Typing reaches neither the terminal nor the daemon.
+    // Typing reaches neither the terminal nor the background service.
     cx.simulate_keystrokes("a b");
     assert!(receiver.try_recv().is_err());
     cx.simulate_keystrokes("escape");

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used)]
-use super::{channel, connection_line, version_line};
+use super::{CONNECTION_LABEL, channel, connection_line, version_line};
 use crate::tmux_snapshot::diagnostics::Versions;
 
 fn versions(daemon: Option<&str>, tmux: Option<&str>) -> Versions {
@@ -52,4 +52,18 @@ fn the_icon_is_the_app_icon_at_128_px() {
     // IHDR: width and height, big-endian, after the signature and chunk head.
     assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 128);
     assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 128);
+}
+
+#[test]
+fn about_says_background_service_not_daemon() {
+    assert_eq!(CONNECTION_LABEL, "CLI and background service");
+    let live = versions(Some("2.9.22"), Some("3.5a"));
+    for text in [
+        CONNECTION_LABEL.to_owned(),
+        connection_line(Some(&live), true),
+        connection_line(None, true),
+        connection_line(None, false),
+    ] {
+        assert!(!text.to_lowercase().contains("daemon"), "{text}");
+    }
 }
