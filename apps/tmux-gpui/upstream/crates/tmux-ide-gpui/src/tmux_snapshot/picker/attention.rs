@@ -87,6 +87,14 @@ pub(super) fn rows(state: &browser::State, active: Option<(u64, u64)>, query: &s
         .collect()
 }
 impl SnapshotView {
+    /// The attention agent `key`'s state may be old (#362).
+    pub(super) fn attention_last_known(&self, key: &str) -> bool {
+        self.browser_state
+            .attention_agents
+            .as_ref()
+            .and_then(|p| p.roster.rows.iter().find(|r| r.key == key))
+            .is_some_and(|row| self.agent_last_known(row))
+    }
     pub(in crate::tmux_snapshot) fn attention_picker_open(&self) -> bool {
         self.picker
             .as_ref()
@@ -198,7 +206,11 @@ impl SnapshotView {
         self.browser_request = pending.request;
         true
     }
-    pub(super) fn open_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::tmux_snapshot) fn open_attention(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_picker_mode(Mode::Attention, window, cx);
         let error = if self.attention.pending.is_some() {
             Some("Attention navigation pending — wait or choose another destination")

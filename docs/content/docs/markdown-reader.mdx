@@ -78,8 +78,8 @@ Enter and ⇧Enter move between matches, and Esc closes the find field.
 - Files up to 4 MiB are shown. For a larger file, run `tmux-ide show <file>` in
   a terminal pane.
 - Over SSH the file is read by tmux-ide on the remote machine, so the remote
-  machine needs a tmux-ide version with the reader.
-- This version of the Mac app asks daemons for a newer pane-stream capability
+  machine needs tmux-ide 2.9.22 or later.
+- From 0.1.16 the Mac app asks daemons for a newer pane-stream capability
   that includes the reader. Until a remote machine's tmux-ide is updated, its
   daemon sends this app no browser favicons and sends terminal graphics
   uncompressed. Everything else works as before.

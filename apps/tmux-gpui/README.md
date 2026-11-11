@@ -757,6 +757,11 @@ new pins only after the corresponding artifacts are available and the isolated
 install/update journey passes. The native installer manages the
 `~/Applications/Tmux IDE Alpha.app` entry and explicit update/rollback/uninstall
 flow documented in the [native alpha guide](../../docs/content/docs/native-alpha.mdx).
+From native 0.1.16 the app is named Tmux IDE in Finder, the Dock, the app switcher,
+Spotlight and the menu bar. The bundle file stays `TmuxIDE.app`, its identifier stays
+`com.tmux-ide.gpui.alpha`, and the Applications entry is still named `Tmux IDE Alpha.app`.
+`scripts/app-bundle-metadata.mjs` explains why the unlocalized display name must equal
+the file name.
 
 ### Experimental explicit-version manifest install/update
 

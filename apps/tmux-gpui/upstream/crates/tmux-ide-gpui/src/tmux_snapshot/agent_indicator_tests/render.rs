@@ -218,3 +218,48 @@ fn the_spinner_paints_inside_its_badge(cx: &mut TestAppContext) {
     );
     assert!(slot.left() >= badge.left() && slot.right() <= badge.right());
 }
+
+/// A last-known running agent stands still (#366): no glyph reserves a
+/// spinner slot, on Home's chip or in the sidebar's agent_state, while the
+/// same agent spins when current.
+#[gpui::test]
+fn a_last_known_spinner_stands_still(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    // Wide enough for the sidebar, and the session selectable, so the
+    // sidebar lists the agent under its project and its agent_state draws.
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            if let Some(fleet) = view.browser_state.fleet.as_mut() {
+                fleet.groups[0].sessions[0].selection =
+                    Some("70500000-0000-4000-8000-000000000001".into());
+            }
+            cx.notify();
+        })
+    });
+    cx.simulate_resize(size(px(1200.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let spinning = cx.update(|_, cx| slot_bounds(snapshot.read(cx))).len();
+    assert!(
+        spinning >= 2,
+        "Home's chip and the sidebar row spin: {spinning}"
+    );
+    let start = std::time::Instant::now();
+    let wall = std::time::SystemTime::now();
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            view.connection.clock = Rc::new(move || (start, wall));
+            view.browser_state.agents_last_known = true;
+            view.browser_state.reconnect_attempt = Some(1);
+            view.observe_connection(cx);
+            let later = start + Duration::from_secs(600);
+            view.connection.clock = Rc::new(move || (later, wall));
+            cx.notify();
+        })
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.update(|_, cx| snapshot.read(cx).agents_shown_last_known()),
+        "the drop shows its words"
+    );
+    assert!(cx.update(|_, cx| slot_bounds(snapshot.read(cx))).is_empty());
+}

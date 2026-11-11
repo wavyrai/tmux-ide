@@ -242,7 +242,7 @@ fn a_held_shortcut_still_does_not_repeat(cx: &mut TestAppContext) {
 fn the_menu_bar_has_the_mac_menus_and_no_shortcut_text() {
     let menus = menus();
     let names: Vec<_> = menus.iter().map(|m| m.name.to_string()).collect();
-    assert_eq!(names, ["tmux-ide", "Edit", "View", "Pane", "Window"]);
+    assert_eq!(names, ["Tmux IDE", "Edit", "View", "Pane", "Window"]);
     for menu in &menus {
         for item in &menu.items {
             if let MenuItem::Action { name, .. } = item {
@@ -309,4 +309,42 @@ fn full_screen_and_minimize_reach_a_handler(cx: &mut TestAppContext) {
         );
         cx.update(|window, cx| assert!(window.is_action_available(action, cx), "{title}"));
     }
+}
+
+/// The app menu reads as a Mac app's, under the app's name, with no key
+/// bindings of its own (menu_bar.rs registers none).
+#[test]
+fn the_app_menu_names_tmux_ide() {
+    let menus = menus();
+    let items: Vec<String> = menus[0]
+        .items
+        .iter()
+        .map(|item| match item {
+            MenuItem::Action { name, .. } => name.to_string(),
+            MenuItem::Separator => "—".into(),
+            _ => "?".into(),
+        })
+        .collect();
+    assert_eq!(
+        items,
+        [
+            "Choose Theme…",
+            "—",
+            "Hide Tmux IDE",
+            "Hide Others",
+            "Show All",
+            "—",
+            "Quit Tmux IDE",
+        ]
+    );
+    let carried = |title: &str| {
+        menus[0].items.iter().find_map(|item| match item {
+            MenuItem::Action { name, action, .. } if name.as_ref() == title => Some(action),
+            _ => None,
+        })
+    };
+    assert!(carried("Hide Tmux IDE").is_some_and(|a| a.partial_eq(&HideApp)));
+    assert!(carried("Hide Others").is_some_and(|a| a.partial_eq(&HideOthers)));
+    assert!(carried("Show All").is_some_and(|a| a.partial_eq(&ShowAll)));
+    assert!(carried("Quit Tmux IDE").is_some_and(|a| a.partial_eq(&crate::Quit)));
 }

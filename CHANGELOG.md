@@ -2,12 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 2.9.22
 
-- Add `tmux-ide servers upgrade`, which moves a running tmux server onto tmux-ide's own tmux. It saves and checks a snapshot of every session, names the machine and socket it is about to end, asks (default No), restarts the server and rebuilds the sessions, resuming agents. `--yes` alone refuses while an agent may be mid-turn, a program may be an agent, or a session that is not restored runs something; `--yes --end-running-agents` ends them. The restart runs in a background process, so a closed terminal, Ctrl-C or a dropped ssh connection can't stop it halfway. See "Move to tmux-ide's own tmux" in the docs.
+- Add a Markdown reader. `tmux-ide open notes.md` opens an existing `.md` or `.markdown` file in a new pane beside the current one. In the Mac app (native alpha 0.1.16) the pane shows a native, read-only reader with live reload, find (Cmd-F) and copy; in a terminal it shows `tmux-ide show`. The daemon gives the reader only the file the pane was opened on, up to 4 MiB, and images only from the file's folder or its git repository. Remote images are never fetched, and raw HTML stays text. A Markdown file that does not exist now fails with `FILE_NOT_FOUND` and creates no pane, instead of opening in the browser. See "Markdown reader" in the docs.
+- Add `tmux-ide servers upgrade`, which moves a running tmux server onto tmux-ide's own tmux. It saves and checks a snapshot of every session, names the machine and socket it is about to end, asks (default No), restarts the server and rebuilds the sessions, resuming agents. `--yes` alone refuses while an agent may be mid-turn, a program may be an agent, or a session that is not restored runs something; `--yes --end-running-agents` ends them. The restart runs in a background process, so a closed terminal, Ctrl-C or a dropped ssh connection can't stop it halfway. Running programs, shell state and scrollback do not come back, and an agent comes back without the extra flags it was started with: a Claude Code pane returns as `claude --resume <id>` without, for example, `--dangerously-skip-permissions`. See "Move to tmux-ide's own tmux" in the docs.
 - Start a new tmux server with tmux-ide's own tmux when none is running, even when another `tmux` (such as Homebrew's) is first on PATH. A running server keeps the PATH `tmux` as its client. Set `TMUX_IDE_TMUX_BIN` to a tmux to use it for everything, as before. A socket file left behind by a crashed server no longer counts as a running server.
 - Add `tmux-ide restore --from FILE`. `restore` now rebuilds the other sessions when one fails, lists the failure, and prints when its snapshot was saved.
 - `tmux-ide doctor` points the "stock tmux" and "older tmux-ide tmux" rows at `servers upgrade`, names what a plain `tmux` runs, and fails a "crash snapshot" row when the snapshot misses a running session, with its age.
+- Add the Linen and Linen Dark theme presets, the pair the Mac app uses for its System theme, to the TUI's theme picker.
+- Fix clicking an agent that has just appeared on Home when its session is already open. It said "That exact agent terminal is no longer available" until a second click. Home now waits up to 5 s for the session to list the agent; keys typed meanwhile go to that agent's pane, or are dropped if it never appears.
+- Daemons from this release serve the Mac app's pane-stream capability 118, which adds the reader. Mac app 0.1.16 asks for 118 in place of 117, so until a remote machine runs 2.9.22 its daemon sends that app no browser favicons and sends terminal graphics uncompressed. Everything else works as before.
 
 ## 2.9.21
 

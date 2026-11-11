@@ -65,6 +65,11 @@ pub(super) struct Gate {
     contexts: Vec<Context>,
     slots: Vec<Slot>,
     epoch: Option<uuid::Uuid>,
+    /// Paused across a connection drop: the shown rows are last known and are
+    /// re-read once the link is back (`Self::pause`).
+    stale: bool,
+    /// The re-read after a drop is running: rows are still last known.
+    rereading: bool,
     revision: u64,
     published: BTreeMap<String, u64>,
     total: usize,
@@ -104,7 +109,24 @@ impl Gate {
             _ => TabObservation::Unavailable,
         }
     }
+    /// A connection drop: stop reading, keep every shown row as last known.
+    /// Cancelled reads never deliver (`AgentObservationPool::cancel`), so no
+    /// row turns into a failure because the link was down.
+    pub(super) fn pause(&mut self) {
+        if self.enabled {
+            self.pool.cancel();
+            self.cycle = false;
+            self.due = None;
+            self.stale = true;
+        }
+    }
+    /// The shown rows are last known, not current.
+    pub(super) fn last_known(&self) -> bool {
+        self.stale || self.rereading
+    }
     pub(super) fn cancel(&mut self) {
+        self.stale = false;
+        self.rereading = false;
         self.pool.cancel();
         self.picker.cancel();
         self.workspace_scope = None;
@@ -202,8 +224,16 @@ impl Gate {
             && self.workspace == workspace
             && self.incomplete_routes == incomplete_routes
         {
+            // Back from a drop on the same sessions: one re-read replaces the
+            // last-known rows, as a fresh load would.
+            if std::mem::take(&mut self.stale) {
+                self.due = Some(now);
+                self.rereading = true;
+            }
             return false;
         }
+        self.stale = false;
+        self.rereading = false;
         self.pool.cancel();
         self.contexts = contexts;
         self.total = total;
@@ -275,6 +305,8 @@ impl Gate {
         }
         self.pool.cancel();
         self.enabled = false;
+        self.stale = false;
+        self.rereading = false;
         self.slots.clear();
         self.published.clear();
         self.epoch = None;
@@ -290,6 +322,7 @@ impl Gate {
         }
         if self.cycle && !self.pool.busy() {
             self.cycle = false;
+            changed |= std::mem::take(&mut self.rereading);
             self.due = (!self.pushed
                 && self
                     .contexts
@@ -433,6 +466,12 @@ impl Local {
         self.agent_tick()
     }
     pub(super) fn agent_tick(&mut self) -> Result<(), Error> {
+        // While a stream or Home reconnects, the rows stay as last known,
+        // and the state says so until the re-read after the drop completes.
+        if self.recovery.is_some() || self.home.active() {
+            self.agents.pause();
+            return self.publish_last_known();
+        }
         let visible = self.foreground
             && self.background_fleet.allows_current()
             && ((self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live)
@@ -624,6 +663,7 @@ impl Local {
             .agents
             .configure(view_contexts, total, workspace, incomplete, now);
         changed |= self.agents.poll(self.stage.is_none(), now);
+        self.state.agents_last_known = self.agents.last_known();
         changed |= self.agents.picker.dirty;
         if changed && picking {
             self.state.home_agents = None;

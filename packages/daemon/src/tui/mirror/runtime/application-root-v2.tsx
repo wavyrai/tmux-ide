@@ -367,7 +367,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           generation,
           sessionName: () => sessionOwner?.sessionName() ?? null,
           startGeneration,
-          selectPane: (paneId, source) => interaction.selectPane(paneId, source),
+          selectPane: interaction.selectPane,
           showTerminals: () => setSurface("terminals"),
           setNote: setTransientNote,
         });
@@ -484,7 +484,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          if (homeAgents?.opening() || machineAgentNavigator?.opening()) return;
+          if (homeAgents?.ownsKey(name) || machineAgentNavigator?.ownsKey(name)) return;
           if (
             activeSurface() === "terminals" &&
             shell().semantic === null &&

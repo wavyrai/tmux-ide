@@ -31,6 +31,21 @@ pub(super) enum HomeFailure {
     /// Will not recover by itself: Home keeps its list and says why.
     Fatal(&'static str),
 }
+/// The link to the same daemon dropped: the socket failed or went quiet.
+/// Anything about identity, the record or the protocol starts over instead.
+fn same_daemon(error: &DaemonError) -> bool {
+    match error {
+        DaemonError::Network(_) => true,
+        DaemonError::CatalogWatch(watch) => matches!(
+            **watch,
+            CatalogWatchError::Io(_)
+                | CatalogWatchError::Socket(_)
+                | CatalogWatchError::Closed
+                | CatalogWatchError::Timeout
+        ),
+        _ => false,
+    }
+}
 /// The act-needed state a publication carries (r3): a stopped Home's reason,
 /// or a session window's recovery that gave up. Read from this module's own
 /// constants, never from text a daemon sent.
@@ -179,8 +194,13 @@ impl Local {
         eprintln!("tmux-ide: Home catalog failed: {error}");
         match self.home.failed(classify(&error), Instant::now()) {
             Ok(()) => {
-                // A retry is a fresh discovery: nothing from the old link is kept.
-                self.sources.reset_catalog()?;
+                // The same daemon keeps its catalog and cursor for a resume;
+                // anything else is a fresh discovery with nothing kept.
+                if same_daemon(&error) {
+                    self.sources.drop_catalog_link()?;
+                } else {
+                    self.sources.reset_catalog()?;
+                }
                 self.worker.reset();
                 self.home.fault = None;
                 self.state.status = self.home.status();
@@ -208,16 +228,31 @@ impl Local {
         if self.stage.is_some() || !self.home_visible() || !self.home.due(Instant::now()) {
             return Ok(());
         }
+        if self.sources.release_catalog()? {
+            // Resume the kept catalog's lane; a full read only if it changed.
+            self.submitted = false;
+            self.state.status = self.home.status();
+            return self.publish();
+        }
         self.stage = Some(Stage::Servers);
         self.submitted = false;
         self.state.status = self.home.status();
         self.publish()
     }
-    /// A fresh catalog arrived: the next one replaces the kept list whole.
-    pub(super) fn home_recovered(&mut self) {
-        if self.home.active.take().is_some() {
-            self.targets.clear();
+    /// The kept catalog's lane is back: Home is current again without a read.
+    pub(super) fn home_resumed(&mut self) -> Result<(), Error> {
+        if self.home.active.is_none() {
+            return Ok(());
         }
+        self.home_recovered();
+        self.state.status = "Sessions ready".into();
+        self.publish()
+    }
+    /// A fresh catalog arrived. The kept list stays: the catalog replaces it
+    /// row by row, and keeps row ids only for the same daemon identity
+    /// (`receive_catalog`), so Home doesn't repaint after a drop.
+    pub(super) fn home_recovered(&mut self) {
+        self.home.active = None;
         self.home.fault = None;
     }
     /// Opening a session waits for Home to reconnect, and is refused with the

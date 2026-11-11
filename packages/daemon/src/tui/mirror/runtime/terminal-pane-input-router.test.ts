@@ -278,4 +278,34 @@ describe("TerminalPaneInputRouter", () => {
     expect(sent).toEqual(["one"]);
     expect(focused).toEqual(["one", "two", "one"]);
   });
+
+  // #764: a Home agent click registers its pane at once and sends the selection
+  // only once the agent is admitted. Keys typed during the wait follow it.
+  test.each([true, false])(
+    "input typed while an agent selection waits for admission (admitted: %p)",
+    async (admitted) => {
+      const admission = deferred<boolean>();
+      const selected: string[] = [];
+      const sent: string[] = [];
+      const router = new TerminalPaneInputRouter<string>({
+        select: async (paneId) => (selected.push(paneId), true),
+        send: async (paneId, input) => void sent.push(`${paneId}:${input}`),
+        onFocusedPane: () => undefined,
+      });
+      router.adoptCanonicalPane("one");
+      router.selectPane("agent", {
+        presentOptimistically: false,
+        selection: () =>
+          admission.promise.then(async (ok) => (ok ? (selected.push("agent"), true) : false)),
+      });
+      const typed = router.sendInput("y");
+      expect(sent).toEqual([]);
+      admission.resolve(admitted);
+      if (admitted) router.adoptCanonicalPane("agent");
+      await expect(typed).resolves.toBe(admitted);
+      // Never the previously focused pane, and never replayed later.
+      expect(sent).toEqual(admitted ? ["agent:y"] : []);
+      expect(selected).toEqual(admitted ? ["agent"] : []);
+    },
+  );
 });

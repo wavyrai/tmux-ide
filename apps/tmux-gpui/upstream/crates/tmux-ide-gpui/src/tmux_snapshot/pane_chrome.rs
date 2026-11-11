@@ -607,7 +607,12 @@ impl SnapshotView {
         let indicator = agent
             .filter(|_| header.width >= 20)
             .and_then(|(row, unavailable)| {
-                self.agent_state(row, unavailable, super::agent_indicator::Plate::Header)
+                self.agent_state(
+                    row,
+                    unavailable,
+                    super::agent_indicator::Plate::Header,
+                    self.agent_last_known(row),
+                )
             });
         // The same kind icon as the pane's sidebar row (#746).
         let icon = pane_kind(

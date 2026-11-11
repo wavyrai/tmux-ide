@@ -47,6 +47,29 @@ impl SnapshotView {
         if count == 0 {
             return None;
         }
+        // Loud as needs-input is, but tagged when any of it may be old (#362).
+        let last_known = roster
+            .rows
+            .iter()
+            .any(|row| row.attention && self.agent_last_known(row));
+        let words = if last_known {
+            format!(
+                "{} · {}",
+                crate::plural::count(count, "needs input", "need input"),
+                super::super::agent_indicator::LAST_KNOWN
+            )
+        } else {
+            crate::plural::count(count, "needs input", "need input")
+        };
+        let spoken = if last_known {
+            format!(
+                "{}, {}",
+                crate::plural::count(count, "agent needs input", "agents need input"),
+                super::super::agent_indicator::LAST_KNOWN
+            )
+        } else {
+            crate::plural::count(count, "agent needs input", "agents need input")
+        };
         let bezel = self.home_palette();
         let on = self.home_filter.as_ref().is_some_and(|c| c.waiting_only);
         let tone: Hsla = rgb(super::super::agent_indicator::attention_ink(&self.theme())).into();
@@ -59,10 +82,10 @@ impl SnapshotView {
                     format!("home-agents-attention-{}", if on { "on" } else { "off" })
                 })
                 .role(Role::Button)
-                .aria_label(crate::plural::count(
-                    count,
-                    "agent needs input",
-                    "agents need input",
+                .aria_label(spoken.clone())
+                .children(design::text_probe(
+                    || "spoken-home-agents-attention".into(),
+                    spoken,
                 ))
                 .aria_toggled(if on { Toggled::True } else { Toggled::False })
                 .flex_none()
@@ -83,7 +106,11 @@ impl SnapshotView {
                         .text_style(TextStyle::Callout)
                         .text_color(bezel.text)
                         .children(design::ink_probe(|| "home-agents-attention".into()))
-                        .child(crate::plural::count(count, "needs input", "need input")),
+                        .children(design::text_probe(
+                            || "home-agents-attention".into(),
+                            words.clone(),
+                        ))
+                        .child(words),
                 )
                 .when(on, |pill| {
                     pill.child(

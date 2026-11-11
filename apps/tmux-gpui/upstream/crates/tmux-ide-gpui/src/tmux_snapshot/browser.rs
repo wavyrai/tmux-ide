@@ -171,6 +171,10 @@ pub(super) struct State {
     pub reconnect_attempt: Option<u32>,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
+    /// Agent rows and pills are last known: their link dropped, or the one
+    /// re-read after it hasn't finished. Worker-owned; the view decides how
+    /// long a drop must last before it shows (quiet reconnect).
+    pub agents_last_known: bool,
     /// What only the user can fix, shown at once (r3).
     pub act: Option<super::connection::Act>,
     /// The last split's outcome, for keys held since its click
@@ -622,6 +626,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             home_fault: false,
+            agents_last_known: false,
             act: None,
             pane_split: None,
             home_notice: None,
