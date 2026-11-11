@@ -216,13 +216,16 @@ impl SnapshotView {
             .collect();
         let more = agents.len().saturating_sub(AGENT_CHIPS);
         let bezel = self.home_palette();
-        // An away machine's agents are last known too (#360's away, r4).
-        let last_known = self.agents_shown_last_known() || self.session_away(session).is_some();
+        // An away machine's agents are last known too (#360's away, r4),
+        // judged by the machine each agent was observed on (#366).
         let mut chips: Vec<AnyElement> = agents
             .iter()
             .take(AGENT_CHIPS)
             .enumerate()
-            .map(|(n, agent)| self.fleet_agent_chip(index, row, n, agent, last_known, cx))
+            .map(|(n, agent)| {
+                let last_known = self.agent_last_known(agent);
+                self.fleet_agent_chip(index, row, n, agent, last_known, cx)
+            })
             .collect();
         if more > 0 {
             chips.push(

@@ -175,24 +175,25 @@ impl SnapshotView {
     /// or the machine that lists its session is away (#360's r4).
     ///
     /// The agent's session is found, in order:
-    /// - within the agent's machine, when the workspace fleet publication
-    ///   scopes the agent;
+    /// - within the agent's machine: the machine its row was observed on
+    ///   (every row the daemon projects carries it), or the workspace fleet
+    ///   publication's scope for it;
     /// - for the open workspace's own agents, as the open session's fleet
     ///   entry (the one the sidebar leads with), since live ids (`$0`, …)
     ///   repeat across machines;
-    /// - otherwise (Home's roster carries no machine id) by the live id
-    ///   alone, which errs toward "last known" if another machine that is
-    ///   away has a session with the same id.
+    /// - otherwise (only a row without a machine, which the projection never
+    ///   publishes) by the live id alone, which errs toward "last known".
     pub(super) fn agent_last_known(&self, row: &Row) -> bool {
         if self.agents_shown_last_known() {
             return true;
         }
-        let machine = self
-            .browser_state
-            .workspace_fleet_agents
-            .as_ref()
-            .and_then(|p| p.sessions.get(&row.key))
-            .map(|scope| scope.machine.as_str());
+        let machine = row.machine.as_deref().or_else(|| {
+            self.browser_state
+                .workspace_fleet_agents
+                .as_ref()
+                .and_then(|p| p.sessions.get(&row.key))
+                .map(|scope| scope.machine.as_str())
+        });
         if machine.is_none()
             && let Some(open) = self.workspace_open_session(&row.session_id)
         {

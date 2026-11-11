@@ -605,3 +605,76 @@ fn a_namesake_on_an_away_machine_leaves_the_open_session_current(cx: &mut TestAp
     });
     assert!(says(&probes, "pane-close-body").starts_with("Claude is working on this."));
 }
+
+/// Home's roster: each row carries the machine it was observed on, so a
+/// current local agent isn't "last known" because an away machine has a
+/// session with the same live id; the away machine's own agent is (review
+/// r3). On every Home site: the pill, the chip, the sidebar Home badge and
+/// agent row, and the attention list.
+#[gpui::test]
+fn home_rows_join_their_own_machine(cx: &mut TestAppContext) {
+    for (machine, marked) in [("local", false), ("remote", true)] {
+        let mut state = home(true);
+        let local: browser::fleet::Group = serde_json::from_value(serde_json::json!({
+            "id":"local","label":"Local","state":"ready","conflict":false,"omittedSessions":0,
+            "sessions":[{"id":"local-a","name":"Alpha","paneCount":1,"sessionId":"session-a",
+             "selection":"70500000-0000-4000-8000-000000000002"}]}))
+        .unwrap();
+        state.fleet.as_mut().unwrap().groups.push(local);
+        let mut row = agent("session-a");
+        row["machine"] = machine.into();
+        state.home_agents = Some(serde_json::from_value(roster(None, row.clone())).unwrap());
+        let probes = painted(cx, state, CURRENT, home_view);
+        let tag = |words: &str| {
+            if marked {
+                format!("{words} · last known")
+            } else {
+                words.to_owned()
+            }
+        };
+        assert_eq!(
+            says(&probes, "home-agents-attention"),
+            tag("1 needs input"),
+            "{machine}"
+        );
+        let chips: Vec<_> = probes
+            .iter()
+            .filter(|(k, _)| k.starts_with("fleet-session-asks-"))
+            .map(|(_, v)| v.clone())
+            .collect();
+        // The agent is listed on every row with its live id; each of its
+        // chips follows its own machine.
+        assert!(!chips.is_empty(), "{machine}");
+        assert!(
+            chips.iter().all(|c| *c == tag("· Needs input")),
+            "{machine}: {chips:?}"
+        );
+        assert_eq!(
+            says(&probes, "spoken-Home").contains("last known"),
+            marked,
+            "{machine}"
+        );
+        // The attention list joins the same way.
+        let mut state = workspace();
+        let mut fleet = home(true).fleet.unwrap();
+        fleet.groups.push(
+            serde_json::from_value(serde_json::json!({
+                "id":"local","label":"Local","state":"ready","conflict":false,
+                "omittedSessions":0,"sessions":[{"id":"local-a","name":"Alpha","paneCount":1,
+                "sessionId":"session-a"}]}))
+            .unwrap(),
+        );
+        state.fleet = Some(fleet);
+        let probes = painted(cx, state, CURRENT, |view, window, cx| {
+            attention(view, window, cx);
+            if let Some(p) = view.browser_state.attention_agents.as_mut() {
+                p.roster.rows[0].machine = Some(machine.into());
+            }
+        });
+        assert_eq!(
+            says(&probes, "palette-row-0").ends_with("· last known"),
+            marked,
+            "{machine}"
+        );
+    }
+}

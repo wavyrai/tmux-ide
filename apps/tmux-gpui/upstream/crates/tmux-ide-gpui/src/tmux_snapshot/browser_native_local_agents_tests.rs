@@ -222,6 +222,16 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
     assert!(roster.valid());
     assert_eq!(roster.rows.len(), 2);
     assert_ne!(roster.rows[0].machine_label, roster.rows[1].machine_label);
+    // Each row names its machine, so a live id repeated on another machine
+    // never joins the wrong session (#366).
+    let machines: std::collections::BTreeSet<_> =
+        roster.rows.iter().map(|r| r.machine.clone()).collect();
+    assert_eq!(
+        machines,
+        [Some("local".to_owned()), Some("remote".to_owned())]
+            .into_iter()
+            .collect()
+    );
     let old = roster
         .rows
         .iter()
