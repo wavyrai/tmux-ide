@@ -37,6 +37,7 @@ const live: HomeAgentSnapshot = {
 function rig() {
   let sessionName = "alpha";
   let semanticReady = true;
+  let listedPane = "pane.exact";
   const semanticListeners = new Set<() => void>();
   let snapshot = live;
   let notify: (value: HomeAgentSnapshot) => void = () => undefined;
@@ -74,7 +75,7 @@ function rig() {
       getSnapshot: () => ({
         generation: 1,
         semantic: semanticReady
-          ? { sidebar: { agents: [{ id: "agent", paneId: "pane.exact" }] } }
+          ? { sidebar: { agents: [{ id: "agent", paneId: listedPane }] } }
           : null,
       }),
       subscribe(_scope: string, fn: () => void) {
@@ -123,6 +124,11 @@ function rig() {
     generation,
     setSessionName(name: string) {
       sessionName = name;
+    },
+    /** The attached session lists the agent on `pane` (#764). */
+    setListedPane(pane: string) {
+      listedPane = pane;
+      for (const listener of semanticListeners) listener();
     },
     setSemanticReady(value: boolean) {
       semanticReady = value;
@@ -270,6 +276,51 @@ describe("resident agent Home composition", () => {
       }
     },
   );
+
+  // #764: Home lists the agent before the attached session does.
+  it("hands the controller the admission while the session catches up, with a wait note", async () => {
+    const r = rig();
+    r.setListedPane("pane.previous");
+    r.owner.presentation.onOpenAgent!(row, "mouse");
+    // Not a bare id: the controller selects only once this admission is true.
+    expect(r.selectPane).toHaveBeenCalledExactlyOnceWith("pane.exact", expect.any(Promise));
+    const admission = r.selectPane.mock.calls[0]![1] as Promise<boolean>;
+    expect(r.setNote).toHaveBeenLastCalledWith("Waiting for agent in alpha…");
+    expect(r.showTerminals).not.toHaveBeenCalled();
+    expect(r.owner.opening()).toBe(true);
+    r.setListedPane("pane.exact");
+    await expect(admission).resolves.toBe(true);
+    await vi.waitFor(() => expect(r.showTerminals).toHaveBeenCalledWith("mouse"));
+    expect(r.setNote).toHaveBeenLastCalledWith(null);
+    await vi.waitFor(() => expect(r.owner.opening()).toBe(false));
+    r.dispose();
+  });
+
+  it("Esc during the warm wait cancels it, selects nothing and returns the keyboard", async () => {
+    const r = rig();
+    r.setListedPane("pane.previous");
+    r.owner.presentation.onOpenAgent!(row, "keyboard");
+    const admission = r.selectPane.mock.calls[0]![1] as Promise<boolean>;
+    expect(r.owner.opening()).toBe(true);
+    expect(r.owner.presentation.agentInputActive).toBe(false);
+    // Other keys are owned (ignored) while opening.
+    expect(r.owner.ownsKey("a")).toBe(true);
+    expect(r.owner.opening()).toBe(true);
+
+    expect(r.owner.ownsKey("escape")).toBe(true);
+    expect(r.owner.opening()).toBe(false);
+    expect(r.owner.presentation.agentInputActive).toBe(true);
+    // The controller never selects a pane whose admission is false.
+    await expect(admission).resolves.toBe(false);
+    r.setListedPane("pane.exact");
+    await Promise.resolve();
+    expect(r.showTerminals).not.toHaveBeenCalled();
+    expect(r.setNote).toHaveBeenLastCalledWith(null);
+    // Not opening: keys, Esc included, reach the rest of the root again.
+    expect(r.owner.ownsKey("escape")).toBe(false);
+    expect(r.owner.ownsKey("a")).toBe(false);
+    r.dispose();
+  });
 
   it("still rejects a changed incarnation after semantic readiness", async () => {
     const r = rig();
