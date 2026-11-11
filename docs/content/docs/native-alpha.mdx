@@ -274,7 +274,9 @@ separate from **Close pane** or stopping a session.
 
 ## Troubleshooting
 
-**Home stays on “Loading sessions” or no sessions appear.** Check that a
+**Home stays empty or no sessions appear.** From 0.1.16, Home shows no
+“Loading sessions” text; a spinner or “Reconnecting…” in the sidebar footer means
+the app is still trying, and a card on Home names a problem only you can fix. Check that a
 compatible daemon is running with `tmux-ide daemon info --json`, and run
 `tmux-ide doctor --json`. Record whether the app changes after you bring its
 window to the foreground. A window that updates only after a click is a bug worth
