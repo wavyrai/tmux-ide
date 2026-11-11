@@ -84,9 +84,10 @@ export interface ApplicationTerminalInteractionController {
   cancelPendingInput(): void;
   adoptLayout(snapshot: OpenTuiWorkspaceLayoutSnapshot): void;
   /**
-   * With `admission`, input typed from now on is ordered behind this pane, and
-   * the pane is selected only if `admission` resolves true; on false that input
-   * is dropped, never delivered to another pane.
+   * With `admission`, input sent from now on is ordered behind this pane, and
+   * the pane is selected only if `admission` resolves true and no later
+   * selection replaced it; otherwise that input is dropped, never delivered to
+   * another pane. (The app's root sends no input while an agent is opening.)
    */
   selectPane(paneId: string, admission?: Promise<boolean>): void;
   selectWindowLink(target: WindowLinkTarget): Promise<void>;
@@ -1243,8 +1244,13 @@ export function createApplicationTerminalInteractionController(
         // Ordered now; selected only once admitted, otherwise held input drops.
         paneInput.selectPane(paneId, {
           presentOptimistically: false,
-          selection: () =>
-            admission.then((admitted) => (admitted ? selectInRuntime(paneId) : false)),
+          selection: () => {
+            // A later selection supersedes this one: never select it after all.
+            const version = paneInput.selectionVersion;
+            return admission.then((admitted) =>
+              admitted && paneInput.selectionVersion === version ? selectInRuntime(paneId) : false,
+            );
+          },
         });
       else paneInput.selectPane(paneId);
       selectionWaiter.reconcile();

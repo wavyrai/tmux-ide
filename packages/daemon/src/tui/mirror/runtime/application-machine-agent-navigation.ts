@@ -22,7 +22,8 @@ export function createApplicationMachineAgentNavigator(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
   readonly sessionName: () => string | null;
   readonly startGeneration: HomeNavigatorOptions["startGeneration"];
-  readonly selectPane: HomeNavigatorOptions["selectPane"];
+  /** The interaction controller's selectPane: `admission` must reach it (#764). */
+  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
   readonly showTerminals: HomeNavigatorOptions["showTerminals"];
   readonly setNote: HomeNavigatorOptions["setNote"];
 }) {
@@ -51,7 +52,7 @@ export function createApplicationMachineAgentNavigator(options: {
       ) {
         // Reserve before the next key; the terminal controller waits for a fresh
         // coherent runtime and remains the only owner of physical input.
-        options.selectPane(target.paneId!, source);
+        options.selectPane(target.paneId!);
         options.showTerminals(source);
         options.setNote(null);
         opening = false;
@@ -86,7 +87,8 @@ export function createApplicationMachineAgentNavigator(options: {
             () =>
               selected() && options.isCurrentTarget(machineId, target) && (admission?.() ?? true),
           ),
-        selectPane: options.selectPane,
+        selectPane: (paneId, _source, admission) =>
+          admission ? options.selectPane(paneId, admission) : options.selectPane(paneId),
         showTerminals: options.showTerminals,
         setNote: options.setNote,
       });

@@ -43,6 +43,7 @@ function harness() {
   };
   const events: string[] = [];
   const admissions: Promise<boolean>[] = [];
+  const selectCalls: [string, Promise<boolean>?][] = [];
   const start = vi.fn(
     async (
       _session: string,
@@ -76,7 +77,9 @@ function harness() {
       }) as unknown as OpenTuiGenerationHostSnapshot,
     sessionName: () => state.session,
     startGeneration: start,
-    selectPane: (pane, _source, admission) => {
+    selectPane: (...args: [string, Promise<boolean>?]) => {
+      const [pane, admission] = args;
+      selectCalls.push(args);
       events.push(`select:${pane}`);
       if (admission) admissions.push(admission);
     },
@@ -89,6 +92,7 @@ function harness() {
     start,
     events,
     admissions,
+    selectCalls,
     owner,
     publish: () => {
       for (const listener of [...listeners]) listener();
@@ -171,8 +175,8 @@ describe("machine agent navigation", () => {
     },
   );
   // #764: the same session not listing the pane yet may be a moment behind
-  // Home. The selection is registered (input ordered behind it) and refused
-  // after the 5 s bound if the pane never appears; nothing is shown.
+  // Home. The selection is registered (not yet sent to the runtime) and refused
+  // after the 5 s bound if the pane never appears; terminals are not shown.
   it("rejects a mismatched pane after the bounded wait", async () => {
     vi.useFakeTimers();
     try {
@@ -182,6 +186,8 @@ describe("machine agent navigation", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect((await result).opened).toBe(false);
       expect(h.events).toEqual(["select:%7"]);
+      // The controller receives the admission itself, not a bare pane id.
+      expect(h.selectCalls).toEqual([["%7", expect.any(Promise)]]);
       expect(h.admissions).toHaveLength(1);
       await expect(h.admissions[0]).resolves.toBe(false);
     } finally {

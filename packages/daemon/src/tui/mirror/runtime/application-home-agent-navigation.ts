@@ -44,9 +44,10 @@ export function createApplicationHomeAgentNavigator(options: {
     admission?: () => boolean,
   ) => Promise<ApplicationGenerationStartResult>;
   /**
-   * With `admission`, the selection is registered now (input typed meanwhile
-   * is ordered behind it) and sent only if `admission` resolves true; on
-   * false, input held for it is dropped, never delivered to another pane.
+   * With `admission`, the selection is registered now and sent to the runtime
+   * only if `admission` resolves true. The controller drops input it holds for
+   * a refused pane, never delivering it to another pane; in the app the root
+   * routes no keys or paste while an agent is opening, so none is held.
    */
   readonly selectPane: (
     paneId: string,
@@ -69,6 +70,8 @@ export function createApplicationHomeAgentNavigator(options: {
   let navigationToken = 0;
   let disposed = false;
   let admissionController: AbortController | null = null;
+  /** The token whose wait note is on screen; cleared with the wait (#764). */
+  let waitingNote: number | null = null;
   const active = (token: number) => !disposed && token === navigationToken;
   const failure = (
     token: number,
@@ -141,7 +144,9 @@ export function createApplicationHomeAgentNavigator(options: {
    * The warm path when Home lists an agent the attached session doesn't yet
    * (#764): register the selection now, wait (bounded) for the session to list
    * exactly this agent on this pane, then run every admission check again.
-   * Keys typed meanwhile reach this pane only if it is admitted.
+   * The selection reaches the runtime only if this admits. The root ignores
+   * keys and paste while an agent is opening, so input typed during the wait
+   * is dropped; the note says why nothing happens yet.
    */
   const admitWhenListed = async (
     token: number,
@@ -156,11 +161,16 @@ export function createApplicationHomeAgentNavigator(options: {
       settle = resolve;
     });
     options.selectPane(target.paneId!, source, admission);
+    // The cold path's "Opening agent in …" note, for the warm wait.
+    options.setNote(`Waiting for agent in ${target.sessionName}…`);
+    waitingNote = token;
     try {
       await waitForAgent(generationKey, () => listed(options.currentGeneration(), target), signal);
     } catch {
       // A failed wait is a refusal below, never an admission.
     }
+    if (waitingNote === token) waitingNote = null;
+    // A refusal replaces the note; an admission clears it below.
     const refused = refusal(token, target, generationKey);
     settle(refused === null);
     if (refused) return refused;
@@ -177,6 +187,8 @@ export function createApplicationHomeAgentNavigator(options: {
       admissionController?.abort();
       const controller = new AbortController();
       admissionController = controller;
+      // This navigation sets its own note.
+      waitingNote = null;
       const token = ++navigationToken;
       try {
         if (!target.paneId)
@@ -248,6 +260,10 @@ export function createApplicationHomeAgentNavigator(options: {
     cancel() {
       navigationToken += 1;
       admissionController?.abort();
+      if (waitingNote !== null) {
+        waitingNote = null;
+        options.setNote(null);
+      }
     },
     dispose() {
       disposed = true;

@@ -39,6 +39,82 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
   return Object.freeze({ current, windows: Object.freeze([current]) });
 }
 
+/** #764: a Home agent selection whose admission settles after the click. */
+function admissionRig() {
+  const peerActive = (): OpenTuiWorkspaceLayoutSnapshot => {
+    const current = {
+      ...splitLayout().current!,
+      panes: splitLayout().current!.panes.map((pane) => ({
+        ...pane,
+        active: pane.pane === "pane.peer",
+      })),
+    };
+    return Object.freeze({ current, windows: Object.freeze([current]) });
+  };
+  // The daemon publishes the new active pane, then the receipt.
+  const dispatch = vi.fn(async (command: { operationId?: string; intent?: unknown }) => {
+    const intent = command.intent as { verb?: string; semanticPaneId?: string } | undefined;
+    if (intent?.verb === "workspace.pane.select" && intent.semanticPaneId === "pane.peer")
+      controller.adoptLayout(peerActive());
+    return receipt(command);
+  });
+  const receipt = (command: { operationId?: string; intent?: unknown }) => ({
+    kind: "semantic-intent",
+    operationId: command.operationId ?? "select-op",
+    result: {
+      verb: "workspace.pane.select",
+      semanticPaneId: (command.intent as { semanticPaneId?: string } | undefined)?.semanticPaneId,
+      workspaceName: "workspace.alpha",
+      daemonInstanceId: "generation-a",
+      operationId: command.operationId ?? "select-op",
+      outcome: "applied",
+    },
+  });
+  const sendInput = vi.fn(async () => ({ status: "sent" as const }));
+  const generation = {
+    status: "live",
+    daemonGeneration: "generation-a",
+    rendererEpoch: 7,
+    connection: { workspaceName: "workspace.alpha" },
+    client: {
+      ownsRuntimeAuthority: () => true,
+      requestAuthority: async () => ({}),
+      dispatch,
+      getSnapshot: () => ({ generation: 4 }),
+    },
+    fastLane: { lane: { sendInput } },
+    adapter: {},
+  };
+  const focused: Array<string | null> = [];
+  const controller = createApplicationTerminalInteractionController({
+    generation: () => generation as never,
+    layout: splitLayout,
+    setFocusedPane: (pane) => void focused.push(pane as string | null),
+    diagnosticsEnabled: false,
+    diagnose: () => undefined,
+    causalCellFixtureEnabled: () => false,
+  });
+  controller.adoptGeneration(generation as never);
+  controller.adoptLayout(splitLayout());
+  const selections = () =>
+    dispatch.mock.calls
+      .map(([command]) => command.intent as { verb?: string; semanticPaneId?: string })
+      .filter((intent) => intent?.verb === "workspace.pane.select")
+      .map((intent) => intent.semanticPaneId);
+  const delivered = () =>
+    sendInput.mock.calls.map((call) => {
+      const [pane, input] = call as unknown as [string, { data: string }];
+      return [pane, input.data];
+    });
+  const admission = () => {
+    let settle!: (admitted: boolean) => void;
+    const promise = new Promise<boolean>((resolve) => (settle = resolve));
+    return { promise, settle };
+  };
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  return { controller, focused, selections, delivered, admission, flush };
+}
+
 describe("application terminal interaction controller", () => {
   it.each([
     "same",
@@ -330,6 +406,67 @@ describe("application terminal interaction controller", () => {
       expect(sendInput).toHaveBeenCalledOnce();
     },
   );
+
+  describe("Home agent admission (#764)", () => {
+    it("never selects a refused pane, drops the input held for it, and keeps the old focus", async () => {
+      const rig = admissionRig();
+      expect(rig.focused).toEqual(["pane.main"]);
+      const admission = rig.admission();
+      rig.controller.selectPane("pane.peer", admission.promise);
+      const typed = [
+        rig.controller.sendInput({ kind: "text", data: "a" }),
+        rig.controller.sendInput({ kind: "text", data: "b" }),
+      ];
+      await rig.flush();
+      // Nothing is selected, sent or presented while the admission is open.
+      expect(rig.selections()).toEqual([]);
+      expect(rig.delivered()).toEqual([]);
+      expect(rig.focused).toEqual(["pane.main"]);
+
+      admission.settle(false);
+      await Promise.all(typed);
+      await rig.flush();
+      expect(rig.selections()).toEqual([]);
+      expect(rig.delivered()).toEqual([]);
+      expect(rig.focused).toEqual(["pane.main"]);
+    });
+
+    it("selects an admitted pane once, then delivers the held input to it once, in order", async () => {
+      const rig = admissionRig();
+      const admission = rig.admission();
+      rig.controller.selectPane("pane.peer", admission.promise);
+      const typed = [
+        rig.controller.sendInput({ kind: "text", data: "a" }),
+        rig.controller.sendInput({ kind: "text", data: "b" }),
+      ];
+      await rig.flush();
+      expect(rig.selections()).toEqual([]);
+      expect(rig.delivered()).toEqual([]);
+
+      admission.settle(true);
+      await Promise.all(typed);
+      await rig.flush();
+      expect(rig.selections()).toEqual(["pane.peer"]);
+      expect(rig.delivered()).toEqual([
+        ["pane.peer", "a"],
+        ["pane.peer", "b"],
+      ]);
+    });
+
+    it("sends nothing to the waiting pane once another pane is selected", async () => {
+      const rig = admissionRig();
+      const admission = rig.admission();
+      rig.controller.selectPane("pane.peer", admission.promise);
+      const held = rig.controller.sendInput({ kind: "text", data: "held" });
+      rig.controller.selectPane("pane.main");
+      const fresh = rig.controller.sendInput({ kind: "text", data: "fresh" });
+      admission.settle(true);
+      await Promise.all([held, fresh]);
+      await rig.flush();
+      expect(rig.selections()).not.toContain("pane.peer");
+      expect(rig.delivered().filter(([pane]) => pane === "pane.peer")).toEqual([]);
+    });
+  });
 
   it("refuses pane-targeted input when its live generation disappears", async () => {
     const controller = createApplicationTerminalInteractionController({

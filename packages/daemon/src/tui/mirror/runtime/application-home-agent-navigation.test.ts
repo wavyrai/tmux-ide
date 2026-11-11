@@ -239,15 +239,16 @@ describe("Home exact agent navigation", () => {
     it("is admitted once the session lists it within the wait", async () => {
       const h = waiting();
       const result = h.owner.open(target, "mouse");
-      // Registered at once, so keys typed now are ordered behind this pane.
+      // Registered at once; the runtime selects it only once admitted.
       expect(h.events).toEqual(["select:pane.exact:mouse:pending"]);
-      expect(h.setNote).not.toHaveBeenCalled();
+      // The wait is visible, like the cold path's "Opening agent in …".
+      expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"]]);
       h.state.current = generation();
       h.wait.resolve(true);
       await expect(result).resolves.toEqual({ opened: true });
       await expect(h.admissions[0]).resolves.toBe(true);
       expect(h.events).toEqual(["select:pane.exact:mouse:pending", "show:mouse"]);
-      expect(h.setNote).toHaveBeenLastCalledWith(null);
+      expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"], [null]]);
     });
 
     it("is refused as before when the bound passes without it", async () => {
@@ -257,7 +258,11 @@ describe("Home exact agent navigation", () => {
       await expect(result).resolves.toEqual({ opened: false, failure: "pane-removed" });
       await expect(h.admissions[0]).resolves.toBe(false);
       expect(h.showTerminals).not.toHaveBeenCalled();
-      expect(h.setNote).toHaveBeenCalledWith(expect.stringContaining("no longer available"));
+      // The refusal note replaces the wait note.
+      expect(h.setNote.mock.calls).toEqual([
+        ["Waiting for agent in agents…"],
+        [expect.stringContaining("no longer available")],
+      ]);
     });
 
     it("is refused when the session lists the agent on another pane", async () => {
@@ -292,13 +297,52 @@ describe("Home exact agent navigation", () => {
       await expect(h.admissions[0]).resolves.toBe(false);
     });
 
-    it("never waits for a different attached session", async () => {
-      const h = waiting({ ...behind(), liveSessionId: "recreated-same-name" });
+    it.each([
+      ["session", { liveSessionId: "recreated-same-name" }],
+      ["daemon", { daemonInstanceId: "other-daemon" }],
+    ] as const)("never waits for a different attached %s", async (_name, changed) => {
+      const h = waiting({ ...behind(), ...changed });
       await expect(h.owner.open(target, "mouse")).resolves.toMatchObject({
         opened: false,
         failure: "generation-changed",
       });
       expect(h.admissions).toEqual([]);
+      expect(h.setNote).not.toHaveBeenCalledWith("Waiting for agent in agents…");
+    });
+
+    it("aborts a superseded wait at once instead of running to the bound", async () => {
+      const signals: AbortSignal[] = [];
+      const h = harness(behind(), {
+        waitForAgent: (_key, _listed, signal) => {
+          signals.push(signal);
+          return new Promise<boolean>(() => undefined);
+        },
+      });
+      void h.owner.open(target, "mouse");
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.aborted).toBe(false);
+      void h.owner.open(target, "keyboard");
+      expect(signals[0]!.aborted).toBe(true);
+      expect(signals[1]!.aborted).toBe(false);
+    });
+
+    it("aborts a cancelled wait at once and clears its note", async () => {
+      const signals: AbortSignal[] = [];
+      const h = harness(behind(), {
+        waitForAgent: (_key, _listed, signal) => {
+          signals.push(signal);
+          return new Promise<boolean>((resolve) =>
+            signal.addEventListener("abort", () => resolve(false)),
+          );
+        },
+        onAdmission: () => undefined,
+      });
+      const result = h.owner.open(target, "mouse");
+      h.owner.cancel();
+      expect(signals[0]!.aborted).toBe(true);
+      await expect(result).resolves.toEqual({ opened: false, failure: "superseded" });
+      expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"], [null]]);
+      expect(h.showTerminals).not.toHaveBeenCalled();
     });
   });
 });

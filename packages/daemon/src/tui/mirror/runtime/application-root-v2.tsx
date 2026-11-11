@@ -367,7 +367,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           generation,
           sessionName: () => sessionOwner?.sessionName() ?? null,
           startGeneration,
-          selectPane: (paneId, _source, admission) => interaction.selectPane(paneId, admission),
+          selectPane: interaction.selectPane,
           showTerminals: () => setSurface("terminals"),
           setNote: setTransientNote,
         });
