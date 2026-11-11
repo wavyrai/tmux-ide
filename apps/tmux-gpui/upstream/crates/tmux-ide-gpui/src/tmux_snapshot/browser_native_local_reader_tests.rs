@@ -101,3 +101,45 @@ fn a_stale_render_is_dropped() {
     assert_eq!(fetch.wanted, ["new.png"]);
     assert_eq!((fetch.generation, fetch.fresh), (1, false));
 }
+
+/// #353 round 3, B4: a whole picture that cannot reach the work thread fails
+/// at once instead of waiting in `storing` for ever; one that reaches it waits
+/// there for its result.
+#[test]
+fn a_picture_the_work_thread_cannot_take_fails_at_once() {
+    use herdr_client::tmux_daemon::ImageMime;
+    let page = || ReaderAsset::Page {
+        mime: ImageMime::Png,
+        chunk: ReaderChunk {
+            revision: REV.into(),
+            size: 4,
+            offset: 0,
+            bytes: b"\x89PNG".to_vec(),
+        },
+    };
+    let mut gate = Gate {
+        kitchen: Some(Kitchen::closed()),
+        ..Default::default()
+    };
+    let wanted = PaneFetch {
+        wanted: vec!["a.png".into()],
+        ..Default::default()
+    };
+    gate.panes.insert("pane".into(), wanted);
+    assert!(gate.asset("pane", "a.png".into(), page()));
+    let fetch = &gate.panes["pane"];
+    assert!(fetch.storing.is_empty());
+    assert!(matches!(fetch.assets.get("a.png"), Some(Asset::Failed)));
+    assert_eq!(
+        fetch.next_asset(),
+        None,
+        "a failed picture is not fetched again"
+    );
+
+    let mut gate = Gate::default();
+    gate.panes.insert("pane".into(), PaneFetch::default());
+    assert!(!gate.asset("pane", "a.png".into(), page()));
+    let fetch = &gate.panes["pane"];
+    assert!(fetch.storing.contains("a.png"));
+    assert!(!fetch.assets.contains_key("a.png"));
+}

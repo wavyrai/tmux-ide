@@ -145,13 +145,7 @@ impl Local {
     }
     /// Sends a job to the work thread, starting it on first use.
     fn reader_work(&mut self, job: Work) -> bool {
-        let gate = &mut self.browser_controls.reader;
-        if gate.kitchen.is_none() {
-            gate.kitchen = Kitchen::spawn().ok();
-        }
-        gate.kitchen
-            .as_ref()
-            .is_some_and(|kitchen| kitchen.send(job))
+        send(&mut self.browser_controls.reader.kitchen, job)
     }
     /// Asks for the pane's document to be rendered again with its images.
     fn reader_render(&mut self, pane: &str) {
@@ -474,7 +468,23 @@ impl Local {
         changed
     }
     fn reader_asset(&mut self, pane: &str, src: String, asset: ReaderAsset) -> bool {
-        let gate = &mut self.browser_controls.reader;
+        self.browser_controls.reader.asset(pane, src, asset)
+    }
+}
+
+/// Sends a job to the work thread, starting it on first use. False when there
+/// is no work thread to take it.
+fn send(kitchen: &mut Option<Kitchen>, job: Work) -> bool {
+    if kitchen.is_none() {
+        *kitchen = Kitchen::spawn().ok();
+    }
+    kitchen.as_ref().is_some_and(|kitchen| kitchen.send(job))
+}
+
+impl Gate {
+    /// Takes one page of a picture. True when a publication changed.
+    fn asset(&mut self, pane: &str, src: String, asset: ReaderAsset) -> bool {
+        let gate = self;
         if gate.cache.is_none() {
             gate.cache = tempfile::Builder::new()
                 .prefix("tmux-ide-reader-")
@@ -503,15 +513,11 @@ impl Local {
                                 cache: cache.path().to_owned(),
                                 budget: fetch.budget_left(),
                             };
-                            if self.reader_work(job) {
+                            if send(&mut gate.kitchen, job) {
                                 return false;
                             }
                             // No work thread: the picture fails rather than
                             // waiting in `storing` for ever.
-                            let Some(fetch) = self.browser_controls.reader.panes.get_mut(pane)
-                            else {
-                                return false;
-                            };
                             fetch.storing.remove(&src);
                             fetch.assets.insert(src, Asset::Failed);
                             return true;

@@ -107,15 +107,95 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
         "Connection closed by 10.0.0.2 port 22",
         "kex_exchange_identification: read: Connection reset by peer",
         "",
+        // The remote command's own stderr, not ssh's (review-chrome on #360):
+        // reached, ran and failed, so not retried.
+        "curl: (7) Failed to connect to localhost port 8080: Connection refused",
+        "Error: getaddrinfo: Could not resolve hostname db",
+        "connect to host db port 5432: Operation timed out",
     ] {
         assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
     }
+    // Auth and host-key failures are read first and stay final, even beside
+    // a line that alone would be retried.
     assert!(matches!(
-        failure("Connection refused\nuser@spark: Permission denied (publickey)."),
+        failure(
+            "ssh: connect to host spark port 22: Connection refused\n\
+             user@spark: Permission denied (publickey)."
+        ),
         DiscoveryError::Authentication
     ));
     assert!(matches!(
-        failure("No route to host\nHost key verification failed."),
+        failure(
+            "ssh: connect to host spark port 22: No route to host\n\
+             Host key verification failed."
+        ),
         DiscoveryError::HostKey
     ));
+    assert!(matches!(
+        failure(
+            "channel 0: open failed: connect failed: Connection refused\n\
+             Host key verification failed."
+        ),
+        DiscoveryError::HostKey
+    ));
+    // ssh's line still counts after the remote's output, and when it arrives
+    // in two reads.
+    assert!(matches!(
+        failure("remote noise\nssh: connect to host spark port 22: No route to host\n"),
+        DiscoveryError::Unreachable
+    ));
+    let mut diagnostics = Diagnostics::default();
+    diagnostics.observe(b"ssh: connect to host spark port 22: Connec");
+    diagnostics.observe(b"tion refused\r\n");
+    assert!(matches!(diagnostics.failure(), DiscoveryError::Unreachable));
+}
+
+/// #368 review: through a jump host that is reachable, the target being away
+/// is reported by the jump host, not as an "ssh: " line. OpenSSH's own form
+/// (channels.c channel_input_open_failure, V_9_9_P2):
+/// `channel %d: open failed: %s%s%s` with reason "connect failed" and the
+/// jump host's strerror; ssh -W then exits with "stdio forwarding failed".
+#[test]
+fn a_jump_host_that_cannot_reach_the_target_is_unreachable() {
+    let failure = |stderr: &str| {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.observe(stderr.as_bytes());
+        diagnostics.failure()
+    };
+    for error in [
+        "Connection refused",
+        "No route to host",
+        "Network is unreachable",
+        "Operation timed out",
+        "Connection timed out",
+    ] {
+        let stderr = format!(
+            "channel 0: open failed: connect failed: {error}\r\n\
+             stdio forwarding failed\r\n\
+             Connection closed by UNKNOWN port 65535\r\n"
+        );
+        assert!(
+            matches!(failure(&stderr), DiscoveryError::Unreachable),
+            "{error}"
+        );
+    }
+    assert!(matches!(
+        failure("channel 12: open failed: connect failed: No route to host"),
+        DiscoveryError::Unreachable
+    ));
+    // Only ssh's exact form: anchored at the line start, a numeric channel,
+    // "connect failed", one of the phrases. A remote command's output, or
+    // another open failure, stays a failure.
+    for stderr in [
+        "  channel 0: open failed: connect failed: Connection refused",
+        "log: channel 0: open failed: connect failed: Connection refused",
+        "channel x: open failed: connect failed: Connection refused",
+        "channel : open failed: connect failed: Connection refused",
+        "channel 0: open failed: administratively prohibited: Connection refused",
+        "channel 0: open failed: connect failed: Name or service not known",
+        "  ssh: connect to host spark port 22: Connection refused",
+        "stdio forwarding failed\nConnection closed by UNKNOWN port 65535",
+    ] {
+        assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
+    }
 }
