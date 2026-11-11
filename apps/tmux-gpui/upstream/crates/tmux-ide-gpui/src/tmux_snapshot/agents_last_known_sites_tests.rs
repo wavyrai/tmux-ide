@@ -678,3 +678,26 @@ fn home_rows_join_their_own_machine(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// F7 lists another machine's agent whose live id equals the open session's
+/// (review r4): it isn't joined to the open session, so with its machine
+/// away it reads "last known"; this Mac's own agent in the same list doesn't.
+#[gpui::test]
+fn the_attention_list_does_not_borrow_the_open_sessions_join(cx: &mut TestAppContext) {
+    for (key, marked) in [("studio-agent", true), ("agent", false)] {
+        let (state, when) = namesake_workspace(Duration::from_secs(600), false);
+        let probes = painted(cx, state, when, |view, window, cx| {
+            attention(view, window, cx);
+            if let Some(p) = view.browser_state.attention_agents.as_mut() {
+                // Unscoped rows (no machine), as the reviewer's probe.
+                p.roster.rows[0].key = key.into();
+            }
+            view.refresh_picker(cx);
+        });
+        assert_eq!(
+            says(&probes, "palette-row-0").ends_with("· last known"),
+            marked,
+            "{key}"
+        );
+    }
+}

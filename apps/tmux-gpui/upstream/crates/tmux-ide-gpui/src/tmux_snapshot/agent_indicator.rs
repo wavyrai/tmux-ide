@@ -195,6 +195,7 @@ impl SnapshotView {
                 .map(|scope| scope.machine.as_str())
         });
         if machine.is_none()
+            && self.in_open_workspace(row)
             && let Some(open) = self.workspace_open_session(&row.session_id)
         {
             return self.session_away(open).is_some();
@@ -208,6 +209,16 @@ impl SnapshotView {
                 .filter(|session| session.session_id.as_deref() == Some(&row.session_id))
                 .any(|session| self.session_away(session).is_some())
         })
+    }
+    /// `row` is one of the open workspace's own agents (its `workspace_agents`
+    /// roster), not another roster's row that shares the live id (F7, Home).
+    fn in_open_workspace(&self, row: &Row) -> bool {
+        self.browser_state
+            .workspace_agents
+            .as_ref()
+            .is_some_and(|w| {
+                w.session_id == row.session_id && w.roster.rows.iter().any(|r| r.key == row.key)
+            })
     }
     /// The fleet entry of the session open in the workspace, when `session`
     /// is its live id: as the sidebar's lead (`hierarchy::open`).
