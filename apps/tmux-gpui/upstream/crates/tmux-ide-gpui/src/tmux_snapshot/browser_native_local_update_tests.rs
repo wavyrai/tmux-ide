@@ -440,3 +440,34 @@ fn an_ssh_environment_mismatch_error_is_an_identity_failure_and_stops_at_once() 
     local.reconnect_retry(Failure::of(&mismatch)).unwrap();
     ended_on_home(&local, SSH_IDENTITY);
 }
+
+/// #363 review, S10: only the environment mismatch is an identity failure.
+/// A transient SSH discovery error (the machine away, a timeout, a cut
+/// connection) and any other descriptor error must not end recovery with
+/// "a different daemon answered".
+#[test]
+fn only_an_environment_mismatch_is_an_identity_failure_over_ssh() {
+    use herdr_client::tmux_ssh::{DiscoveryError, Error as SshError, TransportError};
+    let discovery = |error| E::Remote(Box::new(TransportError::Discovery(error)));
+    for error in [
+        DiscoveryError::Unreachable,
+        DiscoveryError::Timeout,
+        DiscoveryError::Cancelled,
+        DiscoveryError::Exit,
+        DiscoveryError::OutputLimit,
+        DiscoveryError::MissingCli,
+        DiscoveryError::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+        DiscoveryError::Descriptor(SshError::Descriptor),
+        DiscoveryError::Descriptor(SshError::Port),
+        DiscoveryError::Descriptor(SshError::Target),
+    ] {
+        let label = format!("{error:?}");
+        assert_ne!(Failure::of(&discovery(error)), Failure::Identity, "{label}");
+    }
+    assert_eq!(
+        Failure::of(&discovery(DiscoveryError::Descriptor(
+            SshError::Environment
+        ))),
+        Failure::Identity
+    );
+}

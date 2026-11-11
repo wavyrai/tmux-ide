@@ -55,10 +55,41 @@ export function waitForHomeAgentSemantic(
   signal: AbortSignal,
 ): Promise<boolean> {
   const client = generation()?.client;
+  return waitForHomeAgentGeneration(
+    generation,
+    expectedKey,
+    () => Boolean(client?.getSnapshot().semantic),
+    signal,
+  );
+}
+
+/**
+ * Waits, bounded, until the attached generation `expectedKey` lists an agent
+ * (`listed`), or until the generation changes, the bound passes or `signal`
+ * aborts (#764: Home can list an agent before the attached session does).
+ */
+export function waitForHomeAgentListed(
+  generation: () => OpenTuiGenerationHostSnapshot | null,
+  expectedKey: string,
+  listed: () => boolean,
+  signal: AbortSignal,
+): Promise<boolean> {
+  return waitForHomeAgentGeneration(generation, expectedKey, listed, signal);
+}
+
+/** The bound both waits share: the cold path's own 5 s. */
+export const HOME_AGENT_WAIT_MS = 5_000;
+
+function waitForHomeAgentGeneration(
+  generation: () => OpenTuiGenerationHostSnapshot | null,
+  expectedKey: string,
+  satisfied: () => boolean,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const client = generation()?.client;
   if (!client || signal.aborted) return Promise.resolve(false);
   const ready = () =>
-    applicationGenerationNavigationKey(generation()) !== expectedKey ||
-    Boolean(client.getSnapshot().semantic);
+    applicationGenerationNavigationKey(generation()) !== expectedKey || satisfied();
   // A changed generation is settled, not admitted: the navigator revalidates it.
   if (ready()) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -76,7 +107,7 @@ export function waitForHomeAgentSemantic(
     const check = () => {
       if (ready()) finish(true);
     };
-    const timeout = setTimeout(() => finish(false), 5_000);
+    const timeout = setTimeout(() => finish(false), HOME_AGENT_WAIT_MS);
     signal.addEventListener("abort", abort, { once: true });
     // subscribe may synchronously deliver its current projection.
     for (const scope of ["semantic", "lifecycle"] as const) {
@@ -90,6 +121,19 @@ export function waitForHomeAgentSemantic(
   });
 }
 
+/**
+ * While an agent opens, it owns the keyboard: other keys are ignored and Esc
+ * cancels the open (#764: the warm wait can last 5 s). True when it owns `name`.
+ */
+export function agentOpeningOwnsKey(
+  name: string,
+  opener: { opening(): boolean; cancel(): void },
+): boolean {
+  if (!opener.opening()) return false;
+  if (name === "escape") opener.cancel();
+  return true;
+}
+
 /** Resident feature composition: observation, selection, and navigation have separate owners. */
 export function createApplicationHomeAgentsOwner(options: {
   readonly catalog: Accessor<ApplicationHomeCatalogSnapshot>;
@@ -98,7 +142,7 @@ export function createApplicationHomeAgentsOwner(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
   readonly sessionName: () => string | null;
   readonly startGeneration: ReturnType<typeof createApplicationGenerationStarter>;
-  readonly selectPane: (paneId: string) => void;
+  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
   readonly showTerminals: (source: "keyboard" | "mouse") => void;
   readonly restoreHome?: (source: "keyboard" | "mouse") => Promise<void> | void;
   readonly setNote: (note: string | null) => void;
@@ -138,10 +182,13 @@ export function createApplicationHomeAgentsOwner(options: {
       };
     },
     waitForGeneration: (key, signal) => waitForHomeAgentSemantic(options.generation, key, signal),
+    waitForAgent: (key, listed, signal) =>
+      waitForHomeAgentListed(options.generation, key, listed, signal),
     startGeneration: options.startGeneration,
     // The existing pane input router is source-neutral. Session/surface intents
     // above retain keyboard vs pointer provenance without inventing a second router.
-    selectPane: (paneId) => options.selectPane(paneId),
+    selectPane: (paneId, _source, admission) =>
+      admission ? options.selectPane(paneId, admission) : options.selectPane(paneId),
     showTerminals: options.showTerminals,
     setNote: options.setNote,
   });
@@ -202,7 +249,12 @@ export function createApplicationHomeAgentsOwner(options: {
     observer.dispose();
     selection.dispose();
   });
-  return { presentation, opening, cancel };
+  return {
+    presentation,
+    opening,
+    cancel,
+    ownsKey: (name: string) => agentOpeningOwnsKey(name, { opening, cancel }),
+  };
 }
 
 /** Compose Home navigation with competing chrome intents; physical input stays in the root. */

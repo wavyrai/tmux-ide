@@ -6,6 +6,31 @@ use gpui::{prelude::*, *};
 
 /// Native chrome the window draws above its body; popups must clear it.
 pub(super) const HEIGHT: f32 = bezel_theme::Theme::TITLEBAR_HEIGHT;
+/// The strip's height with the sidebar hidden on macOS: the traffic lights'
+/// row and no more, so the cards start just under them. Its controls keep
+/// the full strip's centre line, the lights' (see `row_inset`), so nothing
+/// moves when the sidebar toggles.
+pub(crate) const COMPACT_HEIGHT: f32 = 28.;
+
+/// How tall the strip is: compact where the system draws the frame and the
+/// window keeps only its traffic lights there (macOS, not client-decorated);
+/// full where it also holds the window's own caption buttons, or where a
+/// server-drawn frame sits above it anyway.
+pub(crate) fn strip_height(macos: bool, client_decorations: bool) -> f32 {
+    if macos && !client_decorations {
+        COMPACT_HEIGHT
+    } else {
+        HEIGHT
+    }
+}
+
+/// The top padding that keeps a row of `height` centred on the full strip's
+/// centre line: its content box spans [HEIGHT - height, height], whose
+/// middle is HEIGHT / 2. The controls overhang it by a few points, into the
+/// gutter, never into the cards.
+pub(crate) fn row_inset(height: f32) -> f32 {
+    HEIGHT - height
+}
 
 /// The band, with `leading` right after the traffic lights.
 pub(crate) fn render(leading: Option<AnyElement>, window: &Window) -> Stateful<Div> {
@@ -94,7 +119,9 @@ fn perform(press: Press, window: &mut Window) {
 /// platforms keep the same navigation immediately below their system frame.
 pub(crate) fn navigation_header(window: &Window, navigation: AnyElement, cx: &App) -> AnyElement {
     if cfg!(target_os = "macos") || client(window) {
+        let height = strip_height(cfg!(target_os = "macos"), client(window));
         render(Some(navigation), window)
+            .h(px(height))
             .when(client(window), |bar| {
                 bar.child(titlebar::controls(CaptionSide::Right, window, cx))
             })
