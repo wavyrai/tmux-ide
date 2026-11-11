@@ -83,18 +83,10 @@ fn current_agents_are_never_muted(cx: &mut TestAppContext) {
     view.read_with(cx, |view, _| assert!(!view.agents_shown_last_known()));
 }
 
-/// The last-known pill is the attention pill's shape in the muted ink, still
-/// readable at the pill's own 4.6:1 on every plate.
+/// A last-known "needs input" mark stays loud (the attention pill, as an away
+/// machine's does) and only its words say it may be old.
 #[test]
-fn the_last_known_pill_is_muted_and_readable() {
-    let theme = crate::config::Theme::default();
-    for on in [Plate::Chrome, Plate::Sidebar, Plate::Header] {
-        let (wash, ink) = last_known_pill_colors(&theme, on);
-        let (attention_wash, attention) = attention_pill_colors(&theme, on);
-        assert_ne!(ink, attention, "{on:?}: not the attention colour");
-        assert_ne!(wash, attention_wash, "{on:?}");
-        let packed = u32::from(Rgba::from(wash)) >> 8;
-        assert!(crate::contrast::ratio(ink, packed) >= 4.5, "{on:?}");
-    }
+fn a_last_known_needs_input_mark_is_loud_and_tagged() {
+    assert_eq!(last_known_words(), "Needs input · last known");
     assert_eq!(LAST_KNOWN, "last known");
 }

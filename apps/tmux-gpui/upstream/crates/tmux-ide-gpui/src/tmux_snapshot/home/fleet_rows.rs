@@ -216,11 +216,13 @@ impl SnapshotView {
             .collect();
         let more = agents.len().saturating_sub(AGENT_CHIPS);
         let bezel = self.home_palette();
+        // An away machine's agents are last known too (#360's away, r4).
+        let last_known = self.agents_shown_last_known() || self.session_away(session).is_some();
         let mut chips: Vec<AnyElement> = agents
             .iter()
             .take(AGENT_CHIPS)
             .enumerate()
-            .map(|(n, agent)| self.fleet_agent_chip(index, row, n, agent, cx))
+            .map(|(n, agent)| self.fleet_agent_chip(index, row, n, agent, last_known, cx))
             .collect();
         if more > 0 {
             chips.push(
@@ -244,6 +246,7 @@ impl SnapshotView {
         row: usize,
         n: usize,
         agent: &browser::home_agents::Row,
+        last_known: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(roster) = self.browser_state.home_agents.as_ref() else {
@@ -261,17 +264,7 @@ impl SnapshotView {
             );
         let asks =
             crate::tmux_snapshot::agent_indicator::state_label(agent, unavailable) == "Needs input";
-        // A last-known chip keeps its place in the muted ink (#362).
-        let last_known = self.agents_shown_last_known();
-        let (wash, ink) = if last_known {
-            let (wash, ink) = crate::tmux_snapshot::agent_indicator::last_known_pill_colors(
-                &self.theme(),
-                crate::tmux_snapshot::agent_indicator::Plate::Chrome,
-            );
-            (u32::from(Rgba::from(wash)) >> 8, ink)
-        } else {
-            needs_input_chip(&self.theme(), self.canvas())
-        };
+        let (wash, ink) = needs_input_chip(&self.theme(), self.canvas());
         // The first chip keeps the selectors tests and the keyboard know.
         let suffix = if n == 0 {
             format!("{index}-{row}")
@@ -328,6 +321,7 @@ impl SnapshotView {
                             let asks_id = format!("fleet-session-asks-{suffix}");
                             move || asks_id.clone()
                         }))
+                        // Full strength, but tagged when it may be old (#362).
                         .child(if last_known {
                             format!(
                                 "· Needs input · {}",
@@ -337,7 +331,7 @@ impl SnapshotView {
                             "· Needs input".into()
                         }),
                 ),
-                false => chip.child(self.agent_chip_state(agent, unavailable)),
+                false => chip.child(self.agent_chip_state(agent, unavailable, last_known)),
             })
             .when(enabled, |line| {
                 line.cursor_pointer()

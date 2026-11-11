@@ -84,16 +84,15 @@ pub(super) fn attention_pill(
 }
 /// What a last-known pill and chip add after their words (#362).
 pub(super) const LAST_KNOWN: &str = "last known";
-/// A "needs input" pill whose state is last known, not current: the same
-/// shape in the same place, but in the muted ink, as quiet reconnect mutes
-/// pane titles (#357), and its words say so.
+/// A "needs input" pill whose state is last known, not current: it stays at
+/// full strength, as an away machine's does (#360, r4), because the owner
+/// wants it loud; only its words say it may be old.
 pub(super) fn last_known_pill(theme: &crate::config::Theme, on: Plate) -> Div {
-    let (wash, ink) = last_known_pill_colors(theme, on);
-    pill(wash, ink, format!("Needs input · {LAST_KNOWN}"))
+    attention_pill(theme, on, last_known_words())
 }
-/// The muted wash and ink a last-known pill or chip wears.
-pub(super) fn last_known_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
-    pill_colors(theme, on, theme.ink(theme.muted))
+/// A last-known "needs input" mark's words.
+pub(super) fn last_known_words() -> String {
+    format!("Needs input · {LAST_KNOWN}")
 }
 fn pill(wash: Hsla, ink: u32, words: impl Into<SharedString>) -> Div {
     div()
@@ -115,9 +114,7 @@ fn pill(wash: Hsla, ink: u32, words: impl Into<SharedString>) -> Div {
 }
 /// The pill's opaque wash and the ink of its dot and words.
 pub(super) fn attention_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
-    pill_colors(theme, on, attention_ink(theme))
-}
-fn pill_colors(theme: &crate::config::Theme, on: Plate, accent: u32) -> (Hsla, u32) {
+    let accent = attention_ink(theme);
     let dark = crate::contrast::luminance(theme.background) < 0.5;
     // The plate is Bezel's: the sidebar's surface (the frost's own tone), or
     // the background a card or Home's table sits on.
@@ -181,10 +178,14 @@ impl SnapshotView {
     /// A Home chip's state after the agent's name (#746): the spinner and
     /// "Working", or "· Done", "· Idle" and the like, in the muted ink; a
     /// failed agent's words in its own colour.
-    pub(super) fn agent_chip_state(&self, row: &Row, unavailable: bool) -> AnyElement {
+    pub(super) fn agent_chip_state(
+        &self,
+        row: &Row,
+        unavailable: bool,
+        last_known: bool,
+    ) -> AnyElement {
         let theme = self.theme();
         let words = label(row, unavailable);
-        let last_known = self.agents_shown_last_known();
         let ink: Hsla = if !last_known && !unavailable && matches!(row.status, Status::Failed) {
             rgb(color(row, unavailable, &theme, Plate::Chrome)).into()
         } else {
