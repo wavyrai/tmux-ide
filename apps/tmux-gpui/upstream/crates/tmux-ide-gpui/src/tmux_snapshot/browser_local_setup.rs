@@ -22,29 +22,38 @@ impl Phase {
     pub fn actionable(self) -> bool {
         matches!(self, Self::Available | Self::Failed | Self::StoppedWaiting)
     }
+    /// The button's words, in plain words (onboarding A0: see
+    /// connection::jargon for the words that never appear here).
     pub fn label(self) -> &'static str {
         match self {
-            Self::Available => "Set up local sessions",
+            Self::Available => "Set up Tmux IDE",
             Self::Running => "Setting up…",
-            Self::Failed | Self::StoppedWaiting => "Retry setup",
-            Self::Missing | Self::Unsupported | Self::Unrecognized => "Refresh sessions",
+            Self::Failed | Self::StoppedWaiting => "Try again",
+            Self::Missing | Self::Unsupported | Self::Unrecognized => "Check again",
         }
     }
+    /// What the phase means and what to do, in the onboarding report's words.
     pub fn guidance(self) -> &'static str {
         match self {
-            Self::Available => "Set up local sessions to start the local daemon.",
-            Self::Running => "Setting up local sessions. Waiting for the local connection.",
-            Self::Missing => "Install the tmux-ide CLI to set up local sessions, then refresh.",
+            Self::Available => {
+                "Set up Tmux IDE to start the background service. It keeps your sessions running when the app is closed."
+            }
+            Self::Running => "Starting the background service… This takes a few seconds.",
+            Self::Missing => {
+                "Tmux IDE needs its command-line tool. Install it with one command, then come back here."
+            }
             Self::Unsupported => {
-                "This app can't set up this version of the tmux-ide CLI. Update the app and the CLI, then refresh."
+                "This version of the command-line tool doesn't match the app. Update both with one command."
             }
             Self::Unrecognized => {
-                "The tmux-ide CLI installation wasn't recognized. Reinstall the CLI, then refresh."
+                "The command-line tool's installation wasn't recognized. Reinstall it with one command, then check again."
             }
             Self::Failed => {
-                "Local setup could not be confirmed. Retry setup, or use Copy diagnostics in the F5 menu."
+                "The background service didn't start. Your files and sessions are fine. Try again, or use Copy diagnostics."
             }
-            Self::StoppedWaiting => "Setup has not been confirmed. Retry setup to check again.",
+            Self::StoppedWaiting => {
+                "The background service hasn't answered yet. Try again to check."
+            }
         }
     }
 }
