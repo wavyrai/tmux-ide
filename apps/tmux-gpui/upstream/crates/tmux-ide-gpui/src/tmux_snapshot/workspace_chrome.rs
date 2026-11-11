@@ -282,20 +282,23 @@ impl SnapshotView {
     }
 
     /// The content inset's edges: 8 pt round the cards, none on the side
-    /// the sidebar's own edge already gives (#746). Its top 8 pt moves the
-    /// window: in place of the strip beside the sidebar, and under the
-    /// compact strip with the sidebar hidden.
+    /// the sidebar's own edge already gives (#746). Beside the sidebar its
+    /// top 8 pt moves the window, in place of the strip. Under the strip it
+    /// does not: the strip's controls are 32 pt hit boxes centred on the
+    /// lights' line, and with the compact strip their lower part hangs into
+    /// this gutter, where a grip would take their presses (#369 review).
     pub(super) fn inset_edges(
         &self,
         inset: Stateful<Div>,
         sidebar: bool,
         window: &Window,
     ) -> Stateful<Div> {
+        let strip = self.title_strip(window);
         inset
             .relative()
             .p(px(super::shell::CONTENT_INSET))
             .when(sidebar, |inset| inset.pl_0())
-            .map(|inset| {
+            .when(!strip, |inset| {
                 let grip = div()
                     .id("content-titlebar-grip")
                     .debug_selector(|| "content-titlebar-grip".into())

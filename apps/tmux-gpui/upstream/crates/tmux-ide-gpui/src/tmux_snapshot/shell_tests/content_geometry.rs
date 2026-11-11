@@ -68,7 +68,7 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
             assert_eq!(inset.left(), body.left());
             // Hidden, the sidebar's row keeps the strip over everything,
             // compact on macOS: the lights' row, then the cards 8 pt under
-            // it (owner, 11 Nov), and the 8 pt between moves the window too.
+            // it (owner, 11 Nov).
             let strip = cx.debug_bounds("titlebar").unwrap();
             let expected = crate::titlebar::strip_height(cfg!(target_os = "macos"), false);
             assert_eq!(strip.size.height, px(expected));
@@ -78,10 +78,8 @@ fn inset_content_keeps_headers_cells_and_resize_in_one_measured_rectangle(cx: &m
                 content.top(),
                 strip.bottom() + px(super::super::CONTENT_INSET)
             );
-            let grip = cx.debug_bounds("content-titlebar-grip").unwrap();
-            assert_eq!(grip.top(), body.top());
-            assert_eq!(grip.bottom(), content.top());
-            assert_eq!((grip.left(), grip.right()), (inset.left(), inset.right()));
+            // No grip here: the strip's controls hang into this gutter.
+            assert!(cx.debug_bounds("content-titlebar-grip").is_none());
         }
         // The controls sit on one centre line, the traffic lights', with the
         // sidebar shown or hidden, and never reach the cards (beside the
