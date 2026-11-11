@@ -1801,6 +1801,15 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
+  // #764: tmux's active pane moves before the TUI has switched its input to
+  // that terminal; keys typed in between are dropped on purpose ("queued
+  // input was not sent"). Type only once the TUI shows terminal focus again.
+  await observe(
+    "terminal input ready after return from agent window",
+    10_000,
+    () => frameShowsTerminalFocus(capture(one.targetPane)),
+    one.diagnostics,
+  );
   const keyboardMarker = `PACK_KEYBOARD_${process.pid}`;
   typeCommand(one, `printf '${keyboardMarker}\\n'`);
   await observe(
