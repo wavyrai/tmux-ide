@@ -617,3 +617,30 @@ fn the_sessions_already_there_come_most_recent_first() {
     };
     assert_eq!(known_sessions(&plain)[0].open, Open::Session("s".into()));
 }
+
+/// The checklist's words read on its card in every catalog theme, at both
+/// contrast settings: Home's inks on Bezel's card fill over Home's canvas.
+#[test]
+fn the_checklist_reads_on_its_card_in_every_theme() {
+    use crate::contrast::{Contrast, ratio};
+    let pack = |c: Hsla| u32::from(Rgba::from(c)) >> 8;
+    let mut failures = Vec::new();
+    for (name, mut theme) in crate::tmux_snapshot::ink::tests::catalog_themes() {
+        for contrast in [Contrast::Standard, Contrast::High] {
+            theme.contrast = contrast;
+            let canvas = pack(crate::tmux_snapshot::design::palette(&theme).terminal_bg);
+            let bezel = crate::tmux_snapshot::home::palette(&theme, canvas);
+            let card = pack(bezel_theme::flatten(
+                bezel.card_glass_bg(),
+                rgb(canvas).into(),
+            ));
+            for (role, ink) in [("text", bezel.text), ("muted", bezel.text_muted)] {
+                let r = ratio(pack(ink), card);
+                if r < 4.5 {
+                    failures.push(format!("{name} {contrast:?} {role}: {r:.2}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
