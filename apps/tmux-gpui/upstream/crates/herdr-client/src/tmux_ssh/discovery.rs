@@ -151,7 +151,9 @@ pub(super) struct Diagnostics {
     unreachable: bool,
 }
 /// ssh's own words for a machine it could not reach, lowercased. Only these
-/// are retried; anything else unrecognised stays a failure.
+/// are retried, and only on a line ssh itself wrote ("ssh: ..."): the tail
+/// also holds the remote command's stderr, whose own "connection refused"
+/// must not turn a failure into a retry. Anything else stays a failure.
 const UNREACHABLE: [&str; 5] = [
     "no route to host",
     "connection refused",
@@ -171,7 +173,10 @@ impl Diagnostics {
         self.authentication |= ["publickey", "password", "keyboard-interactive"]
             .iter()
             .any(|method| text.contains(&format!("permission denied ({method}")));
-        self.unreachable |= UNREACHABLE.iter().any(|words| text.contains(words));
+        self.unreachable |= text.lines().any(|line| {
+            line.trim_start().starts_with("ssh: ")
+                && UNREACHABLE.iter().any(|words| line.contains(words))
+        });
     }
     pub(super) fn failure(&self) -> DiscoveryError {
         if self.host_key {

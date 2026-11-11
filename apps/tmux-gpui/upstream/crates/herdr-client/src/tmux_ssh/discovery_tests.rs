@@ -107,6 +107,11 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
         "Connection closed by 10.0.0.2 port 22",
         "kex_exchange_identification: read: Connection reset by peer",
         "",
+        // The remote command's own stderr, not ssh's (review-chrome on #360):
+        // reached, ran and failed, so not retried.
+        "curl: (7) Failed to connect to localhost port 8080: Connection refused",
+        "Error: getaddrinfo: Could not resolve hostname db",
+        "connect to host db port 5432: Operation timed out",
     ] {
         assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
     }
@@ -118,4 +123,14 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
         failure("No route to host\nHost key verification failed."),
         DiscoveryError::HostKey
     ));
+    // ssh's line still counts after the remote's output, and when it arrives
+    // in two reads.
+    assert!(matches!(
+        failure("remote noise\nssh: connect to host spark port 22: No route to host\n"),
+        DiscoveryError::Unreachable
+    ));
+    let mut diagnostics = Diagnostics::default();
+    diagnostics.observe(b"ssh: connect to host spark port 22: Connec");
+    diagnostics.observe(b"tion refused\r\n");
+    assert!(matches!(diagnostics.failure(), DiscoveryError::Unreachable));
 }
