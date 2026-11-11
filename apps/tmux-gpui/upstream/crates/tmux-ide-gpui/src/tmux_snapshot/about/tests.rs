@@ -73,3 +73,13 @@ fn about_says_background_service_not_daemon() {
         );
     }
 }
+
+#[test]
+fn tab_steps_wrap_both_ways() {
+    use super::step;
+    assert_eq!(step(None, false), 0);
+    assert_eq!(step(None, true), 3);
+    assert_eq!(step(Some(3), false), 0);
+    assert_eq!(step(Some(0), true), 3);
+    assert_eq!(step(Some(1), false), 2);
+}

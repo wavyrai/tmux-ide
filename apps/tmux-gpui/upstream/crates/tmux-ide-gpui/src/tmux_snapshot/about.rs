@@ -28,6 +28,40 @@ thread_local! {
 /// The open About card. Holding its focus keeps keys away from the terminal.
 pub(super) struct About {
     focus: FocusHandle,
+    /// What had the keyboard before (a dialog, the welcome, the terminal),
+    /// which gets it back when the card closes.
+    restore: Option<FocusHandle>,
+    /// The control Tab has reached, if any; Return or Space acts on it.
+    pub(super) focused: Option<usize>,
+}
+
+/// The card's controls, in Tab order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Control {
+    Website,
+    Docs,
+    WhatsNew,
+    CopyDiagnostics,
+}
+
+impl Control {
+    pub(super) const ALL: [Self; 4] = [
+        Self::Website,
+        Self::Docs,
+        Self::WhatsNew,
+        Self::CopyDiagnostics,
+    ];
+}
+
+/// The control Tab (or Shift-Tab, `back`) moves to from `from`, wrapping.
+pub(super) fn step(from: Option<usize>, back: bool) -> usize {
+    let n = Control::ALL.len();
+    match (from, back) {
+        (None, false) => 0,
+        (None, true) => n - 1,
+        (Some(i), false) => (i + 1) % n,
+        (Some(i), true) => (i + n - 1) % n,
+    }
 }
 
 /// The bundle's version line: "Version 0.1.16 (2026111101)", or
@@ -71,33 +105,41 @@ pub(super) fn connection_line(
 }
 
 impl SnapshotView {
-    /// Opens the card (the app menu's About item, the palette's row). Another
-    /// dialog that holds the keyboard keeps it.
+    /// Opens the card (the app menu's About item, the palette's row) over
+    /// whatever is open, which keeps its state and gets the keyboard back on
+    /// close. The pane cards and a composition in progress keep the keyboard.
     pub(super) fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pane_close.is_some()
+        if self.about.is_some()
+            || self.pane_close.is_some()
             || self.new_session.is_some()
             || self.pane_actions.is_some()
             || !self.marked.is_empty()
         {
             return;
         }
-        if self.picker.is_some() {
-            self.close_picker_for_about(window, cx);
-        }
+        let restore = window.focused(cx);
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        self.about = Some(About { focus });
+        self.about = Some(About {
+            focus,
+            restore,
+            focused: None,
+        });
         cx.notify();
     }
 
     pub(super) fn close_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.about.take().is_some() {
-            self.terminal_focus.focus(window, cx);
+        if let Some(about) = self.about.take() {
+            about
+                .restore
+                .unwrap_or_else(|| self.terminal_focus.clone())
+                .focus(window, cx);
             cx.notify();
         }
     }
 
-    /// Escape closes the card; it holds every other key.
+    /// Escape closes the card, Tab and Shift-Tab move between its controls,
+    /// Return and Space act on the one reached; it holds every other key.
     pub(super) fn about_key(
         &mut self,
         event: &KeyDownEvent,
@@ -106,8 +148,46 @@ impl SnapshotView {
     ) {
         cx.stop_propagation();
         window.prevent_default();
-        if event.keystroke.key == "escape" && !event.is_held {
-            self.close_about(window, cx);
+        let key = &event.keystroke;
+        let m = &key.modifiers;
+        if event.is_held || m.platform || m.control || m.alt {
+            return;
+        }
+        let Some(about) = self.about.as_mut() else {
+            return;
+        };
+        match key.key.as_str() {
+            "escape" => self.close_about(window, cx),
+            "tab" => {
+                about.focused = Some(step(about.focused, m.shift));
+                cx.notify();
+            }
+            "enter" | "space" => {
+                if let Some(control) = about.focused.and_then(|i| Control::ALL.get(i).copied()) {
+                    self.about_activate(control, window, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn about_activate(
+        &mut self,
+        control: Control,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match control {
+            Control::Website => cx.open_url(WEBSITE),
+            Control::Docs => cx.open_url(DOCS),
+            Control::WhatsNew => {
+                self.close_about(window, cx);
+                self.open_whats_new(window, cx);
+            }
+            Control::CopyDiagnostics => {
+                self.close_about(window, cx);
+                self.copy_diagnostics(window, cx);
+            }
         }
     }
 
@@ -140,9 +220,18 @@ impl SnapshotView {
         };
         #[cfg(not(feature = "visual-capture"))]
         let native = super::diagnostics::native_identity();
-        let link = |id: &'static str, label: &'static str| {
+        let ring = |control: Control| {
+            if about.focused.and_then(|i| Control::ALL.get(i)) == Some(&control) {
+                bezel.ring
+            } else {
+                transparent_black()
+            }
+        };
+        let link = |id: &'static str, label: &'static str, control: Control| {
             bezel
                 .ghost(id)
+                .border_1()
+                .border_color(ring(control))
                 .debug_selector(move || id.into())
                 .role(Role::Link)
                 .aria_label(label)
@@ -213,19 +302,18 @@ impl SnapshotView {
                     .child(row(CONNECTION_LABEL, self.about_connection())),
             )
             .child(
-                div()
-                    .flex()
-                    .gap_1()
-                    .child(
-                        link("about-website", "Website").on_click(|_, _, cx| cx.open_url(WEBSITE)),
-                    )
-                    .child(link("about-docs", "Docs").on_click(|_, _, cx| cx.open_url(DOCS)))
-                    .child(link("about-changelog", "What’s new").on_click(cx.listener(
-                        |view, _, window, cx| {
-                            view.close_about(window, cx);
-                            view.open_whats_new(window, cx);
-                        },
-                    ))),
+                div().flex().gap_1().children(
+                    [
+                        ("about-website", "Website", Control::Website),
+                        ("about-docs", "Docs", Control::Docs),
+                        ("about-changelog", "What’s new", Control::WhatsNew),
+                    ]
+                    .map(|(id, label, control)| {
+                        link(id, label, control).on_click(cx.listener(
+                            move |view, _, window, cx| view.about_activate(control, window, cx),
+                        ))
+                    }),
+                ),
             )
             .child(
                 controls::action_button(
@@ -236,9 +324,9 @@ impl SnapshotView {
                     ButtonStyle::Quiet,
                     &theme,
                 )
+                .border_color(ring(Control::CopyDiagnostics))
                 .on_click(cx.listener(|view, _, window, cx| {
-                    view.close_about(window, cx);
-                    view.copy_diagnostics(window, cx);
+                    view.about_activate(Control::CopyDiagnostics, window, cx)
                 })),
             );
         Some(

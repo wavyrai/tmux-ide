@@ -100,3 +100,101 @@ fn whats_new_closes_about_and_opens_the_changes(cx: &mut TestAppContext) {
         assert_eq!(v.picker.as_ref().map(|p| p.mode), Some(Mode::WhatsNew));
     });
 }
+
+/// A pane card or a composition in progress keeps the keyboard: About waits.
+#[gpui::test]
+fn about_does_not_open_over_a_pane_card_or_a_composition(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| ready_pane(view, false));
+        window.draw(cx).clear(cx);
+    });
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("close pane");
+    cx.simulate_keystrokes("enter");
+    view.read_with(cx, |v, _| assert!(v.pane_close.is_some()));
+    open(cx);
+    view.read_with(cx, |v, _| assert!(v.about.is_none()));
+    cx.simulate_keystrokes("escape");
+    view.update(cx, |v, _| v.marked = "かな".into());
+    open(cx);
+    view.read_with(cx, |v, _| assert!(v.about.is_none()));
+}
+
+/// Over the Add machine dialog, About keeps the form and gives it the
+/// keyboard back on close.
+#[gpui::test]
+fn about_over_a_dialog_returns_the_keyboard_to_it(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("f5");
+    cx.simulate_input("connect to machine");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("spark");
+    open(cx);
+    view.read_with(cx, |v, cx| {
+        assert!(v.about.is_some());
+        let picker = v.picker.as_ref().unwrap();
+        assert_eq!(picker.mode, Mode::Machine);
+        assert_eq!(picker.search.read(cx).text(), "spark");
+    });
+    cx.simulate_keystrokes("escape");
+    cx.simulate_input("-1");
+    view.read_with(cx, |v, cx| {
+        assert!(v.about.is_none());
+        assert_eq!(v.picker.as_ref().unwrap().search.read(cx).text(), "spark-1");
+    });
+    assert!(receiver.try_recv().is_err());
+}
+
+/// With the card open but the keyboard elsewhere, the window's key handler
+/// still sends keys to About first.
+#[gpui::test]
+fn keys_reach_about_even_when_focus_has_moved(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    open(cx);
+    cx.update(|window, cx| {
+        let terminal = view.read(cx).terminal_focus.clone();
+        terminal.focus(window, cx);
+    });
+    cx.simulate_keystrokes("a");
+    assert!(receiver.try_recv().is_err());
+    cx.simulate_keystrokes("escape");
+    view.read_with(cx, |v, _| assert!(v.about.is_none()));
+}
+
+/// Tab reaches every control in order, Shift-Tab goes back, and Return acts.
+#[gpui::test]
+fn tab_reaches_the_links_and_return_acts(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::about::Control;
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    open(cx);
+    let focused = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| {
+            v.about
+                .as_ref()
+                .and_then(|a| a.focused)
+                .map(|i| Control::ALL[i])
+        })
+    };
+    assert_eq!(focused(cx), None);
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(focused(cx), Some(Control::CopyDiagnostics));
+    cx.simulate_keystrokes("tab tab tab");
+    assert_eq!(focused(cx), Some(Control::WhatsNew));
+    cx.simulate_keystrokes("enter");
+    view.read_with(cx, |v, _| {
+        assert!(v.about.is_none());
+        assert_eq!(v.picker.as_ref().map(|p| p.mode), Some(Mode::WhatsNew));
+    });
+}

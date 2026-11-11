@@ -427,9 +427,6 @@ impl SnapshotView {
     pub(super) fn open_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_picker_mode(Mode::WhatsNew, window, cx);
     }
-    pub(super) fn close_picker_for_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_picker(window, cx);
-    }
     fn present_diagnostics(
         &mut self,
         report: Result<String, super::diagnostics::Error>,
