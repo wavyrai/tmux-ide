@@ -27,13 +27,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
-        native: [bundled, system-fallback]
+        # #764 confirmation soak: only the worst variant (8 of 10 failed in
+        # run 42976889816), to keep Actions cost down.
+        node: [24]
+        native: [system-fallback]
         # A busy runner, as a publish or a loaded CI host can be: two CPU
         # hogs beside the journey, to make a timing race likelier.
-        load: [none, cpu]
+        load: [cpu]
     env:
-      RUNS: ${{ inputs.runs || '10' }}
+      RUNS: ${{ inputs.runs || '20' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
