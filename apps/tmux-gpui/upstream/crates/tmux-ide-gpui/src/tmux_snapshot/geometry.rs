@@ -50,6 +50,10 @@ impl FitSettle {
     pub fn clear(&mut self) {
         self.pending = None;
     }
+    /// A fit is waiting to become quiet.
+    pub fn pending(&self) -> bool {
+        self.pending.is_some()
+    }
     pub fn due(&self, now: std::time::Instant) -> bool {
         self.pending
             .is_some_and(|(_, since)| now.saturating_duration_since(since) >= FIT_QUIET)

@@ -13,6 +13,12 @@ pub(in crate::tmux_snapshot) struct Owner {
     query: Option<String>,
     due: Option<Instant>,
 }
+impl Owner {
+    /// A query is waiting out its debounce, or a close for room in the queue.
+    pub(in crate::tmux_snapshot) fn queued(&self) -> bool {
+        self.pending_close.is_some() || self.due.is_some()
+    }
+}
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn cancel_palette(&mut self) {
         self.palette.active = None;

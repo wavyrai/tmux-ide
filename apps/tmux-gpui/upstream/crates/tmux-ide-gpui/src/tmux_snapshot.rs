@@ -396,6 +396,7 @@ fn show_owned(
                         new_session: None,
                         new_session_queued: None,
                         agent_animation: Default::default(),
+                        idle_tick: Default::default(),
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
@@ -486,6 +487,7 @@ struct SnapshotView {
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
     agent_animation: agent_spinner::Slots,
+    idle_tick: browser_tick::IdleTick,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
@@ -530,6 +532,8 @@ impl SnapshotView {
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            // A render is activity: queued work may follow it (#714).
+            self.idle_tick.nudge();
             self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }

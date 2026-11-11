@@ -111,6 +111,7 @@ fn browser_fixture(
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
+        idle_tick: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
