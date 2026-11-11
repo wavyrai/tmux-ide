@@ -245,7 +245,17 @@ impl SnapshotView {
             );
         let asks =
             crate::tmux_snapshot::agent_indicator::state_label(agent, unavailable) == "Needs input";
-        let (wash, ink) = needs_input_chip(&self.theme(), self.canvas());
+        // A last-known chip keeps its place in the muted ink (#362).
+        let last_known = self.agents_shown_last_known();
+        let (wash, ink) = if last_known {
+            let (wash, ink) = crate::tmux_snapshot::agent_indicator::last_known_pill_colors(
+                &self.theme(),
+                crate::tmux_snapshot::agent_indicator::Plate::Chrome,
+            );
+            (u32::from(Rgba::from(wash)) >> 8, ink)
+        } else {
+            needs_input_chip(&self.theme(), self.canvas())
+        };
         // The first chip keeps the selectors tests and the keyboard know.
         let suffix = if n == 0 {
             format!("{index}-{row}")
@@ -302,7 +312,14 @@ impl SnapshotView {
                             let asks_id = format!("fleet-session-asks-{suffix}");
                             move || asks_id.clone()
                         }))
-                        .child("· Needs input"),
+                        .child(if last_known {
+                            format!(
+                                "· Needs input · {}",
+                                crate::tmux_snapshot::agent_indicator::LAST_KNOWN
+                            )
+                        } else {
+                            "· Needs input".into()
+                        }),
                 ),
                 false => chip.child(self.agent_chip_state(agent, unavailable)),
             })

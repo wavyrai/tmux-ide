@@ -80,6 +80,22 @@ pub(super) fn attention_pill(
     words: impl Into<SharedString>,
 ) -> Div {
     let (wash, ink) = attention_pill_colors(theme, on);
+    pill(wash, ink, words)
+}
+/// What a last-known pill and chip add after their words (#362).
+pub(super) const LAST_KNOWN: &str = "last known";
+/// A "needs input" pill whose state is last known, not current: the same
+/// shape in the same place, but in the muted ink, as quiet reconnect mutes
+/// pane titles (#357), and its words say so.
+pub(super) fn last_known_pill(theme: &crate::config::Theme, on: Plate) -> Div {
+    let (wash, ink) = last_known_pill_colors(theme, on);
+    pill(wash, ink, format!("Needs input · {LAST_KNOWN}"))
+}
+/// The muted wash and ink a last-known pill or chip wears.
+pub(super) fn last_known_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
+    pill_colors(theme, on, theme.ink(theme.muted))
+}
+fn pill(wash: Hsla, ink: u32, words: impl Into<SharedString>) -> Div {
     div()
         .debug_selector(|| "attention-pill".into())
         .flex_none()
@@ -99,7 +115,9 @@ pub(super) fn attention_pill(
 }
 /// The pill's opaque wash and the ink of its dot and words.
 pub(super) fn attention_pill_colors(theme: &crate::config::Theme, on: Plate) -> (Hsla, u32) {
-    let accent = attention_ink(theme);
+    pill_colors(theme, on, attention_ink(theme))
+}
+fn pill_colors(theme: &crate::config::Theme, on: Plate, accent: u32) -> (Hsla, u32) {
     let dark = crate::contrast::luminance(theme.background) < 0.5;
     // The plate is Bezel's: the sidebar's surface (the frost's own tone), or
     // the background a card or Home's table sits on.
@@ -143,6 +161,13 @@ pub(super) fn color(row: &Row, unavailable: bool, theme: &crate::config::Theme, 
     }
 }
 impl SnapshotView {
+    /// Agent marks show their last known state, not a current one: the agent
+    /// lane is paused for a drop (#362), and the drop has lasted long enough
+    /// for quiet reconnect to show its words and mute pane titles (#357's
+    /// 8 s, on its clock). A shorter drop changes nothing on screen.
+    pub(super) fn agents_shown_last_known(&self) -> bool {
+        self.browser_state.agents_last_known && self.connection_mutes_titles()
+    }
     fn agent_motion(&self) -> bool {
         self.presence.active()
             && self.picker.is_none()
@@ -159,7 +184,8 @@ impl SnapshotView {
     pub(super) fn agent_chip_state(&self, row: &Row, unavailable: bool) -> AnyElement {
         let theme = self.theme();
         let words = label(row, unavailable);
-        let ink: Hsla = if !unavailable && matches!(row.status, Status::Failed) {
+        let last_known = self.agents_shown_last_known();
+        let ink: Hsla = if !last_known && !unavailable && matches!(row.status, Status::Failed) {
             rgb(color(row, unavailable, &theme, Plate::Chrome)).into()
         } else {
             rgb(theme.ink(theme.muted)).into()
@@ -170,7 +196,7 @@ impl SnapshotView {
             .flex()
             .items_center()
             .text_color(ink);
-        if animated(row, unavailable) {
+        if animated(row, unavailable) && !last_known {
             state
                 .gap(px(2.))
                 .child(self.agent_glyph(row, unavailable))
@@ -189,6 +215,14 @@ impl SnapshotView {
         unavailable: bool,
         on: Plate,
     ) -> Option<AnyElement> {
+        let last_known = self.agents_shown_last_known();
+        if label(row, unavailable) == "Needs input" && last_known {
+            return Some(
+                last_known_pill(&self.theme(), on)
+                    .debug_selector(|| "agent-badge".into())
+                    .into_any_element(),
+            );
+        }
         if label(row, unavailable) == "Needs input" {
             return Some(
                 attention_pill(&self.theme(), on, "Needs input")
@@ -204,7 +238,7 @@ impl SnapshotView {
             div()
                 .debug_selector(|| "agent-glyph".into())
                 .flex_none()
-                .text_color(rgb(color(row, unavailable, &theme, on)))
+                .text_color(rgb(color(row, unavailable || last_known, &theme, on)))
                 // Keyed by where it's drawn, so a test reads each call site's ink.
                 .children(super::design::ink_probe(move || {
                     format!("agent-glyph-{on:?}")
@@ -216,7 +250,10 @@ impl SnapshotView {
     fn agent_glyph(&self, row: &Row, unavailable: bool) -> Div {
         let slots = self.agent_animation.clone();
         // A running row only reserves its slot: the overlay paints the frames.
-        let running = animated(row, unavailable) && slots.attached() && self.agent_motion();
+        let running = animated(row, unavailable)
+            && slots.attached()
+            && self.agent_motion()
+            && !self.agents_shown_last_known();
         div()
             .relative()
             .w(px(16.))
@@ -242,6 +279,9 @@ impl SnapshotView {
             })
     }
 }
+#[cfg(test)]
+#[path = "agents_last_known_tests.rs"]
+mod last_known_tests;
 #[cfg(test)]
 #[path = "agent_indicator_tests.rs"]
 mod tests;
