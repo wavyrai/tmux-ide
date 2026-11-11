@@ -58,6 +58,7 @@ impl SnapshotView {
         let workspace = self.browser_state.surface == browser::Surface::Workspace;
         let sidebar = self.sidebar_shown(window);
         let fullscreen = window.is_fullscreen();
+        let height = self.top_row_height(window);
         // The traffic lights take the band's left end, except in full screen.
         let leading = if fullscreen {
             super::shell::CONTENT_INSET
@@ -169,7 +170,8 @@ impl SnapshotView {
             .on_key_down(cx.listener(Self::picker_key))
             .flex_1()
             .min_w_0()
-            .h(px(APPLICATION_TABS_HEIGHT))
+            .h(px(height))
+            .pt(px(crate::titlebar::row_inset(height)))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -211,6 +213,19 @@ impl SnapshotView {
     /// draws its own caption buttons keeps them in the strip.
     pub(super) fn title_strip(&self, window: &Window) -> bool {
         keeps_title_strip(self.sidebar_shown(window), crate::titlebar::client(window))
+    }
+
+    /// The top row's height: the band over the sidebar is the full strip's
+    /// height; the strip itself is compact on macOS (strip_height).
+    pub(super) fn top_row_height(&self, window: &Window) -> f32 {
+        if self.title_strip(window) {
+            crate::titlebar::strip_height(
+                cfg!(target_os = "macos"),
+                crate::titlebar::client(window),
+            )
+        } else {
+            APPLICATION_TABS_HEIGHT
+        }
     }
 
     /// The window's top row, and the sidebar as the body shows it (still a
@@ -267,20 +282,20 @@ impl SnapshotView {
     }
 
     /// The content inset's edges: 8 pt round the cards, none on the side
-    /// the sidebar's own edge already gives (#746). Without the title
-    /// strip, its top 8 pt moves the window as the strip did.
+    /// the sidebar's own edge already gives (#746). Its top 8 pt moves the
+    /// window: in place of the strip beside the sidebar, and under the
+    /// compact strip with the sidebar hidden.
     pub(super) fn inset_edges(
         &self,
         inset: Stateful<Div>,
         sidebar: bool,
         window: &Window,
     ) -> Stateful<Div> {
-        let strip = self.title_strip(window);
         inset
             .relative()
             .p(px(super::shell::CONTENT_INSET))
             .when(sidebar, |inset| inset.pl_0())
-            .when(!strip, |inset| {
+            .map(|inset| {
                 let grip = div()
                     .id("content-titlebar-grip")
                     .debug_selector(|| "content-titlebar-grip".into())

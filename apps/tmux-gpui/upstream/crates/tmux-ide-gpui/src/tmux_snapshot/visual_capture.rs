@@ -544,6 +544,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     let glyphs = extras.contains(&"glyphs");
     // `+closing`: the close-pane card open on the mock's selected pane.
     let closing = extras.contains(&"closing");
+    // `+nosidebar`: the sidebar hidden (F10), as a user toggles it.
+    let nosidebar = extras.contains(&"nosidebar");
     let state = if mock {
         mock::with_mock_fleet(state)?
     } else {
@@ -654,7 +656,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 let view = cx.new(|cx| {
                     let mut view = capture_view(window, cx, sender, state);
                     // `+sidebar` keeps Home's sidebar (#746).
-                    view.sidebar_hidden = home_b && !with_sidebar;
+                    view.sidebar_hidden = (home_b && !with_sidebar) || nosidebar;
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {
