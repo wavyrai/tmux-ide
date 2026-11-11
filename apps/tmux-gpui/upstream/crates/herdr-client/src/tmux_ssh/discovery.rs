@@ -151,9 +151,10 @@ pub(super) struct Diagnostics {
     unreachable: bool,
 }
 /// ssh's own words for a machine it could not reach, lowercased. Only these
-/// are retried, and only on a line ssh itself wrote ("ssh: ..."): the tail
-/// also holds the remote command's stderr, whose own "connection refused"
-/// must not turn a failure into a retry. Anything else stays a failure.
+/// are retried, and only on a line ssh itself wrote (see [`ssh_unreachable`]):
+/// the tail also holds the remote command's stderr, whose own "connection
+/// refused" must not turn a failure into a retry. Anything else stays a
+/// failure.
 const UNREACHABLE: [&str; 5] = [
     "no route to host",
     "connection refused",
@@ -161,6 +162,36 @@ const UNREACHABLE: [&str; 5] = [
     "could not resolve hostname",
     "operation timed out",
 ];
+/// Linux's strerror(ETIMEDOUT). A jump host reports its own connect error,
+/// and most jump hosts are Linux, where a timed-out connect reads this way
+/// rather than macOS's "operation timed out".
+const JUMP_TIMED_OUT: &str = "connection timed out";
+
+/// Whether `line` (lowercased) is ssh saying the machine can't be reached.
+/// Two forms, both written by ssh itself at the start of a line:
+/// - `ssh: connect to host H port P: <error>` (sshconnect.c) and
+///   `ssh: Could not resolve hostname H: <error>` (ssh.c);
+/// - through a jump host, the jump host could not connect onward:
+///   `channel N: open failed: connect failed: <error>` (channels.c,
+///   channel_input_open_failure; <error> is the jump host's strerror, from
+///   channel_post_connecting), followed by "stdio forwarding failed".
+fn ssh_unreachable(line: &str) -> bool {
+    if line.starts_with("ssh: ") {
+        return UNREACHABLE.iter().any(|words| line.contains(words));
+    }
+    let Some(rest) = line.strip_prefix("channel ") else {
+        return false;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0
+        && rest[digits..]
+            .strip_prefix(": open failed: connect failed: ")
+            .is_some_and(|error| {
+                UNREACHABLE.iter().any(|words| error.contains(words))
+                    || error.contains(JUMP_TIMED_OUT)
+            })
+}
+
 impl Diagnostics {
     pub(super) fn observe(&mut self, bytes: &[u8]) {
         self.tail.extend_from_slice(bytes);
@@ -173,10 +204,7 @@ impl Diagnostics {
         self.authentication |= ["publickey", "password", "keyboard-interactive"]
             .iter()
             .any(|method| text.contains(&format!("permission denied ({method}")));
-        self.unreachable |= text.lines().any(|line| {
-            line.trim_start().starts_with("ssh: ")
-                && UNREACHABLE.iter().any(|words| line.contains(words))
-        });
+        self.unreachable |= text.lines().any(ssh_unreachable);
     }
     pub(super) fn failure(&self) -> DiscoveryError {
         if self.host_key {
