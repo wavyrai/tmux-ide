@@ -76,6 +76,17 @@ pub struct Controller {
     cell_pixels: Option<CellPixels>,
     sent_cell_pixels: Option<CellPixels>,
     materializing: BTreeMap<String, (String, String)>,
+    /// From the stream's start until input is first ready: what a (re)connect
+    /// costs. Reported once (`input_report`).
+    opened: std::time::Instant,
+    received: BTreeMap<String, u64>,
+    reported: bool,
+}
+/// What one stream cost until its window could take input.
+pub struct InputReport {
+    pub elapsed: std::time::Duration,
+    /// Delivery bytes per pane.
+    pub received: BTreeMap<String, u64>,
 }
 impl Controller {
     pub fn spawn(handoff: Handoff) -> Result<Self, Error> {
@@ -138,6 +149,9 @@ impl Controller {
             cell_pixels: None,
             sent_cell_pixels: None,
             materializing: BTreeMap::new(),
+            opened: std::time::Instant::now(),
+            received: BTreeMap::new(),
+            reported: false,
         })
     }
     pub fn retire(&mut self) {
@@ -165,6 +179,18 @@ impl Controller {
     }
     pub fn input_ready(&self) -> bool {
         self.actionable && self.owns(Authority::Input)
+    }
+    /// Once, when input is first ready: the time since the stream started and
+    /// the bytes each pane received until then.
+    pub fn input_report(&mut self) -> Option<InputReport> {
+        if self.reported || !self.input_ready() {
+            return None;
+        }
+        self.reported = true;
+        Some(InputReport {
+            elapsed: self.opened.elapsed(),
+            received: std::mem::take(&mut self.received),
+        })
     }
     pub fn topology(&self) -> &Topology {
         &self.topology
@@ -359,7 +385,12 @@ impl Controller {
         if self.retired {
             return Err(Error::Retired);
         }
-        let updates = self.session.drain()?;
+        let mut updates = self.session.drain()?;
+        if !self.reported {
+            for (pane, bytes) in std::mem::take(&mut updates.received) {
+                *self.received.entry(pane).or_default() += bytes;
+            }
+        }
         self.flush_cell_pixels(updates.cell_pixels, updates.precise_cell_pixels)?;
         let mut presentation_changed = !updates.panes.is_empty();
         match updates.status {

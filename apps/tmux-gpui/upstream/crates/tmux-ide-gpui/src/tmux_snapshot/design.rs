@@ -231,6 +231,42 @@ pub(crate) struct InkProbes(pub std::collections::BTreeMap<String, Hsla>);
 #[cfg(test)]
 impl Global for InkProbes {}
 
+/// In tests, the words a site draws, by key (#362: a test reads whether a
+/// mark says "last known").
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TextProbes(pub std::collections::BTreeMap<String, String>);
+#[cfg(test)]
+impl Global for TextProbes {}
+
+/// In tests, a zero-size child that records `words` under `key` when it is
+/// painted; nothing outside tests.
+pub(crate) fn text_probe(
+    key: impl Fn() -> String + 'static,
+    words: impl Into<String>,
+) -> Option<AnyElement> {
+    #[cfg(test)]
+    {
+        let words = words.into();
+        Some(
+            canvas(
+                |_, _, _| (),
+                move |_, (), _, cx| {
+                    if cx.has_global::<TextProbes>() {
+                        cx.global_mut::<TextProbes>().0.insert(key(), words.clone());
+                    }
+                },
+            )
+            .size_0()
+            .into_any_element(),
+        )
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (key, words.into());
+        None
+    }
+}
 /// In tests, a zero-size child that records the text colour its parent
 /// paints with, under `key`, so a test can check the colour text is
 /// actually drawn in rather than the value a helper returns. Nothing in a

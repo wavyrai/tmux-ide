@@ -11,7 +11,12 @@ impl Local {
         self.agents
             .seed(&snapshot, &self.machine_id, &self.machine_label);
         self.sources.seed_catalog(&snapshot)?;
-        let previous = std::mem::take(&mut self.targets);
+        // Row ids carry over only within the same daemon identity; a different
+        // daemon gets fresh ids, so nothing kept is attributed to it.
+        let mut previous = std::mem::take(&mut self.targets);
+        if self.catalog_identity.as_ref() != Some(&snapshot.identity) {
+            previous.clear();
+        }
         self.state.sessions.clear();
         self.catalog_identity = Some(snapshot.identity);
         let servers = self.catalog_servers(snapshot.servers);

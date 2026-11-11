@@ -270,3 +270,116 @@ fn with_fleet_push_an_idle_watch_never_polls() {
     worker.shutdown().unwrap();
     server.join().unwrap();
 }
+
+fn daemon_hello(identity: &Value, sequence: u64) -> Message {
+    let mut daemon = identity.clone();
+    daemon.as_object_mut().unwrap().remove("pid");
+    daemon.as_object_mut().unwrap().remove("ok");
+    Message::Text(
+        json!({"type":"hello","daemon":daemon,"sessions":[],"eventSequence":sequence})
+            .to_string()
+            .into(),
+    )
+}
+fn ack(sequence: u64) -> Message {
+    Message::Text(json!({"type":"resource.interests-ack","interestRevision":1,"sequence":sequence,"unavailableInterests":[]}).to_string().into())
+}
+fn catalog_change(sequence: u64) -> Message {
+    Message::Text(json!({"type":"resource.changed","sequence":sequence,"resource":"fleet-catalog","workspaceName":null,"revision":sequence,"causeOperationId":null}).to_string().into())
+}
+fn wait(mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A change that arrives just before the lane drops is reported before the
+/// drop, never overwritten by it: the caller still reads it (review of #362).
+#[test]
+fn a_change_just_before_a_drop_is_reported_first() {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let (go, start) = mpsc::sync_channel(1);
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        let mut socket = upgrade(socket);
+        socket.send(daemon_hello(&identity, 0)).unwrap();
+        assert!(matches!(socket.read().unwrap(), Message::Text(_)));
+        socket.send(ack(0)).unwrap();
+        start.recv().unwrap();
+        socket.send(catalog_change(1)).unwrap();
+        socket.get_mut().shutdown(Shutdown::Both).unwrap();
+    });
+    let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
+    until(&worker).unwrap(); // the barrier's own read
+    go.send(()).unwrap();
+    wait(|| !worker.live() && worker.sequence() == 1);
+    thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(worker.poll().unwrap(), Some(Ok(()))),
+        "the change first"
+    );
+    assert!(
+        matches!(worker.poll().unwrap(), Some(Err(_))),
+        "then the drop"
+    );
+    server.join().unwrap();
+}
+
+/// The cursor for a read comes only from a live lane.
+#[test]
+fn a_read_start_is_known_only_on_a_live_lane() {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let (go, start) = mpsc::sync_channel(1);
+    let (more, next) = mpsc::sync_channel(1);
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        let mut socket = upgrade(socket);
+        start.recv().unwrap();
+        socket.send(daemon_hello(&identity, 7)).unwrap();
+        assert!(matches!(socket.read().unwrap(), Message::Text(_)));
+        socket.send(ack(7)).unwrap();
+        next.recv().unwrap();
+        socket.send(catalog_change(8)).unwrap();
+        assert!(socket.read().is_err());
+    });
+    let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(worker.read_start(), None, "before the barrier");
+    go.send(()).unwrap();
+    until(&worker).unwrap();
+    assert_eq!(worker.read_start(), Some(7));
+    more.send(()).unwrap();
+    until(&worker).unwrap();
+    assert_eq!(worker.read_start(), Some(8));
+    worker.shutdown().unwrap();
+    server.join().unwrap();
+}
+
+/// A resumed lane subscribes after its cursor; with nothing changed it is
+/// live and asks for no read.
+#[test]
+fn a_resumed_lane_subscribes_after_its_cursor_and_reads_nothing() {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        let mut socket = upgrade(socket);
+        socket.send(daemon_hello(&identity, 12)).unwrap();
+        let subscribe: Value =
+            serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(subscribe["afterSequence"], 9);
+        socket.send(ack(12)).unwrap();
+        assert!(socket.read().is_err());
+    });
+    let worker = CatalogWatchWorker::resume(source, expected, Some(9), || {}).unwrap();
+    wait(|| worker.live());
+    thread::sleep(Duration::from_millis(50));
+    assert!(worker.poll().unwrap().is_none(), "nothing changed: no read");
+    assert_eq!(worker.read_start(), Some(12));
+    worker.shutdown().unwrap();
+    server.join().unwrap();
+}

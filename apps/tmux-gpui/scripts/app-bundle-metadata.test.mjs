@@ -15,7 +15,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { validateBundleMetadata, readBundleMetadata, bundlePlist } from "./app-bundle-metadata.mjs";
+import {
+  validateBundleMetadata,
+  readBundleMetadata,
+  bundlePlist,
+  infoPlistStrings,
+  appName,
+  bundleBaseName,
+} from "./app-bundle-metadata.mjs";
 const good = { bundleId: "com.tmux-ide.gpui.preview", version: "0.1.0", buildNumber: "1" };
 test("strict preview metadata generates exact safe plist fields; development defaults remain", () => {
   const value = validateBundleMetadata(good);
@@ -25,7 +32,10 @@ test("strict preview metadata generates exact safe plist fields; development def
     good.bundleId,
     good.version,
     ">1<",
-    "tmux-ide Preview",
+    "<key>CFBundleName</key><string>Tmux IDE</string>",
+    "<key>CFBundleDisplayName</key><string>TmuxIDE</string>",
+    "<key>LSHasLocalizedDisplayName</key><true/>",
+    "<key>CFBundleDevelopmentRegion</key><string>en</string>",
     "14.2",
     "tmux-ide-launcher",
     "CFBundleIconFile",
@@ -34,7 +44,9 @@ test("strict preview metadata generates exact safe plist fields; development def
   ])
     assert.ok(plist.includes(text));
   assert.match(bundlePlist(), /com\.tmux-ide\.gpui\.development/);
-  assert.match(bundlePlist(), /tmux-ide Development/);
+  assert.match(bundlePlist(), /<key>CFBundleName<\/key><string>Tmux IDE Development<\/string>/);
+  // A development bundle shows its own file name: no display-name localization.
+  assert.doesNotMatch(bundlePlist(), /CFBundleDisplayName|LSHasLocalizedDisplayName/);
   assert.match(bundlePlist(), />0\.0\.0</);
   if (process.platform === "darwin")
     assert.doesNotThrow(() => execFileSync("/usr/bin/plutil", ["-lint", "-"], { input: plist }));
@@ -130,4 +142,45 @@ test("packaged icon is bound to its source artwork and a complete ICNS container
   assert.equal(offset, icon.length);
   for (const type of ["ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"])
     assert.ok(representations.has(type), `Missing icon representation ${type}`);
+});
+
+test("the display name localizes only because it equals the bundle file every installer uses", async () => {
+  // macOS uses en.lproj's CFBundleDisplayName only while the unlocalized one
+  // equals the file name; a mismatch silently shows the file name again.
+  assert.equal(appName, "Tmux IDE");
+  assert.equal(bundleBaseName, "TmuxIDE");
+  const plist = bundlePlist(validateBundleMetadata(good));
+  assert.match(
+    plist,
+    new RegExp(`<key>CFBundleDisplayName</key><string>${bundleBaseName}</string>`),
+  );
+  const file = `"${bundleBaseName}.app"`;
+  for (const source of [
+    "./install-transaction.mjs",
+    "./preview-release-extract.mjs",
+    "./sign-preview-app.mjs",
+    "./preview-release-package.py",
+  ])
+    assert.ok(
+      (await readFile(new URL(source, import.meta.url), "utf8")).includes(file),
+      `${source} names the bundle ${file}`,
+    );
+  assert.equal(
+    infoPlistStrings(),
+    '"CFBundleDisplayName" = "Tmux IDE";\n"CFBundleName" = "Tmux IDE";\n',
+  );
+  if (process.platform === "darwin") {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gpui-strings-")));
+    try {
+      const path = join(root, "InfoPlist.strings");
+      await writeFile(path, infoPlistStrings());
+      assert.doesNotThrow(() => execFileSync("/usr/bin/plutil", ["-lint", path]));
+      const json = execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
+        encoding: "utf8",
+      });
+      assert.deepEqual(JSON.parse(json), { CFBundleDisplayName: appName, CFBundleName: appName });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
 });

@@ -129,6 +129,7 @@ impl Gate {
                         name: display(&agent.name, 160),
                         session_label: display(&slot.context.session_label, 160),
                         machine_label: Some(display(&slot.context.machine_label, 160)),
+                        machine: Some(slot.context.machine.clone()),
                         server_label: slot.context.server_label.as_ref().map(|s| display(s, 160)),
                         project_name: Some(display(&result.project_name, 160)),
                         harness: Some(

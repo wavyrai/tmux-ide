@@ -5,7 +5,7 @@ use std::{
     net::{Shutdown, TcpStream},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -40,6 +40,10 @@ struct Cancellation {
     socket: Mutex<Option<TcpStream>>,
     /// Set once the live lane confirms the daemon pushes fleet changes.
     fleet_push: AtomicBool,
+    /// The last sequence the lane has seen, for a later resume.
+    sequence: AtomicU64,
+    /// The lane passed its barrier.
+    live: AtomicBool,
 }
 impl Cancellation {
     fn check(&self) -> Result<(), CatalogWatchError> {
@@ -64,7 +68,15 @@ impl Cancellation {
         }
     }
 }
-type Mailbox = Arc<Mutex<Option<Result<(), CatalogWatchError>>>>;
+/// A change notice and the lane's end are kept apart: an error never
+/// overwrites a change that hasn't been taken yet, so a change seen just
+/// before a drop still reaches the caller (`poll` returns it first).
+#[derive(Default)]
+struct Notices {
+    changed: bool,
+    failed: Option<CatalogWatchError>,
+}
+type Mailbox = Arc<Mutex<Notices>>;
 pub struct CatalogWatchWorker {
     cancel: Arc<Cancellation>,
     mailbox: Mailbox,
@@ -76,19 +88,34 @@ impl CatalogWatchWorker {
         expected: CatalogIdentity,
         wake: impl Fn() + Send + 'static,
     ) -> Result<Self, WorkerError> {
+        Self::resume(source, expected, None, wake)
+    }
+    /// Like [`Self::spawn`], but replays only the changes after `after`, a
+    /// cursor from an earlier lane whose catalog the caller still holds. The
+    /// worker then reports [`Self::live`] instead of an invalidation when
+    /// nothing changed.
+    pub fn resume(
+        source: CatalogSource,
+        expected: CatalogIdentity,
+        after: Option<u64>,
+        wake: impl Fn() + Send + 'static,
+    ) -> Result<Self, WorkerError> {
         let cancel = Arc::new(Cancellation::default());
         let stop = cancel.clone();
-        let mailbox: Mailbox = Arc::new(Mutex::new(None));
+        let mailbox: Mailbox = Arc::default();
         let output = mailbox.clone();
         let (finished, done) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("tmux-catalog-watch".into())
             .spawn(move || {
-                let notify = |result| {
+                let notify = |result: Result<(), CatalogWatchError>| {
                     let publish = if let Ok(mut slot) = output.lock() {
                         if stop.check().is_ok() {
-                            if !matches!(*slot, Some(Err(_))) {
-                                *slot = Some(result);
+                            match result {
+                                Ok(()) => slot.changed = true,
+                                Err(error) => {
+                                    slot.failed.get_or_insert(error);
+                                }
                             }
                             true
                         } else {
@@ -101,7 +128,8 @@ impl CatalogWatchWorker {
                         wake();
                     }
                 };
-                if let Err(error) = run(&source, &expected, &stop, || notify(Ok(()))) {
+                let woke = || wake();
+                if let Err(error) = run(&source, &expected, after, &stop, || notify(Ok(())), woke) {
                     notify(Err(error));
                 }
                 stop.cancel();
@@ -114,18 +142,56 @@ impl CatalogWatchWorker {
             finished: done,
         })
     }
+    /// A pending change first, then the lane's end.
     pub fn poll(&self) -> Result<Option<Result<(), CatalogWatchError>>, WorkerError> {
-        Ok(self.mailbox.lock().map_err(|_| WorkerError::Closed)?.take())
+        let mut notices = self.mailbox.lock().map_err(|_| WorkerError::Closed)?;
+        if std::mem::take(&mut notices.changed) {
+            return Ok(Some(Ok(())));
+        }
+        Ok(notices.failed.take().map(Err))
     }
     /// True while this live lane is pushed fleet changes: registered servers,
     /// sessions and agents. Callers may then drop their own periodic reads.
     pub fn fleet_push(&self) -> bool {
         self.cancel.fleet_push.load(Ordering::Acquire) && self.cancel.check().is_ok()
     }
+    /// The last sequence the lane has seen. A catalog read started after it
+    /// reflects at least every change up to it.
+    pub fn sequence(&self) -> u64 {
+        self.cancel.sequence.load(Ordering::Acquire)
+    }
+    /// The lane passed its barrier and is still running.
+    pub fn live(&self) -> bool {
+        self.cancel.live.load(Ordering::Acquire) && self.cancel.check().is_ok()
+    }
+    /// Sampled before a catalog read is submitted: a read started now reflects
+    /// at least every change up to this sequence. `None` until the lane is
+    /// live, when its sequence says nothing about the catalog yet.
+    pub fn read_start(&self) -> Option<u64> {
+        self.live().then(|| self.sequence())
+    }
+    /// A worker with no lane, at `sequence` and live, for callers' tests.
+    #[doc(hidden)]
+    pub fn detached(sequence: u64) -> Self {
+        let cancel = Arc::new(Cancellation::default());
+        cancel.sequence.store(sequence, Ordering::Release);
+        cancel.live.store(true, Ordering::Release);
+        let (_, finished) = mpsc::sync_channel(1);
+        Self {
+            cancel,
+            mailbox: Arc::default(),
+            finished,
+        }
+    }
+    /// Moves a detached worker's lane on, as a received change would.
+    #[doc(hidden)]
+    pub fn advance_detached(&self, sequence: u64) {
+        self.cancel.sequence.store(sequence, Ordering::Release);
+    }
     pub fn cancel(&self) {
         self.cancel.cancel();
         if let Ok(mut slot) = self.mailbox.lock() {
-            *slot = None;
+            *slot = Notices::default();
         }
     }
     /// Only a background owner may wait. Discovery has its own 15-second bound.
@@ -145,8 +211,10 @@ impl Drop for CatalogWatchWorker {
 fn run(
     source: &CatalogSource,
     expected: &CatalogIdentity,
+    after: Option<u64>,
     cancel: &Cancellation,
     changed: impl Fn(),
+    woke: impl Fn(),
 ) -> Result<(), CatalogWatchError> {
     cancel.check()?;
     let owner = source.discover(&cancel.stopped)?;
@@ -184,7 +252,10 @@ fn run(
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(1)))?;
-    let mut lane = CatalogEvents::new(endpoint.identity);
+    let mut lane = match after {
+        Some(after) => CatalogEvents::resume(endpoint.identity, after),
+        None => CatalogEvents::new(endpoint.identity),
+    };
     let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut received = Instant::now();
     let mut ping = received;
@@ -226,7 +297,10 @@ fn run(
         received = Instant::now();
         cancel.check()?;
         match message {
-            Message::Text(text) => match lane.receive(text.as_bytes())? {
+            Message::Text(text) => match lane.receive(text.as_bytes()).inspect(|_| {
+                cancel.sequence.store(lane.sequence(), Ordering::Release);
+                cancel.live.store(lane.ready(), Ordering::Release);
+            })? {
                 CatalogEventEffect::Subscribe { after_sequence } => socket.send(Message::Text(
                     CatalogEvents::subscription(after_sequence)?.into(),
                 ))?,
@@ -236,6 +310,12 @@ fn run(
                         .store(lane.ready() && !lane.needs_fallback(), Ordering::Release);
                     changed();
                     refresh = Instant::now();
+                }
+                CatalogEventEffect::Resumed => {
+                    cancel
+                        .fleet_push
+                        .store(!lane.needs_fallback(), Ordering::Release);
+                    woke();
                 }
                 CatalogEventEffect::Unchanged => {}
             },

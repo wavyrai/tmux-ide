@@ -1,6 +1,13 @@
 // Pre-signing metadata only. This does not authenticate an app or qualify distribution.
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
+// The name people read. The bundle's file stays TmuxIDE.app: installers, rollback
+// and the CLI find the app by that file name, and the identifier keeps its grants.
+export const appName = "Tmux IDE";
+export const developmentAppName = "Tmux IDE Development";
+// macOS shows the localized CFBundleDisplayName only when the unlocalized one
+// equals the bundle's file name; otherwise it treats the bundle as renamed.
+export const bundleBaseName = "TmuxIDE";
 export const developmentMetadata = Object.freeze({
   bundleId: "com.tmux-ide.gpui.development",
   version: "0.0.0",
@@ -56,10 +63,13 @@ const escape = (value) =>
     .replaceAll("'", "&apos;");
 export function bundlePlist(metadata = developmentMetadata) {
   const value = metadata === developmentMetadata ? metadata : validateBundleMetadata(metadata);
+  const development = metadata === developmentMetadata;
   const fields = {
+    CFBundleDevelopmentRegion: "en",
+    ...(development ? {} : { CFBundleDisplayName: bundleBaseName }),
     CFBundleExecutable: "tmux-ide-launcher",
     CFBundleIdentifier: value.bundleId,
-    CFBundleName: metadata === developmentMetadata ? "tmux-ide Development" : "tmux-ide Preview",
+    CFBundleName: development ? developmentAppName : appName,
     CFBundlePackageType: "APPL",
     CFBundleIconFile: "AppIcon.icns",
     CFBundleIconName: "AppIcon",
@@ -67,9 +77,15 @@ export function bundlePlist(metadata = developmentMetadata) {
     CFBundleVersion: value.buildNumber,
     LSMinimumSystemVersion: "14.2",
   };
+  const localized = development ? "" : "\n<key>LSHasLocalizedDisplayName</key><true/>";
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n${Object.entries(
     fields,
   )
     .map(([key, val]) => `<key>${key}</key><string>${escape(val)}</string>`)
-    .join("\n")}\n</dict></plist>\n`;
+    .join("\n")}${localized}\n</dict></plist>\n`;
+}
+/** en.lproj/InfoPlist.strings for a release bundle: the name Finder, the Dock,
+ * Spotlight and the app switcher show. Development bundles show their file name. */
+export function infoPlistStrings() {
+  return `"CFBundleDisplayName" = "${appName}";\n"CFBundleName" = "${appName}";\n`;
 }

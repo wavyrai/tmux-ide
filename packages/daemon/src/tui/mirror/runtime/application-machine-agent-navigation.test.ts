@@ -42,6 +42,8 @@ function harness() {
     },
   };
   const events: string[] = [];
+  const admissions: Promise<boolean>[] = [];
+  const selectCalls: [string, Promise<boolean>?][] = [];
   const start = vi.fn(
     async (
       _session: string,
@@ -75,7 +77,12 @@ function harness() {
       }) as unknown as OpenTuiGenerationHostSnapshot,
     sessionName: () => state.session,
     startGeneration: start,
-    selectPane: (pane) => events.push(`select:${pane}`),
+    selectPane: (...args: [string, Promise<boolean>?]) => {
+      const [pane, admission] = args;
+      selectCalls.push(args);
+      events.push(`select:${pane}`);
+      if (admission) admissions.push(admission);
+    },
     showTerminals: () => events.push("show"),
     setNote: vi.fn(),
   });
@@ -84,6 +91,8 @@ function harness() {
     listeners,
     start,
     events,
+    admissions,
+    selectCalls,
     owner,
     publish: () => {
       for (const listener of [...listeners]) listener();
@@ -156,7 +165,7 @@ describe("machine agent navigation", () => {
       expect(h.owner.opening()).toBe(false);
     },
   );
-  it.each(["daemon", "live", "pane", "session"] as const)(
+  it.each(["daemon", "live", "session"] as const)(
     "rejects mismatched %s identity",
     async (field) => {
       const h = harness();
@@ -165,6 +174,38 @@ describe("machine agent navigation", () => {
       expect(h.events).toEqual([]);
     },
   );
+  // #764: the same session not listing the pane yet may be a moment behind
+  // Home. The selection is registered (not yet sent to the runtime) and refused
+  // after the 5 s bound if the pane never appears; terminals are not shown.
+  it("Esc during the wait cancels it, selects nothing and returns the keyboard", async () => {
+    const h = harness();
+    h.state.pane = "different";
+    const result = h.owner.open("remote", target);
+    expect(h.owner.ownsKey("a")).toBe(true);
+    expect(h.owner.ownsKey("escape")).toBe(true);
+    expect(h.owner.opening()).toBe(false);
+    await expect(h.admissions[0]).resolves.toBe(false);
+    expect((await result).opened).toBe(false);
+    expect(h.events).toEqual(["select:%7"]);
+    expect(h.owner.ownsKey("a")).toBe(false);
+  });
+  it("rejects a mismatched pane after the bounded wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.state.pane = "different";
+      const result = h.owner.open("remote", target);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect((await result).opened).toBe(false);
+      expect(h.events).toEqual(["select:%7"]);
+      // The controller receives the admission itself, not a bare pane id.
+      expect(h.selectCalls).toEqual([["%7", expect.any(Promise)]]);
+      expect(h.admissions).toHaveLength(1);
+      await expect(h.admissions[0]).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("retained machine agent control", () => {

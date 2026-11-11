@@ -222,6 +222,16 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
     assert!(roster.valid());
     assert_eq!(roster.rows.len(), 2);
     assert_ne!(roster.rows[0].machine_label, roster.rows[1].machine_label);
+    // Each row names its machine, so a live id repeated on another machine
+    // never joins the wrong session (#366).
+    let machines: std::collections::BTreeSet<_> =
+        roster.rows.iter().map(|r| r.machine.clone()).collect();
+    assert_eq!(
+        machines,
+        [Some("local".to_owned()), Some("remote".to_owned())]
+            .into_iter()
+            .collect()
+    );
     let old = roster
         .rows
         .iter()
@@ -247,6 +257,8 @@ fn failed_routes_revoke_rows_and_incomplete_fleet_is_not_reported_live() {
     assert!(gate.publication().phase == home_agents::Phase::Partial);
 }
 
+#[path = "browser_native_local_agents_drop_tests.rs"]
+mod drop_link;
 #[path = "browser_native_local_agent_recovery_tests.rs"]
 mod recovery;
 

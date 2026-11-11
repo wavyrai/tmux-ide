@@ -12,7 +12,7 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 pub(super) fn options() -> WindowOptions {
     WindowOptions {
-        titlebar: Some(crate::titlebar::options("tmux-ide — native preview")),
+        titlebar: Some(crate::titlebar::options(super::menu_bar::APP_NAME)),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // Opaque until the first render installs the palette; `Chrome::sync`
         // then moves it to Bezel's blurred background where the palette frosts.

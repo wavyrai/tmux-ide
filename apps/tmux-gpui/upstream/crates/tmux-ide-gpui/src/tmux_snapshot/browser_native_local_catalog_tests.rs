@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+#[path = "browser_native_local_drop_tests.rs"]
+mod drop_link;
 #[path = "browser_native_local_home_recovery_local_tests.rs"]
 mod home_recovery;
 #[path = "browser_native_local_pane_limit_tests.rs"]

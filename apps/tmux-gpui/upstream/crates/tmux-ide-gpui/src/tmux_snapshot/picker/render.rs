@@ -243,12 +243,22 @@ impl SnapshotView {
             } else {
                 &row.label
             };
+            // An attention agent whose state may be old says so (#362), as of
+            // this draw.
+            let marked;
+            let label = match &target {
+                Target::Attention { key, .. } if self.attention_last_known(key) => {
+                    marked = format!("{label} · {}", super::super::agent_indicator::LAST_KNOWN);
+                    marked.as_str()
+                }
+                _ => label,
+            };
             list = list.child(
                 bezel_ui::popover::menu_row(&bezel, index == picker.selected, None)
                     .id(("picker-row", index))
         .role(if enabled && !picker.mode.is_reference() { Role::Button } else { Role::Label })
                     .when(!enabled && !picker.mode.is_reference() && picker.mode != Mode::Plugins, |row| row.aria_description("Unavailable"))
-        .aria_label(row.label.clone())
+        .aria_label(if label == row.label { row.label.clone() } else { label.to_owned() })
                     .debug_selector(move || format!("picker-row-{index}"))
                     .when(!picker.mode.is_reference(), |row| row.truncate())
                     .when(picker.mode.is_reference(), |row| {
@@ -270,6 +280,7 @@ impl SnapshotView {
                     })
                     .child(div().flex_1().min_w_0().when(!picker.mode.is_reference(), |label| label.truncate()).child(label.to_owned()))
                     .children(super::super::design::ink_probe(move || format!("palette-row-{index}")))
+                    .children(super::super::design::text_probe(move || format!("palette-row-{index}"), label))
                     .children(hint.map(|hint| keycap(&bezel, ink, hint)))
                     .when(enabled, |row| {
                         row.on_click(cx.listener(move |view, _, window, cx| {

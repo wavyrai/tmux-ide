@@ -142,7 +142,8 @@ impl Local {
             rebind,
             rediscover_owner: false,
         });
-        self.cancel()?;
+        // A drop, not navigation: agents and the catalog stay on screen.
+        self.drop_link()?;
         self.recovery = Some(recovery);
         self.reconnect_retry(Failure::Unreachable)
     }

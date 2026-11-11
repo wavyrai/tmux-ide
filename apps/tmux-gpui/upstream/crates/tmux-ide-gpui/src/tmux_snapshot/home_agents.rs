@@ -39,6 +39,10 @@ pub(in crate::tmux_snapshot) struct Row {
     pub name: String,
     pub session_label: String,
     pub machine_label: Option<String>,
+    /// The fleet machine (group id) whose catalog lists the session (#366):
+    /// live session ids (`$0`, …) repeat across machines.
+    #[serde(default)]
+    pub machine: Option<String>,
     pub server_label: Option<String>,
     pub project_name: Option<String>,
     pub harness: Option<String>,
