@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
@@ -63,15 +64,91 @@ export function tmuxClientEnvironment(
   return { ...environment, ...bundledTmuxResourceEnvironment(executable) };
 }
 
-/** Ordinary CLI commands retain PATH selection; bundled tmux fills a missing system client. */
+/**
+ * The socket an ordinary tmux client reaches, or null inside tmux (where the
+ * server exists by definition). Ordinary clients pass no -S or -L in
+ * production, so this is tmux's own rule: $TMUX, else the default socket.
+ */
+export function ordinaryTargetSocket(environment: NodeJS.ProcessEnv): string | null {
+  if (environment.TMUX) return null;
+  const uid = process.getuid?.() ?? 0;
+  return join(environment.TMUX_TMPDIR || "/tmp", `tmux-${uid}`, "default");
+}
+
+const answering = new Set<string>();
+
+/**
+ * Does a server answer on this socket? A socket file alone is not enough: a
+ * server that crashed leaves one behind. `probe` asks with `list-sessions`,
+ * which never starts a server. A running server is remembered for the process.
+ */
+export function serverAnswers(socket: string, probe: string): boolean {
+  if (answering.has(socket)) return true;
+  try {
+    if (!statSync(socket).isSocket()) return false;
+  } catch {
+    return false;
+  }
+  try {
+    execFileSync(probe, ["-S", socket, "list-sessions", "-F", "#{pid}"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 3000,
+      env: withBundledTmuxResources(probe, process.env),
+    });
+  } catch (error) {
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    // A refused connection is a stale socket. Anything else (a protocol
+    // mismatch, a timeout) means something is there: keep the PATH client.
+    if (/no server running|error connecting|connection refused|no such file/iu.test(stderr))
+      return false;
+  }
+  answering.add(socket);
+  return true;
+}
+
+export interface OrdinaryTmuxClientOptions {
+  /** Whether a server answers on this socket. Defaults to {@link serverAnswers}. */
+  readonly serverRunning?: (socket: string) => boolean;
+  /** The validated bundled executable, or null. */
+  readonly bundled?: () => string | null;
+}
+
+/**
+ * Ordinary CLI commands retain PATH selection for a running server. When no
+ * server runs, the next command starts one, so bundled tmux goes first: a
+ * Homebrew client must not start a reduced-feature server (#766).
+ * TMUX_IDE_TMUX_BIN always wins.
+ */
 export function resolveOrdinaryTmuxClient(
   environment: NodeJS.ProcessEnv,
   cwd?: string | URL,
+  options: OrdinaryTmuxClientOptions = {},
 ): {
   executable: string;
   environment: NodeJS.ProcessEnv;
 } {
+  const bundled =
+    options.bundled ??
+    (() =>
+      resolveBundledTmux([
+        ...(environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : []),
+        fileURLToPath(import.meta.url),
+      ]));
   const configured = environment.TMUX_IDE_TMUX_BIN;
+  if (!configured) {
+    const socket = ordinaryTargetSocket(environment);
+    if (socket !== null) {
+      let starter: string | null = null;
+      try {
+        starter = bundled();
+      } catch {
+        // An invalid bundle falls back to the PATH client below.
+      }
+      const running = options.serverRunning ?? ((at: string) => serverAnswers(at, starter!));
+      if (starter && !running(socket))
+        return { executable: starter, environment: withBundledTmuxResources(starter, environment) };
+    }
+  }
   const candidates = configured
     ? [configured]
     : (environment.PATH ?? "/usr/bin:/bin")
@@ -93,12 +170,7 @@ export function resolveOrdinaryTmuxClient(
       /* Try the next ordinary PATH candidate. */
     }
   }
-  if (!executable && !configured)
-    executable =
-      resolveBundledTmux([
-        ...(environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : []),
-        fileURLToPath(import.meta.url),
-      ]) ?? undefined;
+  if (!executable && !configured) executable = bundled() ?? undefined;
   if (!executable) throw new Error("tmux_executable_unavailable");
   return { executable, environment: withBundledTmuxResources(executable, environment) };
 }

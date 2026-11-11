@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Add `tmux-ide servers upgrade`, which moves a running tmux server onto tmux-ide's own tmux. It saves and checks a snapshot of every session, names the machine and socket it is about to end, asks (default No), restarts the server and rebuilds the sessions, resuming agents. `--yes` alone refuses while an agent may be mid-turn, a program may be an agent, or a session that is not restored runs something; `--yes --end-running-agents` ends them. The restart runs in a background process, so a closed terminal, Ctrl-C or a dropped ssh connection can't stop it halfway. See "Move to tmux-ide's own tmux" in the docs.
+- Start a new tmux server with tmux-ide's own tmux when none is running, even when another `tmux` (such as Homebrew's) is first on PATH. A running server keeps the PATH `tmux` as its client. Set `TMUX_IDE_TMUX_BIN` to a tmux to use it for everything, as before. A socket file left behind by a crashed server no longer counts as a running server.
+- Add `tmux-ide restore --from FILE`. `restore` now rebuilds the other sessions when one fails, lists the failure, and prints when its snapshot was saved.
+- `tmux-ide doctor` points the "stock tmux" and "older tmux-ide tmux" rows at `servers upgrade`, names what a plain `tmux` runs, and fails a "crash snapshot" row when the snapshot misses a running session, with its age.
+
 ## 2.9.21
 
 - Add Lua plugins. A plugin adds commands to the TUI's F5 palette and to `tmux-ide action`. Plugins in `~/.tmux-ide/plugins/` run only after `tmux-ide plugin consent`, which lists what each asks to do; `~/.tmux-ide/init.lua` is your own file and always runs. Each plugin runs in the daemon's plugin host with its own Lua state, time limits and memory cap.

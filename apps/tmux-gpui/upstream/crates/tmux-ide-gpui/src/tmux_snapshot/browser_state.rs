@@ -78,8 +78,10 @@ impl SnapshotView {
             }
             _ => {}
         }
+        self.observe_connection(cx);
         self.refresh_picker(cx);
         self.refresh_pane_actions(cx);
+        self.refresh_pane_close(cx);
         self.refresh_new_session(cx);
         cx.notify();
     }

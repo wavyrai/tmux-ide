@@ -44,12 +44,13 @@ fn a_notice_keeps_the_live_list_and_takes_the_warning_strip(cx: &mut TestAppCont
         assert_eq!(status_tone(state, true), StatusTone::Warning);
         assert_eq!(status_message(state, true), NOTICE);
     });
-    // Reconnecting and fault status outrank the notice.
+    // A reconnect never outranks the notice (quiet reconnect, #357); a
+    // fault, which the user must act on, does.
     view.update(cx, |view, _| {
         let mut state = view.browser_state.clone();
-        state.status = "Reconnecting…".into();
-        state.reconnect_attempt = Some(1);
-        assert_eq!(status_message(&state, true), "Reconnecting…");
+        state.status = "Reconnecting… attempt 2".into();
+        state.reconnect_attempt = Some(2);
+        assert_eq!(status_message(&state, true), NOTICE);
         state.reconnect_attempt = None;
         state.home_fault = true;
         state.status = "The daemon needs an update.".into();
@@ -79,4 +80,44 @@ fn fleet_rows_over_the_limit_say_they_are_too_many_to_open() {
     assert_eq!(fleet_rows::layout(&row(24, 3)), "3 windows · 24 panes");
     assert_eq!(fleet_rows::layout(&row(25, 3)), "25 panes · too many");
     assert_eq!(fleet_rows::layout(&row(38, 38)), "38 panes · too many");
+}
+
+/// #357 review, item 1: a catalog drop with a pane-limit notice on Home keeps
+/// the notice, shows no reconnect words in Home's strip and no attempt count,
+/// at 0 s, 3 s and 9 s; the footer slot alone carries the drop.
+#[gpui::test]
+fn a_drop_keeps_the_pane_limit_notice_and_says_nothing_in_homes_strip(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::connection::Stage;
+    use std::{cell::Cell, rc::Rc, time::Duration};
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state.home_notice = Some(NOTICE.into());
+        view
+    });
+    let start = std::time::Instant::now();
+    let offset = Rc::new(Cell::new(Duration::ZERO));
+    let read = offset.clone();
+    view.update(cx, |view, _| {
+        view.connection.clock = Rc::new(move || (start + read.get(), std::time::SystemTime::now()))
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.status = "Reconnecting… attempt 2".into();
+            view.browser_state.reconnect_attempt = Some(2);
+            view.observe_connection(cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    for (secs, stage) in [(0, Stage::Quiet), (3, Stage::Spinner), (9, Stage::Words)] {
+        offset.set(Duration::from_secs(secs));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("home-status-warning").is_some(), "{secs} s");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.connection_stage(), stage, "{secs} s");
+            let shown = status_message(&view.browser_state, true);
+            assert_eq!(shown, NOTICE, "{secs} s");
+            assert!(!shown.contains("Reconnecting") && !shown.contains("attempt"));
+        });
+    }
 }

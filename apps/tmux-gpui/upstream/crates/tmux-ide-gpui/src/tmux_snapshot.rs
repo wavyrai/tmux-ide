@@ -1,6 +1,7 @@
 //! tmux-ide addition: an offline, read-only adapter qualification window.
 //! This path never initializes Herdr discovery, settings, updates, or commands.
 mod agent_indicator;
+mod agent_resume;
 mod agent_spinner;
 mod appearance;
 mod browser;
@@ -22,6 +23,7 @@ mod browser_toolbar;
 mod browser_ui;
 mod chrome;
 mod composition;
+mod connection;
 mod controls;
 mod copy;
 mod decode;
@@ -48,6 +50,7 @@ mod new_session;
 mod pane_actions;
 mod pane_cards;
 mod pane_chrome;
+mod pane_close;
 mod pane_shortcuts;
 mod pending_input;
 mod picker;
@@ -383,6 +386,7 @@ fn show_owned(
                         workspace_fleet_agents: Default::default(),
                         home_filter: None,
                         pane_actions: None,
+                        pane_close: None,
                         browser_address: None,
                         new_session: None,
                         new_session_queued: None,
@@ -404,6 +408,7 @@ fn show_owned(
                         selection: None,
                         divider: None,
                         wheel: crate::terminal::WheelRemainder::default(),
+                        connection: Default::default(),
                         browser_request: 0,
                         browser_state: home::initial_state(),
                         browser_commands: browser.map(|b| b.commands),
@@ -411,6 +416,9 @@ fn show_owned(
                     view.launch_terminal_fonts(window, cx);
                     view.load_developer_mode(cx);
                     view.follow_system(cx);
+                    // The first wait starts with the window, not with the
+                    // worker's first publication (#357 review, item 2).
+                    view.observe_connection(cx);
                     view
                 });
                 agent_spinner::window_root(snapshot, window, cx)
@@ -467,6 +475,8 @@ struct SnapshotView {
     workspace_fleet_agents: workspace_fleet_agents::Owner,
     home_filter: Option<home::filters::Controls>,
     pane_actions: Option<pane_actions::Menu>,
+    /// The close-pane card, while it asks (c1).
+    pane_close: Option<pane_close::Card>,
     browser_address: Option<browser_toolbar::Address>,
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
@@ -487,6 +497,7 @@ struct SnapshotView {
     selection: Option<selection::Capture>,
     divider: Option<divider::Drag>,
     wheel: crate::terminal::WheelRemainder,
+    connection: connection::Watch,
     input_geometry: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
     browser_request: u64,
     browser_state: browser::State,
@@ -513,6 +524,7 @@ impl SnapshotView {
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }
         // The preview windows have no browsing shell to install Bezel's theme,
@@ -917,8 +929,10 @@ impl SnapshotView {
                 .size_full(),
             )
             .children(self.pane_header_labels(width, cx))
+            .children(self.pane_close_card(window, cx))
             .children(self.divider_handles(width))
             .children(self.lower_pane_header_controls(width, cx))
+            .children(self.not_sent_toast(width, cx))
             .into_any_element()
     }
 }

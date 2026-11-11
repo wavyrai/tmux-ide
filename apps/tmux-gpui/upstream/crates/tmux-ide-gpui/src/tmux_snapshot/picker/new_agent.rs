@@ -18,10 +18,7 @@ impl SnapshotView {
             || !target.current(&self.browser_state)
             || self.browser_state.request != self.browser_request
             || self.picker.as_ref().is_none_or(|p| {
-                p.mode != Mode::Commands
-                    || p.request != self.browser_request
-                    || p.closing.is_some()
-                    || p.agent.is_some()
+                p.mode != Mode::Commands || p.request != self.browser_request || p.agent.is_some()
             })
         {
             return;

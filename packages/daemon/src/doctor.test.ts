@@ -7,6 +7,8 @@ import {
   agentIntegrationRows,
   daemonProvenanceRow,
   hooksTargetRow,
+  plainTmuxRow,
+  snapshotRow,
   tmuxFeaturesRow,
 } from "./doctor.ts";
 import type { DiscoveredAgent } from "./lib/agent-discovery.ts";
@@ -269,7 +271,9 @@ describe("tmux features row", () => {
   const stock = (args: readonly string[]) => fail(`unknown command: ${args[0]}\n`);
   const none = () => fail("no server running on /tmp/s\n");
   it("names stock tmux and bundled tmux from the running server", () => {
-    expect(tmuxFeaturesRow(stock, bundled).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(stock, bundled).detail).toBe(
+      "stock tmux: reduced features; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
+    );
     expect(tmuxFeaturesRow(bundled, stock).detail).toBe("bundled tmux: full features");
     expect(tmuxFeaturesRow(stock, bundled)).toMatchObject({ pass: true, optional: true });
   });
@@ -286,7 +290,7 @@ describe("tmux features row", () => {
     expect(tmuxFeaturesRow(eventsOnly, bundled)).toMatchObject({
       pass: true,
       detail:
-        "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
+        "older tmux-ide tmux: reduced features; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
     });
   });
   it("does not guess when the split command is missing and the journal probe fails", () => {
@@ -314,5 +318,40 @@ describe("tmux features row", () => {
     const row = tmuxFeaturesRow(() => fail("something else\n"), stock);
     expect(row.pass).toBe(false);
     expect(row.detail).not.toContain("stock");
+  });
+});
+
+describe("plain tmux row", () => {
+  it("names what a plain tmux runs, and never fails doctor for it", () => {
+    expect(plainTmuxRow("/opt/homebrew/bin/tmux", "/b/tmux")).toMatchObject({
+      pass: true,
+      optional: true,
+      detail:
+        "/opt/homebrew/bin/tmux; if it starts the server, features drop (see docs: tmux upgrade)",
+    });
+    expect(plainTmuxRow("/b/tmux", "/b/tmux").detail).toBe("tmux-ide's own tmux (/b/tmux)");
+    expect(plainTmuxRow(null, "/b/tmux").detail).toMatch(/not on PATH/);
+  });
+});
+
+describe("crash snapshot row", () => {
+  const NOW = Date.parse("2026-11-10T09:00:00Z");
+  const saved = (savedAt: string, ...names: string[]) => ({
+    savedAt,
+    sessions: names.map((name) => ({ name })),
+  });
+  it("fails when the snapshot misses running sessions, naming its age (the 2 Nov Spark case)", () => {
+    const row = snapshotRow(saved("2026-11-02T14:16:05Z", "api"), ["api", "web", "docs"], NOW);
+    expect(row.pass).toBe(false);
+    expect(row.detail).toMatch(/^7 days old; misses 2 running sessions \(web, docs\)/);
+    expect(row.detail).toMatch(/tmux-ide adopt --all/);
+  });
+  it("passes when it covers every running session", () => {
+    const row = snapshotRow(saved("2026-11-10T08:58:00Z", "api", "web"), ["web", "api"], NOW);
+    expect(row).toMatchObject({ pass: true, detail: "2 min old, covers every running session" });
+  });
+  it("fails with no snapshot while sessions run, passes with none and no sessions", () => {
+    expect(snapshotRow(null, ["api"], NOW).pass).toBe(false);
+    expect(snapshotRow(null, [], NOW).pass).toBe(true);
   });
 });

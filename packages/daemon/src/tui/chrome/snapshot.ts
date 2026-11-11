@@ -151,7 +151,7 @@ function isBareShell(cmd: string): boolean {
  * BOTH the agent and the restore command; a bare shell records neither; any
  * other foreground process records its `pane_current_command` as the command.
  */
-function resolvePaneCommand(
+export function resolvePaneCommand(
   cmd: string,
   pid: number,
   hint: string,
@@ -357,9 +357,8 @@ export function writeSnapshot(snapshot: FleetSnapshot): void {
   }
 }
 
-/** Read + validate the snapshot on disk. Returns null when missing or malformed. */
-export function readSnapshot(): FleetSnapshot | null {
-  const path = snapshotPath();
+/** Read + validate a snapshot file (default: the updater's). Returns null when missing or malformed. */
+export function readSnapshot(path: string = snapshotPath()): FleetSnapshot | null {
   try {
     if (!existsSync(path)) return null;
     const raw = readFileSync(path, "utf-8");

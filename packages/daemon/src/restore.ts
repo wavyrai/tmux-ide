@@ -365,6 +365,23 @@ export interface RestoreOptions {
   runCommands?: boolean;
   /** Relaunch resumable agent panes (`--resume-agents`); ORed with config default. */
   resumeAgents?: boolean;
+  /** Read this snapshot file instead of `~/.tmux-ide/snapshot.json` (`--from`). */
+  from?: string;
+  /** Rebuild every session from the snapshot, never from its workspace config. */
+  snapshotOnly?: boolean;
+  /** OR `resumeAgents` with the config default (default true). The upgrade passes false. */
+  resumeFromConfig?: boolean;
+}
+
+/** What one restore run did; sessions that threw while rebuilding are in `failed`. */
+export interface RestoreOutcome {
+  snapshot: FleetSnapshot;
+  plan: RestorePlan;
+  restored: string[];
+  launched: string[];
+  resumed: ResumedSession[];
+  failed: string[];
+  resumeAgents: boolean;
 }
 
 /** One rebuilt session's resumed agent panes (for the report). */
@@ -380,75 +397,88 @@ interface ResumedSession {
  * (flag ORed with the `~/.tmux-ide/config.json` default) revives agent
  * conversations via `claude --resume <id>`.
  */
-export async function restore({
+export async function restore(options: RestoreOptions = {}): Promise<void> {
+  const { json = false, dryRun = false } = options;
+  const outcome = await restoreFleet(options);
+  reportPlan(outcome.plan, outcome.snapshot, { ...outcome, json, dryRun });
+  if (outcome.failed.length) {
+    throw new IdeError(`could not rebuild ${outcome.failed.join(", ")}`, {
+      code: "RESTORE_FAILED",
+      exitCode: 1,
+    });
+  }
+}
+
+/**
+ * Rebuild the fleet without printing. One session failing to rebuild does not
+ * stop the rest; it is listed in `failed`.
+ */
+export async function restoreFleet({
   json = false,
   dryRun = false,
   runCommands = false,
   resumeAgents = false,
-}: RestoreOptions = {}): Promise<void> {
-  const snapshot = readSnapshot();
+  from,
+  snapshotOnly = false,
+  resumeFromConfig = true,
+}: RestoreOptions = {}): Promise<RestoreOutcome> {
+  const snapshot = readSnapshot(from);
   if (!snapshot) {
     throw new IdeError(
-      "no snapshot yet — the updater writes one every ~30s while any session is adopted",
+      from
+        ? `no readable snapshot at ${from}`
+        : "no snapshot yet — the updater writes one every ~30s while any session is adopted",
       { code: "NO_SNAPSHOT", exitCode: 1 },
     );
   }
 
   // The flag forces resume on; config makes it the default. No negative flag.
-  const resume = resumeAgents || readRestorePrefs().resumeAgents;
-  const plan = buildRestorePlan(snapshot, liveSessions(), ideBackedProjects());
+  const resume = resumeAgents || (resumeFromConfig && readRestorePrefs().resumeAgents);
+  const plan = buildRestorePlan(
+    snapshot,
+    liveSessions(),
+    snapshotOnly ? new Map() : ideBackedProjects(),
+  );
+  const outcome: RestoreOutcome = {
+    snapshot,
+    plan,
+    restored: [],
+    launched: [],
+    resumed: [],
+    failed: [],
+    resumeAgents: resume,
+  };
+  if (dryRun) return outcome;
 
-  if (dryRun) {
-    reportPlan(plan, snapshot, {
-      json,
-      dryRun: true,
-      restored: [],
-      launched: [],
-      resumed: [],
-      resumeAgents: resume,
-    });
-    return;
-  }
-
-  const restored: string[] = [];
-  const launched: string[] = [];
-  const resumed: ResumedSession[] = [];
   const recordResumed = (session: string, panes: string[]) => {
-    if (panes.length) resumed.push({ session, panes });
+    if (panes.length) outcome.resumed.push({ session, panes });
+  };
+  const rebuild = (session: SessionSnapshot) => {
+    try {
+      recordResumed(session.name, rebuildSession(session, { runCommands, resumeAgents: resume }));
+    } catch {
+      outcome.failed.push(session.name);
+      return;
+    }
+    if (session.adopted) safeAdopt(session.name);
+    outcome.restored.push(session.name);
   };
   for (const action of plan.actions) {
     if (action.kind === "skip") continue;
     if (action.kind === "launch") {
       const ok = await launchProject(action.dir, json);
-      if (ok) launched.push(action.session);
+      if (ok) outcome.launched.push(action.session);
       else {
         // Launch failed — fall back to a raw rebuild from the snapshot so the
         // session still comes back.
         const snap = snapshot.sessions.find((s) => s.name === action.session);
-        if (snap) {
-          recordResumed(snap.name, rebuildSession(snap, { runCommands, resumeAgents: resume }));
-          if (snap.adopted) safeAdopt(snap.name);
-          restored.push(action.session);
-        }
+        if (snap) rebuild(snap);
       }
       continue;
     }
-    recordResumed(
-      action.session.name,
-      rebuildSession(action.session, { runCommands, resumeAgents: resume }),
-    );
-    if (action.session.adopted) safeAdopt(action.session.name);
-    restored.push(action.session.name);
+    rebuild(action.session);
   }
-
-  reportPlan(plan, snapshot, {
-    json,
-    dryRun: false,
-    restored,
-    launched,
-    resumed,
-    resumeAgents: resume,
-  });
+  return outcome;
 }
 
 /** Adopt a restored session into the chrome; never let a chrome failure abort restore. */
@@ -488,12 +518,14 @@ interface ReportContext {
   resumed: ResumedSession[];
   /** Whether resume is on (drives the dry-run `(would resume N agents)` note). */
   resumeAgents: boolean;
+  /** Sessions whose rebuild threw. */
+  failed: string[];
 }
 
 function reportPlan(
   plan: RestorePlan,
   snapshot: FleetSnapshot,
-  { json, dryRun, restored, launched, resumed, resumeAgents }: ReportContext,
+  { json, dryRun, restored, launched, resumed, resumeAgents, failed }: ReportContext,
 ): void {
   const skipped = plan.actions.filter((a) => a.kind === "skip").map((a) => a.session);
   const willLaunch = plan.actions.filter((a) => a.kind === "launch").map((a) => a.session);
@@ -513,6 +545,7 @@ function reportPlan(
           resumeAgents,
           resumedPanes,
           resumed,
+          failed,
         },
         null,
         2,
@@ -553,5 +586,8 @@ function reportPlan(
     parts.push(`rebuilt ${restored.map((s) => `${s}${resumeSuffix(s)}`).join(", ")}`);
   if (launched.length) parts.push(`launched ${launched.join(", ")}`);
   if (skipped.length) parts.push(`skipped ${skipped.join(", ")} (already running)`);
+  if (failed.length) parts.push(`failed to rebuild ${failed.join(", ")}`);
+  // Name the snapshot's age: an old snapshot brings back an old fleet (#766).
+  console.log(`Snapshot saved ${snapshot.savedAt}.`);
   console.log(parts.length ? `Restored: ${parts.join("; ")}` : "Nothing to restore.");
 }

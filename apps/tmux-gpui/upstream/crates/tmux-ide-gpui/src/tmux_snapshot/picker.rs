@@ -10,7 +10,6 @@ mod machine_remove;
 mod navigation_commands;
 mod new_agent;
 pub(super) mod palette;
-mod pane_close;
 mod pane_commands;
 pub(super) mod plugins;
 mod reference;
@@ -105,7 +104,6 @@ pub(super) struct Picker {
     removal: Option<machine_remove::Confirmation>,
     edit: Option<machine_edit::Form>,
     machine: Option<machine::Form>,
-    closing: Option<pane_close::Confirmation>,
     agent: Option<new_agent::Form>,
     plugins: Option<plugins::Session>,
     search: Entity<SearchInput>,
@@ -374,7 +372,6 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_header_actions(window, cx);
         self.begin_pane_close(target, window, cx);
     }
     pub(super) fn open_header_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -495,7 +492,6 @@ impl SnapshotView {
             removal: None,
             edit: None,
             machine: (mode == Mode::Machine).then(|| machine::Form::new(cx)),
-            closing: None,
             agent: None,
             plugins: None,
             search,
@@ -706,7 +702,6 @@ impl SnapshotView {
                 p.mode != Mode::Commands
                     || p.search.read(cx).is_composing()
                     || p.agent.is_some()
-                    || p.closing.is_some()
                     || p.edit.is_some()
                     || p.removal.is_some()
             }))

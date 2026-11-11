@@ -11,9 +11,9 @@ fn narrow_headers_drop_the_splits_first_and_never_overlap_pane_cells() -> Result
         let actions = action_width(&header, 8.);
         // Split right, split down, zoom, close; then zoom and close; then none.
         let expected = if room >= 240. {
-            4. * SLOT
+            4. * SLOT + ACTS_PAD
         } else if room >= 160. {
-            2. * SLOT
+            2. * SLOT + ACTS_PAD
         } else {
             0.
         };

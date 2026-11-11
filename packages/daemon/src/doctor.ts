@@ -2,10 +2,13 @@ import { requireSupportedTmuxVersion } from "./lib/tmux-version.ts";
 import { resolveTmuxExecutable } from "./lib/tmux-client-execution.ts";
 import { TMUX_SOCKET_PATH_ENV } from "./lib/runtime-namespace.ts";
 import { execSync, execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, dirname, join } from "node:path";
-import { nativeSplitCapability } from "./terminal/protocol/native-split-resize.ts";
+import { delimiter, resolve, dirname, join } from "node:path";
+import { resolveBundledTmux } from "./lib/bundled-tmux.ts";
+import { readSnapshot } from "./tui/chrome/snapshot.ts";
+import { isListableSession } from "./tui/team/sessions.ts";
+import { nativeCommands, type NativeAnswer, type TmuxProbe } from "./lib/tmux-server-features.ts";
 import { fileURLToPath } from "node:url";
 import { getCurrentVersion, getUpdateStatus } from "./lib/update-check.ts";
 import { installedSkillVersion } from "./lib/skill-sync.ts";
@@ -179,54 +182,20 @@ function check(
   }
 }
 
-type TmuxProbe = (args: readonly string[]) => string;
-const UNKNOWN = (command: string) => new RegExp(`^unknown command: ${command}$`, "mu");
-
-type NativeAnswer = "full" | "stock" | "older" | "partial" | "no-server" | "unknown";
-/** The same reading of the server as the mirror's: the stock resize when it refuses
- * the split command by name, and full only with the split capability it requires. */
-function nativeCommands(probe: TmuxProbe): NativeAnswer {
-  const ask = (command: string) => {
-    try {
-      return { output: probe([command, "-V"]) };
-    } catch (error) {
-      const failure = error as { stderr?: unknown; message?: string };
-      return { failure: String(failure.stderr ?? failure.message ?? "") };
-    }
-  };
-  const split = ask("tmux-ide-resize-split");
-  const events = ask("tmux-ide-events");
-  const failures = [split.failure, events.failure].filter((text) => text !== undefined);
-  if (failures.some((text) => /no server running|error connecting/u.test(text!)))
-    return "no-server";
-  const refused = (answer: { failure?: string }, command: string) =>
-    answer.failure !== undefined && UNKNOWN(command).test(answer.failure);
-  if (refused(split, "tmux-ide-resize-split")) {
-    if (refused(events, "tmux-ide-events")) return "stock";
-    // The journal answers: a tmux-ide tmux built before the split command.
-    if (events.output !== undefined) return "older";
-    return "unknown";
-  }
-  if (split.output !== undefined && events.output !== undefined) {
-    try {
-      return nativeSplitCapability(split.output) ? "full" : "partial";
-    } catch {
-      return "partial";
-    }
-  }
-  return failures.length === 2 ? "unknown" : "partial";
-}
-
 /** Reads the server a session would use. With none running, a throwaway private
  * server shows what the resolved binary would start. */
 export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe): CheckResult {
   let answer = nativeCommands(probeServer);
-  if (answer === "no-server") answer = nativeCommands(probeBinary);
+  const running = answer !== "no-server";
+  if (!running) answer = nativeCommands(probeBinary);
+  // Only a running server can be moved; the command restarts it and restores its sessions.
+  const upgrade = running
+    ? "; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux"
+    : "";
   const details: Record<NativeAnswer, string> = {
     full: "bundled tmux: full features",
-    stock: "stock tmux: reduced features",
-    older:
-      "older tmux-ide tmux: reduced features (restart it with tmux-ide's own tmux for every feature; that ends its sessions)",
+    stock: `stock tmux: reduced features${upgrade}`,
+    older: `older tmux-ide tmux: reduced features${upgrade}`,
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
     unknown: "could not read the tmux server's features",
@@ -237,6 +206,108 @@ export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe):
     detail: details[answer],
     optional: true,
   };
+}
+
+/**
+ * PURE — what a plain `tmux` typed in a shell runs. Informational: when it is
+ * not tmux-ide's own tmux and it starts the server, features drop (#766).
+ */
+export function plainTmuxRow(pathTmux: string | null, bundled: string | null): CheckResult {
+  const label = "plain `tmux` in your shell";
+  if (!pathTmux)
+    return {
+      label,
+      pass: true,
+      detail: "not on PATH (tmux-ide uses its own tmux)",
+      optional: true,
+    };
+  if (bundled && pathTmux === bundled)
+    return { label, pass: true, detail: `tmux-ide's own tmux (${pathTmux})`, optional: true };
+  return {
+    label,
+    pass: true,
+    detail: `${pathTmux}; if it starts the server, features drop (see docs: tmux upgrade)`,
+    optional: true,
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * PURE — is the crash snapshot fresh enough to restore from? It fails when it
+ * is missing a live session, or is over a day old while sessions run. Only the
+ * chrome updater writes it, and that runs only while a session is adopted.
+ */
+export function snapshotRow(
+  snapshot: { savedAt: string; sessions: readonly { name: string }[] } | null,
+  liveSessions: readonly string[] | null,
+  nowMs: number,
+): CheckResult {
+  const label = "crash snapshot (restore)";
+  const hint =
+    "Only the chrome updater writes it, while a session is adopted: `tmux-ide adopt --all` starts it";
+  if (!snapshot) {
+    return liveSessions?.length
+      ? { label, pass: false, detail: `none yet. ${hint}`, optional: true }
+      : { label, pass: true, detail: "none yet (no sessions running)", optional: true };
+  }
+  const ageMs = nowMs - Date.parse(snapshot.savedAt);
+  const age =
+    ageMs >= DAY_MS
+      ? `${Math.floor(ageMs / DAY_MS)} days old`
+      : `${Math.max(0, Math.round(ageMs / 60_000))} min old`;
+  const saved = new Set(snapshot.sessions.map((session) => session.name));
+  const missing = (liveSessions ?? []).filter((name) => !saved.has(name));
+  if (missing.length)
+    return {
+      label,
+      pass: false,
+      detail: `${age}; misses ${missing.length} running session${missing.length === 1 ? "" : "s"} (${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}). ${hint}`,
+      optional: true,
+    };
+  return { label, pass: true, detail: `${age}, covers every running session`, optional: true };
+}
+
+function firstOnPath(name: string): string | null {
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (!directory) continue;
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return null;
+}
+
+function safeBundledTmux(): string | null {
+  try {
+    const bundled = resolveBundledTmux();
+    return bundled ? realpathSync(bundled) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The sessions the snapshot should hold, on the server doctor reads; null when unreadable. */
+function liveListableSessions(): string[] | null {
+  try {
+    const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+    const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+    const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+    return execFileSync(
+      resolveTmuxExecutable(),
+      [...server, "list-sessions", "-F", "#{session_name}"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 3000 },
+    )
+      .split("\n")
+      .filter((name) => name && isListableSession(name));
+  } catch (error) {
+    const text = String((error as { stderr?: unknown }).stderr ?? "");
+    return /no server running|error connecting/u.test(text) ? [] : null;
+  }
 }
 
 function runTmuxFeatureProbes(executable: string): CheckResult {
@@ -335,6 +406,8 @@ export async function doctor({
   } catch {
     // The tmux version row above already reports a missing executable.
   }
+  checks.push(plainTmuxRow(firstOnPath("tmux"), safeBundledTmux()));
+  checks.push(snapshotRow(readSnapshot(), liveListableSessions(), Date.now()));
 
   checks.push(nodeVersionRow(process.versions.node));
 

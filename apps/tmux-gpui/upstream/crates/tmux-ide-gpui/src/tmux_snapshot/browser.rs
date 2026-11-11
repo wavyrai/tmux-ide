@@ -101,6 +101,14 @@ pub(super) struct CreateSession {
     pub error: Option<String>,
     pub revision: u64,
 }
+/// One split's outcome. `nonce` is fresh per outcome, so a hold tells this
+/// split's answer from an earlier one still in the state.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct PaneSplit {
+    pub nonce: uuid::Uuid,
+    /// The pane the split created; `None` when it was not applied.
+    pub created: Option<String>,
+}
 #[derive(Clone, Default)]
 pub(super) struct State {
     pub browser_controls:
@@ -164,6 +172,9 @@ pub(super) struct State {
     /// re-read after it hasn't finished. Worker-owned; the view decides how
     /// long a drop must last before it shows (quiet reconnect).
     pub agents_last_known: bool,
+    /// The last split's outcome, for keys held since its click
+    /// (pending_input/split.rs). Worker-owned.
+    pub pane_split: Option<PaneSplit>,
     /// Home is live, but the session the user chose has too many panes to
     /// open; this names it and says what to do instead.
     pub home_notice: Option<String>,
@@ -609,6 +620,7 @@ impl Reader {
             reconnect_attempt: None,
             home_fault: false,
             agents_last_known: false,
+            pane_split: None,
             home_notice: None,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
