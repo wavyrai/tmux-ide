@@ -55,6 +55,10 @@ pub(super) struct Owner {
     held: Option<(u64, u8, Lease)>,
     /// A pane header drag (pane_move).
     pub(super) moving: super::pane_move::Owner,
+    /// The link under the pointer while Cmd or Ctrl is held.
+    pub(super) link_hover: Option<super::terminal_links::Hover>,
+    /// A Shift-press on a link, opened if released on the same cell.
+    pub(super) pending_link: Option<super::terminal_links::Pending>,
 }
 fn button(b: MouseButton) -> Option<u8> {
     match b {
@@ -259,11 +263,17 @@ impl SnapshotView {
         if super::terminal_links::gesture(event) {
             self.cancel_pointer();
             if let Some(url) = self.terminal_web_link(event.position) {
-                cx.open_url(&url);
+                self.open_link(&url, cx);
             }
             cx.stop_propagation();
             return;
         }
+        // A Shift-click on a link opens on release; a Shift-drag still selects.
+        self.pointer.pending_link = super::terminal_links::shift_gesture(event)
+            .then(|| self.terminal_web_link(event.position))
+            .flatten()
+            .zip(self.link_cell(event.position))
+            .map(|(url, cell)| super::terminal_links::Pending { url, cell });
         if event.button == MouseButton::Left && self.begin_divider(event.position, cx) {
             self.cancel_pointer();
             return;
@@ -344,15 +354,34 @@ impl SnapshotView {
                     self.input_interrupted = false;
                 }
                 self.discard_composition(cx);
-                self.selection = super::selection::Capture::begin(
-                    &self.browser_state,
+                let (x, y) = (
                     f32::from(point.x) / width,
                     f32::from(point.y) / self.terminal_height(),
                 );
+                self.selection = super::selection::Capture::begin(&self.browser_state, x, y);
+                // Double-click selects a word, triple-click a line.
+                let unit = match event.click_count {
+                    0 | 1 => None,
+                    2 => Some(super::selection::Unit::Word),
+                    _ => Some(super::selection::Unit::Line),
+                };
+                if let (Some(unit), Some(selection)) = (unit, self.selection.as_mut())
+                    && selection.select(unit, x, y).is_err()
+                {
+                    self.selection = None;
+                }
                 cx.notify();
             }
             self.terminal_focus.focus(window, cx);
         }
+    }
+    /// The terminal cell under `position`, in frame columns and rows.
+    fn link_cell(&self, position: Point<Pixels>) -> Option<(u16, u16)> {
+        let point = self.terminal_point(position)?;
+        let width = self.input_cell_width?;
+        let x = (f32::from(point.x) / width).floor();
+        let y = (f32::from(point.y) / self.terminal_height()).floor();
+        (x >= 0. && y >= 0.).then_some((x as u16, y as u16))
     }
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.cancel_tab_selection_restore();
@@ -376,6 +405,12 @@ impl SnapshotView {
             cx.stop_propagation();
             return;
         }
+        self.update_link_hover(
+            event.position,
+            event.modifiers,
+            event.pressed_button.is_some(),
+            cx,
+        );
         if self.pointer_event(
             if event.pressed_button.is_some() {
                 Action::Drag
@@ -436,6 +471,16 @@ impl SnapshotView {
                 return;
             }
             self.move_divider(event.position, true, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(pending) = self.pointer.pending_link.take()
+            && event.button == MouseButton::Left
+            && self.link_cell(event.position) == Some(pending.cell)
+            && self.selection.as_ref().is_none_or(|s| s.empty())
+        {
+            self.clear_selection(cx);
+            self.open_link(&pending.url, cx);
             cx.stop_propagation();
             return;
         }

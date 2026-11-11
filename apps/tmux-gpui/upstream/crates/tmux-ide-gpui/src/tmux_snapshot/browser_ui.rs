@@ -578,6 +578,11 @@ impl SnapshotView {
             div()
                 .size_full()
                 .track_focus(&self.terminal_focus)
+                .when(
+                    self.link_hover_shown(window.mouse_position()).is_some(),
+                    |terminal| terminal.cursor_pointer(),
+                )
+                .on_modifiers_changed(cx.listener(Self::terminal_modifiers))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::terminal_click))
                 .on_mouse_down(MouseButton::Middle, cx.listener(Self::terminal_click))
                 .on_mouse_down(MouseButton::Right, cx.listener(Self::terminal_click))
@@ -591,6 +596,7 @@ impl SnapshotView {
                 .on_key_down(cx.listener(Self::terminal_key))
                 .on_scroll_wheel(cx.listener(Self::terminal_wheel))
                 .child(self.terminal_render(window, cx))
+                .children(self.link_underline(window.mouse_position()))
         });
         let home = is_home.then(|| self.home_render(window, cx));
         if !is_home && let Some(controls) = self.home_filter.as_mut() {

@@ -109,6 +109,12 @@ pub(super) struct PaneSplit {
     /// The pane the split created; `None` when it was not applied.
     pub created: Option<String>,
 }
+/// A saved machine reached over SSH: what notes call it, and how to reach it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RemoteMachine {
+    pub label: String,
+    pub ssh_target: String,
+}
 #[derive(Clone, Default)]
 pub(super) struct State {
     pub browser_controls:
@@ -129,6 +135,8 @@ pub(super) struct State {
     pub machines: Option<machines::Registry>,
     pub fleet: Option<fleet::Fleet>,
     pub selected_server: Option<fleet::SelectedServer>,
+    /// The saved machine the shown sessions run on, when it is not this Mac.
+    pub remote_machine: Option<RemoteMachine>,
     pub split_layout: Option<super::divider::canonical::Layout>,
     pub split_gesture: Option<super::divider::canonical::Ack>,
     pub resize_gesture_supported: bool,
@@ -587,6 +595,7 @@ impl Reader {
             machines: p.machines,
             fleet: p.fleet,
             selected_server: p.selected_server,
+            remote_machine: None,
             split_layout: p.split_layout,
             split_gesture: p.split_gesture,
             resize_gesture_supported: p.resize_gesture_supported,

@@ -212,6 +212,16 @@ impl SnapshotView {
         .detach();
     }
 
+    /// A short note at the foot of the window, without Undo; other features
+    /// share the pane-move toast.
+    pub(in crate::tmux_snapshot) fn show_toast(
+        &mut self,
+        text: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pane_move_toast(text, false, cx);
+    }
+
     fn pane_move_toast(
         &mut self,
         text: impl Into<SharedString>,

@@ -3,6 +3,13 @@ use super::display_frame::DisplayFrame;
 use super::{Error, browser, copy, hit_regions};
 use crate::terminal_painter::{Highlight, Tint};
 
+/// What a double-click (a word) or triple-click (a line) selects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Unit {
+    Word,
+    Line,
+}
+
 pub(super) struct Capture {
     identity: Option<String>,
     pub frame: DisplayFrame,
@@ -12,6 +19,9 @@ pub(super) struct Capture {
     head: (u16, u16),
     pub dragging: bool,
     pub highlights: Vec<Highlight>,
+    /// The unit a double- or triple-click selected, with its boundaries;
+    /// dragging then grows the selection by whole units.
+    unit: Option<(Unit, units::Boundary, units::Boundary)>,
 }
 impl Capture {
     pub fn begin(state: &browser::State, x: f32, y: f32) -> Option<Self> {
@@ -40,13 +50,53 @@ impl Capture {
             head: anchor,
             dragging: true,
             highlights: Vec::new(),
+            unit: None,
         })
     }
+    /// Selects the word or line under (`x`, `y`) in place of the empty start.
+    pub fn select(&mut self, unit: Unit, x: f32, y: f32) -> Result<(), Error> {
+        let cell = self
+            .cell(x, y)
+            .ok_or(Error::Invalid("selection outside the pane"))?;
+        let (start, end) = units::bounds(&self.region, self.frame.view(), unit, cell)?;
+        self.unit = Some((unit, start, end));
+        self.anchor = start;
+        self.head = end;
+        self.paint()
+    }
     pub fn update(&mut self, x: f32, y: f32) -> Result<(), Error> {
+        if let Some((unit, start, end)) = self.unit {
+            if let Some(cell) = self.cell(x, y)
+                && let Ok((from, to)) = units::bounds(&self.region, self.frame.view(), unit, cell)
+            {
+                (self.anchor, self.head) = if from < start {
+                    (end, from)
+                } else {
+                    (start, to.max(end))
+                };
+            }
+            return self.paint();
+        }
         let Some(head) = boundary(&self.region, x, y) else {
             return Ok(());
         };
         self.head = head;
+        self.paint()
+    }
+    /// The pane cell under (`x`, `y`), clamped into the pane.
+    fn cell(&self, x: f32, y: f32) -> Option<(u16, u16)> {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        let row = (y - f32::from(self.region.top))
+            .floor()
+            .clamp(0., f32::from(self.region.height - 1));
+        let column = (x - f32::from(self.region.left))
+            .floor()
+            .clamp(0., f32::from(self.region.width - 1));
+        Some((row as u16, column as u16))
+    }
+    fn paint(&mut self) -> Result<(), Error> {
         self.highlights = self
             .region
             .spans_view(self.frame.view(), self.anchor, self.head)?
@@ -104,6 +154,9 @@ fn boundary(region: &copy::Region, x: f32, y: f32) -> Option<(u16, u16)> {
             .clamp(0., f32::from(region.width)) as u16,
     ))
 }
+#[path = "selection_units.rs"]
+mod units;
+
 #[cfg(test)]
 #[path = "selection_tests.rs"]
 mod tests;
