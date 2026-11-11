@@ -109,6 +109,7 @@ fn browser_fixture(
         pane_close: None,
         welcome: Default::default(),
         browser_address: None,
+        about: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),

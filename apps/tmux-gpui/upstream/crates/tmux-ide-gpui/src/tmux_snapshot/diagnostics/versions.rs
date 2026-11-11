@@ -62,8 +62,10 @@ pub(in crate::tmux_snapshot) struct Versions {
     pub tmux_version: Option<String>,
 }
 
+/// The running bundle's identifier, version and build, each only when the
+/// bundle is one of tmux-ide's and the value is well formed.
 #[cfg(target_os = "macos")]
-pub(super) fn native_bundle() -> (Option<String>, Option<String>) {
+pub(super) fn native_bundle_info() -> (Option<String>, Option<String>, Option<String>) {
     use objc2_foundation::{NSBundle, NSString};
     let bundle = NSBundle::mainBundle();
     let string = |key| {
@@ -75,18 +77,22 @@ pub(super) fn native_bundle() -> (Option<String>, Option<String>) {
         Some(value.to_string())
     };
     let Some(id) = string("CFBundleIdentifier") else {
-        return (None, None);
+        return (None, None, None);
     };
     if id != "com.tmux-ide.gpui" && !id.starts_with("com.tmux-ide.gpui.") {
-        return (None, None);
+        return (None, None, None);
     }
     let version = string("CFBundleShortVersionString").filter(|value| safe_version(value));
     let build = string("CFBundleVersion").filter(|value| {
         !value.is_empty() && value.len() <= 18 && value.bytes().all(|c| c.is_ascii_digit())
     });
-    (version, build)
+    (Some(id), version, build)
 }
 #[cfg(not(target_os = "macos"))]
+pub(super) fn native_bundle_info() -> (Option<String>, Option<String>, Option<String>) {
+    (None, None, None)
+}
 pub(super) fn native_bundle() -> (Option<String>, Option<String>) {
-    (None, None)
+    let (_, version, build) = native_bundle_info();
+    (version, build)
 }
