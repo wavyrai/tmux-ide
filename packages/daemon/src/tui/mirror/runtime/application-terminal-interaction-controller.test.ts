@@ -463,8 +463,12 @@ describe("application terminal interaction controller", () => {
       admission.settle(true);
       await Promise.all([held, fresh]);
       await rig.flush();
+      // The stale admission selects nothing in the runtime (review finding 2:
+      // it used to select the agent pane after the newer one).
       expect(rig.selections()).not.toContain("pane.peer");
+      await rig.controller.sendInput({ kind: "text", data: "next" });
       expect(rig.delivered().filter(([pane]) => pane === "pane.peer")).toEqual([]);
+      expect(rig.delivered().at(-1)).toEqual(["pane.main", "next"]);
     });
   });
 

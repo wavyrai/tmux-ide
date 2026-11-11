@@ -296,6 +296,32 @@ describe("resident agent Home composition", () => {
     r.dispose();
   });
 
+  it("Esc during the warm wait cancels it, selects nothing and returns the keyboard", async () => {
+    const r = rig();
+    r.setListedPane("pane.previous");
+    r.owner.presentation.onOpenAgent!(row, "keyboard");
+    const admission = r.selectPane.mock.calls[0]![1] as Promise<boolean>;
+    expect(r.owner.opening()).toBe(true);
+    expect(r.owner.presentation.agentInputActive).toBe(false);
+    // Other keys are owned (ignored) while opening.
+    expect(r.owner.ownsKey("a")).toBe(true);
+    expect(r.owner.opening()).toBe(true);
+
+    expect(r.owner.ownsKey("escape")).toBe(true);
+    expect(r.owner.opening()).toBe(false);
+    expect(r.owner.presentation.agentInputActive).toBe(true);
+    // The controller never selects a pane whose admission is false.
+    await expect(admission).resolves.toBe(false);
+    r.setListedPane("pane.exact");
+    await Promise.resolve();
+    expect(r.showTerminals).not.toHaveBeenCalled();
+    expect(r.setNote).toHaveBeenLastCalledWith(null);
+    // Not opening: keys, Esc included, reach the rest of the root again.
+    expect(r.owner.ownsKey("escape")).toBe(false);
+    expect(r.owner.ownsKey("a")).toBe(false);
+    r.dispose();
+  });
+
   it("still rejects a changed incarnation after semantic readiness", async () => {
     const r = rig();
     r.setSessionName("beta");

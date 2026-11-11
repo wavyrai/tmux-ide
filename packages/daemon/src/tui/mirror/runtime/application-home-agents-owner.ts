@@ -121,6 +121,19 @@ function waitForHomeAgentGeneration(
   });
 }
 
+/**
+ * While an agent opens, it owns the keyboard: other keys are ignored and Esc
+ * cancels the open (#764: the warm wait can last 5 s). True when it owns `name`.
+ */
+export function agentOpeningOwnsKey(
+  name: string,
+  opener: { opening(): boolean; cancel(): void },
+): boolean {
+  if (!opener.opening()) return false;
+  if (name === "escape") opener.cancel();
+  return true;
+}
+
 /** Resident feature composition: observation, selection, and navigation have separate owners. */
 export function createApplicationHomeAgentsOwner(options: {
   readonly catalog: Accessor<ApplicationHomeCatalogSnapshot>;
@@ -236,7 +249,12 @@ export function createApplicationHomeAgentsOwner(options: {
     observer.dispose();
     selection.dispose();
   });
-  return { presentation, opening, cancel };
+  return {
+    presentation,
+    opening,
+    cancel,
+    ownsKey: (name: string) => agentOpeningOwnsKey(name, { opening, cancel }),
+  };
 }
 
 /** Compose Home navigation with competing chrome intents; physical input stays in the root. */

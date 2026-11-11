@@ -310,6 +310,20 @@ describe("Home exact agent navigation", () => {
       expect(h.setNote).not.toHaveBeenCalledWith("Waiting for agent in agents…");
     });
 
+    it("is refused when the wait itself fails", async () => {
+      const admissions: Promise<boolean>[] = [];
+      const h = harness(behind(), {
+        waitForAgent: () => Promise.reject(new Error("wait failed")),
+        onAdmission: (admission) => admissions.push(admission),
+      });
+      await expect(h.owner.open(target, "mouse")).resolves.toEqual({
+        opened: false,
+        failure: "pane-removed",
+      });
+      await expect(admissions[0]).resolves.toBe(false);
+      expect(h.showTerminals).not.toHaveBeenCalled();
+    });
+
     it("aborts a superseded wait at once instead of running to the bound", async () => {
       const signals: AbortSignal[] = [];
       const h = harness(behind(), {

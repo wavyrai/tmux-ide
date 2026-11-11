@@ -6,6 +6,7 @@ import {
 } from "./application-home-agent-navigation.ts";
 import { applicationGenerationNavigationKey } from "./application-generation-starter.ts";
 import {
+  agentOpeningOwnsKey,
   waitForHomeAgentListed,
   waitForHomeAgentSemantic,
 } from "./application-home-agents-owner.ts";
@@ -31,6 +32,11 @@ export function createApplicationMachineAgentNavigator(options: {
   let disposed = false;
   let opening = false;
   let request = 0;
+  const cancel = () => {
+    request++;
+    opening = false;
+    current?.cancel();
+  };
   return {
     open(
       machineId: string,
@@ -97,11 +103,9 @@ export function createApplicationMachineAgentNavigator(options: {
       });
     },
     opening: () => opening,
-    cancel() {
-      request++;
-      opening = false;
-      current?.cancel();
-    },
+    cancel,
+    /** Esc cancels an open in progress; other keys are ignored meanwhile. */
+    ownsKey: (name: string) => agentOpeningOwnsKey(name, { opening: () => opening, cancel }),
     dispose() {
       disposed = true;
       request++;

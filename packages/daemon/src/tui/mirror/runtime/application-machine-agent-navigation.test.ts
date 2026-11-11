@@ -177,6 +177,18 @@ describe("machine agent navigation", () => {
   // #764: the same session not listing the pane yet may be a moment behind
   // Home. The selection is registered (not yet sent to the runtime) and refused
   // after the 5 s bound if the pane never appears; terminals are not shown.
+  it("Esc during the wait cancels it, selects nothing and returns the keyboard", async () => {
+    const h = harness();
+    h.state.pane = "different";
+    const result = h.owner.open("remote", target);
+    expect(h.owner.ownsKey("a")).toBe(true);
+    expect(h.owner.ownsKey("escape")).toBe(true);
+    expect(h.owner.opening()).toBe(false);
+    await expect(h.admissions[0]).resolves.toBe(false);
+    expect((await result).opened).toBe(false);
+    expect(h.events).toEqual(["select:%7"]);
+    expect(h.owner.ownsKey("a")).toBe(false);
+  });
   it("rejects a mismatched pane after the bounded wait", async () => {
     vi.useFakeTimers();
     try {
