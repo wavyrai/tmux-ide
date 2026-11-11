@@ -28,8 +28,15 @@ actions!(
         PreviousWindow,
         Minimize,
         Attention,
+        HideApp,
+        HideOthers,
+        ShowAll,
     ]
 );
+
+/// The name the menu bar and window titles show; Info.plist's CFBundleName
+/// (scripts/app-bundle-metadata.mjs) says the same.
+pub(crate) const APP_NAME: &str = "Tmux IDE";
 
 /// The keystroke each shortcut item stands for.
 pub(super) fn keystroke(action: &dyn Action) -> Option<&'static str> {
@@ -62,10 +69,14 @@ pub(super) fn keystroke(action: &dyn Action) -> Option<&'static str> {
 /// equivalents come with the keymap card.
 pub(super) fn menus() -> Vec<Menu> {
     vec![
-        Menu::new("tmux-ide").items([
+        Menu::new(APP_NAME).items([
             MenuItem::action("Choose Theme…", ChooseTheme),
             MenuItem::separator(),
-            MenuItem::action("Quit tmux-ide", crate::Quit),
+            MenuItem::action(format!("Hide {APP_NAME}"), HideApp),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action(format!("Quit {APP_NAME}"), crate::Quit),
         ]),
         Menu::new("Edit").items([
             MenuItem::action("Cut", crate::actions::Cut),
@@ -110,8 +121,12 @@ pub(super) fn menus() -> Vec<Menu> {
     ]
 }
 
-/// Installs the menu bar, and nothing else: no key bindings.
+/// Installs the menu bar and the app-wide handlers of its Hide items, and
+/// nothing else: no key bindings.
 pub(super) fn install(cx: &mut App) {
+    cx.on_action(|_: &HideApp, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.set_menus(menus());
 }
 

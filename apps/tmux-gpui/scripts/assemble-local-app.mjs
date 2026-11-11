@@ -7,7 +7,7 @@ import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { verifyNativeBuildReceipt } from "./native-build-receipt.mjs";
-import { readBundleMetadata, bundlePlist } from "./app-bundle-metadata.mjs";
+import { readBundleMetadata, bundlePlist, infoPlistStrings } from "./app-bundle-metadata.mjs";
 import { copyBrowserPayload, assertCurrentBrowserLauncher } from "./browser-payload.mjs";
 const run = promisify(execFile);
 const flags = process.argv.slice(5);
@@ -141,6 +141,10 @@ exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resour
     ? await copyBrowserPayload(options.get("--browser-payload"), join(resources, "browser"))
     : undefined;
   await writeFile(join(output, "Contents/Info.plist"), bundlePlist(metadata));
+  if (metadata) {
+    await mkdir(join(resources, "en.lproj"));
+    await writeFile(join(resources, "en.lproj/InfoPlist.strings"), infoPlistStrings());
+  }
   const digest = async (path) =>
     createHash("sha256")
       .update(await readFile(path))
@@ -197,7 +201,11 @@ exec "$app_macos/tmux-ide-gpui" --tmux-browser-helper "$resources/node" "$resour
       2,
     ) + "\n",
   );
-  await run("/usr/bin/plutil", ["-lint", join(output, "Contents/Info.plist")]);
+  await run("/usr/bin/plutil", [
+    "-lint",
+    join(output, "Contents/Info.plist"),
+    ...(metadata ? [join(resources, "en.lproj/InfoPlist.strings")] : []),
+  ]);
   // Notice/bridge generation must not silently leave a stale source receipt.
   await verifyNativeBuildReceipt(
     join(resources, "native-build-receipt.json"),

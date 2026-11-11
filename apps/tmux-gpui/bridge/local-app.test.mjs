@@ -8,7 +8,11 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { verifyNativeBuildReceipt } from "../scripts/native-build-receipt.mjs";
-import { validateBundleMetadata, developmentMetadata } from "../scripts/app-bundle-metadata.mjs";
+import {
+  validateBundleMetadata,
+  developmentMetadata,
+  infoPlistStrings,
+} from "../scripts/app-bundle-metadata.mjs";
 const run = promisify(execFile);
 const app = process.env.TMUX_GPUI_TEST_APP;
 const nodeFiles = ["node", "NODE-LICENSE", "bridge"];
@@ -38,8 +42,7 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
     CFBundleIdentifier: expected.bundleId,
     CFBundleShortVersionString: expected.version,
     CFBundleVersion: expected.buildNumber,
-    CFBundleName:
-      manifests[0] === "assembly-manifest.json" ? "tmux-ide Preview" : "tmux-ide Development",
+    CFBundleName: manifests[0] === "assembly-manifest.json" ? "Tmux IDE" : "Tmux IDE Development",
     LSMinimumSystemVersion: "14.2",
     CFBundleIconFile: "AppIcon.icns",
     CFBundleIconName: "AppIcon",
@@ -58,6 +61,10 @@ test("local app retains binary identity and refuses replacement", { skip: !app }
       value,
     );
   }
+  const strings = join(resources, "en.lproj/InfoPlist.strings");
+  if (manifests[0] === "assembly-manifest.json")
+    assert.equal(await readFile(strings, "utf8"), infoPlistStrings());
+  else await assert.rejects(access(strings), { code: "ENOENT" });
   assert.equal(manifest.icon.file, "AppIcon.icns");
   assert.deepEqual(
     await readFile(join(resources, "AppIcon.icns")),
