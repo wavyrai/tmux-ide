@@ -67,7 +67,10 @@ fn shown(cx: &mut VisualTestContext) -> bool {
     cx.debug_bounds("welcome").is_some()
 }
 fn fresh(dir: &tempfile::TempDir) -> State {
-    State::for_test(Some(dir.path().join("gpui-onboarding.json")))
+    State::for_test(
+        Some(dir.path().join("gpui-onboarding.json")),
+        Some("0.1.17"),
+    )
 }
 fn saved(dir: &tempfile::TempDir, cx: &mut VisualTestContext) -> State {
     cx.run_until_parked();
@@ -298,6 +301,9 @@ fn the_welcome_speaks_plainly() {
         texts.extend(secondary.map(|b| b.label));
         texts.push(primary.label);
     }
+    for (_, notes) in whats_new::RELEASES.iter().take(1) {
+        texts.extend(notes.iter().map(|n| n.to_string()));
+    }
     for text in texts {
         assert_eq!(jargon(&text), None, "{text}");
     }
@@ -307,24 +313,26 @@ fn the_welcome_speaks_plainly() {
 fn what_is_remembered_survives_and_bad_files_start_over() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("gpui-onboarding.json");
-    let missing = State::for_test(Some(path.clone()));
-    assert!(missing.ready && !missing.welcomed);
+    let missing = State::for_test(Some(path.clone()), None);
+    assert!(missing.ready && !missing.welcomed && missing.whats_new_seen.is_none());
     write(
         &path,
         &Saved {
             version: 1,
             welcomed: true,
+            whats_new_seen: Some("0.1.17".into()),
         },
     )?;
-    let back = State::for_test(Some(path.clone()));
+    let back = State::for_test(Some(path.clone()), None);
     assert!(back.welcomed);
+    assert_eq!(back.whats_new_seen.as_deref(), Some("0.1.17"));
     for contents in [
         "not json",
         r#"{"version":2,"welcomed":true}"#,
         r#"{"version":1,"welcomed":true,"extra":0}"#,
     ] {
         std::fs::write(&path, contents)?;
-        let state = State::for_test(Some(path.clone()));
+        let state = State::for_test(Some(path.clone()), None);
         assert!(state.ready && !state.welcomed, "{contents}");
     }
     Ok(())
@@ -385,10 +393,12 @@ fn set_up_runs_the_managed_setup_and_shows_its_progress(cx: &mut TestAppContext)
     assert_eq!(line.title, STARTING);
     assert_eq!(line.status, "3 s");
     // The worker succeeds: Home is live, the welcome says so and is
-    // remembered.
+    // remembered, with this version's What's new already seen.
     publish(&view, cx, None);
     assert!(shown(cx));
-    assert!(saved(&dir, cx).welcomed);
+    let state = saved(&dir, cx);
+    assert!(state.welcomed);
+    assert_eq!(state.whats_new_seen.as_deref(), Some("0.1.17"));
 }
 
 #[gpui::test]
@@ -519,6 +529,58 @@ fn opening_an_existing_session_closes_the_welcome(cx: &mut TestAppContext) {
         rx.try_iter()
             .any(|c| matches!(c, browser::Command::Session { .. }))
     );
+}
+
+#[test]
+fn whats_new_is_due_once_per_version_for_the_welcomed() {
+    let mut state = State {
+        ready: true,
+        welcomed: true,
+        version: Some("0.1.17".into()),
+        ..Default::default()
+    };
+    assert_eq!(whats_new::due(&state), whats_new::notes("0.1.17"));
+    assert!(whats_new::notes("0.1.17").unwrap().len() <= 3);
+    state.whats_new_seen = Some("0.1.17".into());
+    assert_eq!(whats_new::due(&state), None, "seen");
+    state.whats_new_seen = Some("0.1.16".into());
+    assert!(
+        whats_new::due(&state).is_some(),
+        "a newer version shows again"
+    );
+    state.open = true;
+    assert_eq!(whats_new::due(&state), None, "never over the welcome");
+    state.open = false;
+    state.welcomed = false;
+    assert_eq!(whats_new::due(&state), None, "not on first run");
+    state.welcomed = true;
+    state.version = Some("9.9.9".into());
+    assert_eq!(whats_new::due(&state), None, "a version without notes");
+    state.version = None;
+    assert_eq!(whats_new::due(&state), None, "outside a bundle");
+    assert_eq!(whats_new::notes("Earlier"), None);
+}
+
+#[gpui::test]
+fn whats_new_shows_on_home_once_and_close_remembers_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("gpui-onboarding.json"),
+        r#"{"version":1,"welcomed":true,"whats_new_seen":"0.1.16"}"#,
+    )
+    .unwrap();
+    let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    draw(cx);
+    assert!(cx.debug_bounds("whats-new").is_some());
+    assert!(cx.debug_bounds("whats-new-note-2").is_some());
+    let close = cx.debug_bounds("whats-new-close").unwrap();
+    cx.simulate_click(close.center(), Modifiers::default());
+    draw(cx);
+    assert!(cx.debug_bounds("whats-new").is_none());
+    assert_eq!(saved(&dir, cx).whats_new_seen.as_deref(), Some("0.1.17"));
+    cx.update(|_, cx| view.update(cx, |v, _| v.welcome = fresh(&dir)));
+    draw(cx);
+    assert!(cx.debug_bounds("whats-new").is_none(), "once per version");
 }
 
 #[test]

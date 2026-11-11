@@ -440,6 +440,10 @@ impl SnapshotView {
         }
         cx.notify();
     }
+    /// Commands → What's new, from What's new's card (onboarding A5).
+    pub(super) fn open_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_picker_mode(Mode::WhatsNew, window, cx);
+    }
     fn open_picker_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.browser_commands.is_none() && mode != Mode::Commands {
             return;

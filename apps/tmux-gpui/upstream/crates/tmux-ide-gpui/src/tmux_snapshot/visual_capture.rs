@@ -636,9 +636,10 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     }
     // `+welcome` is first run with setup needed (onboarding A1), with
     // `+running` or `+failed` its states; `+welcome-existing` the welcome
-    // opened from Commands over sessions.
+    // opened from Commands over sessions; `+whatsnew` What's new's card (A5).
     let welcome = extras.contains(&"welcome");
     let welcome_existing = extras.contains(&"welcome-existing");
+    let whats_new = extras.contains(&"whatsnew");
     if welcome {
         state.surface = browser::Surface::Home;
         state.home_phase = browser::HomePhase::Unavailable;
@@ -655,7 +656,7 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         };
         state.local_setup = Some(browser::local_setup::Setup { phase });
     }
-    if welcome_existing {
+    if welcome_existing || whats_new {
         state.surface = browser::Surface::Home;
     }
     let (sender, receiver) = mpsc::sync_channel(1024);
@@ -682,11 +683,12 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     let mut view = capture_view(window, cx, sender, state);
                     // `+sidebar` keeps Home's sidebar (#746).
                     view.sidebar_hidden = (home_b && !with_sidebar) || nosidebar;
-                    if welcome || welcome_existing {
+                    if welcome || welcome_existing || whats_new {
                         let now = cx.background_executor().now();
                         view.welcome = super::welcome::State::preview(
                             welcome_existing,
-                            false,
+                            whats_new,
+                            Some("0.1.17"),
                             extras
                                 .contains(&"running")
                                 .then(|| now - std::time::Duration::from_secs(3)),

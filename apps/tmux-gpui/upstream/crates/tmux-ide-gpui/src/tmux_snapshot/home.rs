@@ -666,7 +666,9 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .bg(rgb(canvas))
+            .relative()
             .child(page.fill())
+            .children(self.whats_new_card(cx))
             .into_any_element()
     }
 }

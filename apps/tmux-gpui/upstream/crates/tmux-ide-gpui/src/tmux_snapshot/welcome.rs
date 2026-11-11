@@ -1,6 +1,6 @@
 //! First run (onboarding A1): a welcome surface in Home's place, which sets
 //! Tmux IDE up with the existing managed setup and says what happened in
-//! plain words.
+//! plain words; and What's new once per version (A5).
 //!
 //! Remembered in ~/.config/tmux-ide/gpui-onboarding.json, the same small,
 //! versioned, atomically written file the app keeps for its other view
@@ -17,6 +17,8 @@ use std::{
 
 #[path = "welcome/render.rs"]
 mod render;
+#[path = "welcome/whats_new.rs"]
+pub(super) mod whats_new;
 
 /// The managed setup's own deadline (herdr-client local_setup.rs).
 pub(super) const SETUP_DEADLINE: Duration = Duration::from_secs(20);
@@ -31,6 +33,8 @@ pub(super) const HELP_URL: &str = "https://github.com/wavyrai/tmux-ide/issues";
 struct Saved {
     version: u8,
     welcomed: bool,
+    #[serde(default)]
+    whats_new_seen: Option<String>,
 }
 
 /// What the app remembers, and the welcome's state for this run.
@@ -42,6 +46,10 @@ pub(super) struct State {
     path: Option<PathBuf>,
     /// The welcome was shown and closed, or this Mac was already set up.
     pub welcomed: bool,
+    /// The last version whose What's new card was closed.
+    pub whats_new_seen: Option<String>,
+    /// This app's version (the bundle's), when it has one.
+    pub version: Option<String>,
     /// First run was decided for this run.
     decided: bool,
     /// The welcome is in Home's place.
@@ -424,7 +432,7 @@ fn write(path: &Path, saved: &Saved) -> io::Result<()> {
     result
 }
 impl State {
-    fn load(path: Option<PathBuf>) -> Self {
+    fn load(path: Option<PathBuf>, version: Option<String>) -> Self {
         let saved = path
             .as_deref()
             .and_then(|p| read(p).ok())
@@ -434,6 +442,8 @@ impl State {
             ready: true,
             path,
             welcomed: saved.welcomed,
+            whats_new_seen: saved.whats_new_seen,
+            version,
             ..Default::default()
         }
     }
@@ -442,6 +452,7 @@ impl State {
     pub(super) fn preview(
         open: bool,
         welcomed: bool,
+        version: Option<&str>,
         started: Option<Instant>,
         stopped_after: Option<Duration>,
     ) -> Self {
@@ -449,6 +460,7 @@ impl State {
             started: true,
             ready: true,
             welcomed,
+            version: version.map(Into::into),
             decided: open || welcomed,
             open,
             setup_started: started,
@@ -458,13 +470,14 @@ impl State {
         }
     }
     #[cfg(test)]
-    pub(super) fn for_test(path: Option<PathBuf>) -> Self {
-        Self::load(path)
+    pub(super) fn for_test(path: Option<PathBuf>, version: Option<&str>) -> Self {
+        Self::load(path, version.map(Into::into))
     }
     fn saved(&self) -> Saved {
         Saved {
             version: 1,
             welcomed: self.welcomed,
+            whats_new_seen: self.whats_new_seen.clone(),
         }
     }
 }
@@ -477,7 +490,7 @@ impl SnapshotView {
         self.welcome.started = true;
         let task = cx
             .background_executor()
-            .spawn(async { State::load(path()) });
+            .spawn(async { State::load(path(), super::diagnostics::app_version()) });
         cx.spawn(async move |view, cx| {
             let state = task.await;
             let _ = view.update(cx, |view, cx| {
@@ -527,7 +540,7 @@ impl SnapshotView {
                 }
                 Decision::AlreadySetUp => {
                     self.welcome.decided = true;
-                    // An existing user: never shown the welcome.
+                    // An existing user: never welcomed, but What's new shows.
                     self.welcome.welcomed = true;
                     self.save_welcome(cx);
                 }
@@ -552,9 +565,10 @@ impl SnapshotView {
         }
         self.welcome.last_phase = setup;
         // Set up while the welcome is open: remember it, so it never shows
-        // again by itself.
+        // again by itself, and let What's new wait for the next version.
         if self.welcome.open && live && !self.welcome.welcomed {
             self.welcome.welcomed = true;
+            self.welcome.whats_new_seen = self.welcome.version.clone();
             self.save_welcome(cx);
         }
         if self.welcome.open && setup == Some(Phase::Running) && !self.welcome.ticking {
@@ -587,10 +601,13 @@ impl SnapshotView {
         }
         cx.notify();
     }
-    /// Closes the welcome and remembers it.
+    /// Closes the welcome and remembers it, with this version's What's new.
     pub(super) fn close_welcome(&mut self, cx: &mut Context<Self>) {
         self.welcome.open = false;
         self.welcome.welcomed = true;
+        if self.welcome.whats_new_seen.is_none() {
+            self.welcome.whats_new_seen = self.welcome.version.clone();
+        }
         self.save_welcome(cx);
         cx.notify();
     }
