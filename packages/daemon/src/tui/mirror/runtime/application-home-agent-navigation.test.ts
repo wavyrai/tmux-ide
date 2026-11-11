@@ -28,7 +28,25 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function harness(initial: HomeAgentNavigationGeneration | null = generation()) {
+/** The attached session has not listed the agent yet (#764). */
+const behind = (): HomeAgentNavigationGeneration => ({ ...generation(), agents: [] });
+/** A harness whose warm path waits: `wait.resolve` ends the bounded wait. */
+function waiting(initial: HomeAgentNavigationGeneration = behind()) {
+  const wait = deferred<boolean>();
+  const admissions: Promise<boolean>[] = [];
+  const h = harness(initial, {
+    waitForAgent: vi.fn(() => wait.promise),
+    onAdmission: (admission) => admissions.push(admission),
+  });
+  return { ...h, wait, admissions };
+}
+function harness(
+  initial: HomeAgentNavigationGeneration | null = generation(),
+  extra: {
+    waitForAgent?: (key: string, listed: () => boolean, signal: AbortSignal) => Promise<boolean>;
+    onAdmission?: (admission: Promise<boolean>) => void;
+  } = {},
+) {
   const state = { current: initial, targetCurrent: true };
   const startGeneration = vi.fn(async (): Promise<ApplicationGenerationStartResult> => {
     state.current = generation();
@@ -39,9 +57,10 @@ function harness(initial: HomeAgentNavigationGeneration | null = generation()) {
     };
   });
   const events: string[] = [];
-  const selectPane = vi.fn((pane: string, source: string) =>
-    events.push(`select:${pane}:${source}`),
-  );
+  const selectPane = vi.fn((pane: string, source: string, admission?: Promise<boolean>) => {
+    events.push(`select:${pane}:${source}${admission ? ":pending" : ""}`);
+    if (admission) extra.onAdmission?.(admission);
+  });
   const showTerminals = vi.fn((source: string) => events.push(`show:${source}`));
   const setNote = vi.fn();
   const owner = createApplicationHomeAgentNavigator({
@@ -51,6 +70,7 @@ function harness(initial: HomeAgentNavigationGeneration | null = generation()) {
     selectPane,
     showTerminals,
     setNote,
+    ...(extra.waitForAgent ? { waitForAgent: extra.waitForAgent } : {}),
   });
   return { state, startGeneration, events, selectPane, showTerminals, setNote, owner };
 }
@@ -211,5 +231,74 @@ describe("Home exact agent navigation", () => {
     await expect(h.owner.open(target)).resolves.toEqual({ opened: false, failure: "superseded" });
     expect(h.setNote.mock.calls).toEqual([["Opening agent in agents…"]]);
     expect(h.events).toEqual([]);
+  });
+
+  // #764: Home's roster can list a new agent before the attached session does.
+  // The warm path then waits, bounded, instead of refusing the click.
+  describe("an agent the attached session lists a moment after Home", () => {
+    it("is admitted once the session lists it within the wait", async () => {
+      const h = waiting();
+      const result = h.owner.open(target, "mouse");
+      // Registered at once, so keys typed now are ordered behind this pane.
+      expect(h.events).toEqual(["select:pane.exact:mouse:pending"]);
+      expect(h.setNote).not.toHaveBeenCalled();
+      h.state.current = generation();
+      h.wait.resolve(true);
+      await expect(result).resolves.toEqual({ opened: true });
+      await expect(h.admissions[0]).resolves.toBe(true);
+      expect(h.events).toEqual(["select:pane.exact:mouse:pending", "show:mouse"]);
+      expect(h.setNote).toHaveBeenLastCalledWith(null);
+    });
+
+    it("is refused as before when the bound passes without it", async () => {
+      const h = waiting();
+      const result = h.owner.open(target, "mouse");
+      h.wait.resolve(false);
+      await expect(result).resolves.toEqual({ opened: false, failure: "pane-removed" });
+      await expect(h.admissions[0]).resolves.toBe(false);
+      expect(h.showTerminals).not.toHaveBeenCalled();
+      expect(h.setNote).toHaveBeenCalledWith(expect.stringContaining("no longer available"));
+    });
+
+    it("is refused when the session lists the agent on another pane", async () => {
+      const h = waiting();
+      const result = h.owner.open(target, "mouse");
+      h.state.current = {
+        ...generation(),
+        agents: [{ id: target.agentId, paneId: "pane.replaced" }],
+      };
+      h.wait.resolve(true);
+      await expect(result).resolves.toEqual({ opened: false, failure: "pane-removed" });
+      await expect(h.admissions[0]).resolves.toBe(false);
+      expect(h.showTerminals).not.toHaveBeenCalled();
+    });
+
+    it("is refused when the generation is replaced during the wait", async () => {
+      const h = waiting();
+      const result = h.owner.open(target, "mouse");
+      h.state.current = { ...generation(), generationKey: "daemon:8:1" };
+      h.wait.resolve(true);
+      await expect(result).resolves.toEqual({ opened: false, failure: "generation-changed" });
+      await expect(h.admissions[0]).resolves.toBe(false);
+    });
+
+    it("is refused when a newer open supersedes it", async () => {
+      const h = waiting();
+      const first = h.owner.open(target, "mouse");
+      h.owner.cancel();
+      h.state.current = generation();
+      h.wait.resolve(true);
+      await expect(first).resolves.toEqual({ opened: false, failure: "superseded" });
+      await expect(h.admissions[0]).resolves.toBe(false);
+    });
+
+    it("never waits for a different attached session", async () => {
+      const h = waiting({ ...behind(), liveSessionId: "recreated-same-name" });
+      await expect(h.owner.open(target, "mouse")).resolves.toMatchObject({
+        opened: false,
+        failure: "generation-changed",
+      });
+      expect(h.admissions).toEqual([]);
+    });
   });
 });

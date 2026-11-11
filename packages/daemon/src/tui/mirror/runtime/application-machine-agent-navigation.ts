@@ -5,7 +5,10 @@ import {
   type HomeAgentNavigationTarget,
 } from "./application-home-agent-navigation.ts";
 import { applicationGenerationNavigationKey } from "./application-generation-starter.ts";
-import { waitForHomeAgentSemantic } from "./application-home-agents-owner.ts";
+import {
+  waitForHomeAgentListed,
+  waitForHomeAgentSemantic,
+} from "./application-home-agents-owner.ts";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 
 type HomeNavigatorOptions = Parameters<typeof createApplicationHomeAgentNavigator>[0];
@@ -72,6 +75,8 @@ export function createApplicationMachineAgentNavigator(options: {
           };
         },
         waitForGeneration: (key, signal) => waitForHomeAgentSemantic(generation, key, signal),
+        waitForAgent: (key, listed, signal) =>
+          waitForHomeAgentListed(generation, key, listed, signal),
         startGeneration: (session, prepared, origin, focus, admission) =>
           options.startGeneration(
             session,

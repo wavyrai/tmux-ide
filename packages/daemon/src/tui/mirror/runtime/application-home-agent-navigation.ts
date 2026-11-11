@@ -43,7 +43,26 @@ export function createApplicationHomeAgentNavigator(options: {
     focusFirstPane: boolean,
     admission?: () => boolean,
   ) => Promise<ApplicationGenerationStartResult>;
-  readonly selectPane: (paneId: string, source: HomeAgentNavigationSource) => void;
+  /**
+   * With `admission`, the selection is registered now (input typed meanwhile
+   * is ordered behind it) and sent only if `admission` resolves true; on
+   * false, input held for it is dropped, never delivered to another pane.
+   */
+  readonly selectPane: (
+    paneId: string,
+    source: HomeAgentNavigationSource,
+    admission?: Promise<boolean>,
+  ) => void;
+  /**
+   * Home's roster can list an agent a moment before the attached session does.
+   * Resolves true once `listed()` holds, false on the bound, abort or a
+   * different generation (the navigator then refuses as before).
+   */
+  readonly waitForAgent?: (
+    generationKey: string,
+    listed: () => boolean,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   readonly showTerminals: (source: HomeAgentNavigationSource) => void;
   readonly setNote: (note: string | null) => void;
 }) {
@@ -60,12 +79,20 @@ export function createApplicationHomeAgentNavigator(options: {
     options.setNote(note);
     return { opened: false, failure: reason };
   };
-  const admit = (
+  const listed = (
+    current: HomeAgentNavigationGeneration | null,
+    target: HomeAgentNavigationTarget,
+  ): boolean =>
+    !!target.paneId &&
+    !!current?.agents.some(
+      (agent) => agent.id === target.agentId && agent.paneId === target.paneId,
+    );
+  /** Every admission check; null admits. Notes are set only for a refusal. */
+  const refusal = (
     token: number,
     target: HomeAgentNavigationTarget,
-    source: HomeAgentNavigationSource,
     expectedGeneration?: string,
-  ): HomeAgentNavigationResult => {
+  ): HomeAgentNavigationResult | null => {
     if (!active(token)) return { opened: false, failure: "superseded" };
     if (!options.isCurrentTarget(target))
       return failure(
@@ -87,18 +114,56 @@ export function createApplicationHomeAgentNavigator(options: {
         "The session changed while opening that agent. Return Home and retry.",
       );
     }
-    if (
-      !target.paneId ||
-      !current.agents.some((agent) => agent.id === target.agentId && agent.paneId === target.paneId)
-    )
+    if (!listed(current, target))
       return failure(
         token,
         "pane-removed",
         "That exact agent terminal is no longer available. Return Home and select another agent.",
       );
+    return null;
+  };
+  const admit = (
+    token: number,
+    target: HomeAgentNavigationTarget,
+    source: HomeAgentNavigationSource,
+    expectedGeneration?: string,
+  ): HomeAgentNavigationResult => {
+    const refused = refusal(token, target, expectedGeneration);
+    if (refused) return refused;
     // Synchronous on the warm path: selection precedes surface visibility and
     // the next input event. The existing terminal owner remains the only input path.
-    options.selectPane(target.paneId, source);
+    options.selectPane(target.paneId!, source);
+    options.showTerminals(source);
+    options.setNote(null);
+    return { opened: true };
+  };
+  /**
+   * The warm path when Home lists an agent the attached session doesn't yet
+   * (#764): register the selection now, wait (bounded) for the session to list
+   * exactly this agent on this pane, then run every admission check again.
+   * Keys typed meanwhile reach this pane only if it is admitted.
+   */
+  const admitWhenListed = async (
+    token: number,
+    target: HomeAgentNavigationTarget,
+    source: HomeAgentNavigationSource,
+    generationKey: string,
+    waitForAgent: NonNullable<typeof options.waitForAgent>,
+    signal: AbortSignal,
+  ): Promise<HomeAgentNavigationResult> => {
+    let settle!: (admitted: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    options.selectPane(target.paneId!, source, admission);
+    try {
+      await waitForAgent(generationKey, () => listed(options.currentGeneration(), target), signal);
+    } catch {
+      // A failed wait is a refusal below, never an admission.
+    }
+    const refused = refusal(token, target, generationKey);
+    settle(refused === null);
+    if (refused) return refused;
     options.showTerminals(source);
     options.setNote(null);
     return { opened: true };
@@ -122,8 +187,27 @@ export function createApplicationHomeAgentNavigator(options: {
             "stale-target",
             "That agent changed or disappeared. Select it again on Home.",
           );
-        if (options.currentGeneration()?.sessionName === target.sessionName)
+        const attached = options.currentGeneration();
+        if (attached?.sessionName === target.sessionName) {
+          if (
+            options.waitForAgent &&
+            attached.daemonInstanceId === target.daemonInstanceId &&
+            attached.liveSessionId === target.liveSessionId &&
+            !listed(attached, target)
+          ) {
+            // The same session, just not listing this agent yet: possibly a
+            // moment behind Home. Refused as before if the wait ends without it.
+            return admitWhenListed(
+              token,
+              target,
+              source,
+              attached.generationKey,
+              options.waitForAgent,
+              controller.signal,
+            );
+          }
           return admit(token, target, source);
+        }
         options.setNote(`Opening agent in ${target.sessionName}…`);
         // Never briefly focus the first pane of the newly opened session.
         const opened = await options.startGeneration(target.sessionName, false, source, false, () =>

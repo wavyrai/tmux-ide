@@ -83,7 +83,12 @@ export interface ApplicationTerminalInteractionController {
   adoptGeneration(snapshot: OpenTuiGenerationHostSnapshot | null): void;
   cancelPendingInput(): void;
   adoptLayout(snapshot: OpenTuiWorkspaceLayoutSnapshot): void;
-  selectPane(paneId: string): void;
+  /**
+   * With `admission`, input typed from now on is ordered behind this pane, and
+   * the pane is selected only if `admission` resolves true; on false that input
+   * is dropped, never delivered to another pane.
+   */
+  selectPane(paneId: string, admission?: Promise<boolean>): void;
   selectWindowLink(target: WindowLinkTarget): Promise<void>;
   unlinkWindowLink(target: WindowLinkTarget): Promise<string>;
   sendInput(
@@ -822,100 +827,118 @@ export function createApplicationTerminalInteractionController(
     );
   };
 
-  const paneInput = new TerminalPaneInputRouter<{
-    readonly input: SessionRuntimeTerminalInput;
-    readonly parserOrigin?: Omit<
-      TuiTerminalInputOrigin,
-      "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
-    >;
-  }>({
-    select: async (paneId): Promise<boolean> => {
-      finishLinkSelection(false);
-      const initial = options.generation();
-      const selectionControl = controlIdentity(initial);
-      const selectionVersion = paneInput.selectionVersion;
-      const selectionCurrent = (): boolean =>
-        paneInput.selectionVersion === selectionVersion &&
-        sameControl(selectionControl, controlIdentity(selectionGeneration));
-      const panePresent = () =>
-        selectionLayout.windows.some((window) => window.panes.some((pane) => pane.pane === paneId));
-      if (initial?.status === "rebinding") {
-        // Reserve the optimistic target now, but send its FIRST mutation only
-        // after this same control connection has a coherent terminal runtime.
-        const ready = await selectionWaiter.wait(() => {
-          if (!selectionCurrent()) return false;
-          const active = selectionGeneration;
-          if (active?.status !== "live" || observedLayoutEpoch !== active.rendererEpoch)
-            return "pending";
-          return panePresent();
-        });
-        if (!ready || !selectionCurrent()) return false;
-      }
-      const expected = liveSelectionTarget();
-      let dispatchedRendererEpoch: number | undefined;
-      const selecting = pendingWindowSwitch;
-      const operationId = selecting?.traceId;
-      const selectionFailure: { current: PaneSelectionFailure | null } = { current: null };
-      const receipt = expected
-        ? await selectTerminalPane(
-            expected,
-            () => {
-              if (!selectionControl) return liveSelectionTarget();
-              return sameControl(selectionControl, controlIdentity(options.generation()))
-                ? expected
-                : null;
-            },
-            paneId,
-            operationId,
-            (failure) => {
-              selectionFailure.current = failure;
-            },
-            windowLinkForPane(options.layout(), paneId) ?? undefined,
-            () => {
-              dispatchedRendererEpoch = options.generation()?.rendererEpoch;
-            },
-          )
-        : null;
-      if (
-        receipt === null &&
-        selectionFailure.current?.reason === "topology-changed" &&
-        selectionCurrent()
-      ) {
-        // The daemon may have selected the pane before retiring its stream.
-        // Observe the replacement runtime; never resubmit an uncertain command
-        // or manufacture an operation receipt. Input still waits on this promise.
-        const confirmed = await selectionWaiter.wait(() => {
-          if (!selectionCurrent()) return false;
-          const active = selectionGeneration;
-          if (
-            active?.status !== "live" ||
-            active.rendererEpoch === dispatchedRendererEpoch ||
-            observedLayoutEpoch !== active.rendererEpoch
-          )
-            return "pending";
-          if (!panePresent()) return false;
-          const current = selectionLayout.current;
-          const activePanes = current?.panes.filter((pane) => pane.active) ?? [];
-          if (!current?.currentWindow || activePanes.length !== 1) return "pending";
-          return activePanes[0]?.pane === paneId ? true : "pending";
-        });
-        if (selecting && pendingWindowSwitch === selecting) pendingWindowSwitch = null;
-        return confirmed && selectionCurrent();
-      }
-      if (selecting && pendingWindowSwitch === selecting) {
-        const receiptAtMicros = options.detailedWindowSwitchTiming ? diagnosticNowMicros() : null;
-        if (selecting.timing) selecting.timing.receiptAtMicros = receiptAtMicros;
-        selecting.selectionApplied =
-          receipt?.applied === true &&
-          receipt.operationId === selecting.traceId &&
-          receipt.semanticPaneId === selecting.paneId;
-        diagnose("window-switch-receipt", {
+  // The one way a pane selection reaches the runtime (#764: also used once an
+  // admitted agent selection settles).
+  const selectInRuntime = async (paneId: string): Promise<boolean> => {
+    finishLinkSelection(false);
+    const initial = options.generation();
+    const selectionControl = controlIdentity(initial);
+    const selectionVersion = paneInput.selectionVersion;
+    const selectionCurrent = (): boolean =>
+      paneInput.selectionVersion === selectionVersion &&
+      sameControl(selectionControl, controlIdentity(selectionGeneration));
+    const panePresent = () =>
+      selectionLayout.windows.some((window) => window.panes.some((pane) => pane.pane === paneId));
+    if (initial?.status === "rebinding") {
+      // Reserve the optimistic target now, but send its FIRST mutation only
+      // after this same control connection has a coherent terminal runtime.
+      const ready = await selectionWaiter.wait(() => {
+        if (!selectionCurrent()) return false;
+        const active = selectionGeneration;
+        if (active?.status !== "live" || observedLayoutEpoch !== active.rendererEpoch)
+          return "pending";
+        return panePresent();
+      });
+      if (!ready || !selectionCurrent()) return false;
+    }
+    const expected = liveSelectionTarget();
+    let dispatchedRendererEpoch: number | undefined;
+    const selecting = pendingWindowSwitch;
+    const operationId = selecting?.traceId;
+    const selectionFailure: { current: PaneSelectionFailure | null } = { current: null };
+    const receipt = expected
+      ? await selectTerminalPane(
+          expected,
+          () => {
+            if (!selectionControl) return liveSelectionTarget();
+            return sameControl(selectionControl, controlIdentity(options.generation()))
+              ? expected
+              : null;
+          },
+          paneId,
+          operationId,
+          (failure) => {
+            selectionFailure.current = failure;
+          },
+          windowLinkForPane(options.layout(), paneId) ?? undefined,
+          () => {
+            dispatchedRendererEpoch = options.generation()?.rendererEpoch;
+          },
+        )
+      : null;
+    if (
+      receipt === null &&
+      selectionFailure.current?.reason === "topology-changed" &&
+      selectionCurrent()
+    ) {
+      // The daemon may have selected the pane before retiring its stream.
+      // Observe the replacement runtime; never resubmit an uncertain command
+      // or manufacture an operation receipt. Input still waits on this promise.
+      const confirmed = await selectionWaiter.wait(() => {
+        if (!selectionCurrent()) return false;
+        const active = selectionGeneration;
+        if (
+          active?.status !== "live" ||
+          active.rendererEpoch === dispatchedRendererEpoch ||
+          observedLayoutEpoch !== active.rendererEpoch
+        )
+          return "pending";
+        if (!panePresent()) return false;
+        const current = selectionLayout.current;
+        const activePanes = current?.panes.filter((pane) => pane.active) ?? [];
+        if (!current?.currentWindow || activePanes.length !== 1) return "pending";
+        return activePanes[0]?.pane === paneId ? true : "pending";
+      });
+      if (selecting && pendingWindowSwitch === selecting) pendingWindowSwitch = null;
+      return confirmed && selectionCurrent();
+    }
+    if (selecting && pendingWindowSwitch === selecting) {
+      const receiptAtMicros = options.detailedWindowSwitchTiming ? diagnosticNowMicros() : null;
+      if (selecting.timing) selecting.timing.receiptAtMicros = receiptAtMicros;
+      selecting.selectionApplied =
+        receipt?.applied === true &&
+        receipt.operationId === selecting.traceId &&
+        receipt.semanticPaneId === selecting.paneId;
+      diagnose("window-switch-receipt", {
+        traceId: selecting.traceId,
+        target: selecting.target,
+        paneId: selecting.paneId,
+        operationId: receipt?.operationId ?? null,
+        selected: receipt !== null,
+        applied: receipt?.applied === true,
+        daemonGeneration: selecting.daemonGeneration,
+        clientGeneration: selecting.clientGeneration,
+        rendererEpoch: selecting.rendererEpoch,
+        sourceEpoch: selecting.sourceEpoch,
+        generation: selecting.generation,
+        incarnation: selecting.incarnation,
+        revision: selecting.revision,
+        stateHash: selecting.stateHash,
+        cols: selecting.cols,
+        rows: selecting.rows,
+        failureStage: selectionFailure.current?.stage ?? (expected ? null : "pre-dispatch"),
+        failureReason:
+          selectionFailure.current?.reason ?? (expected ? null : "generation-replaced"),
+        failureBackendReason: selectionFailure.current?.backendReason ?? null,
+        durationMicros:
+          receiptAtMicros === null ? null : receiptAtMicros - selecting.startedAtMicros,
+        ...(receiptAtMicros === null ? {} : { phaseAtMicros: receiptAtMicros }),
+      });
+      if (!selecting.selectionApplied) {
+        diagnoseCritical(`window-switch:${selecting.traceId}:failed`, "window-switch-failed", {
           traceId: selecting.traceId,
           target: selecting.target,
           paneId: selecting.paneId,
-          operationId: receipt?.operationId ?? null,
-          selected: receipt !== null,
-          applied: receipt?.applied === true,
           daemonGeneration: selecting.daemonGeneration,
           clientGeneration: selecting.clientGeneration,
           rendererEpoch: selecting.rendererEpoch,
@@ -926,44 +949,29 @@ export function createApplicationTerminalInteractionController(
           stateHash: selecting.stateHash,
           cols: selecting.cols,
           rows: selecting.rows,
-          failureStage: selectionFailure.current?.stage ?? (expected ? null : "pre-dispatch"),
-          failureReason:
-            selectionFailure.current?.reason ?? (expected ? null : "generation-replaced"),
-          failureBackendReason: selectionFailure.current?.backendReason ?? null,
+          stage: selectionFailure.current?.stage ?? (expected ? "receipt" : "pre-dispatch"),
+          reason:
+            selectionFailure.current?.reason ??
+            (expected ? "receipt-invalid" : "generation-replaced"),
+          backendReason: selectionFailure.current?.backendReason ?? null,
           durationMicros:
             receiptAtMicros === null ? null : receiptAtMicros - selecting.startedAtMicros,
-          ...(receiptAtMicros === null ? {} : { phaseAtMicros: receiptAtMicros }),
         });
-        if (!selecting.selectionApplied) {
-          diagnoseCritical(`window-switch:${selecting.traceId}:failed`, "window-switch-failed", {
-            traceId: selecting.traceId,
-            target: selecting.target,
-            paneId: selecting.paneId,
-            daemonGeneration: selecting.daemonGeneration,
-            clientGeneration: selecting.clientGeneration,
-            rendererEpoch: selecting.rendererEpoch,
-            sourceEpoch: selecting.sourceEpoch,
-            generation: selecting.generation,
-            incarnation: selecting.incarnation,
-            revision: selecting.revision,
-            stateHash: selecting.stateHash,
-            cols: selecting.cols,
-            rows: selecting.rows,
-            stage: selectionFailure.current?.stage ?? (expected ? "receipt" : "pre-dispatch"),
-            reason:
-              selectionFailure.current?.reason ??
-              (expected ? "receipt-invalid" : "generation-replaced"),
-            backendReason: selectionFailure.current?.backendReason ?? null,
-            durationMicros:
-              receiptAtMicros === null ? null : receiptAtMicros - selecting.startedAtMicros,
-          });
-          pendingWindowSwitch = null;
-          return false;
-        }
-        maybeRequestWindowSwitchFrame();
+        pendingWindowSwitch = null;
+        return false;
       }
-      return receipt !== null;
-    },
+      maybeRequestWindowSwitchFrame();
+    }
+    return receipt !== null;
+  };
+  const paneInput = new TerminalPaneInputRouter<{
+    readonly input: SessionRuntimeTerminalInput;
+    readonly parserOrigin?: Omit<
+      TuiTerminalInputOrigin,
+      "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
+    >;
+  }>({
+    select: (paneId) => selectInRuntime(paneId),
     send: async (paneId, routed) => {
       const { input, parserOrigin } = routed;
       const selectionVersion = paneInput.selectionVersion;
@@ -1229,9 +1237,16 @@ export function createApplicationTerminalInteractionController(
       maybeRequestWindowSwitchFrame();
       maybeRequestPaneResizeFrame();
     },
-    selectPane: (paneId) => {
+    selectPane: (paneId, admission) => {
       finishLinkSelection(false);
-      paneInput.selectPane(paneId);
+      if (admission)
+        // Ordered now; selected only once admitted, otherwise held input drops.
+        paneInput.selectPane(paneId, {
+          presentOptimistically: false,
+          selection: () =>
+            admission.then((admitted) => (admitted ? selectInRuntime(paneId) : false)),
+        });
+      else paneInput.selectPane(paneId);
       selectionWaiter.reconcile();
     },
     async unlinkWindowLink(target) {
