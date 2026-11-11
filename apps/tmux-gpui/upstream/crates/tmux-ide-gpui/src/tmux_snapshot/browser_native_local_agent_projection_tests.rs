@@ -8,6 +8,7 @@ fn row(key: String) -> home_agents::Row {
         name: "Agent".into(),
         session_label: "Session".into(),
         machine_label: None,
+        machine: None,
         server_label: None,
         project_name: None,
         harness: None,

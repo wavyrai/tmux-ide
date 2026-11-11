@@ -216,11 +216,16 @@ impl SnapshotView {
             .collect();
         let more = agents.len().saturating_sub(AGENT_CHIPS);
         let bezel = self.home_palette();
+        // An away machine's agents are last known too (#360's away, r4),
+        // judged by the machine each agent was observed on (#366).
         let mut chips: Vec<AnyElement> = agents
             .iter()
             .take(AGENT_CHIPS)
             .enumerate()
-            .map(|(n, agent)| self.fleet_agent_chip(index, row, n, agent, cx))
+            .map(|(n, agent)| {
+                let last_known = self.agent_last_known(agent);
+                self.fleet_agent_chip(index, row, n, agent, last_known, cx)
+            })
             .collect();
         if more > 0 {
             chips.push(
@@ -244,6 +249,7 @@ impl SnapshotView {
         row: usize,
         n: usize,
         agent: &browser::home_agents::Row,
+        last_known: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(roster) = self.browser_state.home_agents.as_ref() else {
@@ -318,9 +324,22 @@ impl SnapshotView {
                             let asks_id = format!("fleet-session-asks-{suffix}");
                             move || asks_id.clone()
                         }))
-                        .child("· Needs input"),
+                        // Full strength, but tagged when it may be old (#362).
+                        .map(|asks| {
+                            let words = if last_known {
+                                format!(
+                                    "· Needs input · {}",
+                                    crate::tmux_snapshot::agent_indicator::LAST_KNOWN
+                                )
+                            } else {
+                                "· Needs input".into()
+                            };
+                            let key = format!("fleet-session-asks-{suffix}");
+                            asks.children(design::text_probe(move || key.clone(), words.clone()))
+                                .child(words)
+                        }),
                 ),
-                false => chip.child(self.agent_chip_state(agent, unavailable)),
+                false => chip.child(self.agent_chip_state(agent, unavailable, last_known)),
             })
             .when(enabled, |line| {
                 line.cursor_pointer()
