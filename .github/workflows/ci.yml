@@ -327,6 +327,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/apt-dns-fallback
+
       - name: Install Chromium for the WebMCP check
         run: pnpm --filter @tmux-ide/docs exec playwright install --with-deps chromium
 

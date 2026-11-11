@@ -10,6 +10,7 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version: 24
+    - uses: ./.github/actions/apt-dns-fallback
     - shell: bash
       run: sudo apt-get update && sudo apt-get install -y build-essential autoconf automake pkg-config libevent-dev libncurses-dev ncurses-base ncurses-term libutf8proc-dev bison patchelf
     - shell: bash

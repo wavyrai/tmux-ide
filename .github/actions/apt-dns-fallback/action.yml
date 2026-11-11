@@ -1,0 +1,30 @@
+name: Fall back to public DNS for package installs
+description: >-
+  On a hosted Linux runner whose own resolver cannot resolve Ubuntu's package
+  servers, put public resolvers in front of it so apt-get can run. Does nothing
+  when the lookup works, and nothing on macOS or Windows.
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        if timeout 10 getent hosts archive.ubuntu.com >/dev/null 2>&1; then
+          echo "The runner's resolver answers for archive.ubuntu.com; nothing to do."
+          exit 0
+        fi
+        if ! command -v resolvectl >/dev/null 2>&1; then
+          echo "::warning::archive.ubuntu.com does not resolve and resolvectl is missing; leaving DNS as it is."
+          exit 0
+        fi
+        iface="$(ip -o -4 route show to default | awk '{print $5; exit}')"
+        if [ -z "$iface" ]; then
+          echo "::warning::archive.ubuntu.com does not resolve and no default interface was found; leaving DNS as it is."
+          exit 0
+        fi
+        current="$(resolvectl dns "$iface" | sed -E 's/^[^:]*:[[:space:]]*//')"
+        echo "::warning::The runner's resolver ($current) cannot resolve archive.ubuntu.com; adding 1.1.1.1 and 8.8.8.8 in front of it on $iface."
+        # shellcheck disable=SC2086 # $current is a space-separated server list
+        sudo resolvectl dns "$iface" 1.1.1.1 8.8.8.8 $current
+        sudo resolvectl flush-caches
+        timeout 10 getent hosts archive.ubuntu.com
