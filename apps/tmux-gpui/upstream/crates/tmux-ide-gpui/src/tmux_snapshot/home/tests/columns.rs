@@ -216,11 +216,8 @@ fn the_status_slot_sits_between_the_toolbar_and_the_filters(cx: &mut TestAppCont
     let header = cx.debug_bounds("home-header").unwrap();
     let title = cx.debug_bounds("home-title").unwrap();
     let nav = cx.debug_bounds("home-fleet-nav").unwrap();
-    let strip = cx
-        .debug_bounds("home-status-warning")
-        .or_else(|| cx.debug_bounds("home-status-error"))
-        .or_else(|| cx.debug_bounds("home-status-subtitle"))
-        .unwrap();
+    // r3: failed setup is the act card, in the same slot.
+    let strip = cx.debug_bounds("home-act-card").unwrap();
     assert!(header.bottom() <= strip.top());
     assert!(strip.bottom() <= nav.top());
     assert!((strip.left() - title.left()).abs() <= px(1.));
@@ -382,7 +379,7 @@ fn homes_agent_rows_sit_on_the_pane_rows_tile(cx: &mut TestAppContext) {
 /// same slot: under the toolbar, over the filter row, from Home's title
 /// (#746, as the reconnect fix draws them).
 #[gpui::test]
-fn reconnecting_and_a_fault_use_the_status_slot(cx: &mut TestAppContext) {
+fn only_a_fault_uses_the_status_slot_a_reconnect_does_not(cx: &mut TestAppContext) {
     for fault in [false, true] {
         let (sender, receiver) = mpsc::sync_channel(64);
         let (_, cx) = cx.add_window_view(|window, cx| {
@@ -404,12 +401,15 @@ fn reconnecting_and_a_fault_use_the_status_slot(cx: &mut TestAppContext) {
         let header = cx.debug_bounds("home-header").unwrap();
         let title = cx.debug_bounds("home-title").unwrap();
         let nav = cx.debug_bounds("home-fleet-nav").unwrap();
+        // r1: a reconnect shows in the footer slot, not here, and has no Retry.
+        if !fault {
+            assert!(cx.debug_bounds("home-status-subtitle").is_none());
+            assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
+            continue;
+        }
         let line = cx
-            .debug_bounds(if fault {
-                "home-status-warning"
-            } else {
-                "home-status-subtitle"
-            })
+            .debug_bounds("home-status-warning")
+            .or_else(|| cx.debug_bounds("home-act-card"))
             .unwrap_or_else(|| panic!("the status line (fault: {fault})"));
         assert!(header.bottom() <= line.top(), "fault: {fault}");
         assert!(line.bottom() <= nav.top(), "fault: {fault}");
@@ -417,16 +417,7 @@ fn reconnecting_and_a_fault_use_the_status_slot(cx: &mut TestAppContext) {
             (line.left() - title.left()).abs() <= px(1.),
             "fault: {fault}"
         );
-        let retry = cx.debug_bounds("tmux-reconnect-retry");
-        if fault {
-            assert!(retry.is_none(), "a fault has no Retry");
-        } else {
-            let Some(retry) = retry else {
-                panic!("Retry beside the reconnecting line");
-            };
-            assert!(retry.left() >= line.left() && retry.bottom() <= nav.top());
-            assert!(retry.top() < line.bottom() && line.top() < retry.bottom());
-        }
+        assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
     }
 }
 

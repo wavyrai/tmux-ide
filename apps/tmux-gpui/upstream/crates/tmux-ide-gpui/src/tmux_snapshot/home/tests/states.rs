@@ -76,6 +76,7 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             "home-status-subtitle",
             "home-status-warning",
             "home-status-error",
+            "home-act-card",
         ]
         .into_iter()
         .filter(|key| cx.debug_bounds(key).is_some())
@@ -86,7 +87,8 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             phase: Phase::Failed,
         })
     });
-    assert_eq!(shown(cx), ["home-status-error"]);
+    // r3: setup that needs the user is the act card, at once.
+    assert_eq!(shown(cx), ["home-act-card"]);
     draw(&view, cx, |v| {
         v.browser_state.local_setup = None;
         v.browser_state.home_phase = browser::HomePhase::Unavailable;
@@ -98,13 +100,14 @@ fn failure_status_renders_a_strip_and_normal_status_the_subtitle(cx: &mut TestAp
             phase: Phase::Available,
         })
     });
-    assert_eq!(shown(cx), ["home-status-subtitle"]);
+    assert_eq!(shown(cx), ["home-act-card"]);
     draw(&view, cx, |v| {
         v.browser_state.local_setup = None;
         v.browser_state.home_phase = browser::HomePhase::Loading;
         v.browser_state.status = "Loading sessions…".into();
     });
-    assert_eq!(shown(cx), ["home-status-subtitle"]);
+    // r5: loading paints no text; the footer slot says it once it matters.
+    assert!(shown(cx).is_empty());
 }
 
 #[gpui::test]
@@ -145,7 +148,7 @@ fn empty_state_renders_only_when_a_live_catalog_has_no_sessions(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn a_live_home_shows_its_reconnect_line_and_retry_and_a_fatal_reason(cx: &mut TestAppContext) {
+fn a_live_home_reconnects_quietly_and_shows_a_fatal_reason(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| home_view(window, cx, sender));
     cx.simulate_resize(size(px(900.), px(800.)));
@@ -176,14 +179,8 @@ fn a_live_home_shows_its_reconnect_line_and_retry_and_a_fatal_reason(cx: &mut Te
         v.browser_state.status = "Reconnecting… attempt 2".into();
         v.browser_state.reconnect_attempt = Some(2);
     });
-    assert_eq!(
-        shown(cx),
-        [
-            "home-status-subtitle",
-            "tmux-reconnect-retry",
-            "tmux-home-session-0"
-        ]
-    );
+    // r1: a reconnect is the footer slot's: no line, no Retry, the list stays.
+    assert_eq!(shown(cx), ["tmux-home-session-0"]);
     draw(&view, cx, |v| {
         v.browser_state.status =
             "The daemon refused this app's credentials. Restart tmux-ide.".into();

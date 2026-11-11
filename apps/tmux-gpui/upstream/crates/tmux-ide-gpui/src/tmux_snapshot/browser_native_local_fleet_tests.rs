@@ -390,3 +390,31 @@ fn a_version_2_row_carries_windows_activity_and_a_decoded_favicon() {
     assert!(second.favicon.is_none());
     assert_eq!((second.window_count, second.last_activity), (None, None));
 }
+
+/// review-chrome #360, away-when-disconnected: a machine the user
+/// disconnected is never shown as away, even with a retry still on record.
+#[test]
+fn a_disconnected_machine_is_not_away() {
+    let own = catalog("local-env", "local-generation", 1);
+    let mut gate = Gate::default();
+    add(
+        &mut gate,
+        "remote",
+        catalog("remote-env", "remote-generation", 1),
+    );
+    let incarnation = gate.labels["remote"].1;
+    let error =
+        herdr_client::tmux_daemon::Error::Network(ureq::Error::Timeout(ureq::Timeout::Global));
+    gate.recovery
+        .failed("remote", incarnation, &error, Instant::now());
+    gate.failed.insert("remote".into());
+    let mut away = state(&own);
+    gate.project(&mut away, "local", Some(&own.identity))
+        .unwrap();
+    assert!(away.fleet.as_ref().unwrap().groups[1].away.is_some());
+    gate.disconnected.insert("remote".into());
+    let mut off = state(&own);
+    gate.project(&mut off, "local", Some(&own.identity))
+        .unwrap();
+    assert!(off.fleet.as_ref().unwrap().groups[1].away.is_none());
+}

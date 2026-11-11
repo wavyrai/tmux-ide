@@ -151,7 +151,7 @@ fn headers(state: &State) -> Vec<Header> {
         })
         .collect()
 }
-fn label(state: &State, id: &str) -> String {
+pub(super) fn label(state: &State, id: &str) -> String {
     state
         .panes
         .iter()
@@ -628,8 +628,21 @@ impl SnapshotView {
         let ink = header_ink(&theme);
         // #746 v3: the focused title in the text ink, the others in the
         // label tier; the kind icon a step quieter on an unfocused card.
-        let tint = if selected { ink.text } else { ink.label };
-        let icon_tint = if selected { ink.text } else { ink.muted };
+        // While the connection's words show, every title and icon steps
+        // down to the muted ink (#357).
+        let muted = self.connection_mutes_titles();
+        let tint = if muted {
+            ink.muted
+        } else if selected {
+            ink.text
+        } else {
+            ink.label
+        };
+        let icon_tint = if selected && !muted {
+            ink.text
+        } else {
+            ink.muted
+        };
         let size = (self.terminal_height() - 2.).min(bezel_theme::TextStyle::Body.size());
         // Herdr sidebar/row.rs label budgeting and selection styling, rendered
         // with native elements. Never insert title glyphs into terminal cells.

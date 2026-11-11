@@ -55,7 +55,7 @@ fn plates(bezel: &bezel_theme::Theme, canvas: u32) -> [u32; 6] {
 
 /// What a status strip of `tone` paints its message on: the tone's wash over
 /// the canvas.
-fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
+pub(super) fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
     pack(bezel_theme::flatten(
         tone.opacity(STRIP_FILL),
         rgb(canvas).into(),
@@ -161,11 +161,11 @@ fn status_message(state: &browser::State, connected: bool) -> String {
     if connected && let Some(setup) = &state.local_setup {
         return setup.phase.guidance().into();
     }
-    // Reconnecting and fault status outrank a pane-limit notice.
+    // Only a fault, which the user must act on, outranks a pane-limit notice.
+    // A reconnect is the footer slot's: its words never reach Home's strip,
+    // and the notice stays through it (r1, quiet reconnect).
     match &state.home_notice {
-        Some(notice) if state.reconnect_attempt.is_none() && !state.home_fault => {
-            crate::notifications::safe_text(notice, 480)
-        }
+        Some(notice) if !state.home_fault => crate::notifications::safe_text(notice, 480),
         _ => crate::notifications::safe_text(&state.status, 240),
     }
 }
@@ -200,7 +200,12 @@ impl SnapshotView {
             && self.new_session.is_none()
             && self.pane_actions.is_none()
     }
-    fn home_refresh(&mut self, request: u64, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn home_refresh(
+        &mut self,
+        request: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.home_action_current(request) {
             return;
         }
@@ -434,14 +439,26 @@ impl SnapshotView {
         // or error strip for a fault (home_fault); then guidance and the
         // new-session form. A live Home shows a status line only while it
         // reconnects or has stopped.
-        let reconnect = is_live && self.browser_state.reconnect_attempt.is_some();
-        if (connected && setup_phase.is_some())
-            || (!is_live && !self.browser_state.status.is_empty())
-            || reconnect
-            || (is_live && self.browser_state.home_fault)
-            || (is_live && self.browser_state.home_notice.is_some())
+        // A reconnect or the first load is the footer slot's (r1, r5): no line here.
+        let waiting = super::connection::waiting(&self.browser_state, connected).is_some();
+        // r3: what only the user can fix is one card, in place of the line.
+        let act = super::connection::card(&self.browser_state, connected);
+        if let Some(card) = act.clone() {
+            body = body.child(self.act_card(card, cx));
+        }
+        // The pane-limit notice is always loud: it shows beside a card too.
+        let notice = self.browser_state.home_notice.as_ref().filter(|_| is_live);
+        if (act.is_some() && notice.is_some())
+            || (act.is_none()
+                && ((connected && setup_phase.is_some())
+                    || (!is_live && !waiting && !self.browser_state.status.is_empty())
+                    || (is_live && self.browser_state.home_fault)
+                    || notice.is_some()))
         {
-            let status = status_message(&self.browser_state, connected);
+            let status = match notice.filter(|_| act.is_some()) {
+                Some(notice) => crate::notifications::safe_text(notice, 480),
+                None => status_message(&self.browser_state, connected),
+            };
             let line = match status_tone(&self.browser_state, connected) {
                 StatusTone::Normal => bezel
                     .page_subtitle(status)
@@ -458,17 +475,8 @@ impl SnapshotView {
             let line = line
                 .w_full()
                 .children(design::ink_probe(|| "home-status".into()));
-            let retry = reconnect.then(|| self.reconnect_retry(cx)).flatten();
             // The slot fades in over FADE_QUICK and leaves at once (#761).
-            body = body.child(bezel_motion::fade_quick(
-                "home-status-in",
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .child(line)
-                    .children(retry),
-            ));
+            body = body.child(bezel_motion::fade_quick("home-status-in", line));
         }
         if self.home_diagnostics_available() {
             body = body.child(
@@ -571,7 +579,7 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if !connected || setup_phase.is_none() {
+        } else if (!connected || setup_phase.is_none()) && !waiting && act.is_none() {
             let guidance = if !connected {
                 bezel
                     .error_strip("Connection lost. Reopen tmux-ide to reconnect.")
@@ -585,18 +593,11 @@ impl SnapshotView {
                     .debug_selector(|| "home-guidance-warning".into())
                     .children(design::ink_probe(|| "home-guidance-warning".into()))
             } else {
-                let (title, hint) = if self.browser_state.home_phase == browser::HomePhase::Loading
-                {
-                    (
-                        "Loading sessions…",
-                        "Waiting for the daemon’s session catalog.",
-                    )
-                } else {
-                    (
-                        "No live sessions",
-                        "Start a new local session, or select a fleet server to create a session there.",
-                    )
-                };
+                // Loading is the footer slot's (r5): this is only ever an empty list.
+                let (title, hint) = (
+                    "No live sessions",
+                    "Start a new local session, or select a fleet server to create a session there.",
+                );
                 bezel
                     .empty_state(
                         bezel_ui::icons::Icon::asset("icons/terminal.svg"),

@@ -168,6 +168,8 @@ pub(super) struct State {
     pub reconnect_attempt: Option<u32>,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
+    /// What only the user can fix, shown at once (r3).
+    pub act: Option<super::connection::Act>,
     /// The last split's outcome, for keys held since its click
     /// (pending_input/split.rs). Worker-owned.
     pub pane_split: Option<PaneSplit>,
@@ -615,6 +617,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             home_fault: false,
+            act: None,
             pane_split: None,
             home_notice: None,
             unavailable_panes: Vec::new(),

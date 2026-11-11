@@ -430,7 +430,11 @@ impl SnapshotView {
         let request = self.browser_request;
         let painter = bezel_motion::Painter::of(cx);
         sidebar = sidebar.child(self.sidebar_home_row(cx));
-        for (index, row) in sidebar::rows(&self.browser_state).into_iter().enumerate() {
+        let now = (self.connection.clock)().0;
+        for (index, row) in sidebar::rows_at(&self.browser_state, now)
+            .into_iter()
+            .enumerate()
+        {
             let mut element = sidebar::render_row(
                 index,
                 &row,
@@ -618,8 +622,7 @@ impl SnapshotView {
                     .children(super::design::ink_probe(|| "status-text".into()))
                     .child(div().w_full().child(status)),
                 Axis::Vertical,
-            ))
-            .children(self.reconnect_retry(cx));
+            ));
         // Cards own their terminal background; the surrounding canvas exposes gutters.
         let content_background = self.canvas();
         let mut context = Some(context);
@@ -700,6 +703,7 @@ impl SnapshotView {
             .on_key_down(cx.listener(Self::picker_key))
             .map(|body| self.menu_actions(body, cx))
             .child(main)
+            .children(self.floating_connection_slot(show_sidebar, cx))
             .children(
                 self.picker_popover(window, cx)
                     .map(|popover| deferred(popover).with_priority(2)),
