@@ -17,6 +17,7 @@ mod session_continuation;
 mod session_history;
 mod session_popover;
 mod session_tabs;
+mod welcome_command;
 use crate::tmux_snapshot::presence::Presence;
 use core::prelude::v1::test;
 use std::sync::{Arc, mpsc};
