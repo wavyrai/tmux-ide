@@ -437,6 +437,9 @@ impl SnapshotView {
         let bezel = bezel_theme::Theme::of(cx).clone();
         // Its own view, replayed while unchanged (`sidebar_view`).
         let sidebar = self.sidebar_element(window, cx);
+        if !show_sidebar {
+            self.sidebar_unmounted();
+        }
         let status = self.status_line();
         // Routine window navigation must not insert a notice beside the tabs:
         // its width would move the entire strip during every retained frame.

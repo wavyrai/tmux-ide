@@ -99,6 +99,16 @@ impl SnapshotView {
 }
 
 impl SnapshotView {
+    /// The sidebar is not in this frame. Its last paint is gone, and so are
+    /// the spinner slots that paint reserved: only a render of the sidebar's
+    /// own view would drop them, and none is coming.
+    pub(super) fn sidebar_unmounted(&mut self) {
+        self.sidebar_view.key = None;
+        if let Some(view) = &self.sidebar_view.view {
+            self.agent_animation.begin_render(view.entity_id());
+        }
+    }
+
     /// Everything the sidebar shows, hashed. Each input the sidebar's render
     /// reads must be here; `sidebar_view_tests` pins that a change to each one
     /// redraws it, and that a cached frame paints what a fresh one would.
