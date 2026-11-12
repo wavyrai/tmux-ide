@@ -362,13 +362,21 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
         let batched = render(&mut cx, &case, false)?;
         let hits =
             crate::terminal_painter::ROW_HITS.load(std::sync::atomic::Ordering::Relaxed) - hits;
+        // The batched path without retained rows: the frame a row's first
+        // paint draws, which the retained frames above never show.
+        let retain = &crate::terminal_painter::RETAIN_ROWS;
+        retain.store(false, std::sync::atomic::Ordering::Relaxed);
+        let unretained = render(&mut cx, &case, false);
+        retain.store(true, std::sync::atomic::Ordering::Relaxed);
+        let unretained = unretained?;
         let differing = legacy
             .pixels()
             .zip(batched.pixels())
             .filter(|(a, b)| a != b)
             .count();
-        let same =
-            legacy.dimensions() == batched.dimensions() && legacy.as_raw() == batched.as_raw();
+        let same = legacy.dimensions() == batched.dimensions()
+            && legacy.as_raw() == batched.as_raw()
+            && legacy.as_raw() == unretained.as_raw();
         let inked = legacy
             .pixels()
             .filter(|p| p.0 != legacy.get_pixel(0, 0).0)
@@ -381,7 +389,11 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
         ));
         if !same {
             failed += 1;
-            for (suffix, image) in [("legacy", &legacy), ("batched", &batched)] {
+            for (suffix, image) in [
+                ("legacy", &legacy),
+                ("batched", &batched),
+                ("unretained", &unretained),
+            ] {
                 let path = dir.join(format!("{}-{suffix}.png", case.name));
                 image
                     .save_with_format(&path, image::ImageFormat::Png)
