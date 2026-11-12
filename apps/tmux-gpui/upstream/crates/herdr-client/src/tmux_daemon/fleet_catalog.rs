@@ -28,7 +28,9 @@ impl Owner {
             }
         };
         current()?;
-        let catalog = self.catalog()?;
+        // The remembered server list may start the traversal; the read that
+        // ends it always asks, and a difference publishes nothing.
+        let catalog = self.known_catalog()?;
         let mut sessions = Vec::new();
         let mut count = 0;
         // Match the native Home publication limit, including offline entries.

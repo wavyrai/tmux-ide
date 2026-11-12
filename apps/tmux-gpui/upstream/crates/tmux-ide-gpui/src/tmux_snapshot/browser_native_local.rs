@@ -311,6 +311,8 @@ impl Local {
     fn restart_discovery(&mut self, profile_verified: bool) -> Result<(), Error> {
         self.cancel()?;
         self.sources.reset_catalog()?;
+        // Starting over: nothing read before this answers what follows.
+        herdr_client::tmux_daemon::forget_known_servers();
         // Explicit refresh may discover a replacement owner; an existing request
         // never crosses that identity boundary or replays into the new owner.
         self.worker.reset();

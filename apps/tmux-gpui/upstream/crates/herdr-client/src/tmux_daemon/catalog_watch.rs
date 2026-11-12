@@ -145,10 +145,17 @@ impl CatalogWatchWorker {
     /// A pending change first, then the lane's end.
     pub fn poll(&self) -> Result<Option<Result<(), CatalogWatchError>>, WorkerError> {
         let mut notices = self.mailbox.lock().map_err(|_| WorkerError::Closed)?;
+        // Servers or sessions changed, or the lane that would say so is gone:
+        // the remembered server list is read again before its next use.
         if std::mem::take(&mut notices.changed) {
+            super::servers::forget();
             return Ok(Some(Ok(())));
         }
-        Ok(notices.failed.take().map(Err))
+        let failed = notices.failed.take();
+        if failed.is_some() {
+            super::servers::forget();
+        }
+        Ok(failed.map(Err))
     }
     /// True while this live lane is pushed fleet changes: registered servers,
     /// sessions and agents. Callers may then drop their own periodic reads.
@@ -181,6 +188,14 @@ impl CatalogWatchWorker {
             cancel,
             mailbox: Arc::default(),
             finished,
+        }
+    }
+    /// Puts a change, or the lane's end, in a detached worker's mailbox.
+    #[cfg(test)]
+    pub(super) fn report_detached(&self, lost: bool) {
+        if let Ok(mut notices) = self.mailbox.lock() {
+            notices.changed = !lost;
+            notices.failed = lost.then_some(CatalogWatchError::Closed);
         }
     }
     /// Moves a detached worker's lane on, as a received change would.

@@ -94,7 +94,7 @@ mod split_layout;
 mod worker;
 pub use create_session::{CreateOutcome, CreatedSession};
 use serde::Deserialize;
-pub use servers::ServerRegistration;
+pub use servers::{ServerRegistration, forget_known_servers};
 pub use sessions::{Favicon, ServerClient, Session};
 use std::{
     path::{Path, PathBuf},
@@ -444,6 +444,8 @@ fn prove(fingerprint: [u8; 32], epoch: Option<u64>, started: Instant) {
     }
 }
 fn disprove(fingerprint: &[u8; 32]) {
+    // What a daemon said before a failure or a new record is not what it says now.
+    servers::forget();
     if caching()
         && let Ok(mut proof) = PROOF.lock()
     {
