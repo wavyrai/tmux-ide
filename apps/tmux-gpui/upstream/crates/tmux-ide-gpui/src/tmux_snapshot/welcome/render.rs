@@ -48,7 +48,9 @@ impl SnapshotView {
             acts.push((1, primary.act.clone()));
         }
         acts.push((2, Act::Close));
-        if !focus.iter().any(|f| f.contains_focused(window, cx)) {
+        if self.welcome_may_take_focus(window, cx)
+            && !focus.iter().any(|f| f.contains_focused(window, cx))
+        {
             let start = acts
                 .iter()
                 .find(|(i, _)| *i == 1)
@@ -359,6 +361,18 @@ impl SnapshotView {
             .text_style(TextStyle::Body)
             .child(bezel_ui::scroll::Viewport::new("welcome-scroll", page, Axis::Vertical).fill())
             .into_any_element()
+    }
+    /// The welcome takes the keyboard only when nothing else holds it: no
+    /// palette, card or dialog is open over it, and the window has no focus
+    /// or only Home's own.
+    fn welcome_may_take_focus(&self, window: &Window, cx: &App) -> bool {
+        self.picker.is_none()
+            && self.about.is_none()
+            && self.new_session.is_none()
+            && self.pane_close.is_none()
+            && self.pane_actions.is_none()
+            && self.browser_address.is_none()
+            && (window.focused(cx).is_none() || self.terminal_focus.is_focused(window))
     }
     /// Tab and Shift-Tab move between the welcome's buttons; Return and
     /// Space press the focused one.

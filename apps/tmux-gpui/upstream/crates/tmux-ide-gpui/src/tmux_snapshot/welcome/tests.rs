@@ -19,7 +19,7 @@ fn choice(id: &str, label: &str) -> browser::Choice {
 }
 
 /// Home, live, with `sessions`; setup at `phase` when given.
-fn home<'a>(
+pub(super) fn home<'a>(
     cx: &'a mut TestAppContext,
     phase: Option<Phase>,
     sessions: &[(&str, &str)],
@@ -59,14 +59,14 @@ fn home<'a>(
     receiver.try_iter().for_each(drop);
     (view, cx, receiver)
 }
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
-fn shown(cx: &mut VisualTestContext) -> bool {
+pub(super) fn shown(cx: &mut VisualTestContext) -> bool {
     draw(cx);
     cx.debug_bounds("welcome").is_some()
 }
-fn fresh(dir: &tempfile::TempDir) -> State {
+pub(super) fn fresh(dir: &tempfile::TempDir) -> State {
     State::for_test(
         Some(dir.path().join("gpui-onboarding.json")),
         Some("0.1.17"),

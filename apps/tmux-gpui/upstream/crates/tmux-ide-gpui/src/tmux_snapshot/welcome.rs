@@ -654,5 +654,8 @@ impl SnapshotView {
 }
 
 #[cfg(test)]
+#[path = "welcome/focus_tests.rs"]
+mod focus_tests;
+#[cfg(test)]
 #[path = "welcome/tests.rs"]
 mod tests;
