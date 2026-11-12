@@ -399,7 +399,9 @@ describe("crash snapshot row", () => {
     const row = snapshotRow(saved("2026-11-02T14:16:05Z", "api"), ["api", "web", "docs"], NOW);
     expect(row.pass).toBe(false);
     expect(row.detail).toMatch(/^7 days old; misses 2 running sessions \(web, docs\)/);
-    expect(row.detail).toMatch(/tmux-ide adopt --all/);
+    expect(row.detail).toMatch(
+      /The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer$/,
+    );
   });
   it("passes when it covers every running session", () => {
     const row = snapshotRow(saved("2026-11-10T08:58:00Z", "api", "web"), ["web", "api"], NOW);

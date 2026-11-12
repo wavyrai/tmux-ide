@@ -235,8 +235,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * PURE — is the crash snapshot fresh enough to restore from? It fails when it
- * is missing a live session, or is over a day old while sessions run. Only the
- * chrome updater writes it, and that runs only while a session is adopted.
+ * is missing a live session, or is over a day old while sessions run. The
+ * chrome updater writes it while a session is adopted; otherwise the background
+ * service does, for its default server (lib/daemon-crash-snapshot.ts).
  */
 export function snapshotRow(
   snapshot: { savedAt: string; sessions: readonly { name: string }[] } | null,
@@ -245,7 +246,7 @@ export function snapshotRow(
 ): CheckResult {
   const label = "crash snapshot (restore)";
   const hint =
-    "Only the chrome updater writes it, while a session is adopted: `tmux-ide adopt --all` starts it";
+    "The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer";
   if (!snapshot) {
     return liveSessions?.length
       ? { label, pass: false, detail: `none yet. ${hint}`, optional: true }
