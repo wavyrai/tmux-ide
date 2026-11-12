@@ -33,6 +33,7 @@ fn catalog(small_panes: u32) -> FleetCatalog {
         unreachable!()
     };
     FleetCatalog {
+        service_version: None,
         identity: CatalogIdentity {
             instance_id: uuid::Uuid::new_v4().to_string(),
             environment_id: None,

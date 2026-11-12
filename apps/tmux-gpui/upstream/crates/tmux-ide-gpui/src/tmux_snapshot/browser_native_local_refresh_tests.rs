@@ -8,6 +8,7 @@ fn changed_home_catalog_preserves_current_tokens_but_retires_changed_generations
         unreachable!()
     };
     let mut catalog = FleetCatalog {
+        service_version: None,
         identity: CatalogIdentity {
             instance_id: uuid::Uuid::new_v4().to_string(),
             environment_id: None,

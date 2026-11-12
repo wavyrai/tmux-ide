@@ -10,6 +10,8 @@ use std::sync::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetCatalog {
     pub identity: CatalogIdentity,
+    /// The service's own version, for display only (#831).
+    pub service_version: Option<String>,
     pub servers: Vec<ServerRegistration>,
     pub sessions: Vec<FleetCatalogSessions>,
 }
@@ -65,6 +67,7 @@ impl Owner {
         }
         Ok(FleetCatalog {
             identity: catalog.identity,
+            service_version: catalog.service_version,
             servers: catalog.servers,
             sessions,
         })

@@ -9,6 +9,8 @@ pub struct CatalogIdentity {
 }
 pub struct CatalogSnapshot {
     pub identity: CatalogIdentity,
+    /// The service's own version, for display only (#831).
+    pub service_version: Option<String>,
     pub servers: Vec<ServerRegistration>,
 }
 impl CatalogIdentity {
@@ -51,6 +53,7 @@ impl Owner {
                         instance_id: daemon.record.instance_id.clone(),
                         environment_id: daemon.record.environment_id.clone(),
                     },
+                    service_version: Some(daemon.product_version().to_owned()),
                     servers,
                 })
             }
@@ -64,6 +67,7 @@ impl Owner {
                         instance_id: remote.instance_id().into(),
                         environment_id: remote.environment_id().map(str::to_owned),
                     },
+                    service_version: Some(remote.product_version().to_owned()),
                     servers,
                 })
             }

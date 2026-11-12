@@ -122,6 +122,8 @@ pub(super) struct State {
     pub browser_pending: Option<super::browser_toolbar::Pending>,
     pub renderer_probe_scope: Option<super::renderer_probe::Scope>,
     pub diagnostics: Option<super::diagnostics::Versions>,
+    /// The connected service's version, known without a terminal (#831).
+    pub service_version: Option<String>,
     pub native_diagnostics: Option<super::browser_native_editor::Diagnostics>,
     pub pointer_modes: Option<decode::PointerModes>,
     pub local_setup: Option<local_setup::Setup>,
@@ -580,6 +582,7 @@ impl Reader {
             readers: Default::default(),
             browser_pending: None,
             diagnostics: p.diagnostics,
+            service_version: None,
             native_diagnostics: p.native_diagnostics,
             pointer_modes: None,
             local_setup: p.local_setup,
