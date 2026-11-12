@@ -45,6 +45,8 @@ function harness(
   extra: {
     waitForAgent?: (key: string, listed: () => boolean, signal: AbortSignal) => Promise<boolean>;
     onAdmission?: (admission: Promise<boolean>) => void;
+    /** What the runtime answers once the selection is admitted. */
+    selection?: Promise<"selected" | "not-admitted" | "failed" | "superseded">;
   } = {},
 ) {
   const state = { current: initial, targetCurrent: true };
@@ -60,6 +62,7 @@ function harness(
   const selectPane = vi.fn((pane: string, source: string, admission?: Promise<boolean>) => {
     events.push(`select:${pane}:${source}${admission ? ":pending" : ""}`);
     if (admission) extra.onAdmission?.(admission);
+    return admission ? extra.selection : undefined;
   });
   const showTerminals = vi.fn((source: string) => events.push(`show:${source}`));
   const setNote = vi.fn();
@@ -249,6 +252,59 @@ describe("Home exact agent navigation", () => {
       await expect(h.admissions[0]).resolves.toBe(true);
       expect(h.events).toEqual(["select:pane.exact:mouse:pending", "show:mouse"]);
       expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"], [null]]);
+    });
+
+    // Journey soak, #764: the selection was admitted and then refused by the
+    // daemon; the app showed the terminals and said nothing.
+    it("shows the terminals only once the runtime has selected the pane", async () => {
+      const selection = deferred<"selected" | "failed">();
+      const wait = deferred<boolean>();
+      const h = harness(behind(), {
+        waitForAgent: () => wait.promise,
+        selection: selection.promise,
+      });
+      const result = h.owner.open(target, "mouse");
+      h.state.current = generation();
+      wait.resolve(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      // Admitted, not yet selected: still waiting, terminals not shown.
+      expect(h.events).toEqual(["select:pane.exact:mouse:pending"]);
+      expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"]]);
+      selection.resolve("selected");
+      await expect(result).resolves.toEqual({ opened: true });
+      expect(h.events).toEqual(["select:pane.exact:mouse:pending", "show:mouse"]);
+      expect(h.setNote.mock.calls.at(-1)).toEqual([null]);
+    });
+
+    it("says so when the runtime could not select the admitted pane", async () => {
+      const wait = deferred<boolean>();
+      const h = harness(behind(), {
+        waitForAgent: () => wait.promise,
+        selection: Promise.resolve("failed"),
+      });
+      const result = h.owner.open(target, "mouse");
+      h.state.current = generation();
+      wait.resolve(true);
+      await expect(result).resolves.toEqual({ opened: false, failure: "selection-failed" });
+      expect(h.showTerminals).not.toHaveBeenCalled();
+      expect(h.setNote.mock.calls.at(-1)).toEqual([
+        "That agent's terminal could not be selected yet. Select the agent again.",
+      ]);
+    });
+
+    it("stays silent when another selection replaced the admitted one", async () => {
+      const wait = deferred<boolean>();
+      const h = harness(behind(), {
+        waitForAgent: () => wait.promise,
+        selection: Promise.resolve("superseded"),
+      });
+      const result = h.owner.open(target, "mouse");
+      h.state.current = generation();
+      wait.resolve(true);
+      await expect(result).resolves.toEqual({ opened: false, failure: "superseded" });
+      expect(h.showTerminals).not.toHaveBeenCalled();
+      expect(h.setNote.mock.calls.at(-1)).toEqual([null]);
     });
 
     it("is refused as before when the bound passes without it", async () => {

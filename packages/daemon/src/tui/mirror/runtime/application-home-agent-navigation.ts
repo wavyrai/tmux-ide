@@ -1,5 +1,6 @@
 import type { HomeAgentRow } from "./application-home-agents.ts";
 import type { ApplicationGenerationStartResult } from "./application-generation-starter.ts";
+import type { AdmittedPaneSelectionOutcome } from "./application-terminal-interaction-controller.ts";
 
 export type HomeAgentNavigationSource = "keyboard" | "mouse";
 export type HomeAgentNavigationTarget = Pick<
@@ -22,6 +23,7 @@ export type HomeAgentNavigationFailure =
   | "attach-failed"
   | "generation-changed"
   | "pane-removed"
+  | "selection-failed"
   | "superseded";
 
 export interface HomeAgentNavigationResult {
@@ -53,7 +55,7 @@ export function createApplicationHomeAgentNavigator(options: {
     paneId: string,
     source: HomeAgentNavigationSource,
     admission?: Promise<boolean>,
-  ) => void;
+  ) => void | Promise<AdmittedPaneSelectionOutcome> | undefined;
   /**
    * Home's roster can list an agent a moment before the attached session does.
    * Resolves true once `listed()` holds, false on the bound, abort or a
@@ -160,7 +162,7 @@ export function createApplicationHomeAgentNavigator(options: {
     const admission = new Promise<boolean>((resolve) => {
       settle = resolve;
     });
-    options.selectPane(target.paneId!, source, admission);
+    const selection = options.selectPane(target.paneId!, source, admission);
     // The cold path's "Opening agent in …" note, for the warm wait.
     options.setNote(`Waiting for agent in ${target.sessionName}…`);
     waitingNote = token;
@@ -169,11 +171,34 @@ export function createApplicationHomeAgentNavigator(options: {
     } catch {
       // A failed wait is a refusal below, never an admission.
     }
-    if (waitingNote === token) waitingNote = null;
     // A refusal replaces the note; an admission clears it below.
     const refused = refusal(token, target, generationKey);
     settle(refused === null);
-    if (refused) return refused;
+    if (refused) {
+      if (waitingNote === token) waitingNote = null;
+      return refused;
+    }
+    // Admitted is not selected: the runtime may still refuse the pane, or take
+    // a moment for a pane that was just created. The wait note stays until it
+    // answers, and the terminals are shown only for a pane that was selected.
+    let selected: AdmittedPaneSelectionOutcome;
+    try {
+      selected = (await selection) ?? "selected";
+    } catch {
+      selected = "failed";
+    }
+    if (waitingNote === token) waitingNote = null;
+    if (!active(token)) return { opened: false, failure: "superseded" };
+    if (selected === "superseded" || selected === "not-admitted") {
+      options.setNote(null);
+      return { opened: false, failure: "superseded" };
+    }
+    if (selected === "failed")
+      return failure(
+        token,
+        "selection-failed",
+        "That agent's terminal could not be selected yet. Select the agent again.",
+      );
     options.showTerminals(source);
     options.setNote(null);
     return { opened: true };

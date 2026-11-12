@@ -1,3 +1,4 @@
+import type { AdmittedPaneSelectionOutcome } from "./application-terminal-interaction-controller.ts";
 import { createApplicationNewAgentOwner } from "./application-new-agent-owner.ts";
 import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import { createEffect, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
@@ -142,7 +143,10 @@ export function createApplicationHomeAgentsOwner(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
   readonly sessionName: () => string | null;
   readonly startGeneration: ReturnType<typeof createApplicationGenerationStarter>;
-  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
+  readonly selectPane: (
+    paneId: string,
+    admission?: Promise<boolean>,
+  ) => void | Promise<AdmittedPaneSelectionOutcome>;
   readonly showTerminals: (source: "keyboard" | "mouse") => void;
   readonly restoreHome?: (source: "keyboard" | "mouse") => Promise<void> | void;
   readonly setNote: (note: string | null) => void;

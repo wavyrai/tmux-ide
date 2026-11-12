@@ -1,3 +1,4 @@
+import type { AdmittedPaneSelectionOutcome } from "./application-terminal-interaction-controller.ts";
 import { retainsAgentControl } from "./application-retained-agent.ts";
 import {
   createApplicationHomeAgentNavigator,
@@ -24,7 +25,10 @@ export function createApplicationMachineAgentNavigator(options: {
   readonly sessionName: () => string | null;
   readonly startGeneration: HomeNavigatorOptions["startGeneration"];
   /** The interaction controller's selectPane: `admission` must reach it (#764). */
-  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
+  readonly selectPane: (
+    paneId: string,
+    admission?: Promise<boolean>,
+  ) => void | Promise<AdmittedPaneSelectionOutcome>;
   readonly showTerminals: HomeNavigatorOptions["showTerminals"];
   readonly setNote: HomeNavigatorOptions["setNote"];
 }) {

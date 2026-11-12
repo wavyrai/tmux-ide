@@ -3238,6 +3238,14 @@ export class PaneStreamLiveConnection {
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";
+        // A refused intent is answered to the client only; without this line a
+        // click that did nothing leaves no trace in either log (#764).
+        logger.info("pane-stream", "intent rejected", {
+          session: this.#descriptor.sessionName,
+          clientId: this.#clientId,
+          verb: intent.verb,
+          code,
+        });
         this.#sendFrame(null, {
           type: "semantic-intent-ack",
           operationId,
