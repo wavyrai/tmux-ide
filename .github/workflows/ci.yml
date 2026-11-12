@@ -108,11 +108,15 @@ jobs:
           refused=$(cat "$dir"/*-refused.log 2>/dev/null | grep -c . || true)
           undeclared=$(cat "$dir"/*-undeclared.log 2>/dev/null | grep -c . || true)
           declared=$(cat "$dir"/*-redirected.log 2>/dev/null | grep -c . || true)
+          named=$(cat "$dir"/*-named.log 2>/dev/null | grep -c . || true)
+          lane=$(cat "$dir"/*-lane.log 2>/dev/null | grep -c . || true)
           {
             echo "### tmux guard"
             echo "Calls to a shared tmux socket path, refused: $refused"
             echo "Calls with no private server from tests that did not declare it: $undeclared"
             echo "Calls of tests that declared a daemon without a server: $declared"
+            echo "Calls to a server the test named itself (-L), placed in the private namespace: $named"
+            echo "Calls with no server in the Bun lanes (listed, not failing): $lane"
             if [ "$undeclared" != 0 ]; then
               echo '```'
               cat "$dir"/*-undeclared.log | sed -E 's/ args=.*//' | sort | uniq -c | head -40
