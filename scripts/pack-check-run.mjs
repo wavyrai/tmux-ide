@@ -390,7 +390,13 @@ function spawnInstalledCli(installedCli) {
   childExits.set(
     child,
     new Promise((resolveExit, rejectExit) => {
-      child.once("close", (code, signal) => resolveExit({ code, signal }));
+      child.once("close", (code, signal) => {
+        // The daemon's own account of the run (owner kept or retired, lifecycle,
+        // stream closes) is evidence too; a soak that keeps only the trace cannot
+        // say whether a failure involved it.
+        saveDaemonOutput(child, output, { code, signal });
+        resolveExit({ code, signal });
+      });
       child.once("error", rejectExit);
     }),
   );
@@ -404,6 +410,21 @@ function spawnInstalledCli(installedCli) {
  * daemon bounds its own stop, a hung teardown also "closes" in time (forced
  * exit 1 after the deadline), so closing alone proves nothing (#839).
  */
+function saveDaemonOutput(child, output, exit) {
+  if (!evidenceDir) return;
+  try {
+    mkdirSync(evidenceDir, { recursive: true });
+    const name = `installed-daemon-${String(child.pid)}`;
+    writeFileSync(join(evidenceDir, `${name}.stdout.log`), output.stdout);
+    writeFileSync(
+      join(evidenceDir, `${name}.stderr.log`),
+      `${output.stderr}\n[exit code=${String(exit.code)} signal=${String(exit.signal)}]\n`,
+    );
+  } catch {
+    // Evidence is best effort; the journey's verdict does not depend on it.
+  }
+}
+
 async function waitForSignalledDaemon(child, phase) {
   // Longer than the daemon's own 25 s total stop bound, so a hung teardown is
   // reported by the daemon (stuck stage and open steps) rather than cut off here.
