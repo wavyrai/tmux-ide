@@ -291,6 +291,36 @@ impl Local {
         self.recovery = Some(recovery);
         self.reconnect_schedule()
     }
+    /// Opening `target` failed before it had a stream: recover it through the
+    /// catalog, as a dropped session is, with the same ends (ready, the
+    /// session ended, navigation, a stop no retry can pass).
+    pub(super) fn reconnect_opening(
+        &mut self,
+        target: Target,
+        pane: Option<String>,
+        failure: Failure,
+    ) -> Result<(), Error> {
+        let label = (self.state.sessions.iter())
+            .find(|choice| choice.id == target.live)
+            .map(|choice| choice.label.clone());
+        self.recovery = Some(Recovery {
+            target,
+            pane,
+            attempts: 0,
+            due: None,
+            local_record: self.current_local_record(),
+            remote: self.current_remote(),
+            rebind: None,
+            rediscover_owner: false,
+            label,
+            away_since: None,
+            record: record_stamp(self.current_local_record().as_ref()),
+            missing_since: None,
+            ended: false,
+            identity_retried: false,
+        });
+        self.reconnect_retry(failure)
+    }
     /// The stream's lease no longer fits the session's panes (one was added or
     /// closed elsewhere): recover through the catalog, which lists them as
     /// they are now, and do it now. Not a failed try, so no backoff.

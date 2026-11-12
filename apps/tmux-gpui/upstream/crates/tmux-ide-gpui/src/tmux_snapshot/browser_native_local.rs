@@ -574,22 +574,7 @@ impl Local {
                     Err(error) if self.home.active() && matches!(stage, Stage::Servers) => {
                         self.home_catalog_failed(error)?
                     }
-                    Err(error) => {
-                        let setup = matches!(stage, Stage::Servers);
-                        if self.recovery.is_some() {
-                            // Bounded messages only: codes and numbers, no payloads.
-                            eprintln!("tmux-ide: reconnect attempt failed: {error}");
-                            self.reconnect_retry(reconnect::Failure::of(&error))?;
-                        } else {
-                            // Home keeps looking for the daemon meanwhile.
-                            self.unavailable_retrying(
-                                "Session changed or is unavailable — refresh to retry",
-                            )?;
-                            if setup {
-                                self.offer_local_setup()?;
-                            }
-                        }
-                    }
+                    Err(error) => self.stage_failed(stage, &error)?,
                 }
             }
         }

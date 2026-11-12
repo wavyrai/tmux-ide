@@ -1139,7 +1139,9 @@ automatically replayed. A Home that could not load its sessions (no daemon
 yet, no tmux server online, or an internal error) keeps looking for a local
 daemon every 5 s at most and loads when one answers. A session opened before
 the daemon lists its pane (one that was just created) is opened again for
-about 3 s before the window says it has no attachable panes. A Home whose
+about 3 s before the window says it has no attachable panes. A session whose open
+or lease request fails is recovered like a dropped one instead of stopping
+the window. A Home whose
 catalog lists a server offline, or no server online, reads the catalog again
 by itself: after 5 s, then doubling to once a minute, while its window is
 active. The server list

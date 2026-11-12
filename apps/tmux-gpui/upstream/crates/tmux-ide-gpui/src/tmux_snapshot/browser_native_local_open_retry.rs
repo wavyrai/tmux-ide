@@ -84,6 +84,43 @@ impl Local {
         self.submitted = false;
         Ok(())
     }
+    /// A catalog request failed and no stage has its own answer to that.
+    /// With a recovery under way it is one more failed try. A session that
+    /// was being opened is recovered like a dropped one: the soak saw an open
+    /// session re-opened for a pane split elsewhere, the open refused, and
+    /// the window left on "refresh to retry" (audit row 10). Anything else
+    /// stops Home, which keeps looking for the daemon.
+    pub(super) fn stage_failed(
+        &mut self,
+        stage: Stage,
+        error: &herdr_client::tmux_daemon::Error,
+    ) -> Result<(), Error> {
+        let failure = reconnect::Failure::of(error);
+        if self.recovery.is_some() {
+            // Bounded messages only: codes and numbers, no payloads.
+            eprintln!("tmux-ide: reconnect attempt failed: {error}");
+            return self.reconnect_retry(failure);
+        }
+        let opening = match &stage {
+            Stage::Open { target, preferred } => Some((target.clone(), preferred.clone())),
+            Stage::Issue {
+                target, selected, ..
+            } => Some((target.clone(), Some(selected.clone()))),
+            _ => None,
+        };
+        if let Some((target, pane)) = opening
+            && self.state.surface == Surface::Workspace
+        {
+            eprintln!("tmux-ide: opening the session failed, trying again: {error}");
+            return self.reconnect_opening(target, pane, failure);
+        }
+        // Home keeps looking for the daemon meanwhile.
+        self.unavailable_retrying("Session changed or is unavailable — refresh to retry")?;
+        if matches!(stage, Stage::Servers) {
+            self.offer_local_setup()?;
+        }
+        Ok(())
+    }
     /// How long until the next try, for the actor's idle wait.
     pub(super) fn empty_open_wait(&self) -> Option<Duration> {
         let waiting = self.empty_open.0.as_ref()?;
