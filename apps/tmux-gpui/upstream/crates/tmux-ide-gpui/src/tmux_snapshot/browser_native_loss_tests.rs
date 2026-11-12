@@ -47,13 +47,46 @@ fn is_interrupted(command: &Command) -> bool {
     )
 }
 
+/// A stream the peer closed: not an input failure.
+fn closed() -> NativeError {
+    NativeError::Controller(herdr_client::tmux_controller::Error::Retired)
+}
+
+/// Soak, 12 Nov 2026: a frozen daemon never acknowledged a typed line. The
+/// scheduler gave the key up, so nothing was "in flight" any more when the
+/// poll failed with the input error, and the held frame did not say that keys
+/// were lost. The error itself says a key went unanswered.
+#[test]
+fn a_stream_lost_to_an_unanswered_key_reports_it() {
+    let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    assert!(!active.input.busy());
+    let mut hold = Hold::default();
+    let unanswered = NativeError::Input(browser_native_input::Error::Scope);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &unanswered,
+    );
+    assert_eq!(
+        hold.lost_input(),
+        Some(true),
+        "an unanswered key was lost silently"
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
 #[test]
 fn a_lost_stream_drops_and_reports_queued_keys() {
     let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
     let state = live(&state);
     let mut pending = queue(vec![key("a"), Command::Home { request: 9 }, key("b")]);
     let mut hold = Hold::default();
-    let notice = stream_lost(&active, &mut pending, &mut hold, &state, 1);
+    let notice = stream_lost(&active, &mut pending, &mut hold, &state, 1, &closed());
     assert_eq!(inputs(&pending), 0, "queued keys would replay");
     assert_eq!(pending.len(), 1, "other work was dropped");
     assert!(is_interrupted(&notice));
@@ -65,7 +98,14 @@ fn a_lost_stream_drops_and_reports_queued_keys() {
 
     // Nothing queued or in flight: no "keys not sent".
     let mut hold = Hold::default();
-    stream_lost(&active, &mut VecDeque::new(), &mut hold, &state, 1);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &closed(),
+    );
     assert_eq!(
         hold.lost_input(),
         Some(false),
@@ -87,7 +127,14 @@ fn a_lost_stream_reports_keys_in_flight() {
         "the fixture did not leave the key in flight"
     );
     let mut hold = Hold::default();
-    stream_lost(&active, &mut VecDeque::new(), &mut hold, &state, 1);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &closed(),
+    );
     assert_eq!(
         hold.lost_input(),
         Some(true),

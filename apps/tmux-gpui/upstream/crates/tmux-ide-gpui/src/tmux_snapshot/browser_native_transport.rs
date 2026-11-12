@@ -622,6 +622,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 &mut hold,
                                 &state,
                                 presence.1,
+                                &error,
                             );
                             revoke_connection(&mut active, &mut state, &mut output);
                             if output(notice).is_err() {

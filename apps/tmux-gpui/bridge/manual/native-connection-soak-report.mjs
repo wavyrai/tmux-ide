@@ -51,7 +51,9 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
       entry.ended += 1;
       if (!expectedEnd.has(event.fault)) entry.unexpectedEnds += 1;
     } else if (event.event === "key-lost") {
-      if (event.dropped) entry.keyLostTold += event.told ? 1 : 0;
+      // Lost with a drop and reported by the app is what #702 promises. Lost
+      // without a notice, or with no drop at all, is silent.
+      if (event.dropped && event.told) entry.keyLostTold += 1;
       else entry.silentKeyLoss += 1;
     }
   }

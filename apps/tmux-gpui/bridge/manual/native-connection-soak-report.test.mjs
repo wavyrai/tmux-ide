@@ -43,7 +43,7 @@ test("an ended session is expected only after a fault that ends it", () => {
   assert.equal(report.totals.unexpectedEnds, 1);
 });
 
-test("a typed line lost without a drop is a silent loss; with a drop it is not", () => {
+test("a typed line lost without a notice is a silent loss, with or without a drop", () => {
   const report = run(
     [
       { event: "key-lost", fault: "idle", dropped: false, told: false },
@@ -52,6 +52,6 @@ test("a typed line lost without a drop is a silent loss; with a drop it is not",
     ],
     [{ tag: "daemon-kill#1", name: "daemon-kill", expectedEnd: false }],
   );
-  assert.equal(report.totals.silentKeyLoss, 1);
+  assert.equal(report.totals.silentKeyLoss, 2);
   assert.match(table(report), /\| idle \| 0 \| 0 \| 0 \|/u);
 });

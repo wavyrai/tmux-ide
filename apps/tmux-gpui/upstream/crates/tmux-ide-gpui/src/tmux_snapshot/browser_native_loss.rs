@@ -119,17 +119,21 @@ fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     pending.retain(|command| !matches!(command, Command::Input { .. }));
     pending.len() != before
 }
-/// The stream under `current` failed. Keys in flight or queued die with it, so
-/// the held frame says they were not sent. Returns the re-issue notice.
+/// The stream under `current` failed with `error`. Keys in flight or queued
+/// die with it, so the held frame says they were not sent; so does a key that
+/// went unanswered until the scheduler gave it up (an input error). Returns
+/// the re-issue notice.
 pub(super) fn stream_lost(
     current: &Active,
     pending: &mut VecDeque<Command>,
     hold: &mut Hold,
     state: &State,
     presence_revision: u64,
+    error: &NativeError,
 ) -> Command {
     let queued = drop_queued_input(pending);
-    hold.begin(state, queued || current.input.busy());
+    let unanswered = matches!(error, NativeError::Input(_));
+    hold.begin(state, queued || unanswered || current.input.busy());
     interrupted(current, presence_revision)
 }
 /// A command failed in a way `fatal` says leaves the stream unusable. It is
