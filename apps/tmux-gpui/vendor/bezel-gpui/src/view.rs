@@ -47,6 +47,20 @@ impl AnyView {
         self.into_element().cached(style)
     }
 
+    /// Like [`AnyView::cached`], but the recycled subtree is reused even while
+    /// a cached ancestor re-renders: only [Context::notify] on this entity, a
+    /// change of its bounds, content mask or text style, or [Window::refresh]
+    /// renders it again. A plain cached view re-renders whenever any cached
+    /// ancestor does.
+    ///
+    /// Use it only for a view that renders from state its owner keeps in step
+    /// with it: the owner must notify this entity (or draw it uncached) on any
+    /// frame whose change it shows, since a re-rendering ancestor no longer
+    /// implies one.
+    pub fn cached_isolated(self, style: StyleRefinement) -> ViewElement<AnyView> {
+        self.into_element().cached_isolated(style)
+    }
+
     /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
@@ -250,6 +264,13 @@ impl<T: Render> Entity<T> {
     pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
         ViewElement::with_type_name(self, type_name::<T>()).cached(style)
     }
+
+    /// Embed this entity as a cached [`ViewElement`] that is reused even while
+    /// a cached ancestor re-renders. See [`AnyView::cached_isolated`].
+    #[track_caller]
+    pub fn cached_isolated(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
+        ViewElement::with_type_name(self, type_name::<T>()).cached_isolated(style)
+    }
 }
 
 /// The element type for [`View`] implementations. Wraps a `View` and hooks it
@@ -259,6 +280,8 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    /// Reused under a re-rendering ancestor (see [`AnyView::cached_isolated`]).
+    isolated: bool,
     #[cfg(feature = "profiler")]
     view_type_name: &'static str,
     #[cfg(debug_assertions)]
@@ -281,6 +304,7 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            isolated: false,
             #[cfg(feature = "profiler")]
             view_type_name,
             view: Some(view),
@@ -300,6 +324,13 @@ impl<V: View> ViewElement<V> {
     /// entity-backed by construction.
     pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style);
+        self
+    }
+
+    /// [`Self::cached`], reused even under a re-rendering ancestor.
+    pub(crate) fn cached_isolated(mut self, style: StyleRefinement) -> Self {
+        self.cached_style = Some(style);
+        self.isolated = true;
         self
     }
 }
@@ -394,6 +425,7 @@ impl<V: View> Element for ViewElement<V> {
             let start = window.window_profiler.begin_view();
             let prepainted = prepaint_view(
                 entity_id,
+                self.isolated,
                 global_id,
                 bounds,
                 element,
@@ -507,6 +539,7 @@ fn request_layout_component(
 #[inline(never)]
 fn prepaint_view(
     entity_id: EntityId,
+    isolated: bool,
     global_id: Option<&GlobalElementId>,
     bounds: Bounds<Pixels>,
     element: &mut Option<AnyElement>,
@@ -532,7 +565,11 @@ fn prepaint_view(
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
                     && !window.dirty_views.contains(&entity_id)
-                    && !window.refreshing
+                    && !if isolated {
+                        window.refresh_forced
+                    } else {
+                        window.refreshing
+                    }
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
