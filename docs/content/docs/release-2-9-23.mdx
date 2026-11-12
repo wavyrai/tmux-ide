@@ -1,0 +1,95 @@
+---
+title: tmux-ide 2.9.23
+metaTitle: "What's new in 2.9.23"
+description: "The daemon no longer drops every terminal stream when one tmux probe is slow, and a stop after SIGTERM is bounded."
+---
+
+`2.9.23` is a CLI/daemon release that fixes dropped terminal connections. It
+adds no commands and needs no Mac app update.
+
+## Terminals no longer drop while the daemon stays up
+
+In 2.9.22 the daemon could close every terminal stream of a tmux server while
+the daemon itself kept running. The Mac app then lost its terminals.
+
+The cause: each time a client listed the tmux servers, the daemon asked every
+server a question with a 500 ms limit. A slow answer, or a `tmux` that could not
+be started, counted as "server gone", so the daemon dropped its connection to
+that server, closed its streams and built a new connection on the next list. The
+Mac app lists servers whenever it reads the catalog, opens a session or creates
+one, so it was hit far more often than the TUI, which lists only when it
+reconnects.
+
+The reproduction, on a separate daemon with tmux answering in 0.7 s, one list
+request and one open stream:
+
+|                | 2.9.22      | 2.9.23      |
+| -------------- | ----------- | ----------- |
+| Streams closed | 1           | 0           |
+| Connection     | rebuilt     | kept        |
+| List answered  | after 5.7 s | after 0.5 s |
+
+A `tmux` that cannot be started because the process limit is reached gave the
+same drop in 2.9.22 and gives none in 2.9.23. A busy tmux server, many list
+requests at once and plain CPU load did not reproduce the drop. Which of the two
+causes hit a given machine can't be told from 2.9.22's log; 2.9.23 logs it.
+
+What changed:
+
+- Read requests can no longer retire or replace a tmux server connection. They
+  wait at most 1 s for work in flight, then answer with what is known.
+- A background check every 2 s watches the servers. It starts no `tmux` process
+  while their sockets and processes are unchanged.
+- The daemon retires a connection only on evidence that the server changed: its
+  socket was replaced, its process is gone, or another process answers. A second
+  probe must confirm it.
+- A connection that fails to build is logged and retried, from 500 ms up to
+  every 30 s.
+
+One case is left open: when a tmux server has died, another process has taken
+its process id, and its old socket file is still there, the server is listed as
+online until one of those changes.
+
+## A stop that ends
+
+After SIGTERM or SIGINT the daemon now stops within a limit. If its teardown
+makes no progress for 10 s, or takes 25 s in all, it logs the steps still open,
+removes `daemon.json` and exits with status 1. Two waits on the stop path that
+had no limit now have one.
+
+We have not found why a daemon sometimes did not stop after its tmux server was
+replaced. It did not happen in 74 local runs. The limit and the new log line are
+there to end the hang and to name the step if it happens again.
+
+## Also in 2.9.23
+
+- Clients keep re-reading a terminal inventory the daemon refuses: after 250 ms,
+  500 ms, then every 1 s for up to 15 s. After that the client reconnects, with
+  1, 2, 4 and up to 30 s between attempts. Before, it stopped after two quick
+  retries and kept showing a stale terminal.
+- The daemon announces when a session's terminal inventory is readable again, so
+  an idle client re-reads it.
+- A terminal stream closes with code 1012 and reason `tmux-server-retired` when
+  its tmux server is gone or replaced, and 1012 `daemon-restarting` when the
+  daemon restarts in place. 1001 `daemon-shutdown` now means the daemon stops.
+
+## New log lines
+
+The daemon log gains:
+
+- `tmux-server-owners`: a connection kept after a failed probe, retired, built
+  or failed to build, with the trigger, the probe's duration and its error.
+- `daemon-lifecycle`: a restart in place with its trigger, and a slow or failed
+  stop with its slowest steps. A stop that misses its limit logs
+  `stop missed the signal deadline; exiting anyway`.
+- `pane-stream`: a shutdown that closes streams, with the code, the reason and
+  the number of streams.
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. A running older daemon
+restarts on 2.9.23 by itself; your tmux sessions keep running. Update remote
+machines too: the fix is in the daemon on the machine that runs tmux.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
