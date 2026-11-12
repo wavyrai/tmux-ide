@@ -67,6 +67,8 @@ async function startedRig(
     onFlowRecoveryObserved?: (observation: MirrorFlowRecoveryObservation) => void;
     continueReply?: "auto-success" | "manual";
     borderReply?: "manual";
+    /** What every window's `pane-border-status` reads when the channel starts. */
+    windowBorder?: string;
     descriptorReply?: { manual: boolean };
     historyLines?: number;
     atomicHook?: boolean;
@@ -76,6 +78,10 @@ async function startedRig(
 ): Promise<Rig> {
   options = { ...options, atomicHook: options.atomicHook ?? true };
   const state = fixtureState();
+  if (options.windowBorder)
+    state.windowRows = state.windowRows.map((row) =>
+      row.replace(/\toff$/u, `\t${options.windowBorder}`),
+    );
   if (options.nativeBirth)
     state.descriptorRows = state.descriptorRows.map((row) => row + options.nativeBirth);
   const pendingSyncs: Array<() => void> = [];
@@ -2372,6 +2378,69 @@ describe("layout push", () => {
       2,
     );
     await rig.channel.dispose();
+  });
+
+  describe("tmux 3.8 floating pane border status (#742)", () => {
+    // `top-floating` and `bottom-floating` draw a status line on floating panes
+    // only. Tiled panes get none, so their geometry is that of "off".
+    it.each(["top-floating", "bottom-floating"])(
+      "attaches a session whose windows use %s",
+      async (windowBorder) => {
+        const rig = await startedRig({ windowBorder });
+        const layouts: MirrorLayoutEvent[] = [];
+        try {
+          rig.channel.subscribePane(
+            "pane.alpha",
+            () => {},
+            (layout) => layouts.push(layout),
+          );
+          expect(layouts.at(-1)?.paneBorderStatus).toBe("off");
+          expect(layouts.at(-1)?.panes[0]).toMatchObject({ width: 100, height: 50 });
+        } finally {
+          await rig.channel.dispose();
+        }
+      },
+    );
+
+    it.each(["top-floating", "bottom-floating"])(
+      "applies a layout change while the window uses %s",
+      async (border) => {
+        const rig = await startedRig({ borderReply: "manual" });
+        const layouts: MirrorLayoutEvent[] = [];
+        try {
+          rig.channel.subscribePane(
+            "pane.alpha",
+            () => {},
+            (layout) => layouts.push(layout),
+          );
+          completeSeed(rig, ["seed"], "0 0 100 50");
+          const syncs = rig.pendingSyncs.length;
+          rig.sim.feedLines(
+            `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{140x50,0,0,1,59x50,141,0,2} 0`,
+          );
+          rig.sim.reply([border]);
+          expect(layouts.at(-1)?.panes[0]?.width).toBe(140);
+          expect(layouts.at(-1)?.paneBorderStatus).toBe("off");
+          expect(rig.pendingSyncs.length).toBe(syncs);
+        } finally {
+          await rig.channel.dispose();
+        }
+      },
+    );
+
+    it.each(["top-floating", "bottom-floating"])(
+      "reads the window again when its border status becomes %s",
+      async (border) => {
+        const rig = await startedRig();
+        try {
+          const syncs = rig.pendingSyncs.length;
+          rig.sim.feedLines(`%subscription-changed tmux-ide-pane-borders $1 @1 0 - : ${border}`);
+          expect(rig.pendingSyncs.length).toBe(syncs + 1);
+        } finally {
+          await rig.channel.dispose();
+        }
+      },
+    );
   });
 
   it("bounds output held for metadata and recovers instead of replaying a partial stream", async () => {
