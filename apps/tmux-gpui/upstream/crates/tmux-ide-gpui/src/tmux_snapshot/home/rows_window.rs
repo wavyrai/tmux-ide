@@ -9,19 +9,33 @@
 //! page's scroll instead: rows are a fixed height (`fleet::ROW_HEIGHT`), and a
 //! zero-height marker at the top of each run records where the run sat on
 //! the last frame. Scrolling notifies the view, so the next render widens the
-//! window before the rows come into view. A run that hasn't been measured
-//! yet, or a page with no height yet, builds every row.
+//! window before the rows come into view. A page that is a new size (a zoom,
+//! full screen) renders again once it is laid out, as a moved run does. A run
+//! that hasn't been measured yet, or a page with no height yet, builds every
+//! row.
 use gpui::{prelude::*, *};
-use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+};
 
 /// A run of rows: (machine index, server index), or `usize::MAX` for the
 /// sessions not on a listed server.
 pub(in crate::tmux_snapshot) type Run = (usize, usize);
 
 /// Where each run's first row starts, in the page's own coordinates (as if
-/// it weren't scrolled), as of the last frame.
+/// it weren't scrolled), as of the last frame; and the page's visible top
+/// and bottom the last render planned for.
 #[derive(Clone, Default)]
-pub(in crate::tmux_snapshot) struct RowWindow(Rc<RefCell<HashMap<Run, Pixels>>>);
+pub(in crate::tmux_snapshot) struct RowWindow {
+    tops: Rc<RefCell<HashMap<Run, Pixels>>>,
+    planned: Rc<Cell<Option<(Pixels, Pixels)>>>,
+    /// How many renders the markers have asked for.
+    #[cfg(test)]
+    asked: Rc<Cell<usize>>,
+}
 
 impl RowWindow {
     /// What to lay out for the `count` rows of `run`, `height` tall each,
@@ -39,8 +53,9 @@ impl RowWindow {
     }
 
     fn rows(&self, run: Run, count: usize, height: Pixels, page: &ScrollHandle) -> Range<usize> {
-        let top = self.0.borrow().get(&run).copied();
+        let top = self.tops.borrow().get(&run).copied();
         let view = page.bounds();
+        self.planned.set(Some((view.top(), view.bottom())));
         visible(
             top,
             count,
@@ -52,21 +67,33 @@ impl RowWindow {
 
     /// A zero-height element at the top of `run` that records where the run
     /// starts when it is laid out. When that isn't where the render assumed
-    /// (a new table shape, or the first frame), `view` renders again, so the
-    /// window is never built against a stale place.
+    /// (a new table shape, or the first frame), or the page's visible part
+    /// isn't the one the render planned for (a resize), `view` renders again,
+    /// so the window is never built against a stale place.
     pub(in crate::tmux_snapshot) fn marker(
         &self,
         run: Run,
         page: &ScrollHandle,
         view: EntityId,
     ) -> AnyElement {
-        let tops = self.0.clone();
+        let tops = self.tops.clone();
+        let planned = self.planned.clone();
+        #[cfg(test)]
+        let asked = self.asked.clone();
         let page = page.clone();
         canvas(
             move |bounds, window, _| {
                 let top = bounds.origin.y - page.offset().y;
                 let before = tops.borrow_mut().insert(run, top);
-                if before.is_none_or(|before| (before - top).abs() > px(0.5)) {
+                // The page is laid out by now: its bounds are this frame's.
+                let shown = page.bounds();
+                let resized = planned.get().is_none_or(|(from, to)| {
+                    (from - shown.top()).abs() > px(0.5) || (to - shown.bottom()).abs() > px(0.5)
+                });
+                let moved = before.is_none_or(|before| (before - top).abs() > px(0.5));
+                if moved || resized {
+                    #[cfg(test)]
+                    asked.set(asked.get() + 1);
                     // Not during this draw: the next frame renders again.
                     window.on_next_frame(move |_, cx| cx.notify(view));
                 }
@@ -83,7 +110,12 @@ impl RowWindow {
 impl RowWindow {
     /// Forgets where every run was, as a new table shape would move them.
     pub(in crate::tmux_snapshot) fn forget(&self) {
-        self.0.borrow_mut().clear();
+        self.tops.borrow_mut().clear();
+    }
+
+    /// How many renders the markers have asked for so far.
+    pub(in crate::tmux_snapshot) fn asked(&self) -> usize {
+        self.asked.get()
     }
 }
 

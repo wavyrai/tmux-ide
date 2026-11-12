@@ -264,3 +264,37 @@ fn a_moved_run_renders_again_and_a_still_one_does_not(cx: &mut TestAppContext) {
         renders.get()
     );
 }
+
+/// A page that grows (zoom, full screen, a display change) asks for another
+/// render itself once it is laid out at its new size, so the rows that came
+/// into view are built on the next frame, not left as spacers until
+/// something else wakes the view (review of step 1).
+#[gpui::test]
+fn a_resized_page_asks_for_a_render_itself(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    next_frame(cx);
+    draw(cx);
+    next_frame(cx);
+    draw(cx);
+    assert!(!built(cx, 30), "row 30 is below a 700 pt page");
+    let asked = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| v.home_filter.as_ref().unwrap().rows.asked())
+    };
+    let before = asked(cx);
+    draw(cx);
+    assert_eq!(asked(cx), before, "a still page asks for nothing");
+    cx.simulate_resize(size(px(1200.), px(1800.)));
+    // The frame the resize draws is planned against the old page.
+    draw(cx);
+    assert_eq!(
+        asked(cx),
+        before + 1,
+        "the resized page asks for one render"
+    );
+    next_frame(cx);
+    draw(cx);
+    assert!(built(cx, 30), "and the rows now in view are built");
+    let settled = asked(cx);
+    draw(cx);
+    assert_eq!(asked(cx), settled, "and then asks for nothing more");
+}
