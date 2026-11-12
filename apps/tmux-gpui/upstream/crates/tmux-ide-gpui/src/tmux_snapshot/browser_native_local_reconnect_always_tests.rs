@@ -222,6 +222,7 @@ fn a_catalog_with_no_online_server_keeps_reconnecting() {
                     instance_id: "instance".into(),
                     environment_id: Some("environment".into()),
                 },
+                service_version: None,
                 servers: vec![offline("server")],
                 sessions: Vec::new(),
             },
