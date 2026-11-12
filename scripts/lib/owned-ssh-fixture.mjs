@@ -120,9 +120,12 @@ export function verifyEffectiveServer(text, expected) {
   })) {
     if (env.get(k) !== v) throw refusedAt(`setenv:${k}`);
   }
-  const command = fields.get("forcecommand")?.join(" ");
+  // One value, like every other field: two lines must not join into the command.
+  const commands = fields.get("forcecommand");
+  if (commands?.length !== 1)
+    throw refusedAt(commands === undefined ? "forcecommand:missing" : "forcecommand:repeated");
   if (
-    command !==
+    commands[0] !==
     (expected.jump
       ? "/usr/bin/false"
       : `${quote(expected.node)} ${quote(join(expected.root, "dispatch.mjs"))}`)
@@ -835,12 +838,13 @@ export async function createOwnedSshFixture({
   }
 }
 /** What a refusal can say about itself without fixture paths, keys or output. */
-function refusalDetail(error) {
+export function refusalDetail(error) {
   if (typeof error?.check === "string") return { check: error.check };
   if (error && (error.code !== undefined || error.signal || error.killed)) {
     const firstLine = String(error.stderr ?? "")
       .split("\n")[0]
-      .replace(/\/[^\s"']*/gu, "<path>")
+      // To the end of the line: a path may contain spaces.
+      .replace(/\/.*$/u, "<path>")
       .slice(0, 160);
     return {
       exit: typeof error.code === "number" ? error.code : String(error.code ?? ""),
