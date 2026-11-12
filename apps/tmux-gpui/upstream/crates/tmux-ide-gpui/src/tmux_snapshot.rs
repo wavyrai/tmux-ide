@@ -554,10 +554,9 @@ impl SnapshotView {
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
         let separator = controls::separator(&theme);
-        let highlights = self
-            .selection
-            .as_ref()
-            .map_or_else(Vec::new, |selection| selection.highlights.clone());
+        // A reference to the selection's highlights, never a copy (none
+        // without a selection).
+        let highlights = self.selection.as_ref().map(|s| s.highlights.clone());
         let entity = cx.entity();
         // Browse publications carry placements per frame; static files once.
         let kitty_scene = if self.browsing {
@@ -794,7 +793,7 @@ impl SnapshotView {
                                     frame.view(),
                                     bounds,
                                     &font,
-                                    &highlights,
+                                    highlights.as_deref().unwrap_or(&[]),
                                     (!kitty_scene.is_empty()).then_some(PlacedImages {
                                         placements: &kitty_scene,
                                         images,
@@ -817,7 +816,7 @@ impl SnapshotView {
                                 Some(bounds.size),
                                 width,
                                 &font,
-                                &highlights,
+                                highlights.as_deref().unwrap_or(&[]),
                                 &[],
                                 None,
                                 (!kitty_scene.is_empty()).then_some(PlacedImages {
