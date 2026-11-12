@@ -1747,7 +1747,9 @@ export class WorkspaceTerminalInventoryRuntime {
       if (this.#inventoryEpoch === epoch) return null;
       if (staleRetry < INVENTORY_STALE_RETRIES)
         return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
-      return Promise.reject(new NativeTerminalAttachmentRuntimeError("discovery-failed"));
+      return Promise.reject(
+        new NativeTerminalAttachmentRuntimeError("discovery-failed", "overtaken-by-invalidations"),
+      );
     };
     assertLive();
     const nativeEpoch = this.#nativeServerEpoch?.() ?? null;
