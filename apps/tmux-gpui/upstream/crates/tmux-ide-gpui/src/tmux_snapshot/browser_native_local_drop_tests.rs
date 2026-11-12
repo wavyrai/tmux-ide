@@ -286,6 +286,13 @@ fn home_publishes_the_service_version_only_while_its_catalog_is_live() {
     snapshot.service_version = Some("2.9.22".into());
     local.receive_catalog(snapshot, false).unwrap();
     assert!(published(&events).unwrap().service_version.is_some());
+    // An open terminal reports its own service: Home's is not lent to it.
+    local.state.surface = Surface::Workspace;
+    local.publish().unwrap();
+    assert_eq!(published(&events).unwrap().service_version, None);
+    local.state.surface = Surface::Home;
+    local.publish().unwrap();
+    assert!(published(&events).unwrap().service_version.is_some());
     // The list is lost: the version goes with it.
     local.unavailable("No online tmux servers").unwrap();
     assert_eq!(published(&events).unwrap().service_version, None);

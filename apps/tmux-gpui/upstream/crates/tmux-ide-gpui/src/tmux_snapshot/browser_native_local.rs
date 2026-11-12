@@ -235,11 +235,14 @@ impl Local {
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
         state.act = home_recovery::act(self.home.fault(), &state);
-        // Shown only while the catalog that reported it is the live one.
-        state.service_version = self
-            .service_version
-            .clone()
-            .filter(|_| picker_ready && !state.home_fault && self.recovery.is_none());
+        // Shown on Home only, and only while the list that reported it is
+        // live: a terminal names its own service, which may be another
+        // machine's.
+        state.service_version = self.service_version.clone().filter(|_| {
+            state.surface == Surface::Home
+                && state.home_phase == HomePhase::Live
+                && !state.home_fault
+        });
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
