@@ -35,7 +35,8 @@ pub(in crate::tmux_snapshot) struct Cache {
     key: Option<u64>,
     /// Whether the fade that shows the sidebar has ended. A paint carries the
     /// opacity of the frame that drew it, so the sidebar is drawn, not
-    /// replayed, until then.
+    /// replayed, until then. The fade's own first frame clears it: that
+    /// frame is drawn, since a sidebar that was not shown holds no key.
     faded_in: Rc<Cell<bool>>,
 }
 
@@ -111,7 +112,6 @@ impl SnapshotView {
     /// own view would drop them, and none is coming.
     pub(super) fn sidebar_unmounted(&mut self) {
         self.sidebar_view.key = None;
-        self.sidebar_view.faded_in.set(false);
         if let Some(view) = &self.sidebar_view.view {
             self.agent_animation.begin_render(view.entity_id());
         }
