@@ -3,6 +3,7 @@ import type { Socket } from "node:net";
 import { WebSocketServer } from "ws";
 import { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL } from "@tmux-ide/contracts";
 import type { DirectTerminalSocket } from "../terminal/attachments/direct-websocket.ts";
+import { daemonWebSocketHeartbeat, type WebSocketHeartbeat } from "./websocket-heartbeat.ts";
 import {
   PANE_STREAM_MAX_CONTROL_BYTES,
   PANE_STREAM_MAX_REDEMPTION_BYTES,
@@ -60,6 +61,7 @@ export function attachPaneStreamWebSocket(
   coordinator: PaneStreamAdmissionCoordinator,
   redemptionPath: string = PANE_STREAM_REDEEM_PATH,
   isCurrent: () => boolean = () => true,
+  heartbeat: WebSocketHeartbeat = daemonWebSocketHeartbeat(),
 ): PaneStreamWebSocketBoundary {
   const wss = new WebSocketServer({
     noServer: true,
@@ -73,6 +75,9 @@ export function attachPaneStreamWebSocket(
         : false;
     },
   });
+
+  // Old clients ignore the header and answer the pings by protocol.
+  wss.on("headers", (headers) => heartbeat.advertise(headers));
 
   const upgrade = (
     request: import("node:http").IncomingMessage,
@@ -140,6 +145,7 @@ export function attachPaneStreamWebSocket(
       wss.handleUpgrade(request, socket, head, (ws) => {
         socket.off("close", cancelUnbound);
         socket.off("error", cancelUnbound);
+        heartbeat.watch(ws, `pane-stream ${redemptionPath}`);
         decision.admission.bind(ws as unknown as DirectTerminalSocket);
       });
     } catch {

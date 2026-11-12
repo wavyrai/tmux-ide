@@ -350,6 +350,50 @@ function runTmuxFeatureProbes(executable: string): CheckResult {
   }
 }
 
+/**
+ * PURE — which tmux server the daemon uses, and whether this shell's `tmux`
+ * means the same one.
+ *
+ * A daemon started outside tmux (launchd, systemd, `--headless` from a plain
+ * shell) addresses the socket named "default" and gives its tmux clients a
+ * scrubbed environment, so it always looks in /tmp/tmux-<uid>/ and ignores
+ * TMUX_TMPDIR. A shell that exports TMUX_TMPDIR, or sits in a tmux started
+ * with -S or -L, is then on a server that daemon cannot see. The explicit
+ * TMUX_IDE_TMUX_SOCKET_PATH / TMUX_IDE_TMUX_SOCKET_NAME settings apply to both.
+ */
+export function tmuxServerSocketRow(environment: NodeJS.ProcessEnv, uid: number): CheckResult {
+  const defaultDirectory = join("/tmp", `tmux-${String(uid)}`);
+  const explicitPath = environment[TMUX_SOCKET_PATH_ENV];
+  const explicitName = environment.TMUX_IDE_TMUX_SOCKET_NAME;
+  const daemonSocket = explicitPath
+    ? explicitPath
+    : join(defaultDirectory, explicitName ? explicitName : "default");
+  const insideTmux = /^(.*),[0-9]+,[0-9]+$/u.exec(environment.TMUX ?? "")?.[1];
+  const shellSocket =
+    insideTmux ?? join(environment.TMUX_TMPDIR || "/tmp", `tmux-${String(uid)}`, "default");
+  const same = (left: string, right: string): boolean =>
+    left.replace(/^\/private\/tmp\//u, "/tmp/") === right.replace(/^\/private\/tmp\//u, "/tmp/");
+  if (explicitPath || explicitName || same(shellSocket, daemonSocket))
+    return {
+      label: "tmux server",
+      pass: true,
+      detail: `the daemon uses ${daemonSocket}${explicitPath || explicitName ? " (set explicitly)" : ""}`,
+      optional: true,
+    };
+  const why = insideTmux
+    ? "this shell is inside a tmux on another socket"
+    : "TMUX_TMPDIR is set, and the daemon ignores it";
+  return {
+    label: "tmux server",
+    pass: false,
+    detail:
+      `this shell's tmux uses ${shellSocket}, a background daemon uses ${daemonSocket} (${why}): ` +
+      `it will not see this shell's sessions. Set ${TMUX_SOCKET_PATH_ENV}=${shellSocket} in the daemon's environment` +
+      (insideTmux ? "" : ", or unset TMUX_TMPDIR"),
+    optional: true,
+  };
+}
+
 export function nodeVersionRow(version: string): CheckResult {
   const major = Number(version.split(".")[0]);
   const pass = Number.isInteger(major) && major >= 20;
@@ -551,6 +595,8 @@ export async function doctor({
       { optional: true },
     ),
   );
+
+  checks.push(tmuxServerSocketRow(process.env, process.getuid?.() ?? 0));
 
   // Canonical daemon identity + log provenance (credential-free), so a triage
   // never chases a stale, manually redirected log file.

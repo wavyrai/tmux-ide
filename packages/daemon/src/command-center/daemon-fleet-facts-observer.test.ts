@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DaemonFleetFactsObserver,
+  FLEET_FACTS_IDLE_POLL_MS,
   FLEET_FACTS_POLL_MS,
+  FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF,
   parseAgentStateFacts,
   parseSessionCompositionFacts,
   type SessionCompositionFacts,
@@ -60,6 +62,149 @@ describe("DaemonFleetFactsObserver", () => {
     expect(FLEET_FACTS_POLL_MS).toBe(500);
     expect(setTimer).toHaveBeenLastCalledWith(expect.any(Function), 500);
     handle.release();
+  });
+
+  it("backs off to 1 s after 10 unchanged ticks and returns to 500 ms on any change (perf F6)", async () => {
+    const timers: Array<{ callback: () => void; delayMs: number }> = [];
+    const setTimer = vi.fn((callback: () => void, delayMs: number) => {
+      timers.push({ callback, delayMs });
+      return timers.length as unknown as ReturnType<typeof setTimeout>;
+    });
+    let state = "idle:1";
+    const onAgentSessionsChanged = vi.fn();
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => emptySessions(),
+      readAgents: async () =>
+        new Map([["work", new Map([["%1", { paneStamp: "pane.a", state, command: "claude" }]])]]),
+      ...callbacks(),
+      onAgentSessionsChanged,
+      setTimer,
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["agents"]);
+    await handle.ready;
+    const tick = async () => {
+      const next = timers.at(-1)!;
+      next.callback();
+      for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+    for (let i = 0; i < FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF - 1; i++) {
+      await tick();
+      expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+    }
+    await tick();
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_IDLE_POLL_MS);
+    await tick();
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_IDLE_POLL_MS);
+    // An agent flips: the very next tick is back at 500 ms.
+    state = "working:2";
+    await tick();
+    expect(onAgentSessionsChanged).toHaveBeenCalledWith(["work"]);
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+    // Flips stay visible within 1 s even while backed off (#716).
+    expect(FLEET_FACTS_IDLE_POLL_MS).toBeLessThanOrEqual(1_000);
+    handle.release();
+  });
+
+  it.each([
+    {
+      change: "a new session",
+      demand: "sessions" as const,
+      // Same topology proof, so only the session-list diff can reset the poll.
+      next: { sessions: ["extra", "work"], adopted: [], terminalTopology: ["work\t0"] },
+      callback: "onSessionsChanged" as const,
+    },
+    {
+      change: "an adoption",
+      demand: "adopted" as const,
+      next: { sessions: ["work"], adopted: ["work"], terminalTopology: ["work\t0"] },
+      callback: "onAdoptedChanged" as const,
+    },
+    {
+      change: "a topology change in the same sessions",
+      demand: "sessions" as const,
+      next: { sessions: ["work"], adopted: [], terminalTopology: ["work\t0", "work\t1"] },
+      callback: "onTerminalTopologyChanged" as const,
+    },
+  ])(
+    "returns from the backed-off poll to 500 ms on $change (perf F6)",
+    async ({ demand, next, callback }) => {
+      const timers: Array<{ callback: () => void; delayMs: number }> = [];
+      let facts: SessionCompositionFacts = {
+        sessions: ["work"],
+        adopted: [],
+        terminalTopology: ["work\t0"],
+      };
+      const observed = callbacks();
+      const observer = new DaemonFleetFactsObserver({
+        readSessions: async () => facts,
+        readAgents: async () => new Map(),
+        ...observed,
+        setTimer: (run: () => void, delayMs: number) => {
+          timers.push({ callback: run, delayMs });
+          return timers.length as unknown as ReturnType<typeof setTimeout>;
+        },
+        clearTimer: vi.fn(),
+      });
+      const handle = observer.acquire([demand]);
+      await handle.ready;
+      const tick = async () => {
+        timers.at(-1)!.callback();
+        for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+      };
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      for (let i = 0; i < FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF; i++) await tick();
+      expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_IDLE_POLL_MS);
+      expect(observed[callback]).not.toHaveBeenCalled();
+      facts = next;
+      await tick();
+      expect(observed[callback]).toHaveBeenCalledTimes(1);
+      expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+      // And it takes the full run of unchanged ticks to back off again.
+      for (let i = 0; i < FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF - 1; i++) {
+        await tick();
+        expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+      }
+      await tick();
+      expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_IDLE_POLL_MS);
+      handle.release();
+    },
+  );
+
+  it("returns from the backed-off poll to 500 ms when a subscriber joins (perf F6)", async () => {
+    const timers: Array<{ callback: () => void; delayMs: number }> = [];
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => emptySessions(),
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer: (run: () => void, delayMs: number) => {
+        timers.push({ callback: run, delayMs });
+        return timers.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: vi.fn(),
+    });
+    const first = observer.acquire(["agents"]);
+    await first.ready;
+    const tick = async () => {
+      timers.at(-1)!.callback();
+      for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (let i = 0; i < FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF + 2; i++) await tick();
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_IDLE_POLL_MS);
+    const second = observer.acquire(["agents"]);
+    await second.ready;
+    await tick();
+    expect(timers.at(-1)!.delayMs).toBe(FLEET_FACTS_POLL_MS);
+    first.release();
+    second.release();
+  });
+
+  it("pins the back-off: 10 unchanged ticks, then 1 s (perf F6)", () => {
+    expect(FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF).toBe(10);
+    expect(FLEET_FACTS_IDLE_POLL_MS).toBe(1_000);
   });
 
   it("leaves no timer behind when the last subscriber leaves mid-cycle (#716)", async () => {

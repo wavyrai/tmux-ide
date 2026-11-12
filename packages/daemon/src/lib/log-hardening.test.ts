@@ -11,6 +11,8 @@ import {
   getLogStreamFailures,
   logger,
   registerLogSecret,
+  reserveStdoutForProtocol,
+  structuredLogStream,
   setLogIdentity,
   setLogLevel,
   subscribeLogs,
@@ -24,7 +26,7 @@ let stderrLines: string[];
 let originalStdout: Writer;
 let originalStderr: Writer;
 
-function installCapture(options: { stdoutThrows?: boolean } = {}): void {
+function installCapture(options: { stdoutThrows?: boolean; stderrThrows?: boolean } = {}): void {
   stdoutLines = [];
   stderrLines = [];
   originalStdout = process.stdout.write;
@@ -35,6 +37,7 @@ function installCapture(options: { stdoutThrows?: boolean } = {}): void {
     return true;
   }) as Writer;
   process.stderr.write = ((chunk: string | Uint8Array) => {
+    if (options.stderrThrows) throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     stderrLines.push(String(chunk));
     return true;
   }) as Writer;
@@ -117,6 +120,28 @@ describe("reserved metadata", () => {
   });
 });
 
+// Bug sweep, section A: `--headless --json` stdout must stay one JSON document.
+describe("a stdout reserved for a protocol", () => {
+  it("sends every record to stderr once stdout is reserved, and to stdout otherwise", () => {
+    installCapture();
+    expect(structuredLogStream()).toBe("stdout");
+    logger.info("pane-stream", "stream closed", { code: 1000 });
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed");
+    expect(stdoutLines).toHaveLength(2);
+    expect(stderrLines).toHaveLength(0);
+    reserveStdoutForProtocol();
+    expect(structuredLogStream()).toBe("stderr");
+    logger.info("pane-stream", "stream closed", { code: 1000 });
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed");
+    logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway");
+    expect(stdoutLines).toHaveLength(2);
+    expect(stderrLines).toHaveLength(3);
+    expect(JSON.parse(stderrLines[1]!)).toMatchObject({ level: "warn", msg: expect.any(String) });
+    // The ring and subscribers are unaffected by where the wire copy goes.
+    expect(getLogBuffer()).toHaveLength(5);
+  });
+});
+
 describe("redaction", () => {
   it("never writes a registered secret, credential key or bearer header", () => {
     installCapture();
@@ -182,6 +207,26 @@ describe("stream degradation", () => {
     // Error-level records still reach stderr.
     logger.error("daemon", "three");
     expect(stderrLines.some((line) => line.includes('"msg":"three"'))).toBe(true);
+  });
+});
+
+// CI, PR #378: with stdout reserved the records go to stderr, and a failing
+// stderr used to put its warning on stdout, the stream that was reserved.
+describe("stream degradation with a reserved stdout", () => {
+  it("writes nothing to stdout when stderr fails, and keeps the ring", () => {
+    installCapture({ stderrThrows: true });
+    reserveStdoutForProtocol();
+    expect(() => logger.info("daemon", "one")).not.toThrow();
+    expect(() => logger.error("daemon", "two")).not.toThrow();
+    expect(getLogStreamFailures()).toEqual(["stderr"]);
+    expect(stdoutLines).toEqual([]);
+    expect(getLogBuffer().map((entry) => entry.msg)).toEqual(["one", "two"]);
+  });
+
+  it("still warns on stdout about a failing stderr when stdout is not reserved", () => {
+    installCapture({ stderrThrows: true });
+    logger.error("daemon", "one");
+    expect(stdoutLines.filter((line) => line.includes("stderr write failed"))).toHaveLength(1);
   });
 });
 

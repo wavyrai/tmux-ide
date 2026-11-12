@@ -1,7 +1,10 @@
 import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { testInteractionContext } from "../../../test-support/interaction-evidence.ts";
 import { describe, expect, it, vi } from "vitest";
-import type { SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
+import type {
+  CanonicalTerminalReplicaUpdate,
+  SessionRuntimeSemanticIntent,
+} from "@tmux-ide/contracts";
 import { MirrorService, type MirrorServiceOptions } from "../mirror/mirror-service.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
 import {
@@ -11,6 +14,12 @@ import {
   fixtureState,
 } from "../mirror/__tests__/simulated-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
+import { PARK_AFTER_MS } from "./terminal-replica-owner.ts";
+import {
+  SYSTEM_SESSION_RUNTIME_SCHEDULER,
+  type SessionRuntimeScheduler,
+} from "./runtime-scheduler.ts";
+import { applyTerminalReplicaUpdate } from "@tmux-ide/core";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 
 const GENERATION_A = "11111111-1111-4111-8111-111111111111";
@@ -1378,5 +1387,137 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
     expect(registry.activeControllerLeaseCount()).toBe(0);
     expect(sims).toHaveLength(0);
+  });
+});
+
+describe("parking through the real owner and channel (perf F2)", () => {
+  function parkRegistry() {
+    const sims: SimulatedChannel[] = [];
+    const parks: Array<{ task: () => void; cancelled: boolean }> = [];
+    const scheduler: SessionRuntimeScheduler = {
+      ...SYSTEM_SESSION_RUNTIME_SCHEDULER,
+      timer: (task, delayMs) => {
+        if (delayMs !== PARK_AFTER_MS) return SYSTEM_SESSION_RUNTIME_SCHEDULER.timer(task, delayMs);
+        const timer = { task, cancelled: false };
+        parks.push(timer);
+        return { cancel: () => (timer.cancelled = true) };
+      },
+    };
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      scheduler,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new OwnedSnapshotChannel(
+            handlers,
+            (command) => {
+              const reply = fixtureAutoReply(fixtureState())(command);
+              if (reply) return reply;
+              // Stock capture path, as `rig(…, true)` does.
+              if (command.includes("capture-pane") && command.includes("-R -S"))
+                return ["command capture-pane: unknown flag -R"];
+              if (command.includes("capture-pane")) return ["seed"];
+              if (command.startsWith("display-message")) return ["0 0 100 50"];
+              return [];
+            },
+            () => ["seed"],
+            () => "0 0 100 50",
+          );
+          const reply = sim.reply.bind(sim);
+          sim.reply = (lines, ok = true) =>
+            reply(lines, lines[0] === "command capture-pane: unknown flag -R" ? false : ok);
+          sims.push(sim);
+          return sim;
+        },
+        generatePaneId: () => "pane.mirror.generated",
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    const fire = () => {
+      for (const timer of parks.splice(0)) if (!timer.cancelled) timer.task();
+    };
+    return { registry, sims, fire };
+  }
+  const pauses = (sim: SimulatedChannel) =>
+    sim.written.filter((line) => line.includes("refresh-client -A '%1:pause'")).length;
+  const text = (updates: CanonicalTerminalReplicaUpdate[]) => {
+    type State = Parameters<typeof applyTerminalReplicaUpdate>[0];
+    let state: State = null;
+    for (const update of updates) {
+      const result = applyTerminalReplicaUpdate(
+        update.type === "terminal.seed" ? null : state,
+        update,
+      );
+      if (result.state) state = result.state;
+    }
+    const snapshot = state?.snapshot;
+    return snapshot
+      ? [...snapshot.history, ...snapshot.grid]
+          .map((row) => row.cells.map((cell) => cell.grapheme || " ").join(""))
+          .join("\n")
+      : "";
+  };
+
+  it.each(["frozen, no %pause seen yet", "paused"] as const)(
+    "a client arriving while %s gets the retained frame, then one reseed, and no second freeze",
+    async (moment) => {
+      const { registry, sims, fire } = parkRegistry();
+      try {
+        const consumer = registry.connect(FIXTURE.session, "web", "park-client");
+        const before: CanonicalTerminalReplicaUpdate[] = [];
+        const first = await consumer.subscribeReplica("pane.alpha", (u) => before.push(u));
+        await vi.waitFor(() => expect(before.length).toBeGreaterThan(0));
+        const sim = sims[0]!;
+        sim.output("%1", "BEFORE");
+        await vi.waitFor(() => expect(text(before)).toContain("BEFORE"));
+        const retained = before.filter((u) => u.type === "terminal.seed").at(-1)!;
+        const retainedRevision = before.at(-1)!.revision;
+        await first.close();
+        fire();
+        expect(pauses(sim)).toBe(1);
+        if (moment === "paused") sim.feedLines("%pause %1");
+        const back: CanonicalTerminalReplicaUpdate[] = [];
+        await consumer.subscribeReplica("pane.alpha", (u) => back.push(u));
+        // The retained frame first, at its own revision.
+        expect(back[0]).toMatchObject({ type: "terminal.seed", revision: retainedRevision });
+        void retained;
+        // Then exactly one reseed from the requested-pause recovery.
+        await vi.waitFor(() =>
+          expect(back.filter((u) => u.type === "terminal.seed")).toHaveLength(2),
+        );
+        expect(pauses(sim)).toBe(1);
+        // The recovery resumed the pane: output after the return arrives once,
+        // on top of the reseed.
+        sim.output("%1", "AFTER");
+        await vi.waitFor(() => expect(text(back)).toContain("AFTER"));
+        expect(text(back).split("AFTER").length - 1).toBe(1);
+        expect(back.filter((u) => u.type === "terminal.seed")).toHaveLength(2);
+      } finally {
+        await registry.dispose();
+      }
+    },
+  );
+
+  it("a runtime retired while a pane is parked leaves no park behind", async () => {
+    // What a retired tmux server owner does to its session runtimes (#840).
+    const { registry, sims, fire } = parkRegistry();
+    const consumer = registry.connect(FIXTURE.session, "web", "park-client");
+    const before: CanonicalTerminalReplicaUpdate[] = [];
+    const first = await consumer.subscribeReplica("pane.alpha", (u) => before.push(u));
+    await vi.waitFor(() => expect(before.length).toBeGreaterThan(0));
+    const sim = sims[0]!;
+    await first.close();
+    fire();
+    expect(pauses(sim)).toBe(1);
+    await registry.dispose();
+    const written = sim.written.length;
+    fire();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // No thaw, recovery or second pause is sent for a pane whose runtime is gone,
+    // and the retired runtime serves no retained frame.
+    expect(sim.written.length).toBe(written);
+    const late: CanonicalTerminalReplicaUpdate[] = [];
+    await expect(consumer.subscribeReplica("pane.alpha", (u) => late.push(u))).rejects.toThrow();
+    expect(late).toEqual([]);
   });
 });

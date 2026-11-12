@@ -310,10 +310,17 @@ describe("owner retirement needs positive evidence (#840)", () => {
     const clock = { now: 10_000 };
     // By default the bound never expires, so a read waits for the work in flight.
     const delay = vi.fn((_ms: number) => new Promise<void>(() => {}));
+    const socket = { present: true, stale: false, processReplaced: false as boolean | Error };
     const owners = new TmuxServerOwners({
       probe,
       create,
       serverProcessAlive,
+      serverSocketPresent: () => socket.present,
+      selectorSocketRefuses: async () => socket.stale,
+      serverProcessReplaced: async () => {
+        if (socket.processReplaced instanceof Error) throw socket.processReplaced;
+        return socket.processReplaced;
+      },
       onEvent: (event) => events.push(event),
       now: () => clock.now,
       delay,
@@ -333,6 +340,7 @@ describe("owner retirement needs positive evidence (#840)", () => {
       serverProcessAlive,
       clock,
       delay,
+      socket,
     };
   }
 
@@ -663,6 +671,98 @@ describe("owner retirement needs positive evidence (#840)", () => {
     expect(waits).toEqual([OBSERVE_MAX_WAIT_MS]);
     teardown.resolve();
     await sweeping;
+    await f.owners.dispose();
+  });
+
+  // Review N10: a registered server that is not running must not cost a spawn for ever.
+  it("spawns no probe at all while the server's socket file does not exist", async () => {
+    const f = liveFixture();
+    await f.owners.register({ selector: { kind: "name", name: "gone" }, label: "gone" });
+    const probesIn15Minutes = async () => {
+      const before = f.probe.mock.calls.length;
+      for (let second = 0; second < 900; second += 2) {
+        f.clock.now += 2_000;
+        await f.owners.sweep(); // the background sweep, every 2 s
+        if (second % 10 === 0) await f.owners.observe(); // an app listing servers every 10 s
+      }
+      return f.probe.mock.calls.length - before;
+    };
+    // The socket file is there but nothing answers: the sweep backs off to one probe per 30 s,
+    // and each read asks once more.
+    const withSocketFile = await probesIn15Minutes();
+    expect(withSocketFile).toBeGreaterThanOrEqual(30);
+    // A dead server's leftover socket file: one connect says nobody listens, no spawn.
+    f.socket.stale = true;
+    expect(await probesIn15Minutes()).toBe(0);
+    f.socket.stale = false;
+    f.socket.present = false;
+    expect(await probesIn15Minutes()).toBe(0);
+    expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
+    expect(f.probe.mock.calls.length).toBeGreaterThan(0);
+    // The moment the socket appears, the next read brings the server online.
+    const before = f.probe.mock.calls.length;
+    f.socket.present = true;
+    f.observations.set("gone", f.native("back"));
+    f.clock.now += OBSERVE_MIN_INTERVAL_MS;
+    expect((await f.owners.observe())[0]).toMatchObject({ state: "online" });
+    expect(f.probe.mock.calls.length).toBe(before + 1);
+    await f.owners.dispose();
+  });
+
+  // Review (pid reuse): the server died and another process has its pid.
+  it("retires an owner whose pid now belongs to another process", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.observations.set("a", timeout);
+    // Still the same process, or a check that fails: the owner is kept.
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    f.socket.processReplaced = new Error("ps: EAGAIN");
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    f.socket.processReplaced = true;
+    expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+    expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
+      trigger: "server-process-replaced",
+      probe: { failure: "timeout" },
+    });
+    await f.owners.dispose();
+  });
+
+  // Review C1: a live tmux server that is not accepting has a full accept queue; its socket
+  // refuses connections and tmux itself prints "no server running". It must keep its owner.
+  it("keeps the owner of a live server whose socket refuses connections", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.socket.stale = true; // every connect is refused
+    f.observations.set("a", { failure: "no-server" as const, detail: "no server running on …" });
+    for (let round = 0; round < 3; round += 1)
+      expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    expect((await f.owners.sweep())[0]).toMatchObject({ generation: online.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    expect(f.events.at(-1)).toMatchObject({
+      type: "owner-kept",
+      probe: { failure: "no-server" },
+    });
+    await f.owners.dispose();
+  });
+
+  it("does not ask about the process while tmux answers", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    f.socket.processReplaced = true;
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
     await f.owners.dispose();
   });
 

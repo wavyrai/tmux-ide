@@ -26,7 +26,7 @@ import {
   type EmbeddedDaemonOptions,
 } from "./daemon-embed.ts";
 import { DaemonStartupError, IdeError } from "./errors.ts";
-import { logger } from "./log.ts";
+import { logger, reserveStdoutForProtocol } from "./log.ts";
 import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
@@ -74,8 +74,10 @@ export interface HeadlessDaemonDependencies {
  */
 export const SIGNAL_STOP_DEADLINE_MS = 10_000;
 /**
- * A slow stop that still completes teardown steps is not hung: each step that
- * settles renews the deadline, up to this total. It stays under the 30 s the
+ * A slow stop that still completes teardown steps is not hung: the deadline
+ * above counts from the last step that settled, and this bounds the whole
+ * stop. So a teardown that hangs exits 10 s after its last progress, and one
+ * that keeps moving exits at 25 s at the latest. That stays under the 30 s the
  * launchd and systemd units grant before they kill the process themselves.
  */
 export const SIGNAL_STOP_MAX_MS = 25_000;
@@ -87,6 +89,12 @@ interface HeadlessLifecycle {
   generations: number;
   /** Why the next generation starts: "initial", or what retired the previous one. */
   startReason: string;
+  /**
+   * The port the previous generation served on. A restart in place keeps it
+   * when it can, so a client reconnects where it was instead of having to
+   * find the daemon again.
+   */
+  lastPort?: number;
 }
 
 function activeResourceCounts(): Record<string, number> {
@@ -345,6 +353,9 @@ export async function runHeadlessDaemon(
       options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
   };
   let restoreTmuxWorkspaces = false;
+  // With --json, stdout is the status document for whoever started the
+  // daemon; log records, also warnings and "stream closed", go to stderr.
+  if (options.json === true) reserveStdoutForProtocol();
   const lifecycle: HeadlessLifecycle = { generations: 0, startReason: "initial" };
   while (true) {
     const result = await runHeadlessDaemonGeneration(
@@ -364,7 +375,9 @@ async function runHeadlessDaemonGeneration(
   restoreTmuxWorkspaces: boolean,
   lifecycle: HeadlessLifecycle,
 ): Promise<"stopped" | "already-running" | "restart"> {
-  const port = parsePort(lifecycle.restart?.port ?? options.port);
+  const requestedPort = parsePort(lifecycle.restart?.port ?? options.port);
+  // Nobody asked for a port: prefer the one the previous generation had.
+  let port = requestedPort ?? lifecycle.lastPort;
   const generation = (lifecycle.generations += 1);
   const startReason = lifecycle.startReason;
   const generationStartedAt = performance.now();
@@ -375,7 +388,7 @@ async function runHeadlessDaemonGeneration(
   /** What asked this generation to retire; logged with the timings. */
   let retireTrigger: string | null = null;
   const deadlineMs = deps.signalStopDeadlineMs ?? SIGNAL_STOP_DEADLINE_MS;
-  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  let deadlineTimer: ReturnType<typeof setInterval> | null = null;
   let rejectDeadline!: (error: Error) => void;
   const deadlineExceeded = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
@@ -384,6 +397,7 @@ async function runHeadlessDaemonGeneration(
   const maxMs = Math.max(deadlineMs, deps.signalStopMaxMs ?? SIGNAL_STOP_MAX_MS);
   let signalledAt = 0;
   let lastProgress = "";
+  let lastProgressAt = 0;
   const readStop = () => {
     try {
       return handle?.stopDiagnostics?.() ?? null;
@@ -393,21 +407,18 @@ async function runHeadlessDaemonGeneration(
   };
   const progressOf = (stop: ReturnType<typeof readStop>): string =>
     stop ? `${stop.completed.length}:${stop.stepsSettled}` : "";
-  const stopDeadlineExceeded = (signal: NodeJS.Signals): void => {
-    const stop = readStop();
-    const waitedMs = Math.round(performance.now() - signalledAt);
-    const progress = progressOf(stop);
-    if (progress !== lastProgress && waitedMs + deadlineMs <= maxMs) {
-      // Steps settled since the last look: slow, not hung. Give it another window.
-      lastProgress = progress;
-      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
-      return;
-    }
+  const abandonStop = (
+    signal: NodeJS.Signals | "restart",
+    stop: ReturnType<typeof readStop>,
+  ): void => {
+    const now = performance.now();
     logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway", {
       signal,
+      trigger: retireTrigger,
       deadlineMs,
       maxMs,
-      waitedMs,
+      waitedMs: Math.round(now - signalledAt),
+      sinceLastProgressMs: Math.round(now - lastProgressAt),
       generation,
       startReason,
       generationInstanceId: handle?.instanceId ?? null,
@@ -426,21 +437,45 @@ async function runHeadlessDaemonGeneration(
     }
     (deps.exit ?? ((code: number) => process.exit(code)))(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
     rejectDeadline(
-      new IdeError(`Daemon stop did not finish within ${deadlineMs}ms of ${signal}`, {
+      new IdeError(`Daemon stop did not finish within its deadline after ${signal}`, {
         code: "DAEMON_STOP_TIMEOUT",
         exitCode: SIGNAL_STOP_TIMEOUT_EXIT_CODE,
       }),
     );
   };
+  /** Looked at a few times per deadline: has the teardown moved, and how long has it been? */
+  const watchStop = (signal: NodeJS.Signals | "restart"): void => {
+    const stop = readStop();
+    const now = performance.now();
+    const progress = progressOf(stop);
+    if (progress !== lastProgress) {
+      lastProgress = progress;
+      lastProgressAt = now;
+    }
+    if (now - lastProgressAt < deadlineMs && now - signalledAt < maxMs) return;
+    if (deadlineTimer) clearInterval(deadlineTimer);
+    abandonStop(signal, stop);
+  };
+  /**
+   * Start the watch over a stop. A signal starts it, and so does a restart in
+   * place: a restart whose teardown hangs would otherwise leave a process that
+   * serves nothing and waits for ever, with no signal to end it.
+   * Armed once; repeating the signal buys no time.
+   */
+  const watchThisStop = (cause: NodeJS.Signals | "restart"): void => {
+    if (deadlineTimer) return;
+    signalledAt = lastProgressAt = performance.now();
+    lastProgress = progressOf(readStop());
+    // Deliberately not unref'd: a hung teardown must not outlive the deadline.
+    deadlineTimer = setInterval(
+      () => watchStop(cause),
+      Math.max(1, Math.min(1_000, Math.floor(deadlineMs / 8))),
+    );
+  };
   const requestStop = (signal: NodeJS.Signals): void => {
     signalRequested = true;
     retireTrigger ??= `signal:${signal}`;
-    // Deliberately not unref'd: a hung teardown must not outlive the deadline.
-    if (!deadlineTimer) {
-      signalledAt = performance.now();
-      lastProgress = progressOf(readStop());
-      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
-    }
+    watchThisStop(signal);
     if (handle) void handle.stop().catch(() => undefined);
   };
   const onSigint = (): void => requestStop("SIGINT");
@@ -491,6 +526,7 @@ async function runHeadlessDaemonGeneration(
             lifecycle.restart = request;
             restartRequested = true;
             retireTrigger ??= `restart-request:${"kind" in request ? request.kind : "settings"}`;
+            watchThisStop("restart");
             await handle.stop();
           },
           localBypassToken: generateAuthToken(),
@@ -499,6 +535,19 @@ async function runHeadlessDaemonGeneration(
           ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),
         });
       } catch (error) {
+        // The remembered port is a preference, not a requirement: if the new
+        // generation cannot start on it, it starts on a free one as before.
+        if (requestedPort === undefined && port !== undefined) {
+          logger.warn("daemon-lifecycle", "could not keep the previous port; picking a free one", {
+            generation,
+            port,
+            error: error instanceof Error ? error.message.slice(0, 200) : String(error),
+          });
+          port = undefined;
+          lifecycle.lastPort = undefined;
+          startAttempt -= 1;
+          continue;
+        }
         // Another process may hold the complete startup claim before its
         // daemon.json and endpoints are visible. Wait for that exact winner;
         // if it dies before publication, retry the claim once.
@@ -617,6 +666,7 @@ async function runHeadlessDaemonGeneration(
       throw error;
     }
 
+    lifecycle.lastPort = info.port;
     emitStatus(deps, options.json === true, "ready", info);
     // The first generation already says so with its status line on stdout.
     logger[generation > 1 ? "info" : "debug"]("daemon-lifecycle", "generation ready", {
@@ -636,6 +686,7 @@ async function runHeadlessDaemonGeneration(
               if (!replaced || stopStarted || signalRequested) return;
               restartRequested = true;
               retireTrigger ??= "tmux-authority-replaced";
+              watchThisStop("restart");
               return handle!.stop();
             })
             .catch(() => undefined)
@@ -658,7 +709,7 @@ async function runHeadlessDaemonGeneration(
   try {
     return await Promise.race([runGeneration(), deadlineExceeded]);
   } finally {
-    if (deadlineTimer) clearTimeout(deadlineTimer);
+    if (deadlineTimer) clearInterval(deadlineTimer);
     deps.offSignal("SIGINT", onSigint);
     deps.offSignal("SIGTERM", onSigterm);
   }

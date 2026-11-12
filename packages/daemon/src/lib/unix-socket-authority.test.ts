@@ -6,6 +6,7 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -14,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  birthtimeIdentifiesFile,
   captureUnixSocketIdentity,
   revalidateUnixSocketIdentity,
   unixSocketPathLimit,
@@ -65,6 +67,38 @@ describe("Unix socket authority", () => {
     const identity = captureUnixSocketIdentity(path);
     chmodSync(path, 0o600);
     expect(revalidateUnixSocketIdentity(identity)).toBe(identity.path);
+  });
+
+  // Bug sweep, section A: `touch` on a healthy server's socket retired its owner.
+  it("still knows the socket after its modification time changed, where creation time identifies it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-socket-touch-"));
+    roots.push(root);
+    const path = join(root, "t.sock");
+    await socketAt(path);
+    const identity = captureUnixSocketIdentity(path);
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(path, later, later); // what `touch` does
+    if (birthtimeIdentifiesFile(process.platform))
+      expect(revalidateUnixSocketIdentity(identity)).toBe(identity.path);
+    else expect(() => revalidateUnixSocketIdentity(identity)).toThrow(/changed before use/u);
+  });
+
+  it("uses the creation time only on platforms that record one", () => {
+    expect(birthtimeIdentifiesFile("darwin")).toBe(true);
+    expect(birthtimeIdentifiesFile("freebsd")).toBe(true);
+    expect(birthtimeIdentifiesFile("linux")).toBe(false);
+    expect(birthtimeIdentifiesFile("win32")).toBe(false);
+  });
+
+  it("a different creation time is a different socket even with the same device and inode", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-socket-birth-"));
+    roots.push(root);
+    const path = join(root, "t.sock");
+    await socketAt(path);
+    const identity = captureUnixSocketIdentity(path);
+    expect(() =>
+      revalidateUnixSocketIdentity({ ...identity, birthtimeNs: identity.birthtimeNs + 1n }),
+    ).toThrow(/changed before use/u);
   });
 
   it("rejects missing, regular, relative, oversized, final-symlink, and parent-symlink paths", async () => {

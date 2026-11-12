@@ -15,6 +15,9 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
+    // No test may reach a live tmux server: private socket directory + guard.
+    globalSetup: ["./test-support/tmux-isolation-global.ts"],
+    setupFiles: ["./test-support/tmux-isolation-setup.ts"],
     maxWorkers: 1,
     include: ["src/**/*-live.test.ts", "src/lib/__tests__/headless-cli-entrypoint.test.ts"],
     exclude: ["**/node_modules/**", "**/dist/**"],

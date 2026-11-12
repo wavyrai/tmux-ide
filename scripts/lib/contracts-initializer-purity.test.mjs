@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { build } from "esbuild";
+import { cliBundlePlugins } from "./cli-bundle-policy.mjs";
 import {
   contractsInitializerPurityPlugin,
   transformContractsInitializers,
@@ -187,4 +188,35 @@ export { PaneStreamLeaseRequestSchemaZ as leafLease } from "./packages/contracts
       "2.9.0-beta.11",
     );
   }
+});
+
+test("the CLI bundle keeps only the contract schemas it references", async () => {
+  // A dynamic `import("@tmux-ide/contracts")` or an `import * as` of the barrel
+  // makes the bundler materialise the whole namespace: every schema is then
+  // built at daemon start again (it cost 16 MiB of heap and 44 MiB of footprint
+  // when plugins/cli.ts did this). Import the names you need statically.
+  const result = await build({
+    entryPoints: [resolve("bin/cli.ts")],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    plugins: cliBundlePlugins(),
+    logLevel: "silent",
+    write: false,
+    outdir: "unused",
+    metafile: true,
+  });
+  const [output] = Object.values(result.metafile.outputs);
+  const prefix = "packages/contracts/src/";
+  const contracts = Object.entries(output.inputs).filter(([path]) => path.startsWith(prefix));
+  const bytes = (entries) => entries.reduce((sum, [, input]) => sum + input.bytesInOutput, 0);
+  const barrel = bytes(contracts.filter(([path]) => path === `${prefix}index.ts`));
+  const hint =
+    "is a dynamic or namespace import of @tmux-ide/contracts keeping the whole barrel alive?";
+  // A tree-shaken barrel leaves no code of its own; a namespace object is about 85 KB.
+  assert.ok(barrel < 5_000, `contracts barrel is ${barrel} bytes in bin/cli.js: ${hint}`);
+  // 442,507 bytes when written; 713,542 with the whole namespace.
+  const total = bytes(contracts);
+  assert.ok(total < 520_000, `contracts code is ${total} bytes in bin/cli.js: ${hint}`);
 });

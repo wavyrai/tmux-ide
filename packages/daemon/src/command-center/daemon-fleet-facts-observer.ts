@@ -29,6 +29,8 @@ export interface DaemonFleetFactsObserverOptions {
   readonly onAgentSessionsChanged: (sessions: readonly string[]) => void;
   readonly onAgentTurnCompleted: (completion: AgentTurnCompletion) => void;
   readonly intervalMs?: number;
+  /** Interval after {@link FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF} unchanged ticks. */
+  readonly idleIntervalMs?: number;
   readonly readTimeoutMs?: number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -64,6 +66,9 @@ interface ReadyWaiter {
 export class DaemonFleetFactsObserver {
   readonly #options: DaemonFleetFactsObserverOptions;
   readonly #intervalMs: number;
+  readonly #idleIntervalMs: number;
+  #unchangedTicks = 0;
+  #changedThisTick = false;
   readonly #setTimer: NonNullable<DaemonFleetFactsObserverOptions["setTimer"]>;
   readonly #clearTimer: NonNullable<DaemonFleetFactsObserverOptions["clearTimer"]>;
   readonly #refs = new Map<FleetFactsDemand, number>();
@@ -91,6 +96,10 @@ export class DaemonFleetFactsObserver {
   constructor(options: DaemonFleetFactsObserverOptions) {
     this.#options = options;
     this.#intervalMs = options.intervalMs ?? FLEET_FACTS_POLL_MS;
+    this.#idleIntervalMs = Math.max(
+      this.#intervalMs,
+      options.idleIntervalMs ?? FLEET_FACTS_IDLE_POLL_MS,
+    );
     this.#setTimer =
       options.setTimer ??
       ((callback, delayMs) => {
@@ -116,6 +125,8 @@ export class DaemonFleetFactsObserver {
       resolveReady = resolve;
     });
     const waiter = { demands: unique, resolve: resolveReady };
+    // A new subscriber is activity: poll at the base rate again.
+    this.#unchangedTicks = 0;
     this.#waiters.add(waiter);
     this.#settleWaiters();
     this.#queueStart();
@@ -182,10 +193,18 @@ export class DaemonFleetFactsObserver {
           void this.#runOnce(true);
           return;
         }
-        this.#timer = this.#setTimer(() => {
-          this.#timer = null;
-          void this.runOnce();
-        }, this.#intervalMs);
+        // Back off while nothing changes (perf F6); any change resets it.
+        this.#unchangedTicks = this.#changedThisTick ? 0 : this.#unchangedTicks + 1;
+        this.#changedThisTick = false;
+        this.#timer = this.#setTimer(
+          () => {
+            this.#timer = null;
+            void this.runOnce();
+          },
+          this.#unchangedTicks >= FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF
+            ? this.#idleIntervalMs
+            : this.#intervalMs,
+        );
       },
     );
     return this.#running;
@@ -434,31 +453,44 @@ export class DaemonFleetFactsObserver {
     if (acceptSessions) {
       const previous = this.#sessionNames;
       const previousTopology = this.#terminalTopology;
+      if (!previous) this.#changedThisTick = true;
       this.#sessionNames = next.sessions;
       this.#terminalTopology = next.terminalTopology ?? next.sessions;
-      if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
+      if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions)) {
+        this.#changedThisTick = true;
         this.#options.onSessionsChanged();
+      }
       if (
         previousTopology &&
         JSON.stringify(previousTopology) !== JSON.stringify(this.#terminalTopology)
       ) {
+        this.#changedThisTick = true;
         this.#options.onTerminalTopologyChanged?.();
       }
     }
     if (acceptAdopted) {
       const previous = this.#adoptedNames;
       this.#adoptedNames = next.adopted;
-      if (previous && JSON.stringify(previous) !== JSON.stringify(next.adopted))
+      if (previous && JSON.stringify(previous) !== JSON.stringify(next.adopted)) {
+        this.#changedThisTick = true;
         this.#options.onAdoptedChanged();
+      }
     }
   }
 
   #acceptAgents(next: AgentStateReading): void {
     const previous = this.#agentFacts;
     this.#agentFacts = next;
-    if (!previous) return;
+    if (!previous) {
+      // A baseline read is not an idle tick.
+      this.#changedThisTick = true;
+      return;
+    }
     const changed = diffChangedSessions(previous, next);
-    if (changed.length > 0) this.#options.onAgentSessionsChanged(changed);
+    if (changed.length > 0) {
+      this.#changedThisTick = true;
+      this.#options.onAgentSessionsChanged(changed);
+    }
     for (const completion of diffTurnCompletions(previous, next))
       this.#options.onAgentTurnCompleted(completion);
   }
@@ -556,6 +588,15 @@ export function createDefaultFleetFactsReaders(): Pick<
  * only while a client is subscribed.
  */
 export const FLEET_FACTS_POLL_MS = 500;
+/**
+ * After this many ticks in a row with no change, re-read every
+ * {@link FLEET_FACTS_IDLE_POLL_MS} instead (perf F6). With the app connected
+ * and nothing happening, the 500 ms poll was most of the daemon's idle CPU.
+ * Any change returns to 500 ms on the next tick, and 1 s still keeps an agent
+ * flip visible within about 1 s (#716).
+ */
+export const FLEET_FACTS_UNCHANGED_TICKS_BEFORE_BACKOFF = 10;
+export const FLEET_FACTS_IDLE_POLL_MS = 1_000;
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
   "list-panes",

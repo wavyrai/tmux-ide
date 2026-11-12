@@ -1260,6 +1260,8 @@ export class PaneStreamLiveConnection {
   #legacyInputActivated = false;
   #legacyGeometryActivated = false;
   #closed = false;
+  #closeCause: { readonly cause: string; readonly error?: string } | null = null;
+  #heldInput: boolean | null = null;
   #releasePromise: Promise<unknown> | null = null;
   #stopAuthoritySnapshots: (() => void) | null = null;
   #sharedClockOriginMicros: number | null = null;
@@ -1450,14 +1452,34 @@ export class PaneStreamLiveConnection {
     void this.#subscribeAll();
   }
 
+  /**
+   * 1011 "stream-unavailable" has ten different origins and the client is told
+   * none of them. The log says which one, with the error text, so a stream
+   * that "just closed" can be traced without a reproduction.
+   */
+  #fail(cause: string, error?: unknown): void {
+    if (this.#closed) return;
+    this.#closeCause = {
+      cause,
+      ...(error === undefined
+        ? {}
+        : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }),
+    };
+    this.close(1011, "stream-unavailable");
+  }
+
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
     this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
     logger.info("pane-stream", "stream closed", {
       code,
       reason,
+      ...(this.#closeCause ?? {}),
       session: this.#descriptor.sessionName,
       clientId: this.#clientId,
+      // Whether this connection held input when it went: the next stream of
+      // the same client can only be granted input once that is released.
+      ...(this.#heldInput === null ? {} : { heldInput: this.#heldInput }),
     });
     this.#closed = true;
     for (const demand of this.#surfaceDemands.values()) demand.close();
@@ -1527,8 +1549,8 @@ export class PaneStreamLiveConnection {
     let described: MirrorSessionDescription;
     try {
       described = await this.#mirror.describeSession(this.#descriptor.sessionName);
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("describe-session-failed", error);
       return;
     }
     if (this.#closed) return;
@@ -1548,8 +1570,8 @@ export class PaneStreamLiveConnection {
           return;
         }
         this.#layoutSubscription = layoutSubscription;
-      } catch {
-        this.close(1011, "stream-unavailable");
+      } catch (error) {
+        this.#fail("layout-subscribe-failed", error);
         return;
       }
     }
@@ -1573,8 +1595,8 @@ export class PaneStreamLiveConnection {
           continue;
         }
         channel.sub = sub;
-      } catch {
-        this.close(1011, "stream-unavailable");
+      } catch (error) {
+        this.#fail("pane-subscribe-failed", error);
         return;
       }
     }
@@ -1585,7 +1607,7 @@ export class PaneStreamLiveConnection {
     const binding = this.#sessionRuntimeBinding;
     const offer = this.#descriptor.terminalDelivery;
     if (!binding || !offer) {
-      this.close(1011, "stream-unavailable");
+      this.#fail("no-session-runtime-binding");
       return;
     }
     // Layout authority covers the whole session, while content leases may select
@@ -1653,7 +1675,7 @@ export class PaneStreamLiveConnection {
         this.#failTopologyChanged();
         return;
       }
-      this.close(1011, "stream-unavailable");
+      this.#fail("semantic-layout-subscribe-failed", cause);
       return;
     }
 
@@ -1711,7 +1733,13 @@ export class PaneStreamLiveConnection {
       )
     ) {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
-      if (!this.#closed) this.close(1011, "stream-unavailable");
+      if (!this.#closed) {
+        const rejected = settled.find((result) => result.status === "rejected");
+        this.#fail(
+          "delivery-negotiation-failed",
+          rejected?.status === "rejected" ? rejected.reason : "a pane's delivery offer was refused",
+        );
+      }
       return;
     }
 
@@ -2595,8 +2623,8 @@ export class PaneStreamLiveConnection {
     this.#sentBytesTotal += bytes;
     try {
       this.#socket.send(encoded, { binary });
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("socket-send-failed", error);
       return;
     }
     // Stall is judged on the drain tick, never synchronously at send: the
@@ -2638,7 +2666,7 @@ export class PaneStreamLiveConnection {
     if (this.#closed) return;
     const buffered = this.#socket.bufferedAmount ?? 0;
     if (!Number.isSafeInteger(buffered) || buffered < 0) {
-      this.close(1011, "stream-unavailable");
+      this.#fail("socket-buffer-invalid");
       return;
     }
     if (buffered > this.#maxSocketBufferedBytes) {
@@ -3098,6 +3126,23 @@ export class PaneStreamLiveConnection {
   }
 
   #sendAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): void {
+    // One line when this connection gains or loses input, and one for its
+    // first snapshot: a stream that paints but never accepts keys shows up
+    // here as "holdsInput false" with the client that holds it instead.
+    const self = this.#sessionRuntimeBinding?.clientId ?? null;
+    const holdsInput = self !== null && snapshot.owners.input === self;
+    if (this.#heldInput !== holdsInput) {
+      logger.info("pane-stream", "stream input authority", {
+        session: this.#descriptor.sessionName,
+        clientId: this.#clientId,
+        connectionClientId: self,
+        holdsInput,
+        inputOwner: snapshot.owners.input,
+        clients: snapshot.clients.length,
+        revision: snapshot.revision,
+      });
+      this.#heldInput = holdsInput;
+    }
     this.#sendFrame(null, { type: "authority-snapshot", snapshot });
   }
 
@@ -3436,8 +3481,8 @@ export class PaneStreamLiveConnection {
           }
         }
       }
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("control-frame-handler-failed", error);
     }
   }
 
@@ -3449,8 +3494,8 @@ export class PaneStreamLiveConnection {
         code,
         retryable: false,
       });
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("error-frame-send-failed", error);
       return;
     }
     this.close(1008, code);

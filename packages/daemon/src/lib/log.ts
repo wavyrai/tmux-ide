@@ -58,8 +58,22 @@ export function registerLogSecret(secret: string | null | undefined): void {
   if (typeof secret === "string" && secret.length >= 8) secrets.add(secret);
 }
 
+/**
+ * Where records below error level go. stdout by default (the service log).
+ * A process whose stdout is a protocol, like `tmux-ide --headless --json`
+ * with its one status line, reserves it: every record then goes to stderr.
+ */
+let recordStream: StreamName = "stdout";
+export function reserveStdoutForProtocol(): void {
+  recordStream = "stderr";
+}
+export function structuredLogStream(): "stdout" | "stderr" {
+  return recordStream;
+}
+
 /** @internal test seam */
 export function _resetLogStateForTests(): void {
+  recordStream = "stdout";
   identity = {};
   secrets.clear();
   logBuffer.length = 0;
@@ -161,6 +175,9 @@ function markStreamFailed(name: StreamName, error: unknown): void {
   const other: StreamName = name === "stdout" ? "stderr" : "stdout";
   // The fallback can fail asynchronously too. Install the same error handling
   // before writing it; failed flags prevent a warning loop if both streams fail.
+  // A reserved stdout carries a protocol: the warning about a failed stderr
+  // has nowhere to go then, and the records stay in the ring.
+  if (other === "stdout" && recordStream === "stderr") return;
   if (!streamState[other].failed) writeToStream(other, warning);
 }
 
@@ -243,7 +260,7 @@ function writeStructuredLog(
     ...(entry.version ? { version: entry.version } : {}),
   };
   if (payload.renamedKeys.length > 0) wire.reservedKeysRenamed = payload.renamedKeys;
-  writeToStream(level === "error" ? "stderr" : "stdout", JSON.stringify(wire) + "\n");
+  writeToStream(level === "error" ? "stderr" : recordStream, JSON.stringify(wire) + "\n");
 }
 
 export const logger = {

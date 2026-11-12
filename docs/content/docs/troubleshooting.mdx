@@ -121,6 +121,14 @@ so tmux-ide places tabs at the default stops (every 8 columns). A line that was
 edited in place after its tab was printed, or printed under custom tab stops,
 can be a few columns off until the program draws it again.
 
+## doctor warns about "tmux server"
+
+The background daemon looks for tmux in `/tmp/tmux-<uid>/` and ignores `TMUX_TMPDIR`.
+If your shell exports `TMUX_TMPDIR`, or your tmux was started with `-S` or `-L`,
+the daemon uses a different server and does not see your sessions. Set
+`TMUX_IDE_TMUX_SOCKET_PATH` to your server's socket in the daemon's environment
+(`tmux-ide doctor` prints the path), or unset `TMUX_TMPDIR`.
+
 ## `events` prints nothing
 
 The event log is written by the same background updater, so it needs an

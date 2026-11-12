@@ -111,11 +111,17 @@ const ERROR_MESSAGES: Readonly<Record<NativeTerminalAttachmentRuntimeErrorCode, 
 
 export class NativeTerminalAttachmentRuntimeError extends Error {
   readonly code: NativeTerminalAttachmentRuntimeErrorCode;
+  /**
+   * Which of the several origins of this code it was. For diagnostics only:
+   * the message a client sees stays the same.
+   */
+  readonly detail: string | undefined;
 
-  constructor(code: NativeTerminalAttachmentRuntimeErrorCode) {
+  constructor(code: NativeTerminalAttachmentRuntimeErrorCode, detail?: string) {
     super(ERROR_MESSAGES[code]);
     this.name = "NativeTerminalAttachmentRuntimeError";
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -730,7 +736,10 @@ async function requiredTmuxResult(
   const result = await runner.run({ executable: "tmux", argv }, signal);
   if (result.status === "not-found") return null;
   if (result.status !== "ok") {
-    throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    throw new NativeTerminalAttachmentRuntimeError(
+      "discovery-failed",
+      `tmux-command-${result.status}`,
+    );
   }
   return result.stdout;
 }
@@ -919,6 +928,18 @@ function parsePaneSnapshot(
  * before any pane query, and a second identity/topology snapshot closes races.
  */
 const INVENTORY_FENCE_ATTEMPTS = 4;
+/**
+ * A read that was overtaken by an inventory invalidation is not a failed
+ * read: the answer it was computing is simply out of date, so it is read
+ * again. One retry was not enough while tmux topology is in motion: creating
+ * an agent pane invalidates the inventory several times within a few hundred
+ * milliseconds, a read overtaken twice failed with "discovery-failed", the
+ * inventory route answered 503, and a click on the new agent's row landed on
+ * "That agent changed or disappeared" until the client's backoff recovered
+ * seconds later (#764, journey soak 43257599866). Still bounded: a server
+ * whose topology never stops moving must not hold a reader for ever.
+ */
+export const INVENTORY_STALE_RETRIES = 4;
 /** 25, 50, 100 ms: enough for a mutation's identity stamps, bounded for every reader. */
 const settleDelay = (attempt: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, 25 * 2 ** (attempt - 1)));
@@ -977,12 +998,17 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     for (let attempt = 0; attempt < INVENTORY_FENCE_ATTEMPTS && !stable; attempt += 1) {
       if (attempt > 0) await settleDelay(attempt);
       const after = await requiredTmuxResult(runner, argv, signal);
-      if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      if (after === null)
+        throw new NativeTerminalAttachmentRuntimeError(
+          "discovery-failed",
+          "session-vanished-mid-read",
+        );
       const next = parsePaneSnapshot(after, identity);
       if (matches(previous, next)) stable = next;
       else previous = next;
     }
-    if (!stable) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    if (!stable)
+      throw new NativeTerminalAttachmentRuntimeError("discovery-failed", "topology-not-settled");
     bySessionName.set(sessionName, stable.panes);
   }
 
@@ -1609,15 +1635,23 @@ export class WorkspaceTerminalInventoryRuntime {
         snapshot = await this.#readInventoryAttempt(signal);
       } catch (error) {
         if (this.#inventoryEpoch !== epoch) {
-          if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
-          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+          if (staleRetry < INVENTORY_STALE_RETRIES)
+            return this.#readInventory(signal, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError(
+            "discovery-failed",
+            "overtaken-by-invalidations",
+          );
         }
         throw error;
       }
       if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
       if (this.#inventoryEpoch !== epoch) {
-        if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
-        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        if (staleRetry < INVENTORY_STALE_RETRIES)
+          return this.#readInventory(signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError(
+          "discovery-failed",
+          "overtaken-by-invalidations",
+        );
       }
       return this.#publishInventory(snapshot, nativeEpoch, signal, epoch);
     }
@@ -1629,14 +1663,22 @@ export class WorkspaceTerminalInventoryRuntime {
         value = await this.#readInventoryAttempt(abort.signal);
       } catch (error) {
         if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
-          if (staleRetry < 1) return this.#readInventory(undefined, staleRetry + 1);
-          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+          if (staleRetry < INVENTORY_STALE_RETRIES)
+            return this.#readInventory(undefined, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError(
+            "discovery-failed",
+            "overtaken-by-invalidations",
+          );
         }
         throw error;
       }
       if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
-        if (staleRetry < 1) return this.#readInventory(undefined, staleRetry + 1);
-        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        if (staleRetry < INVENTORY_STALE_RETRIES)
+          return this.#readInventory(undefined, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError(
+          "discovery-failed",
+          "overtaken-by-invalidations",
+        );
       }
       return this.#publishInventory(value, nativeEpoch, abort.signal, epoch);
     })().finally(() => {
@@ -1703,9 +1745,11 @@ export class WorkspaceTerminalInventoryRuntime {
     const retryIfReplaced = (): Promise<NativeTerminalRuntimeSessionSnapshot | null> | null => {
       assertLive();
       if (this.#inventoryEpoch === epoch) return null;
-      if (staleRetry < 1)
+      if (staleRetry < INVENTORY_STALE_RETRIES)
         return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
-      return Promise.reject(new NativeTerminalAttachmentRuntimeError("discovery-failed"));
+      return Promise.reject(
+        new NativeTerminalAttachmentRuntimeError("discovery-failed", "overtaken-by-invalidations"),
+      );
     };
     assertLive();
     const nativeEpoch = this.#nativeServerEpoch?.() ?? null;
