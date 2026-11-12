@@ -115,6 +115,14 @@ export interface SessionRuntimeRegistryOptions {
   readonly observability?: SessionRuntimeObservability;
   /** Deterministic qualification seam; never invoked while observability is disabled. */
   readonly createTraceCorrelator?: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
+  /**
+   * A session's trusted inventory became qualified again after it was not
+   * (first qualification, or after a shared-window conflict invalidated it).
+   * The daemon publishes a terminal-runtime-inventory change so an idle
+   * client that met the 503 re-reads at once instead of waiting for its own
+   * retry (perf plan F13, from #764).
+   */
+  readonly onTrustedInventoryQualified?: (session: string) => void;
 }
 
 /** Opaque daemon-internal proof that an inventory came from one exact runtime owner. */
@@ -324,6 +332,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
+  readonly #onTrustedInventoryQualified: ((session: string) => void) | null;
   readonly #sessions = new Map<string, SessionRuntime>();
   #listenerDisposal: ListenerDisposalSummary | null = null;
   readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
@@ -342,6 +351,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
+    this.#onTrustedInventoryQualified = options.onTrustedInventoryQualified ?? null;
     const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = {
       onInputAccepted: (session, action, acceptedAtMicros, ok) => {
         for (const traceId of action.traceIds ?? []) {
@@ -573,7 +583,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       }
       signal?.throwIfAborted();
       await abortable(this.#mirror.verifyRegisteredWindows(), signal);
+      const wasQualified = runtime.trustedInventoryQualified();
       runtime.qualifyTrustedInventory(runtimeSessionId);
+      if (!wasQualified && runtime.trustedInventoryQualified()) {
+        try {
+          this.#onTrustedInventoryQualified?.(session);
+        } catch {
+          // A publication failure never changes qualification.
+        }
+      }
     } finally {
       this.#releaseProofPrewarmRuntime(runtime);
     }

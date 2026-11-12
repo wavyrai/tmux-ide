@@ -394,6 +394,36 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
   });
 
+  it("announces a qualification once per transition, not on every prewarm (perf F13)", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.generated\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    const qualified: string[] = [];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      onTrustedInventoryQualified: (session) => qualified.push(session),
+      mirror: {
+        createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+        generatePaneId: () => "pane.mirror.generated",
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    await registry.prewarmSession(FIXTURE.session);
+    expect(qualified).toEqual([]);
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    expect(qualified).toEqual([FIXTURE.session]);
+    // Already qualified: a repeat prewarm publishes nothing.
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    expect(qualified).toEqual([FIXTURE.session]);
+    // Retired, then qualified again: a new transition, a new announcement.
+    await registry.retireSession(FIXTURE.session);
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    expect(qualified).toEqual([FIXTURE.session, FIXTURE.session]);
+    await registry.dispose();
+  });
+
   it("retires old authority before qualifying a same-name replacement session", async () => {
     const states = [fixtureState(), fixtureState()];
     for (const state of states) {

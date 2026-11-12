@@ -94,6 +94,7 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
   broadcastInteractionReceipt,
   broadcastResourceChanged,
+  broadcastTerminalsChanged,
   handleWsEventsConnection,
   setFleetFactsObserverDiagnostics,
   setFleetFactsTmuxRunner,
@@ -1602,6 +1603,8 @@ async function startEmbeddedDaemonGeneration(
         process.platform === "darwin" ? new NativeSurfaceProviderRegistry(instanceId) : undefined;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
+        // An idle client that met the 503 re-reads when the inventory is trusted again.
+        onTrustedInventoryQualified: (session) => broadcastTerminalsChanged(session),
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
         semanticMutations: {
           captureInteractionContext: (intent) => {
