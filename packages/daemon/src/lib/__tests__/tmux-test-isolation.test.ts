@@ -202,6 +202,39 @@ describe("the tmux guard in front of every test", () => {
     expect(undeclaredTmuxCalls(g)).toEqual([]);
   });
 
+  // CI, PR #378: `wait-for -S <channel>` and `capture-pane -S -` to a private
+  // server were refused, because every -S was read as the socket option.
+  it("reads -S and -L only among tmux's own options, never among a command's", () => {
+    const { directory, run } = guard();
+    const socket = join(directory, "t.sock");
+    for (const args of [
+      ["-S", socket, "wait-for", "-S", "test-drain-resume"],
+      ["-S", socket, "-u", "capture-pane", "-p", "-S", "-", "-E", "-"],
+      ["-L", "tmux-ide-upgrade-1", "-f", "/dev/null", "capture-pane", "-p", "-S", "-"],
+      ["-u", "-S", socket, "list-sessions", "-F", "#{session_name}"],
+      [`-uS${socket}`, "wait-for", "-L", "lock"],
+    ]) {
+      const result = run(args, { TMUX_TMPDIR: directory });
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`RAN ${args.join(" ")} |`);
+    }
+    expect(refusedTmuxCalls({ directory })).toEqual([]);
+    expect(undeclaredTmuxCalls({ directory })).toEqual([]);
+    // The socket option is still found behind other options and in a cluster.
+    for (const args of [
+      ["-u", "-f", "/dev/null", "-S", "/tmp/tmux-501/default", "list-sessions"],
+      ["-uS/tmp/tmux-501/default", "list-sessions"],
+      ["-2", "-S/private/tmp/tmux-501/default", "wait-for", "-S", "x"],
+    ]) {
+      expect(run(args, { TMUX_TMPDIR: directory }).status).toBe(TMUX_GUARD_REFUSAL_EXIT_CODE);
+    }
+    expect(refusedTmuxCalls({ directory })).toHaveLength(3);
+    // A command's own -L does not make the call look like it names a server.
+    const unnamed = run(["wait-for", "-L", "lock"], { TMUX_TMPDIR: "/tmp" });
+    expect(unnamed.stdout).toContain(`TMUX_TMPDIR=${directory}`);
+  });
+
   it("installs once: first on PATH, a private TMUX_TMPDIR, and no inherited live TMUX", () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: "/usr/bin:/bin",

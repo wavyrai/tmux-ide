@@ -84,17 +84,35 @@ private_dir() {
   esac
   return 1
 }
-selector=none; value=; previous=
+# Only tmux's own options, the ones before the command, select a server.
+# A command's -S or -L (wait-for -S, capture-pane -S -) is not a socket.
+selector=none; value=; expect=
 for argument in "$@"; do
-  case "$previous" in
-    -S) selector=path; value="$argument" ;;
-    -L) [ "$selector" = path ] || { selector=name; value="$argument"; } ;;
-  esac
+  if [ -n "$expect" ]; then
+    case "$expect" in
+      S) selector=path; value="$argument" ;;
+      L) [ "$selector" = path ] || { selector=name; value="$argument"; } ;;
+    esac
+    expect=
+    continue
+  fi
   case "$argument" in
-    -S?*) selector=path; value="\${argument#-S}" ;;
-    -L?*) [ "$selector" = path ] || { selector=name; value="\${argument#-L}"; } ;;
+    --) break ;;
+    -?*)
+      rest="\${argument#-}"
+      while [ -n "$rest" ]; do
+        flag="\${rest%"\${rest#?}"}"; rest="\${rest#?}"
+        case "$flag" in
+          S|L|c|f|T)
+            if [ -z "$rest" ]; then expect="$flag"
+            elif [ "$flag" = S ]; then selector=path; value="$rest"
+            elif [ "$flag" = L ]; then [ "$selector" = path ] || { selector=name; value="$rest"; }
+            fi
+            rest= ;;
+        esac
+      done ;;
+    *) break ;;
   esac
-  previous="$argument"
 done
 if [ "$selector" = path ]; then
   if ! private_dir "$value"; then
