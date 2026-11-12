@@ -2136,6 +2136,7 @@ impl App {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_deref_mut() {
                 window.refreshing = true;
+                window.refresh_forced = true;
                 window.invalidator.set_dirty(true);
             }
         }

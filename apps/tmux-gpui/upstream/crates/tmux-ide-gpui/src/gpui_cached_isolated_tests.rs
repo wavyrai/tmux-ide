@@ -20,6 +20,7 @@ struct Parent {
     leaf: Entity<Leaf>,
     isolated: bool,
     width: Pixels,
+    ink: Hsla,
 }
 impl Render for Parent {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -29,7 +30,10 @@ impl Render for Parent {
         } else {
             self.leaf.clone().cached(style).into_any_element()
         };
-        div().size_full().child(div().w(self.width).h(px(40.)).child(leaf))
+        div()
+            .size_full()
+            .text_color(self.ink)
+            .child(div().w(self.width).h(px(40.)).child(leaf))
     }
 }
 
@@ -37,16 +41,23 @@ impl Render for Parent {
 struct Top(Entity<Parent>);
 impl Render for Top {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(self.0.clone().cached(StyleRefinement::default().size_full()))
+        div().size_full().child(
+            self.0
+                .clone()
+                .cached(StyleRefinement::default().size_full()),
+        )
     }
 }
 
 fn open(
     cx: &mut TestAppContext,
     isolated: bool,
-) -> (Entity<Parent>, Entity<Leaf>, Rc<Cell<usize>>, &mut VisualTestContext) {
+) -> (
+    Entity<Parent>,
+    Entity<Leaf>,
+    Rc<Cell<usize>>,
+    &mut VisualTestContext,
+) {
     let renders = Rc::new(Cell::new(0));
     let count = renders.clone();
     let (top, cx) = cx.add_window_view(move |_, cx| {
@@ -55,6 +66,7 @@ fn open(
             leaf,
             isolated,
             width: px(100.),
+            ink: black(),
         }))
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -118,4 +130,54 @@ fn an_isolated_view_renders_when_its_bounds_change(cx: &mut TestAppContext) {
         })
     });
     assert_eq!(n, 1);
+}
+
+/// An inherited text style is part of what it painted with.
+#[gpui::test]
+fn an_isolated_view_renders_when_its_text_style_changes(cx: &mut TestAppContext) {
+    let (parent, _, renders, cx) = open(cx, true);
+    let n = renders_after(&renders, cx, |_, cx| {
+        parent.update(cx, |parent, cx| {
+            parent.ink = white();
+            cx.notify();
+        })
+    });
+    assert_eq!(n, 1);
+}
+
+/// `App::refresh_windows` is the same request made of every window: the
+/// Bezel theme and the system appearance reach the views through it.
+#[gpui::test]
+fn an_isolated_view_renders_on_an_app_wide_refresh(cx: &mut TestAppContext) {
+    let (_, _, renders, cx) = open(cx, true);
+    let before = renders.get();
+    // The refresh is an effect: it lands when this update returns.
+    cx.update(|_, cx| cx.refresh_windows());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(renders.get() - before, 1);
+}
+
+/// The same frames leave a plain cached view where it was: one render with
+/// its parent, one per refresh, none on a frame nothing changed.
+#[gpui::test]
+fn a_plain_cached_view_renders_as_before(cx: &mut TestAppContext) {
+    let (parent, leaf, renders, cx) = open(cx, false);
+    assert_eq!(renders_after(&renders, cx, |_, _| ()), 0, "an idle frame");
+    let n = renders_after(&renders, cx, |_, cx| leaf.update(cx, |_, cx| cx.notify()));
+    assert_eq!(n, 1, "its own notify");
+    assert_eq!(renders_after(&renders, cx, |window, _| window.refresh()), 1);
+    let n = renders_after(&renders, cx, |_, cx| {
+        parent.update(cx, |parent, cx| {
+            parent.width = px(120.);
+            cx.notify();
+        })
+    });
+    assert_eq!(n, 1, "new bounds");
+}
+
+/// An isolated view is as idle as a plain one on a frame nothing changed.
+#[gpui::test]
+fn an_isolated_view_is_reused_on_an_idle_frame(cx: &mut TestAppContext) {
+    let (_, _, renders, cx) = open(cx, true);
+    assert_eq!(renders_after(&renders, cx, |_, _| ()), 0);
 }

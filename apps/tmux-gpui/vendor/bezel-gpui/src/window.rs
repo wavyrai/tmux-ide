@@ -7438,6 +7438,15 @@ impl Window {
         self.a11y.is_active()
     }
 
+    /// Switches accessibility on or off for this window from its next frame,
+    /// as an assistive client connecting or leaving does. The test platform
+    /// has no such client, so a test that reads the tree calls this first.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_a11y_active_for_test(&mut self, active: bool) {
+        self.a11y.set_active_flag(active);
+        self.refresh();
+    }
+
     /// Debug representation of the last frame's accessibility information.
     pub fn debug_a11y_tree_json(&self) -> Option<String> {
         self.a11y.debug_tree_json()

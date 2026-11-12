@@ -8,6 +8,8 @@ mod contrast;
 mod controls;
 mod error;
 mod fonts;
+#[cfg(test)]
+mod gpui_cached_isolated_tests;
 mod icons;
 mod input;
 mod notifications;
@@ -23,8 +25,6 @@ pub mod tmux_native_surface;
 mod tmux_snapshot;
 mod web_url;
 mod window;
-#[cfg(test)]
-mod gpui_cached_isolated_tests;
 
 #[cfg(feature = "integration-test")]
 mod performance;
