@@ -371,11 +371,10 @@ fn the_sidebar_is_replayed_again_when_the_client_leaves(cx: &mut TestAppContext)
     assert_eq!(renders(cx), settled, "replayed without a client");
 }
 
-/// Lets `ms` of wall-clock and executor time pass, a frame every 20 ms, with
-/// motion on: hover washes and fades run on the real clock.
+/// Lets `ms` of the executor's clock pass, a frame every 20 ms: the frame
+/// clock that hover washes claim and GPUI's animations both read it.
 fn animate(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, ms: u64) {
     for _ in 0..ms / 20 {
-        std::thread::sleep(std::time::Duration::from_millis(20));
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(20));
         cx.run_until_parked();
@@ -389,6 +388,9 @@ fn animate(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, ms: u64)
 
 fn with_motion(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
+        // A test window is not the active one, and the frame clock refuses
+        // claims while no window is: keep it running.
+        bezel_motion::AppExt::set_pause_when_inactive(cx, false);
         snapshot.update(cx, |view, cx| {
             view.chrome.force_motion(false);
             cx.notify();
@@ -410,6 +412,12 @@ fn assert_settled(cx: &mut VisualTestContext, name: &str) {
     );
 }
 
+/// A wash's value follows the wall clock while its frames follow the
+/// executor's: wait out the 150 ms, so the frames that follow paint its end.
+fn settle_wash() {
+    std::thread::sleep(std::time::Duration::from_millis(250));
+}
+
 /// A row's hover wash fades in over 150 ms. The frames of that fade must
 /// render the sidebar, or it keeps the wash of the frame it was last drawn.
 #[gpui::test]
@@ -422,6 +430,7 @@ fn a_hover_wash_finishes_on_the_replayed_sidebar(cx: &mut TestAppContext) {
     };
     let before = renders(cx);
     cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    settle_wash();
     animate(&snapshot, cx, 400);
     // One render is the hover itself; the rest are the fade's frames.
     assert!(
@@ -430,8 +439,21 @@ fn a_hover_wash_finishes_on_the_replayed_sidebar(cx: &mut TestAppContext) {
         renders(cx) - before
     );
     assert_settled(cx, "hovered");
+    // The Home row's wash asks the same view.
+    let home = cx.debug_bounds("tmux-sidebar-home").unwrap();
+    let before = renders(cx);
+    cx.simulate_mouse_move(home.center(), None, Modifiers::none());
+    settle_wash();
+    animate(&snapshot, cx, 400);
+    assert!(
+        renders(cx) - before >= 3,
+        "the Home row's wash did not render the sidebar: {}",
+        renders(cx) - before
+    );
+    assert_settled(cx, "Home hovered");
     let other = cx.debug_bounds("tmux-sidebar-row-5").unwrap();
     cx.simulate_mouse_move(other.center(), None, Modifiers::none());
+    settle_wash();
     animate(&snapshot, cx, 400);
     assert_settled(cx, "moved to another row");
 }
