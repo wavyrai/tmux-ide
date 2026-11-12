@@ -59,13 +59,30 @@ impl Hold {
         if self.disabled {
             return;
         }
-        self.held = live(state).or_else(|| {
+        // A stream of the same recovery failed again (it may never have shown
+        // a frame): the frame already held stays, and so does what it says
+        // about lost keys. Only a stream that took input ends a hold.
+        let kept = (self.held.take()).filter(|held| held.request == state.request);
+        let lost_input = lost_input || kept.as_ref().is_some_and(|held| held.lost_input);
+        self.held = live(state).or(kept).or_else(|| {
             self.last
                 .take()
                 .filter(|last| last.request == state.request)
         });
         if let Some(held) = &mut self.held {
             held.lost_input = lost_input;
+        }
+    }
+    /// A key arrived while no stream could take it and was dropped. The held
+    /// frame says so from now on, so nothing typed after it is delivered
+    /// alone. Whether that changed what is published.
+    pub fn keys_lost(&mut self) -> bool {
+        match &mut self.held {
+            Some(held) if !held.lost_input => {
+                held.lost_input = true;
+                true
+            }
+            _ => false,
         }
     }
     pub fn clear(&mut self) {

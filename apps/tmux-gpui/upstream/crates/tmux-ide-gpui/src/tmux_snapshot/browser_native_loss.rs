@@ -121,6 +121,24 @@ impl Releases {
     }
 }
 
+/// Whether `command` is a key. A key for which no stream is open is about to
+/// be dropped: the UI sent it before it saw the hold. The held frame then
+/// reports lost keys (`changed` is set when that is news), so the keys the UI
+/// holds after it are refused instead of running without it.
+pub(super) fn key(
+    command: &Command,
+    active: Option<&Active>,
+    hold: &mut Hold,
+    changed: &mut bool,
+) -> bool {
+    let Command::Input { request, .. } = command else {
+        return false;
+    };
+    if active.is_none_or(|a| a.request != *request) {
+        *changed |= hold.keys_lost();
+    }
+    true
+}
 /// Queued keys are never replayed onto a new stream. Whether any were dropped.
 fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     let before = pending.len();

@@ -298,3 +298,27 @@ fn only_keys_wait_in_the_reconnect_hold(cx: &mut TestAppContext) {
         })
     });
 }
+
+/// Review of 9c0da9fe, finding 1, the view's half: the loop reports a key
+/// it dropped after the hold began. Keys held meanwhile are refused, all of
+/// them, and the pane says so.
+#[gpui::test]
+fn held_keys_are_refused_when_the_hold_later_reports_lost_keys(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            view.replace_text_in_range(None, "suffix", window, cx);
+            assert!(view.pending_input.is_some());
+            let state = dropped(view, true);
+            view.apply_browser_state(Some(state), cx);
+            assert!(view.pending_input.is_none());
+            assert!(view.not_sent_shown());
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            assert!(sent(&receiver).is_empty());
+        })
+    });
+}

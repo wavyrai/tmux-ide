@@ -374,3 +374,47 @@ fn the_notice_says_why_the_stream_ended() {
     );
     assert_eq!(cause_of(failed.unwrap()), Cause::Lost);
 }
+
+/// Review of 9c0da9fe, finding 1: the UI sent a key after the stream was
+/// lost and before it saw the hold. The loop has no stream for it and drops
+/// it; the held frame must say so, or the keys the UI holds next would be
+/// delivered without it.
+#[test]
+fn a_key_that_arrives_with_no_stream_marks_the_held_frame() {
+    let (active, state, _observed, _peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    let mut hold = Hold::default();
+    hold.begin(&state, false);
+    let mut changed = false;
+    // Not a key: nothing happens.
+    let other = Command::Pane {
+        request: 3,
+        id: "left".into(),
+    };
+    assert!(!super::key(&other, None, &mut hold, &mut changed));
+    assert!(!changed);
+    // A key with its stream open is the stream's business.
+    assert_eq!(active.request, 3);
+    assert!(super::key(
+        &key("a"),
+        Some(&active),
+        &mut hold,
+        &mut changed
+    ));
+    assert!(!changed);
+    assert_eq!(hold.lost_input(), Some(false));
+    // A key with no stream, or with another request's stream, is dropped.
+    assert!(super::key(&key("b"), None, &mut hold, &mut changed));
+    assert!(changed, "the publication was not refreshed");
+    assert_eq!(hold.lost_input(), Some(true));
+    let mut hold = Hold::default();
+    hold.begin(&state, false);
+    let stale = Command::Input {
+        input_target: None,
+        request: 4,
+        id: "left".into(),
+        input: Input::Text("c".into()),
+    };
+    assert!(super::key(&stale, Some(&active), &mut hold, &mut changed));
+    assert_eq!(hold.lost_input(), Some(true));
+}

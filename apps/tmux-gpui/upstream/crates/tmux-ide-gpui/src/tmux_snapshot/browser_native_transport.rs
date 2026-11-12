@@ -759,7 +759,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 {
                     break 'worker;
                 }
-                let failed_input = matches!(command, Command::Input { .. });
+                let failed_input = loss::key(&command, active.as_ref(), &mut hold, &mut changed);
                 let result = match command {
                     Command::OpenEditor { request, id, token } => {
                         if let Some(current) = active
