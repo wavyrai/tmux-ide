@@ -8,7 +8,6 @@ import {
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamServerFrameSchemaZ,
-  STOCK_CAPTURE_TAB_UNAVAILABLE,
   type TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import {
@@ -21,11 +20,14 @@ import { createPaneStreamRuntime } from "../../pane-stream/runtime.ts";
 import { attachPaneStreamWebSocket } from "../../../server/pane-stream-upgrade.ts";
 import { MirrorControlChannel } from "../control-channel.ts";
 
-/** Actual registry → delivery hub → HTTP upgrade → one WebSocket, on the caller's private server. */
+/**
+ * Actual registry → delivery hub → HTTP upgrade → one WebSocket, on the caller's private server.
+ * The same expectations hold for tmux-ide's tmux and a stock tmux: a pane whose
+ * capture holds a tab is delivered, with the tab's cells blank to the next stop.
+ */
 export async function qualifyStockTabWire(options: {
   binary: string;
   socket: string;
-  native: boolean;
   nativeText: () => string;
   record: (evidence: unknown) => void;
   paintLate: () => Promise<void>;
@@ -188,35 +190,15 @@ export async function qualifyStockTabWire(options: {
         expect(frames.filter((f) => f.type === "terminal-delivery-ready")).toHaveLength(3);
         expect(received.has(good)).toBe(true);
         expect(received.has(late)).toBe(true);
-        if (options.native) expect(received.has(bad)).toBe(true);
-        else
-          expect(
-            frames.filter((f) => f.type === "terminal-delivery-fault" && f.pane === bad),
-          ).toHaveLength(1);
+        expect(received.has(bad)).toBe(true);
       },
       { timeout: 5000 },
     );
-    if (!options.native) {
-      const fault = frames.find((f) => f.type === "terminal-delivery-fault" && f.pane === bad)!;
-      expect(fault.type === "terminal-delivery-fault" && fault.fault.message).toBe(
-        STOCK_CAPTURE_TAB_UNAVAILABLE,
-      );
-      const negotiation = frames.find(
-        (f) => f.type === "terminal-delivery-ready" && f.pane === bad,
-      )!;
-      if (
-        negotiation.type !== "terminal-delivery-ready" ||
-        !negotiation.negotiation.accepted ||
-        fault.type !== "terminal-delivery-fault"
-      )
-        throw Error("missing negotiation");
-      expect(fault.fault.deliveryNonce).toBe(negotiation.negotiation.negotiated.deliveryNonce);
-      expect(frames.indexOf(negotiation)).toBeLessThan(frames.indexOf(fault));
-      expect(received.has(bad)).toBe(false);
-      expect(
-        frames.filter((f) => f.type === "terminal-delivery-envelope" && f.pane === bad),
-      ).toHaveLength(0);
-    }
+    // The first load of a pane with a saved tab: A, six blank cells, B.
+    expect(readDeliveredFrame(received.get(bad)!).cells[0]).toEqual(
+      knownTabFrame("initial").cells[0],
+    );
+    expect(frames.filter((f) => f.type === "terminal-delivery-fault")).toHaveLength(0);
     send({ type: "presence", generation, state: "foreground" });
     const authorityRequestId = randomUUID();
     send({
@@ -257,11 +239,9 @@ export async function qualifyStockTabWire(options: {
       },
       { timeout: 5000 },
     );
-    expect(frames.filter((f) => f.type === "terminal-delivery-fault")).toHaveLength(
-      options.native ? 0 : 1,
-    );
-    // Live HT is valid: source provenance, not the mere presence of HT in output,
-    // controls rejection. Wait for its canonical update before native resize.
+    expect(frames.filter((f) => f.type === "terminal-delivery-fault")).toHaveLength(0);
+    // Live HT is cursor motion. Wait for its canonical update before the resize
+    // that makes the daemon capture the same tab again.
     await options.paintLate();
     await vi.waitFor(
       () => {
@@ -279,35 +259,13 @@ export async function qualifyStockTabWire(options: {
     await vi.waitFor(
       () => {
         expect(errors).toEqual([]);
-        if (options.native) {
-          const snapshot = received.get(late)!;
-          expect(snapshot.rows).toBe(5);
-          expect(snapshot.cols).toBe(8);
-          expect(readDeliveredFrame(snapshot).cells[0]).toEqual(knownTabFrame("initial").cells[0]);
-        } else
-          expect(
-            frames.filter((f) => f.type === "terminal-delivery-fault" && f.pane === late),
-          ).toHaveLength(1);
+        const snapshot = received.get(late)!;
+        expect(snapshot.rows).toBe(5);
+        expect(snapshot.cols).toBe(8);
+        expect(readDeliveredFrame(snapshot).cells[0]).toEqual(knownTabFrame("initial").cells[0]);
       },
       { timeout: 5000 },
     );
-    if (!options.native) {
-      const fault = frames.find((f) => f.type === "terminal-delivery-fault" && f.pane === late)!;
-      const ready = frames.find((f) => f.type === "terminal-delivery-ready" && f.pane === late)!;
-      if (
-        fault.type !== "terminal-delivery-fault" ||
-        ready.type !== "terminal-delivery-ready" ||
-        !ready.negotiation.accepted
-      )
-        throw Error("missing late delivery identity");
-      expect(fault.fault.message).toBe(STOCK_CAPTURE_TAB_UNAVAILABLE);
-      expect(fault.fault.deliveryNonce).toBe(ready.negotiation.negotiated.deliveryNonce);
-      expect(
-        frames
-          .slice(frames.indexOf(fault) + 1)
-          .filter((f) => f.type === "terminal-delivery-envelope" && f.pane === late),
-      ).toHaveLength(0);
-    }
     const secondMarker = "after-" + randomUUID().slice(0, 8);
     send({ type: "input", kind: "text", pane: good, seq: 2, data: secondMarker });
     await vi.waitFor(
@@ -326,23 +284,10 @@ export async function qualifyStockTabWire(options: {
             .join("\n"),
         ).toContain("ACK:" + secondMarker);
         expect(ws!.readyState).toBe(WebSocket.OPEN);
-        expect(frames.filter((f) => f.type === "terminal-delivery-fault")).toHaveLength(
-          options.native ? 0 : 2,
-        );
+        expect(frames.filter((f) => f.type === "terminal-delivery-fault")).toHaveLength(0);
       },
       { timeout: 5000 },
     );
-    if (!options.native) {
-      const faultIndex = frames.findIndex(
-        (f) => f.type === "terminal-delivery-fault" && f.pane === late,
-      );
-      expect(faultIndex).toBeGreaterThan(-1);
-      expect(
-        frames
-          .slice(faultIndex + 1)
-          .filter((f) => f.type === "terminal-delivery-envelope" && f.pane === late),
-      ).toHaveLength(0);
-    }
     trace.push({ marker, secondMarker, good, bad, late, port, phase: "after-late-recapture" });
   } catch (error) {
     failure = error;

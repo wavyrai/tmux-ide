@@ -1,4 +1,5 @@
 import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
+import { logger } from "../../lib/log.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
@@ -159,6 +160,7 @@ export class TerminalReplicaInterpreter {
   #nativeSeedBackingCandidate: NativeGridCapture | undefined;
   readonly #generation: SessionRuntimeGeneration;
   readonly #workspaceName: string;
+  #stockTabsNoted = false;
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
   #scrollback: number;
@@ -631,10 +633,11 @@ export class TerminalReplicaInterpreter {
 
   /**
    * Replay one stock `capture-pane -e` chunk. tmux stores a tab as one wide
-   * cell and prints it as a single HT, without its width. Paint spaces to the
-   * next default tab stop instead: that is the cell tmux made when the tab was
-   * written at this column, and spaces take the cell's background as tmux's
-   * cell does. tmux never tabs into the last column (`input_c0_dispatch`).
+   * cell and prints it as a single HT, without its width. Blank the cells up
+   * to the next default tab stop instead (ECH, then CUF): that is the cell tmux
+   * made when the tab was written at this column, and erased cells take the
+   * rendition the capture set for it, as tmux's blank tab cell does. tmux never
+   * tabs into the last column (`input_c0_dispatch`).
    * A row whose cells moved after the tab was written (insert or delete
    * character, reflow) or that was written under custom tab stops can come out
    * a few columns off until the program redraws it.
@@ -647,8 +650,17 @@ export class TerminalReplicaInterpreter {
       if (tab > start) await this.#writeToBackend(backend, chunk.subarray(start, tab));
       const column = backend.graphicsCursor!().x;
       const stop = Math.min(backend.cols - 1, (Math.floor(column / 8) + 1) * 8);
-      if (stop > column) await this.#writeToBackend(backend, " ".repeat(stop - column));
+      if (stop > column)
+        await this.#writeToBackend(backend, `\x1b[${stop - column}X\x1b[${stop - column}C`);
       start = tab + 1;
+    }
+    if (!this.#stockTabsNoted) {
+      this.#stockTabsNoted = true;
+      // Once per pane: its saved rows are not tmux's exact cells on this server.
+      logger.info("terminal-replica", "stock capture: tab positions reconstructed", {
+        pane: this.#semanticPaneId,
+        workspace: this.#workspaceName,
+      });
     }
     if (start < chunk.length) await this.#writeToBackend(backend, chunk.subarray(start));
   }

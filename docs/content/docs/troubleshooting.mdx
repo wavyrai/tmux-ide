@@ -115,6 +115,12 @@ The running tmux server was started by another tmux, such as Homebrew's.
 `tmux-ide servers upgrade` restarts it on tmux-ide's own tmux and restores its
 sessions. See [Move to tmux-ide's own tmux](/docs/tmux-upgrade).
 
+Sessions on such a server still open. One difference shows in output printed
+before you opened the pane: a stock tmux does not report how wide each tab was,
+so tmux-ide places tabs at the default stops (every 8 columns). A line that was
+edited in place after its tab was printed, or printed under custom tab stops,
+can be a few columns off until the program draws it again.
+
 ## `events` prints nothing
 
 The event log is written by the same background updater, so it needs an

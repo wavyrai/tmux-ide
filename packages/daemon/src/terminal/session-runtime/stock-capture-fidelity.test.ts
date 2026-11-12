@@ -1,5 +1,6 @@
 import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { expect, it } from "vitest";
+import { getLogBuffer } from "../../lib/log.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 const make = () =>
   new TerminalReplicaInterpreter({
@@ -27,7 +28,11 @@ it("paints a captured tab to the next tab stop with its background, and leaves l
     // tmux never tabs into the last column: the tab cell ends at column 6.
     expect(painted[7]!.grapheme).toBe("B");
     expect(painted[0]!.background).not.toEqual({ kind: "default" });
-    for (let x = 1; x < 7; x++) expect(painted[x]!.background).toEqual(painted[0]!.background);
+    // Like tmux's own tab cell: blank cells in the cell's background, not typed spaces.
+    for (let x = 1; x < 7; x++) {
+      expect(painted[x]!.background).toEqual(painted[0]!.background);
+      expect(painted[x]!.grapheme).toBe("");
+    }
     await interpreter.enqueue({
       type: "reseed",
       cols: 8,
@@ -147,6 +152,32 @@ it("owns captured provenance bytes before asynchronous application", async () =>
     // The bytes admitted were "A<tab>B", not the caller's later overwrite.
     const cells = interpreter.currentSnapshot().grid[0]!.cells;
     expect([cells[0]!.grapheme, cells[7]!.grapheme]).toEqual(["A", "B"]);
+  } finally {
+    await interpreter.enqueue({ type: "close", reason: "fixture-complete" });
+  }
+});
+it("logs once per pane that tab positions were reconstructed", async () => {
+  const noted = () =>
+    getLogBuffer().filter((entry) => entry.msg === "stock capture: tab positions reconstructed");
+  const before = noted().length;
+  const interpreter = make();
+  try {
+    for (const text of ["A\tB", "C\tD", "plain"])
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 4,
+        chunks: [Buffer.from(text)],
+        cursor: { x: 0, y: 0 },
+        bootstrap: "painted-capture",
+      });
+    expect(noted().slice(before)).toMatchObject([
+      {
+        level: "info",
+        component: "terminal-replica",
+        data: { pane: "pane.tabs", workspace: "tabs" },
+      },
+    ]);
   } finally {
     await interpreter.enqueue({ type: "close", reason: "fixture-complete" });
   }

@@ -194,7 +194,7 @@ export function tmuxFeaturesRow(probeServer: TmuxProbe, probeBinary: TmuxProbe):
     : "";
   const details: Record<NativeAnswer, string> = {
     full: "bundled tmux: full features",
-    stock: `stock tmux: reduced features${upgrade}`,
+    stock: `stock tmux: reduced features (tab positions in saved output are reconstructed)${upgrade}`,
     older: `older tmux-ide tmux: reduced features${upgrade}`,
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
