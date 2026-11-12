@@ -80,6 +80,18 @@ describe("control clients left behind by a daemon that died", () => {
     expect(fake.killed).toEqual([[94332, "SIGTERM"]]);
   });
 
+  it("never ends its own clients when the daemon is pid 1, as in a container", async () => {
+    const fake = io("77\t1\n", { 77: { ppid: 1, command: ATTACH } });
+    await expect(evictOrphanedControlClients(fake, 1)).resolves.toEqual([]);
+    expect(fake.killed).toEqual([]);
+  });
+
+  it("leaves a client that tmux does not list as control mode", async () => {
+    const fake = io("94332\t0\n", { 94332: { ppid: 1, command: ATTACH } });
+    await expect(evictOrphanedControlClients(fake, 4242)).resolves.toEqual([]);
+    expect(fake.killed).toEqual([]);
+  });
+
   it("treats a client adopted by a service manager as orphaned", async () => {
     const fake = io("94332\t1\n", {
       94332: { ppid: 800, command: ATTACH },
