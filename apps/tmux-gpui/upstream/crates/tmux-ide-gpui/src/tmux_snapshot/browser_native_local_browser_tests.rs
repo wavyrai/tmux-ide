@@ -55,6 +55,7 @@ fn fixture() -> Local {
         appearance: None,
         recovery: None,
         flap: Default::default(),
+        empty_open: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),

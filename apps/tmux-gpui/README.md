@@ -1104,17 +1104,44 @@ recognised falls back to "select a session". The first try is at once; each
 failed try reads the daemon record again and waits 250 ms doubling to 5 s
 (30 s over SSH), under "Connection lost. Reconnecting…". A rewritten daemon
 record, or activating the window, is tried at once. No number of failures ends
-recovery. It ends only when the stream is ready; when the session ended (its
-server is online without it, or stayed offline or unlisted for a minute),
+recovery. Why the stream ended picks the first step. A close frame from the
+daemon means it was reachable a moment ago: the try is at once and the backoff
+starts over, also within a recovery (at most four such starts in ten seconds;
+a daemon that closes more often gets the backoff). The reason decides, not
+the code: `tmux-server-retired` and `daemon-restarting` read the catalog
+instead of asking for a lease of the generation that is gone; `panes-closed`
+reads the catalog and ends the session on the first one without it; any other
+reason, a reason this app does not know, and 1001 `daemon-shutdown` (which a
+2.9.22 daemon sends for every close while it stays up) ask for the same lease.
+A ready frame that is not the lease's gets one fresh lease, then the catalog.
+A daemon that advertises its heartbeat (`x-tmux-ide-heartbeat` on the upgrade
+response) is also judged by its silence: nothing received for
+interval x (missed-limit + 1), 40 s at the defaults, ends the stream or the
+events socket, and it is connected again. Without the header there is no such
+deadline. Recovery ends only when the stream is ready; when the session ended,
 which loads Home again with a notice naming the session; when the daemon
 speaks a protocol the app does not; or over SSH when another machine answers.
+The session counts as ended when its server is online without it in two
+catalogs at least 2 s apart (30 s when that server lists no session at all,
+as an owner that was just rebuilt may), at once when the daemon said its panes
+closed, or when its server stayed offline or unlisted for 30 s. A session that
+is listed but has no pane to attach yet is tried again.
 A too-old daemon stops at once. A stream that shows frames but is given no
-input for 10 s is replaced, twice at most. Keys typed while reconnecting are
-refused and said so, never replayed; typing works again without a click once
-the stream is back. Navigation cancels recovery, and mutations are never
+input for 10 s is replaced, twice at most. Up to 32 keys or 256 bytes typed
+within 3 s of a drop wait and go, in order, to the same pane when its stream
+takes input again. They are all refused, and the pane says "Not sent…", when
+the reconnect takes longer, the queue fills, keys typed just before the drop
+were lost, or the stream comes back elsewhere; typing works again without a
+click once the stream is back. Keys already submitted are never replayed.
+Navigation cancels recovery, and mutations are never
 automatically replayed. A Home that could not load its sessions (no daemon
-yet, or no tmux server online) keeps looking for a local daemon every 5 s at
-most and loads when one answers. Saved-profile selection and return-to-Local retain a separate local registry
+yet, no tmux server online, or an internal error) keeps looking for a local
+daemon every 5 s at most and loads when one answers. A session opened before
+the daemon lists its pane (one that was just created) is opened again for
+about 3 s before the window says it has no attachable panes. The server list
+(`GET /api/v1/tmux-servers`) is remembered per daemon generation for at most
+5 s and dropped by an events change, a lost events socket, any failed request
+and a new discovery; a catalog read still ends on a fresh one. Saved-profile selection and return-to-Local retain a separate local registry
 worker. The local entry provides that worker automatically; the SSH entry
 requires the explicit `--local-daemon` record for registry operations.
 Recovery and manual refresh revalidate saved-profile authority before replacement

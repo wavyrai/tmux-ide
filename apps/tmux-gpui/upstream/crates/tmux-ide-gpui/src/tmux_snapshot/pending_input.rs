@@ -215,7 +215,6 @@ impl SnapshotView {
             || !self.terminal_input_ready()
             || self.browser_state.request != self.browser_request
             || self.split_hold_waiting()
-            || self.reconnect_hold_waiting()
         {
             return;
         }

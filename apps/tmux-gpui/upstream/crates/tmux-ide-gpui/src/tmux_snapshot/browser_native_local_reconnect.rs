@@ -533,4 +533,4 @@ impl Local {
 
 #[cfg(test)]
 #[path = "browser_native_local_reconnect_tests.rs"]
-mod tests;
+pub(super) mod tests;

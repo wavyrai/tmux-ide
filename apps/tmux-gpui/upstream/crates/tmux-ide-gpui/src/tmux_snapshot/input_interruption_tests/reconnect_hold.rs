@@ -131,9 +131,14 @@ fn keys_typed_during_a_short_reconnect_reach_the_same_pane_in_order(cx: &mut Tes
 /// are refused at once; keys already held are dropped together at the limit.
 #[gpui::test]
 fn a_reconnect_longer_than_three_seconds_refuses_every_held_key(cx: &mut TestAppContext) {
-    for (typed_after, back_after, delivered) in
-        [(0, 2900, true), (0, 3100, false), (3100, 3200, false)]
-    {
+    for (typed_after, back_after, delivered) in [
+        (0, 2900, true),
+        (0, 3100, false),
+        // The limit counts from the drop, not from the first key.
+        (2000, 2900, true),
+        (2000, 3100, false),
+        (3100, 3200, false),
+    ] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -237,9 +242,13 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
                 assert!(view.pending_input.is_some(), "{case}");
                 let mut state = back(view);
                 match case {
+                    // The typed-in pane still takes input, but is not selected.
                     "other-pane" => {
                         state.selected_pane = Some("pane-b".into());
-                        state.input_targets[0].id = "pane-b".into();
+                        state.input_targets.push(Target {
+                            id: "pane-b".into(),
+                            token: "c".repeat(64),
+                        });
                     }
                     "other-session" => state.selected_session = Some("other".into()),
                     "navigated" => {

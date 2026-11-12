@@ -154,12 +154,13 @@ fn keys_lost_with_the_stream_are_reported_while_reconnecting() {
         shown.status,
         format!("Reconnecting… attempt 2 — {LOST_INPUT}")
     );
+    // The view reads this to refuse, not hold, what is typed after them.
+    assert!(shown.reconnect_keys_lost);
     let mut hold = Hold::default();
     hold.begin(&live(7), false);
-    assert_eq!(
-        hold.publication(&reconnecting(7, 2)).status,
-        "Reconnecting… attempt 2"
-    );
+    let shown = hold.publication(&reconnecting(7, 2));
+    assert_eq!(shown.status, "Reconnecting… attempt 2");
+    assert!(!shown.reconnect_keys_lost);
 }
 
 /// The legacy pipe catalog never ends a hold (it recovers on its own and

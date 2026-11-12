@@ -44,6 +44,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             appearance: None,
             recovery: None,
             flap: Default::default(),
+            empty_open: Default::default(),
             home: Default::default(),
             background_fleet: Default::default(),
             registry: Default::default(),
@@ -588,6 +589,12 @@ fn a_catalog_error_at_home_becomes_a_refresh_notice() {
         local.state.status,
         "Something went wrong. Refresh sessions to try again."
     );
+    // It does not wait for the click: Home is loaded again by itself.
+    assert!(local.home.quiet.due_now(), "nothing retries the load");
+    local.quiet_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Servers)));
+    local.home_recovered();
+    assert!(local.state.home_phase == HomePhase::Loading);
 }
 #[test]
 fn only_a_gone_terminal_loop_ends_the_actor() {
@@ -657,7 +664,7 @@ fn an_idle_actor_delivers_waiting_events_without_being_woken() {
 }
 
 /// The fixture with the open session's panes known, as after a live attachment.
-fn attached() -> (Local, mpsc::Receiver<Incoming>) {
+pub(in crate::tmux_snapshot) fn attached() -> (Local, mpsc::Receiver<Incoming>) {
     let (mut local, events) = fixture();
     local.state.surface = Surface::Workspace;
     local.state.panes = ["%1", "%2"]
@@ -674,7 +681,7 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
         .collect();
     (local, events)
 }
-fn last_catalog(events: &mpsc::Receiver<Incoming>) -> State {
+pub(in crate::tmux_snapshot) fn last_catalog(events: &mpsc::Receiver<Incoming>) -> State {
     let mut last = None;
     while let Ok(event) = events.try_recv() {
         if let Incoming::Catalog(state) = event {

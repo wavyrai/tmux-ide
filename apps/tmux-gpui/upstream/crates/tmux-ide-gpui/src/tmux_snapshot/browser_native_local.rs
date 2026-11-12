@@ -59,6 +59,8 @@ pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
 mod drop_link;
 #[path = "browser_native_local_home_recovery.rs"]
 mod home_recovery;
+#[path = "browser_native_local_open_retry.rs"]
+mod open_retry;
 #[path = "browser_native_local_pane_limit.rs"]
 mod pane_limit;
 #[path = "browser_native_local_home_quiet.rs"]
@@ -91,6 +93,7 @@ struct Local {
     appearance: Option<crate::tmux_snapshot::appearance::native::Owner>,
     recovery: Option<reconnect::Recovery>,
     flap: reconnect::Flap,
+    empty_open: open_retry::EmptyOpen,
     home: home_recovery::Recovery,
     background_fleet: background_fleet::Gate,
     registry: registry::Gate,
@@ -169,6 +172,7 @@ fn start_source(
         appearance: None,
         recovery: None,
         flap: Default::default(),
+        empty_open: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
@@ -420,8 +424,12 @@ impl Local {
         match reconnecting {
             Ok(()) => Ok(()),
             // A gone terminal loop fails this publication too, and ends the actor.
+            // Nothing was open: Home says so, and keeps loading quietly until
+            // a load succeeds, so the notice needs no click either.
             Err(_) => {
-                match self.unavailable("Something went wrong. Refresh sessions to try again.") {
+                match self
+                    .unavailable_retrying("Something went wrong. Refresh sessions to try again.")
+                {
                     Err(error) if outbox::closed(&error) => Err(error),
                     _ => Ok(()),
                 }
@@ -452,6 +460,7 @@ impl Local {
         self.fleet_tick()?;
         self.selected_catalog_tick()?;
         self.reconnect_tick()?;
+        self.empty_open_tick()?;
         self.home_recovery_tick()?;
         self.quiet_tick()?;
         if !self.submitted
@@ -613,6 +622,7 @@ impl Local {
                 .fleet_recovery_wait()
                 .into_iter()
                 .chain(self.home_recovery_wait())
+                .chain(self.empty_open_wait())
                 .chain(self.agents.wait())
                 .min()
             {
@@ -709,11 +719,11 @@ impl Local {
                     panes,
                 },
             ) => {
-                let Some(selected) = preferred
+                let Some(selected) = (preferred.clone())
                     .filter(|id| panes.contains(id))
                     .or_else(|| panes.first().cloned())
                 else {
-                    return self.unavailable("Session has no attachable terminal panes");
+                    return self.opened_without_panes(target, preferred);
                 };
                 if let Some(done) = self.pane_limit_exceeded(&target, &panes) {
                     return done;
