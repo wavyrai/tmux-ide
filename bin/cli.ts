@@ -2480,7 +2480,7 @@ try {
       // package-manager path heuristic (see lib/update.ts).
       const { runUpdate } = await import("../packages/daemon/src/lib/update.ts");
       const dryRun = values["dry-run"] === true;
-      runUpdate({ cliDir: __dirname, dryRun, json });
+      await runUpdate({ cliDir: __dirname, dryRun, json });
       break;
     }
 
