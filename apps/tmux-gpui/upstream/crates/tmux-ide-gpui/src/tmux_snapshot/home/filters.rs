@@ -53,7 +53,7 @@ impl SnapshotView {
             return true;
         }
         // Enter/Space belong to GPUI's focused-button key-up activation.
-        if self.home_action_index(window).is_some() {
+        if self.home_action_index(window).is_some() || self.whats_new_focused(window) {
             return false;
         }
         if self.home_fleet_nav_key(event, window, cx) {

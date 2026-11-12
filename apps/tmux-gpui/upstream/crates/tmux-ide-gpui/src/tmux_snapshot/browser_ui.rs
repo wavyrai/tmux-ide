@@ -120,7 +120,11 @@ impl SnapshotView {
         cx.stop_propagation();
     }
     fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
+        if self.picker.is_some()
+            || self.pane_actions.is_some()
+            || self.new_session.is_some()
+            || self.about.is_some()
+        {
             return;
         }
         if self.pane_move_key(event, window, cx) {
@@ -409,8 +413,15 @@ impl SnapshotView {
             && self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
+            && self.about.is_none()
         {
             self.terminal_focus.focus(window, cx);
+        }
+        // About is modal: while it shows, its card keeps the keyboard.
+        if let Some(about) = &self.about
+            && !about.holds_focus(window)
+        {
+            about.take_focus(window, cx);
         }
         let theme = self.theme();
         let is_home = self.browser_state.surface == browser::Surface::Home;
@@ -734,6 +745,10 @@ impl SnapshotView {
             .children(
                 self.machine_dialog(cx)
                     .map(|dialog| deferred(dialog).with_priority(2)),
+            )
+            .children(
+                self.about_dialog(cx)
+                    .map(|dialog| deferred(dialog).with_priority(3)),
             )
             .into_any_element();
         super::shell::themed_frame(body, window, cx, application_tabs)
