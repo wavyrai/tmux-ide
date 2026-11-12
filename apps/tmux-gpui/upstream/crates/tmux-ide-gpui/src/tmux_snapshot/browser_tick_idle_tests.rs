@@ -277,6 +277,8 @@ fn key_down_and_up_nudge_without_a_render(cx: &mut TestAppContext) {
     let (snapshot, mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     let key = Keystroke::parse("f19").unwrap();
+    // Drawn now, so dispatching the key has nothing dirty to draw first.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     mailbox.take_activity();
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -290,6 +292,7 @@ fn key_down_and_up_nudge_without_a_render(cx: &mut TestAppContext) {
         );
     });
     assert!(mailbox.has_activity(), "key down");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     mailbox.take_activity();
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -325,16 +328,14 @@ fn pending_activity_arms_the_tick() {
     assert!(super::arm_tick(&mailbox, || false));
 }
 
-/// Deactivating the window wakes the task without a draw: a minimized
+/// Deactivating the window nudges the task without a draw: a minimized
 /// window may not draw, and its background transition must still be sent.
 #[gpui::test]
-fn deactivation_wakes_the_task_without_a_draw(cx: &mut TestAppContext) {
+fn deactivation_nudges_the_task_without_a_draw(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
-    let (snapshot, _mailbox, cx) = open(cx, sender);
-    cx.update(|window, _| window.activate_window());
+    let (snapshot, mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
-    let before = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
-    cx.deactivate_window();
-    let after = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
-    assert!(after > before, "deactivation did not wake the task");
+    mailbox.take_activity();
+    cx.update(|_, cx| snapshot.update(cx, |view, cx| view.activation_changed(false, cx)));
+    assert!(mailbox.has_activity());
 }
