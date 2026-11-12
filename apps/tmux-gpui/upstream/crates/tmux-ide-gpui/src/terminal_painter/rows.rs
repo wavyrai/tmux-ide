@@ -1,8 +1,10 @@
 //! Retained glyph rows (R2): a row's sprites, kept from the frame that
 //! painted it and queued again while the row is unchanged.
 //!
-//! A native frame's rows are immutable `Arc`s, and a row that did not change
-//! keeps its `Arc`, also when it scrolls to another line. A row is retained
+//! A native frame's rows are immutable `Arc`s. The direct projection keeps a
+//! row's `Arc` while it is unchanged at the same line; a row that scrolls,
+//! or a canvas row composed from several panes, arrives as a new `Arc` and
+//! misses (the perf bench's pool reuses `Arc`s as rows scroll). A row is retained
 //! by identity: the cache holds the `Arc`, so its address cannot be reused
 //! by another row while the entry lives, and a hit needs no hash of the
 //! cells. A row painted at another height has its sprites' vertical
