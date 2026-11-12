@@ -141,7 +141,9 @@ impl DividerState {
     }
     /// Reads a window's layout again after a read was lost, with growing delays.
     /// Geometry may never change again, so nothing else would recover its handles.
-    /// A read cannot start during a gesture, and only the foreground owner reads.
+    /// A read cannot start during a gesture, except for a gesture tmux already
+    /// applied, which is waiting for exactly this read (#740); and only the
+    /// foreground owner reads.
     fn retry_read(&mut self, c: &Controller, now: u64) -> Result<(), Error> {
         if self.read.is_some() {
             return Ok(());
@@ -158,7 +160,7 @@ impl DividerState {
             self.read_retry_due = Some(now.saturating_add(read_retry_delay(self.read_attempts)));
         }
         if self.read_retry_due.is_none_or(|due| now < due)
-            || self.active.is_some()
+            || self.active.as_ref().is_some_and(|g| g.successor.is_none())
             || self.geometry.is_none()
             || !c.actionable
             || c.topology.awaiting_authority()
@@ -275,7 +277,13 @@ impl DividerState {
         self.read = None;
         self.read_issued_at = None;
         self.read_lost = true;
-        if self.active.as_ref().is_some_and(|g| g.operation.is_none()) {
+        // A gesture with a successor was applied by tmux: its read is retried
+        // until the gesture's deadline, not failed on the first loss (#740).
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|g| g.operation.is_none() && g.successor.is_none())
+        {
             self.fail(SplitPhase::Failed);
         }
     }
