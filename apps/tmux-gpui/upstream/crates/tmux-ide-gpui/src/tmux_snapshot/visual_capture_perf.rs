@@ -10,6 +10,9 @@ use crate::terminal_painter::NativeFrame;
 use herdr_client::protocol::{CellData, CursorState};
 use std::{fmt::Write as _, time::Instant};
 
+#[path = "visual_capture_perf_live.rs"]
+mod live;
+
 /// Allocations and bytes allocated so far, from the binary's global allocator,
 /// and the main thread's CPU time in nanoseconds.
 pub type AllocCounter = fn() -> (u64, u64, u64);
@@ -27,6 +30,8 @@ pub const SCENARIOS: &[&str] = &[
     "ws-resize",
     "big-flood",
     "ws30-flood",
+    "ws-flood-nosidebar-live",
+    "big-flood-live",
     "ws30-refresh",
     "home30-publish",
     "home30-refresh",
@@ -59,6 +64,8 @@ struct Scenario {
     step: Step,
     /// Rows the published frames scroll through, and the grid size.
     rows: Option<Flood>,
+    /// Decode and project each frame as the live app does (`live`).
+    live: bool,
 }
 
 /// A pool of terminal rows and the grid (columns, rows) they scroll through.
@@ -241,7 +248,14 @@ fn scenario(name: &str, base: &browser::State) -> Result<Scenario> {
         sidebar,
         step,
         rows,
+        live: false,
     };
+    if let Some(name) = name.strip_suffix("-live") {
+        return Ok(Scenario {
+            live: true,
+            ..scenario(name, base)?
+        });
+    }
     Ok(match name {
         "ws-idle" => s(state, workspace, true, Step::Idle, None),
         "ws-refresh" => s(state, workspace, true, Step::Refresh, None),
@@ -357,7 +371,12 @@ fn run(
         sidebar,
         step,
         rows,
+        live,
     } = scenario;
+    let mut feed = rows
+        .as_ref()
+        .filter(|_| live)
+        .map(|(pool, cols, rows)| live::LiveFeed::new(pool, *cols, *rows));
     let (sender, receiver) = mpsc::sync_channel(1 << 16);
     let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let base = state.clone();
@@ -421,11 +440,19 @@ fn run(
             &mut timed
         };
         // Built before the clock starts: the transport thread does this work.
-        let published = rows.as_ref().map(|(pool, cols, rows)| {
-            let mut state = base.clone();
-            state.frame = Some(frame_at(pool, *cols, *rows, index + 1));
-            state
-        });
+        let published = match (rows.as_ref(), feed.as_mut()) {
+            (Some(_), Some(feed)) => {
+                let mut state = base.clone();
+                state.frame = Some(DisplayFrame::Native(feed.frame(index + 1)?));
+                Some(state)
+            }
+            (Some((pool, cols, rows)), None) => {
+                let mut state = base.clone();
+                state.frame = Some(frame_at(pool, *cols, *rows, index + 1));
+                Some(state)
+            }
+            _ => None,
+        };
         let (allocs, bytes, cpu) = counter();
         let started = Instant::now();
         cx.update_window(handle.into(), |_, window, cx| {
@@ -459,6 +486,17 @@ fn run(
     }
     cx.update_window(handle.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
+    if let Some(mut feed) = feed {
+        feed.projection_ms.sort_by(f64::total_cmp);
+        let at = |q: f64| {
+            feed.projection_ms[((feed.projection_ms.len() - 1) as f64 * q).round() as usize]
+        };
+        eprintln!(
+            "  live projection (transport thread, off the clock) p50={:.3}ms p95={:.3}",
+            at(0.5),
+            at(0.95)
+        );
+    }
     Ok((timed, ab.then_some(legacy_timed)))
 }
 
