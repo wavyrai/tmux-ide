@@ -10,6 +10,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // About holds the keyboard while it is open.
+        if self.about.is_some() {
+            self.about_key(event, window, cx);
+            return;
+        }
         // The close-pane card holds the keyboard while it is open (c1).
         if self.pane_close.is_some() {
             self.pane_close_key(event, window, cx);

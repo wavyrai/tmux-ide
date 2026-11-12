@@ -51,9 +51,18 @@ fn malformed_data_counts_toward_the_protocol_limit() {
 fn failures_that_cannot_recover_stop_with_their_reason() {
     for (error, says) in [
         (DaemonError::Incompatible(3), "needs an update"),
-        (DaemonError::RecordFormat, "record is unreadable"),
-        (DaemonError::RecordSecurity, "record is unreadable"),
-        (DaemonError::Endpoint, "record is unreadable"),
+        (
+            DaemonError::RecordFormat,
+            "can't read the background service's details",
+        ),
+        (
+            DaemonError::RecordSecurity,
+            "can't read the background service's details",
+        ),
+        (
+            DaemonError::Endpoint,
+            "can't read the background service's details",
+        ),
         (
             DaemonError::RequestStatus(401),
             "refused this app's credentials",
@@ -209,4 +218,22 @@ fn a_session_recovery_stop_maps_to_its_act() {
         ..State::default()
     };
     assert_eq!(act(None, &live), None);
+}
+
+/// Onboarding A0: every reason the act-needed card shows reads plainly.
+#[test]
+fn every_act_reason_reads_plainly() {
+    use crate::tmux_snapshot::connection::jargon;
+    for text in [
+        CREDENTIALS,
+        DAEMON_UPDATE,
+        RECORD,
+        PLATFORM,
+        UNREADABLE,
+        reconnect::GAVE_UP,
+        reconnect::UPDATE_APP,
+        reconnect::SSH_IDENTITY,
+    ] {
+        assert_eq!(jargon(text), None, "{text}");
+    }
 }
