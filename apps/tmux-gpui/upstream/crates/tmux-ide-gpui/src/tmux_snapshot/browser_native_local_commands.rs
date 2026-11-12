@@ -137,6 +137,10 @@ impl Local {
                 self.local_creation_presence(active)?;
                 self.setup_presence(active)?;
                 self.presence_revision = revision;
+                if active && !self.foreground {
+                    // Back at the window: try now, whatever the backoff says.
+                    self.reconnect_now(self.state.request)?;
+                }
                 self.foreground = active;
                 if !active
                     && matches!(

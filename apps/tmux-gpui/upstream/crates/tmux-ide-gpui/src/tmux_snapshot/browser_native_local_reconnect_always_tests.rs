@@ -473,3 +473,28 @@ fn a_record_that_did_not_change_does_not_hurry_a_flapping_stream() {
     assert!(local.stage.is_none(), "tried before the backoff was over");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Coming back to the window is a reason to try now: over SSH the backoff may
+/// be thirty seconds.
+#[test]
+fn activating_the_window_tries_at_once() {
+    let (mut local, _events) = attached();
+    local.foreground = false;
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().due = Some(Instant::now() + Duration::from_secs(30));
+    // Still inactive: the backoff stands.
+    local
+        .command(Command::Presence {
+            active: false,
+            revision: 1,
+        })
+        .unwrap();
+    assert!(local.recovery.as_ref().unwrap().due.unwrap() > Instant::now());
+    local
+        .command(Command::Presence {
+            active: true,
+            revision: 2,
+        })
+        .unwrap();
+    assert!(local.recovery.as_ref().unwrap().due.unwrap() <= Instant::now());
+}
