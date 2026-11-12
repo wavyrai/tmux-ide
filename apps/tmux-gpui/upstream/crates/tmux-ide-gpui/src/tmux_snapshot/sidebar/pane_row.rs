@@ -96,6 +96,7 @@ impl SnapshotView {
     /// A Tab stop after the rows, like the other sidebar controls.
     pub(in crate::tmux_snapshot) fn sidebar_home_row(
         &self,
+        painter: bezel_motion::Painter,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = self.theme();
@@ -114,20 +115,13 @@ impl SnapshotView {
         };
         let request = self.browser_request;
         self.sidebar_focus_control(
-            render_row(
-                usize::MAX,
-                &row,
-                &theme,
-                &bezel,
-                bezel_motion::Painter::of(cx),
-                false,
-            )
-            .debug_selector(|| "tmux-sidebar-home".into())
-            // The focus ring's border is always there, so focus never moves
-            // the rows under Home.
-            .border_1()
-            .border_color(transparent_black())
-            .map(|home| spoken(home, &row, None)),
+            render_row(usize::MAX, &row, &theme, &bezel, painter, false)
+                .debug_selector(|| "tmux-sidebar-home".into())
+                // The focus ring's border is always there, so focus never moves
+                // the rows under Home.
+                .border_1()
+                .border_color(transparent_black())
+                .map(|home| spoken(home, &row, None)),
             5,
             &theme,
         )

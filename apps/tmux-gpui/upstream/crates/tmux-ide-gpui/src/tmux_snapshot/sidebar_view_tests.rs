@@ -370,3 +370,106 @@ fn the_sidebar_is_replayed_again_when_the_client_leaves(cx: &mut TestAppContext)
     terminal_frame(cx);
     assert_eq!(renders(cx), settled, "replayed without a client");
 }
+
+/// Lets `ms` of wall-clock and executor time pass, a frame every 20 ms, with
+/// motion on: hover washes and fades run on the real clock.
+fn animate(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, ms: u64) {
+    for _ in 0..ms / 20 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            // A terminal frame, as a busy pane publishes while this runs.
+            snapshot.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+    }
+}
+
+fn with_motion(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        snapshot.update(cx, |view, cx| {
+            view.chrome.force_motion(false);
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+}
+
+/// What a frame drawn now paints over the sidebar, against a forced render.
+fn assert_settled(cx: &mut VisualTestContext, name: &str) {
+    let cached = painted(cx);
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    assert!(
+        painted(cx) == cached,
+        "{name}: the replayed sidebar is stale"
+    );
+}
+
+/// A row's hover wash fades in over 150 ms. The frames of that fade must
+/// render the sidebar, or it keeps the wash of the frame it was last drawn.
+#[gpui::test]
+fn a_hover_wash_finishes_on_the_replayed_sidebar(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    with_motion(&snapshot, cx);
+    let row = cx.debug_bounds("tmux-sidebar-row-2").unwrap();
+    let renders = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| crate::tmux_snapshot::browser_ui::sidebar_view::renders(cx))
+    };
+    let before = renders(cx);
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    animate(&snapshot, cx, 400);
+    // One render is the hover itself; the rest are the fade's frames.
+    assert!(
+        renders(cx) - before >= 3,
+        "the wash's frames did not render the sidebar: {}",
+        renders(cx) - before
+    );
+    assert_settled(cx, "hovered");
+    let other = cx.debug_bounds("tmux-sidebar-row-5").unwrap();
+    cx.simulate_mouse_move(other.center(), None, Modifiers::none());
+    animate(&snapshot, cx, 400);
+    assert_settled(cx, "moved to another row");
+}
+
+/// Showing the sidebar fades it in over 150 ms. Its paint carries the
+/// opacity of the frame that drew it, so it is drawn until the fade ends.
+#[gpui::test]
+fn the_sidebar_is_opaque_after_it_fades_in(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    with_motion(&snapshot, cx);
+    for hidden in [true, false] {
+        cx.update(|window, cx| {
+            snapshot.update(cx, |view, cx| {
+                view.sidebar_hidden = hidden;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+    }
+    // Three frames at once, well inside the 150 ms: each draws the sidebar.
+    let renders = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| crate::tmux_snapshot::browser_ui::sidebar_view::renders(cx))
+    };
+    let before = renders(cx);
+    for _ in 0..3 {
+        cx.update(|window, cx| {
+            snapshot.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+    }
+    assert_eq!(renders(cx) - before, 3, "replayed while it fades in");
+    animate(&snapshot, cx, 400);
+    assert_settled(cx, "shown again");
+    // Faded in: replayed again.
+    let settled = renders(cx);
+    cx.update(|window, cx| {
+        snapshot.update(cx, |_, cx| cx.notify());
+        window.draw(cx).clear(cx);
+    });
+    assert_eq!(renders(cx), settled, "still drawn after the fade");
+}
