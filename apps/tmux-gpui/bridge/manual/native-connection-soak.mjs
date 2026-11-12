@@ -37,7 +37,7 @@ import process from "node:process";
 import console from "node:console";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmod, copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -78,14 +78,46 @@ process.env.TMUX_TMPDIR = tmuxDir;
 // probe the daemon runs before it lists servers answers after 2 s instead of
 // at once: that is what a loaded machine does to it, and what made the daemon
 // rebuild the server owner and close every stream with 1001 "daemon-shutdown".
+//
+// It also writes one line per call to tmux-calls.log: the time, where the
+// call goes, and its arguments. "socket": an explicit -S naming the scratch
+// socket. "env": no socket argument, TMUX names the scratch socket.
+// "PINNED-DEFAULT": neither, so tmux would use its default socket, which the
+// pinned TMUX_TMPDIR keeps under the scratch root. "REFUSED": a socket
+// argument that is not the scratch socket, or anything naming
+// /tmp/tmux-UID; the call is not made (exit 97). The run fails if any call
+// was refused, and prints the counts.
 const realTmux = scratch.environment.TMUX_IDE_TMUX_BIN;
 const slowTmux = join(scratch.root, "tmux-slow");
+const tmuxCalls = join(scratch.root, "tmux-calls.log");
+await writeFile(tmuxCalls, "");
 await writeFile(
   slowTmux,
   [
     "#!/bin/sh",
     `export TMUX_TMPDIR='${tmuxDir}'`,
-    'case "$*" in */tmp/tmux-[0-9]*) echo "soak: refusing the default tmux socket" >&2; exit 97 ;; esac',
+    "kind=''; sock=''; named=''; want=''",
+    'for a in "$@"; do',
+    '  if [ -n "$want" ]; then',
+    '    case "$want" in S) sock="$a" ;; L) named="$a" ;; esac',
+    "    want=''; continue",
+    "  fi",
+    '  case "$a" in',
+    "    -S) want=S ;; -L) want=L ;; -f|-c|-T) want=x ;;",
+    '    -S*) sock="${a#-S}" ;; -L*) named="${a#-L}" ;;',
+    "    -*) ;;",
+    "    *) break ;;",
+    "  esac",
+    "done",
+    'if [ -n "$sock" ]; then',
+    `  case "$sock" in '${scratch.socketPath}'|'${socket}') kind=socket ;; *) kind=REFUSED ;; esac`,
+    'elif [ -n "$named" ]; then kind=PINNED-DEFAULT',
+    "else",
+    `  case "$TMUX" in '${scratch.socketPath}',*|'${socket}',*) kind=env ;; *) kind=PINNED-DEFAULT ;; esac`,
+    "fi",
+    'case "$*" in */tmp/tmux-[0-9]*) kind=REFUSED ;; esac',
+    `printf '%s %s %s\\n' "$(date -u +%H:%M:%S)" "$kind" "$*" >> '${tmuxCalls}'`,
+    'if [ "$kind" = REFUSED ]; then echo "soak: refusing a tmux call outside the scratch socket" >&2; exit 97; fi',
     `if [ -e '${signals}/slow-probe' ]; then`,
     '  case "$*" in *socket_path*) sleep 2 ;; esac',
     "fi",
@@ -167,6 +199,52 @@ const assertIsolated = async () => {
   }
 };
 
+// What the daemon's tmux calls were, by where they went. Saved before the
+// scratch root is removed.
+const tmuxCallReport = async () => {
+  const text = await readFile(tmuxCalls, "utf8").catch(() => "");
+  const counts = { socket: 0, env: 0, "PINNED-DEFAULT": 0, REFUSED: 0 };
+  for (const line of text.split("\n")) {
+    const kind = line.split(" ")[1];
+    if (kind in counts) counts[kind] += 1;
+  }
+  if (process.env.SOAK_TMUX_LOG) await writeFile(process.env.SOAK_TMUX_LOG, text);
+  console.log(`tmux calls by the daemon: ${JSON.stringify(counts)}`);
+  return counts;
+};
+// The scratch tmux servers this run started, to stop by pid if kill-server
+// did not (a loaded machine timed it out and left servers behind).
+const serverPids = new Set();
+const noteServer = () => {
+  const pid = Number(tmuxQuiet("display-message", "-p", "#{pid}"));
+  if (Number.isInteger(pid) && pid > 1) serverPids.add(pid);
+};
+const stopServers = () => {
+  tmuxQuiet("kill-server");
+  for (const pid of serverPids) {
+    try {
+      const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], {
+        encoding: "utf8",
+      });
+      if (command.includes(scratch.socketPath) || command.includes(socket))
+        process.kill(pid, "SIGTERM");
+    } catch {
+      /* Already gone. */
+    }
+  }
+};
+noteServer();
+// Stops what is left of the scratch world and reports the tmux calls. A
+// refused call fails the run: something tried to leave the scratch socket.
+const endScratch = async () => {
+  stopServers();
+  const calls = await tmuxCallReport();
+  await scratch.dispose();
+  if (calls.REFUSED > 0) {
+    console.error(`ISOLATION: ${calls.REFUSED} tmux call(s) were refused; see the tmux call log`);
+    process.exitCode = 1;
+  }
+};
 const events = [];
 let openSession = null;
 let child = null;
@@ -186,6 +264,7 @@ const ensureSessions = () => {
     );
     tmuxQuiet("set-option", "-t", `soak-${sessionSeq}`, "@tmux_ide_adopted", "1");
   }
+  noteServer();
 };
 
 // Each fault returns what it did, for the log.
@@ -359,11 +438,11 @@ if (process.env.SOAK_MODE === "late-daemon") {
       try {
         await daemon?.stop();
       } finally {
-        await scratch.dispose();
+        await endScratch();
       }
     }
   }
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 }
 // SOAK_MODE=requests: no faults. The app test opens a session, idles in it
 // and creates one, and prints what it asked the daemon for.
@@ -405,11 +484,11 @@ if (process.env.SOAK_MODE === "requests") {
       try {
         await daemon?.stop();
       } finally {
-        await scratch.dispose();
+        await endScratch();
       }
     }
   }
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 }
 try {
   await startOwnDaemon();
@@ -526,7 +605,7 @@ try {
       if (existsSync(join(signals, "slow-probe"))) await rm(join(signals, "slow-probe"));
       await daemon?.stop();
     } finally {
-      await scratch.dispose();
+      await endScratch();
     }
   }
 }
