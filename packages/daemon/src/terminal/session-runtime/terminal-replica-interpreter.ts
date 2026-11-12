@@ -75,7 +75,11 @@ export const COALESCED_COMMIT_INTERVAL_MS = 16;
  * (1 + factor) of a flood goes to commits (half, at 1).
  */
 export const COALESCED_COMMIT_REST_FACTOR = 1;
-/** Upper bound of that rest, so a frame under a flood is never held longer. */
+/**
+ * Upper bound of that rest. A skipped frame can still wait longer when the
+ * queued write behind it opens a synchronized update: then it is published
+ * with that update, at its end or by the 250 ms sync recovery.
+ */
 export const COALESCED_COMMIT_MAX_REST_MS = 100;
 type PendingWrite = {
   data: Uint8Array;
@@ -580,7 +584,9 @@ export class TerminalReplicaInterpreter {
     if (scanned.forward.byteLength === 0) {
       // The queued write a coalesced commit was counting on turned out to be
       // all image payload, and nothing else is queued: publish what it skipped.
-      if (this.#coalescedCommitOwed && !hasBacklog()) {
+      // Not inside a synchronized update: its end, or the sync recovery,
+      // publishes the owed commit with the whole frame.
+      if (this.#coalescedCommitOwed && !hasBacklog() && !this.#backend.modes().synchronizedOutput) {
         this.#commit(false, this.#pendingWriteDirty ?? undefined, trace);
         this.#publishGraphics();
       }

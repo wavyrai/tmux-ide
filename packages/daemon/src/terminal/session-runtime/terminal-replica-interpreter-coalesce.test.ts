@@ -214,6 +214,7 @@ describe("TerminalReplicaInterpreter commit coalescing (daemon perf F1)", () => 
     await pour(f, clock, 60, 20);
     const commits = f.updates.length - before;
     expect(COALESCED_COMMIT_MAX_REST_MS).toBe(100);
+    expect(COALESCED_COMMIT_REST_FACTOR).toBe(1);
     expect(commits).toBeGreaterThanOrEqual(8);
     expect(f.text().at(-1)).toBe("line 60");
     await f.interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
@@ -305,6 +306,66 @@ describe("TerminalReplicaInterpreter commit coalescing (daemon perf F1)", () => 
     await f.interpreter.whenIdle();
     expect(f.updates.length - before).toBe(1);
     expect(f.text()).toEqual(["seen"]);
+    await f.interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+  });
+
+  it("does not publish a half-drawn synchronized update from the image-payload path", async () => {
+    const clock = { now: 1_000 };
+    const f = flood(clock);
+    await settleAfterSeed(f);
+    const before = f.updates.length;
+    const first = f.interpreter.enqueue({ type: "write", data: encoder.encode("seen\r\n") });
+    await new Promise((resolve) => setImmediate(resolve));
+    // Queued behind it: a synchronized update opens, draws part of its frame
+    // and starts an image. The first write's commit is skipped for this one.
+    const partial = f.interpreter.enqueue({
+      type: "write",
+      data: encoder.encode("\u001b[?2026hPARTIAL\u001b_Ga=T,f=100,m=1;AAAA"),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await f.releaseNext();
+    await first;
+    // Payload only, nothing queued behind it, and the update is still open.
+    const payload = f.interpreter.enqueue({ type: "write", data: encoder.encode("BBBB") });
+    await new Promise((resolve) => setImmediate(resolve));
+    await f.releaseNext();
+    await Promise.all([partial, payload]);
+    expect(f.updates.length - before).toBe(0);
+    expect(f.text()).toEqual([]);
+    // The end of the update publishes the skipped commit with the whole frame.
+    f.gating.on = false;
+    await f.interpreter.enqueue({
+      type: "write",
+      data: encoder.encode("\u001b\\ DONE\u001b[?2026l"),
+    });
+    await f.interpreter.whenIdle();
+    expect(f.updates.length - before).toBe(1);
+    expect(f.text()[0]).toBe("seen");
+    expect(f.text()[1]).toContain("PARTIAL");
+    expect(f.text()[1]).toContain("DONE");
+    await f.interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+  });
+
+  it("counts a newer untraced group waiting behind a finished one as queued output", async () => {
+    const clock = { now: 1_000 };
+    const f = flood(clock);
+    await settleAfterSeed(f);
+    const before = f.updates.length;
+    const first = f.interpreter.enqueue({ type: "write", data: encoder.encode("one\r\n") });
+    await new Promise((resolve) => setImmediate(resolve));
+    // Seal the running group: the next write starts a new group behind it.
+    const idle = f.interpreter.whenIdle();
+    const second = f.interpreter.enqueue({ type: "write", data: encoder.encode("two\r\n") });
+    await new Promise((resolve) => setImmediate(resolve));
+    await f.releaseNext();
+    await first;
+    // The first group is empty, but output waits in the next: no commit yet.
+    expect(f.updates.length - before).toBe(0);
+    await f.releaseAll([second]);
+    await Promise.all([second, idle]);
+    await f.interpreter.whenIdle();
+    expect(f.updates.length - before).toBe(1);
+    expect(f.text()).toEqual(["one", "two"]);
     await f.interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
   });
 });

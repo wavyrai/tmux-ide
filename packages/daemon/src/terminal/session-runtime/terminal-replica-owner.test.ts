@@ -1635,6 +1635,10 @@ describe("parking a pane nobody watches (perf F2)", () => {
     await rig.owner.dispose();
   });
 
+  it("pins the park grace period at 10 s", () => {
+    expect(PARK_AFTER_MS).toBe(10_000);
+  });
+
   it("cancels a pending park on dispose", async () => {
     const rig = parkRig();
     const first = await rig.owner.subscribe(() => undefined);
