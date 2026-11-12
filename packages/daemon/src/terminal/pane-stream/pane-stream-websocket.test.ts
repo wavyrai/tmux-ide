@@ -54,6 +54,7 @@ import { createPaneStreamRuntime } from "./runtime.ts";
 import {
   PANE_STREAM_OWNER_RETIRED_CLOSE,
   PaneStreamAdmissionCoordinator,
+  paneStreamCloseForRetirement,
   type PaneStreamMirror,
   type SessionRuntimePaneStreamTransportBinding,
 } from "./pane-stream-websocket.ts";
@@ -3406,6 +3407,19 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.closed).toEqual({ code: 1012, reason: "tmux-server-retired" });
     expect(unredeemed.closed).toEqual({ code: 1012, reason: "tmux-server-retired" });
     expect(h.coordinator.snapshot()).toMatchObject({ liveConnections: 0, shuttingDown: true });
+  });
+
+  it("maps every reason an owner is disposed to what its streams are told", () => {
+    const told = (retirement: Parameters<typeof paneStreamCloseForRetirement>[0]) => {
+      const close = paneStreamCloseForRetirement(retirement);
+      return `${close.code} ${close.reason}`;
+    };
+    expect(told(undefined)).toBe("1001 daemon-shutdown");
+    expect(told("shutdown")).toBe("1001 daemon-shutdown");
+    expect(told("generation-restart")).toBe("1012 daemon-restarting");
+    expect(told("server-gone")).toBe("1012 tmux-server-retired");
+    expect(told("server-replaced")).toBe("1012 tmux-server-retired");
+    expect(told("removed")).toBe("1012 tmux-server-retired");
   });
 });
 

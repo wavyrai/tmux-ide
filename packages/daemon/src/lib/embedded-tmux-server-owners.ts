@@ -8,13 +8,13 @@ import {
   TmuxServerOwners,
   MAX_TMUX_SERVER_OWNERS,
   isTmuxServerObservation,
-  retirementKeepsDaemon,
+  retirementKeepsGeneration,
   type TmuxServerOwnerRetirement,
   type TmuxServerOwnersEvent,
   type TmuxServerProbeResult,
   type TmuxServerRegistration,
 } from "./tmux-server-owners.ts";
-import { PANE_STREAM_OWNER_RETIRED_CLOSE } from "../terminal/pane-stream/pane-stream-websocket.ts";
+import { paneStreamCloseForRetirement } from "../terminal/pane-stream/pane-stream-websocket.ts";
 import { logger } from "./log.ts";
 import {
   createDiagnosedTmuxServerProbe,
@@ -121,7 +121,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
   const retireDefault = async (retirement?: TmuxServerOwnerRetirement) => {
     if (defaultRetired) return;
     defaultRetired = true;
-    if (retirementKeepsDaemon(retirement))
+    if (retirementKeepsGeneration(retirement))
       logger.warn(
         "tmux-server-owners",
         "default owner retired; legacy default routes now answer 410",
@@ -162,7 +162,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
           // The first shutdown call names the close reason; the boundary and
           // the owner then only join it.
           const streamsClosed = owner.paneStreamRuntime.coordinator.shutdown(
-            retirementKeepsDaemon(retirement) ? PANE_STREAM_OWNER_RETIRED_CLOSE : undefined,
+            paneStreamCloseForRetirement(retirement),
           );
           streamsClosed.catch(() => undefined);
           try {
@@ -251,9 +251,9 @@ export async function createEmbeddedTmuxServerOwners(options: {
           ),
         );
     },
-    async dispose() {
+    async dispose(retirement: "shutdown" | "generation-restart" = "shutdown") {
       httpServer?.off("upgrade", refuseUnknownScope);
-      await owners.dispose();
+      await owners.dispose(retirement);
     },
     /** Legacy default routes remain bound to their original authority; never retarget. */
     get defaultRetired() {

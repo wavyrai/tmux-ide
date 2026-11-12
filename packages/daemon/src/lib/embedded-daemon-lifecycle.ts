@@ -86,6 +86,16 @@ export async function startOwnedEmbeddedDaemon(
     tmuxAuthorityReplaced: () => current.tmuxAuthorityReplaced?.() ?? Promise.resolve(false),
     compatibilityTerminalAttachmentRuntimeConstructed: () =>
       current.compatibilityTerminalAttachmentRuntimeConstructed(),
+    stopDiagnostics: () =>
+      current.stopDiagnostics?.() ?? {
+        started: false,
+        finished: false,
+        elapsedMs: 0,
+        stage: null,
+        stageMs: 0,
+        completed: [],
+      },
+    abandon: () => current.abandon?.(),
     activateProject: (name, activationOptions) => {
       if (closed || !available) return Promise.reject(new Error("Embedded daemon is retiring"));
       return current.activateProject(name, activationOptions);

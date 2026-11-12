@@ -37,8 +37,12 @@ import {
 } from "./tmux-server-generation-runner.ts";
 import { createNativeTmuxServerCatalog } from "./tmux-server-owner.ts";
 import { createEmbeddedTmuxServerOwners } from "./embedded-tmux-server-owners.ts";
-import { retirementKeepsDaemon, type TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
-import { PANE_STREAM_OWNER_RETIRED_CLOSE } from "../terminal/pane-stream/pane-stream-websocket.ts";
+import type { TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
+import {
+  PANE_STREAM_DAEMON_RESTARTING_CLOSE,
+  paneStreamCloseForRetirement,
+  type PaneStreamShutdownClose,
+} from "../terminal/pane-stream/pane-stream-websocket.ts";
 import {
   captureTmuxServerProofAsync,
   captureTmuxServerProof,
@@ -171,7 +175,9 @@ import {
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import { captureDaemonProvenance } from "./daemon-provenance.ts";
-import { registerLogSecret, setLogIdentity } from "./log.ts";
+import { logger, registerLogSecret, setLogIdentity } from "./log.ts";
+import { createStopProgress, type DaemonStopProgress } from "./daemon-stop-progress.ts";
+export type { DaemonStopProgress } from "./daemon-stop-progress.ts";
 import { createDaemonPluginSupervisor, pluginsEnabled } from "../plugins/daemon-plugins.ts";
 import type { PluginSupervisor } from "../plugins/supervisor.ts";
 import {
@@ -279,7 +285,15 @@ export interface EmbeddedDaemonHandle {
     projectName: string,
     options?: ProjectActivationOptions,
   ): Promise<{ stop: () => Promise<void> }>;
-  stop(opts?: { gracefulMs?: number }): Promise<void>;
+  /** `restarting`: a new generation follows in this process; streams are told to reconnect. */
+  stop(opts?: { gracefulMs?: number; restarting?: boolean }): Promise<void>;
+  /** Where a stop is right now; lets a deadline say what was still open (#839). */
+  stopDiagnostics?(): DaemonStopProgress;
+  /**
+   * Last resort for a stop that will not finish: synchronously withdraw
+   * daemon.json and the startup claim so the forced exit leaves no stale owner.
+   */
+  abandon?(): void;
 }
 
 function tmux(...args: string[]): string {
@@ -2112,9 +2126,7 @@ async function startEmbeddedDaemonGeneration(
             const transportResults = await Promise.allSettled([
               Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
               Promise.resolve().then(() =>
-                paneStreamRuntime!.dispose(
-                  retirementKeepsDaemon(retirement) ? PANE_STREAM_OWNER_RETIRED_CLOSE : undefined,
-                ),
+                paneStreamRuntime!.dispose(paneStreamCloseForRetirement(retirement)),
               ),
             ]);
             const authorityResults = await Promise.allSettled([
@@ -2272,9 +2284,11 @@ async function startEmbeddedDaemonGeneration(
       terminalAttachmentBoundary,
       paneStreamBoundary,
     } = startedServer;
-    const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
+    const retirePaneStreamTransport = async (
+      close?: PaneStreamShutdownClose,
+    ): Promise<readonly unknown[]> => {
       const transportResults = await Promise.allSettled([
-        Promise.resolve().then(() => paneStreamRuntime!.dispose()),
+        Promise.resolve().then(() => paneStreamRuntime!.dispose(close)),
         Promise.resolve().then(() => paneStreamBoundary.close()),
       ]);
       const runtimeResults = await Promise.allSettled([
@@ -2398,6 +2412,15 @@ async function startEmbeddedDaemonGeneration(
 
     let stopped = false;
     let stopping: Promise<void> | null = null;
+    const stopProgress = createStopProgress();
+    // Idempotent: the normal stop and a deadline-forced exit may both reach it.
+    const releaseCanonicalPublication = (): void => {
+      try {
+        clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+      } finally {
+        releaseCanonicalDaemonClaim(claim);
+      }
+    };
     let stopSelf: (() => void) | null = null;
     const activeProjectStops = new Map<string, { stop: () => void }>();
 
@@ -2541,50 +2564,68 @@ async function startEmbeddedDaemonGeneration(
       wsUrl,
       localBypassToken,
       compatibilityTerminalAttachmentRuntimeConstructed: () => terminalAttachmentRuntime !== null,
-      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+      stopDiagnostics: () => stopProgress.snapshot(),
+      abandon: () => releaseCanonicalPublication(),
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS, restarting = false } = {}) => {
         if (stopping) return stopping;
         if (stopped) return;
         stopping = (async () => {
           const failures: unknown[] = [];
-          const capture = async (operation: () => void | Promise<void>): Promise<void> => {
+          const capture = async (
+            stage: string,
+            operation: () => void | Promise<void>,
+          ): Promise<void> => {
             try {
-              await operation();
+              await stopProgress.run(stage, operation);
             } catch (error) {
               failures.push(error);
             }
           };
           try {
             stopped = true;
-            await capture(() => pluginSupervisor?.stop());
-            await capture(() => setActivationBackend(null));
-            await capture(() => sessionMonitor?.stop());
+            stopProgress.begin();
+            await capture("plugins", () => pluginSupervisor?.stop());
+            await capture("activation-backend", () => setActivationBackend(null));
+            await capture("session-monitor", () => sessionMonitor?.stop());
             paneSourceCredentials.dispose();
-            await capture(() => serverOwners?.dispose());
+            // A generation restarting in place tells its streams to reconnect
+            // now; only a real shutdown says "daemon-shutdown" (#840).
+            await capture("tmux-server-owners", () =>
+              serverOwners?.dispose(restarting ? "generation-restart" : "shutdown"),
+            );
 
             // Retire direct-ticket admission, live PTYs, and the direct upgrade
             // listener before touching the legacy WS or HTTP surfaces.
-            failures.push(
-              ...(await retireTerminalAttachmentTransport(
-                terminalAttachmentRuntime,
-                terminalAttachmentBoundary,
-              )),
-            );
-            failures.push(...(await retirePaneStreamTransport()));
-            await capture(() => localImages?.dispose());
-            await capture(() => terminalInventoryRuntime.dispose());
-            await capture(() => workspacePaneCreation.dispose());
-            await capture(() => workspaceOpen.dispose());
-            await capture(() => workspaceOpenHandoff?.dispose());
-            await capture(() =>
+            await capture("terminal-attachments", async () => {
+              failures.push(
+                ...(await retireTerminalAttachmentTransport(
+                  terminalAttachmentRuntime,
+                  terminalAttachmentBoundary,
+                )),
+              );
+            });
+            await capture("pane-streams", async () => {
+              failures.push(
+                ...(await retirePaneStreamTransport(
+                  restarting ? PANE_STREAM_DAEMON_RESTARTING_CLOSE : undefined,
+                )),
+              );
+            });
+            await capture("local-images", () => localImages?.dispose());
+            await capture("terminal-inventory", () => terminalInventoryRuntime.dispose());
+            await capture("pane-creation", () => workspacePaneCreation.dispose());
+            await capture("workspace-open", () => workspaceOpen.dispose());
+            await capture("workspace-open-handoff", () => workspaceOpenHandoff?.dispose());
+            await capture("session-backends", () =>
               Promise.all([
                 workspacePromotion.dispose(),
                 defaultSessionOpener.dispose(),
                 defaultSessionCreator.dispose(),
               ]).then(() => {}),
             );
-            await capture(() => appWindowMutation.dispose());
-            await capture(() => workspaceMultiplexer.dispose());
-            await capture(() => disposeInteractionObservation());
+            await capture("app-window-mutation", () => appWindowMutation.dispose());
+            await capture("workspace-multiplexer", () => workspaceMultiplexer.dispose());
+            await capture("interaction-observation", () => disposeInteractionObservation());
 
             let closePromise: Promise<void>;
             try {
@@ -2593,26 +2634,28 @@ async function startEmbeddedDaemonGeneration(
               failures.push(error);
               closePromise = Promise.resolve();
             }
-            await capture(() => closeClients());
+            await capture("http-clients", () => closeClients());
             for (const stop of activeProjectStops.values()) {
-              await capture(() => stop.stop());
+              await capture("active-projects", () => stop.stop());
             }
             activeProjectStops.clear();
-            await capture(() => shutdownPtyBridges());
-            await capture(() => Promise.race([closePromise, delay(gracefulMs)]));
+            await capture("pty-bridges", () => shutdownPtyBridges());
+            await capture("http-close-grace", () =>
+              Promise.race([closePromise, delay(gracefulMs)]),
+            );
             for (const socket of sockets) {
-              await capture(() => {
+              await capture("http-sockets", () => {
                 socket.destroy();
               });
             }
-            await capture(() => Promise.race([closePromise, delay(100)]));
-            await capture(() => closeWsServers());
-            await capture(() => shutdownWsEventObservation());
-            await capture(() => setFleetFactsTmuxRunner(null));
-            await capture(() => closeRuntimeTraceStream());
-            await capture(() => setRemoteAccessRestartBackend(null));
-            await capture(() => setDaemonShutdownBackend(null));
-            await capture(() => setDaemonRestartBackend(null));
+            await capture("http-close-final", () => Promise.race([closePromise, delay(100)]));
+            await capture("ws-servers", () => closeWsServers());
+            await capture("ws-event-observation", () => shutdownWsEventObservation());
+            await capture("fleet-facts-runner", () => setFleetFactsTmuxRunner(null));
+            await capture("runtime-trace", () => closeRuntimeTraceStream());
+            await capture("remote-access-backend", () => setRemoteAccessRestartBackend(null));
+            await capture("shutdown-backend", () => setDaemonShutdownBackend(null));
+            await capture("restart-backend", () => setDaemonRestartBackend(null));
 
             if (failures.length > 0) {
               const cause =
@@ -2622,11 +2665,17 @@ async function startEmbeddedDaemonGeneration(
               throw new DaemonShutdownError("Daemon shutdown failed", { cause: cause as Error });
             }
           } finally {
-            try {
-              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
-            } finally {
-              releaseCanonicalDaemonClaim(claim);
-            }
+            const progress = stopProgress.finish();
+            logger.info("daemon-lifecycle", "generation stopped", {
+              generationInstanceId: instanceId,
+              port,
+              stopMs: progress.elapsedMs,
+              failures: failures.length,
+              slowestStages: [...progress.completed]
+                .sort((left, right) => right.ms - left.ms)
+                .slice(0, 5),
+            });
+            releaseCanonicalPublication();
           }
         })();
         return stopping;

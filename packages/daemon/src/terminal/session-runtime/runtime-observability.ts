@@ -118,6 +118,7 @@ export interface SessionRuntimeStageSpan {
       | "peer-closed"
       | "daemon-shutdown"
       | "tmux-server-retired"
+      | "daemon-restarting"
       | "redemption-rejected"
       | "unknown";
     readonly deliveryVisibility?: "visible" | "background" | "hidden" | "frozen";

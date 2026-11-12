@@ -439,6 +439,16 @@ describe("owner retirement needs positive evidence (#840)", () => {
     expect(f.events.at(-1)).toMatchObject({ type: "owner-retired", trigger: "owners-disposed" });
   });
 
+  it("passes a generation restart on to the owners instead of calling it a shutdown", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const a = scope(await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }));
+    const owner = f.owners.current(a);
+    await f.owners.dispose("generation-restart");
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("generation-restart");
+    expect(f.events.at(-1)).toMatchObject({ type: "owner-retired", trigger: "owners-disposed" });
+  });
+
   it("reports an owner that could not be built instead of hiding it", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a"));

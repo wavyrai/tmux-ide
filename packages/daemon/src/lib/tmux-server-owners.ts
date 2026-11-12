@@ -43,11 +43,21 @@ export function isTmuxServerObservation(
 /**
  * Why an owner is disposed. Everything except "shutdown" happens while the
  * daemon process lives, so its streams must tell clients to reconnect.
+ * "generation-restart" is the whole daemon generation restarting in place.
  */
-export type TmuxServerOwnerRetirement = "server-gone" | "server-replaced" | "removed" | "shutdown";
-/** What the retired owner's pane streams are told, by retirement. */
-export function retirementKeepsDaemon(retirement: TmuxServerOwnerRetirement | undefined): boolean {
-  return retirement !== undefined && retirement !== "shutdown";
+export type TmuxServerOwnerRetirement =
+  | "server-gone"
+  | "server-replaced"
+  | "removed"
+  | "shutdown"
+  | "generation-restart";
+/** True when only this owner goes while its daemon generation keeps running. */
+export function retirementKeepsGeneration(
+  retirement: TmuxServerOwnerRetirement | undefined,
+): boolean {
+  return (
+    retirement !== undefined && retirement !== "shutdown" && retirement !== "generation-restart"
+  );
 }
 export interface DisposableTmuxServerOwner {
   dispose(retirement?: TmuxServerOwnerRetirement): Promise<void>;
@@ -190,6 +200,7 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     entry: Entry<T>,
     trigger: TmuxServerOwnerRetirementTrigger,
     probe?: { readonly failure: TmuxServerProbeFailure | null; readonly ms: number },
+    retirement: TmuxServerOwnerRetirement = RETIREMENT_OF[trigger],
   ): Promise<void> {
     const owner = entry.owner;
     const generation = entry.scope?.generation;
@@ -201,7 +212,7 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     const started = this.#now();
     let failure: unknown;
     try {
-      await owner.dispose(RETIREMENT_OF[trigger]);
+      await owner.dispose(retirement);
     } catch (error) {
       failure = error;
     }
@@ -410,14 +421,17 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
       await this.#retire(entry, "removed"); // never kill-server or kill-session
     });
   }
-  dispose(): Promise<void> {
+  /** `retirement` says whether the daemon stops or only restarts its generation. */
+  dispose(retirement: "shutdown" | "generation-restart" = "shutdown"): Promise<void> {
     if (this.#disposePromise) return this.#disposePromise;
     this.#disposed = true;
     this.#disposePromise = (async () => {
       await this.#tail;
       const entries = [...this.#entries.values()];
       this.#entries.clear();
-      await Promise.allSettled(entries.map((entry) => this.#retire(entry, "owners-disposed")));
+      await Promise.allSettled(
+        entries.map((entry) => this.#retire(entry, "owners-disposed", undefined, retirement)),
+      );
     })();
     return this.#disposePromise;
   }

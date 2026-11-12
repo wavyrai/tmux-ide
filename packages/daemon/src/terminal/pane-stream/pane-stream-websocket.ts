@@ -31,6 +31,7 @@ import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
 import { logger } from "../../lib/log.ts";
+import type { TmuxServerOwnerRetirement } from "../../lib/tmux-server-owners.ts";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
@@ -135,7 +136,7 @@ export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
 
 export interface PaneStreamShutdownClose {
   readonly code: number;
-  readonly reason: "daemon-shutdown" | "tmux-server-retired";
+  readonly reason: "daemon-shutdown" | "tmux-server-retired" | "daemon-restarting";
 }
 /** The daemon process (or its whole generation) is going away. */
 export const PANE_STREAM_DAEMON_SHUTDOWN_CLOSE: PaneStreamShutdownClose = Object.freeze({
@@ -151,6 +152,25 @@ export const PANE_STREAM_OWNER_RETIRED_CLOSE: PaneStreamShutdownClose = Object.f
   code: 1012,
   reason: "tmux-server-retired",
 });
+/**
+ * The process restarts its daemon generation in place (tmux server replaced,
+ * settings restart). A new generation follows at once, possibly on another
+ * port: read daemon.json again and reconnect now.
+ */
+export const PANE_STREAM_DAEMON_RESTARTING_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1012,
+  reason: "daemon-restarting",
+});
+/** What an owner's streams are told when it is disposed for this reason. */
+export function paneStreamCloseForRetirement(
+  retirement: TmuxServerOwnerRetirement | undefined,
+): PaneStreamShutdownClose {
+  if (retirement === undefined || retirement === "shutdown")
+    return PANE_STREAM_DAEMON_SHUTDOWN_CLOSE;
+  return retirement === "generation-restart"
+    ? PANE_STREAM_DAEMON_RESTARTING_CLOSE
+    : PANE_STREAM_OWNER_RETIRED_CLOSE;
+}
 export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 
 const WS_OPEN = 1;
@@ -1272,6 +1292,7 @@ export class PaneStreamLiveConnection {
         "peer-closed",
         "daemon-shutdown",
         "tmux-server-retired",
+        "daemon-restarting",
         "redemption-rejected",
         "unknown",
       ]).has(closeReason ?? "")
@@ -1290,6 +1311,7 @@ export class PaneStreamLiveConnection {
       | "peer-closed"
       | "daemon-shutdown"
       | "tmux-server-retired"
+      | "daemon-restarting"
       | "redemption-rejected"
       | "unknown";
     this.#observability.recordSpan(
