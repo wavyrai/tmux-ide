@@ -108,7 +108,9 @@ describe.skipIf(!tmuxAvailable)("installed daemon provenance", () => {
       panePreserved: true,
     });
   }, 60000);
-  it("keeps serving and retaining logs when stdout and its fallback both fail asynchronously", async () => {
+  // The fixture starts `--headless --json`: stdout is the status protocol, so
+  // records go to stderr and a failed stderr has no fallback stream.
+  it("keeps serving and retaining logs when its log stream fails asynchronously, and keeps stdout clean", async () => {
     const f = (fleet = await createPrivateFleet("log-failure"));
     f.tmux("-f", "/dev/null", "new-session", "-d", "-s", "log-failure", "exec sleep 300");
     assertUnifiedSocket(f);
@@ -124,8 +126,10 @@ for (const [name, code] of [["stdout", "ENOSPC"], ["stderr", "EPIPE"]]) {
   const original = process[name].write.bind(process[name]);
   process[name].write = (chunk, ...args) => {
     const text = String(chunk);
-    if (name === "stdout" ? !text.includes('"component"') : !text.includes("[log.ts]")) return original(chunk, ...args);
-    if (text.includes("[log.ts]")) {
+    const warning = text.includes("[log.ts]");
+    const record = name === "stderr" && text.includes('"component"');
+    if (!warning && !record) return original(chunk, ...args);
+    if (warning) {
       evidence.warnings++;
       evidence.leaked ||= text.includes(${JSON.stringify(secret)});
     }
@@ -168,9 +172,9 @@ for (const [name, code] of [["stdout", "ENOSPC"], ["stderr", "EPIPE"]]) {
       return value.stderrFailed ? value : null;
     }, "both injected stream failures");
     expect(injected).toEqual({
-      stdoutFailed: true,
+      stdoutFailed: false,
       stderrFailed: true,
-      warnings: 1,
+      warnings: 0,
       leaked: false,
     });
     const result = await f.bounded(
@@ -188,11 +192,13 @@ for (const [name, code] of [["stdout", "ENOSPC"], ["stderr", "EPIPE"]]) {
     expect(entries.some((entry) => entry.instanceId === daemon.info.instanceId)).toBe(true);
     expect(JSON.stringify(entries)).not.toContain(secret);
     expect(daemon.child.exitCode).toBeNull();
+    // Nothing was written to the reserved stdout after the failure either.
+    expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual(injected);
     f.evidence({
       scenario: "provenance",
       step: "injected-stream-failures",
-      stdoutError: "ENOSPC",
-      fallbackError: "EPIPE",
+      recordStreamError: "EPIPE",
+      reservedStdoutWrites: 0,
       alive: true,
       ringRetained: true,
       warningRedacted: true,
