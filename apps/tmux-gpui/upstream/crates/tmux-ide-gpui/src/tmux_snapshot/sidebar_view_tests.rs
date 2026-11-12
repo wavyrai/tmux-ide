@@ -442,9 +442,11 @@ fn a_hover_wash_finishes_on_the_replayed_sidebar(cx: &mut TestAppContext) {
     let idle = renders(cx);
     animate(&snapshot, cx, 100);
     assert_eq!(renders(cx), idle, "control: replayed before the hover");
+    // The Home row first: coming from a row, that row's wash fading out
+    // would ask for the same frames.
     for (name, selector) in [
-        ("a row", "tmux-sidebar-row-2"),
         ("the Home row", "tmux-sidebar-home"),
+        ("a row", "tmux-sidebar-row-2"),
         ("another row", "tmux-sidebar-row-5"),
     ] {
         let row = cx.debug_bounds(selector).unwrap();
