@@ -35,9 +35,6 @@ pub(in crate::tmux_snapshot) struct RowWindow {
     planned: Rc<Cell<Option<(Pixels, Pixels)>>>,
     /// Assistive technology is reading the window: every row is built.
     assistive: Rc<Cell<bool>>,
-    /// Stands in for assistive technology, which a test window never has.
-    #[cfg(test)]
-    forced: Rc<Cell<bool>>,
     /// How many renders the markers have asked for.
     #[cfg(test)]
     asked: Rc<Cell<usize>>,
@@ -48,11 +45,7 @@ impl RowWindow {
     /// `window`. gpui draws the window afresh when that starts or stops, so
     /// the rows are all there before the first accessibility tree is sent.
     pub(in crate::tmux_snapshot) fn observe(&self, window: &Window) {
-        #[cfg(test)]
-        let forced = self.forced.get();
-        #[cfg(not(test))]
-        let forced = false;
-        self.assistive.set(forced || window.is_a11y_active());
+        self.assistive.set(window.is_a11y_active());
     }
 
     /// Whether every row is built, for assistive technology.
@@ -133,11 +126,6 @@ impl RowWindow {
     /// Forgets where every run was, as a new table shape would move them.
     pub(in crate::tmux_snapshot) fn forget(&self) {
         self.tops.borrow_mut().clear();
-    }
-
-    /// Builds every row, as a window that VoiceOver reads does.
-    pub(in crate::tmux_snapshot) fn force_assistive(&self, on: bool) {
-        self.forced.set(on);
     }
 
     /// How many renders the markers have asked for so far.

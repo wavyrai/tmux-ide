@@ -300,30 +300,36 @@ fn a_resized_page_asks_for_a_render_itself(cx: &mut TestAppContext) {
     assert_eq!(asked(cx), settled, "and then asks for nothing more");
 }
 
-/// VoiceOver must reach every row (PM requirement): while assistive
-/// technology reads the window every row is built, as before the table was
-/// windowed, and when it stops the table is windowed again. A test window
-/// never has assistive technology, so the test stands in for it.
+/// VoiceOver must reach every row (PM requirement): while an assistive
+/// client reads the window every row is built and is in the accessibility
+/// tree, as before the table was windowed; when the client leaves the table
+/// is windowed again.
 #[gpui::test]
-fn assistive_technology_gets_every_row(cx: &mut TestAppContext) {
+fn an_assistive_client_reads_every_row(cx: &mut TestAppContext) {
     let (view, cx, _receiver) = open(cx, 100);
     assert!(!built(cx, 90), "row 90 starts as part of a spacer");
-    let read = |cx: &mut VisualTestContext, on: bool| {
-        view.update(cx, |v, _| {
-            v.home_filter.as_ref().unwrap().rows.force_assistive(on);
-        });
-        // gpui draws the whole window afresh when a reader starts or stops.
-        cx.update(|window, _| window.refresh());
-        draw(cx);
-    };
     let extent = page_extent(&view, cx);
-    read(cx, true);
+    // gpui draws the window afresh when a client connects or leaves.
+    let client = |cx: &mut VisualTestContext, on: bool| {
+        cx.update(|window, cx| {
+            window.set_a11y_active_for_test(on);
+            window.draw(cx).clear(cx);
+        });
+    };
+    client(cx, true);
     let missing: Vec<usize> = (0..100).filter(|row| !built(cx, *row)).collect();
     assert!(missing.is_empty(), "rows not built: {missing:?}");
+    // What the tree holds of a row is its favourite button (the row itself
+    // has no role, on main either).
+    let tree = cx.update(|window, _| window.debug_a11y_tree_json().unwrap());
+    let unread: Vec<usize> = (0..100)
+        .filter(|row| !tree.contains(&format!(r#"NamedInteger(\"fleet-favorite\", {row})"#)))
+        .collect();
+    assert!(unread.is_empty(), "rows not in the tree: {unread:?}");
     assert_eq!(page_extent(&view, cx), extent, "the page is as long");
-    read(cx, false);
+    client(cx, false);
     assert!(built(cx, 0));
-    assert!(!built(cx, 90), "and windowed again once it stops");
+    assert!(!built(cx, 90), "and windowed again once the client leaves");
 }
 
 /// Dragging the page's scrollbar thumb builds the rows it brings into view
