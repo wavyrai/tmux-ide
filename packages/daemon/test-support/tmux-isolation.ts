@@ -67,7 +67,11 @@ function findRealTmux(environment: NodeJS.ProcessEnv): string | null {
  *                  empty private namespace, exactly what a CI machine without
  *                  a tmux server looks like, instead of the developer's server.
  *   $TMUX          an inherited live socket is dropped, a private one is kept.
- * Redirections are recorded too, as information; refusals fail the run.
+ * Every redirection is attributed to the test file that caused it. A test
+ * that needs a daemon with no server of its own declares that with
+ * `allowDefaultTmuxServerInPrivateNamespace()`; its redirections are recorded
+ * as declared. A redirection from any other test, and every refusal, fails
+ * the run: a test either names a private server or says that it has none.
  */
 export function tmuxGuardScript(realTmux: string | null, directory: string): string {
   return `#!/bin/sh
@@ -99,13 +103,30 @@ if [ "$selector" = path ]; then
     exit ${TMUX_GUARD_REFUSAL_EXIT_CODE}
   fi
 else
+  redirect=
   if [ -n "$TMUX" ] && ! private_dir "\${TMUX%%,*}"; then
-    printf 'REDIRECTED dropped TMUX=%s args=%s\n' "$TMUX" "$*" >> "$GUARD/redirected.log"
+    redirect="dropped TMUX=$TMUX"
     unset TMUX TMUX_PANE
   fi
   if [ -z "$TMUX" ] && ! private_dir "$TMUX_TMPDIR/x"; then
-    printf 'REDIRECTED %s TMUX_TMPDIR=%s args=%s\n' "$selector" "\${TMUX_TMPDIR:-unset}" "$*" >> "$GUARD/redirected.log"
+    redirect="$selector TMUX_TMPDIR=\${TMUX_TMPDIR:-unset}"
     TMUX_TMPDIR="$GUARD"; export TMUX_TMPDIR
+  fi
+  if [ -n "$redirect" ]; then
+    # Which test is this? Walk up to the test process that registered itself.
+    pid=$PPID; test=unknown; declared=no; hops=0
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$hops" -lt 8 ]; do
+      if [ -f "$GUARD/current-test.$pid" ]; then
+        test=$(/bin/cat "$GUARD/current-test.$pid" 2>/dev/null)
+        [ -f "$GUARD/allow-redirect.$pid" ] && declared=yes
+        break
+      fi
+      pid=$(/bin/ps -o ppid= -p "$pid" 2>/dev/null)
+      pid="\${pid##* }"
+      hops=$((hops + 1))
+    done
+    if [ "$declared" = yes ]; then log="$GUARD/redirected.log"; else log="$GUARD/undeclared.log"; fi
+    printf 'REDIRECTED %s test=%s args=%s\\n' "$redirect" "$test" "$*" >> "$log"
   fi
 fi
 if [ -z "$REAL" ]; then echo "tmux test guard: no tmux installed" >&2; exit 127; fi
@@ -135,6 +156,7 @@ export function installTmuxGuard(environment: NodeJS.ProcessEnv = process.env): 
   chmodSync(executable, 0o755);
   writeFileSync(log, "");
   writeFileSync(join(directory, "redirected.log"), "");
+  writeFileSync(join(directory, "undeclared.log"), "");
   environment.TMUX_IDE_TEST_TMUX_GUARD = directory;
   environment.PATH = [directory, ...(environment.PATH ?? "").split(delimiter)].join(delimiter);
   // resolveTmuxExecutable prefers a bundled binary over PATH. The configured
@@ -158,9 +180,44 @@ function lines(path: string): readonly string[] {
 export function refusedTmuxCalls(guard: Pick<TmuxGuard, "directory">): readonly string[] {
   return lines(join(guard.directory, "refused.log"));
 }
-/** Calls the guard moved into its private namespace. Informational. */
+/** Redirected calls of tests that declared they run a daemon with no server of its own. */
 export function redirectedTmuxCalls(guard: Pick<TmuxGuard, "directory">): readonly string[] {
   return lines(join(guard.directory, "redirected.log"));
+}
+/** Redirected calls of tests that declared nothing. Any of these fails the run. */
+export function undeclaredTmuxCalls(guard: Pick<TmuxGuard, "directory">): readonly string[] {
+  return lines(join(guard.directory, "undeclared.log"));
+}
+
+function guardDirectory(environment: NodeJS.ProcessEnv): string | null {
+  const directory = environment.TMUX_IDE_TEST_TMUX_GUARD;
+  return directory && existsSync(join(directory, "tmux")) ? directory : null;
+}
+/** Tell the guard which test file this process is running; redirections are attributed to it. */
+export function registerCurrentTest(
+  testPath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  pid: number = process.pid,
+): void {
+  const directory = guardDirectory(environment);
+  if (directory) writeFileSync(join(directory, `current-test.${String(pid)}`), `${testPath}\n`);
+}
+/**
+ * For a test whose subject is a daemon with NO tmux server intent (no
+ * explicit socket, no TMUX): such a daemon addresses the socket named
+ * "default", which the guard keeps in its private namespace. Declaring it
+ * says the redirect is this test's isolation and not an oversight. Returns
+ * the function that withdraws the declaration.
+ */
+export function allowDefaultTmuxServerInPrivateNamespace(
+  environment: NodeJS.ProcessEnv = process.env,
+  pid: number = process.pid,
+): () => void {
+  const directory = guardDirectory(environment);
+  if (!directory) return () => {};
+  const marker = join(directory, `allow-redirect.${String(pid)}`);
+  writeFileSync(marker, "");
+  return () => rmSync(marker, { force: true });
 }
 
 /** Why this environment no longer has the guard in force, or null if it has. */
@@ -204,11 +261,34 @@ export function saveTmuxGuardReport(guard: TmuxGuard, destination: string | unde
   if (!destination) return;
   mkdirSync(destination, { recursive: true });
   const stamp = `${process.pid}-${Date.now()}`;
-  for (const name of ["refused.log", "redirected.log"])
+  for (const name of ["refused.log", "undeclared.log", "redirected.log"])
     writeFileSync(
       join(destination, `${stamp}-${name}`),
       lines(join(guard.directory, name)).join("\n") + "\n",
     );
+}
+
+export function tmuxGuardFailureMessage(
+  refused: readonly string[],
+  undeclared: readonly string[],
+): string {
+  return [
+    `${refused.length + undeclared.length} tmux call(s) from this test run named no private tmux server.`,
+    ...(refused.length
+      ? [
+          "Refused (a socket path outside a private temp dir; use a socket under mkdtemp()):",
+          ...refused.slice(0, 40),
+        ]
+      : []),
+    ...(undeclared.length
+      ? [
+          "Kept away from the default server, but the test did not say it has none. Give it a private",
+          "server (-S, TMUX or TMUX_IDE_TMUX_SOCKET_PATH under a temp dir), or, if its subject is a daemon",
+          "without a server, call allowDefaultTmuxServerInPrivateNamespace() from test-support/tmux-isolation.ts:",
+          ...undeclared.slice(0, 40),
+        ]
+      : []),
+  ].join("\n");
 }
 
 export function removeTmuxGuard(guard: TmuxGuard): void {

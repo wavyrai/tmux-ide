@@ -75,8 +75,9 @@ jobs:
       # needs a real tmux session and is excluded by path).
       # Every tmux call a daemon test makes goes through the guard in
       # packages/daemon/test-support/tmux-isolation.ts. It records each call
-      # that named no private server; the record is kept below. A call to a
-      # shared socket path fails the run.
+      # that named no private server, with the test file behind it; the record
+      # is kept below. A call to a shared socket path, or one from a test that
+      # did not declare a daemon without a server, fails the run.
       - name: Run test suite
         if: matrix.node >= 22
         env:
@@ -105,13 +106,20 @@ jobs:
           dir="$RUNNER_TEMP/tmux-guard"
           mkdir -p "$dir"
           refused=$(cat "$dir"/*-refused.log 2>/dev/null | grep -c . || true)
-          redirected=$(cat "$dir"/*-redirected.log 2>/dev/null | grep -c . || true)
+          undeclared=$(cat "$dir"/*-undeclared.log 2>/dev/null | grep -c . || true)
+          declared=$(cat "$dir"/*-redirected.log 2>/dev/null | grep -c . || true)
           {
             echo "### tmux guard"
             echo "Calls to a shared tmux socket path, refused: $refused"
-            echo "Calls with no private server, kept in a private namespace: $redirected"
+            echo "Calls with no private server from tests that did not declare it: $undeclared"
+            echo "Calls of tests that declared a daemon without a server: $declared"
+            if [ "$undeclared" != 0 ]; then
+              echo '```'
+              cat "$dir"/*-undeclared.log | sed -E 's/ args=.*//' | sort | uniq -c | head -40
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
-          test "$refused" = 0
+          test "$refused" = 0 && test "$undeclared" = 0
 
       - name: Upload tmux guard records
         if: always() && matrix.node >= 22

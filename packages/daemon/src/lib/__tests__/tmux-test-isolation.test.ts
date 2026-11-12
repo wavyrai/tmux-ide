@@ -14,8 +14,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   TMUX_GUARD_REFUSAL_EXIT_CODE,
   assertTmuxGuarded,
+  allowDefaultTmuxServerInPrivateNamespace,
   installTmuxGuard,
   redirectedTmuxCalls,
+  registerCurrentTest,
+  tmuxGuardFailureMessage,
+  undeclaredTmuxCalls,
   refusedTmuxCalls,
   removeTmuxGuard,
   saveTmuxGuardReport,
@@ -86,11 +90,39 @@ describe("the tmux guard in front of every test", () => {
         stderr: "",
       });
     }
-    expect(redirectedTmuxCalls(g)).toHaveLength(4);
-    expect(redirectedTmuxCalls(g)[0]).toBe(
-      "REDIRECTED name TMUX_TMPDIR=unset args=-L default -u show-hooks -g",
+    // Kept away from the default server either way; but nobody declared it, so it fails the run.
+    expect(undeclaredTmuxCalls(g)).toHaveLength(4);
+    expect(undeclaredTmuxCalls(g)[0]).toBe(
+      "REDIRECTED name TMUX_TMPDIR=unset test=unknown args=-L default -u show-hooks -g",
     );
+    expect(redirectedTmuxCalls(g)).toEqual([]);
     expect(refusedTmuxCalls(g)).toEqual([]);
+  });
+
+  it("names the test behind a redirected call, and accepts it once that test declares a daemon without a server", () => {
+    const g = guard();
+    const here: NodeJS.ProcessEnv = { TMUX_IDE_TEST_TMUX_GUARD: g.directory };
+    // The wrapper's parent is this test process; a daemon's child would be found one level up.
+    registerCurrentTest("src/lib/__tests__/daemon-embed-takeover.test.ts", here);
+    g.run(["-L", "default", "show-hooks", "-g"], daemonClient);
+    expect(undeclaredTmuxCalls(g)).toEqual([
+      "REDIRECTED name TMUX_TMPDIR=unset test=src/lib/__tests__/daemon-embed-takeover.test.ts args=-L default show-hooks -g",
+    ]);
+    const withdraw = allowDefaultTmuxServerInPrivateNamespace(here);
+    g.run(["-L", "default", "show-hooks", "-g"], daemonClient);
+    // Through a shell in between, as when the daemon is a child of the test process.
+    spawnSync("/bin/sh", ["-c", `'${g.directory}/tmux' -L default ls`], { env: daemonClient });
+    expect(redirectedTmuxCalls(g)).toEqual([
+      "REDIRECTED name TMUX_TMPDIR=unset test=src/lib/__tests__/daemon-embed-takeover.test.ts args=-L default show-hooks -g",
+      "REDIRECTED name TMUX_TMPDIR=unset test=src/lib/__tests__/daemon-embed-takeover.test.ts args=-L default ls",
+    ]);
+    expect(undeclaredTmuxCalls(g)).toHaveLength(1);
+    withdraw();
+    g.run(["list-sessions"], daemonClient);
+    expect(undeclaredTmuxCalls(g)).toHaveLength(2);
+    expect(tmuxGuardFailureMessage(refusedTmuxCalls(g), undeclaredTmuxCalls(g))).toContain(
+      "allowDefaultTmuxServerInPrivateNamespace()",
+    );
   });
 
   it("drops an inherited live TMUX and never uses the shared /tmp as TMUX_TMPDIR", () => {
@@ -104,7 +136,7 @@ describe("the tmux guard in front of every test", () => {
     expect(g.run(["-L", "default", "ls"], { TMUX_TMPDIR: "/private/tmp" }).stdout).toBe(
       `RAN -L default ls | TMUX_TMPDIR=${g.directory} TMUX=unset`,
     );
-    expect(redirectedTmuxCalls(g)).toHaveLength(4);
+    expect(undeclaredTmuxCalls(g)).toHaveLength(3);
   });
 
   it("refuses and records an explicit socket path that is not private", () => {
@@ -167,6 +199,7 @@ describe("the tmux guard in front of every test", () => {
     }
     expect(refusedTmuxCalls(g)).toEqual([]);
     expect(redirectedTmuxCalls(g)).toEqual([]);
+    expect(undeclaredTmuxCalls(g)).toEqual([]);
   });
 
   it("installs once: first on PATH, a private TMUX_TMPDIR, and no inherited live TMUX", () => {
@@ -228,6 +261,7 @@ describe("the tmux guard in front of every test", () => {
     expect(saved.map((name) => name.replace(/^\d+-\d+-/u, ""))).toEqual([
       "redirected.log",
       "refused.log",
+      "undeclared.log",
     ]);
     expect(readFileSync(join(report, saved[0]!), "utf8")).toContain("REDIRECTED name");
     saveTmuxGuardReport(installed, undefined); // no destination: nothing to do
