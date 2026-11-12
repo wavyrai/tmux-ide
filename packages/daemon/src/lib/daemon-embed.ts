@@ -1898,6 +1898,15 @@ async function startEmbeddedDaemonGeneration(
       await externalInteractionObserver.start();
       serverOwners = await createEmbeddedTmuxServerOwners({
         trackTeardown: stopProgress.track,
+        // The background sweep, not a client's request, now notices a server
+        // that came back or was replaced; subscribed clients must hear of it.
+        onServersChanged: () => {
+          broadcastResourceChanged({ workspaceName: null, resource: "fleet-catalog" }, instanceId);
+          broadcastResourceChanged(
+            { workspaceName: null, resource: "workspace-catalog" },
+            instanceId,
+          );
+        },
         localImages,
         environmentId,
         onDefaultScope: async (scope) => {
