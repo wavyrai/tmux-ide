@@ -623,6 +623,7 @@ impl Local {
                 .into_iter()
                 .chain(self.home_recovery_wait())
                 .chain(self.empty_open_wait())
+                .chain(self.sources.catalog_recheck_wait())
                 .chain(self.agents.wait())
                 .min()
             {

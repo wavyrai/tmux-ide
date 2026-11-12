@@ -1138,7 +1138,10 @@ automatically replayed. A Home that could not load its sessions (no daemon
 yet, no tmux server online, or an internal error) keeps looking for a local
 daemon every 5 s at most and loads when one answers. A session opened before
 the daemon lists its pane (one that was just created) is opened again for
-about 3 s before the window says it has no attachable panes. The server list
+about 3 s before the window says it has no attachable panes. A Home whose
+catalog lists a server offline, or no server online, reads the catalog again
+by itself: after 5 s, then doubling to once a minute, while its window is
+active. The server list
 (`GET /api/v1/tmux-servers`) is remembered per daemon generation for at most
 5 s and dropped by an events change, a lost events socket, any failed request
 and a new discovery; a catalog read still ends on a fresh one. Saved-profile selection and return-to-Local retain a separate local registry
