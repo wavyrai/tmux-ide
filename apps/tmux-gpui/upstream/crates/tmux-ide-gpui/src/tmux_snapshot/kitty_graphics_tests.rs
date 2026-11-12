@@ -554,7 +554,10 @@ fn an_inflated_image_wakes_the_idle_ui_task() -> anyhow::Result<()> {
     ))?;
     store.settle();
     assert!(wakes.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-    assert!(store.pending(), "the repaint is still owed to the tick");
+    assert!(
+        store.changed_or_inflating(),
+        "the repaint is still owed to the tick"
+    );
     assert!(store.take_changed());
     Ok(())
 }
@@ -563,7 +566,7 @@ fn an_inflated_image_wakes_the_idle_ui_task() -> anyhow::Result<()> {
 #[test]
 fn a_missing_image_keeps_the_tick_armed() {
     let store = Store::default();
-    assert!(!store.pending());
+    assert!(!store.waiting());
     store.scene(&[placement(0, 0)]);
-    assert!(store.pending());
+    assert!(store.waiting());
 }

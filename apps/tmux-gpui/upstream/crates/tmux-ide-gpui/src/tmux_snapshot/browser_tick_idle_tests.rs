@@ -1,7 +1,8 @@
-//! #714: an idle window arms no 16 ms tick, and every way work can reach the
-//! tick starts it again.
+//! #714: the browser task wakes only for a reason. An idle window never
+//! wakes it; each way work can arrive wakes it once; queued work sets a
+//! deadline or a poll, and nothing more.
 #![allow(clippy::unwrap_used)]
-use super::GRACE;
+use super::Next;
 use crate::tmux_snapshot::{SnapshotView, agent_spinner, browser, fit_test_support};
 use core::prelude::v1::test;
 use gpui::*;
@@ -68,114 +69,124 @@ fn wakes_over(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, steps
     cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes) - before
 }
 
-/// Lets the grace period run out; the task must then stop waking.
+/// The task goes idle: it must then not wake at all.
 fn settle(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext) {
-    let steps = (GRACE.as_millis() / 16) as u32 + 10;
-    wakes_over(snapshot, cx, steps);
+    wakes_over(snapshot, cx, 10);
     assert_eq!(
         wakes_over(snapshot, cx, 125),
         0,
-        "the idle UI task kept ticking"
+        "the idle UI task kept waking"
     );
 }
 
-/// After a wake source, the tick runs again: many wakes, not one.
-fn assert_ticking(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, source: &str) {
-    let wakes = wakes_over(snapshot, cx, 20);
-    assert!(
-        wakes >= 10,
-        "{source} did not restart the tick ({wakes} wakes)"
-    );
+/// `source` wakes the task once or twice (its render may nudge again), not
+/// a 16 ms tick's worth, and the task is idle again after it.
+fn assert_woken(
+    snapshot: &Entity<SnapshotView>,
+    cx: &mut VisualTestContext,
+    name: &str,
+    source: impl FnOnce(&mut VisualTestContext),
+) {
+    let before = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
+    source(cx);
+    wakes_over(snapshot, cx, 20);
+    let wakes = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes) - before;
+    assert!((1..=3).contains(&wakes), "{name}: {wakes} wakes in 320 ms");
+    settle(snapshot, cx);
 }
 
 #[gpui::test]
-fn an_idle_home_arms_no_tick(cx: &mut TestAppContext) {
+fn an_idle_home_never_wakes_the_task(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
-    // Within the grace period after opening, the tick still runs.
-    assert!(wakes_over(&snapshot, cx, 20) >= 10, "no tick after opening");
     settle(&snapshot, cx);
     let now = cx.executor().now();
-    assert!(!cx.update(|_, cx| snapshot.read(cx).tick_wanted(now)));
+    assert_eq!(
+        cx.update(|_, cx| snapshot.read(cx).tick_next(now)),
+        Next::Idle
+    );
 }
 
 #[gpui::test]
-fn a_publication_restarts_the_tick(cx: &mut TestAppContext) {
+fn a_publication_wakes_the_task_once(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
-    *mailbox.lock().unwrap() = Some(Some(home()));
-    assert_ticking(&snapshot, cx, "a publication");
-    settle(&snapshot, cx);
+    assert_woken(&snapshot, cx, "a publication", |_| {
+        *mailbox.lock().unwrap() = Some(Some(home()));
+    });
 }
 
 #[gpui::test]
-fn input_restarts_the_tick(cx: &mut TestAppContext) {
+fn input_wakes_the_task_once(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
-    cx.simulate_mouse_move(point(px(40.), px(40.)), None, Modifiers::none());
-    assert_ticking(&snapshot, cx, "a mouse move");
-    settle(&snapshot, cx);
-    cx.simulate_event(ScrollWheelEvent {
-        position: point(px(40.), px(40.)),
-        ..Default::default()
+    assert_woken(&snapshot, cx, "a mouse move", |cx| {
+        cx.simulate_mouse_move(point(px(40.), px(40.)), None, Modifiers::none());
     });
-    assert_ticking(&snapshot, cx, "a scroll");
-    settle(&snapshot, cx);
+    assert_woken(&snapshot, cx, "a scroll", |cx| {
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(40.), px(40.)),
+            ..Default::default()
+        });
+    });
     // A key re-renders the window in tests as well, so this passes with
     // either the key listeners or the render nudge; mutants removing both fail.
-    cx.simulate_keystrokes("f19");
-    assert_ticking(&snapshot, cx, "a key");
-    settle(&snapshot, cx);
-    cx.simulate_modifiers_change(Modifiers::shift());
-    assert_ticking(&snapshot, cx, "a modifier key");
+    assert_woken(&snapshot, cx, "a key", |cx| {
+        cx.simulate_keystrokes("f19");
+    });
+    assert_woken(&snapshot, cx, "a modifier key", |cx| {
+        cx.simulate_modifiers_change(Modifiers::shift());
+    });
 }
 
 #[gpui::test]
-fn a_render_restarts_the_tick(cx: &mut TestAppContext) {
+fn a_render_wakes_the_task_once(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
-    cx.update(|window, cx| {
-        snapshot.update(cx, |_, cx| cx.notify());
-        window.draw(cx).clear(cx);
+    assert_woken(&snapshot, cx, "a render", |cx| {
+        cx.update(|window, cx| {
+            snapshot.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
     });
-    assert_ticking(&snapshot, cx, "a render");
 }
 
 #[gpui::test]
-fn image_and_settings_changes_restart_the_tick(cx: &mut TestAppContext) {
+fn image_and_settings_changes_wake_the_task_once(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     // In production this runs on the reader thread; the test scheduler
     // allows wakes from its own thread only.
     let store = cx.update(|_, cx| snapshot.read(cx).graphics.store.clone());
-    store.invalidate_native(&["gone".into()]);
-    assert_ticking(&snapshot, cx, "an image change");
-    settle(&snapshot, cx);
+    assert_woken(&snapshot, cx, "an image change", |_| {
+        store.invalidate_native(&["gone".into()]);
+    });
     #[cfg(target_os = "macos")]
     {
-        cx.update(|_, cx| snapshot.read(cx).chrome.simulate_settings_change());
-        assert_ticking(&snapshot, cx, "an accessibility settings change");
+        assert_woken(&snapshot, cx, "an accessibility settings change", |cx| {
+            cx.update(|_, cx| snapshot.read(cx).chrome.simulate_settings_change());
+        });
     }
 }
 
-/// Queued work keeps the tick running past the grace period until flushed:
-/// here a presence change waiting for room in the command queue.
+/// Work waiting for room in the command queue polls every 16 ms until it is
+/// sent: here a presence change.
 #[gpui::test]
-fn queued_work_outlasts_the_grace_period(cx: &mut TestAppContext) {
+fn work_waiting_for_room_polls_until_sent(cx: &mut TestAppContext) {
     // The fixture's own presence command fills the only slot.
     let (sender, receiver) = mpsc::sync_channel(1);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     cx.update(|_, cx| snapshot.update(cx, |view, _| view.presence.set_active(false)));
     cx.update(|_, cx| snapshot.read(cx).idle_tick.nudge());
-    let steps = (GRACE.as_millis() / 16) as u32 * 2;
+    let steps = 60;
     assert!(
         wakes_over(&snapshot, cx, steps) >= steps / 2,
-        "the tick stopped with a presence change still queued"
+        "the task stopped polling with a presence change still queued"
     );
     // Room in the queue: the next tick flushes, and the window goes idle.
     receiver.try_iter().for_each(drop);
@@ -186,16 +197,39 @@ fn queued_work_outlasts_the_grace_period(cx: &mut TestAppContext) {
     assert!(flushed, "the queued presence change was never sent");
 }
 
-/// Each kind of queued work keeps the tick armed after the grace period,
-/// while nothing else would wake the task to flush it.
+/// A fit waiting to settle wakes the task at its deadline, not every 16 ms.
 #[gpui::test]
-fn each_kind_of_queued_work_arms_the_tick_past_the_grace(cx: &mut TestAppContext) {
+fn a_settling_fit_sets_a_deadline_not_a_poll(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let now = cx.executor().now();
+    let next = cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            let fit = |cols| crate::tmux_snapshot::geometry::Fit {
+                request: 7,
+                cols,
+                rows: 24,
+                pixels: (0, 0, 0, 0),
+            };
+            assert!(
+                !view
+                    .fit_settle
+                    .ready(fit(80), Some((7, 100, 24)), false, now)
+            );
+            view.tick_next(now)
+        })
+    });
+    assert_eq!(next, Next::At(now + Duration::from_millis(150)));
+}
+#[gpui::test]
+fn each_kind_of_queued_work_sets_a_wake(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     let wanted = |cx: &mut VisualTestContext| {
         let now = cx.executor().now();
-        cx.update(|_, cx| snapshot.read(cx).tick_wanted(now))
+        cx.update(|_, cx| snapshot.read(cx).tick_next(now)) != Next::Idle
     };
     assert!(!wanted(cx), "nothing queued");
     type Queue = fn(&mut SnapshotView, std::time::Instant);
@@ -234,7 +268,7 @@ fn each_kind_of_queued_work_arms_the_tick_past_the_grace(cx: &mut TestAppContext
     for (name, queue) in cases {
         let now = cx.executor().now();
         cx.update(|_, cx| snapshot.update(cx, |view, _| queue(view, now)));
-        assert!(wanted(cx), "{name} did not arm the tick");
+        assert!(wanted(cx), "{name} set no wake");
         // Flushed or expired by later ticks, the window goes idle again.
         cx.update(|_, cx| {
             snapshot.update(cx, |view, _| {
@@ -246,27 +280,28 @@ fn each_kind_of_queued_work_arms_the_tick_past_the_grace(cx: &mut TestAppContext
                 let _ = view.graphics.store.take_changed();
             })
         });
-        assert!(!wanted(cx), "{name}: still armed once flushed");
+        assert!(!wanted(cx), "{name}: still set once flushed");
     }
     // The renderer probe (TMUX_IDE_RENDERER_FIXTURE=1) ticks for as long as it runs.
     let probe = |on| super::super::renderer_probe::FORCED.with(|forced| forced.set(on));
     probe(true);
-    assert!(wanted(cx), "the renderer probe did not arm the tick");
+    assert!(wanted(cx), "the renderer probe set no wake");
     probe(false);
     assert!(!wanted(cx));
 }
 
 #[gpui::test]
-fn a_mouse_press_restarts_the_tick(cx: &mut TestAppContext) {
+fn a_mouse_press_wakes_the_task(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
-    cx.simulate_mouse_down(
-        point(px(40.), px(40.)),
-        MouseButton::Left,
-        Modifiers::none(),
-    );
-    assert_ticking(&snapshot, cx, "a mouse press");
+    assert_woken(&snapshot, cx, "a mouse press", |cx| {
+        cx.simulate_mouse_down(
+            point(px(40.), px(40.)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+    });
 }
 
 /// A key nudges the task through the root's listeners alone, before any
@@ -313,15 +348,16 @@ fn a_publication_marks_activity_before_any_draw(cx: &mut TestAppContext) {
     assert!(mailbox.has_activity());
 }
 
-/// Activity left by a nudge while the task was busy arms the tick even with
-/// the grace run out and nothing queued.
+/// Activity left by a nudge while the task was busy runs it at once, even
+/// with nothing queued.
 #[test]
-fn pending_activity_arms_the_tick() {
+fn pending_activity_runs_the_task_at_once() {
     let mailbox = browser::MailboxSlot::default();
-    assert!(!super::arm_tick(&mailbox, || false));
+    let now = std::time::Instant::now();
+    assert_eq!(super::next_run(&mailbox, now, || Next::Idle), Next::Idle);
     mailbox.set_idle(false);
     mailbox.nudge();
-    assert!(super::arm_tick(&mailbox, || false));
+    assert_eq!(super::next_run(&mailbox, now, || Next::Idle), Next::At(now));
 }
 
 /// Deactivating the window nudges the task without a draw: a minimized
@@ -338,4 +374,208 @@ fn deactivation_nudges_the_task_without_a_draw(cx: &mut TestAppContext) {
         snapshot.update(cx, |view, cx| view.activation_changed(false, cx));
         assert!(mailbox.has_activity());
     });
+}
+
+/// A deadline already passed (a fit whose render has not run yet) is polled,
+/// never run again at once: that would keep the main thread from rendering.
+#[gpui::test]
+fn a_passed_deadline_is_polled_not_spun(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let fit = |cols| super::super::geometry::Fit {
+        request: 7,
+        cols,
+        rows: 24,
+        pixels: (0, 0, 0, 0),
+    };
+    let long_ago = cx.executor().now();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    let now = cx.executor().now();
+    let next = cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            assert!(
+                !view
+                    .fit_settle
+                    .ready(fit(80), Some((7, 100, 24)), false, long_ago)
+            );
+            view.tick_next(now)
+        })
+    });
+    assert_eq!(next, Next::At(now + Duration::from_millis(16)));
+}
+
+/// A debounced palette query held back by a close sets no deadline of its own.
+#[gpui::test]
+fn a_held_palette_query_sets_no_deadline(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let now = cx.executor().now();
+    let due = cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.palette
+                .debounce_for_test(now + Duration::from_millis(5));
+            let free = view.palette.due_at();
+            view.palette.close_for_test();
+            (free, view.palette.due_at())
+        })
+    });
+    assert_eq!(due, (Some(now + Duration::from_millis(5)), None));
+}
+
+/// Sets a test deadline `after` from now and nudges, as queued work would.
+fn deadline_in(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, after: Duration) {
+    let at = cx.executor().now() + after;
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.idle_tick.deadline = Some(at);
+            view.idle_tick.nudge();
+        })
+    });
+}
+
+/// Wakes over `ms` of 1 ms steps.
+fn wakes_over_ms(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, ms: u32) -> u32 {
+    let before = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
+    for _ in 0..ms {
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+    }
+    cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes) - before
+}
+
+/// A deadline is kept to the millisecond: no wake before it, one at it.
+#[gpui::test]
+fn a_deadline_wakes_the_task_on_time(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    deadline_in(&snapshot, cx, Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        wakes_over_ms(&snapshot, cx, 149),
+        0,
+        "woke before the deadline"
+    );
+    assert_eq!(wakes_over_ms(&snapshot, cx, 2), 1, "missed the deadline");
+    settle(&snapshot, cx);
+}
+
+/// An earlier deadline set while the task waits for a later one re-arms it,
+/// and the earliest of several wins.
+#[gpui::test]
+fn an_earlier_deadline_rearms_the_wait(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    // The far one: a missing image's 250 ms poll.
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics
+                .store
+                .refer_for_test(Some("00000000000000ff00000000000000ff"));
+            view.idle_tick.nudge();
+        })
+    });
+    cx.run_until_parked();
+    wakes_over_ms(&snapshot, cx, 50);
+    deadline_in(&snapshot, cx, Duration::from_millis(70));
+    cx.run_until_parked();
+    assert_eq!(wakes_over_ms(&snapshot, cx, 69), 0);
+    assert_eq!(
+        wakes_over_ms(&snapshot, cx, 2),
+        1,
+        "the earlier deadline was not kept"
+    );
+}
+
+/// Missing images poll every 250 ms, not every frame, and stop once no
+/// placement refers to them.
+#[gpui::test]
+fn missing_images_poll_slowly_until_dropped(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics
+                .store
+                .refer_for_test(Some("00000000000000ff00000000000000ff"));
+            view.idle_tick.nudge();
+        })
+    });
+    let wakes = wakes_over(&snapshot, cx, 63);
+    assert!((4..=6).contains(&wakes), "{wakes} wakes in 1 s");
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics.store.refer_for_test(None);
+            view.idle_tick.nudge();
+        })
+    });
+    settle(&snapshot, cx);
+}
+
+/// A window resize that stops with the command queue full: the fit waits
+/// 150 ms, its deadline passes, and the task must yield to the render that
+/// applies it rather than spin (review-366's probe, kept as a regression test).
+#[gpui::test]
+fn a_settling_fit_with_a_full_queue_does_not_hang(cx: &mut TestAppContext) {
+    let choice = |id: &str, label: &str| browser::Choice {
+        id: id.into(),
+        label: label.into(),
+        pane_count: None,
+        window_id: None,
+        browser_icon: None,
+        display_name_source: None,
+        window_label: None,
+    };
+    let workspace = browser::State {
+        surface: browser::Surface::Workspace,
+        request: 7,
+        input_ready: true,
+        sessions: vec![choice("session-a", "Alpha")],
+        panes: vec![choice("pane-a", "Editor")],
+        selected_session: Some("session-a".into()),
+        ..Default::default()
+    };
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let filler = sender.clone();
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let snapshot =
+            cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, workspace));
+        let content = agent_spinner::window_root(snapshot.clone(), window, cx).into();
+        Host { snapshot, content }
+    });
+    cx.simulate_resize(size(px(520.), px(400.)));
+    let snapshot = host.read_with(cx, |host, _| host.snapshot.clone());
+    let mailbox: browser::Mailbox = Default::default();
+    cx.update(|window, cx| {
+        snapshot.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |entity, cx| {
+                super::run_browser(entity, mailbox, cx).await
+            })
+            .detach();
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+    receiver.try_iter().for_each(drop);
+    filler
+        .try_send(browser::Command::Presence {
+            active: true,
+            revision: 99,
+        })
+        .unwrap();
+    cx.update(|_, cx| snapshot.update(cx, |view, _| view.last_resize = Some((7, 10, 10))));
+    cx.simulate_resize(size(px(700.), px(500.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.update(|_, cx| snapshot.read(cx).fit_settle.due_at())
+            .is_some()
+    );
+    // Returns only if the task yields; before the fix this never returned.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
 }

@@ -1,7 +1,7 @@
 //! The latest browser publication, handed from the transport thread to the UI.
 //! A publication wakes the UI task at once instead of waiting for its 16 ms
-//! tick (#710); the tick stays for queued UI work only, and stops while the
-//! window is idle (#714): then only a publication or a nudge wakes the task.
+//! tick (#710). Otherwise the task runs only for a nudge or a deadline that
+//! queued work set (#714).
 use super::State;
 use std::{
     future::Future,
@@ -21,7 +21,7 @@ pub(in crate::tmux_snapshot) struct MailboxSlot {
     slot: Mutex<Slot>,
     published: AtomicBool,
     waker: Mutex<Option<Waker>>,
-    /// The UI task waits for a publication or nudge only, with no tick armed.
+    /// The UI task is waiting, for a publication, a nudge or a deadline.
     idle: AtomicBool,
     /// Something happened in the window since the UI task last looked.
     activity: AtomicBool,
@@ -62,15 +62,16 @@ impl MailboxSlot {
         }
     }
     /// Reports window activity (input, a render, a finished image): it wakes
-    /// the UI task if it is idle, and restarts its tick's grace period.
+    /// the UI task if it is waiting; if it is busy, the task runs again at
+    /// once after its current pass.
     pub(in crate::tmux_snapshot) fn nudge(&self) {
         self.activity.store(true, Ordering::Release);
         if self.idle.load(Ordering::Acquire) {
             self.wake();
         }
     }
-    /// Set by the UI task before it decides whether to arm its tick, so a
-    /// nudge between that decision and the wait is never lost.
+    /// Set by the UI task before it decides when to run next, so a nudge
+    /// between that decision and the wait is never lost.
     pub(in crate::tmux_snapshot) fn set_idle(&self, idle: bool) {
         self.idle.store(idle, Ordering::Release);
     }
