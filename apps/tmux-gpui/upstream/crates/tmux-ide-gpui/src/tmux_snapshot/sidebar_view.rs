@@ -117,6 +117,12 @@ impl SnapshotView {
         }
     }
 
+    /// Whether no key is held: the next frame with the sidebar draws it.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn sidebar_view_forgotten(&self) -> bool {
+        self.sidebar_view.key.is_none()
+    }
+
     /// Fades the sidebar's column in when it is shown (#761), and records
     /// when the fade has ended.
     pub(super) fn sidebar_fade_in(&self, column: Stateful<Div>) -> impl IntoElement + use<> {
@@ -131,80 +137,91 @@ impl SnapshotView {
         )
     }
 
-    /// Everything the sidebar shows, hashed. Each input the sidebar's render
-    /// reads must be here; `sidebar_view_tests` pins that a change to each one
-    /// redraws it, and that a cached frame paints what a fresh one would.
+    /// The key the sidebar's paint is kept under: [`Inputs`], hashed.
     pub(in crate::tmux_snapshot) fn sidebar_key(&self, window: &Window, cx: &App) -> u64 {
-        let mut hash = DefaultHasher::new();
+        digest(|hash| self.sidebar_inputs(window, cx).hash(hash))
+    }
+
+    /// Everything the sidebar's render reads, resolved as the render resolves
+    /// it. `sidebar_view_tests` has one case per field: a change the sidebar
+    /// shows must move that field.
+    pub(in crate::tmux_snapshot) fn sidebar_inputs(&self, window: &Window, cx: &App) -> Inputs {
         let state = &self.browser_state;
         let now = (self.connection.clock)().0;
-        // The rows, as the render resolves them.
-        let local_last_known = self.agents_shown_last_known();
-        for row in sidebar::rows_at(state, now) {
-            row_hash(&row, &mut hash);
-            if let Some((action, favorite)) = &row.favorite {
-                self.preference_button_enabled(action.as_deref(), !*favorite)
-                    .hash(&mut hash);
-            }
-            let agent = row
-                .agent
-                .as_ref()
-                .and_then(|key| sidebar::activity::row_agent(state, key));
-            let pane = row
-                .pane
-                .as_deref()
-                .and_then(|pane| sidebar::panes::pane_agent(state, pane));
-            for (agent, unavailable) in [agent, pane].into_iter().flatten() {
-                agent_hash(agent, &mut hash);
-                unavailable.hash(&mut hash);
-                self.agent_last_known(agent).hash(&mut hash);
-            }
-        }
-        local_last_known.hash(&mut hash);
-        // The Home row.
-        (state.surface == browser::Surface::Home).hash(&mut hash);
-        for agent in sidebar::pane_row::waiting_rows(state) {
-            agent_hash(agent, &mut hash);
-            self.agent_last_known(agent).hash(&mut hash);
-        }
-        // Keyboard navigation, focus and the controls' availability.
+        let rows = sidebar::rows_at(state, now);
+        // Each row's agent, and its pane's: the state the row draws.
+        let agents: Vec<_> = rows
+            .iter()
+            .flat_map(|row| {
+                let agent = row
+                    .agent
+                    .as_ref()
+                    .and_then(|key| sidebar::activity::row_agent(state, key));
+                let pane = row
+                    .pane
+                    .as_deref()
+                    .and_then(|pane| sidebar::panes::pane_agent(state, pane));
+                [agent, pane].into_iter().flatten()
+            })
+            .collect();
+        let waiting = sidebar::pane_row::waiting_rows(state);
         let keyboard = &self.sidebar_keyboard;
-        (keyboard.active, &keyboard.selected, keyboard.request).hash(&mut hash);
-        self.sidebar_keyboard_allowed().hash(&mut hash);
-        self.sidebar_control_index(window).hash(&mut hash);
-        keyboard
-            .focus
-            .as_ref()
-            .map(|focus| focus.is_focused(window))
-            .hash(&mut hash);
-        self.sidebar_footer_current(self.browser_request)
-            .hash(&mut hash);
-        (self.browser_request, state.appearance.is_some()).hash(&mut hash);
-        self.local_session_available().hash(&mut hash);
-        // The preference status line.
-        self.fleet_preference_status()
-            .map(|status| status.message().to_owned())
-            .hash(&mut hash);
-        // The footer's connection slot, which reads the watch's clock.
-        self.connection_stage().hash(&mut hash);
-        self.connection_words().hash(&mut hash);
-        crate::tmux_snapshot::connection::card(state, self.browser_commands.is_some())
-            .hash(&mut hash);
-        // A reveal moves the list by its scroll handle, outside any render.
-        let offset = self.sidebar_keyboard.scroll.offset();
-        (f32::from(offset.x).to_bits(), f32::from(offset.y).to_bits()).hash(&mut hash);
-        // Theme, translucency, motion and the agent spinner.
-        format!("{:?}", self.theme()).hash(&mut hash);
-        self.chrome.allowed().hash(&mut hash);
-        cx.reduce_motion().hash(&mut hash);
-        self.agent_motion().hash(&mut hash);
+        let offset = keyboard.scroll.offset();
         let slots = &self.agent_animation;
-        slots.attached().hash(&mut hash);
-        // Without the overlay the glyphs themselves animate.
-        if !slots.attached() {
-            slots.frame().hash(&mut hash);
+        Inputs {
+            rows: digest(|hash| rows.iter().for_each(|row| row_hash(row, hash))),
+            favorites_enabled: rows
+                .iter()
+                .filter_map(|row| row.favorite.as_ref())
+                .map(|(action, favorite)| {
+                    self.preference_button_enabled(action.as_deref(), !*favorite)
+                })
+                .collect(),
+            preference_revision: self.preference_revision(),
+            agents: digest(|hash| agents.iter().for_each(|(agent, _)| agent_hash(agent, hash))),
+            agents_unavailable: agents.iter().map(|(_, unavailable)| *unavailable).collect(),
+            agents_last_known: agents
+                .iter()
+                .map(|(agent, _)| self.agent_last_known(agent))
+                .collect(),
+            local_last_known: self.agents_shown_last_known(),
+            home: state.surface == browser::Surface::Home,
+            waiting: digest(|hash| waiting.iter().for_each(|agent| agent_hash(agent, hash))),
+            waiting_last_known: waiting
+                .iter()
+                .map(|agent| self.agent_last_known(agent))
+                .collect(),
+            keyboard_active: keyboard.active,
+            keyboard_selected: keyboard.selected.clone(),
+            keyboard_request: keyboard.request,
+            keyboard_allowed: self.sidebar_keyboard_allowed(),
+            control_focused: self.sidebar_control_index(window),
+            list_focused: keyboard
+                .focus
+                .as_ref()
+                .map(|focus| focus.is_focused(window)),
+            footer_current: self.sidebar_footer_current(self.browser_request),
+            request: self.browser_request,
+            appearance_known: state.appearance.is_some(),
+            local_session_available: self.local_session_available(),
+            preference_status: self
+                .fleet_preference_status()
+                .map(|status| status.message().to_owned()),
+            connection_stage: self.connection_stage(),
+            connection_words: self.connection_words(),
+            connection_card: crate::tmux_snapshot::connection::card(
+                state,
+                self.browser_commands.is_some(),
+            ),
+            scroll: (f32::from(offset.x).to_bits(), f32::from(offset.y).to_bits()),
+            theme: format!("{:?}", self.theme()),
+            translucent: self.chrome.allowed(),
+            reduce_motion: cx.reduce_motion(),
+            agent_motion: self.agent_motion(),
+            spinner_attached: slots.attached(),
+            // Without the overlay the glyphs themselves animate.
+            spinner_frame: (!slots.attached()).then(|| slots.frame()),
         }
-        hash.finish()
     }
 
     /// The sidebar's elements, built inside [`SidebarView`]'s render.
@@ -358,6 +375,57 @@ impl SnapshotView {
             )
             .child(self.sidebar_footer(cx))
     }
+}
+
+/// What the sidebar shows, one field per thing its render reads.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::tmux_snapshot) struct Inputs {
+    /// The rows as the render resolves them (labels, selection, badges).
+    pub rows: u64,
+    /// Whether each row's favourite button takes a press.
+    pub favorites_enabled: Vec<bool>,
+    /// The revision the favourite buttons' presses carry.
+    pub preference_revision: u64,
+    /// The agents the rows show.
+    pub agents: u64,
+    pub agents_unavailable: Vec<bool>,
+    pub agents_last_known: Vec<bool>,
+    /// This Mac's agent lane is marked last known.
+    pub local_last_known: bool,
+    /// Home is the surface: its row is the selected one.
+    pub home: bool,
+    /// The roster the Home row counts waiting agents from.
+    pub waiting: u64,
+    pub waiting_last_known: Vec<bool>,
+    pub keyboard_active: bool,
+    pub keyboard_selected: Option<sidebar::Target>,
+    pub keyboard_request: u64,
+    pub keyboard_allowed: bool,
+    /// Which footer or title control holds focus.
+    pub control_focused: Option<usize>,
+    pub list_focused: Option<bool>,
+    pub footer_current: bool,
+    pub request: u64,
+    pub appearance_known: bool,
+    pub local_session_available: bool,
+    pub preference_status: Option<String>,
+    pub connection_stage: crate::tmux_snapshot::connection::Stage,
+    pub connection_words: &'static str,
+    pub connection_card: Option<crate::tmux_snapshot::connection::Card>,
+    /// A reveal moves the list by its scroll handle, outside any render.
+    pub scroll: (u32, u32),
+    pub theme: String,
+    pub translucent: bool,
+    pub reduce_motion: bool,
+    pub agent_motion: bool,
+    pub spinner_attached: bool,
+    pub spinner_frame: Option<usize>,
+}
+
+fn digest(feed: impl FnOnce(&mut DefaultHasher)) -> u64 {
+    let mut hash = DefaultHasher::new();
+    feed(&mut hash);
+    hash.finish()
 }
 
 fn row_hash(row: &sidebar::Row, hash: &mut DefaultHasher) {

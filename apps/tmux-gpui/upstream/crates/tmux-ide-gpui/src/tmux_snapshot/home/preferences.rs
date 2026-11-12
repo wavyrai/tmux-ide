@@ -129,7 +129,7 @@ impl SnapshotView {
             });
         (tip, button, enabled)
     }
-    fn preference_revision(&self) -> u64 {
+    pub(in crate::tmux_snapshot) fn preference_revision(&self) -> u64 {
         self.browser_state
             .fleet
             .as_ref()

@@ -8,7 +8,8 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     pub(in crate::tmux_snapshot::browser_ui) focus: Option<FocusHandle>,
     pub(in crate::tmux_snapshot::browser_ui) selected: Option<Target>,
     pub(in crate::tmux_snapshot::browser_ui) scroll: ScrollHandle,
-    pub(super) controls: Option<[FocusHandle; control_focus::CONTROLS]>,
+    pub(in crate::tmux_snapshot::browser_ui) controls:
+        Option<[FocusHandle; control_focus::CONTROLS]>,
     reveal: reveal::Reveal,
     pub(in crate::tmux_snapshot::browser_ui) request: u64,
     displayed: Vec<Option<Target>>,
