@@ -54,6 +54,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             agent_animation: Default::default(),
             idle_tick: Default::default(),
             sidebar_view: Default::default(),
+            home_fleet: Default::default(),
             sidebar_hidden: false,
             sidebar_keyboard: Default::default(),
             developer_mode: Default::default(),

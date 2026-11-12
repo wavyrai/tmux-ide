@@ -380,6 +380,7 @@ fn show_owned(
                         agent_animation: Default::default(),
                         idle_tick: Default::default(),
                         sidebar_view: Default::default(),
+                        home_fleet: Default::default(),
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
@@ -476,6 +477,8 @@ struct SnapshotView {
     agent_animation: agent_spinner::Slots,
     idle_tick: browser_tick::IdleTick,
     sidebar_view: browser_ui::sidebar_view::Cache,
+    /// Home's session table as its own view, and what it last showed.
+    home_fleet: home::fleet_view::Cache,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,

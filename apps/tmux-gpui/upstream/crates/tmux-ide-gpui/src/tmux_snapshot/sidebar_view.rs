@@ -355,7 +355,10 @@ fn row_hash(row: &sidebar::Row, hash: &mut DefaultHasher) {
     favicon.as_ref().map(std::sync::Arc::as_ptr).hash(hash);
 }
 
-fn agent_hash(agent: &browser::home_agents::Row, hash: &mut DefaultHasher) {
+pub(in crate::tmux_snapshot) fn agent_hash(
+    agent: &browser::home_agents::Row,
+    hash: &mut DefaultHasher,
+) {
     let browser::home_agents::Row {
         key,
         session_id,

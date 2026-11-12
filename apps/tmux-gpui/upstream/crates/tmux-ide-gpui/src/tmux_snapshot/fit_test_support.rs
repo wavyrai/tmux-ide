@@ -138,6 +138,7 @@ pub(super) fn fixture_view(
         agent_animation: Default::default(),
         idle_tick: Default::default(),
         sidebar_view: Default::default(),
+        home_fleet: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),

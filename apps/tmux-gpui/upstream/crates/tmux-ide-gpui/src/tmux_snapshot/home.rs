@@ -9,6 +9,7 @@ pub(super) mod filters;
 pub(super) mod fleet;
 pub(super) mod fleet_nav;
 pub(super) mod fleet_rows;
+pub(super) mod fleet_view;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
@@ -288,13 +289,16 @@ impl SnapshotView {
         // First run: the welcome takes Home's place (onboarding A1).
         self.observe_welcome(cx);
         if self.welcome.open {
+            self.fleet_view_hidden();
             return self.welcome_render(window, cx);
         }
         let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
+        let mut settling = false;
         if let Some(controls) = self.home_filter.as_mut() {
             let machines = super::motion::home_machines(&self.browser_state);
             controls.motion.observe(&machines, now);
-            if controls.motion.settle(now, reduced) {
+            settling = controls.motion.settle(now, reduced);
+            if settling {
                 window.request_animation_frame();
             }
         }
@@ -567,7 +571,7 @@ impl SnapshotView {
             .flex_col()
             .gap(px(SPACE * 1.5));
         let nav = self.fleet_nav(cx);
-        if let Some(cards) = self.fleet_cards(window, cx) {
+        if let Some(cards) = self.fleet_element(settling, window, cx) {
             // The left list names the view; the table needs no heading.
             detail = detail.child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {

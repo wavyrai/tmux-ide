@@ -48,6 +48,15 @@ impl RowWindow {
         self.assistive.set(window.is_a11y_active());
     }
 
+    /// Where each run sat on the last frame.
+    pub(super) fn tops(&self) -> Vec<(Run, Pixels)> {
+        self.tops
+            .borrow()
+            .iter()
+            .map(|(run, top)| (*run, *top))
+            .collect()
+    }
+
     /// Whether every row is built, for assistive technology.
     pub(in crate::tmux_snapshot) fn every_row(&self) -> bool {
         self.assistive.get()
@@ -82,9 +91,8 @@ impl RowWindow {
 
     /// A zero-height element at the top of `run` that records where the run
     /// starts when it is laid out. When that isn't where the render assumed
-    /// (a new table shape, or the first frame), or the page's visible part
-    /// isn't the one the render planned for (a resize), `view` renders again,
-    /// so the window is never built against a stale place.
+    /// (a new table shape, or the first frame), `view` renders again, so the
+    /// window is never built against a stale place.
     pub(in crate::tmux_snapshot) fn marker(
         &self,
         run: Run,
@@ -92,7 +100,6 @@ impl RowWindow {
         view: EntityId,
     ) -> AnyElement {
         let tops = self.tops.clone();
-        let planned = self.planned.clone();
         #[cfg(test)]
         let asked = self.asked.clone();
         let page = page.clone();
@@ -100,13 +107,8 @@ impl RowWindow {
             move |bounds, window, _| {
                 let top = bounds.origin.y - page.offset().y;
                 let before = tops.borrow_mut().insert(run, top);
-                // The page is laid out by now: its bounds are this frame's.
-                let shown = page.bounds();
-                let resized = planned.get().is_none_or(|(from, to)| {
-                    (from - shown.top()).abs() > px(0.5) || (to - shown.bottom()).abs() > px(0.5)
-                });
                 let moved = before.is_none_or(|before| (before - top).abs() > px(0.5));
-                if moved || resized {
+                if moved {
                     #[cfg(test)]
                     asked.set(asked.get() + 1);
                     // Not during this draw: the next frame renders again.
@@ -117,6 +119,43 @@ impl RowWindow {
         )
         .w_full()
         .h(px(0.))
+        .into_any_element()
+    }
+}
+
+impl RowWindow {
+    /// An element with no size, laid out with the table on every frame the
+    /// page draws, replayed table or not. When the page's visible part isn't
+    /// the one the rows were last planned for (a zoom, full screen), `view`
+    /// renders again, so the rows that came into view are built on the next
+    /// frame.
+    pub(in crate::tmux_snapshot) fn watch(
+        &self,
+        page: &ScrollHandle,
+        view: EntityId,
+    ) -> AnyElement {
+        let planned = self.planned.clone();
+        #[cfg(test)]
+        let asked = self.asked.clone();
+        let page = page.clone();
+        canvas(
+            move |_, window, _| {
+                // The page is laid out by now: its bounds are this frame's.
+                let shown = page.bounds();
+                let resized = planned.get().is_some_and(|(from, to)| {
+                    (from - shown.top()).abs() > px(0.5) || (to - shown.bottom()).abs() > px(0.5)
+                });
+                if resized {
+                    #[cfg(test)]
+                    asked.set(asked.get() + 1);
+                    // Not during this draw: the next frame renders again.
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
         .into_any_element()
     }
 }

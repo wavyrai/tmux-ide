@@ -469,8 +469,11 @@ impl SnapshotView {
                 .child(self.terminal_render(window, cx))
         });
         let home = is_home.then(|| self.home_render(window, cx));
-        if !is_home && let Some(controls) = self.home_filter.as_mut() {
-            controls.motion.end();
+        if !is_home {
+            if let Some(controls) = self.home_filter.as_mut() {
+                controls.motion.end();
+            }
+            self.fleet_view_hidden();
         }
         // Connection messages can wrap; retain the scroll owner instead of
         // imposing the upstream status bar's fixed single-line height.
