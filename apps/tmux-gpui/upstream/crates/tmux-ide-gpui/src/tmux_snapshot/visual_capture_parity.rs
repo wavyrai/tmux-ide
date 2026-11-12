@@ -188,14 +188,21 @@ fn placement(key: &SurfaceGraphicsAssetKey, x: u16, y: u16, z: i32) -> SurfaceGr
 /// What changes between a case's early frames and the one captured, so the
 /// rows the early frames retained must not be drawn again as they were. The
 /// captured frame is always the case's own: only the frames before differ.
-const SEQUENCES: [&str; 10] = [
-    // Nothing changes.
-    "", // Another theme, font size, cell height or font first.
-    "theme", "size", "cellh", "font",   // The grid 3.5 pt to the right first.
-    "origin", // The left half only first, layer by layer.
-    "part",   // A pane scrollbar over column 5 first; then one that appears.
-    "bar", "unbar", // The grid partly outside the window throughout.
-    "clip",
+const SEQUENCES: [(&str, &str); 11] = [
+    ("", "nothing changes"),
+    ("theme", "another theme first"),
+    ("size", "another font size first"),
+    ("cellh", "another cell height first"),
+    ("font", "another font first, of another width"),
+    ("weight", "the same font in bold first: the same cell width"),
+    ("origin", "the grid 3.5 pt to the right first"),
+    ("part", "the left half only first, layer by layer"),
+    ("bar", "a pane scrollbar over column 5 first"),
+    (
+        "unbar",
+        "a pane scrollbar that appears for the captured frame",
+    ),
+    ("clip", "the grid partly outside the window throughout"),
 ];
 
 /// Paints `case` with the legacy or batched glyph path, after early frames
@@ -262,6 +269,7 @@ fn render(
     }
     let state = Rc::new(RefCell::new(Late {
         font: if sw == "font" { "Monaco" } else { "Menlo" },
+        bold: sw == "weight",
         origin: if sw == "origin" {
             case.origin + point(px(3.5), px(0.))
         } else if sw == "clip" {
@@ -311,6 +319,7 @@ fn render(
             .set_appearance(14., case.cell_height, case.theme.clone());
         *state.borrow_mut() = Late {
             font: "Menlo",
+            bold: false,
             origin: if sw == "clip" {
                 case.origin + point(px(300.), px(120.))
             } else {
@@ -356,6 +365,7 @@ type Images = (Arc<SurfaceImages>, Arc<[SurfaceGraphicsPlacement]>);
 #[derive(Clone)]
 struct Late {
     font: &'static str,
+    bold: bool,
     origin: Point<Pixels>,
     partial: bool,
     bar: bool,
@@ -383,7 +393,10 @@ impl Render for Painted {
                 move |_, _, window, cx| {
                     let state = state.borrow().clone();
                     let origin = state.origin;
-                    let font = font(state.font);
+                    let mut font = font(state.font);
+                    if state.bold {
+                        font.weight = FontWeight::BOLD;
+                    }
                     let mut painter = painter.borrow_mut();
                     let width = painter.cell_width(&font, window, cx);
                     let rect = SurfaceRect {
@@ -487,7 +500,7 @@ fn glyph_cases(dir: &Path) -> Result<Vec<String>> {
     let all = cases();
     for (case, sw) in all
         .iter()
-        .flat_map(|case| SEQUENCES.iter().map(move |sw| (case, *sw)))
+        .flat_map(|case| SEQUENCES.iter().map(move |(sw, _)| (case, *sw)))
     {
         // A partial repaint over an image is not stable frame to frame.
         if sw == "part" && case.images {
