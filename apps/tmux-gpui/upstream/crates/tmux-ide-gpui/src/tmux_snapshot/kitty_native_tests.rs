@@ -86,7 +86,7 @@ fn native_arrivals_invalidation_and_retirement_wake_the_ui_task() -> Result<(), 
     assert_eq!(wakes.load(SeqCst), 1, "a partial arrival");
     store.accept_native(chunk(8, vec![7; 8], true))?;
     assert_eq!(wakes.load(SeqCst), 2, "the final chunk");
-    assert!(store.pending());
+    assert!(store.changed_or_inflating());
     store.invalidate_native(&[DIGEST.into()]);
     assert_eq!(wakes.load(SeqCst), 3, "invalidation");
     store.retire_native();
