@@ -18,9 +18,11 @@ impl Owner {
     pub(in crate::tmux_snapshot) fn closing(&self) -> bool {
         self.pending_close.is_some()
     }
-    /// When a debounced query is due to be sent.
+    /// When a debounced query is due to be sent; none while a rejection or
+    /// a close holds it back (a publication or the close's poll moves it on).
     pub(in crate::tmux_snapshot) fn due_at(&self) -> Option<Instant> {
         self.due
+            .filter(|_| self.pending.is_none() && self.pending_close.is_none())
     }
     /// A query debounced until `due`, for tests outside the palette.
     #[cfg(test)]

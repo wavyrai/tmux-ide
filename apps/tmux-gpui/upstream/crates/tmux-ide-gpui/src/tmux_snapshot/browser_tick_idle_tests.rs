@@ -375,3 +375,51 @@ fn deactivation_nudges_the_task_without_a_draw(cx: &mut TestAppContext) {
         assert!(mailbox.has_activity());
     });
 }
+
+/// A deadline already passed (a fit whose render has not run yet) is polled,
+/// never run again at once: that would keep the main thread from rendering.
+#[gpui::test]
+fn a_passed_deadline_is_polled_not_spun(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let fit = |cols| super::super::geometry::Fit {
+        request: 7,
+        cols,
+        rows: 24,
+        pixels: (0, 0, 0, 0),
+    };
+    let long_ago = cx.executor().now();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    let now = cx.executor().now();
+    let next = cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            assert!(
+                !view
+                    .fit_settle
+                    .ready(fit(80), Some((7, 100, 24)), false, long_ago)
+            );
+            view.tick_next(now)
+        })
+    });
+    assert_eq!(next, Next::At(now + Duration::from_millis(16)));
+}
+
+/// A debounced palette query held back by a close sets no deadline of its own.
+#[gpui::test]
+fn a_held_palette_query_sets_no_deadline(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let now = cx.executor().now();
+    let due = cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.palette
+                .debounce_for_test(now + Duration::from_millis(5));
+            let free = view.palette.due_at();
+            view.palette.close_for_test();
+            (free, view.palette.due_at())
+        })
+    });
+    assert_eq!(due, (Some(now + Duration::from_millis(5)), None));
+}

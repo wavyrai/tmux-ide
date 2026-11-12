@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 /// The poll period while queued work waits for room in the command queue.
 const POLL: Duration = Duration::from_millis(16);
+/// The shortest wait: even "at once" yields to the main thread first.
+const MIN_WAIT: Duration = Duration::from_millis(1);
 /// The poll period while images are missing or arriving: they are reported
 /// missing after seconds, not frames.
 const IMAGE_POLL: Duration = Duration::from_millis(250);
@@ -73,9 +75,9 @@ pub(super) async fn run_browser(
         match next {
             Next::Idle => mailbox.published().await,
             Next::At(at) => {
-                let timer = cx
-                    .background_executor()
-                    .timer(at.saturating_duration_since(now));
+                // Never a zero timer: gpui completes it without yielding.
+                let wait = at.saturating_duration_since(now).max(MIN_WAIT);
+                let timer = cx.background_executor().timer(wait);
                 browser::tick_or_publication(timer, &mailbox).await;
             }
         }
@@ -150,11 +152,14 @@ impl SnapshotView {
             self.palette.due_at(),
             self.graphics.store.waiting().then_some(now + IMAGE_POLL),
         ];
+        // A deadline already passed is work this pass did not finish (a fit
+        // waits for its render): poll for it rather than run again at once,
+        // which would keep the main thread from rendering (review r1).
         deadlines
             .into_iter()
             .flatten()
             .min()
-            .map_or(Next::Idle, Next::At)
+            .map_or(Next::Idle, |at| Next::At(at.max(now + POLL)))
     }
 
     pub(super) fn browser_tick(&mut self, cx: &mut Context<Self>) {
