@@ -187,7 +187,9 @@ pub(in crate::tmux_snapshot) fn visible(
     first.min(count)..last.min(count).max(first.min(count))
 }
 
-use super::{SnapshotView, browser, fleet::ROW_HEIGHT};
+use super::{SnapshotView, browser, fleet::ROW_HEIGHT, row_root::row_root};
+
+const ROW_HEIGHT_PX: Pixels = px(ROW_HEIGHT);
 use crate::tmux_snapshot::motion;
 
 impl SnapshotView {
@@ -257,10 +259,9 @@ impl SnapshotView {
     ) -> AnyElement {
         let key = motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
         let entered = self.home_entered(&key, clock, reduced);
-        motion::enter_any(
-            self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
-            entered,
-        )
+        // Laid out on its own: the page's measure passes stop at its box.
+        let row = self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx);
+        motion::enter_any(row_root(ROW_HEIGHT_PX, row).into_any_element(), entered)
     }
 }
 

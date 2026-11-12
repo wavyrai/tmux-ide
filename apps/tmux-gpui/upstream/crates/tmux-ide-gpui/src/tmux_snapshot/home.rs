@@ -12,6 +12,7 @@ pub(super) mod fleet_rows;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
+mod row_root;
 pub(super) mod rows_window;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;

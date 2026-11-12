@@ -122,6 +122,7 @@ impl SnapshotView {
             .group(group)
             .debug_selector(move || format!("fleet-session-{index}-{row}"))
             .h(px(ROW_HEIGHT))
+            .w_full()
             .px(px(ROW_GAP))
             .flex()
             .items_center()
