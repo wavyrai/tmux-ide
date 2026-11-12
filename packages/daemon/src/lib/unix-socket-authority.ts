@@ -3,7 +3,29 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const MAX_SOCKET_PATH_BYTES = 4_096;
 
+/**
+ * The longest socket path a client can connect to: `sockaddr_un.sun_path` less
+ * its terminating NUL. 108 bytes on Linux, 104 on macOS and the BSDs.
+ */
+export function unixSocketPathLimit(platform: NodeJS.Platform = process.platform): number {
+  return platform === "linux" ? 107 : 103;
+}
+
+export class UnixSocketPathTooLongError extends TypeError {
+  constructor(bytes: number, limit: number) {
+    super(
+      `The tmux socket path is ${bytes} bytes; this platform allows ${limit}. Start the tmux server on a shorter socket path.`,
+    );
+    this.name = "UnixSocketPathTooLongError";
+  }
+}
+
 export interface UnixSocketIdentity {
+  /**
+   * The spelling to connect with. The canonical path when it fits
+   * {@link unixSocketPathLimit}; otherwise a shorter spelling proven to be the
+   * same socket, such as /tmp for /private/tmp on macOS (#384).
+   */
   readonly path: string;
   readonly dev: number;
   readonly ino: number;
@@ -31,12 +53,48 @@ export function captureUnixSocketIdentity(path: string): UnixSocketIdentity {
   if (!canonical.isSocket() || canonical.dev !== source.dev || canonical.ino !== source.ino)
     throw new TypeError("Unix socket authority changed while resolving");
   return Object.freeze({
-    path: canonicalPath,
+    path: reachableSpelling(path, canonicalPath, canonical),
     dev: Number(canonical.dev),
     ino: Number(canonical.ino),
     mtimeNs: canonical.mtimeNs,
     birthtimeNs: canonical.birthtimeNs,
   });
+}
+
+/**
+ * tmux refuses a socket path longer than `sun_path` ("File name too long"). A
+ * server can still be running on such a socket when it was started through a
+ * shorter spelling. Use that spelling, but only after proving it is the same
+ * socket; `revalidateUnixSocketIdentity` checks its inode again before each use.
+ */
+function reachableSpelling(
+  given: string,
+  canonicalPath: string,
+  canonical: { readonly dev: bigint; readonly ino: bigint },
+): string {
+  const limit = unixSocketPathLimit();
+  if (Buffer.byteLength(canonicalPath) <= limit) return canonicalPath;
+  const candidates = [given];
+  if (process.platform === "darwin" && /^\/private\/(?:tmp|var)\//u.test(canonicalPath))
+    candidates.push(canonicalPath.slice("/private".length));
+  for (const candidate of candidates) {
+    if (candidate === canonicalPath || Buffer.byteLength(candidate) > limit) continue;
+    try {
+      const parent = lstatSync(dirname(candidate));
+      const socket = lstatSync(candidate, { bigint: true });
+      if (
+        parent.isDirectory() &&
+        socket.isSocket() &&
+        socket.dev === canonical.dev &&
+        socket.ino === canonical.ino &&
+        join(realpathSync(dirname(candidate)), basename(candidate)) === canonicalPath
+      )
+        return candidate;
+    } catch {
+      // Not a usable spelling; try the next one.
+    }
+  }
+  throw new UnixSocketPathTooLongError(Buffer.byteLength(canonicalPath), limit);
 }
 
 export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): string {

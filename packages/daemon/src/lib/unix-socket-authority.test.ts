@@ -1,4 +1,13 @@
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +16,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   captureUnixSocketIdentity,
   revalidateUnixSocketIdentity,
+  unixSocketPathLimit,
+  UnixSocketPathTooLongError,
 } from "./unix-socket-authority.ts";
 
 const roots: string[] = [];
@@ -74,6 +85,94 @@ describe("Unix socket authority", () => {
     symlinkSync(root, parentLink);
     expect(() => captureUnixSocketIdentity(join(parentLink, "live.sock"))).toThrow(
       /authority is invalid/u,
+    );
+  });
+
+  describe("a socket whose canonical path does not fit sockaddr_un (#384)", () => {
+    const limit = unixSocketPathLimit();
+    /**
+     * `<root>/a` links to a directory deep enough that the socket's canonical
+     * path is `over` bytes past the limit. The socket is bound through the link.
+     */
+    async function aliased(over: number) {
+      const root = mkdtempSync("/tmp/usa-");
+      roots.push(root);
+      const canonicalRoot = realpathSync(root);
+      const pad = limit + over - Buffer.byteLength(join(canonicalRoot, "r", "", "d", "t.sock")) - 1;
+      const deep = join(root, "r", "p".repeat(pad));
+      mkdirSync(join(deep, "d"), { recursive: true });
+      symlinkSync(deep, join(root, "a"));
+      const alias = join(root, "a", "d", "t.sock");
+      const canonical = join(realpathSync(join(deep, "d")), "t.sock");
+      expect(Buffer.byteLength(canonical)).toBe(limit + over);
+      expect(Buffer.byteLength(alias)).toBeLessThanOrEqual(limit);
+      const server = await socketAt(alias);
+      return { root, alias, canonical, server, deep };
+    }
+
+    it("knows the limit of each platform", () => {
+      expect(unixSocketPathLimit("darwin")).toBe(103);
+      expect(unixSocketPathLimit("freebsd")).toBe(103);
+      expect(unixSocketPathLimit("linux")).toBe(107);
+    });
+
+    it("connects through the caller's spelling and revalidates it", async () => {
+      const { alias } = await aliased(8);
+      const identity = captureUnixSocketIdentity(alias);
+      expect(identity.path).toBe(alias);
+      expect(revalidateUnixSocketIdentity(identity)).toBe(alias);
+      // The alias is stable: capturing it again gives the same identity.
+      expect(captureUnixSocketIdentity(identity.path)).toEqual(identity);
+    });
+
+    it("refuses an alias whose socket was replaced", async () => {
+      const { alias, server } = await aliased(8);
+      const identity = captureUnixSocketIdentity(alias);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      servers.splice(servers.indexOf(server), 1);
+      await socketAt(alias);
+      expect(() => revalidateUnixSocketIdentity(identity)).toThrow(/changed before use/u);
+    });
+
+    it("refuses an alias that now leads to another socket", async () => {
+      const { root, alias } = await aliased(8);
+      const identity = captureUnixSocketIdentity(alias);
+      const other = join(root, "o");
+      mkdirSync(join(other, "d"), { recursive: true });
+      await socketAt(join(other, "d", "t.sock"));
+      unlinkSync(join(root, "a"));
+      symlinkSync(other, join(root, "a"));
+      expect(() => revalidateUnixSocketIdentity(identity)).toThrow(/changed before use/u);
+    });
+
+    it("names the size and the limit when no spelling of the path fits", async () => {
+      // Too long even without macOS's /private prefix.
+      const { canonical } = await aliased(40);
+      let thrown: unknown;
+      try {
+        captureUnixSocketIdentity(canonical);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(UnixSocketPathTooLongError);
+      expect((thrown as Error).message).toBe(
+        `The tmux socket path is ${limit + 40} bytes; this platform allows ${limit}. Start the tmux server on a shorter socket path.`,
+      );
+    });
+
+    it.runIf(process.platform === "darwin")(
+      "finds the /tmp spelling of an overlong /private/tmp path",
+      async () => {
+        const { alias, canonical } = await aliased(8);
+        expect(canonical.startsWith("/private/tmp/")).toBe(true);
+        const identity = captureUnixSocketIdentity(canonical);
+        expect(identity.path).toBe(canonical.slice("/private".length));
+        expect(revalidateUnixSocketIdentity(identity)).toBe(identity.path);
+        expect(captureUnixSocketIdentity(alias)).toMatchObject({
+          dev: identity.dev,
+          ino: identity.ino,
+        });
+      },
     );
   });
 });
