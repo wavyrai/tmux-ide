@@ -656,6 +656,7 @@ impl SnapshotView {
         if let Some(controls) = &self.home_filter {
             page = page.track_scroll(&controls.page_scroll);
         }
+        let whats_new = self.whats_new_card(cx);
         div()
             .id("tmux-home")
             .debug_selector(|| "tmux-home".into())
@@ -668,7 +669,7 @@ impl SnapshotView {
             .bg(rgb(canvas))
             .relative()
             .child(page.fill())
-            .children(self.whats_new_card(cx))
+            .children(whats_new)
             .into_any_element()
     }
 }

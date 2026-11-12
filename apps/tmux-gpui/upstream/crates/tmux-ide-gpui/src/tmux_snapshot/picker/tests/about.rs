@@ -198,3 +198,79 @@ fn tab_reaches_the_links_and_return_acts(cx: &mut TestAppContext) {
         assert_eq!(v.picker.as_ref().map(|p| p.mode), Some(Mode::WhatsNew));
     });
 }
+
+fn press(cx: &mut VisualTestContext, key: &str, is_held: bool) {
+    cx.simulate_event(KeyDownEvent {
+        keystroke: Keystroke::parse(key).unwrap(),
+        is_held,
+        prefer_character_input: false,
+        layout: None,
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+/// Only a fresh Escape closes About: a held one, other keys and Space with no
+/// control reached leave it open.
+#[gpui::test]
+fn only_a_fresh_escape_closes_about(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    open(cx);
+    press(cx, "escape", true);
+    assert!(view.read_with(cx, |v, _| v.about.is_some()), "held Escape");
+    for key in ["a", "space", "enter", "f5", "left"] {
+        press(cx, key, false);
+        assert!(view.read_with(cx, |v, _| v.about.is_some()), "{key}");
+    }
+    assert!(receiver.try_recv().is_err());
+    press(cx, "escape", false);
+    assert!(view.read_with(cx, |v, _| v.about.is_none()));
+}
+
+/// About answers each key once: one Tab moves its ring one step, which it
+/// would not if the key also reached the window's handler.
+#[gpui::test]
+fn one_tab_moves_about_one_step(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    open(cx);
+    press(cx, "tab", false);
+    assert_eq!(
+        view.read_with(cx, |v, _| v.about.as_ref().and_then(|a| a.focused)),
+        Some(0)
+    );
+    press(cx, "tab", false);
+    assert_eq!(
+        view.read_with(cx, |v, _| v.about.as_ref().and_then(|a| a.focused)),
+        Some(1)
+    );
+}
+
+/// The new-session dialog keeps the keyboard: About waits for it.
+#[gpui::test]
+fn about_does_not_open_over_the_new_session_dialog(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    let request = view.update(cx, |v, _| {
+        v.browser_state.request = v.browser_request;
+        v.browser_state.surface = browser::Surface::Home;
+        v.browser_state.home_phase = browser::HomePhase::Live;
+        v.browser_state.create_session = Some(browser::CreateSession {
+            phase: browser::CreatePhase::Idle,
+            error: None,
+            revision: 0,
+        });
+        v.browser_request
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_new_session(request, window, cx)));
+    assert!(view.read_with(cx, |v, _| v.new_session.is_some()));
+    open(cx);
+    view.read_with(cx, |v, _| {
+        assert!(v.about.is_none());
+        assert!(v.new_session.is_some());
+    });
+}

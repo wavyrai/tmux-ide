@@ -48,20 +48,45 @@ pub(in crate::tmux_snapshot) fn due(welcome: &State) -> Option<&'static [&'stati
 }
 
 impl SnapshotView {
+    /// The card's two keyboard stops while it shows: See everything, Close.
+    pub(in crate::tmux_snapshot) fn whats_new_stops(
+        &mut self,
+        cx: &App,
+    ) -> Option<[FocusHandle; 2]> {
+        due(&self.welcome)?;
+        while self.welcome.whats_new_focus.len() < 2 {
+            self.welcome.whats_new_focus.push(cx.focus_handle());
+        }
+        Some([
+            self.welcome.whats_new_focus[0].clone(),
+            self.welcome.whats_new_focus[1].clone(),
+        ])
+    }
+    /// Whether the keyboard is on one of the card's buttons.
+    pub(in crate::tmux_snapshot) fn whats_new_focused(&self, window: &Window) -> bool {
+        due(&self.welcome).is_some()
+            && self
+                .welcome
+                .whats_new_focus
+                .iter()
+                .any(|focus| focus.is_focused(window))
+    }
     pub(in crate::tmux_snapshot) fn close_whats_new(&mut self, cx: &mut Context<Self>) {
         self.welcome.whats_new_seen = self.welcome.version.clone();
         self.save_welcome(cx);
         cx.notify();
     }
     pub(in crate::tmux_snapshot) fn whats_new_card(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         use bezel_ui::surface::Surfaced as _;
+        let [all_focus, close_focus] = self.whats_new_stops(cx)?;
         let notes = due(&self.welcome)?;
         let version = self.welcome.version.clone()?;
         let bezel = super::super::glass_ink::on_regular_glass(&self.home_palette());
         let title = format!("What's new in Tmux IDE {version}");
+        let ring = bezel.ring;
         Some(
             bezel_ui::popover::popover_card(&bezel)
                 .id("whats-new")
@@ -105,6 +130,10 @@ impl SnapshotView {
                                 .debug_selector(|| "whats-new-all".into())
                                 .role(Role::Button)
                                 .aria_label("See everything")
+                                .track_focus(&all_focus.tab_stop(true))
+                                .border_1()
+                                .border_color(transparent_black())
+                                .focus_visible(move |s| s.border_color(ring))
                                 .cursor_pointer()
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     cx.stop_propagation();
@@ -119,10 +148,15 @@ impl SnapshotView {
                                 .debug_selector(|| "whats-new-close".into())
                                 .role(Role::Button)
                                 .aria_label("Close What's new")
+                                .track_focus(&close_focus.tab_stop(true))
+                                .border_1()
+                                .border_color(transparent_black())
+                                .focus_visible(move |s| s.border_color(ring))
                                 .cursor_pointer()
-                                .on_click(cx.listener(|view, _, _, cx| {
+                                .on_click(cx.listener(|view, _, window, cx| {
                                     cx.stop_propagation();
                                     view.close_whats_new(cx);
+                                    view.terminal_focus.focus(window, cx);
                                 })),
                         ),
                 )

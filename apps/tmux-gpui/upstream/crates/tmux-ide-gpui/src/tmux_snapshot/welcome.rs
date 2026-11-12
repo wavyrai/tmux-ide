@@ -64,6 +64,8 @@ pub(super) struct State {
     ticking: bool,
     /// The keyboard order of the welcome's buttons.
     pub(super) focus: Vec<FocusHandle>,
+    /// The What's new card's See everything and Close, in keyboard order.
+    pub(super) whats_new_focus: Vec<FocusHandle>,
 }
 
 /// What first run means for this window, decided once per run.
