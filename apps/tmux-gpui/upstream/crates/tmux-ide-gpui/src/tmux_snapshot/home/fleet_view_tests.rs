@@ -232,7 +232,23 @@ fn a_resized_page_draws_the_table_again(cx: &mut TestAppContext) {
 #[gpui::test]
 fn each_table_input_changes_the_key(cx: &mut TestAppContext) {
     type Change = fn(&mut SnapshotView);
-    let changes: [(&str, Change); 16] = [
+    fn roster(status: &str, phase: &str) -> Option<browser::home_agents::Roster> {
+        serde_json::from_value(serde_json::json!({"revision": 5, "phase": phase, "rows": [
+            {"key": "busy", "sessionId": "$1", "paneId": "p1", "name": "Busy",
+             "sessionLabel": "project-1", "status": status, "attention": false,
+             "available": true}],
+            "observedSessions": 1, "totalSessions": 1, "truncatedSessions": 0,
+            "truncatedRows": 0, "note": null}))
+        .ok()
+    }
+    let changes: [(&str, Change); 19] = [
+        ("no agents", |view| view.browser_state.home_agents = None),
+        ("an agent's state", |view| {
+            view.browser_state.home_agents = roster("DONE", "live")
+        }),
+        ("the roster's phase", |view| {
+            view.browser_state.home_agents = roster("WORKING", "unavailable")
+        }),
         ("a session's name", |view| {
             view.browser_state.fleet = Some(fleet(30, "renamed"))
         }),
@@ -289,6 +305,11 @@ fn each_table_input_changes_the_key(cx: &mut TestAppContext) {
     // Each from the same starting window, so no change hides another.
     for (name, change) in changes {
         let (view, cx) = open(cx, 30);
+        cx.update(|_, cx| {
+            view.update(cx, |view, _| {
+                view.browser_state.home_agents = roster("WORKING", "live")
+            })
+        });
         let key = |cx: &mut VisualTestContext| {
             cx.update(|window, cx| view.read(cx).home_fleet_key(false, window, cx))
         };

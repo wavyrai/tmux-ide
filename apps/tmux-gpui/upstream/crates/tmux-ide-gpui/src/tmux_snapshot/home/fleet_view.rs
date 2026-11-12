@@ -168,7 +168,26 @@ impl SnapshotView {
         // The agents on the rows, and whether their state may be old.
         self.agents_shown_last_known().hash(&mut hash);
         if let Some(roster) = &state.home_agents {
-            for agent in &roster.rows {
+            let browser::home_agents::Roster {
+                // Not shown: a republished roster with the same rows replays.
+                revision: _,
+                phase,
+                rows,
+                observed_sessions,
+                total_sessions,
+                truncated_sessions,
+                truncated_rows,
+                note,
+            } = roster;
+            (std::mem::discriminant(phase), note).hash(&mut hash);
+            (
+                observed_sessions,
+                total_sessions,
+                truncated_sessions,
+                truncated_rows,
+            )
+                .hash(&mut hash);
+            for agent in rows {
                 crate::tmux_snapshot::browser_ui::sidebar_view::agent_hash(agent, &mut hash);
                 self.agent_last_known(agent).hash(&mut hash);
             }
