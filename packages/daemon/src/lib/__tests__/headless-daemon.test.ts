@@ -802,6 +802,48 @@ describe("bounded stop on a signal", () => {
     }
   });
 
+  // Review B2 (D3): repeating the signal must not buy a hung teardown more time.
+  it("keeps the first deadline when the signal is sent again and again", async () => {
+    const f = bounded(80);
+    const start = f.harness.deps.startEmbeddedDaemon;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...f.deps,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          stop: () => never,
+          stopDiagnostics: () => stuck,
+          abandon: f.abandon,
+        }),
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(f.harness.lines).toHaveLength(1));
+      const signalled = performance.now();
+      f.harness.signals.get("SIGTERM")?.();
+      const repeating = setInterval(() => {
+        f.harness.signals.get("SIGTERM")?.();
+        f.harness.signals.get("SIGINT")?.();
+      }, 20);
+      try {
+        await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
+      } finally {
+        clearInterval(repeating);
+      }
+      // One 80 ms window from the FIRST signal; a re-armed timer would never fire here.
+      expect(performance.now() - signalled).toBeLessThan(400);
+      expect(f.exit).toHaveBeenCalledExactlyOnceWith(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
+      expect(f.errors).toHaveBeenCalledExactlyOnceWith(
+        "daemon-lifecycle",
+        expect.any(String),
+        expect.objectContaining({ signal: "SIGTERM" }),
+      );
+    } finally {
+      f.errors.mockRestore();
+    }
+  });
+
   // Review N1: a slow teardown that keeps settling steps is not a hang.
   it("renews the deadline while teardown steps keep settling, and lets that stop finish", async () => {
     const f = bounded(40);

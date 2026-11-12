@@ -5,13 +5,15 @@ import {
   createEmbeddedTmuxServerOwners,
 } from "./embedded-tmux-server-owners.ts";
 
-const mocks = vi.hoisted(() => ({ probe: vi.fn() }));
+const mocks = vi.hoisted(() => ({ probe: vi.fn(), createNative: vi.fn() }));
+vi.mock("./tmux-server-owner.ts", () => ({ createNativeTmuxServerOwner: mocks.createNative }));
 vi.mock("./tmux-server-registration.ts", () => ({
   readTmuxServerRegistrations: () => [],
   writeTmuxServerRegistrations: vi.fn(),
   createDiagnosedTmuxServerProbe: () => mocks.probe,
 }));
 beforeEach(() => {
+  mocks.createNative.mockReset();
   mocks.probe.mockReset();
   mocks.probe.mockResolvedValue({ fingerprint: "verified", valid: () => true });
 });
@@ -178,6 +180,50 @@ describe("embedded owner initialization cleanup", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    // Review B2 (R30, R32): the wiring that tells streams WHY, through the real `create` callback.
+    it("replaces an unadopted default as server-replaced and retires its native owner as tmux-server-retired", async () => {
+      const defaultDispose = vi.fn(async () => {});
+      const shutdown = vi.fn(async (_close?: { code: number; reason: string }) => {});
+      const nativeDispose = vi.fn(async () => {});
+      mocks.createNative.mockImplementation(async (options: { serverId: string }) => ({
+        serverId: options.serverId,
+        paneStreamRuntime: { coordinator: { shutdown } },
+        dispose: nativeDispose,
+      }));
+      // The server that answers is not the one the default owner was proven against,
+      // so the default is not adopted and its registration is built as a native owner.
+      const deadPid = 2 ** 22 - 3;
+      mocks.probe.mockResolvedValue({ ...verified(deadPid), fingerprint: "another-server" });
+      const embedded = await embed(defaultDispose);
+      expect(mocks.createNative).toHaveBeenCalledTimes(1);
+      expect(defaultDispose).toHaveBeenCalledExactlyOnceWith("server-replaced");
+      expect(embedded.owners.list()[0]).toMatchObject({ state: "online" });
+      expect(shutdown).not.toHaveBeenCalled();
+
+      // Its server process is gone and the probe misses: the native owner is retired in place.
+      mocks.probe.mockResolvedValue(timeout);
+      expect((await embedded.owners.refresh())[0]).toMatchObject({ state: "offline" });
+      expect(shutdown).toHaveBeenCalledWith({ code: 1012, reason: "tmux-server-retired" });
+      expect(shutdown.mock.calls[0]).toEqual([{ code: 1012, reason: "tmux-server-retired" }]);
+      expect(nativeDispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+      await embedded.dispose();
+    });
+
+    it("tells a native owner's streams daemon-restarting when the generation restarts", async () => {
+      const shutdown = vi.fn(async (_close?: { code: number; reason: string }) => {});
+      const nativeDispose = vi.fn(async () => {});
+      mocks.createNative.mockImplementation(async (options: { serverId: string }) => ({
+        serverId: options.serverId,
+        paneStreamRuntime: { coordinator: { shutdown } },
+        dispose: nativeDispose,
+      }));
+      mocks.probe.mockResolvedValue({ ...verified(process.pid), fingerprint: "another-server" });
+      const embedded = await embed(vi.fn(async () => {}));
+      await embedded.dispose("generation-restart");
+      expect(shutdown.mock.calls[0]).toEqual([{ code: 1012, reason: "daemon-restarting" }]);
+      expect(nativeDispose).toHaveBeenCalledExactlyOnceWith("generation-restart");
     });
 
     it("does not wait out the retries when tmux itself says there is no server", async () => {
