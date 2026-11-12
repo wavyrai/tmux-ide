@@ -310,16 +310,16 @@ describe("owner retirement needs positive evidence (#840)", () => {
     const clock = { now: 10_000 };
     // By default the bound never expires, so a read waits for the work in flight.
     const delay = vi.fn((_ms: number) => new Promise<void>(() => {}));
-    const socket = { present: true, stale: false, refuses: false as boolean | Error };
+    const socket = { present: true, stale: false, processReplaced: false as boolean | Error };
     const owners = new TmuxServerOwners({
       probe,
       create,
       serverProcessAlive,
       serverSocketPresent: () => socket.present,
       selectorSocketRefuses: async () => socket.stale,
-      socketRefuses: async () => {
-        if (socket.refuses instanceof Error) throw socket.refuses;
-        return socket.refuses;
+      serverProcessReplaced: async () => {
+        if (socket.processReplaced instanceof Error) throw socket.processReplaced;
+        return socket.processReplaced;
       },
       onEvent: (event) => events.push(event),
       now: () => clock.now,
@@ -709,8 +709,8 @@ describe("owner retirement needs positive evidence (#840)", () => {
     await f.owners.dispose();
   });
 
-  // Review (pid reuse): the server died, another process has its pid, the socket file is stale.
-  it("retires an owner whose socket refuses connections even though its pid is alive", async () => {
+  // Review (pid reuse): the server died and another process has its pid.
+  it("retires an owner whose pid now belongs to another process", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a"));
     const online = scope(
@@ -718,25 +718,47 @@ describe("owner retirement needs positive evidence (#840)", () => {
     );
     const owner = f.owners.current(online);
     f.observations.set("a", timeout);
-    // A socket that still accepts, or a check that fails, keeps the owner.
+    // Still the same process, or a check that fails: the owner is kept.
     expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
-    f.socket.refuses = new Error("EMFILE");
+    f.socket.processReplaced = new Error("ps: EAGAIN");
     expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
     expect(owner.dispose).not.toHaveBeenCalled();
-    f.socket.refuses = true;
+    f.socket.processReplaced = true;
     expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
     expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
     expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
-      trigger: "socket-refused",
+      trigger: "server-process-replaced",
       probe: { failure: "timeout" },
     });
     await f.owners.dispose();
   });
 
-  it("does not ask the socket while tmux answers", async () => {
+  // Review C1: a live tmux server that is not accepting has a full accept queue; its socket
+  // refuses connections and tmux itself prints "no server running". It must keep its owner.
+  it("keeps the owner of a live server whose socket refuses connections", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a"));
-    f.socket.refuses = true;
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.socket.stale = true; // every connect is refused
+    f.observations.set("a", { failure: "no-server" as const, detail: "no server running on …" });
+    for (let round = 0; round < 3; round += 1)
+      expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    expect((await f.owners.sweep())[0]).toMatchObject({ generation: online.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    expect(f.events.at(-1)).toMatchObject({
+      type: "owner-kept",
+      probe: { failure: "no-server" },
+    });
+    await f.owners.dispose();
+  });
+
+  it("does not ask about the process while tmux answers", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    f.socket.processReplaced = true;
     const online = scope(
       await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
     );

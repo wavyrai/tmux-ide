@@ -3,7 +3,9 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  processIsNotTmuxServer,
   tmuxSelectorSocketPath,
+  tmuxServerProcessReplaced,
   tmuxServerSocketPresent,
   unixSocketRefusesConnections,
 } from "./tmux-server-registration.ts";
@@ -59,5 +61,48 @@ describe("cheap checks on a tmux server socket (no subprocess)", () => {
     await new Promise((resolve) => holder.close(() => resolve(null)));
     writeFileSync(stale, "");
     expect(await unixSocketRefusesConnections(stale)).toBe(true);
+  });
+
+  // Review C1: a refusal is what a stalled live server looks like too, so the owner's fate is
+  // decided by who has the server's pid, never by a refused connection.
+  describe("is the server's pid still that tmux server?", () => {
+    const now = 1_794_500_000;
+    it("says another process has the pid when the command is not tmux", () => {
+      expect(processIsNotTmuxServer("   02:13 /usr/bin/node", String(now - 133), now)).toBe(true);
+      expect(processIsNotTmuxServer("12-07:10:40 sleep", String(now - 1_062_640), now)).toBe(true);
+    });
+    it("says another process has the pid when it started at another time", () => {
+      // A tmux, but one that started an hour after the server we knew.
+      expect(processIsNotTmuxServer("   02:13 tmux", String(now - 3_733), now)).toBe(true);
+    });
+    it("recognises the same server, in any spelling of its command", () => {
+      for (const command of [
+        "tmux",
+        "tmux: server",
+        "/opt/homebrew/bin/tmux",
+        "/Users/a b/tmux-ide/native/tmux/darwin-arm64/tmux",
+      ])
+        expect(processIsNotTmuxServer(`12-07:10:40 ${command}`, String(now - 1_062_640), now)).toBe(
+          false,
+        );
+      // A few seconds between the process start and the server's own clock reading are normal.
+      expect(processIsNotTmuxServer("   02:13 tmux", String(now - 133 + 4), now)).toBe(false);
+      expect(processIsNotTmuxServer("01:02:13 tmux", String(now - 3_733), now)).toBe(false);
+    });
+    it("decides nothing from output it cannot read", () => {
+      for (const line of ["", "garbage", "tmux", "02:13"])
+        expect(processIsNotTmuxServer(line, String(now), now)).toBe(false);
+      expect(processIsNotTmuxServer("   02:13 tmux", "not-a-number", now)).toBe(false);
+    });
+    it("asks ps about a real process and never throws", async () => {
+      // This test process is alive and is not tmux.
+      expect(await tmuxServerProcessReplaced({ pid: String(process.pid), startTime: "1" })).toBe(
+        true,
+      );
+      expect(await tmuxServerProcessReplaced({ pid: "0", startTime: "1" })).toBe(false);
+      expect(await tmuxServerProcessReplaced({ pid: "abc", startTime: "1" })).toBe(false);
+      // A pid nobody has: ps fails, nothing is decided (liveness is a separate check).
+      expect(await tmuxServerProcessReplaced({ pid: "4194301", startTime: "1" })).toBe(false);
+    });
   });
 });

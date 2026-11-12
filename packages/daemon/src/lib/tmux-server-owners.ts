@@ -65,7 +65,7 @@ export interface DisposableTmuxServerOwner {
 export type TmuxServerOwnerRetirementTrigger =
   | "server-process-gone"
   | "socket-identity-changed"
-  | "socket-refused"
+  | "server-process-replaced"
   | "server-identity-unknown"
   | "fingerprint-changed"
   | "removed"
@@ -125,7 +125,7 @@ export function createRetryDelayMs(failures: number): number {
 const RETIREMENT_OF: Record<TmuxServerOwnerRetirementTrigger, TmuxServerOwnerRetirement> = {
   "server-process-gone": "server-gone",
   "socket-identity-changed": "server-gone",
-  "socket-refused": "server-gone",
+  "server-process-replaced": "server-gone",
   "server-identity-unknown": "server-gone",
   "fingerprint-changed": "server-replaced",
   removed: "removed",
@@ -175,11 +175,21 @@ export interface TmuxServerOwnersOptions<T extends DisposableTmuxServerOwner> {
   /** Liveness of the tmux server process; injectable for tests. */
   readonly serverProcessAlive?: (pid: string) => boolean;
   /**
-   * Asked only when a probe missed and the owner would otherwise be kept:
-   * does the owner's socket refuse connections outright? True is positive
-   * evidence that no server listens there, even if its pid was reused.
+   * Asked only when a probe missed and the owner would otherwise be kept: is
+   * the process that now has the server's pid provably NOT that tmux server
+   * (the server died and the pid was reused)? True is positive evidence.
+   * False or a failure keeps the owner.
+   *
+   * A refused connection is deliberately not used for this. A tmux server that
+   * is alive but not accepting for a while has a full accept queue, and the
+   * kernel then answers ECONNREFUSED exactly as for a dead one: measured on
+   * macOS with a stopped server, connection 129 was refused while the server
+   * was fine (review C1). That would be the #840 drop again.
    */
-  readonly socketRefuses?: (observation: TmuxServerObservation) => Promise<boolean>;
+  readonly serverProcessReplaced?: (identity: {
+    readonly pid: string;
+    readonly startTime: string;
+  }) => Promise<boolean>;
   /**
    * A stat, no subprocess: can a server exist for this selector at all? While
    * the socket file is missing, neither the sweep nor a read spawns a probe.
@@ -288,10 +298,12 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     });
     if (failure !== undefined) throw failure;
   }
-  /** A failing check is not evidence: only a clear refusal counts. */
-  async #socketRefuses(observation: TmuxServerObservation): Promise<boolean> {
+  /** A failing check is not evidence: only a clear "another process" counts. */
+  async #serverProcessReplaced(observation: TmuxServerObservation): Promise<boolean> {
+    const identity = observation.nativeServerIdentity;
+    if (!identity || !this.options.serverProcessReplaced) return false;
     try {
-      return (await this.options.socketRefuses?.(observation)) === true;
+      return (await this.options.serverProcessReplaced(identity)) === true;
     } catch {
       return false;
     }
@@ -357,9 +369,9 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
       else if (pid === undefined) trigger = "server-identity-unknown";
       else if (!(this.options.serverProcessAlive ?? processAlive)(pid))
         trigger = "server-process-gone";
-      // The pid is alive, but a pid can be reused after the server died. A
-      // socket that refuses connections has no server behind it (review: pid reuse).
-      else if (await this.#socketRefuses(current)) trigger = "socket-refused";
+      // The pid is alive, but a pid can be reused after the server died: is
+      // the process behind it still that server (review: pid reuse, C1)?
+      else if (await this.#serverProcessReplaced(current)) trigger = "server-process-replaced";
       else {
         entry.probeFailures += 1;
         this.#emit({

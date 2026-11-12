@@ -14,6 +14,7 @@ vi.mock("./tmux-server-registration.ts", () => ({
   tmuxSelectorSocketPath: () => "/fixture/socket",
   tmuxServerSocketPresent: () => true,
   unixSocketRefusesConnections: async () => false,
+  tmuxServerProcessReplaced: async () => false,
 }));
 beforeEach(() => {
   mocks.createNative.mockReset();

@@ -87,11 +87,64 @@ export function tmuxServerSocketPresent(selector: TmuxServerRegistration["select
     return code !== "ENOENT" && code !== "ENOTDIR";
   }
 }
+/**
+ * PURE. Given what `ps -o etime=,comm= -p <pid>` printed for the pid a tmux
+ * server had, is this provably another process? Yes when its command does not
+ * mention tmux at all, or when it started at another time than the server
+ * reported (`#{start_time}`, epoch seconds). Elapsed time is used rather than
+ * a start date so that neither locale nor time zone can make a live server
+ * look replaced. Unreadable output decides nothing.
+ */
+export const SERVER_START_TOLERANCE_SECONDS = 10;
+export function processIsNotTmuxServer(
+  psLine: string,
+  startTime: string,
+  nowSeconds: number,
+): boolean {
+  // "[[dd-]hh:]mm:ss command…", e.g. "12-07:10:40 /opt/…/tmux" or "02:13 tmux: server".
+  const match = /^\s*(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s+(\S.*)$/u.exec(psLine);
+  if (!match) return false;
+  if (!/tmux/iu.test(match[5]!)) return true;
+  const elapsed =
+    Number(match[1] ?? 0) * 86_400 +
+    Number(match[2] ?? 0) * 3_600 +
+    Number(match[3]) * 60 +
+    Number(match[4]);
+  const reported = Number(startTime);
+  if (!Number.isSafeInteger(reported) || reported <= 0) return false;
+  return Math.abs(nowSeconds - elapsed - reported) > SERVER_START_TOLERANCE_SECONDS;
+}
+/** One `ps`, and only when a probe missed while the server's pid is alive. */
+export async function tmuxServerProcessReplaced(identity: {
+  readonly pid: string;
+  readonly startTime: string;
+}): Promise<boolean> {
+  if (!/^[1-9][0-9]*$/u.test(identity.pid)) return false;
+  try {
+    const { stdout } = await exec("/bin/ps", ["-o", "etime=,comm=", "-p", identity.pid], {
+      env: { LC_ALL: "C" },
+      encoding: "utf8",
+      timeout: 1_000,
+      maxBuffer: 4_096,
+    });
+    return processIsNotTmuxServer(
+      stdout.split("\n", 1)[0] ?? "",
+      identity.startTime,
+      Date.now() / 1_000,
+    );
+  } catch {
+    return false;
+  }
+}
 export const SOCKET_CONNECT_TIMEOUT_MS = 250;
 /**
  * Does this unix socket refuse connections outright (nobody listening, or no
  * socket at all)? A connection that is accepted is closed at once; a timeout
  * or any other error is not a refusal.
+ *
+ * A refusal is NOT proof that no server exists: a live server with a full
+ * accept queue is refused too. Use it only where a wrong "refused" is
+ * harmless, i.e. to skip probing a registration that is already offline.
  */
 export function unixSocketRefusesConnections(
   path: string,

@@ -20,6 +20,7 @@ import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import {
   createDiagnosedTmuxServerProbe,
   tmuxSelectorSocketPath,
+  tmuxServerProcessReplaced,
   tmuxServerSocketPresent,
   unixSocketRefusesConnections,
   readTmuxServerRegistrations,
@@ -149,8 +150,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
     serverSocketPresent: tmuxServerSocketPresent,
     selectorSocketRefuses: (selector) =>
       unixSocketRefusesConnections(tmuxSelectorSocketPath(selector)),
-    socketRefuses: (observation) =>
-      unixSocketRefusesConnections(tmuxSelectorSocketPath(observation.authority.socketSelector)),
+    serverProcessReplaced: tmuxServerProcessReplaced,
     onEvent: logTmuxServerOwnersEvent,
     persist: (registrations) => writeTmuxServerRegistrations(path, registrations),
     create: async (registration, scope, observation) => {
