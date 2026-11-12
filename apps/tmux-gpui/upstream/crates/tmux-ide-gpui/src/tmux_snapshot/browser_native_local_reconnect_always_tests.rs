@@ -555,3 +555,31 @@ fn a_refresh_in_an_inactive_window_reads_the_panes_again_within_the_recovery() {
     assert!(matches!(local.stage, Some(Stage::Servers)));
     assert_eq!(local.state.surface, Surface::Workspace);
 }
+
+/// A daemon that answers but no longer knows the generation (it restarted, or
+/// rebuilt the server owner) is news, not a failure to wait out: the catalog
+/// is read at once. In the soak a killed daemon was back for five seconds
+/// before the window was, because this step waited out the whole backoff.
+#[test]
+fn a_daemon_that_no_longer_knows_the_generation_is_rediscovered_at_once() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    // The daemon was gone for a while.
+    for _ in 0..6 {
+        local.recovery.as_mut().unwrap().due = Some(Instant::now());
+        local.reconnect_tick().unwrap();
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+    }
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    // It is back and refuses the old generation.
+    local.reconnect_retry(Failure::Other).unwrap();
+    assert!(local.recovery.as_ref().unwrap().rebind.is_none());
+    assert!(local.recovery.as_ref().unwrap().due.unwrap() <= Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Servers)));
+    // A failure of the rediscovery itself backs off as before.
+    let before = Instant::now();
+    local.reconnect_retry(Failure::Other).unwrap();
+    assert_eq!(delay(&local, before), 5000);
+}

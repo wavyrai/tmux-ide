@@ -241,8 +241,16 @@ impl Local {
             return self.unavailable(UPDATE_APP);
         }
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
-            // Not the daemon or session the stream came from: look it up again.
+            // Not the daemon or session the stream came from: look it up again,
+            // now. The daemon answered, so this is news, not a failure to wait
+            // out, and it happens once per recovery.
             recovery.rebind = None;
+            recovery.rediscover_owner = true;
+            recovery.due = Some(Instant::now());
+            self.stage = None;
+            self.submitted = false;
+            self.state.status = RECONNECTING.into();
+            return self.publish();
         } else if recovery.rebind.is_none()
             && failure == Failure::Identity
             && recovery.local_record.is_none()

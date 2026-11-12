@@ -19,15 +19,20 @@
 //                             it loads every core of the machine for 8 s)
 //   SOAK_REPORT=/abs/file.json  the full report; SOAK_TRANSCRIPT, SOAK_DAEMON_LOG
 //
-// Isolation: its own HOME, TMUX_IDE_HOME, daemon record, port and tmux socket
-// (-S, under the scratch root). It refuses to run on the default tmux socket
-// directory or on port 56983, and only signals processes it started.
+// Isolation: its own HOME, TMUX_IDE_HOME, daemon record, port, tmux socket (-S)
+// and TMUX_TMPDIR, all under the scratch root; TMUX is unset here and points at
+// the scratch socket for the daemon. Every tmux the daemon runs goes through a
+// wrapper that sets the private TMUX_TMPDIR and refuses the default socket
+// directory (/tmp/tmux-UID), so nothing can reach the user's own tmux server
+// even after the scratch server is killed. The run stops at once if the daemon
+// ever lists a session this harness did not create. It refuses port 56983 and
+// only signals processes it started.
 import assert from "node:assert/strict";
 import process from "node:process";
 import console from "node:console";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -43,6 +48,10 @@ assert(
   guiTestBinary && isAbsolute(guiTestBinary),
   "Usage: node --import tsx native-connection-soak.mjs ABS_GUI_TEST_BINARY",
 );
+assert((await stat(guiTestBinary)).isFile(), `not a file: ${guiTestBinary}`);
+// Before anything can start tmux: no inherited TMUX, and a private TMUX_TMPDIR.
+delete process.env.TMUX;
+delete process.env.TMUX_PANE;
 const seconds = Number(process.env.SOAK_SECONDS ?? 600);
 const settleMs = Number(process.env.SOAK_SETTLE_MS ?? 12_000);
 const inactive = process.env.SOAK_INACTIVE === "1";
@@ -54,26 +63,39 @@ const socket = realpathSync(scratch.socketPath);
 assert(!/^(\/private)?\/tmp\/tmux-\d+\//u.test(socket), `refusing tmux socket ${socket}`);
 assert.notEqual(scratch.environment.HOME, ownerHome, "refusing the owner's HOME");
 const signals = join(scratch.root, "signals");
+const tmuxDir = join(scratch.root, "tmux");
 await mkdir(signals, { recursive: true });
+await mkdir(tmuxDir, { recursive: true, mode: 0o700 });
+process.env.TMUX_TMPDIR = tmuxDir;
 
-// The daemon's tmux, wrapped: while `slow-probe` exists, the probe the daemon
-// runs before it lists servers answers after 2 s instead of at once. That is
-// what a loaded machine does to it, and what made the daemon rebuild the
-// server owner and close every stream with 1001 "daemon-shutdown".
+// The daemon's tmux, wrapped. It pins TMUX_TMPDIR to the scratch root and
+// refuses the default socket directory. And while `slow-probe` exists, the
+// probe the daemon runs before it lists servers answers after 2 s instead of
+// at once: that is what a loaded machine does to it, and what made the daemon
+// rebuild the server owner and close every stream with 1001 "daemon-shutdown".
 const realTmux = scratch.environment.TMUX_IDE_TMUX_BIN;
 const slowTmux = join(scratch.root, "tmux-slow");
 await writeFile(
   slowTmux,
-  `#!/bin/sh\nif [ -e '${signals}/slow-probe' ]; then\n  case "$*" in *socket_path*) sleep 2 ;; esac\nfi\nexec '${realTmux}' "$@"\n`,
+  [
+    "#!/bin/sh",
+    `export TMUX_TMPDIR='${tmuxDir}'`,
+    'case "$*" in */tmp/tmux-[0-9]*) echo "soak: refusing the default tmux socket" >&2; exit 97 ;; esac',
+    `if [ -e '${signals}/slow-probe' ]; then`,
+    '  case "$*" in *socket_path*) sleep 2 ;; esac',
+    "fi",
+    `exec '${realTmux}' "$@"`,
+    "",
+  ].join("\n"),
 );
 await chmod(slowTmux, 0o755);
 const fleet = {
   ...scratch,
-  environment: { ...scratch.environment, TMUX_IDE_TMUX_BIN: slowTmux, TMUX_TMPDIR: scratch.root },
+  environment: { ...scratch.environment, TMUX_IDE_TMUX_BIN: slowTmux, TMUX_TMPDIR: tmuxDir },
 };
 const tmux = (...argv) =>
   execFileSync(realTmux, ["-S", scratch.socketPath, ...argv], {
-    env: { ...process.env, ...scratch.environment },
+    env: { ...process.env, ...scratch.environment, TMUX_TMPDIR: tmuxDir },
     encoding: "utf8",
     timeout: 5000,
     stdio: ["ignore", "pipe", "pipe"],
@@ -102,6 +124,23 @@ const api = async (path) => {
     return response.status;
   } catch {
     return 0;
+  }
+};
+
+// Every session this daemon may list was created here, under these names.
+const ours = /^(e2e-soak-|soak-|churn-)/u;
+const assertIsolated = async () => {
+  try {
+    const response = await fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, {
+      headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return;
+    const body = await response.json();
+    const foreign = (body.sessions ?? []).map((s) => s.label).filter((label) => !ours.test(label));
+    assert.deepEqual(foreign, [], "ISOLATION BREACH: the scratch daemon lists a foreign session");
+  } catch (error) {
+    if (error?.code === "ERR_ASSERTION") throw error;
   }
 };
 
@@ -261,7 +300,7 @@ if (process.env.SOAK_MODE === "late-daemon") {
       {
         env: {
           ...process.env,
-          ...scratch.environment,
+          ...fleet.environment,
           TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -311,7 +350,7 @@ try {
     {
       env: {
         ...process.env,
-        ...scratch.environment,
+        ...fleet.environment,
         TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
         TMUX_IDE_TEST_SIGNAL_DIR: signals,
         TMUX_IDE_SOAK_INACTIVE: inactive ? "1" : "",
@@ -371,6 +410,7 @@ try {
       did = `fault failed: ${error.message}`;
     }
     await rm(join(signals, "busy"), { force: true });
+    await assertIsolated();
     injected.push({ tag, name, at, did, expectedEnd: expectedEnd.has(name) });
     console.error(`[soak] injected ${tag}: ${did}`);
     await sleep(settleMs);
