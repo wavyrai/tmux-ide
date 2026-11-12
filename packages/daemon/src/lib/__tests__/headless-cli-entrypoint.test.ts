@@ -464,7 +464,9 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     // exit never speaks, and nothing of the owner is left behind: no record,
     // no startup claim, no listening socket.
     expect(result.stdout + result.stderr).not.toContain("stop missed the signal deadline");
-    expect(result.stdout).toContain('"msg":"generation stopped"');
+    // `--headless --json` keeps its promise of one status line on stdout: a
+    // routine start and stop add no log line to it.
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({ status: "ready", pid: owner.pid });
     expect(
       readdirSync(env.TMUX_IDE_DAEMON_INFO_DIR!).filter((name) => /daemon|claim/u.test(name)),
     ).toEqual([]);
