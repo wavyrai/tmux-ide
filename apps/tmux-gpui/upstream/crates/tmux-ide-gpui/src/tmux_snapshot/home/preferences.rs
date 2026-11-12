@@ -64,6 +64,43 @@ impl SnapshotView {
         icon: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (tip, button, enabled) =
+            self.fleet_preference_parts(id, action, enabled_value, label, icon, cx);
+        tip.child(
+            div()
+                .debug_selector(move || {
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    format!("{}-{}-{state}", id.0, id.1)
+                })
+                .child(button),
+        )
+        .into_any_element()
+    }
+    /// [`Self::fleet_preference_button`] with the button straight in its
+    /// tooltip box: one box fewer for each of Home's session rows, where the
+    /// caller styles that box itself (step 1b).
+    pub(in crate::tmux_snapshot) fn fleet_preference_tip(
+        &self,
+        id: (&'static str, usize),
+        action: Option<&str>,
+        enabled_value: bool,
+        label: &'static str,
+        icon: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (tip, button, _) =
+            self.fleet_preference_parts(id, action, enabled_value, label, icon, cx);
+        tip.child(button)
+    }
+    fn fleet_preference_parts(
+        &self,
+        id: (&'static str, usize),
+        action: Option<&str>,
+        enabled_value: bool,
+        label: &'static str,
+        icon: &'static str,
+        cx: &mut Context<Self>,
+    ) -> (Stateful<Div>, bezel_ui::widgets::Button, bool) {
         let request = self.browser_request;
         let revision = self
             .browser_state
@@ -89,23 +126,15 @@ impl SnapshotView {
                     view.change_fleet_preference(request, revision, action, enabled_value, cx);
                 }
             }));
-        div()
+        let tip = div()
             .id(SharedString::from(format!("{}-{}-tip", id.0, id.1)))
             .accessibility_id(format!("{}-{}", id.0, id.1))
             .debug_selector(move || format!("{}-{}", id.0, id.1))
             .flex_shrink_0()
-            .child(
-                div()
-                    .debug_selector(move || {
-                        let state = if enabled { "enabled" } else { "disabled" };
-                        format!("{}-{}-{state}", id.0, id.1)
-                    })
-                    .child(button),
-            )
             .when(enabled, |tip| {
                 tip.tooltip(move |_, cx| crate::tmux_snapshot::glass_ink::tooltip(label, None, cx))
-            })
-            .into_any_element()
+            });
+        (tip, button, enabled)
     }
     /// Saving progress, or why a preference did not apply.
     pub(in crate::tmux_snapshot) fn fleet_preference_status(&self) -> Option<Status<'_>> {
