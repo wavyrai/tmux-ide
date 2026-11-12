@@ -175,6 +175,9 @@ function markStreamFailed(name: StreamName, error: unknown): void {
   const other: StreamName = name === "stdout" ? "stderr" : "stdout";
   // The fallback can fail asynchronously too. Install the same error handling
   // before writing it; failed flags prevent a warning loop if both streams fail.
+  // A reserved stdout carries a protocol: the warning about a failed stderr
+  // has nowhere to go then, and the records stay in the ring.
+  if (other === "stdout" && recordStream === "stderr") return;
   if (!streamState[other].failed) writeToStream(other, warning);
 }
 

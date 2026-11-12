@@ -86,7 +86,7 @@ private_dir() {
 }
 # Only tmux's own options, the ones before the command, select a server.
 # A command's -S or -L (wait-for -S, capture-pane -S -) is not a socket.
-selector=none; value=; expect=
+selector=none; value=; expect=; version=
 for argument in "$@"; do
   if [ -n "$expect" ]; then
     case "$expect" in
@@ -103,6 +103,7 @@ for argument in "$@"; do
       while [ -n "$rest" ]; do
         flag="\${rest%"\${rest#?}"}"; rest="\${rest#?}"
         case "$flag" in
+          V) version=yes ;;
           S|L|c|f|T)
             if [ -z "$rest" ]; then expect="$flag"
             elif [ "$flag" = S ]; then selector=path; value="$rest"
@@ -130,7 +131,8 @@ else
     redirect="$selector TMUX_TMPDIR=\${TMUX_TMPDIR:-unset}"
     TMUX_TMPDIR="$GUARD"; export TMUX_TMPDIR
   fi
-  if [ -n "$redirect" ]; then
+  # tmux -V prints a version and contacts no server.
+  if [ -n "$redirect" ] && [ -z "$version" ]; then
     # Which test is this? Walk up to the test process that registered itself.
     pid=$PPID; test=unknown; declared=no; hops=0
     while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$hops" -lt 8 ]; do
@@ -143,7 +145,12 @@ else
       pid="\${pid##* }"
       hops=$((hops + 1))
     done
-    if [ "$declared" = yes ]; then log="$GUARD/redirected.log"; else log="$GUARD/undeclared.log"; fi
+    # A socket name of the test's own choosing is a private server by name:
+    # nothing but that test and its daemon can know it. Only the default
+    # server (no selector, or the name "default") has to be declared.
+    if [ "$declared" = yes ]; then log="$GUARD/redirected.log"
+    elif [ "$selector" = name ] && [ "$value" != default ]; then log="$GUARD/named.log"
+    else log="$GUARD/undeclared.log"; fi
     printf 'REDIRECTED %s test=%s args=%s\\n' "$redirect" "$test" "$*" >> "$log"
   fi
 fi
@@ -175,6 +182,7 @@ export function installTmuxGuard(environment: NodeJS.ProcessEnv = process.env): 
   writeFileSync(log, "");
   writeFileSync(join(directory, "redirected.log"), "");
   writeFileSync(join(directory, "undeclared.log"), "");
+  writeFileSync(join(directory, "named.log"), "");
   environment.TMUX_IDE_TEST_TMUX_GUARD = directory;
   environment.PATH = [directory, ...(environment.PATH ?? "").split(delimiter)].join(delimiter);
   // resolveTmuxExecutable prefers a bundled binary over PATH. The configured
@@ -203,6 +211,10 @@ export function redirectedTmuxCalls(guard: Pick<TmuxGuard, "directory">): readon
   return lines(join(guard.directory, "redirected.log"));
 }
 /** Redirected calls of tests that declared nothing. Any of these fails the run. */
+/** Calls to a server the test named itself (-L <own name>), placed in the private namespace. */
+export function namedTmuxCalls(guard: Pick<TmuxGuard, "directory">): readonly string[] {
+  return lines(join(guard.directory, "named.log"));
+}
 export function undeclaredTmuxCalls(guard: Pick<TmuxGuard, "directory">): readonly string[] {
   return lines(join(guard.directory, "undeclared.log"));
 }
@@ -243,7 +255,14 @@ export function tmuxGuardViolation(environment: NodeJS.ProcessEnv): string | nul
   const directory = environment.TMUX_IDE_TEST_TMUX_GUARD;
   if (!directory || !existsSync(join(directory, "tmux")))
     return "the tmux guard is not installed (TMUX_IDE_TEST_TMUX_GUARD)";
-  if ((environment.PATH ?? "").split(delimiter)[0] !== directory)
+  // A test may put its own shim in a temp dir in front (it then calls the tmux
+  // it resolved, which is the guard); any other directory could hold a real tmux.
+  const path = (environment.PATH ?? "").split(delimiter);
+  const position = path.indexOf(directory);
+  if (
+    position < 0 ||
+    !path.slice(0, position).every((entry) => isBelowTemporaryDirectory(`${entry}/tmux`))
+  )
     return "the tmux guard is no longer first on PATH";
   // Unset, the daemon would take a bundled tmux before PATH; a test's own
   // fake tmux in a temp dir is fine, any other binary bypasses the guard.
@@ -275,13 +294,20 @@ export function assertTmuxGuarded(environment: NodeJS.ProcessEnv = process.env):
  * refused call of the run, i.e. the complete list of tests' tmux calls that
  * named no private server.
  */
-export function saveTmuxGuardReport(guard: TmuxGuard, destination: string | undefined): void {
+export function saveTmuxGuardReport(
+  guard: TmuxGuard,
+  destination: string | undefined,
+  options: { readonly undeclaredAs?: string } = {},
+): void {
   if (!destination) return;
   mkdirSync(destination, { recursive: true });
   const stamp = `${process.pid}-${Date.now()}`;
-  for (const name of ["refused.log", "undeclared.log", "redirected.log"])
+  for (const name of ["refused.log", "undeclared.log", "redirected.log", "named.log"])
     writeFileSync(
-      join(destination, `${stamp}-${name}`),
+      join(
+        destination,
+        `${stamp}-${name === "undeclared.log" ? (options.undeclaredAs ?? name) : name}`,
+      ),
       lines(join(guard.directory, name)).join("\n") + "\n",
     );
 }
