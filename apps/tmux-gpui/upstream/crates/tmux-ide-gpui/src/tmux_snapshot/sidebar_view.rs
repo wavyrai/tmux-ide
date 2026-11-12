@@ -9,16 +9,17 @@
 //! `cached_isolated`: it stays in `SnapshotView`'s tree at its old place (so
 //! paint order and the accessibility tree are as before), and is replayed
 //! while [`SnapshotView::sidebar_key`] is unchanged. On the frame the key
-//! changes it is drawn uncached. `SnapshotView` still builds the sidebar's
+//! changes it is drawn uncached, and so it is on every frame while an
+//! assistive client is connected. `SnapshotView` still builds the sidebar's
 //! elements, inside this view's render, so every handler and helper is
 //! unchanged.
 use super::{SIDEBAR_WIDTH, focus_ring, sidebar};
 use crate::tmux_snapshot::{SnapshotView, browser};
 use bezel_theme::{TextStyle, Typeset};
 use gpui::{prelude::*, *};
-use std::hash::{DefaultHasher, Hash, Hasher};
 #[cfg(test)]
 use std::cell::Cell;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// The sidebar's view. Its render asks `SnapshotView` for the elements.
 pub(in crate::tmux_snapshot) struct SidebarView {
@@ -57,7 +58,11 @@ impl Render for SidebarView {
 impl SnapshotView {
     /// The sidebar: replayed from its last paint unless its key changed, and
     /// drawn uncached on the frame it changes, so it is never a frame stale.
-    pub(super) fn sidebar_element(&mut self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn sidebar_element(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let key = self.sidebar_key(window, cx);
         let view = match &self.sidebar_view.view {
             Some(view) => view.clone(),
@@ -68,7 +73,10 @@ impl SnapshotView {
                 view
             }
         };
-        let fresh = self.sidebar_view.key.replace(key) != Some(key);
+        // GPUI builds the accessibility tree from the elements a frame
+        // prepaints, and a replayed view prepaints none: while an assistive
+        // client is connected the sidebar is drawn every frame, as before.
+        let fresh = self.sidebar_view.key.replace(key) != Some(key) || window.is_a11y_active();
         // Tests read probes that only a fresh paint records.
         #[cfg(test)]
         let fresh = fresh
@@ -298,7 +306,6 @@ impl SnapshotView {
         }
         div()
             .id("sidebar-viewport")
-            .children(crate::tmux_snapshot::design::order_probe("sidebar"))
             .debug_selector(|| "tmux-sidebar-viewport".into())
             .relative()
             .w(px(SIDEBAR_WIDTH))

@@ -538,7 +538,6 @@ impl SnapshotView {
             super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
         let content = super::shell::content_panel(content_background, card_border, is_home)
             .relative()
-            .children(super::design::order_probe("content"))
             .children(home)
             .when(!is_home, |panel| {
                 panel

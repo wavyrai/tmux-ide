@@ -1,6 +1,7 @@
-//! The sidebar drawn by the window root, replayed while unchanged: it must
-//! paint exactly what a fresh render would after every kind of change, and
-//! a terminal publication alone must not render it again.
+//! The sidebar as its own view, replayed while unchanged: it must paint
+//! exactly what a fresh render would after every kind of change, a terminal
+//! publication alone must not render it again, and an assistive client must
+//! read the tree it reads on main.
 #![allow(clippy::unwrap_used)]
 use crate::tmux_snapshot::{SnapshotView, agent_spinner, browser, fit_test_support};
 use core::prelude::v1::test;
@@ -47,11 +48,17 @@ fn named(sessions: usize, prefix: &str) -> browser::State {
 }
 
 fn open(cx: &mut TestAppContext) -> (Entity<SnapshotView>, &mut VisualTestContext) {
+    open_with(cx, workspace(8))
+}
+
+fn open_with(
+    cx: &mut TestAppContext,
+    state: browser::State,
+) -> (Entity<SnapshotView>, &mut VisualTestContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     std::mem::forget(receiver);
     let (host, cx) = cx.add_window_view(|window, cx| {
-        let snapshot =
-            cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, workspace(8)));
+        let snapshot = cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, state));
         let content = agent_spinner::window_root(snapshot.clone(), window, cx).into();
         Host { snapshot, content }
     });
@@ -216,18 +223,125 @@ fn each_sidebar_input_changes_the_key(cx: &mut TestAppContext) {
     }
 }
 
-/// The sidebar is prepainted before the content, as before it was its own
-/// view: GPUI builds the accessibility tree in prepaint order, so VoiceOver
-/// reaches the sidebar first.
-#[gpui::test]
-fn the_sidebar_comes_before_the_content(cx: &mut TestAppContext) {
-    let (_, cx) = open(cx);
+/// The window's accessibility tree as an outline, in the order an assistive
+/// client walks it: one line per node, indented by depth, role then label.
+fn outline(cx: &mut VisualTestContext) -> Vec<String> {
+    let json = cx.update(|window, _| window.debug_a11y_tree_json().unwrap());
+    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    fn walk(tree: &serde_json::Value, id: &str, depth: usize, out: &mut Vec<String>) {
+        let node = &tree["nodes"][id];
+        let aria = &node["aria"];
+        let mut line = format!("{}{}", "  ".repeat(depth), aria["role"].as_str().unwrap());
+        for key in ["label", "description", "value", "selected"] {
+            if !aria[key].is_null() {
+                line.push_str(&format!(" {key}={}", aria[key]));
+            }
+        }
+        out.push(line);
+        for child in node["children"].as_array().into_iter().flatten() {
+            walk(tree, child.as_str().unwrap(), depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&tree, tree["root"].as_str().unwrap(), 0, &mut out);
+    out
+}
+
+/// Switches accessibility on, as VoiceOver connecting does, and draws.
+fn with_assistive_client(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
-        cx.set_global(crate::tmux_snapshot::design::PrepaintOrder::default());
-        window.refresh();
+        window.set_a11y_active_for_test(true);
         window.draw(cx).clear(cx);
     });
-    let order = cx.update(|_, cx| cx.global::<crate::tmux_snapshot::design::PrepaintOrder>().0.clone());
-    let at = |key: &str| order.iter().position(|k| k == key).unwrap();
-    assert!(at("sidebar") < at("content"), "{order:?}");
+}
+
+/// Home with three sessions: the sidebar, then Home's own controls.
+fn home() -> browser::State {
+    let mut state = workspace(3);
+    state.surface = browser::Surface::Home;
+    state
+}
+
+/// The tree main builds for [`home`], where the sidebar's elements are part
+/// of `SnapshotView`'s own render (850b150d; the same outline function, run
+/// there). The sidebar's nodes come after the title controls and before
+/// Home's, each row a heading with its favourite button.
+const MAIN_OUTLINE: &str = r#"Window
+  Button label="Show / hide sidebar · F10"
+  Button label="Browse sessions…"
+  Button label="New session on this Mac"
+  Button label="Home" selected=true
+  Heading label="project-0, Unavailable, project" selected=false
+    Button label="Add favorite"
+  Heading label="project-1, Unavailable, project" selected=false
+    Button label="Add favorite"
+  Heading label="project-2, Unavailable, project" selected=false
+    Button label="Add favorite"
+  Button label="Switch session"
+  Button label="Switch machine"
+  Button label="Choose theme" description="Appearance settings are not available yet"
+  Button label="Settings and commands"
+  Button label="Browse sessions"
+  Button label="Refresh"
+  Button label="New session…" description="Connect to a local tmux server from Your fleet, then create a session."
+  TabList label="Fleet"
+    Tab label="All sessions" selected=true
+    Tab label="Favourites" selected=false
+    Tab label="Local" selected=false
+    Button label="Add machine…"
+  Grid label="Sessions"
+    Button label="Add favorite"
+    Button label="Add favorite"
+    Button label="Add favorite""#;
+
+/// GPUI builds the accessibility tree from the elements a frame prepaints, and
+/// a replayed view prepaints none. So while an assistive client is connected
+/// the sidebar is drawn every frame, and the client reads on every frame the
+/// tree main builds: same nodes, same order.
+#[gpui::test]
+fn an_assistive_client_reads_the_tree_main_builds(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open_with(cx, home());
+    with_assistive_client(cx);
+    assert_eq!(outline(cx).join("\n"), MAIN_OUTLINE, "the first frame");
+    for frame in 0..3 {
+        cx.update(|window, cx| {
+            snapshot.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(
+            outline(cx).join("\n"),
+            MAIN_OUTLINE,
+            "terminal frame {frame}"
+        );
+    }
+}
+
+/// Without a client nothing reads the tree, and the sidebar is replayed
+/// again from the frame after the client leaves.
+#[gpui::test]
+fn the_sidebar_is_replayed_again_when_the_client_leaves(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open_with(cx, home());
+    let renders = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| crate::tmux_snapshot::browser_ui::sidebar_view::renders(cx))
+    };
+    let terminal_frame = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            snapshot.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+    };
+    with_assistive_client(cx);
+    let before = renders(cx);
+    terminal_frame(cx);
+    assert_eq!(renders(cx), before + 1, "drawn for the client");
+    cx.update(|window, cx| {
+        window.set_a11y_active_for_test(false);
+        window.draw(cx).clear(cx);
+    });
+    // The first frame without the client stores the paint to replay.
+    terminal_frame(cx);
+    let settled = renders(cx);
+    terminal_frame(cx);
+    terminal_frame(cx);
+    assert_eq!(renders(cx), settled, "replayed without a client");
 }

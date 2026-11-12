@@ -236,36 +236,6 @@ impl Global for InkProbes {}
 #[cfg(test)]
 #[derive(Default)]
 pub(crate) struct TextProbes(pub std::collections::BTreeMap<String, String>);
-/// Test-only: the order elements with an [`order_probe`] were prepainted in.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct PrepaintOrder(pub Vec<String>);
-#[cfg(test)]
-impl Global for PrepaintOrder {}
-
-/// Test-only: records `key` in [`PrepaintOrder`] when prepainted.
-pub(crate) fn order_probe(key: &'static str) -> Option<AnyElement> {
-    #[cfg(test)]
-    {
-        Some(
-            canvas(
-                move |_, _, cx| {
-                    if cx.has_global::<PrepaintOrder>() {
-                        cx.global_mut::<PrepaintOrder>().0.push(key.into());
-                    }
-                },
-                |_, (), _, _| {},
-            )
-            .size_0()
-            .into_any_element(),
-        )
-    }
-    #[cfg(not(test))]
-    {
-        let _ = key;
-        None
-    }
-}
 #[cfg(test)]
 impl Global for TextProbes {}
 

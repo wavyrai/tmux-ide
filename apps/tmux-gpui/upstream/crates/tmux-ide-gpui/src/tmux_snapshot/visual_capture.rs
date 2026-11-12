@@ -816,6 +816,19 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             cx.update_window(handle.into(), |_, window, _| window.refresh())?;
         }
     }
+    // `+replay`: the captured frame is the one a terminal publication draws.
+    // Only the view is notified, with no refresh, so whatever it caches is
+    // replayed from the frame before and not rendered again.
+    if extras.contains(&"replay")
+        && let Some(view) = root.borrow().clone()
+    {
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            view.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        })?;
+    }
     cx.run_until_parked();
     receiver.try_iter().for_each(drop);
     let image = cx.capture_screenshot(handle.into())?;
