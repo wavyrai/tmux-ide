@@ -179,8 +179,12 @@
     "tests/image_layout.rs": "3fe9749a7a93ae3a18f2d88181c85b88a71b094165035c0d4a072773f96ff182",
     "tests/window_background/tests.rs": "7fce2e77e6b6314d73aead1d9d9c28dbce57f4f85320ce2db8c4bce57b09446a"
   },
-  "patchPurpose": "None: an unmodified copy of the crate, so that changes to it are reviewed as commits on top.",
-  "modifiedFiles": [],
-  "addedSourceFiles": [],
+  "patchPurpose": "Batched glyph sprites for the terminal painter: Window::glyph_placement, resolve_glyph, insert_glyphs and glyph_raster_state, with the arithmetic of paint_glyph and paint_emoji, which stay unchanged.",
+  "modifiedFiles": [
+    "src/window.rs"
+  ],
+  "addedSourceFiles": [
+    "src/window_glyphs.rs"
+  ],
   "verify": "node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-provenance.json"
 }

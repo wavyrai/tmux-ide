@@ -79,6 +79,10 @@ use crate::util::{
 };
 pub use prompts::*;
 
+#[path = "window_glyphs.rs"]
+mod window_glyphs;
+pub use window_glyphs::{GlyphKind, GlyphPlacement, GlyphRasterState, PlacedGlyph, ResolvedGlyph};
+
 /// Default window size used when no explicit size is provided.
 pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
 
