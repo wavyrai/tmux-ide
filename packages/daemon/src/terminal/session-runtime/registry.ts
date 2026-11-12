@@ -116,13 +116,13 @@ export interface SessionRuntimeRegistryOptions {
   /** Deterministic qualification seam; never invoked while observability is disabled. */
   readonly createTraceCorrelator?: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   /**
-   * A session's trusted inventory became qualified again after it was not
-   * (first qualification, or after a shared-window conflict invalidated it).
-   * The daemon publishes a terminal-runtime-inventory change so an idle
-   * client that met the 503 re-reads at once instead of waiting for its own
-   * retry (perf plan F13, from #764).
+   * A session's terminal inventory may be readable again: a shared-window or
+   * registered-window conflict cleared, or its trusted inventory became
+   * qualified after it was not. The daemon publishes a
+   * terminal-runtime-inventory change so an idle client that met the 503
+   * re-reads at once; that read re-qualifies the session (perf plan F13, #764).
    */
-  readonly onTrustedInventoryQualified?: (session: string) => void;
+  readonly onInventoryRecovered?: (session: string) => void;
 }
 
 /** Opaque daemon-internal proof that an inventory came from one exact runtime owner. */
@@ -332,7 +332,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
-  readonly #onTrustedInventoryQualified: ((session: string) => void) | null;
+  readonly #onInventoryRecovered: ((session: string) => void) | null;
+
+  #announceInventory(session: string): void {
+    try {
+      this.#onInventoryRecovered?.(session);
+    } catch {
+      // A publication failure never changes qualification.
+    }
+  }
   readonly #sessions = new Map<string, SessionRuntime>();
   #listenerDisposal: ListenerDisposalSummary | null = null;
   readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
@@ -351,7 +359,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
-    this.#onTrustedInventoryQualified = options.onTrustedInventoryQualified ?? null;
+    this.#onInventoryRecovered = options.onInventoryRecovered ?? null;
     const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = {
       onInputAccepted: (session, action, acceptedAtMicros, ok) => {
         for (const traceId of action.traceIds ?? []) {
@@ -484,6 +492,9 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       onSharedWindowConflict: (session, conflict) => {
         options.mirror?.onSharedWindowConflict?.(session, conflict);
         if (conflict) this.#sessions.get(session)?.invalidateSharedWindowAuthority();
+        // A cleared conflict is the trigger an idle client needs: nobody else
+        // may read the inventory, and the client's re-read re-qualifies it.
+        else if (!this.#mirror.hasSharedWindowConflict(session)) this.#announceInventory(session);
       },
       onNativeClientActivity: (session) => {
         options.mirror?.onNativeClientActivity?.(session);
@@ -585,13 +596,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       await abortable(this.#mirror.verifyRegisteredWindows(), signal);
       const wasQualified = runtime.trustedInventoryQualified();
       runtime.qualifyTrustedInventory(runtimeSessionId);
-      if (!wasQualified && runtime.trustedInventoryQualified()) {
-        try {
-          this.#onTrustedInventoryQualified?.(session);
-        } catch {
-          // A publication failure never changes qualification.
-        }
-      }
+      if (!wasQualified && runtime.trustedInventoryQualified()) this.#announceInventory(session);
     } finally {
       this.#releaseProofPrewarmRuntime(runtime);
     }

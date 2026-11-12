@@ -1604,7 +1604,7 @@ async function startEmbeddedDaemonGeneration(
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
         // An idle client that met the 503 re-reads when the inventory is trusted again.
-        onTrustedInventoryQualified: (session) => broadcastTerminalsChanged(session),
+        onInventoryRecovered: (session) => broadcastTerminalsChanged(session),
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
         semanticMutations: {
           captureInteractionContext: (intent) => {

@@ -403,7 +403,7 @@ describe("SessionRuntimeRegistry", () => {
     const qualified: string[] = [];
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION_A,
-      onTrustedInventoryQualified: (session) => qualified.push(session),
+      onInventoryRecovered: (session) => qualified.push(session),
       mirror: {
         createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
         generatePaneId: () => "pane.mirror.generated",
@@ -422,6 +422,46 @@ describe("SessionRuntimeRegistry", () => {
     await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
     expect(qualified).toEqual([FIXTURE.session, FIXTURE.session]);
     await registry.dispose();
+  });
+
+  it("announces once when a registered-window conflict clears, with no read in between (perf F13)", async () => {
+    const announced: string[] = [];
+    const sims: SimulatedChannel[] = [];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      onInventoryRecovered: (session) => announced.push(session),
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new SimulatedChannel(handlers, fixtureAutoReply(fixtureState()));
+          sims.push(sim);
+          return sim;
+        },
+        generatePaneId: () => "pane.mirror.generated",
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    try {
+      await registry.prewarmSession(FIXTURE.session);
+      let rows = [
+        { session: FIXTURE.session, window: "@1" },
+        { session: "unopened", window: "@1" },
+      ];
+      registry.setRegisteredWindowReader(async () => rows);
+      await registry.verifyWindowOwnership();
+      expect(registry.hasProofQualifiedInventory(FIXTURE.session)).toBe(false);
+      expect(announced).toEqual([]);
+      rows = [{ session: FIXTURE.session, window: "@1" }];
+      // tmux announces the unlink; the guard re-reads on the next verification.
+      sims[0]!.feedLines("%sessions-changed");
+      await registry.verifyWindowOwnership();
+      expect(announced).toEqual([FIXTURE.session]);
+      // Still clear: nothing more.
+      sims[0]!.feedLines("%sessions-changed");
+      await registry.verifyWindowOwnership();
+      expect(announced).toEqual([FIXTURE.session]);
+    } finally {
+      await registry.dispose();
+    }
   });
 
   it("retires old authority before qualifying a same-name replacement session", async () => {

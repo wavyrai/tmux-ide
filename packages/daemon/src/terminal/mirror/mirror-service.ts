@@ -265,7 +265,11 @@ export class MirrorService {
           diagnostic?.("guard-conflict-push", { session });
           this.opts.onSharedWindowConflict?.(session, true);
         }
-      } else this.registeredConflicts.delete(session);
+      } else if (this.registeredConflicts.delete(session)) {
+        // The registered-window conflict cleared: report it like a shared-window
+        // clear, so idle clients re-read the inventory (perf plan F13).
+        this.opts.onSharedWindowConflict?.(session, false);
+      }
     }
     diagnostic?.("guard-verify-ok", { blocked, channels: this.channelSessions.size });
   }
