@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { TmuxServerDescriptor, TmuxServerScope } from "@tmux-ide/contracts";
 import {
   MAX_TMUX_SERVER_OWNERS,
+  OBSERVE_MAX_WAIT_MS,
+  OBSERVE_MIN_INTERVAL_MS,
   TmuxServerOwners,
+  createRetryDelayMs,
   type TmuxServerObservation,
   type TmuxServerOwnerRetirement,
   type TmuxServerOwnersEvent,
@@ -304,17 +307,33 @@ describe("owner retirement needs positive evidence (#840)", () => {
       dispose: vi.fn(async (_retirement?: TmuxServerOwnerRetirement) => {}),
     }));
     const serverProcessAlive = vi.fn((pid: string) => alive.has(pid));
+    const clock = { now: 10_000 };
+    // By default the bound never expires, so a read waits for the work in flight.
+    const delay = vi.fn((_ms: number) => new Promise<void>(() => {}));
     const owners = new TmuxServerOwners({
       probe,
       create,
       serverProcessAlive,
       onEvent: (event) => events.push(event),
+      now: () => clock.now,
+      delay,
     });
     const native = (fingerprint: string, pid = "41") => ({
       ...observation(fingerprint),
       nativeServerIdentity: { pid, startTime: "100" },
     });
-    return { owners, observations, probe, create, alive, events, native, serverProcessAlive };
+    return {
+      owners,
+      observations,
+      probe,
+      create,
+      alive,
+      events,
+      native,
+      serverProcessAlive,
+      clock,
+      delay,
+    };
   }
 
   it("keeps a healthy owner and its generation when one probe times out", async () => {
@@ -455,17 +474,157 @@ describe("owner retirement needs positive evidence (#840)", () => {
     expect(f.events.at(-1)).toMatchObject({ type: "owner-retired", trigger: "owners-disposed" });
   });
 
-  it("reports an owner that could not be built instead of hiding it", async () => {
+  it("reports an owner that could not be built and retries it with backoff", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a"));
     f.create.mockRejectedValueOnce(new Error("inventory startup failed"));
+    f.create.mockRejectedValueOnce(new Error("inventory startup failed again"));
     expect(
       await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
     ).toMatchObject({ state: "offline" });
     expect(f.events.at(-1)).toMatchObject({
       type: "owner-create-failed",
       error: "inventory startup failed",
+      consecutiveCreateFailures: 1,
+      retryInMs: 500,
     });
+    // Neither the sweep nor a read hammers a failing build before its retry is due.
+    await f.owners.sweep();
+    await f.owners.observe();
+    expect(f.create).toHaveBeenCalledTimes(1);
+    f.clock.now += 500;
+    await f.owners.sweep();
+    expect(f.create).toHaveBeenCalledTimes(2);
+    expect(f.events.at(-1)).toMatchObject({ consecutiveCreateFailures: 2, retryInMs: 1_000 });
+    f.clock.now += 999;
+    await f.owners.sweep();
+    expect(f.create).toHaveBeenCalledTimes(2);
+    f.clock.now += 1;
+    expect((await f.owners.sweep())[0]).toMatchObject({ state: "online" });
+    expect(f.create).toHaveBeenCalledTimes(3);
+    expect(createRetryDelayMs(1)).toBe(500);
+    expect(createRetryDelayMs(40)).toBe(30_000);
+    await f.owners.dispose();
+  });
+
+  it("retires only when a second probe confirms the evidence", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a1"));
+    const first = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(first);
+    f.alive.add("42");
+    // One answer from another server, then the original again: not confirmed.
+    const real = f.probe.getMockImplementation()!;
+    f.probe.mockImplementationOnce(async () => f.native("a2", "42"));
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: first.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    expect(f.events.at(-1)).toMatchObject({
+      type: "retirement-unconfirmed",
+      trigger: "fingerprint-changed",
+      generation: first.generation,
+    });
+    // The same answer twice in a row retires, after exactly two probes.
+    f.probe.mockImplementation(real);
+    f.observations.set("a", f.native("a2", "42"));
+    const before = f.probe.mock.calls.length;
+    expect((await f.owners.refresh())[0]?.generation).not.toBe(first.generation);
+    expect(f.probe.mock.calls.length - before).toBe(2);
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-replaced");
+    await f.owners.dispose();
+  });
+
+  it("a read never probes or retires an online owner, whatever tmux would say", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    const probes = f.probe.mock.calls.length;
+    // Even with the server process gone a read answers from what is known.
+    f.alive.delete("41");
+    f.observations.set("a", timeout);
+    for (let i = 0; i < 10; i += 1)
+      expect(await f.owners.observe()).toEqual([{ ...online, label: "a", state: "online" }]);
+    expect(f.probe.mock.calls.length).toBe(probes);
+    expect(owner.dispose).not.toHaveBeenCalled();
+    // The background sweep is what acts on that evidence.
+    expect((await f.owners.sweep())[0]).toMatchObject({ state: "offline" });
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+    await f.owners.dispose();
+  });
+
+  it("the sweep costs no probe while sockets and server processes are unchanged", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" });
+    const probes = f.probe.mock.calls.length;
+    for (let i = 0; i < 20; i += 1) await f.owners.sweep();
+    expect(f.probe.mock.calls.length).toBe(probes);
+    await f.owners.dispose();
+  });
+
+  it("concurrent reads share one rate-limited pass that brings an offline server online", async () => {
+    const f = liveFixture();
+    const offline = await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" });
+    expect(offline).toMatchObject({ state: "offline" });
+    const probes = f.probe.mock.calls.length;
+    // Twenty lists at once ask tmux once.
+    await Promise.all(Array.from({ length: 20 }, () => f.owners.observe()));
+    expect(f.probe.mock.calls.length).toBe(probes + 1);
+    // Inside the rate-limit window nothing more is asked, even though the server is now there.
+    f.observations.set("a", f.native("a"));
+    await Promise.all(Array.from({ length: 20 }, () => f.owners.observe()));
+    expect(f.probe.mock.calls.length).toBe(probes + 1);
+    f.clock.now += OBSERVE_MIN_INTERVAL_MS;
+    const lists = await Promise.all(Array.from({ length: 20 }, () => f.owners.observe()));
+    expect(f.probe.mock.calls.length).toBe(probes + 2);
+    expect(f.create).toHaveBeenCalledTimes(1);
+    for (const list of lists) expect(list[0]).toMatchObject({ state: "online" });
+    await f.owners.dispose();
+  });
+
+  it("a read answers within its bound while a teardown is still running", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const teardown = deferred<void>();
+    f.owners.current(online).dispose.mockImplementation(() => teardown.promise);
+    f.alive.delete("41");
+    f.observations.set("a", timeout);
+    const sweeping = f.owners.sweep();
+    await vi.waitFor(() => expect(f.owners.current.bind(f.owners, online)).toThrow());
+    const waits: number[] = [];
+    f.delay.mockImplementation(async (ms: number) => void waits.push(ms));
+    // The teardown has not finished; the read still answers.
+    expect((await f.owners.observe())[0]).toMatchObject({ state: "offline" });
+    expect(waits).toEqual([OBSERVE_MAX_WAIT_MS]);
+    teardown.resolve();
+    await sweeping;
+    await f.owners.dispose();
+  });
+
+  it("an absent server is asked less often by the sweep but at once by a read", async () => {
+    const f = liveFixture();
+    await f.owners.register({ selector: { kind: "name", name: "gone" }, label: "gone" });
+    const probes = () => f.probe.mock.calls.length;
+    let seen = probes();
+    for (let i = 0; i < 5; i += 1) await f.owners.sweep();
+    expect(probes()).toBe(seen); // first miss: next sweep probe in 500 ms
+    f.clock.now += 500;
+    await f.owners.sweep();
+    expect(probes()).toBe(seen + 1);
+    seen = probes();
+    f.clock.now += 999; // second miss backed off to 1 s
+    await f.owners.sweep();
+    expect(probes()).toBe(seen);
+    f.clock.now += OBSERVE_MIN_INTERVAL_MS;
+    await f.owners.observe();
+    expect(probes()).toBe(seen + 1);
     await f.owners.dispose();
   });
 });

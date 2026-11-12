@@ -90,6 +90,13 @@ export type TmuxServerOwnersEvent =
       readonly disposeError?: string;
     }
   | {
+      /** Evidence for retirement did not survive the confirming second probe. */
+      readonly type: "retirement-unconfirmed";
+      readonly serverId: string;
+      readonly generation: string;
+      readonly trigger: TmuxServerOwnerRetirementTrigger;
+    }
+  | {
       readonly type: "owner-created";
       readonly serverId: string;
       readonly generation: string;
@@ -101,7 +108,19 @@ export type TmuxServerOwnersEvent =
       readonly generation: string;
       readonly createMs: number;
       readonly error: string;
+      readonly consecutiveCreateFailures: number;
+      readonly retryInMs: number;
     };
+/** Reads share one constructive pass and start at most one per this interval. */
+export const OBSERVE_MIN_INTERVAL_MS = 1_000;
+/** The longest a read waits for work already in flight before answering with what is known. */
+export const OBSERVE_MAX_WAIT_MS = 1_000;
+export const CREATE_RETRY_BASE_MS = 500;
+export const CREATE_RETRY_MAX_MS = 30_000;
+/** Delay before the next attempt to build an owner after `failures` consecutive failures. */
+export function createRetryDelayMs(failures: number): number {
+  return Math.min(CREATE_RETRY_MAX_MS, CREATE_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1));
+}
 const RETIREMENT_OF: Record<TmuxServerOwnerRetirementTrigger, TmuxServerOwnerRetirement> = {
   "server-process-gone": "server-gone",
   "socket-identity-changed": "server-gone",
@@ -136,6 +155,12 @@ type Entry<T> = {
   scope: TmuxServerScope | null;
   owner: T | null;
   probeFailures: number;
+  createFailures: number;
+  /** Background and read passes leave a failing build alone until then. */
+  nextCreateAt: number;
+  /** An absent server is asked less and less often by the background sweep; reads still ask. */
+  offlineMisses: number;
+  nextSweepProbeAt: number;
 };
 export interface TmuxServerOwnersOptions<T extends DisposableTmuxServerOwner> {
   readonly probe: (selector: TmuxServerRegistration["selector"]) => Promise<TmuxServerProbeResult>;
@@ -149,6 +174,12 @@ export interface TmuxServerOwnersOptions<T extends DisposableTmuxServerOwner> {
   readonly serverProcessAlive?: (pid: string) => boolean;
   readonly onEvent?: (event: TmuxServerOwnersEvent) => void;
   readonly now?: () => number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+}
+function unrefDelay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds).unref?.();
+  });
 }
 /** One process; no shared mutable tmux authority, runtime cache or retry ledger. */
 export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
@@ -159,11 +190,19 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
   constructor(readonly options: TmuxServerOwnersOptions<T>) {}
   #queuedRefresh: Promise<readonly TmuxServerDescriptor[]> | null = null;
   #queuedRefreshTail: Promise<unknown> | null = null;
+  #inFlight = 0;
+  #onlinePass: Promise<void> | null = null;
+  #lastOnlinePassAt = Number.NEGATIVE_INFINITY;
   #serial<R>(work: () => Promise<R>): Promise<R> {
+    this.#inFlight += 1;
     const run = this.#tail.then(() => {
       if (this.#disposed) throw new TmuxServerScopeError("disposed");
       return work();
     });
+    const settled = () => {
+      this.#inFlight -= 1;
+    };
+    run.then(settled, settled);
     this.#tail = run.catch(() => undefined);
     return run;
   }
@@ -228,7 +267,20 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     });
     if (failure !== undefined) throw failure;
   }
-  async #refresh(entry: Entry<T>, observed?: TmuxServerProbeResult): Promise<void> {
+  /** Positive evidence that needs no subprocess: the socket was replaced or the server process is gone. */
+  #hasCheapEvidence(entry: Entry<T>): boolean {
+    const current = entry.observation;
+    if (!entry.owner || !current) return false;
+    if (!current.valid()) return true;
+    const pid = current.nativeServerIdentity?.pid;
+    return pid !== undefined && !(this.options.serverProcessAlive ?? processAlive)(pid);
+  }
+  async #refresh(
+    entry: Entry<T>,
+    observed?: TmuxServerProbeResult,
+    pass: { readonly confirming?: boolean; readonly respectBackoff?: boolean } = {},
+  ): Promise<void> {
+    if (!entry.owner && pass.respectBackoff && this.#now() < entry.nextCreateAt) return;
     const probeStarted = this.#now();
     const result =
       observed === undefined ? await this.options.probe(entry.registration.selector) : observed;
@@ -264,8 +316,28 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
         return;
       }
     } else if (next && current && !current.valid()) trigger = "socket-identity-changed";
+    if (entry.owner && entry.scope && !pass.confirming) {
+      // One observation never retires a live owner: ask once more and retire
+      // only if the second answer still says so.
+      const generation = entry.scope.generation;
+      const again = await this.options.probe(entry.registration.selector);
+      if (this.#disposed) return;
+      await this.#refresh(entry, again, { ...pass, confirming: true });
+      if (entry.scope?.generation === generation)
+        this.#emit({
+          type: "retirement-unconfirmed",
+          serverId: entry.registration.serverId,
+          generation,
+          trigger,
+        });
+      return;
+    }
     // Socket recreation also needs a fresh connection authority, even if PID survived.
     await this.#retire(entry, trigger, { failure, ms: probeMs });
+    if (!next) {
+      entry.offlineMisses += 1;
+      entry.nextSweepProbeAt = this.#now() + createRetryDelayMs(entry.offlineMisses);
+    }
     if (this.#disposed || !next || !next.valid()) return;
     const duplicate = [...this.#entries.values()].find(
       (other) =>
@@ -280,15 +352,20 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     try {
       owner = await this.options.create(entry.registration, scope, next);
     } catch (error) {
+      entry.createFailures += 1;
+      const retryInMs = createRetryDelayMs(entry.createFailures);
+      entry.nextCreateAt = this.#now() + retryInMs;
       this.#emit({
         type: "owner-create-failed",
         serverId: scope.serverId,
         generation: scope.generation,
         createMs: Math.round(this.#now() - createStarted),
         error: describeError(error),
+        consecutiveCreateFailures: entry.createFailures,
+        retryInMs,
       });
       return;
-    } // Registration remains visible/offline; explicit refresh retries.
+    } // Registration remains visible/offline; the background sweep retries with backoff.
     if (this.#disposed || !next.valid()) {
       await owner.dispose(this.#disposed ? "shutdown" : "server-gone");
       return;
@@ -297,6 +374,10 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     entry.scope = scope;
     entry.owner = owner;
     entry.probeFailures = 0;
+    entry.createFailures = 0;
+    entry.nextCreateAt = 0;
+    entry.offlineMisses = 0;
+    entry.nextSweepProbeAt = 0;
     this.#emit({
       type: "owner-created",
       serverId: scope.serverId,
@@ -339,6 +420,10 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
         scope: null,
         owner: null,
         probeFailures: 0,
+        createFailures: 0,
+        nextCreateAt: 0,
+        offlineMisses: 0,
+        nextSweepProbeAt: 0,
       };
       this.#entries.set(registration.serverId, entry);
       try {
@@ -368,6 +453,10 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
       observation,
       owner,
       probeFailures: 0,
+      createFailures: 0,
+      nextCreateAt: 0,
+      offlineMisses: 0,
+      nextSweepProbeAt: 0,
     });
   }
   refresh(): Promise<readonly TmuxServerDescriptor[]> {
@@ -380,7 +469,8 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     const queued = this.#serial(async () => {
       if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
       // Sequential admission bounds subprocess work and avoids alias races.
-      for (const entry of this.#entries.values()) await this.#refresh(entry);
+      for (const entry of this.#entries.values())
+        await this.#refresh(entry, undefined, { respectBackoff: true });
       return this.list();
     });
     this.#queuedRefresh = queued;
@@ -390,6 +480,54 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     };
     queued.then(settle, settle);
     return queued;
+  }
+  /**
+   * What a read route may do (#840). It never probes, retires or replaces an
+   * owner: it answers from what is known. For servers that are offline it
+   * starts at most one shared, rate-limited pass that may bring them online,
+   * and it waits a bounded time for work already in flight, so a list can
+   * neither close a stream nor hang behind a teardown.
+   */
+  async observe(): Promise<readonly TmuxServerDescriptor[]> {
+    if (this.#disposed) throw new TmuxServerScopeError("disposed");
+    const now = this.#now();
+    const offlineDue = [...this.#entries.values()].some(
+      (entry) => !entry.owner && now >= entry.nextCreateAt,
+    );
+    if (
+      offlineDue &&
+      !this.#onlinePass &&
+      now - this.#lastOnlinePassAt >= OBSERVE_MIN_INTERVAL_MS
+    ) {
+      this.#lastOnlinePassAt = now;
+      const pass = this.#serial(async () => {
+        for (const entry of this.#entries.values())
+          if (!entry.owner) await this.#refresh(entry, undefined, { respectBackoff: true });
+      })
+        .catch(() => undefined)
+        .finally(() => {
+          if (this.#onlinePass === pass) this.#onlinePass = null;
+        });
+      this.#onlinePass = pass;
+    }
+    if (this.#inFlight > 0)
+      await Promise.race([this.#tail, (this.options.delay ?? unrefDelay)(OBSERVE_MAX_WAIT_MS)]);
+    return this.list();
+  }
+  /**
+   * The background liveness check. Costs no subprocess while every owner's
+   * socket and server process are still there; only evidence of a change, or
+   * an offline server whose retry is due, starts the confirmed refresh.
+   */
+  sweep(): Promise<readonly TmuxServerDescriptor[]> {
+    if (this.#disposed) return Promise.resolve([]);
+    const now = this.#now();
+    const due = [...this.#entries.values()].some((entry) =>
+      entry.owner
+        ? this.#hasCheapEvidence(entry)
+        : now >= Math.max(entry.nextCreateAt, entry.nextSweepProbeAt),
+    );
+    return due ? this.refresh() : Promise.resolve(this.list());
   }
   current(scopeInput: TmuxServerScope): T {
     const scope = TmuxServerScopeSchemaZ.parse(scopeInput);

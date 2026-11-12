@@ -171,7 +171,7 @@ export function mountAutomationRoutes(app: Hono, options: AutomationRoutesOption
       const panes: AutomationPanesResponse["panes"] = [];
       const credential = c.req.header(PANE_SOURCE_CREDENTIAL_HEADER);
       let source: Endpoint | null = null;
-      for (const scope of await options.owners.refresh()) {
+      for (const scope of await options.owners.observe()) {
         if (!scope.generation) continue;
         await options.owners.withOwner(
           { serverId: scope.serverId, generation: scope.generation },

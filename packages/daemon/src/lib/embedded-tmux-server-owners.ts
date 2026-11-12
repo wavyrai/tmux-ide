@@ -31,6 +31,9 @@ import {
 /** Startup decides once whether the default owner is adopted, so a slow first answer is asked again. */
 export const DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS = 3;
 
+/** How often the background liveness check looks at sockets and server pids (no subprocess). */
+export const OWNER_SWEEP_INTERVAL_MS = 2_000;
+
 /** Every owner decision as one structured line: what was retired, kept or built, and why (#840). */
 export function logTmuxServerOwnersEvent(event: TmuxServerOwnersEvent): void {
   const { type, ...fields } = event;
@@ -40,6 +43,8 @@ export function logTmuxServerOwnersEvent(event: TmuxServerOwnersEvent): void {
     logger.info("tmux-server-owners", "owner disposed with its daemon generation", fields);
   else if (type === "owner-retired")
     logger.warn("tmux-server-owners", "owner retired; its streams were closed", fields);
+  else if (type === "retirement-unconfirmed")
+    logger.warn("tmux-server-owners", "retirement evidence not confirmed; owner kept", fields);
   else if (type === "owner-create-failed")
     logger.warn("tmux-server-owners", "owner could not be built; server stays offline", fields);
   else logger.info("tmux-server-owners", "owner built", fields);
@@ -118,6 +123,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
       );
   };
   let defaultRetired = false;
+  let defaultAdopted = false;
   const retireDefault = async (retirement?: TmuxServerOwnerRetirement) => {
     if (defaultRetired) return;
     defaultRetired = true;
@@ -183,6 +189,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
         serverId: defaultRegistration.serverId,
         generation: options.defaultGeneration,
       });
+      defaultAdopted = true;
       owners.adopt(
         defaultRegistration,
         { serverId: defaultRegistration.serverId, generation: options.defaultGeneration },
@@ -214,6 +221,14 @@ export async function createEmbeddedTmuxServerOwners(options: {
     if (route.startsWith("/v2/tmux-servers/") && !pending.has(route))
       socket.end("HTTP/1.1 410 Gone\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
   };
+  // Read routes no longer check liveness, so this does. While the adopted
+  // default is the only server, its replacement belongs to the embedder's
+  // restart adapter (tmuxAuthorityReplaced), which rebuilds the generation.
+  const sweepTimer = setInterval(() => {
+    if (defaultAdopted && !defaultRetired && owners.list().length <= 1) return;
+    void owners.sweep().catch(() => undefined);
+  }, OWNER_SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
   return {
     owners,
     isDefaultCurrent() {
@@ -252,6 +267,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
         );
     },
     async dispose(retirement: "shutdown" | "generation-restart" = "shutdown") {
+      clearInterval(sweepTimer);
       httpServer?.off("upgrade", refuseUnknownScope);
       await owners.dispose(retirement);
     },

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS,
+  OWNER_SWEEP_INTERVAL_MS,
   createEmbeddedTmuxServerOwners,
 } from "./embedded-tmux-server-owners.ts";
 
@@ -148,6 +149,32 @@ describe("embedded owner initialization cleanup", () => {
       });
       expect(dispose).not.toHaveBeenCalled();
       await embedded.dispose();
+    });
+
+    it("leaves the sole adopted default to the restart adapter and sweeps once there are more servers", async () => {
+      vi.useFakeTimers();
+      try {
+        const dispose = vi.fn(async () => {});
+        const deadPid = 2 ** 22 - 3;
+        mocks.probe.mockResolvedValue(verified(deadPid));
+        const embedded = await embed(dispose);
+        const probes = mocks.probe.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(OWNER_SWEEP_INTERVAL_MS * 3);
+        // Its server process is gone, but replacing a sole default is a generation restart.
+        expect(mocks.probe.mock.calls.length).toBe(probes);
+        expect(dispose).not.toHaveBeenCalled();
+        // A second registered server makes the registry responsible for both.
+        mocks.probe.mockResolvedValue(timeout);
+        await embedded.owners.register({ label: "B", selector: { kind: "name", name: "b" } });
+        await vi.advanceTimersByTimeAsync(OWNER_SWEEP_INTERVAL_MS);
+        expect(dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+        const settled = mocks.probe.mock.calls.length;
+        await embedded.dispose();
+        await vi.advanceTimersByTimeAsync(OWNER_SWEEP_INTERVAL_MS * 20);
+        expect(mocks.probe.mock.calls.length).toBe(settled);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("does not wait out the retries when tmux itself says there is no server", async () => {
