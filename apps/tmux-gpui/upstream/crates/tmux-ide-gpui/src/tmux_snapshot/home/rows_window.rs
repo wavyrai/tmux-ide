@@ -63,11 +63,12 @@ impl RowWindow {
         let tops = self.0.clone();
         let page = page.clone();
         canvas(
-            move |bounds, _, cx| {
+            move |bounds, window, _| {
                 let top = bounds.origin.y - page.offset().y;
                 let before = tops.borrow_mut().insert(run, top);
                 if before.is_none_or(|before| (before - top).abs() > px(0.5)) {
-                    cx.notify(view);
+                    // Not during this draw: the next frame renders again.
+                    window.on_next_frame(move |_, cx| cx.notify(view));
                 }
             },
             |_, _, _, _| {},
@@ -75,6 +76,14 @@ impl RowWindow {
         .w_full()
         .h(px(0.))
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+impl RowWindow {
+    /// Forgets where every run was, as a new table shape would move them.
+    pub(in crate::tmux_snapshot) fn forget(&self) {
+        self.0.borrow_mut().clear();
     }
 }
 

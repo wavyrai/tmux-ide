@@ -53,6 +53,14 @@ fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
+/// Delivers the next frame, which tests have no loop for.
+fn next_frame(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
+    });
+    cx.run_until_parked();
+}
+
 fn built(cx: &mut VisualTestContext, row: usize) -> bool {
     cx.debug_bounds(Box::leak(format!("fleet-session-0-{row}").into_boxed_str()))
         .is_some()
@@ -220,4 +228,39 @@ fn an_arriving_row_still_enters(cx: &mut TestAppContext) {
     let settled = cx.debug_bounds("fleet-session-0-0").unwrap().top();
     assert_eq!(first, settled + px(crate::tmux_snapshot::motion::RISE));
     assert!(!built(cx, 95), "and far rows stay spacers");
+}
+
+/// When a run isn't where the last render assumed (the first frame, a new
+/// table shape), the view renders again by itself; once it is, it doesn't.
+#[gpui::test]
+fn a_moved_run_renders_again_and_a_still_one_does_not(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    // Let the first measurement's own request play out.
+    next_frame(cx);
+    draw(cx);
+    next_frame(cx);
+    let renders = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = renders.clone();
+    cx.update(|_, cx| {
+        cx.observe(&view, move |_, _| seen.set(seen.get() + 1))
+            .detach()
+    });
+    draw(cx);
+    next_frame(cx);
+    draw(cx);
+    next_frame(cx);
+    assert_eq!(renders.get(), 0, "a still table asks for nothing");
+    // Forget where the runs were, as a new shape would move them, and
+    // render: that render asks for one more once the runs are measured.
+    view.update(cx, |v, cx| {
+        v.home_filter.as_ref().unwrap().rows.forget();
+        cx.notify();
+    });
+    draw(cx);
+    next_frame(cx);
+    assert!(
+        renders.get() >= 2,
+        "a moved run asks for another render: {}",
+        renders.get()
+    );
 }
