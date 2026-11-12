@@ -4,6 +4,7 @@ import {
   installTmuxGuard,
   refusedTmuxCalls,
   removeTmuxGuard,
+  saveTmuxGuardReport,
 } from "./tmux-isolation.ts";
 
 // `bun test --preload`: the same guard for the Bun lanes. Bun has no global
@@ -13,6 +14,7 @@ assertTmuxGuarded();
 beforeEach(() => assertTmuxGuarded());
 process.on("exit", () => {
   const refused = refusedTmuxCalls(guard);
+  saveTmuxGuardReport(guard, process.env.TMUX_IDE_TEST_TMUX_GUARD_REPORT);
   removeTmuxGuard(guard);
   if (refused.length > 0) {
     console.error(

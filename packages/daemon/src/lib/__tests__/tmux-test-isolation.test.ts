@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -9,10 +18,12 @@ import {
   redirectedTmuxCalls,
   refusedTmuxCalls,
   removeTmuxGuard,
+  saveTmuxGuardReport,
   tmuxGuardScript,
   tmuxGuardViolation,
 } from "../../../test-support/tmux-isolation.ts";
-import { tmuxClientEnvironment } from "../tmux-client-execution.ts";
+import { resolveTmuxExecutable, tmuxClientEnvironment } from "../tmux-client-execution.ts";
+import { resolveWorkspacePaneTmuxAuthority } from "../workspace-pane-creation.ts";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -41,9 +52,15 @@ function guard() {
 }
 
 describe("the tmux guard in front of every test", () => {
-  it("is installed for this very test process", () => {
+  it("is installed for this very test process, and is the tmux the daemon resolves", () => {
     expect(tmuxGuardViolation(process.env)).toBeNull();
-    expect(process.env.PATH!.split(delimiter)[0]).toBe(process.env.TMUX_IDE_TEST_TMUX_GUARD);
+    const directory = process.env.TMUX_IDE_TEST_TMUX_GUARD!;
+    expect(process.env.PATH!.split(delimiter)[0]).toBe(directory);
+    // Bundled binary, PATH or configuration: whatever the daemon would pick, it gets the guard.
+    expect(resolveTmuxExecutable()).toBe(realpathSync(join(directory, "tmux")));
+    expect(resolveWorkspacePaneTmuxAuthority().executablePath).toBe(
+      realpathSync(join(directory, "tmux")),
+    );
   });
 
   // The environment a daemon gives its tmux clients: no TMUX, no TMUX_TMPDIR,
@@ -162,6 +179,7 @@ describe("the tmux guard in front of every test", () => {
     directories.push(installed.directory);
     expect(installed.created).toBe(true);
     expect(environment.PATH).toBe(`${installed.directory}:/usr/bin:/bin`);
+    expect(environment.TMUX_IDE_TMUX_BIN).toBe(installed.executable);
     expect(environment.TMUX_TMPDIR).toBe(installed.directory);
     expect(environment.TMUX).toBeUndefined();
     expect(environment.TMUX_PANE).toBeUndefined();
@@ -191,6 +209,26 @@ describe("the tmux guard in front of every test", () => {
     expect(() =>
       assertTmuxGuarded({ ...environment, TMUX_IDE_TMUX_BIN: "/tmp/case-abc/fake-tmux" }),
     ).not.toThrow();
+    const { TMUX_IDE_TMUX_BIN: _dropped, ...withoutBinary } = environment;
+    expect(() => assertTmuxGuarded(withoutBinary)).toThrow(/bundled tmux would be used/u);
+    expect(() =>
+      assertTmuxGuarded({ ...environment, TMUX_IDE_RUNTIME_MODE: "development" }),
+    ).toThrow(/ignore TMUX_IDE_TMUX_BIN/u);
     expect(() => assertTmuxGuarded({ PATH: "/usr/bin" })).toThrow(/not installed/u);
+
+    const report = mkdtempSync("/tmp/tmux-ide-test-report-");
+    directories.push(report);
+    writeFileSync(
+      join(installed.directory, "redirected.log"),
+      "REDIRECTED name args=-L default ls\n",
+    );
+    saveTmuxGuardReport(installed, report);
+    const saved = readdirSync(report).sort();
+    expect(saved.map((name) => name.replace(/^\d+-\d+-/u, ""))).toEqual([
+      "redirected.log",
+      "refused.log",
+    ]);
+    expect(readFileSync(join(report, saved[0]!), "utf8")).toContain("REDIRECTED name");
+    saveTmuxGuardReport(installed, undefined); // no destination: nothing to do
   });
 });

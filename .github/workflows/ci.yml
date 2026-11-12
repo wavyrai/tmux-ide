@@ -73,8 +73,14 @@ jobs:
 
       # test:unit is scoped to src/cli.test.ts only (integration.test.ts
       # needs a real tmux session and is excluded by path).
+      # Every tmux call a daemon test makes goes through the guard in
+      # packages/daemon/test-support/tmux-isolation.ts. It records each call
+      # that named no private server; the record is kept below. A call to a
+      # shared socket path fails the run.
       - name: Run test suite
         if: matrix.node >= 22
+        env:
+          TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:unit
 
       - name: Run comparative benchmark contract tests
@@ -83,11 +89,38 @@ jobs:
 
       - name: Run canonical daemon and authentication suites
         if: matrix.node >= 22
+        env:
+          TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:daemon-bun
 
       - name: Run TUI renderer suite
         if: matrix.node >= 22
+        env:
+          TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:tui-renderer
+
+      - name: Summarize tmux guard records
+        if: always() && matrix.node >= 22
+        run: |
+          dir="$RUNNER_TEMP/tmux-guard"
+          mkdir -p "$dir"
+          refused=$(cat "$dir"/*-refused.log 2>/dev/null | grep -c . || true)
+          redirected=$(cat "$dir"/*-redirected.log 2>/dev/null | grep -c . || true)
+          {
+            echo "### tmux guard"
+            echo "Calls to a shared tmux socket path, refused: $refused"
+            echo "Calls with no private server, kept in a private namespace: $redirected"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$refused" = 0
+
+      - name: Upload tmux guard records
+        if: always() && matrix.node >= 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-guard-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/tmux-guard
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Validate isolated production-component gallery
         if: matrix.node >= 22

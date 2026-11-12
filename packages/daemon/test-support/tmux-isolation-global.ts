@@ -3,6 +3,7 @@ import {
   redirectedTmuxCalls,
   refusedTmuxCalls,
   removeTmuxGuard,
+  saveTmuxGuardReport,
 } from "./tmux-isolation.ts";
 
 /**
@@ -14,6 +15,8 @@ export default function setup(): () => void {
   const guard = installTmuxGuard();
   return () => {
     const refused = refusedTmuxCalls(guard);
+    // CI sets this and uploads the directory: the run's complete list.
+    saveTmuxGuardReport(guard, process.env.TMUX_IDE_TEST_TMUX_GUARD_REPORT);
     const redirected = redirectedTmuxCalls(guard).length;
     if (redirected > 0)
       console.log(

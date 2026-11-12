@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -136,6 +137,9 @@ export function installTmuxGuard(environment: NodeJS.ProcessEnv = process.env): 
   writeFileSync(join(directory, "redirected.log"), "");
   environment.TMUX_IDE_TEST_TMUX_GUARD = directory;
   environment.PATH = [directory, ...(environment.PATH ?? "").split(delimiter)].join(delimiter);
+  // resolveTmuxExecutable prefers a bundled binary over PATH. The configured
+  // binary wins over both, so the daemon cannot be handed any other tmux.
+  environment.TMUX_IDE_TMUX_BIN = executable;
   // Raw tmux children inherit these; an inherited live TMUX would win over both.
   environment.TMUX_TMPDIR = directory;
   delete environment.TMUX;
@@ -166,13 +170,15 @@ export function tmuxGuardViolation(environment: NodeJS.ProcessEnv): string | nul
     return "the tmux guard is not installed (TMUX_IDE_TEST_TMUX_GUARD)";
   if ((environment.PATH ?? "").split(delimiter)[0] !== directory)
     return "the tmux guard is no longer first on PATH";
+  // Unset, the daemon would take a bundled tmux before PATH; a test's own
+  // fake tmux in a temp dir is fine, any other binary bypasses the guard.
   const configured = environment.TMUX_IDE_TMUX_BIN;
-  if (
-    configured &&
-    !configured.includes(`/${PRIVATE_PREFIX}`) &&
-    !isBelowTemporaryDirectory(configured)
-  )
+  if (!configured)
+    return "TMUX_IDE_TMUX_BIN is unset: a bundled tmux would be used instead of the guard";
+  if (configured !== join(directory, "tmux") && !isBelowTemporaryDirectory(configured))
     return `TMUX_IDE_TMUX_BIN names ${JSON.stringify(configured)}, a tmux that bypasses the guard`;
+  if (environment.TMUX_IDE_RUNTIME_MODE === "development")
+    return "TMUX_IDE_RUNTIME_MODE=development makes the daemon ignore TMUX_IDE_TMUX_BIN";
   return null;
 }
 
@@ -186,6 +192,22 @@ export function assertTmuxGuarded(environment: NodeJS.ProcessEnv = process.env):
     throw new Error(
       `Refusing to run: this test could reach a live tmux server: ${violation}. ` +
         "See packages/daemon/test-support/tmux-isolation.ts.",
+    );
+}
+
+/**
+ * Keep the guard's records where CI can upload them: every redirected and
+ * refused call of the run, i.e. the complete list of tests' tmux calls that
+ * named no private server.
+ */
+export function saveTmuxGuardReport(guard: TmuxGuard, destination: string | undefined): void {
+  if (!destination) return;
+  mkdirSync(destination, { recursive: true });
+  const stamp = `${process.pid}-${Date.now()}`;
+  for (const name of ["refused.log", "redirected.log"])
+    writeFileSync(
+      join(destination, `${stamp}-${name}`),
+      lines(join(guard.directory, name)).join("\n") + "\n",
     );
 }
 
