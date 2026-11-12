@@ -58,8 +58,22 @@ export function registerLogSecret(secret: string | null | undefined): void {
   if (typeof secret === "string" && secret.length >= 8) secrets.add(secret);
 }
 
+/**
+ * Where records below error level go. stdout by default (the service log).
+ * A process whose stdout is a protocol, like `tmux-ide --headless --json`
+ * with its one status line, reserves it: every record then goes to stderr.
+ */
+let recordStream: StreamName = "stdout";
+export function reserveStdoutForProtocol(): void {
+  recordStream = "stderr";
+}
+export function structuredLogStream(): "stdout" | "stderr" {
+  return recordStream;
+}
+
 /** @internal test seam */
 export function _resetLogStateForTests(): void {
+  recordStream = "stdout";
   identity = {};
   secrets.clear();
   logBuffer.length = 0;
@@ -243,7 +257,7 @@ function writeStructuredLog(
     ...(entry.version ? { version: entry.version } : {}),
   };
   if (payload.renamedKeys.length > 0) wire.reservedKeysRenamed = payload.renamedKeys;
-  writeToStream(level === "error" ? "stderr" : "stdout", JSON.stringify(wire) + "\n");
+  writeToStream(level === "error" ? "stderr" : recordStream, JSON.stringify(wire) + "\n");
 }
 
 export const logger = {

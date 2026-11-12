@@ -17,7 +17,7 @@ import {
   runHeadlessDaemon,
   type HeadlessDaemonDependencies,
 } from "../headless-daemon.ts";
-import { logger } from "../log.ts";
+import { _resetLogStateForTests, logger, structuredLogStream } from "../log.ts";
 
 function daemonInfo(overrides: Partial<CanonicalDaemonInfo> = {}): CanonicalDaemonInfo {
   return {
@@ -1044,6 +1044,30 @@ describe("what a retiring generation tells its streams", () => {
     await expect(running).resolves.toBe("stopped");
     expect(stops).toEqual([undefined]);
     expect(harness.startOptions).toHaveLength(1);
+  });
+});
+
+describe("stdout of --headless --json", () => {
+  it("is reserved for the status document: log records move to stderr only with --json", async () => {
+    _resetLogStateForTests();
+    try {
+      const plain = createHarness();
+      const first = runHeadlessDaemon({}, plain.deps);
+      await vi.waitFor(() => expect(plain.lines).toHaveLength(1));
+      expect(structuredLogStream()).toBe("stdout");
+      plain.signals.get("SIGTERM")?.();
+      await first;
+
+      const json = createHarness();
+      const second = runHeadlessDaemon({ json: true }, json.deps);
+      await vi.waitFor(() => expect(json.lines).toHaveLength(1));
+      expect(structuredLogStream()).toBe("stderr");
+      expect(JSON.parse(json.lines[0]!)).toMatchObject({ status: "ready" });
+      json.signals.get("SIGTERM")?.();
+      await second;
+    } finally {
+      _resetLogStateForTests();
+    }
   });
 });
 

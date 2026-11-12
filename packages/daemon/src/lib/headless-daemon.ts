@@ -26,7 +26,7 @@ import {
   type EmbeddedDaemonOptions,
 } from "./daemon-embed.ts";
 import { DaemonStartupError, IdeError } from "./errors.ts";
-import { logger } from "./log.ts";
+import { logger, reserveStdoutForProtocol } from "./log.ts";
 import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
@@ -347,6 +347,9 @@ export async function runHeadlessDaemon(
       options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
   };
   let restoreTmuxWorkspaces = false;
+  // With --json, stdout is the status document for whoever started the
+  // daemon; log records, also warnings and "stream closed", go to stderr.
+  if (options.json === true) reserveStdoutForProtocol();
   const lifecycle: HeadlessLifecycle = { generations: 0, startReason: "initial" };
   while (true) {
     const result = await runHeadlessDaemonGeneration(

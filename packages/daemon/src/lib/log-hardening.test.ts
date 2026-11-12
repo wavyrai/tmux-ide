@@ -11,6 +11,8 @@ import {
   getLogStreamFailures,
   logger,
   registerLogSecret,
+  reserveStdoutForProtocol,
+  structuredLogStream,
   setLogIdentity,
   setLogLevel,
   subscribeLogs,
@@ -114,6 +116,28 @@ describe("reserved metadata", () => {
     const entry = getLogBuffer().at(-1)!;
     expect(entry.msg).toBe("real message");
     expect(entry.data).not.toHaveProperty("msg");
+  });
+});
+
+// Bug sweep, section A: `--headless --json` stdout must stay one JSON document.
+describe("a stdout reserved for a protocol", () => {
+  it("sends every record to stderr once stdout is reserved, and to stdout otherwise", () => {
+    installCapture();
+    expect(structuredLogStream()).toBe("stdout");
+    logger.info("pane-stream", "stream closed", { code: 1000 });
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed");
+    expect(stdoutLines).toHaveLength(2);
+    expect(stderrLines).toHaveLength(0);
+    reserveStdoutForProtocol();
+    expect(structuredLogStream()).toBe("stderr");
+    logger.info("pane-stream", "stream closed", { code: 1000 });
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed");
+    logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway");
+    expect(stdoutLines).toHaveLength(2);
+    expect(stderrLines).toHaveLength(3);
+    expect(JSON.parse(stderrLines[1]!)).toMatchObject({ level: "warn", msg: expect.any(String) });
+    // The ring and subscribers are unaffected by where the wire copy goes.
+    expect(getLogBuffer()).toHaveLength(5);
   });
 });
 
