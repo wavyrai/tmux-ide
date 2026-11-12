@@ -544,7 +544,7 @@ impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
             // A render is activity: queued work may follow it (#714).
-            self.idle_tick.nudge();
+            self.idle_tick.render_nudge();
             self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }

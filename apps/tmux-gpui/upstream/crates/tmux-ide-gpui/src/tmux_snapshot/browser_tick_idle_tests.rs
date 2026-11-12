@@ -277,33 +277,29 @@ fn key_down_and_up_nudge_without_a_render(cx: &mut TestAppContext) {
     let (snapshot, mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     let key = Keystroke::parse("f19").unwrap();
-    // Drawn now, so dispatching the key has nothing dirty to draw first.
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    mailbox.take_activity();
-    cx.update(|window, cx| {
-        window.dispatch_event(
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke: key.clone(),
-                is_held: false,
-                prefer_character_input: false,
-                layout: None,
-            }),
-            cx,
-        );
-    });
-    assert!(mailbox.has_activity(), "key down");
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    mailbox.take_activity();
-    cx.update(|window, cx| {
-        window.dispatch_event(
-            PlatformInput::KeyUp(KeyUpEvent {
-                keystroke: key,
-                layout: None,
-            }),
-            cx,
-        );
-    });
-    assert!(mailbox.has_activity(), "key up");
+    // Renders still happen (dispatching draws a dirty window first), but
+    // their nudge is off, so only the key listeners can mark activity.
+    cx.update(|_, cx| snapshot.update(cx, |view, _| view.idle_tick.quiet_renders = true));
+    let down = KeyDownEvent {
+        keystroke: key.clone(),
+        is_held: false,
+        prefer_character_input: false,
+        layout: None,
+    };
+    let up = KeyUpEvent {
+        keystroke: key,
+        layout: None,
+    };
+    for (name, event) in [
+        ("key down", PlatformInput::KeyDown(down)),
+        ("key up", PlatformInput::KeyUp(up)),
+    ] {
+        cx.update(|window, cx| {
+            mailbox.take_activity();
+            window.dispatch_event(event, cx);
+            assert!(mailbox.has_activity(), "{name}");
+        });
+    }
 }
 
 /// A publication marks activity before anything draws.
@@ -336,6 +332,10 @@ fn deactivation_nudges_the_task_without_a_draw(cx: &mut TestAppContext) {
     let (snapshot, mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     mailbox.take_activity();
-    cx.update(|_, cx| snapshot.update(cx, |view, cx| view.activation_changed(false, cx)));
-    assert!(mailbox.has_activity());
+    // Asserted inside the update: the test context draws once it returns,
+    // and that render's own nudge would hide a missing one.
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| view.activation_changed(false, cx));
+        assert!(mailbox.has_activity());
+    });
 }

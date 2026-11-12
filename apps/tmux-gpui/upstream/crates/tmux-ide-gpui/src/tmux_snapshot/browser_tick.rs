@@ -18,8 +18,19 @@ pub(super) struct IdleTick {
     /// Times the UI task woke, by tick or otherwise.
     #[cfg(test)]
     wakes: u32,
+    /// Tests turn the render's nudge off to see the input listeners' alone.
+    #[cfg(test)]
+    quiet_renders: bool,
 }
 impl IdleTick {
+    /// A render's nudge: a render is activity, and queued work may follow it.
+    pub(super) fn render_nudge(&self) {
+        #[cfg(test)]
+        if self.quiet_renders {
+            return;
+        }
+        self.nudge();
+    }
     /// Wakes the UI task if it is idle and restarts the grace period.
     pub(super) fn nudge(&self) {
         if let Some(mailbox) = &self.mailbox {
