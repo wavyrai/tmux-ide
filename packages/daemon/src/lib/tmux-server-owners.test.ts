@@ -4,6 +4,9 @@ import {
   MAX_TMUX_SERVER_OWNERS,
   TmuxServerOwners,
   type TmuxServerObservation,
+  type TmuxServerOwnerRetirement,
+  type TmuxServerOwnersEvent,
+  type TmuxServerProbeResult,
 } from "./tmux-server-owners.ts";
 
 function deferred<T>() {
@@ -282,6 +285,171 @@ describe("independent tmux server owners", () => {
     gate.resolve();
     await Promise.all([running, queued, registering]);
     expect((await after).map((descriptor) => descriptor.label)).toEqual(["a", "b"]);
+    await f.owners.dispose();
+  });
+});
+
+// #840: a probe that failed is not proof that the tmux server is gone.
+describe("owner retirement needs positive evidence (#840)", () => {
+  const timeout = { failure: "timeout" as const, detail: "probe exceeded 500ms", durationMs: 500 };
+  function liveFixture() {
+    const alive = new Set(["41"]);
+    const events: TmuxServerOwnersEvent[] = [];
+    const observations = new Map<string, TmuxServerProbeResult>();
+    const probe = vi.fn(
+      async (selector: { kind: "path"; path: string } | { kind: "name"; name: string }) =>
+        observations.get(selector.kind === "path" ? selector.path : selector.name) ?? null,
+    );
+    const create = vi.fn(async () => ({
+      dispose: vi.fn(async (_retirement?: TmuxServerOwnerRetirement) => {}),
+    }));
+    const owners = new TmuxServerOwners({
+      probe,
+      create,
+      serverProcessAlive: (pid) => alive.has(pid),
+      onEvent: (event) => events.push(event),
+    });
+    const native = (fingerprint: string, pid = "41") => ({
+      ...observation(fingerprint),
+      nativeServerIdentity: { pid, startTime: "100" },
+    });
+    return { owners, observations, probe, create, alive, events, native };
+  }
+
+  it("keeps a healthy owner and its generation when one probe times out", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.observations.set("a", timeout);
+    const [after] = await f.owners.refresh();
+    expect(after).toMatchObject({ state: "online", generation: online.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    expect(f.owners.current(online)).toBe(owner);
+    expect(f.create).toHaveBeenCalledTimes(1);
+    expect(f.events.at(-1)).toMatchObject({
+      type: "owner-kept",
+      serverId: online.serverId,
+      generation: online.generation,
+      probe: { failure: "timeout" },
+      consecutiveProbeFailures: 1,
+    });
+    // The next good probe of the same server resets the count and changes nothing.
+    f.observations.set("a", f.native("a"));
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    f.observations.set("a", timeout);
+    await f.owners.refresh();
+    expect(f.events.at(-1)).toMatchObject({ type: "owner-kept", consecutiveProbeFailures: 1 });
+    await f.owners.dispose();
+  });
+
+  it("keeps the owner when tmux reports no observation but the server process is alive", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    f.observations.delete("a"); // the probe answers null
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: online.generation });
+    await f.owners.dispose();
+  });
+
+  it("retires the owner when the probe fails and the server process is gone", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.alive.delete("41");
+    f.observations.set("a", timeout);
+    expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline", generation: null });
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+    expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
+      trigger: "server-process-gone",
+      generation: online.generation,
+      probe: { failure: "timeout" },
+    });
+    await f.owners.dispose();
+  });
+
+  it("retires the owner when its socket was replaced, even if the probe failed", async () => {
+    const f = liveFixture();
+    const first = f.native("a");
+    f.observations.set("a", first);
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    first.valid.mockReturnValue(false);
+    f.observations.set("a", timeout);
+    expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+    expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
+      trigger: "socket-identity-changed",
+    });
+    await f.owners.dispose();
+  });
+
+  it("an owner without a known server process is not kept on a failed probe", async () => {
+    const f = liveFixture();
+    f.observations.set("a", observation("a")); // no nativeServerIdentity
+    const online = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(online);
+    f.observations.set("a", timeout);
+    expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
+    expect(owner.dispose).toHaveBeenCalledTimes(1);
+    await f.owners.dispose();
+  });
+
+  it("tells the owner why it retires and reports the rebuild with timings", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a1"));
+    const first = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const replaced = f.owners.current(first);
+    f.alive.add("42");
+    f.observations.set("a", f.native("a2", "42"));
+    const [next] = await f.owners.refresh();
+    expect(replaced.dispose).toHaveBeenCalledExactlyOnceWith("server-replaced");
+    expect(next).toMatchObject({ state: "online" });
+    const retired = f.events.find((event) => event.type === "owner-retired")!;
+    expect(retired).toMatchObject({ trigger: "fingerprint-changed", generation: first.generation });
+    expect(retired.type === "owner-retired" && retired.disposeMs).toBeGreaterThanOrEqual(0);
+    const created = f.events.filter((event) => event.type === "owner-created").at(-1)!;
+    expect(created).toMatchObject({
+      serverId: first.serverId,
+      generation: scope(next!).generation,
+    });
+
+    const current = f.owners.current(scope(next!));
+    await f.owners.remove(first.serverId);
+    expect(current.dispose).toHaveBeenCalledExactlyOnceWith("removed");
+
+    f.observations.set("b", f.native("b"));
+    const b = scope(await f.owners.register({ selector: { kind: "name", name: "b" }, label: "b" }));
+    const ownerB = f.owners.current(b);
+    await f.owners.dispose();
+    expect(ownerB.dispose).toHaveBeenCalledExactlyOnceWith("shutdown");
+    expect(f.events.at(-1)).toMatchObject({ type: "owner-retired", trigger: "owners-disposed" });
+  });
+
+  it("reports an owner that could not be built instead of hiding it", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    f.create.mockRejectedValueOnce(new Error("inventory startup failed"));
+    expect(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    ).toMatchObject({ state: "offline" });
+    expect(f.events.at(-1)).toMatchObject({
+      type: "owner-create-failed",
+      error: "inventory startup failed",
+    });
     await f.owners.dispose();
   });
 });

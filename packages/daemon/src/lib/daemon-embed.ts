@@ -37,6 +37,8 @@ import {
 } from "./tmux-server-generation-runner.ts";
 import { createNativeTmuxServerCatalog } from "./tmux-server-owner.ts";
 import { createEmbeddedTmuxServerOwners } from "./embedded-tmux-server-owners.ts";
+import { retirementKeepsDaemon, type TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
+import { PANE_STREAM_OWNER_RETIRED_CLOSE } from "../terminal/pane-stream/pane-stream-websocket.ts";
 import {
   captureTmuxServerProofAsync,
   captureTmuxServerProof,
@@ -2102,14 +2104,18 @@ async function startEmbeddedDaemonGeneration(
           sessionRuntimeRegistry,
           terminalInventoryRuntime,
           paneStreamRuntime,
-          dispose: async () => {
+          dispose: async (retirement?: TmuxServerOwnerRetirement) => {
             defaultEditorContextRetired = true;
             defaultDiagnosticsLifetime.abort();
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
             const transportResults = await Promise.allSettled([
               Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
-              Promise.resolve().then(() => paneStreamRuntime!.dispose()),
+              Promise.resolve().then(() =>
+                paneStreamRuntime!.dispose(
+                  retirementKeepsDaemon(retirement) ? PANE_STREAM_OWNER_RETIRED_CLOSE : undefined,
+                ),
+              ),
             ]);
             const authorityResults = await Promise.allSettled([
               Promise.resolve().then(() => terminalInventoryRuntime!.dispose()),

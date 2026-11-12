@@ -48,6 +48,8 @@ import { isVisibleFleetSession, type LiveSessionSummary } from "../command-cente
 import { WorkspaceTerminalInventoryRuntime } from "../terminal/attachments/native-runtime.ts";
 import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import { createPaneStreamRuntime } from "../terminal/pane-stream/runtime.ts";
+import { PANE_STREAM_OWNER_RETIRED_CLOSE } from "../terminal/pane-stream/pane-stream-websocket.ts";
+import { retirementKeepsDaemon, type TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
 import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
@@ -575,9 +577,15 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       return backend.mutate(...args);
     },
   };
-  const dispose = (): Promise<void> => {
+  const dispose = (retirement?: TmuxServerOwnerRetirement): Promise<void> => {
     if (disposePromise) return disposePromise;
     disposed = true;
+    // Streams hear first, and hear why: a retired owner under a live daemon
+    // means "reconnect now", not "the daemon is shutting down" (#840).
+    const streamsClosed = paneStreamRuntime.dispose(
+      retirementKeepsDaemon(retirement) ? PANE_STREAM_OWNER_RETIRED_CLOSE : undefined,
+    );
+    streamsClosed.catch(() => undefined);
     credentialLifetime.abort();
     sourceCredentials.dispose();
     authoredReceiptEnricher.dispose();
@@ -589,7 +597,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
         () => sessionOpener.dispose(),
         () => sessionCreator.dispose(),
         () => paneCreation.dispose(),
-        () => paneStreamRuntime.dispose(),
+        () => streamsClosed,
         () => observer.dispose(),
         () => terminalInventoryRuntime.dispose(),
         () => multiplexer.dispose(),

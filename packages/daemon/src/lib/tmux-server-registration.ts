@@ -19,7 +19,10 @@ import {
 import {
   MAX_TMUX_SERVER_OWNERS,
   TmuxServerRegistrationSchemaZ,
+  isTmuxServerObservation,
   type TmuxServerObservation,
+  type TmuxServerProbeFailure,
+  type TmuxServerProbeResult,
   type TmuxServerRegistration,
 } from "./tmux-server-owners.ts";
 
@@ -60,20 +63,63 @@ export function writeTmuxServerRegistrations(
     }
   }
 }
+export const TMUX_SERVER_PROBE_TIMEOUT_MS = 500;
+/**
+ * Say why a probe produced nothing. Only tmux itself answering "no server"
+ * (a clean non-zero exit) is a statement about the server; a timeout or a
+ * failed spawn says nothing about it (#840).
+ */
+export function classifyTmuxServerProbeError(
+  error: unknown,
+  durationMs: number,
+): TmuxServerProbeFailure {
+  const failed = error as NodeJS.ErrnoException & {
+    killed?: boolean;
+    signal?: string | null;
+    stderr?: string;
+  };
+  const detail = (
+    (typeof failed?.stderr === "string" && failed.stderr.trim()) ||
+    (error instanceof Error ? error.message : String(error))
+  ).slice(0, 200);
+  const failure: TmuxServerProbeFailure["failure"] =
+    failed?.killed === true || (typeof failed?.signal === "string" && failed.signal.length > 0)
+      ? "timeout"
+      : typeof failed?.code === "number"
+        ? "no-server"
+        : "exec-error";
+  return { failure, detail, durationMs: Math.round(durationMs) };
+}
 /** Discovery never creates a server, loads configuration, or attaches a client. */
 export function createTmuxServerProbe(
   executable: string,
 ): (selector: TmuxServerRegistration["selector"]) => Promise<TmuxServerObservation | null> {
+  const probe = createDiagnosedTmuxServerProbe(executable);
+  return async (selector) => {
+    const result = await probe(selector);
+    return isTmuxServerObservation(result) ? result : null;
+  };
+}
+/** The same probe, but a miss says why (timeout, failed spawn, no server, …). */
+export function createDiagnosedTmuxServerProbe(
+  executable: string,
+): (selector: TmuxServerRegistration["selector"]) => Promise<TmuxServerProbeResult> {
   const executablePath = realpathSync(executable);
   const env = tmuxClientEnvironment(process.env, executablePath);
   return async (selector) => {
+    const started = performance.now();
+    const failed = (failure: TmuxServerProbeFailure["failure"], detail: string) => ({
+      failure,
+      detail,
+      durationMs: Math.round(performance.now() - started),
+    });
     const args = selector.kind === "path" ? ["-S", selector.path] : ["-L", selector.name];
     const read = async (selection: readonly string[]) =>
       (
         await exec(
           executablePath,
           [...selection, "-N", "display-message", "-p", "#{socket_path}|#{pid}|#{start_time}"],
-          { env, encoding: "utf8", timeout: 500, maxBuffer: 8192 },
+          { env, encoding: "utf8", timeout: TMUX_SERVER_PROBE_TIMEOUT_MS, maxBuffer: 8192 },
         )
       ).stdout.trimEnd();
     try {
@@ -89,7 +135,7 @@ export function createTmuxServerProbe(
       }
       const first = await read(pinned ? ["-S", pinned.path] : args);
       const match = /^(.*)\|([1-9][0-9]*)\|([1-9][0-9]*)$/u.exec(first);
-      if (!match) return null;
+      if (!match) return failed("unparsable", `${first.length} bytes of probe output`);
       const reportedSocket = captureUnixSocketIdentity(match[1]!);
       const socket = pinned ?? reportedSocket;
       if (pinned) {
@@ -98,8 +144,9 @@ export function createTmuxServerProbe(
           reportedSocket.dev !== pinned.dev ||
           reportedSocket.ino !== pinned.ino
         )
-          return null;
-      } else if ((await read(["-S", socket.path])) !== first) return null;
+          return failed("socket-mismatch", "the server answered from another socket");
+      } else if ((await read(["-S", socket.path])) !== first)
+        return failed("socket-mismatch", "the explicit-path proof differed");
       revalidateUnixSocketIdentity(socket);
       return {
         nativeServerIdentity: { pid: match[2]!, startTime: match[3]! },
@@ -116,8 +163,8 @@ export function createTmuxServerProbe(
           }
         },
       };
-    } catch {
-      return null;
+    } catch (error) {
+      return classifyTmuxServerProbeError(error, performance.now() - started);
     }
   };
 }
