@@ -472,3 +472,43 @@ fn the_newest_notes_are_not_older_than_the_shipped_app() {
     );
     assert!(whats_new::notes(newest).is_some());
 }
+
+/// Each session's Open button is a keyboard stop, before the footer's
+/// buttons as on screen, and Return on one opens that session.
+#[gpui::test]
+fn tab_reaches_each_sessions_open_button(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    draw(cx);
+    assert!(cx.debug_bounds("welcome-session-1").is_some());
+    while rx.try_recv().is_ok() {}
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                v.welcome.focus.iter().position(|f| f.is_focused(window))
+            })
+        })
+    };
+    let start = focused(cx).unwrap();
+    assert!(start < 3, "focus starts on a footer button: {start}");
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        press(cx, "tab", false);
+        seen.push(focused(cx).unwrap());
+    }
+    assert!(seen.contains(&3) && seen.contains(&4), "{seen:?}");
+    let first = seen.iter().position(|&i| i == 3).unwrap();
+    assert_eq!(seen[first + 1], 4, "the rows in order: {seen:?}");
+    assert!(seen[first + 2] < 3, "then the footer: {seen:?}");
+    // Return on the second row's Open opens that session.
+    while focused(cx) != Some(4) {
+        press(cx, "tab", false);
+    }
+    assert!(rx.try_recv().is_err());
+    press(cx, "enter", false);
+    assert!(
+        rx.try_iter().next().is_some(),
+        "Return on Open sends the open"
+    );
+}
