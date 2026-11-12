@@ -165,15 +165,7 @@ beforeEach(() => {
     TMUX_IDE_REGISTRY_DIR: process.env.TMUX_IDE_REGISTRY_DIR,
     TMUX_IDE_SETTINGS_DIR: process.env.TMUX_IDE_SETTINGS_DIR,
     TMUX_IDE_HOME: process.env.TMUX_IDE_HOME,
-    TMUX: process.env.TMUX,
-    TMUX_TMPDIR: process.env.TMUX_TMPDIR,
   };
-  // These cases start real embedded daemons. Without a private socket
-  // directory they attach to the developer's own default tmux server and
-  // rewrite its global hooks, which a running daemon there reports as
-  // "hooks-replaced".
-  delete process.env.TMUX;
-  process.env.TMUX_TMPDIR = stateDir;
   process.env.TMUX_IDE_DAEMON_INFO_DIR = stateDir;
   process.env.TMUX_IDE_REGISTRY_DIR = stateDir;
   process.env.TMUX_IDE_SETTINGS_DIR = stateDir;
