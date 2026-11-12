@@ -124,7 +124,8 @@ fn the_grid_sent_for_two_panes_is_the_grid_the_cards_hold(cx: &mut TestAppContex
         });
         draw(cx);
         draw(cx);
-        cx.executor().advance_clock(std::time::Duration::from_secs(1));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
         draw(cx);
         match sent(&receiver) {
             Some(next) => grid = next,
@@ -137,7 +138,10 @@ fn the_grid_sent_for_two_panes_is_the_grid_the_cards_hold(cx: &mut TestAppContex
         let canvas = view.input_geometry.unwrap().0.size;
         let advance = view.input_cell_width.unwrap();
         let line = view.terminal_height();
-        assert!(advance > 0. && canvas.width > px(600.), "{advance} {canvas:?}");
+        assert!(
+            advance > 0. && canvas.width > px(600.),
+            "{advance} {canvas:?}"
+        );
         // Two cards: each pads its cells on both sides, and one gap between.
         let chrome = 4. * PAD + GAP;
         let cells = f32::from(cols - 1);

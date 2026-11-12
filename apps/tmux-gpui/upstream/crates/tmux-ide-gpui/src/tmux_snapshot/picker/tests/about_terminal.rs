@@ -210,9 +210,42 @@ fn whats_new_is_spelled_one_way() {
         ("about.rs", include_str!("../../about.rs")),
         ("picker/commands.rs", include_str!("../commands.rs")),
         ("picker/reference.rs", include_str!("../reference.rs")),
-        ("welcome/whats_new.rs", include_str!("../../welcome/whats_new.rs")),
+        (
+            "welcome/whats_new.rs",
+            include_str!("../../welcome/whats_new.rs"),
+        ),
     ] {
         assert!(source.contains("What's new"), "{file}");
         assert!(!source.contains("What\u{2019}s new"), "{file}");
     }
+}
+
+/// The dialog under About goes away while About is open (a publication
+/// closes it): closing About still leaves the keyboard somewhere. The
+/// handle About meant to restore is gone, so the terminal takes it.
+#[gpui::test]
+fn a_dialog_closed_under_about_does_not_strand_the_keyboard(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = workspace(cx);
+    cx.simulate_keystrokes("f5");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(view.read_with(cx, |v, _| v.picker.is_some()));
+    cx.dispatch_action(AboutApp);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(view.read_with(cx, |v, _| v.about.is_some()));
+    view.update(cx, |v, cx| {
+        v.picker = None;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(view.read_with(cx, |v, _| v.about.is_none()));
+    let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
+    cx.update(|window, cx| {
+        assert!(window.focused(cx).is_some(), "the keyboard is somewhere");
+        assert!(terminal.is_focused(window), "the terminal has it");
+    });
+    type_some(cx);
+    assert!(input_sent(&receiver), "typing reaches the terminal");
 }

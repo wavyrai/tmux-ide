@@ -35,14 +35,20 @@ fn the_connection_line_never_shows_a_version_it_does_not_hold() {
         "tmux-ide 2.9.22 · tmux 3.5a"
     );
     let no_tmux = versions(Some("2.9.22"), None);
-    assert_eq!(connection_line(Some(&no_tmux), None, true), "tmux-ide 2.9.22");
+    assert_eq!(
+        connection_line(Some(&no_tmux), None, true),
+        "tmux-ide 2.9.22"
+    );
     assert_eq!(connection_line(None, None, false), "Not connected");
     assert_eq!(
         connection_line(None, None, true),
         "Connected · open a terminal to see its version"
     );
     let unknown = versions(None, Some("3.5a"));
-    assert_eq!(connection_line(Some(&unknown), None, false), "Not connected");
+    assert_eq!(
+        connection_line(Some(&unknown), None, false),
+        "Not connected"
+    );
     // #831: on Home no terminal is open, and the service still has a version.
     assert_eq!(
         connection_line(None, Some("2.9.22"), true),

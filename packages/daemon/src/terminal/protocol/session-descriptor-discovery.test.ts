@@ -328,10 +328,12 @@ describe("sameSessionPaneInventory (#730)", () => {
       );
     }
     expect(sameSessionPaneInventory([row()], [row(), row()])).toBe(false);
-    expect(sameSessionPaneInventory([row({ 0: "%1" }), row({ 0: "%2" })], [
-      row({ 0: "%2" }),
-      row({ 0: "%1" }),
-    ])).toBe(false);
+    expect(
+      sameSessionPaneInventory(
+        [row({ 0: "%1" }), row({ 0: "%2" })],
+        [row({ 0: "%2" }), row({ 0: "%1" })],
+      ),
+    ).toBe(false);
     expect(sameSessionPaneInventory([], [])).toBe(true);
   });
 });

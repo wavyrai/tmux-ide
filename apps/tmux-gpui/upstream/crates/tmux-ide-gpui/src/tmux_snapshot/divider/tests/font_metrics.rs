@@ -75,10 +75,11 @@ fn a_resize_that_is_never_answered_says_the_connection_is_lost(cx: &mut TestAppC
             view.resize_gesture
                 .flush(view.browser_commands.as_ref().unwrap(), true, true);
             view.divider = Some(drag);
-            assert!(receiver.try_iter().any(|command| matches!(
-                command,
-                browser::Command::ResizeGesture { .. }
-            )));
+            assert!(
+                receiver
+                    .try_iter()
+                    .any(|command| matches!(command, browser::Command::ResizeGesture { .. }))
+            );
             // Released, and then no answer for longer than the stall limit.
             view.resize_gesture.offer(7, true);
             view.resize_gesture
