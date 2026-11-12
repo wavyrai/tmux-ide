@@ -12,6 +12,7 @@ pub(super) mod fleet_rows;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
+pub(super) mod rows_window;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over

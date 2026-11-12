@@ -23,6 +23,9 @@ pub(in crate::tmux_snapshot) struct Controls {
     pub(in crate::tmux_snapshot) waiting_only: bool,
     /// What is entering on Home this visit (#761).
     pub(in crate::tmux_snapshot) motion: crate::tmux_snapshot::motion::HomeMotion,
+    /// Where the table's runs of rows sat on the last frame, so only the rows
+    /// near the visible part of the page are built (perf plan, finding 2).
+    pub(in crate::tmux_snapshot) rows: rows_window::RowWindow,
 }
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn prepare_home_filter(&mut self, cx: &mut Context<Self>) {
@@ -40,6 +43,7 @@ impl SnapshotView {
                 table_cursor: None,
                 waiting_only: false,
                 motion: Default::default(),
+                rows: Default::default(),
             });
         }
     }
