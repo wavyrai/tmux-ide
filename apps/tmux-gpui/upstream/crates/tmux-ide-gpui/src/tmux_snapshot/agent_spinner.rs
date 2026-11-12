@@ -250,7 +250,19 @@ pub(super) struct Root {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // GPUI builds the accessibility tree from the elements a frame
+        // prepaints, and a replayed view prepaints none: a spinner tick would
+        // send an assistive client a tree with nothing under the window. So
+        // while a client is connected every frame draws the view.
+        let snapshot = if window.is_a11y_active() {
+            AnyView::from(self.snapshot.clone()).into_any_element()
+        } else {
+            self.snapshot
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        };
         let nudge = |snapshot: &Entity<SnapshotView>| {
             let snapshot = snapshot.clone();
             move |cx: &App| snapshot.read(cx).idle_tick.nudge()
@@ -271,11 +283,7 @@ impl Render for Root {
             .capture_key_down(move |_, _, cx| down(cx))
             .capture_key_up(move |_, _, cx| up(cx))
             .on_modifiers_changed(move |_, _, cx| modifiers(cx))
-            .child(
-                self.snapshot
-                    .clone()
-                    .cached(StyleRefinement::default().size_full()),
-            )
+            .child(snapshot)
             .child(self.spinner.clone())
             .child(
                 canvas(

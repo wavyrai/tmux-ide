@@ -301,7 +301,9 @@ const MAIN_OUTLINE: &str = r#"Window
 #[gpui::test]
 fn an_assistive_client_reads_the_tree_main_builds(cx: &mut TestAppContext) {
     let (snapshot, cx) = open_with(cx, home());
+    let without = painted(cx);
     with_assistive_client(cx);
+    assert!(painted(cx) == without, "a client changed what is painted");
     assert_eq!(outline(cx).join("\n"), MAIN_OUTLINE, "the first frame");
     for frame in 0..3 {
         cx.update(|window, cx| {
@@ -314,6 +316,29 @@ fn an_assistive_client_reads_the_tree_main_builds(cx: &mut TestAppContext) {
             "terminal frame {frame}"
         );
     }
+}
+
+/// A frame only the window root renders (an agent-spinner tick) replays
+/// `SnapshotView`. On main that frame's tree is the window node alone, so a
+/// working agent emptied the tree twelve times a second; the root now draws
+/// `SnapshotView` on such frames while a client is connected.
+#[gpui::test]
+fn a_spinner_tick_keeps_the_tree_for_an_assistive_client(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    std::mem::forget(receiver);
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let snapshot = cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, home()));
+        let content = agent_spinner::window_root(snapshot.clone(), window, cx).into();
+        Host { snapshot, content }
+    });
+    cx.simulate_resize(size(px(1000.), px(700.)));
+    with_assistive_client(cx);
+    let root = host.read_with(cx, |host, _| host.content.entity_id());
+    cx.update(|window, cx| {
+        cx.notify(root);
+        window.draw(cx).clear(cx);
+    });
+    assert_eq!(outline(cx).join("\n"), MAIN_OUTLINE);
 }
 
 /// Without a client nothing reads the tree, and the sidebar is replayed
