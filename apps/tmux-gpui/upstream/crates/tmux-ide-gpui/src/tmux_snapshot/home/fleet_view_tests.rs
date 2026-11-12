@@ -701,3 +701,105 @@ fn the_last_active_step_changes_with_the_words() {
     }
     assert_eq!(last_active_step(5, 10), (0, 0), "a time ahead reads as now");
 }
+
+fn rows_read(cx: &mut VisualTestContext, count: usize) -> usize {
+    let tree = cx.update(|window, _| window.debug_a11y_tree_json().unwrap());
+    (0..count)
+        .filter(|row| tree.contains(&format!(r#"NamedInteger(\"fleet-favorite\", {row})"#)))
+        .count()
+}
+
+/// With a client connected, a frame only the window's root renders (an
+/// agent spinner tick) still holds every row of the table in the tree: the
+/// root draws its views afresh for a client (review of perf-paint).
+#[gpui::test]
+fn a_root_only_frame_keeps_the_table_for_a_client(cx: &mut TestAppContext) {
+    struct Host(AnyView);
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+    let (sender, receiver) = mpsc::sync_channel(256);
+    std::mem::forget(receiver);
+    let state = browser::State {
+        request: 7,
+        surface: browser::Surface::Home,
+        fleet: Some(fleet(30, "project")),
+        ..Default::default()
+    };
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let view = cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, state));
+        Host(crate::tmux_snapshot::agent_spinner::window_root(view, window, cx).into())
+    });
+    cx.simulate_resize(size(px(1200.), px(700.)));
+    settle(cx);
+    cx.update(|window, cx| {
+        window.set_a11y_active_for_test(true);
+        window.draw(cx).clear(cx);
+    });
+    assert_eq!(rows_read(cx, 30), 30, "the client's first frame");
+    let root = host.read_with(cx, |host, _| host.0.entity_id());
+    cx.update(|window, cx| {
+        cx.notify(root);
+        window.draw(cx).clear(cx);
+    });
+    assert_eq!(rows_read(cx, 30), 30, "a frame only the root renders");
+}
+
+/// How many renders the rows' markers and the page asked for over `frames`
+/// frames, each with its next-frame callbacks delivered, and how often the
+/// table rendered.
+fn idle(view: &Entity<SnapshotView>, cx: &mut VisualTestContext, frames: usize) -> (usize, usize) {
+    let asked = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| v.home_filter.as_ref().unwrap().rows.asked())
+    };
+    let (before, rendered) = (asked(cx), renders());
+    for _ in 0..frames {
+        draw(cx);
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
+        cx.run_until_parked();
+    }
+    (asked(cx) - before, renders() - rendered)
+}
+
+/// A still Home asks for no frame and renders no table; and after a resize
+/// it settles back to that, whether a window of rows is planned, every row
+/// is built for a client, or the fleet has no session to plan (review of
+/// perf-paint: the last two asked on every frame).
+#[gpui::test]
+fn a_resized_home_settles_whatever_the_rows(cx: &mut TestAppContext) {
+    type Setup = fn(&Entity<SnapshotView>, &mut VisualTestContext);
+    let setups: [(&str, Setup); 3] = [
+        ("a window of rows", |_, _| {}),
+        ("every row, for a client", |_, cx| {
+            cx.update(|window, cx| {
+                window.set_a11y_active_for_test(true);
+                window.draw(cx).clear(cx);
+            });
+        }),
+        ("no sessions", |view, cx| {
+            publish(view, cx, |view, _| {
+                let fleet = view.browser_state.fleet.as_mut().unwrap();
+                fleet.groups[0].sessions.clear();
+            });
+        }),
+    ];
+    for (name, setup) in setups {
+        let (view, cx) = open(cx, 100);
+        setup(&view, cx);
+        settle(cx);
+        let client = name.contains("client");
+        // For a client the table is drawn every frame; it still asks nothing.
+        let (asked, rendered) = idle(&view, cx, 6);
+        assert_eq!(asked, 0, "{name}: a still Home asks for frames");
+        assert!(client || rendered == 0, "{name}: a still table rendered");
+        cx.simulate_resize(size(px(1200.), px(1000.)));
+        settle(cx);
+        let (asked, rendered) = idle(&view, cx, 6);
+        assert_eq!(asked, 0, "{name}: asks on every frame after a resize");
+        assert!(client || rendered == 0, "{name}: renders after a resize");
+    }
+}

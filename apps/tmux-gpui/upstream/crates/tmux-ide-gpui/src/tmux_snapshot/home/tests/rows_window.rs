@@ -440,3 +440,45 @@ fn a_resize_with_every_row_built_asks_once(cx: &mut TestAppContext) {
         asked(cx) - before
     );
 }
+
+/// Each row is laid out as a root of its own and placed at its box: the
+/// rows stack from the first one, a row apart, inside their machine's
+/// block, wherever the page is scrolled.
+#[gpui::test]
+fn rows_sit_in_their_boxes(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    let height = px(crate::tmux_snapshot::home::fleet::ROW_HEIGHT);
+    for offset in [0., -900.] {
+        view.update(cx, |v, cx| {
+            let page = &v.home_filter.as_ref().unwrap().page_scroll;
+            page.set_offset(point(px(0.), px(offset)));
+            cx.notify();
+        });
+        draw(cx);
+        let bounds = |cx: &mut VisualTestContext, selector: String| {
+            cx.debug_bounds(Box::leak(selector.into_boxed_str()))
+        };
+        let block = bounds(cx, "fleet-machine-0".into()).unwrap();
+        let rows: Vec<(usize, Bounds<Pixels>)> = (0..100)
+            .filter_map(|row| Some((row, bounds(cx, format!("fleet-session-0-{row}"))?)))
+            .collect();
+        assert!(rows.len() > 10, "rows are built: {}", rows.len());
+        let (first, start) = rows[0];
+        for (row, at) in &rows {
+            assert_eq!(at.size.height, height, "row {row}");
+            assert_eq!(
+                at.top(),
+                start.top() + height * (*row - first) as f32,
+                "row {row} at offset {offset}"
+            );
+            assert_eq!(at.left(), start.left(), "row {row}");
+        }
+        // The block ends with its last row: 100 rows from the first's box.
+        let end = start.top() + height * (100 - first) as f32;
+        assert!(
+            (block.bottom() - end).abs() < px(0.5),
+            "the rows fill their block to its end: {:?} against {end:?}",
+            block.bottom()
+        );
+    }
+}
