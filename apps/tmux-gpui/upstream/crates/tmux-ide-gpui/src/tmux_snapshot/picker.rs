@@ -396,7 +396,9 @@ impl SnapshotView {
         self.open_picker_mode(Mode::Navigation, window, cx);
     }
     pub(super) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_state.appearance.is_some() {
+        // About keeps the keyboard: the menu bar's item waits, as its other
+        // items do (`picker_key`'s About guard).
+        if self.browser_state.appearance.is_some() && self.about.is_none() {
             self.open_picker_mode(Mode::Theme, window, cx);
         }
     }

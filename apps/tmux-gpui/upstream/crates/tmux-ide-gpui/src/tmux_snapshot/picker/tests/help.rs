@@ -31,7 +31,7 @@ fn help_and_preview_changes_search_return_without_terminal_commands(cx: &mut Tes
         cx.simulate_keystrokes("f5");
         // Full label avoids matching pane creation commands on Workspace.
         cx.simulate_input(if entry == "new" {
-            "What’s new"
+            "What's new"
         } else {
             entry
         });

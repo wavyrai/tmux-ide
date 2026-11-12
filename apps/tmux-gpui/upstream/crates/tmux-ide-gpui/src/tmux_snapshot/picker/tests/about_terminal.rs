@@ -130,3 +130,89 @@ fn about_does_not_open_over_the_pane_actions_menu(cx: &mut TestAppContext) {
     cx.dispatch_action(AboutApp);
     view.read_with(cx, |v, _| assert!(v.about.is_none()));
 }
+
+/// The input handler of the frame before About opened stays installed until
+/// About's first frame. Text it delivers in that gap (an input method,
+/// dictation, the character viewer) is not for tmux (review-374c, finding 1).
+#[gpui::test]
+fn a_text_commit_before_abouts_first_frame_stays_out_of_tmux(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = workspace(cx);
+    cx.dispatch_action(AboutApp);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let focused = cx.update(|window, cx| {
+        let terminal = view.read(cx).terminal_focus.clone();
+        terminal.focus(window, cx);
+        view.update(cx, |v, cx| {
+            use gpui::EntityInputHandler as _;
+            v.replace_text_in_range(None, "b", window, cx);
+            v.replace_and_mark_text_in_range(None, "c", None, window, cx);
+            assert!(v.marked.is_empty(), "no composition starts under About");
+        });
+        terminal.is_focused(window)
+    });
+    assert!(focused, "fixture: the terminal had focus at the commit");
+    assert!(!input_sent(&receiver), "a commit in the gap reached tmux");
+    // Without About the same commit is the terminal's.
+    cx.simulate_keystrokes("escape");
+    assert!(view.read_with(cx, |v, _| v.about.is_none()));
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            use gpui::EntityInputHandler as _;
+            v.replace_text_in_range(None, "b", window, cx);
+        })
+    });
+    assert!(input_sent(&receiver), "the terminal takes text again");
+}
+
+/// Tmux IDE > Choose Theme while About is open: the palette does not open
+/// under the card, where it would be left without the keyboard
+/// (review-374c, finding 2).
+#[gpui::test]
+fn choose_theme_waits_while_about_is_open(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::menu_bar::ChooseTheme;
+    let (view, cx, receiver) = workspace(cx);
+    view.update(cx, |v, _| {
+        v.browser_state.appearance = Some(
+            serde_json::from_value(serde_json::json!({
+                "selected":"dark", "system":"dark", "error":null,
+                "theme":{"canvas":1,"background":2,"foreground":3,"cursor":4,"surface":5,
+                    "active":6,"muted":7,"accent":8,"palette":vec![9;256]},
+                "options":[{"id":"dark","name":"Dark"}]
+            }))
+            .unwrap(),
+        );
+    });
+    cx.dispatch_action(AboutApp);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.dispatch_action(ChooseTheme);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    view.read_with(cx, |v, _| {
+        assert!(v.about.is_some());
+        assert!(v.picker.is_none(), "no palette under About");
+    });
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
+    cx.update(|window, _| assert!(terminal.is_focused(window)));
+    type_some(cx);
+    assert!(input_sent(&receiver), "the terminal takes typing again");
+    // With About closed the item opens the theme list as before.
+    cx.dispatch_action(ChooseTheme);
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.picker.as_ref().map(|p| p.mode), Some(Mode::Theme));
+    });
+}
+
+/// One apostrophe for "What's new" wherever the app writes it.
+#[test]
+fn whats_new_is_spelled_one_way() {
+    for (file, source) in [
+        ("about.rs", include_str!("../../about.rs")),
+        ("picker/commands.rs", include_str!("../commands.rs")),
+        ("picker/reference.rs", include_str!("../reference.rs")),
+        ("welcome/whats_new.rs", include_str!("../../welcome/whats_new.rs")),
+    ] {
+        assert!(source.contains("What's new"), "{file}");
+        assert!(!source.contains("What\u{2019}s new"), "{file}");
+    }
+}
