@@ -12,7 +12,8 @@
 //! window before the rows come into view. A page that is a new size (a zoom,
 //! full screen) renders again once it is laid out, as a moved run does. A run
 //! that hasn't been measured yet, or a page with no height yet, builds every
-//! row.
+//! row. So does a window that assistive technology is reading: VoiceOver
+//! must reach every row, and a spacer has nothing for it to read.
 use gpui::{prelude::*, *};
 use std::{
     cell::{Cell, RefCell},
@@ -32,12 +33,33 @@ pub(in crate::tmux_snapshot) type Run = (usize, usize);
 pub(in crate::tmux_snapshot) struct RowWindow {
     tops: Rc<RefCell<HashMap<Run, Pixels>>>,
     planned: Rc<Cell<Option<(Pixels, Pixels)>>>,
+    /// Assistive technology is reading the window: every row is built.
+    assistive: Rc<Cell<bool>>,
+    /// Stands in for assistive technology, which a test window never has.
+    #[cfg(test)]
+    forced: Rc<Cell<bool>>,
     /// How many renders the markers have asked for.
     #[cfg(test)]
     asked: Rc<Cell<usize>>,
 }
 
 impl RowWindow {
+    /// Notes, at each render, whether assistive technology is reading
+    /// `window`. gpui draws the window afresh when that starts or stops, so
+    /// the rows are all there before the first accessibility tree is sent.
+    pub(in crate::tmux_snapshot) fn observe(&self, window: &Window) {
+        #[cfg(test)]
+        let forced = self.forced.get();
+        #[cfg(not(test))]
+        let forced = false;
+        self.assistive.set(forced || window.is_a11y_active());
+    }
+
+    /// Whether every row is built, for assistive technology.
+    pub(in crate::tmux_snapshot) fn every_row(&self) -> bool {
+        self.assistive.get()
+    }
+
     /// What to lay out for the `count` rows of `run`, `height` tall each,
     /// for the page scrolled as `page` says; `keep` is a row that must stay
     /// built wherever it is (the keyboard's).
@@ -111,6 +133,11 @@ impl RowWindow {
     /// Forgets where every run was, as a new table shape would move them.
     pub(in crate::tmux_snapshot) fn forget(&self) {
         self.tops.borrow_mut().clear();
+    }
+
+    /// Builds every row, as a window that VoiceOver reads does.
+    pub(in crate::tmux_snapshot) fn force_assistive(&self, on: bool) {
+        self.forced.set(on);
     }
 
     /// How many renders the markers have asked for so far.
@@ -210,7 +237,11 @@ impl SnapshotView {
         let (index, _) = run;
         let height = px(ROW_HEIGHT);
         let mut out = Vec::new();
-        let Some(controls) = self.home_filter.as_ref().filter(|_| !rows.is_empty()) else {
+        let Some(controls) = self
+            .home_filter
+            .as_ref()
+            .filter(|controls| !rows.is_empty() && !controls.rows.every_row())
+        else {
             for &(row, session) in rows {
                 out.push(self.fleet_run_row(group, index, row, session, is_cursor, time, cx));
             }

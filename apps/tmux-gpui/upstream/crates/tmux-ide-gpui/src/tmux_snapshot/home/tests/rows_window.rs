@@ -2,6 +2,7 @@
 //! (perf plan, finding 2), and nothing a user sees or does changes for it.
 use super::*;
 use crate::tmux_snapshot::home::fleet_nav;
+use std::{cell::Cell, rc::Rc};
 
 /// One machine, one server, `count` sessions; every seventh is a favourite.
 fn fleet(count: usize) -> browser::fleet::Fleet {
@@ -239,7 +240,7 @@ fn a_moved_run_renders_again_and_a_still_one_does_not(cx: &mut TestAppContext) {
     next_frame(cx);
     draw(cx);
     next_frame(cx);
-    let renders = std::rc::Rc::new(std::cell::Cell::new(0));
+    let renders = Rc::new(Cell::new(0));
     let seen = renders.clone();
     cx.update(|_, cx| {
         cx.observe(&view, move |_, _| seen.set(seen.get() + 1))
@@ -297,4 +298,111 @@ fn a_resized_page_asks_for_a_render_itself(cx: &mut TestAppContext) {
     let settled = asked(cx);
     draw(cx);
     assert_eq!(asked(cx), settled, "and then asks for nothing more");
+}
+
+/// VoiceOver must reach every row (PM requirement): while assistive
+/// technology reads the window every row is built, as before the table was
+/// windowed, and when it stops the table is windowed again. A test window
+/// never has assistive technology, so the test stands in for it.
+#[gpui::test]
+fn assistive_technology_gets_every_row(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    assert!(!built(cx, 90), "row 90 starts as part of a spacer");
+    let read = |cx: &mut VisualTestContext, on: bool| {
+        view.update(cx, |v, _| {
+            v.home_filter.as_ref().unwrap().rows.force_assistive(on);
+        });
+        // gpui draws the whole window afresh when a reader starts or stops.
+        cx.update(|window, _| window.refresh());
+        draw(cx);
+    };
+    let extent = page_extent(&view, cx);
+    read(cx, true);
+    let missing: Vec<usize> = (0..100).filter(|row| !built(cx, *row)).collect();
+    assert!(missing.is_empty(), "rows not built: {missing:?}");
+    assert_eq!(page_extent(&view, cx), extent, "the page is as long");
+    read(cx, false);
+    assert!(built(cx, 0));
+    assert!(!built(cx, 90), "and windowed again once it stops");
+}
+
+/// Dragging the page's scrollbar thumb builds the rows it brings into view
+/// on the drag's own frame. Every step of the drag notifies the view (in
+/// the app the view is cached, and draws again only when notified), so the
+/// render plans from the new offset. The quarter-page margin is not what
+/// covers it: the drag here moves the page by more than two pages.
+#[gpui::test]
+fn dragging_the_scrollbar_builds_the_rows_it_shows(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    let page = cx.debug_bounds("tmux-home-page").unwrap();
+    // The thumb shows while the pointer is over the page's edge.
+    cx.simulate_mouse_move(
+        point(page.right() - px(4.), page.top() + px(20.)),
+        None,
+        Modifiers::none(),
+    );
+    draw(cx);
+    let thumb = cx
+        .debug_bounds("tmux-home-page-thumb")
+        .expect("the page's scrollbar thumb");
+    let notified = Rc::new(Cell::new(0));
+    let count = notified.clone();
+    cx.update(|_, cx| {
+        cx.observe(&view, move |_, _| count.set(count.get() + 1))
+            .detach();
+    });
+    let offset = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| {
+            v.home_filter.as_ref().unwrap().page_scroll.offset().y
+        })
+    };
+    cx.simulate_mouse_down(thumb.center(), MouseButton::Left, Modifiers::none());
+    let mut scrolled = 0;
+    for step in 1..=8 {
+        notified.set(0);
+        let before = offset(cx);
+        cx.simulate_mouse_move(
+            thumb.center() + point(px(0.), px(50. * step as f32)),
+            Some(MouseButton::Left),
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        // The first move only starts the drag; each one after scrolls.
+        if offset(cx) != before {
+            scrolled += 1;
+            assert!(notified.get() > 0, "drag step {step} notifies the view");
+        }
+    }
+    assert!(
+        scrolled >= 7,
+        "the drag's moves scrolled the page: {scrolled}"
+    );
+    let offset = offset(cx);
+    assert!(
+        offset < -(page.size.height * 2.),
+        "the drag scrolled the page by more than two pages: {offset:?}"
+    );
+    // The one frame the drag asked for, and no other wakeup.
+    draw(cx);
+    let first = (0..100)
+        .find(|row| built(cx, *row))
+        .expect("rows are built");
+    let top = cx
+        .debug_bounds(Box::leak(
+            format!("fleet-session-0-{first}").into_boxed_str(),
+        ))
+        .unwrap()
+        .top();
+    let height = px(crate::tmux_snapshot::home::fleet::ROW_HEIGHT);
+    let mut shown = 0;
+    for row in 0..100 {
+        let slot = top + height * (row as f32 - first as f32);
+        if slot + height > page.top() && slot < page.bottom() {
+            shown += 1;
+            assert!(built(cx, row), "row {row} is on the page but a spacer");
+        }
+    }
+    assert!(shown > 10, "the page shows rows: {shown}");
+    assert!(!built(cx, 0), "the top rows went back to a spacer");
+    cx.simulate_mouse_up(thumb.center(), MouseButton::Left, Modifiers::none());
 }

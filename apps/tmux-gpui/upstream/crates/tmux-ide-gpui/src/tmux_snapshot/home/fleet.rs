@@ -609,6 +609,9 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let fleet = self.browser_state.fleet.as_ref()?;
+        if let Some(controls) = &self.home_filter {
+            controls.rows.observe(window);
+        }
         let bezel = self.home_palette();
         let view = self.home_fleet_view();
         let waiting = filters::waiting_sessions(
