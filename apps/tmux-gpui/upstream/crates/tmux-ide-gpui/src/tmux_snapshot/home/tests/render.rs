@@ -182,3 +182,25 @@ fn narrow_home_counts_refresh_without_changing_duplicate_label_identity(cx: &mut
 
 #[path = "agents.rs"]
 mod agents;
+
+/// The palettes are built once per theme, and follow a theme change at once
+/// (perf plan, finding 2).
+#[test]
+fn palettes_follow_the_theme_they_were_built_for() {
+    use crate::tmux_snapshot::design;
+    let dark = crate::config::Theme::default();
+    let mut light = dark.clone();
+    light.background = 0xfafafa;
+    light.foreground = 0x202020;
+    let first = design::palette(&dark);
+    assert_eq!(design::palette(&dark).bg, first.bg);
+    assert_ne!(design::palette(&light).bg, first.bg);
+    assert_eq!(
+        design::palette(&dark).text,
+        first.text,
+        "switching back finds it again"
+    );
+    let home = palette(&dark, 0x101010);
+    assert_ne!(palette(&light, 0xfafafa).text, home.text);
+    assert_eq!(palette(&dark, 0x101010).text, home.text);
+}
