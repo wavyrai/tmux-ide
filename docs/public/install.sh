@@ -143,6 +143,65 @@ if (info && Number.isInteger(info.pid) && typeof info.productVersion === 'string
 }
 JS
 }
+# The lock records its owner's pid and start time, so a run that died without
+# releasing it (SIGKILL, power loss) is told apart from one that is still working.
+process_start() { LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; print}'; }
+lock_is_stale() {
+  lock_pid=''
+  lock_start=''
+  if [ -f "$1/owner" ]; then
+    { IFS= read -r lock_pid && IFS= read -r lock_start; } <"$1/owner" 2>/dev/null || true
+  fi
+  case "$lock_pid" in
+    ''|*[!0-9]*)
+      # No record: an installer from before owners were recorded, or one about
+      # to write its record. Only age can tell; no download runs this long.
+      lock_pid=''
+      [ -n "$(find "$1" -maxdepth 0 -mmin +15 2>/dev/null)" ]
+      return ;;
+  esac
+  kill -0 "$lock_pid" 2>/dev/null || return 0
+  lock_now=$(process_start "$lock_pid")
+  # Same pid, another start time: the owner exited and its pid was reused.
+  [ -n "$lock_start" ] && [ -n "$lock_now" ] && [ "$lock_start" != "$lock_now" ]
+}
+lock_busy() {
+  if [ -n "$lock_pid" ]; then fail "Another installation is running (pid $lock_pid; lock: $1)"; fi
+  fail "Another installation may be running (lock: $1). If no installation is running, remove that directory and retry."
+}
+acquire_lock() {
+  if ! mkdir "$1" 2>/dev/null; then
+    lock_is_stale "$1" || lock_busy "$1"
+    # One run at a time may remove a stale lock. The guard is held for a moment
+    # only, so one older than a minute belongs to a run that died holding it.
+    [ -z "$(find "$1.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$1.takeover" 2>/dev/null || true
+    mkdir "$1.takeover" 2>/dev/null || lock_busy "$1"
+    if lock_is_stale "$1"; then
+      rm -f "$1/owner" "$1"/owner.* 2>/dev/null || true
+      rmdir "$1" 2>/dev/null || true
+    fi
+    lock_taken=true
+    mkdir "$1" 2>/dev/null || lock_taken=false
+    rmdir "$1.takeover" 2>/dev/null || true
+    [ "$lock_taken" = true ] || lock_busy "$1"
+    step 'Removed the lock of an installation that is no longer running'
+  fi
+  lock_held=$1
+  printf '%s\n%s\n' "$$" "$(process_start "$$")" >"$1/owner.$$"
+  mv -f "$1/owner.$$" "$1/owner"
+}
+# Runs on every exit. Nothing here may stop the lock from being released.
+release() {
+  set +e
+  if [ -n "$stage" ]; then
+    rm -rf "$stage" 2>/dev/null || { chmod -R u+w "$stage" 2>/dev/null; rm -rf "$stage"; }
+  fi
+  if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi
+  if [ -n "$lock_held" ]; then
+    rm -f "$lock_held/owner" "$lock_held"/owner.* 2>/dev/null
+    rmdir "$lock_held" 2>/dev/null
+  fi
+}
 main() {
   action=install
   confirmed=false
@@ -177,11 +236,13 @@ main() {
     [ -f "$root/installer-v1" ] && grep -q '^# tmux-ide universal installer v1$' "$launcher" || fail "Refusing to replace an unmanaged installation at $launcher"
   fi
   mkdir -p "$root/releases" "$prefix/bin"
-  mkdir "$root/install.lock" 2>/dev/null || fail "Another installation is running (lock: $root/install.lock)"
   stage=''
   candidate=''
-  trap '[ -z "$stage" ] || rm -rf "$stage"; if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi; rmdir "$root/install.lock" 2>/dev/null || true' 0
-  trap 'exit 1' INT TERM
+  lock_held=''
+  trap release 0
+  # A closed terminal or pipe ends the run like an interrupt does: through release.
+  trap 'exit 1' INT TERM HUP QUIT PIPE
+  acquire_lock "$root/install.lock"
   if [ "$action" != install ]; then
     [ -f "$root/installer-v1" ] || fail 'No managed installation found at this prefix'
     [ -x "$root/current/node/bin/node" ] || fail 'Installed Node.js is unavailable; reinstall at this prefix to repair it'
