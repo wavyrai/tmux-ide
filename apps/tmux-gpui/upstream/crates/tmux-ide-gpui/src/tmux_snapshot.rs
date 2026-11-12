@@ -400,6 +400,7 @@ fn show_owned(
                         new_session: None,
                         new_session_queued: None,
                         agent_animation: Default::default(),
+                        idle_tick: Default::default(),
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
@@ -494,6 +495,7 @@ struct SnapshotView {
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
     agent_animation: agent_spinner::Slots,
+    idle_tick: browser_tick::IdleTick,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
@@ -538,6 +540,8 @@ impl SnapshotView {
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            // A render is activity: queued work may follow it (#714).
+            self.idle_tick.nudge();
             self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }
@@ -558,10 +562,9 @@ impl SnapshotView {
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
         let separator = controls::separator(&theme);
-        let highlights = self
-            .selection
-            .as_ref()
-            .map_or_else(Vec::new, |selection| selection.highlights.clone());
+        // A reference to the selection's highlights, never a copy (none
+        // without a selection).
+        let highlights = self.selection.as_ref().map(|s| s.highlights.clone());
         let entity = cx.entity();
         // Browse publications carry placements per frame; static files once.
         let kitty_scene = if self.browsing {
@@ -799,7 +802,7 @@ impl SnapshotView {
                                     frame.view(),
                                     bounds,
                                     &font,
-                                    &highlights,
+                                    highlights.as_deref().unwrap_or(&[]),
                                     (!kitty_scene.is_empty()).then_some(PlacedImages {
                                         placements: &kitty_scene,
                                         images,
@@ -822,7 +825,7 @@ impl SnapshotView {
                                 Some(bounds.size),
                                 width,
                                 &font,
-                                &highlights,
+                                highlights.as_deref().unwrap_or(&[]),
                                 &[],
                                 None,
                                 (!kitty_scene.is_empty()).then_some(PlacedImages {

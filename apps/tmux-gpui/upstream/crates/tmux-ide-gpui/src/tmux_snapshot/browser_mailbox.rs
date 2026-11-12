@@ -1,6 +1,7 @@
 //! The latest browser publication, handed from the transport thread to the UI.
 //! A publication wakes the UI task at once instead of waiting for its 16 ms
-//! tick (#710); the tick stays for queued UI work only.
+//! tick (#710); the tick stays for queued UI work only, and stops while the
+//! window is idle (#714): then only a publication or a nudge wakes the task.
 use super::State;
 use std::{
     future::Future,
@@ -20,6 +21,10 @@ pub(in crate::tmux_snapshot) struct MailboxSlot {
     slot: Mutex<Slot>,
     published: AtomicBool,
     waker: Mutex<Option<Waker>>,
+    /// The UI task waits for a publication or nudge only, with no tick armed.
+    idle: AtomicBool,
+    /// Something happened in the window since the UI task last looked.
+    activity: AtomicBool,
 }
 
 /// Holds the slot; when dropped holding a publication, it unlocks first and
@@ -49,11 +54,29 @@ impl MailboxSlot {
     }
     /// Sets the flag before waking, so the woken task's poll sees it.
     fn wake(&self) {
+        self.activity.store(true, Ordering::Release);
         self.published.store(true, Ordering::Release);
         let waker = self.waker.lock().ok().and_then(|mut waker| waker.take());
         if let Some(waker) = waker {
             waker.wake();
         }
+    }
+    /// Reports window activity (input, a render, a finished image): it wakes
+    /// the UI task if it is idle, and restarts its tick's grace period.
+    pub(in crate::tmux_snapshot) fn nudge(&self) {
+        self.activity.store(true, Ordering::Release);
+        if self.idle.load(Ordering::Acquire) {
+            self.wake();
+        }
+    }
+    /// Set by the UI task before it decides whether to arm its tick, so a
+    /// nudge between that decision and the wait is never lost.
+    pub(in crate::tmux_snapshot) fn set_idle(&self, idle: bool) {
+        self.idle.store(idle, Ordering::Release);
+    }
+    /// True once after a nudge or publication.
+    pub(in crate::tmux_snapshot) fn take_activity(&self) -> bool {
+        self.activity.swap(false, Ordering::AcqRel)
     }
     /// Resolves once a publication has arrived since the last time it resolved.
     pub(in crate::tmux_snapshot) fn published(&self) -> Published<'_> {
