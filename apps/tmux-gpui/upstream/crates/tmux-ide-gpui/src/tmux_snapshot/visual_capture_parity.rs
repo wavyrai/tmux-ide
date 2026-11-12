@@ -5,15 +5,17 @@
 //! with `visual-capture`; run through `examples/glyph_parity.rs`.
 use crate::config::Theme;
 use crate::terminal::{BOLD, ITALIC, STRIKETHROUGH, UNDERLINE};
-use crate::terminal_painter::{ImageTarget, NativeFrame, PlacedImages, TerminalPainter};
+use crate::terminal_painter::{
+    ImageTarget, Layer, NativeFrame, Part, PlacedImages, Span, TerminalPainter,
+};
 use anyhow::{Context as _, anyhow};
 use gpui::*;
 use herdr_client::{
     SurfaceImages,
     protocol::{
-        CellData, CursorState, SurfaceGraphicsAsset, SurfaceGraphicsAssetKey,
-        SurfaceGraphicsFormat, SurfaceGraphicsPlacement, SurfaceGraphicsSource,
-        SurfaceGraphicsTarget,
+        CellData, CursorState, PaneSurfacePane, PaneSurfaceScrollMetrics, SurfaceGraphicsAsset,
+        SurfaceGraphicsAssetKey, SurfaceGraphicsFormat, SurfaceGraphicsPlacement,
+        SurfaceGraphicsSource, SurfaceGraphicsTarget, SurfaceRect,
     },
 };
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
@@ -22,7 +24,7 @@ const LINES: [&str; 9] = [
     "fn main() { println!(\"hello, world\"); } // ascii",
     "Compiling tmux-ide-gpui v0.1.17 (bold italic below)",
     "wide: 界面 テスト 한국어 ｶﾞ and emoji: 🙂🚀✅ 👍🏽 🇳🇱",
-    "box: ┌──┬──┐ ║ ▛▀▜ ░▒▓ powerline:  ",
+    "box: ┌──┬──┐ ║ ▛▀▜ ░▒▓ powerline: \u{e0b0}\u{e0b2} \u{e0b4}\u{e0b6}",
     "underline and strike through, then dim/rev",
     "colours: red green blue 256 truecolor",
     "    indented text after spaces    and tabs",
@@ -183,9 +185,27 @@ fn placement(key: &SurfaceGraphicsAssetKey, x: u16, y: u16, z: i32) -> SurfaceGr
     }
 }
 
-/// Paints `case` with the legacy or batched glyph path and returns the
-/// screenshot.
-fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<image::RgbaImage> {
+/// What changes between a case's early frames and the one captured, so the
+/// rows the early frames retained must not be drawn again as they were. The
+/// captured frame is always the case's own: only the frames before differ.
+const SEQUENCES: [&str; 10] = [
+    // Nothing changes.
+    "", // Another theme, font size, cell height or font first.
+    "theme", "size", "cellh", "font",   // The grid 3.5 pt to the right first.
+    "origin", // The left half only first, layer by layer.
+    "part",   // A pane scrollbar over column 5 first; then one that appears.
+    "bar", "unbar", // The grid partly outside the window throughout.
+    "clip",
+];
+
+/// Paints `case` with the legacy or batched glyph path, after early frames
+/// that differ as `sw` says, and returns the screenshot.
+fn render(
+    cx: &mut VisualTestAppContext,
+    case: &Case,
+    legacy: bool,
+    sw: &str,
+) -> Result<image::RgbaImage> {
     const COLS: usize = 60;
     let rows = cells(COLS);
     let mut earlier = rows.clone();
@@ -222,15 +242,37 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
     let painter = Rc::new(RefCell::new(TerminalPainter::default()));
     {
         let mut painter = painter.borrow_mut();
-        painter.set_appearance(14., case.cell_height, case.theme.clone());
+        let mut early_theme = case.theme.clone();
+        if sw == "theme" {
+            early_theme.foreground = 0xff2222;
+            early_theme.palette[1] = 0x00ff00;
+            early_theme.palette[2] = 0xff00ff;
+            early_theme.palette[4] = 0xffff00;
+        }
+        painter.set_appearance(
+            if sw == "size" { 13. } else { 14. },
+            if sw == "cellh" {
+                case.cell_height + 2.
+            } else {
+                case.cell_height
+            },
+            early_theme,
+        );
         painter.legacy_glyphs = legacy;
     }
-    let (origin, with_images, background, scrolled) = (
-        case.origin,
-        case.images,
-        case.theme.background,
-        case.scrolled,
-    );
+    let state = Rc::new(RefCell::new(Late {
+        font: if sw == "font" { "Monaco" } else { "Menlo" },
+        origin: if sw == "origin" {
+            case.origin + point(px(3.5), px(0.))
+        } else if sw == "clip" {
+            case.origin + point(px(300.), px(120.))
+        } else {
+            case.origin
+        },
+        partial: sw == "part",
+        bar: sw == "bar",
+    }));
+    let (with_images, background, scrolled) = (case.images, case.theme.background, case.scrolled);
     let handle = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
@@ -251,7 +293,7 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
                     } else {
                         frame.clone()
                     },
-                    origin,
+                    state: state.clone(),
                     images: with_images.then(|| (images.clone(), placements.clone())),
                     background,
                 })
@@ -263,7 +305,20 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, _| window.refresh())?;
     }
-    if scrolled {
+    if scrolled || !sw.is_empty() {
+        painter
+            .borrow_mut()
+            .set_appearance(14., case.cell_height, case.theme.clone());
+        *state.borrow_mut() = Late {
+            font: "Menlo",
+            origin: if sw == "clip" {
+                case.origin + point(px(300.), px(120.))
+            } else {
+                case.origin
+            },
+            partial: false,
+            bar: sw == "unbar",
+        };
         cx.update_window(handle.into(), |root, window, cx| {
             if let Ok(view) = root.downcast::<Painted>() {
                 view.update(cx, |view, _| view.frame = frame.clone());
@@ -298,47 +353,111 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
 
 type Images = (Arc<SurfaceImages>, Arc<[SurfaceGraphicsPlacement]>);
 
+#[derive(Clone)]
+struct Late {
+    font: &'static str,
+    origin: Point<Pixels>,
+    partial: bool,
+    bar: bool,
+}
+
 struct Painted {
     painter: Rc<RefCell<TerminalPainter>>,
     frame: Arc<NativeFrame>,
-    origin: Point<Pixels>,
+    state: Rc<RefCell<Late>>,
     images: Option<Images>,
     background: u32,
 }
 
 impl Render for Painted {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let (painter, frame, origin, images) = (
+        let (painter, frame, state, images) = (
             self.painter.clone(),
             self.frame.clone(),
-            self.origin,
+            self.state.clone(),
             self.images.clone(),
         );
         div().size_full().bg(rgb(self.background)).child(
             canvas(
                 |_, _, _| (),
                 move |_, _, window, cx| {
-                    let font = font("Menlo");
+                    let state = state.borrow().clone();
+                    let origin = state.origin;
+                    let font = font(state.font);
                     let mut painter = painter.borrow_mut();
                     let width = painter.cell_width(&font, window, cx);
-                    painter.paint_view(
-                        (&*frame).into(),
-                        origin,
-                        None,
-                        width,
-                        &font,
-                        &[],
-                        &[],
-                        None,
-                        images.as_ref().map(|(images, placements)| PlacedImages {
-                            placements,
-                            images,
-                            target: ImageTarget::Main,
-                            cell_pixels: None,
-                        }),
-                        window,
-                        cx,
-                    );
+                    let rect = SurfaceRect {
+                        x: 0,
+                        y: 0,
+                        width: 60,
+                        height: 9,
+                    };
+                    let panes: Vec<PaneSurfacePane> = if state.bar {
+                        vec![PaneSurfacePane {
+                            pane_id: "p1".into(),
+                            content_revision: 0,
+                            rect,
+                            inner_rect: rect,
+                            scrollbar_rect: Some(SurfaceRect {
+                                x: 5,
+                                y: 0,
+                                width: 1,
+                                height: 9,
+                            }),
+                            scroll: Some(PaneSurfaceScrollMetrics {
+                                offset_from_bottom: 0,
+                                max_offset_from_bottom: 100,
+                                viewport_rows: 9,
+                            }),
+                            focused: true,
+                            mouse_reporting: false,
+                            sgr_pixel_mouse: false,
+                            alternate_screen_active: false,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+                    let area: Vec<Span> = (0..9)
+                        .map(|row| Span {
+                            row,
+                            columns: 0..30,
+                        })
+                        .collect();
+                    let parts: Vec<Option<Part<'_>>> = if state.partial {
+                        Layer::ALL
+                            .iter()
+                            .map(|layer| {
+                                Some(Part {
+                                    area: &area,
+                                    layer: *layer,
+                                })
+                            })
+                            .collect()
+                    } else {
+                        vec![None]
+                    };
+                    for part in parts {
+                        painter.paint_view(
+                            (&*frame).into(),
+                            origin,
+                            None,
+                            width,
+                            &font,
+                            &[],
+                            &panes,
+                            part,
+                            images.as_ref().map(|(images, placements)| PlacedImages {
+                                placements,
+                                images,
+                                target: ImageTarget::Main,
+                                cell_pixels: None,
+                            }),
+                            window,
+                            cx,
+                        );
+                    }
                 },
             )
             .size_full(),
@@ -350,23 +469,45 @@ impl Render for Painted {
 /// screenshots of any case that differs to `dir`.
 #[doc(hidden)]
 pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
+    let mut lines = glyph_cases(dir)?;
+    lines.push(
+        "subpixel sprites: no window here draws them (checked per case), so that branch has no pixels to compare"
+            .into(),
+    );
+    Ok(lines)
+}
+
+fn glyph_cases(dir: &Path) -> Result<Vec<String>> {
     let mut cx = VisualTestAppContext::with_asset_source(
         gpui_platform::current_platform(false),
         Arc::new(crate::icons::Icons),
     );
     let mut lines = Vec::new();
     let mut failed = 0;
-    for case in cases() {
-        let legacy = render(&mut cx, &case, true)?;
+    let all = cases();
+    for (case, sw) in all
+        .iter()
+        .flat_map(|case| SEQUENCES.iter().map(move |sw| (case, *sw)))
+    {
+        // A partial repaint over an image is not stable frame to frame.
+        if sw == "part" && case.images {
+            continue;
+        }
+        let name = if sw.is_empty() {
+            case.name.to_owned()
+        } else {
+            format!("{}+{sw}", case.name)
+        };
+        let legacy = render(&mut cx, case, true, sw)?;
         let hits = crate::terminal_painter::ROW_HITS.load(std::sync::atomic::Ordering::Relaxed);
-        let batched = render(&mut cx, &case, false)?;
+        let batched = render(&mut cx, case, false, sw)?;
         let hits =
             crate::terminal_painter::ROW_HITS.load(std::sync::atomic::Ordering::Relaxed) - hits;
         // The batched path without retained rows: the frame a row's first
         // paint draws, which the retained frames above never show.
         let retain = &crate::terminal_painter::RETAIN_ROWS;
         retain.store(false, std::sync::atomic::Ordering::Relaxed);
-        let unretained = render(&mut cx, &case, false);
+        let unretained = render(&mut cx, case, false, sw);
         retain.store(true, std::sync::atomic::Ordering::Relaxed);
         let unretained = unretained?;
         let differing = legacy
@@ -382,8 +523,7 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
             .filter(|p| p.0 != legacy.get_pixel(0, 0).0)
             .count();
         lines.push(format!(
-            "{:<40} {}x{} identical={same} differing_pixels={differing} non_background_pixels={inked} retained_row_hits={hits}",
-            case.name,
+            "{name:<48} {}x{} identical={same} differing_pixels={differing} non_background_pixels={inked} retained_row_hits={hits}",
             legacy.width(),
             legacy.height(),
         ));
@@ -394,7 +534,7 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
                 ("batched", &batched),
                 ("unretained", &unretained),
             ] {
-                let path = dir.join(format!("{}-{suffix}.png", case.name));
+                let path = dir.join(format!("{name}-{suffix}.png"));
                 image
                     .save_with_format(&path, image::ImageFormat::Png)
                     .with_context(|| format!("save {}", path.display()))?;
@@ -404,9 +544,5 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
     if failed > 0 {
         return Err(anyhow!("{failed} case(s) differ:\n{}", lines.join("\n")));
     }
-    lines.push(
-        "subpixel sprites: no window here draws them (checked per case), so that branch has no pixels to compare"
-            .into(),
-    );
     Ok(lines)
 }
