@@ -398,7 +398,11 @@ export class TerminalReplicaInterpreter {
   ): Promise<void> {
     if (this.#closed) return;
     if (operation.type === "reseed") {
-      if (operation.bootstrap === "painted-capture" && !operation.native)
+      // A stock capture prints a saved tab cell as one HT and drops its width.
+      // Paint it to the next tab stop; refuse only when the parser cannot say
+      // where its cursor is.
+      const paintCapturedTabs = operation.bootstrap === "painted-capture" && !operation.native;
+      if (paintCapturedTabs && !this.#backend.graphicsCursor)
         assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
       this.#causalCell?.fail("reseeded");
       const nativeCols = operation.nativeCols ?? operation.cols;
@@ -417,8 +421,18 @@ export class TerminalReplicaInterpreter {
       try {
         if (operation.native && !replacement.importNativeGrid?.(operation.native))
           throw new Error("Native bootstrap requires a compatible interpreter");
+        // Capture chunks come first and in order; anything else is live output,
+        // where HT stays cursor motion.
+        const captured = operation.captureChunks ?? operation.chunks;
+        let nextCaptured = 0;
         for (const chunk of operation.chunks) {
-          await this.#writeToBackend(replacement, chunk);
+          const fromCapture =
+            paintCapturedTabs &&
+            nextCaptured < captured.length &&
+            Buffer.compare(chunk, captured[nextCaptured]!) === 0;
+          if (fromCapture) nextCaptured += 1;
+          if (fromCapture && chunk.includes(9)) await this.#writeStockCapture(replacement, chunk);
+          else await this.#writeToBackend(replacement, chunk);
         }
         if (operation.wraparound !== undefined)
           replacement.setAuthoritativeWraparound(operation.wraparound);
@@ -613,6 +627,30 @@ export class TerminalReplicaInterpreter {
       });
       this.#tail = run.catch(() => undefined);
     }, 250);
+  }
+
+  /**
+   * Replay one stock `capture-pane -e` chunk. tmux stores a tab as one wide
+   * cell and prints it as a single HT, without its width. Paint spaces to the
+   * next default tab stop instead: that is the cell tmux made when the tab was
+   * written at this column, and spaces take the cell's background as tmux's
+   * cell does. tmux never tabs into the last column (`input_c0_dispatch`).
+   * A row whose cells moved after the tab was written (insert or delete
+   * character, reflow) or that was written under custom tab stops can come out
+   * a few columns off until the program redraws it.
+   */
+  async #writeStockCapture(backend: TerminalInterpreterBackend, chunk: Uint8Array): Promise<void> {
+    let start = 0;
+    for (;;) {
+      const tab = chunk.indexOf(9, start);
+      if (tab < 0) break;
+      if (tab > start) await this.#writeToBackend(backend, chunk.subarray(start, tab));
+      const column = backend.graphicsCursor!().x;
+      const stop = Math.min(backend.cols - 1, (Math.floor(column / 8) + 1) * 8);
+      if (stop > column) await this.#writeToBackend(backend, " ".repeat(stop - column));
+      start = tab + 1;
+    }
+    if (start < chunk.length) await this.#writeToBackend(backend, chunk.subarray(start));
   }
 
   #writeToBackend(backend: TerminalInterpreterBackend, data: Uint8Array | string): Promise<void> {

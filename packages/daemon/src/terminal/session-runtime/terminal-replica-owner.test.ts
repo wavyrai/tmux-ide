@@ -1242,16 +1242,14 @@ it.each(["seed", "delta"] as const)(
     );
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     try {
-      if (kind === "seed") {
-        await expect(owner.subscribe((u) => updates.push(u))).rejects.toThrow("saved tab cells");
-        expect(updates).toHaveLength(0);
-        expect(faults).toHaveLength(1);
-        expect(reseeds).toBe(0);
-      } else {
-        await owner.subscribe((u) => updates.push(u));
-        expect(updates).toHaveLength(1);
-        expect(faults).toHaveLength(0);
-      }
+      // A captured tab is painted and a live one is cursor motion; neither faults.
+      await owner.subscribe((u) => updates.push(u));
+      expect(updates).toHaveLength(1);
+      expect(faults).toHaveLength(0);
+      expect(reseeds).toBe(0);
+      const update = updates[0]!;
+      const cells = update.type === "terminal.seed" ? update.snapshot.grid[0]!.cells : [];
+      expect([cells[0]?.grapheme, cells[7]?.grapheme]).toEqual(["A", "B"]);
     } finally {
       await owner.dispose();
     }
