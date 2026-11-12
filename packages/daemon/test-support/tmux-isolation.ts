@@ -312,9 +312,8 @@ function followExisting(path: string): string {
 
 /** A directory in front of the guard on PATH: private itself, and so is any tmux in it. */
 function privateShimDirectory(entry: string): boolean {
-  return (
-    leadsBelowTemporaryDirectory(`${entry}/x`) && leadsBelowTemporaryDirectory(`${entry}/tmux`)
-  );
+  // Following entry/tmux follows the entry itself on the way.
+  return leadsBelowTemporaryDirectory(`${entry}/tmux`);
 }
 
 export function assertTmuxGuarded(environment: NodeJS.ProcessEnv = process.env): void {
