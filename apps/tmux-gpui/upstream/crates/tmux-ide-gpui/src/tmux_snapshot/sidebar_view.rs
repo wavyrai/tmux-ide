@@ -17,9 +17,11 @@ use super::{SIDEBAR_WIDTH, focus_ring, sidebar};
 use crate::tmux_snapshot::{SnapshotView, browser};
 use bezel_theme::{TextStyle, Typeset};
 use gpui::{prelude::*, *};
-#[cfg(test)]
-use std::cell::Cell;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    cell::Cell,
+    hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
+};
 
 /// The sidebar's view. Its render asks `SnapshotView` for the elements.
 pub(in crate::tmux_snapshot) struct SidebarView {
@@ -31,6 +33,10 @@ pub(in crate::tmux_snapshot) struct SidebarView {
 pub(in crate::tmux_snapshot) struct Cache {
     view: Option<Entity<SidebarView>>,
     key: Option<u64>,
+    /// Whether the fade that shows the sidebar has ended. A paint carries the
+    /// opacity of the frame that drew it, so the sidebar is drawn, not
+    /// replayed, until then.
+    faded_in: Rc<Cell<bool>>,
 }
 
 #[cfg(test)]
@@ -47,9 +53,12 @@ impl Render for SidebarView {
         #[cfg(test)]
         RENDERS.with(|renders| renders.set(renders.get() + 1));
         let owner = cx.entity_id();
+        // Hover washes ask their painter for the frames of their fade: that
+        // must be this view, or those frames would replay it.
+        let painter = bezel_motion::Painter::of(cx);
         self.parent
             .update(cx, |view, cx| {
-                view.sidebar_viewport(owner, cx).into_any_element()
+                view.sidebar_viewport(owner, painter, cx).into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -73,7 +82,8 @@ impl SnapshotView {
                 view
             }
         };
-        let fresh = self.sidebar_view.key.replace(key) != Some(key);
+        let fresh =
+            self.sidebar_view.key.replace(key) != Some(key) || !self.sidebar_view.faded_in.get();
         // Tests read probes that only a fresh paint records.
         #[cfg(test)]
         let fresh = fresh
@@ -101,9 +111,24 @@ impl SnapshotView {
     /// own view would drop them, and none is coming.
     pub(super) fn sidebar_unmounted(&mut self) {
         self.sidebar_view.key = None;
+        self.sidebar_view.faded_in.set(false);
         if let Some(view) = &self.sidebar_view.view {
             self.agent_animation.begin_render(view.entity_id());
         }
+    }
+
+    /// Fades the sidebar's column in when it is shown (#761), and records
+    /// when the fade has ended.
+    pub(super) fn sidebar_fade_in(&self, column: Stateful<Div>) -> impl IntoElement + use<> {
+        let faded_in = self.sidebar_view.faded_in.clone();
+        column.with_animation(
+            "sidebar-in",
+            bezel_motion::FADE_QUICK.animation(),
+            move |column, t| {
+                faded_in.set(t >= 1.);
+                column.opacity(t)
+            },
+        )
     }
 
     /// Everything the sidebar shows, hashed. Each input the sidebar's render
@@ -183,7 +208,12 @@ impl SnapshotView {
     }
 
     /// The sidebar's elements, built inside [`SidebarView`]'s render.
-    fn sidebar_viewport(&mut self, owner: EntityId, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn sidebar_viewport(
+        &mut self,
+        owner: EntityId,
+        painter: bezel_motion::Painter,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         self.agent_animation.begin_render(owner);
         let theme = self.theme();
         let bezel = bezel_theme::Theme::of(cx).clone();
@@ -201,9 +231,8 @@ impl SnapshotView {
             .flex_col()
             // Rows sit 2 pt apart, as in the mockup (#746 v3).
             .gap(px(2.));
-        sidebar = sidebar.child(self.sidebar_home_row(cx));
+        sidebar = sidebar.child(self.sidebar_home_row(painter, cx));
         let request = self.browser_request;
-        let painter = bezel_motion::Painter::of(cx);
         let now = (self.connection.clock)().0;
         let local_last_known = self.agents_shown_last_known();
         for (index, mut row) in sidebar::rows_at(&self.browser_state, now)

@@ -586,7 +586,7 @@ impl SnapshotView {
             // The width snaps, so the terminal grid resizes once; the
             // contents fade in over FADE_QUICK (#761).
             .when(show_sidebar, |main| {
-                main.child(bezel_motion::fade_quick("sidebar-in", sidebar))
+                main.child(self.sidebar_fade_in(sidebar))
             })
             .child(
                 div()
