@@ -829,13 +829,16 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     const shell = await daemonApplicationShell("journey-beta");
     const resource = shell?.resource;
     const daemonView = JSON.stringify({
-      selectedPane: resource?.workspace?.selectedPaneId ?? resource?.workspace?.activePaneId ?? null,
+      selectedPane:
+        resource?.workspace?.selectedPaneId ?? resource?.workspace?.activePaneId ?? null,
       agents: (resource?.workspace?.sidebar?.agents ?? []).map(({ id, paneId, status }) => ({
         id,
         paneId,
         status,
       })),
-      inventory: (resource?.terminalInventory?.resources ?? []).map(({ id, kind }) => `${kind}:${id}`),
+      inventory: (resource?.terminalInventory?.resources ?? []).map(
+        ({ id, kind }) => `${kind}:${id}`,
+      ),
     });
     clickText(one, agentClickLabel);
     await cancellation.pause(3_000);
@@ -844,7 +847,10 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       mkdirSync(evidenceDir, { recursive: true });
       const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
       if (existsSync(trace))
-        writeFileSync(join(evidenceDir, "recreated-agent-daemon.performance.jsonl"), readFileSync(trace));
+        writeFileSync(
+          join(evidenceDir, "recreated-agent-daemon.performance.jsonl"),
+          readFileSync(trace),
+        );
       writeFileSync(join(evidenceDir, "recreated-agent-frame-before-click.txt"), before);
       writeFileSync(join(evidenceDir, "recreated-agent-frame-after-click.txt"), after);
     }
@@ -1288,7 +1294,8 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       shells[name] = shell
         ? Object.keys(shell.resource ?? {}).length
           ? {
-              runtime: shell.resource?.terminalRuntime?.status ?? shell.resource?.runtime?.status ?? null,
+              runtime:
+                shell.resource?.terminalRuntime?.status ?? shell.resource?.runtime?.status ?? null,
               keys: Object.keys(shell.resource).sort(),
             }
           : null
@@ -1310,7 +1317,10 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     if (evidenceDir) {
       const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
       if (existsSync(trace))
-        writeFileSync(join(evidenceDir, "linked-refusal-daemon.performance.jsonl"), readFileSync(trace));
+        writeFileSync(
+          join(evidenceDir, "linked-refusal-daemon.performance.jsonl"),
+          readFileSync(trace),
+        );
       writeFileSync(join(evidenceDir, "linked-refusal-frame-after-poke.txt"), after);
     }
     throw new Error(
@@ -1322,6 +1332,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         `poke sent: ${poke.status === 0}; refusal 2 s after the poke: ${/unlink/i.test(after)}; poke reached a terminal: ${pokeLanded}`,
         `frame after the poke:\n${after}`,
       ].join("\n"),
+      { cause: error },
     );
   }
   const blockedMarker = `PACK_LINK_BLOCKED_${process.pid}`;
@@ -1686,6 +1697,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         recreatedAgentPane,
         recreatedSemanticAgentPane,
       )}`,
+      { cause: error },
     );
   }
   let topologyInputWindow = null;
