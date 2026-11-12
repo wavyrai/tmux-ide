@@ -209,7 +209,8 @@ describe("the tmux guard in front of every test", () => {
     expect(() =>
       assertTmuxGuarded({ ...environment, TMUX_IDE_TMUX_BIN: "/tmp/case-abc/fake-tmux" }),
     ).not.toThrow();
-    const { TMUX_IDE_TMUX_BIN: _dropped, ...withoutBinary } = environment;
+    const withoutBinary = { ...environment };
+    delete withoutBinary.TMUX_IDE_TMUX_BIN;
     expect(() => assertTmuxGuarded(withoutBinary)).toThrow(/bundled tmux would be used/u);
     expect(() =>
       assertTmuxGuarded({ ...environment, TMUX_IDE_RUNTIME_MODE: "development" }),
