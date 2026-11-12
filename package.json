@@ -107,6 +107,7 @@
     "typecheck:tui-gallery": "tsc --noEmit -p scripts/tsconfig.tui-gallery.json",
     "test:spark-qualification": "node --import tsx --test scripts/lib/spark-*.test.ts scripts/lib/spark-*.test.mjs",
     "test:installer": "node --test scripts/install.test.mjs scripts/lib/installer-service-qualification.test.mjs",
+    "test:installer-native": "node --test scripts/install-native-alpha.test.mjs scripts/install-native-dispatch.test.mjs",
     "qualify:styled-ssh": "node scripts/qualify-styled-ssh.mjs"
   },
   "keywords": [

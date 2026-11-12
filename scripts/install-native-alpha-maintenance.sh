@@ -53,16 +53,17 @@ applications_entry() {
   ' "$1" "$HOME" "$prefix"
 }
 applications_entry check
-base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026101702
-installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4
-archive_sha=4633e227a5ecff7cbb867185ccbb248f91fc197e96596c959cb4fa6664547324
+base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111101
+installer_sha=98cc545d26643ba03853effc5aa49ac01ed1aefec6cb81441627e73002280456
+archive_sha=bf296ddfb3e640441ab2ff4a1738048f7ed4f3cf69d4a21544991fb28c84f902
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --connect-timeout 15 --max-time 300 --max-filesize 536870912 "$1" -o "$2"; }
+# Retry a failed request; give up on a stalled download, not a slow one.
+fetch() { curl --proto '=https' --proto-redir '=https' -fLsS --retry 3 --retry-max-time 900 --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 900 --max-filesize 536870912 "$1" -o "$2"; }
 verify() { actual=$(shasum -a 256 "$1" | awk '{print $1}'); [ "$actual" = "$2" ] || fail 'Downloaded asset checksum mismatch'; }
-fetch "$base/tmux-ide-install-v3.mjs" "$scratch/installer.mjs"
+fetch "$base/tmux-ide-install-v5.mjs" "$scratch/installer.mjs"
 verify "$scratch/installer.mjs" "$installer_sha"
 printf '%s\n' '{"teamId":"7HWMF997US","bundleId":"com.tmux-ide.gpui.alpha","architecture":"arm64","minimumMacOS":"14.2"}' > "$scratch/policy.json"
 mkdir -p "$(dirname "$prefix")"
@@ -71,7 +72,7 @@ case "$action" in
   recover) "$node" "$scratch/installer.mjs" recover --prefix "$prefix" --policy "$scratch/policy.json" --disposition keep-current ;;
   rollback) "$node" "$scratch/installer.mjs" rollback --prefix "$prefix" --policy "$scratch/policy.json" ;;
   install|update)
-    fetch "$base/tmux-ide-gpui-0.1.2-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
+    fetch "$base/tmux-ide-gpui-0.1.16-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
     verify "$scratch/app.tar.gz" "$archive_sha"
     # Only the pinned, checksum-verified archive reaches tar. Bound both reads.
     "$node" --input-type=module -e '
@@ -84,7 +85,7 @@ case "$action" in
       const extraction=spawnSync("/usr/bin/tar",["-xzf",archive,"-C",destination],{stdio:"inherit",timeout:120000});
       if(extraction.error || extraction.status!==0) process.exit(1);
     ' "$scratch/app.tar.gz" "$scratch"
-    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.2-2026101702 ;;
+    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.16-2026111101 ;;
 esac
 case "$action" in
   uninstall) applications_entry remove ;;
