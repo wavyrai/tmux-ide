@@ -192,7 +192,7 @@ fn paint_glyphs(
     line: &ShapedLine,
     origin: Point<Pixels>,
     line_height: Pixels,
-    color: Rgba,
+    color: Hsla,
     window: &mut Window,
 ) -> Result<()> {
     let baseline = origin
@@ -206,17 +206,28 @@ fn paint_glyphs(
             if glyph.is_emoji {
                 window.paint_emoji(position, run.font_id, glyph.id, line.font_size)?;
             } else {
-                window.paint_glyph(
-                    position,
-                    run.font_id,
-                    glyph.id,
-                    line.font_size,
-                    color.into(),
-                )?;
+                window.paint_glyph(position, run.font_id, glyph.id, line.font_size, color)?;
             }
         }
     }
     Ok(())
+}
+
+/// The last foreground converted for a glyph. Neighbouring cells mostly share
+/// one, so a run of text converts its colour once rather than once per glyph.
+#[derive(Default)]
+struct GlyphColor(Option<(u32, Hsla)>);
+impl GlyphColor {
+    fn get(&mut self, color: u32) -> Hsla {
+        match self.0 {
+            Some((last, hsla)) if last == color => hsla,
+            _ => {
+                let hsla = Hsla::from(rgb(color));
+                self.0 = Some((color, hsla));
+                hsla
+            }
+        }
+    }
 }
 
 /// Whether a cell background is painted: on a card with its own fill, the
@@ -773,6 +784,7 @@ impl TerminalPainter {
         #[cfg(feature = "integration-test")] counts: &mut crate::performance::Counts,
     ) -> u64 {
         let mut paint_errors = 0;
+        let mut glyph_color = GlyphColor::default();
         for index in cell_ranges(frame, area).flatten() {
             let Some(cell) = frame.cell_at(index) else {
                 continue;
@@ -846,7 +858,7 @@ impl TerminalPainter {
                     px((index % usize::from(frame.width())) as f32 * cell_width),
                     px((index / usize::from(frame.width())) as f32 * self.cell_height),
                 );
-            let color = rgb(cell_colors(cell, &self.theme).0);
+            let color = glyph_color.get(cell_colors(cell, &self.theme).0);
             let result = paint_glyphs(shaped, position, px(self.cell_height), color, window);
             paint_errors += u64::from(result.is_err());
             #[cfg(feature = "integration-test")]
@@ -895,7 +907,9 @@ impl TerminalPainter {
                         ),
                         color,
                     ));
-                    if paint_glyphs(&line, origin, px(self.cell_height), color, window).is_err() {
+                    if paint_glyphs(&line, origin, px(self.cell_height), color.into(), window)
+                        .is_err()
+                    {
                         tracing::warn!(category = "glyph_paint", "IME composition paint failed");
                     }
                 });

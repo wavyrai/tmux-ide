@@ -246,16 +246,59 @@ pub(super) struct Root {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let nudge = |snapshot: &Entity<SnapshotView>| {
+            let snapshot = snapshot.clone();
+            move |cx: &App| snapshot.read(cx).idle_tick.nudge()
+        };
+        let (down, up, modifiers, mouse) = (
+            nudge(&self.snapshot),
+            nudge(&self.snapshot),
+            nudge(&self.snapshot),
+            self.snapshot.clone(),
+        );
+        // Every input event nudges the browser UI task, so an idle window's
+        // tick restarts for whatever the event queues (#714). Input that
+        // renders would nudge anyway; this covers input that only queues work.
+        // Keys dispatch along the focus path, which always runs through here.
         div()
             .relative()
             .size_full()
+            .capture_key_down(move |_, _, cx| down(cx))
+            .capture_key_up(move |_, _, cx| up(cx))
+            .on_modifiers_changed(move |_, _, cx| modifiers(cx))
             .child(
                 self.snapshot
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
             .child(self.spinner.clone())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), window, _| mouse_nudges(&mouse, window),
+                )
+                .absolute()
+                .size_0(),
+            )
     }
+}
+
+/// Mouse events reach window-level listeners wherever the pointer is.
+fn mouse_nudges(snapshot: &Entity<SnapshotView>, window: &mut Window) {
+    macro_rules! on_mouse {
+        ($($event:ty),*) => {$({
+            let snapshot = snapshot.clone();
+            window.on_mouse_event(move |_: &$event, _, _, cx| {
+                snapshot.read(cx).idle_tick.nudge();
+            });
+        })*};
+    }
+    on_mouse!(
+        MouseDownEvent,
+        MouseUpEvent,
+        MouseMoveEvent,
+        ScrollWheelEvent
+    );
 }
 
 /// Mounts `snapshot` as the window content with its spinner overlay.

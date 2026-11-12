@@ -13,6 +13,23 @@ pub(in crate::tmux_snapshot) struct Owner {
     query: Option<String>,
     due: Option<Instant>,
 }
+impl Owner {
+    /// A query is waiting out its debounce, or a close for room in the queue.
+    pub(in crate::tmux_snapshot) fn queued(&self) -> bool {
+        self.pending_close.is_some() || self.due.is_some()
+    }
+    /// A query debounced until `due`, for tests outside the palette.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn debounce_for_test(&mut self, due: Instant) {
+        self.query = Some("q".into());
+        self.due = Some(due);
+    }
+    /// A close waiting for room, for tests outside the palette.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn close_for_test(&mut self) {
+        self.pending_close = Some((7, 1, 0));
+    }
+}
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn cancel_palette(&mut self) {
         self.palette.active = None;
