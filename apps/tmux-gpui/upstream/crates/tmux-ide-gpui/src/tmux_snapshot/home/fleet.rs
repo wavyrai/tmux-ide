@@ -770,30 +770,34 @@ impl SnapshotView {
                 if rows.is_empty() {
                     block = block.child(self.fleet_note("No sessions"));
                 }
-                for (row, session) in rows {
-                    let key =
-                        motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
-                    let entered = self.home_entered(&key, clock, reduced);
-                    block = block.child(motion::enter_any(
-                        self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
-                        entered,
-                    ));
-                }
-            }
-            for (row, session) in group.sessions.iter().enumerate().filter(|(_, s)| {
-                fleet_nav::shows(&view, only, group, s)
-                    && s.server_id
-                        .as_ref()
-                        .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
-            }) {
-                let key =
-                    motion::fleet_row_key(&group.id, &session.id, session.server_id.as_deref());
-                let entered = self.home_entered(&key, clock, reduced);
-                block = block.child(motion::enter_any(
-                    self.fleet_session_row(index, row, session, is_cursor(index, row), now, cx),
-                    entered,
+                block = block.children(self.fleet_run(
+                    (index, server_index),
+                    &rows,
+                    group,
+                    &is_cursor,
+                    (now, clock, reduced),
+                    cx,
                 ));
             }
+            let unlisted: Vec<_> = group
+                .sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    fleet_nav::shows(&view, only, group, s)
+                        && s.server_id
+                            .as_ref()
+                            .is_none_or(|id| !group.servers.iter().any(|server| &server.id == id))
+                })
+                .collect();
+            block = block.children(self.fleet_run(
+                (index, usize::MAX),
+                &unlisted,
+                group,
+                &is_cursor,
+                (now, clock, reduced),
+                cx,
+            ));
             if group.omitted_servers > 0 {
                 block = block.child(
                     self.fleet_note(format!("{} more servers not shown", group.omitted_servers)),

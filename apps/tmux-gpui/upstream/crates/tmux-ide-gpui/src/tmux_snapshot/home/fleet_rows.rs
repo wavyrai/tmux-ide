@@ -30,13 +30,10 @@ impl SnapshotView {
             && self.presence.ready()
             && self.browser_state.request == request;
         let group: SharedString = format!("fleet-row-{index}-{row}").into();
-        let star = div()
-            .flex_none()
-            .debug_selector(move || format!("fleet-star-{index}-{row}"))
-            .when(!session.favorite, |star| {
-                star.invisible().group_hover(group.clone(), |s| s.visible())
-            })
-            .child(self.fleet_preference_button(
+        // The star's tooltip box is its row cell: shown on a favourite, or
+        // under the pointer.
+        let star = self
+            .fleet_preference_tip(
                 ("fleet-favorite", index * 128 + row),
                 session.favorite_action.as_deref(),
                 !session.favorite,
@@ -51,7 +48,11 @@ impl SnapshotView {
                     "icons/fleet-star.svg"
                 },
                 cx,
-            ));
+            )
+            .flex_none()
+            .when(!session.favorite, |star| {
+                star.invisible().group_hover(group.clone(), |s| s.visible())
+            });
         let icon = match &session.favicon {
             Some(image) => img(image.clone())
                 .debug_selector(move || format!("fleet-session-favicon-{index}-{row}"))
@@ -122,6 +123,7 @@ impl SnapshotView {
             .group(group)
             .debug_selector(move || format!("fleet-session-{index}-{row}"))
             .h(px(ROW_HEIGHT))
+            .w_full()
             .px(px(ROW_GAP))
             .flex()
             .items_center()

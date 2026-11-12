@@ -12,6 +12,8 @@ pub(super) mod fleet_rows;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
+mod row_root;
+pub(super) mod rows_window;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
@@ -80,6 +82,27 @@ pub(super) fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
 /// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
+    thread_local! {
+        /// The last theme and canvas Home was inked for, and the result:
+        /// every row and chip asks, and the answer changes only with the
+        /// appearance (perf plan, finding 2).
+        static LAST: std::cell::RefCell<Option<(crate::config::Theme, u32, bezel_theme::Theme)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    if let Some(inked) = LAST.with(|last| {
+        last.borrow()
+            .as_ref()
+            .filter(|(source, plate, _)| source == theme && *plate == canvas)
+            .map(|(_, _, inked)| inked.clone())
+    }) {
+        return inked;
+    }
+    let inked = ink_home(theme, canvas);
+    LAST.with(|last| *last.borrow_mut() = Some((theme.clone(), canvas, inked.clone())));
+    inked
+}
+
+fn ink_home(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
     thread_local! {
