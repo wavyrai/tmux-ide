@@ -139,6 +139,7 @@ import { FleetLifecycleAuthority } from "./fleet-lifecycle-authority.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
+import { evictOrphanedControlClientsOnOwnership } from "./orphaned-control-clients.ts";
 import {
   createTmuxInteractionObservationHandler,
   externalTmuxInteractionDraft,
@@ -1231,6 +1232,9 @@ async function startEmbeddedDaemonGeneration(
     const fleetFactsTmuxRunner = initialNativeServerIdentity
       ? createServerGenerationFencedTmuxAsyncRunner(tmuxAuthority, initialNativeServerIdentity)
       : createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
+    // The daemon's own server: a predecessor killed without a stop may have
+    // left control clients attached to it.
+    void evictOrphanedControlClientsOnOwnership(fleetFactsTmuxRunner, null);
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner,

@@ -54,6 +54,7 @@ import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-sessio
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
+import { evictOrphanedControlClientsOnOwnership } from "./orphaned-control-clients.ts";
 import { InteractionReceiptJournal } from "./interaction-receipt-journal.ts";
 import { InteractionObservationStatusStore } from "./interaction-observation-status.ts";
 import { InteractionEvidenceAuthority } from "./interaction-evidence-authority.ts";
@@ -241,6 +242,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     authority,
     nativeServerIdentity,
   );
+  void evictOrphanedControlClientsOnOwnership(generationRunAsync, options.serverId);
   const multiplexer = new WorkspaceMultiplexerAuthority({
     daemonInstanceId: generation,
     registry: workspaceRegistry,
