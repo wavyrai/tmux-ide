@@ -218,6 +218,18 @@ impl Local {
         self.recovery = Some(recovery);
         self.reconnect_schedule()
     }
+    /// The stream's lease no longer fits the session's panes (one was added or
+    /// closed elsewhere): recover through the catalog, which lists them as
+    /// they are now, and do it now. Not a failed try, so no backoff.
+    pub(super) fn reconnect_refresh(&mut self, preferred: Option<String>) -> Result<(), Error> {
+        self.reconnect_start()?;
+        if let Some(recovery) = self.recovery.as_mut() {
+            recovery.rebind = None;
+            recovery.pane = preferred.or(recovery.pane.take());
+            recovery.due = Some(Instant::now());
+        }
+        Ok(())
+    }
     /// A try failed: schedule the next. Nothing but [`Failure::Incompatible`]
     /// and an SSH identity change ends recovery; a daemon that no longer knows
     /// the generation or session ends a rebind and starts rediscovery.

@@ -512,3 +512,46 @@ fn the_away_minute_starts_over_after_any_other_failure() {
     local.reconnect_retry(Failure::Unreachable).unwrap();
     assert!(local.recovery.as_ref().unwrap().away_since.is_none());
 }
+
+/// Soak, inactive window: a pane split by another client left the window on
+/// "Reconnecting… attempt 1" until it was activated. The stream's lease lacked
+/// the new pane, and the fresh lease it asked for was only given in an active
+/// window. An inactive window now reads the session's panes again as part of
+/// the recovery, instead of asking for the old pane list once more.
+#[test]
+fn a_refresh_in_an_inactive_window_reads_the_panes_again_within_the_recovery() {
+    let (mut local, _events) = attached();
+    local.foreground = false;
+    let target = local.active.as_ref().unwrap().target.clone();
+    // The 1012 drop, then the rebind with the old pane list, which was issued.
+    local.reconnect_start().unwrap();
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Issue { .. })));
+    local.stage = None;
+    local.active = Some(Route {
+        id: "rebound".into(),
+        request: 7,
+        target,
+        workspace: "fixture".into(),
+    });
+    let refresh = |id: &str, request| Command::NativeTerminalRefresh {
+        id: id.into(),
+        request,
+        preferred_pane: Some("%9".into()),
+    };
+    // Not this route: nothing happens.
+    local.command(refresh("another", 7)).unwrap();
+    local.command(refresh("rebound", 6)).unwrap();
+    assert!(local.active.is_some());
+    local.command(refresh("rebound", 7)).unwrap();
+    let recovery = local.recovery.as_ref().expect("the refresh was dropped");
+    assert!(
+        recovery.rebind.is_none(),
+        "the old pane list would be leased again"
+    );
+    assert_eq!(recovery.pane.as_deref(), Some("%9"));
+    assert!(recovery.due.unwrap() <= Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Servers)));
+    assert_eq!(local.state.surface, Surface::Workspace);
+}

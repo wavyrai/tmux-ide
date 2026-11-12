@@ -281,6 +281,20 @@ impl Local {
                 }
                 Ok(())
             }
+            // An inactive window gets no lease for a new open, so its stream is
+            // put back by a recovery that reads the session's panes again.
+            Command::NativeTerminalRefresh {
+                id,
+                request,
+                preferred_pane,
+            } => {
+                if (self.active.as_ref())
+                    .is_some_and(|route| route.id == id && route.request == request)
+                {
+                    return self.reconnect_refresh(preferred_pane);
+                }
+                Ok(())
+            }
             Command::RetryReconnect { request } => self.reconnect_now(request),
             Command::NativeTerminalInterrupted {
                 id,
@@ -303,8 +317,7 @@ impl Local {
             | Command::Home { .. }
             | Command::Refresh { .. }
             | Command::Session { .. }
-            | Command::Pane { .. }
-            | Command::NativeTerminalRefresh { .. } => Ok(()),
+            | Command::Pane { .. } => Ok(()),
             // Unsupported development-path actions must not leave a pending
             // controller authorization waiting for a helper that does not exist.
             _ => self.unavailable(

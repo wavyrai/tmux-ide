@@ -676,9 +676,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             {
                 break 'worker;
             }
-            // The broker admits refresh only in the foreground. Retain a completed
-            // mutation until focus returns so its fresh inventory request is not lost.
-            if presence.0 && active.as_ref().is_some_and(|a| a.reissue) {
+            // The legacy broker admits refresh only in the foreground: wait for focus so
+            // the request is not lost. The native catalog recovers an inactive window too.
+            if (presence.0 || hold.enabled()) && active.as_ref().is_some_and(|a| a.reissue) {
                 if let Some(current) = active.as_ref() {
                     transition.begin(&state, current.request, now);
                     let command = Command::NativeTerminalRefresh {
